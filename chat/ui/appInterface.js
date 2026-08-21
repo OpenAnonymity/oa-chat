@@ -109,7 +109,18 @@ export function createModelPickerInterface(app, options = {}) {
         getCurrentSession: () => app.getCurrentSession(),
         getDefaultModelName: () => app.getDefaultModelName(),
         normalizeModelName: (modelName) => app.normalizeModelName(modelName),
+        getPrimaryModelName: () => {
+            if (app.chatInput?.getPrimaryModelName) {
+                return app.chatInput.getPrimaryModelName();
+            }
+            const session = app.getCurrentSession();
+            const rawModelName = session?.model || app.state.pendingModelName || null;
+            return rawModelName ? (app.normalizeModelName(rawModelName) || rawModelName) : null;
+        },
+        getCouncilSecondaryModelName: () => app.chatInput?.getSelectedCouncilSecondaryModelName?.() || '',
+        getCouncilSynthesisModelName: () => app.chatInput?.getCouncilSynthesisModelForSelection?.() || '',
         renderCurrentModel: () => app.renderCurrentModel(),
+        refreshEditModelPickerButton: () => app.chatArea?.updateEditModelPickerButton?.(),
         actions: {
             async selectModel(modelName) {
                 const normalizedModelName = app.normalizeModelName(modelName);
@@ -119,6 +130,7 @@ export function createModelPickerInterface(app, options = {}) {
 
                 if (!session) {
                     app.state.pendingModelName = normalizedModelName;
+                    app.applyPersistedParallelPendingConfig?.(normalizedModelName);
                     app.renderCurrentModel();
                     return { session: null, modelName: normalizedModelName };
                 }
@@ -127,6 +139,20 @@ export function createModelPickerInterface(app, options = {}) {
                 await db.saveSession(session);
                 app.renderCurrentModel();
                 return { session, modelName: normalizedModelName };
+            },
+            async selectCouncilSecondaryModel(modelName) {
+                const normalizedModelName = app.normalizeModelName(modelName);
+                if (app.chatInput?.selectCouncilSecondaryModel) {
+                    await app.chatInput.selectCouncilSecondaryModel(normalizedModelName);
+                }
+                return { session: app.getCurrentSession(), modelName: normalizedModelName };
+            },
+            async selectCouncilSynthesisModel(modelName) {
+                const normalizedModelName = app.normalizeModelName(modelName);
+                if (app.chatInput?.selectCouncilSynthesisModel) {
+                    await app.chatInput.selectCouncilSynthesisModel(normalizedModelName);
+                }
+                return { session: app.getCurrentSession(), modelName: normalizedModelName };
             }
         }
     };
@@ -190,13 +216,17 @@ const COMPONENT_APP_KEYS = new Set([
     'getCurrentSession',
     'getCurrentSessionStreamingPhase',
     'getDefaultModelId',
+    'getDefaultModelName',
+    'getFallbackModelEntry',
     'getFilteredSessions',
     'getMessageTemplateOptions',
     'getPromptSlideUpMessageIdForSession',
+    'getPendingCouncilConfig',
     'getSessionListEmptyText',
     'handleMemoryApprovalDecision',
     'handleEditFileUpload',
     'hasActiveSessionListCriteria',
+    'hasTicketManagementAction',
     'inlineQuickAsk',
     'isCurrentSessionStreaming',
     'isElectronEnvironment',
@@ -208,10 +238,13 @@ const COMPONENT_APP_KEYS = new Set([
     'messageNavigation',
     'modelPicker',
     'normalizeModelName',
+    'openTicketManagement',
     'processContentWithLatex',
     'pruneMemoryRetrievedContextFromMessage',
+    'refreshExtensionSlot',
     'reasoningEffort',
     'reasoningEnabled',
+    'regenerateCouncilLane',
     'regenerateResponse',
     'reloadSessions',
     'renderMessages',
@@ -230,6 +263,9 @@ const COMPONENT_APP_KEYS = new Set([
     'setMemoryAgentModel',
     'setMemoryAutoInclude',
     'setMemoryFeatureEnabled',
+    'setCouncilModeForCurrentSession',
+    'setPendingCouncilConfig',
+    'setParallelDefaults',
     'shareCurrentSession',
     'shouldAutoScrollChat',
     'showLoadingToast',

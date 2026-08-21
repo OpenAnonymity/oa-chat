@@ -6,6 +6,7 @@
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import themeManager from '../services/themeManager.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import { SLOT_NAMES } from '../extensions/extensionHost.js';
 import TurnstileBubble from './TurnstileBubble.js';
 
 // localStorage key for synchronous pre-hydration check (matches preferencesStore snapshot)
@@ -864,6 +865,8 @@ class WelcomePanel {
         }
         this.animateOnNextRender = false;
 
+        this.app.refreshExtensionSlot?.(SLOT_NAMES.WELCOME_ACTIONS);
+
         if (this.step !== 'welcome') {
             this.resetWelcomeDialogAnchor();
         }
@@ -1213,6 +1216,7 @@ class WelcomePanel {
                 </div>
 
                 <!-- Action buttons -->
+                <div data-oa-extension-slot="welcome.actions" hidden></div>
                 <div class="flex items-stretch gap-2">
                     <a
                         href="https://openanonymity.ai/beta"
@@ -1229,7 +1233,7 @@ class WelcomePanel {
                     </a>
                     <button
                         id="import-data-btn"
-                        class="welcome-btn-blue-glass flex-1 h-10 px-3 rounded-lg text-sm text-white transition-colors flex items-center justify-center gap-1.5"
+                        class="welcome-btn-glass btn-ghost-hover flex-1 h-10 px-3 rounded-lg text-sm border border-border text-foreground shadow-sm transition-colors flex items-center justify-center gap-1.5"
                         ${controlsDisabled ? 'disabled' : ''}
                     >
                         <svg class="w-4 h-4 flex-shrink-0" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">

@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const testsRoot = path.join(repoRoot, 'test');
-const outDir = path.join('/tmp', 'oa-fastchat-unit-tests');
+const outDirPrefix = path.join('/tmp', 'oa-fastchat-unit-tests-');
 
 async function pathExists(target) {
     try {
@@ -40,8 +40,9 @@ if (testFiles.length === 0) {
     process.exit(0);
 }
 
-await fs.rm(outDir, { recursive: true, force: true });
-await fs.mkdir(outDir, { recursive: true });
+// Parallel worktrees and review agents must not overwrite one shared bundle
+// while another Node test process is still reading it.
+const outDir = await fs.mkdtemp(outDirPrefix);
 
 await esbuild.build({
     entryPoints: testFiles,
@@ -57,11 +58,21 @@ await esbuild.build({
 });
 
 const bundledTests = await collectTests(outDir);
-const child = spawn(process.execPath, ['--test', ...bundledTests], {
+// These bundled tests share browser/global shims and a single temporary output
+// directory. Node 24's isolated workers can corrupt verifier-suite IPC even at
+// concurrency one, so keep the repository test group serial and in-process.
+const child = spawn(process.execPath, [
+    '--test',
+    '--test-force-exit',
+    '--test-concurrency=1',
+    '--test-isolation=none',
+    ...bundledTests
+], {
     stdio: 'inherit'
 });
 
-child.on('exit', (code, signal) => {
+child.on('exit', async (code, signal) => {
+    await fs.rm(outDir, { recursive: true, force: true });
     if (signal) {
         console.error(`Unit tests terminated by signal ${signal}`);
         process.exit(1);

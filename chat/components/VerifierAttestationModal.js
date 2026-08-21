@@ -6,8 +6,9 @@
 import { VERIFIER_URL } from '../config.js';
 
 const OA_VERIFIER_REPO_BLOB_BASE = 'https://github.com/OpenAnonymity/oa-verifier/blob/main';
+const LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS = 'local-loopback-bypass';
 
-class VerifierAttestationModal {
+export class VerifierAttestationModal {
     constructor() {
         this.isOpen = false;
         this.overlay = null;
@@ -362,6 +363,7 @@ class VerifierAttestationModal {
             expiresAtUnix: access.expiresAtUnix,
             stationSignature: access.stationSignature,
             orgSignature: access.orgSignature,
+            submitKeyProof: access.submitKeyProof,
             hasStationSignature: !!access.stationSignature,
             hasOrgSignature: !!access.orgSignature,
             stationSignatureLength: access.stationSignature ? access.stationSignature.length : 0,
@@ -1146,7 +1148,35 @@ class VerifierAttestationModal {
         `;
     }
 
+    getZeroTrustPresentation(evidence = {}) {
+        const localLoopbackBypass = evidence?.submitKeyProof?.status ===
+            LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS;
+        const disposableDemo = evidence?.submitKeyProof?.detail ===
+            'explicit_disposable_demo';
+        return localLoopbackBypass
+            ? {
+                localLoopbackBypass: true,
+                summaryTone: 'warn',
+                summaryTitle: disposableDemo
+                    ? 'Disposable demo verifier bypass active'
+                    : 'Local verifier bypass active',
+                summaryBody: 'This development key was issued without production verifier approval. It is not marked verified and cannot be shared.',
+                sectionIntro: disposableDemo
+                    ? 'This key is using an explicit same-origin disposable-demo path. The evidence below is informational and does not verify this key.'
+                    : 'This key is using the explicit loopback-only development path. The evidence below is informational and does not verify this key.'
+            }
+            : {
+                localLoopbackBypass: false,
+                summaryTone: 'success',
+                summaryTitle: 'Key issuance chain verified',
+                summaryBody: 'This flow attests the verifier runtime, checks ownership lineage, and binds issued ephemeral keys to signed station identity.',
+                sectionIntro: 'Expand each item to inspect live evidence (attestation fields, broadcast snapshot, signed payload details, and local verification inputs).'
+            };
+    }
+
     renderZeroTrustSection(attestation, verification, evidence) {
+        const presentation = this.getZeroTrustPresentation(evidence);
+        const { localLoopbackBypass } = presentation;
         const stationId = evidence?.stationId || null;
         const hasStationSignature = !!evidence?.hasStationSignature;
         const hasOrgSignature = !!evidence?.hasOrgSignature;
@@ -1388,14 +1418,28 @@ class VerifierAttestationModal {
             }
         ];
 
-        const summaryClasses = this.getStepToneClasses('success');
-        const summaryTitle = 'Key issuance chain verified';
-        const summaryBody = 'This flow attests the verifier runtime, checks ownership lineage, and binds issued ephemeral keys to signed station identity.';
+        if (localLoopbackBypass) {
+            for (const step of steps) {
+                step.tone = 'neutral';
+            }
+            Object.assign(steps[1], {
+                title: 'Verifier ownership check skipped locally',
+                description: 'This explicit loopback-only development session did not submit the key to the production verifier.',
+                proves: 'No verifier ownership claim is made for this local key.'
+            });
+            Object.assign(steps[3], {
+                title: 'Production station registry not applied locally',
+                description: 'Production broadcast state is not used to approve or ban this loopback development key.',
+                proves: 'The local bypass remains separate from production verifier state.'
+            });
+        }
+
+        const summaryClasses = this.getStepToneClasses(presentation.summaryTone);
 
         return `
             <div class="space-y-2.5">
                 <p class="text-[11px] text-muted-foreground">
-                    Expand each item to inspect live evidence (attestation fields, broadcast snapshot, signed payload details, and local verification inputs).
+                    ${this.escapeHtml(presentation.sectionIntro)}
                 </p>
 
                 <div class="space-y-1.5">
@@ -1403,9 +1447,9 @@ class VerifierAttestationModal {
                 </div>
 
                 <div class="p-2 rounded-md border ${summaryClasses.border} ${summaryClasses.bg}">
-                    <div class="text-[11px] font-semibold ${summaryClasses.text}">${this.escapeHtml(summaryTitle)}</div>
+                    <div class="text-[11px] font-semibold ${summaryClasses.text}">${this.escapeHtml(presentation.summaryTitle)}</div>
                     <p class="text-[11px] mt-0.5 ${summaryClasses.subtleText}">
-                        ${this.escapeHtml(summaryBody)}
+                        ${this.escapeHtml(presentation.summaryBody)}
                     </p>
                 </div>
             </div>

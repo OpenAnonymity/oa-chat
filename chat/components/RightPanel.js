@@ -10,8 +10,9 @@ import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimes
 import { getTicketCost } from '../services/modelTiers.js';
 import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
-import { SHARE_BASE_URL } from '../config.js';
 import SmoothProgress from '../services/smoothProgress.js';
+import { COUNCIL_OUTPUT_SYNTHESIS } from '../domain/councilConfig.js';
+import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
@@ -52,6 +53,7 @@ class RightPanel {
         this.importStatus = null;
         this.isSplitting = false;
         this.timerInterval = null;
+        this.lastLaneExpiryRenderAt = 0;
         this.pendingInvitationCode = null;
         this.pendingInvitationTickets = null;
         this.pendingInvitationSource = null;
@@ -59,7 +61,7 @@ class RightPanel {
         // Split controls state
         this.showSplitControls = false;
         this.splitCount = 1;
-        this.splitResult = null; // { code, ticketsConsumed }
+        this.splitResult = null; // { code, ticketsConsumed, expiresAt }
 
         // Ticket animation state
         this.currentTicket = null;
@@ -94,6 +96,9 @@ class RightPanel {
                 this.renderTopSectionOnly();
             }
         });
+        this.accountUnsubscribe = this.app.services.account?.subscribe?.(() => {
+            if (this.hasMounted) this.renderTopSectionOnly();
+        }) || null;
 
         // Invitation code dropdown state - check localStorage snapshot first to avoid flash
         const savedFormVisible = localStorage.getItem('oa-invitation-form-visible');
@@ -103,6 +108,7 @@ class RightPanel {
         // Ticket info panel state - check localStorage snapshot first to avoid flash
         const savedTicketInfoVisible = localStorage.getItem('oa-ticket-info-visible');
         this.showTicketInfo = savedTicketInfoVisible === 'false' ? false : true;
+        this.showExternalTicketInfo = false;
         this.lastAppliedVisibility = null;
         this.panelFadeCleanupTimer = null;
         this.panelFadeAnimation = null;
@@ -265,27 +271,46 @@ class RightPanel {
         return Math.min(50, this.ticketCount);
     }
 
-    getTicketShareBaseUrl() {
-        const configuredBase = String(SHARE_BASE_URL || '').trim();
-        const fallbackBase = String(window.location.origin || '').trim();
-        const candidate = configuredBase || fallbackBase;
-        if (!candidate) return '';
+    getMembershipTicketToolsSnapshot() {
+        const ticketCount = Number(this.app.services.tickets.getTicketCount?.() || 0);
+        this.ticketCount = ticketCount;
+        return Object.freeze({
+            ticketCount,
+            maxShareCount: Math.min(50, ticketCount),
+            busy: Boolean(this.isImporting || this.isSplitting || this.isRegistering)
+        });
+    }
 
-        const baseWithProtocol = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+    getTicketCodeShareUrl(code, location = window.location) {
+        const normalizedCode = this.normalizeInvitationCode(code);
+        if (normalizedCode.length !== 24) return '';
+
         try {
-            const parsed = new URL(baseWithProtocol);
-            return `${parsed.protocol}//${parsed.host}`;
+            const origin = String(location?.origin || '').trim();
+            if (!origin) return '';
+
+            // One-time ticket codes must be redeemed in the environment that
+            // issued them. Commercial and preview builds mount chat at /chat/;
+            // the public client is also supported at the origin root.
+            const pathname = String(location?.pathname || '/');
+            const appPath = /^\/chat(?:\/|$)/i.test(pathname) ? '/chat/' : '/';
+            const url = new URL(appPath, origin);
+            url.searchParams.set('tickets', normalizedCode);
+            return url.toString();
         } catch {
             return '';
         }
     }
 
-    getTicketCodeShareUrl(code) {
-        const normalizedCode = this.normalizeInvitationCode(code);
-        if (normalizedCode.length !== 24) return '';
-        const baseUrl = this.getTicketShareBaseUrl();
-        if (!baseUrl) return '';
-        return `${baseUrl}/tickets/${encodeURIComponent(normalizedCode)}`;
+    getTicketCodeRegistrationError(error) {
+        const message = String(error?.message || '').trim();
+        if (/already used|already redeemed/i.test(message)) {
+            return 'This ticket code was already redeemed.';
+        }
+        if (/not found|expired/i.test(message)) {
+            return 'This ticket code is unavailable. It may have expired or come from a different OA environment.';
+        }
+        return message || 'Unable to redeem this ticket code.';
     }
 
     escapeHtml(text) {
@@ -327,6 +352,24 @@ class RightPanel {
 
         toggleInfoBtn.title = this.showTicketInfo ? 'Hide ticket info' : 'Show ticket info';
         toggleInfoBtn.setAttribute('aria-pressed', this.showTicketInfo ? 'true' : 'false');
+    }
+
+    updateExternalTicketInfoVisibility() {
+        const panel = document.getElementById('external-ticket-info-panel');
+        const toggle = document.getElementById('toggle-external-ticket-info-btn');
+        if (!panel || !toggle) return;
+
+        const show = this.showExternalTicketInfo;
+        panel.classList.toggle('mt-2', show);
+        panel.classList.toggle('max-h-[480px]', show);
+        panel.classList.toggle('max-h-0', !show);
+        panel.classList.toggle('opacity-100', show);
+        panel.classList.toggle('opacity-0', !show);
+        panel.classList.toggle('pointer-events-none', !show);
+        panel.setAttribute('aria-hidden', show ? 'false' : 'true');
+        toggle.title = show ? 'Hide inference ticket description' : 'What is an inference ticket?';
+        toggle.setAttribute('aria-label', show ? 'Hide inference ticket description' : 'What is an inference ticket?');
+        toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
     }
 
     setupEventListeners() {
@@ -394,7 +437,7 @@ class RightPanel {
 
         if (!dot) return;
 
-        const hasActiveKey = this.apiKey && !this.isExpired;
+        const hasActiveKey = this.hasAnyActiveAccessKey();
 
         // Remove all status classes first
         dot.classList.remove('status-active', 'status-inactive');
@@ -424,6 +467,7 @@ class RightPanel {
         if (!this.expiresAt) {
             this.timeRemaining = null;
             this.isExpired = false;
+            this.ensureLaneExpirationTimer();
             return;
         }
 
@@ -440,6 +484,8 @@ class RightPanel {
                     this.timerInterval = null;
                 }
                 this.updateStatusIndicator();
+                this.refreshLaneExpiryPanelIfNeeded(true);
+                this.ensureLaneExpirationTimer();
             } else {
                 this.isExpired = false;
                 const hours = Math.floor(diff / 3600000);
@@ -465,6 +511,8 @@ class RightPanel {
                     : '';
                 timeRemainingEl.innerHTML = shareIcon + (this.timeRemaining || 'Loading...');
                 timeRemainingEl.className = `font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.getExpiryWidthClass(isKeyShared)} flex items-center ${this.getExpiryAlignmentClass(isKeyShared)} gap-0.5 tabular-nums whitespace-nowrap ${this.getTimerClasses(isKeyShared)}`;
+            } else if (this.getCouncilAccessRows().length > 0) {
+                this.refreshLaneExpiryPanelIfNeeded();
             }
         };
 
@@ -592,11 +640,13 @@ class RightPanel {
         }, 500);
     }
 
-    async handleRegister(invitationCode) {
+    async handleRegister(invitationCode, options = {}) {
         if (!invitationCode || invitationCode.length !== 24) {
             this.registrationError = 'Invalid ticket code (must be 24 characters)';
             this.renderTopSectionOnly();
-            return;
+            const error = new Error(this.registrationError);
+            if (options.throwOnError) throw error;
+            return null;
         }
 
         this.isRegistering = true;
@@ -614,6 +664,7 @@ class RightPanel {
             await this.app.services.tickets.alphaRegister(invitationCode, (message, percent) => {
                 this.smoothProgress.set(percent);
                 this.registrationProgress = { message, percent };
+                options.onProgress?.({ message, percent });
                 // Update message text directly to avoid innerHTML replacement
                 const msgEl = document.querySelector('[data-smooth-progress-msg="right-panel"]');
                 if (msgEl) msgEl.textContent = message;
@@ -652,10 +703,14 @@ class RightPanel {
                 this.updateTicketInfoVisibility();
                 this.updateTicketInfoToggleButton();
             }, 2000);
+            return Object.freeze({ ticketCount: this.ticketCount });
         } catch (error) {
-            this.registrationError = error.message;
+            console.warn('Ticket code redemption failed:', error);
+            this.registrationError = this.getTicketCodeRegistrationError(error);
             this.smoothProgress.stop();
             this.registrationProgress = null;
+            if (options.throwOnError) throw new Error(this.registrationError);
+            return null;
         } finally {
             this.isRegistering = false;
             this.renderTopSectionOnly();
@@ -685,7 +740,7 @@ class RightPanel {
         });
     }
 
-    async handleImportTickets(file, inputEl = null) {
+    async handleImportTickets(file, inputEl = null, options = {}) {
         if (!file || this.isImporting) return;
 
         this.isImporting = true;
@@ -712,11 +767,18 @@ class RightPanel {
                     message: `Imported ${totalAdded} ticket${totalAdded !== 1 ? 's' : ''} (${result.addedActive} active, ${result.addedArchived} used).`
                 };
             }
+            return Object.freeze({
+                addedActive: Number(result.addedActive || 0),
+                addedArchived: Number(result.addedArchived || 0),
+                ticketCount: this.ticketCount
+            });
         } catch (error) {
             this.importStatus = {
                 type: 'error',
                 message: error.message || 'Failed to import tickets.'
             };
+            if (options.throwOnError) throw error;
+            return null;
         } finally {
             this.isImporting = false;
             if (inputEl) {
@@ -736,14 +798,14 @@ class RightPanel {
         }
     }
 
-    async handleExportTickets() {
+    async handleExportTickets(options = {}) {
+        let outcome = null;
         try {
             const result = await exportTickets();
             if (result.cancelled) {
                 // User cancelled - no message needed
-                return;
-            }
-            if (result.success) {
+                outcome = Object.freeze({ cancelled: true });
+            } else if (result.success) {
                 const total = result.activeCount + result.archivedCount;
                 this.ticketCount = this.app.services.tickets.getTicketCount();
                 this.loadNextTicket();
@@ -757,23 +819,34 @@ class RightPanel {
                     message: 'Failed to export tickets.'
                 };
             }
+            if (!outcome) {
+                outcome = Object.freeze({
+                    cancelled: false,
+                    success: result.success === true,
+                    activeCount: Number(result.activeCount || 0),
+                    archivedCount: Number(result.archivedCount || 0),
+                    ticketCount: this.ticketCount
+                });
+            }
         } catch (error) {
             this.importStatus = {
                 type: 'error',
                 message: error.message || 'Failed to export tickets.'
             };
-        }
+            if (options.throwOnError) throw error;
+        } finally {
+            this.renderTopSectionOnly();
 
-        this.renderTopSectionOnly();
-
-        if (this.importStatus?.type === 'success') {
-            setTimeout(() => {
-                if (this.importStatus?.type === 'success') {
-                    this.importStatus = null;
-                    this.renderTopSectionOnly();
-                }
-            }, 2500);
+            if (this.importStatus?.type === 'success') {
+                setTimeout(() => {
+                    if (this.importStatus?.type === 'success') {
+                        this.importStatus = null;
+                        this.renderTopSectionOnly();
+                    }
+                }, 2500);
+            }
         }
+        return outcome;
     }
 
     handleSplitToggle() {
@@ -829,41 +902,62 @@ class RightPanel {
     }
 
     async handleSplitConfirm() {
-        if (this.isSplitting) return;
+        const result = await this.performTicketSplit(this.splitCount, { autoCopy: true });
+        if (result) {
+            this.showSplitControls = false;
+            this.splitResult = result;
+        }
+        this.renderTopSectionOnly();
+    }
+
+    async performTicketSplit(count, options = {}) {
+        if (this.isSplitting) return null;
         const maxSplitCount = this.getMaxSplitCount();
-        if (this.splitCount <= 0 || this.splitCount > maxSplitCount) {
-            this.app?.showToast?.(`You can split at most ${maxSplitCount} tickets at a time.`, 'error');
-            return;
+        const normalizedCount = Number(count);
+        if (!Number.isInteger(normalizedCount) || normalizedCount <= 0 || normalizedCount > maxSplitCount) {
+            const error = new Error(`You can share at most ${maxSplitCount} tickets at a time.`);
+            if (options.throwOnError) throw error;
+            this.app?.showToast?.(error.message, 'error');
+            return null;
         }
 
         this.isSplitting = true;
         this.renderTopSectionOnly();
 
         try {
-            const result = await this.app.services.tickets.splitTickets(this.splitCount);
+            const result = await this.app.services.tickets.splitTickets(normalizedCount);
             this.ticketCount = this.app.services.tickets.getTicketCount();
             this.loadNextTicket();
-            this.showSplitControls = false;
-            this.splitResult = {
+            const splitResult = Object.freeze({
                 code: result.code,
-                ticketsConsumed: result.ticketsConsumed || this.splitCount
-            };
+                ticketsConsumed: result.ticketsConsumed || normalizedCount,
+                expiresAt: result.expiresAt || null,
+                shareUrl: this.getTicketCodeShareUrl(result.code)
+            });
 
             // Auto-copy the code to clipboard
-            try {
-                await navigator.clipboard.writeText(result.code);
-                this.app?.showToast?.('Code copied to clipboard!', 'success');
-            } catch (copyError) {
-                console.error('Failed to auto-copy code:', copyError);
-                // Don't show error toast, user can still manually copy
+            if (options.autoCopy) {
+                try {
+                    await navigator.clipboard.writeText(result.code);
+                    this.app?.showToast?.('Code copied to clipboard!', 'success');
+                } catch (copyError) {
+                    console.error('Failed to auto-copy code:', copyError);
+                    // Don't show error toast, user can still manually copy
+                }
             }
+            return splitResult;
         } catch (error) {
+            if (options.throwOnError) throw error;
             this.app?.showToast?.(error.message || 'Failed to split tickets.', 'error');
+            return null;
         } finally {
             this.isSplitting = false;
+            this.renderTopSectionOnly();
         }
+    }
 
-        this.renderTopSectionOnly();
+    splitTicketsForMembership(count) {
+        return this.performTicketSplit(count, { autoCopy: false, throwOnError: true });
     }
 
     handleSplitCancel() {
@@ -1646,12 +1740,292 @@ class RightPanel {
         return this.app.state.sessions.filter(s => this.app.services.inference.getAccessInfo(s)?.token === this.apiKey).length;
     }
 
+    hasAnyAccessKey() {
+        return !!this.apiKey || this.getCouncilAccessRows().some((row) => !!row.access?.apiKey);
+    }
+
+    hasAnyActiveAccessKey() {
+        if (this.apiKey && !this.isExpired) return true;
+        return this.getCouncilAccessRows().some((row) => (
+            !!row.access?.apiKey && this.getAccessExpiryLabel(row.access) !== 'Expired'
+        ));
+    }
+
+    getCouncilAccessRows() {
+        const session = this.currentSession;
+        const access = session?.councilAccess || null;
+        const config = session
+            ? (session.councilConfig || {})
+            : this.getPendingCouncilAccessConfig();
+        const isParallelMode = session
+            ? session.responseMode === 'council' && config.enabled === true
+            : config?.enabled === true;
+        if (!isParallelMode) return [];
+
+        const rows = [
+            {
+                id: 'primary',
+                label: 'Model 1',
+                access: access?.primary || null
+            },
+            {
+                id: 'secondary',
+                label: 'Model 2',
+                access: access?.secondary || null
+            }
+        ];
+
+        if (config.outputMode === COUNCIL_OUTPUT_SYNTHESIS) {
+            rows.push({
+                id: 'synthesis',
+                label: 'Council',
+                access: access?.synthesis || null
+            });
+        }
+
+        return rows;
+    }
+
+    getPendingCouncilAccessConfig() {
+        const pendingConfig = this.app.getPendingCouncilConfig?.();
+        if (pendingConfig) return pendingConfig;
+        return this.app.buildPersistedParallelCouncilConfig?.() || null;
+    }
+
+    getAccessExpiryLabel(access) {
+        if (!access?.apiKey) return 'Pending';
+        const expiresAt = access.expiresAt || access.apiKeyInfo?.expiresAt || access.apiKeyInfo?.expires_at || null;
+        if (!expiresAt) return 'Active';
+
+        const diffMs = new Date(expiresAt).getTime() - Date.now();
+        if (!Number.isFinite(diffMs)) return 'Active';
+        if (diffMs <= 0) return 'Expired';
+
+        const hours = Math.floor(diffMs / 3600000);
+        const minutes = Math.floor((diffMs % 3600000) / 60000);
+        if (hours > 0) return `${hours}h ${minutes}m`;
+        if (minutes > 0) return `${minutes}m`;
+        return '<1m';
+    }
+
+    getAccessExpiryClasses(access) {
+        if (!access?.apiKey) return 'bg-muted/30 text-muted-foreground';
+        return this.getAccessExpiryLabel(access) === 'Expired'
+            ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+            : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
+    }
+
+    hasCouncilAccessKeys() {
+        return this.getCouncilAccessRows().some((row) => !!row.access?.apiKey);
+    }
+
+    maskCouncilAccessToken(access) {
+        if (!access?.apiKey) return '';
+        const laneDisplaySession = {
+            ...this.currentSession,
+            currentEphemeralKeyId: null,
+            ephemeralKeyMappings: null
+        };
+        return this.app.services.inference.maskAccessToken(laneDisplaySession, access.apiKey);
+    }
+
+    getLaneAttestationAccessInfo(access) {
+        if (!access?.apiKey) return null;
+        return {
+            ...(access.apiKeyInfo || {}),
+            key: access.apiKey,
+            token: access.apiKey,
+            expiresAt: access.expiresAt || access.apiKeyInfo?.expiresAt || access.apiKeyInfo?.expires_at || null
+        };
+    }
+
+    ensureLaneExpirationTimer() {
+        if ((this.expiresAt && !this.isExpired) || this.timerInterval || !this.hasCouncilAccessKeys()) return;
+
+        this.timerInterval = setInterval(() => {
+            if ((this.expiresAt && !this.isExpired) || !this.hasCouncilAccessKeys()) {
+                clearInterval(this.timerInterval);
+                this.timerInterval = null;
+                return;
+            }
+            this.renderTopSectionOnly();
+            this.updateStatusIndicator();
+        }, 30000);
+    }
+
+    refreshLaneExpiryPanelIfNeeded(force = false) {
+        if (this.getCouncilAccessRows().length === 0) return;
+        const now = Date.now();
+        if (!force && now - this.lastLaneExpiryRenderAt < 30000) return;
+        this.lastLaneExpiryRenderAt = now;
+        this.renderTopSectionOnly();
+        this.updateStatusIndicator();
+    }
+
+    generateCouncilAccessKeyPanelHTML(rows) {
+        const rowHtml = rows.map((row) => {
+            const access = row.access || null;
+            const hasKey = !!access?.apiKey;
+            const displayMask = hasKey
+                ? this.maskCouncilAccessToken(access)
+                : 'Requested on message send';
+            const station = access?.apiKeyInfo?.stationId || access?.apiKeyInfo?.station_name || null;
+            return `
+                <div class="rounded-md border ${hasKey ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10'} p-2">
+                    <div class="flex items-center justify-between gap-2 mb-1.5">
+                        <div class="min-w-0">
+                            <div class="text-[10px] font-semibold text-foreground">${this.escapeHtml(row.label)}</div>
+                        </div>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                            ${hasKey ? `
+                                <button
+                                    class="lane-verifier-attestation-btn inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                                    title="Show verifier attestation for ${this.escapeHtmlAttribute(row.label)}"
+                                    type="button"
+                                    data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}"
+                                >?</button>
+                            ` : ''}
+                            <span class="font-medium px-1.5 py-0.5 rounded-full text-[10px] tabular-nums whitespace-nowrap ${this.getAccessExpiryClasses(access)}">
+                                ${this.escapeHtml(this.getAccessExpiryLabel(access))}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="text-[10px] font-mono break-all ${hasKey ? 'text-foreground' : 'text-muted-foreground'}">${this.escapeHtml(displayMask)}</div>
+                    ${station ? `
+                        <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-border/60">
+                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                            <span class="text-[10px] font-medium">${this.escapeHtml(station)}</span>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="flex items-center gap-1.5 mb-2">
+                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Ephemeral Access Keys</span>
+                    </div>
+                    <div class="text-[10px] text-muted-foreground mb-2">
+                        Keys persist until expiry, model change, or exhaustion.
+                    </div>
+                    <div class="space-y-2">
+                        ${rowHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    generateSingleAccessKeyPanelHTML(hasApiKey) {
+        return hasApiKey ? `
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="flex items-center gap-1.5 mb-2">
+                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Ephemeral Access Key</span>
+                        <button
+                            id="verifier-attestation-btn"
+                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                            title="Show verifier attestation"
+                            type="button"
+                        >?</button>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
+                        ${(() => {
+                            const keyInfo = this.getKeyDisplayInfo();
+                            const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
+                            return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
+                                ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
+                        })()}
+                        <div class="flex items-center gap-0 flex-shrink-0 ml-1">
+                            <button
+                                id="renew-key-btn"
+                                class="inline-flex items-center justify-center w-4 h-4 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:pointer-events-none"
+                                aria-label="Regenerate key"
+                                title="Regenerate key"
+                                ${this.isRenewingKey ? 'disabled' : ''}
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3 ${this.isRenewingKey ? 'animate-spin' : ''}">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                </svg>
+                            </button>
+                            <span id="api-key-expiry" class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.getExpiryWidthClass()} flex items-center ${this.getExpiryAlignmentClass()} gap-0.5 tabular-nums whitespace-nowrap ${this.getTimerClasses()}">
+                                ${(this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared)
+                                    ? `<span class="inline-flex w-3 h-3 items-center justify-center"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></span>`
+                                    : ''}${this.timeRemaining || 'Loading...'}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-2 mb-3">
+
+                    ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
+                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                            <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.stationId || this.apiKeyInfo.station_name)}</span>
+                        </div>
+                    ` : ''}
+
+                    ${this.getSharedKeyCount() > 1 ? `
+                        <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
+                            <span class="text-[10px] text-muted-foreground">Shared across</span>
+                            <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
+                        </div>
+                    ` : ''}
+                </div>
+
+            </div>
+        ` : `
+            <div class="p-3">
+                <div class="mb-3">
+                    <div class="flex items-center gap-1.5 mb-2">
+                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
+                        </svg>
+                        <span class="text-xs font-medium">Ephemeral Access Key</span>
+                        <button
+                            id="verifier-attestation-btn"
+                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
+                            title="Show verifier attestation"
+                            type="button"
+                        >?</button>
+                    </div>
+                    <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
+                        <span class="flex-1 min-w-0">Requested on message send</span>
+                        <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
+                    </div>
+                </div>
+                <div class="space-y-2 mb-3">
+                    <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
+                        <span class="text-[10px] text-muted-foreground">Issuing Station</span>
+                        <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    generateAccessKeyPanelHTML(hasApiKey) {
+        const councilAccessRows = this.getCouncilAccessRows();
+        return councilAccessRows.length > 0
+            ? this.generateCouncilAccessKeyPanelHTML(councilAccessRows)
+            : this.generateSingleAccessKeyPanelHTML(hasApiKey);
+    }
+
     /**
      * Generates HTML for the top section (tickets and API key) only.
      */
     generateTopSectionHTML() {
         const hasTickets = this.ticketCount > 0;
-        const hasApiKey = !!this.apiKey;
+        const hasApiKey = this.hasAnyAccessKey();
         const fallbackTicketValue = 'Not stored';
         const previewTicket = this.currentTicket?.finalized_ticket
             || this.currentTicket?.signed_response
@@ -1664,8 +2038,52 @@ class RightPanel {
         const splitShareUrl = this.getTicketCodeShareUrl(this.splitResult?.code);
         const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
         const splitShareUrlAttribute = splitShareUrl ? this.escapeHtmlAttribute(splitShareUrl) : '';
+        const accountState = this.app.services.account?.getState?.() || {};
+        const showGuestAccessCode = !(
+            accountState.accountId &&
+            accountState.sessionVerified &&
+            accountState.status === 'unlocked'
+        );
+        const showLegacyTicketTools = false;
+        const hasExternalTicketManager = this.app.hasTicketManagementAction?.() === true;
 
         return `
+                ${hasExternalTicketManager ? `
+                <div class="p-3">
+                    <div class="flex items-center gap-1.5">
+                        <button
+                            id="open-ticket-manager-btn"
+                            type="button"
+                            class="btn-ghost-hover inline-flex min-w-0 items-center gap-1.5 rounded-md text-left text-xs font-medium text-foreground transition-all duration-150"
+                            aria-label="Manage inference tickets, ${this.ticketCount} available"
+                        >
+                            <svg class="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                            </svg>
+                            <span>Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
+                        </button>
+                        <button
+                            id="toggle-external-ticket-info-btn"
+                            type="button"
+                            class="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground transition-all hover:border-foreground/20 hover:bg-accent hover:text-foreground"
+                            title="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
+                            aria-label="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
+                            aria-controls="external-ticket-info-panel"
+                            aria-expanded="${this.showExternalTicketInfo ? 'true' : 'false'}"
+                        >?</button>
+                    </div>
+                    <div
+                        id="external-ticket-info-panel"
+                        class="${this.showExternalTicketInfo ? 'mt-2 max-h-[480px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out"
+                        aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
+                    >
+                        <p class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider—not OA.
+                        </p>
+                    </div>
+                    <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
+                </div>
+                ` : `
                 <!-- Invitation Code Section -->
                 <div class="p-3">
                 <div class="flex items-center justify-between">
@@ -1684,7 +2102,7 @@ class RightPanel {
                             ?
                         </button>
                     </div>
-                    <button
+                    ${showGuestAccessCode ? `<button
                         id="toggle-invitation-form-btn"
                         class="btn-ghost-hover inline-flex items-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm"
                     >
@@ -1692,10 +2110,10 @@ class RightPanel {
                         <svg class="w-2.5 h-2.5 transition-transform ${this.showInvitationForm ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
-                    </button>
+                    </button>` : ''}
                 </div>
 
-                <div class="mt-2 flex items-center gap-1.5">
+                ${showLegacyTicketTools ? `<div class="mt-2 flex items-center gap-1.5">
                     <input
                         id="import-tickets-input"
                         type="file"
@@ -1793,6 +2211,11 @@ class RightPanel {
                             </svg>
                         </button>
                     </div>
+                    ${this.splitResult.expiresAt ? `
+                    <div class="split-result-share-label">
+                        Usable until ${this.escapeHtml(this.formatUTCtoLocal(this.splitResult.expiresAt))}
+                    </div>
+                    ` : ''}
                     ${splitShareUrl ? `
                     <div class="split-result-share">
                         <div class="split-result-share-label">
@@ -1823,8 +2246,9 @@ class RightPanel {
                     ` : ''}
                 </div>
                 ` : ''}
+                ` : ''}
 
-                ${this.showInvitationForm ? `
+                ${showGuestAccessCode && this.showInvitationForm ? `
                     <form id="invitation-code-form" class="space-y-2 mt-3 p-3 bg-muted/10 rounded-lg">
                         <div class="invitation-code-input-shell flex items-center w-full h-8 border border-border rounded-md bg-background transition-all">
                             <input
@@ -1887,8 +2311,10 @@ class RightPanel {
                 ` : ''}
 
             </div>
+            `}
 
             <!-- Ticket Visualization Section -->
+            ${hasExternalTicketManager ? '' : `
             <div id="ticket-info-panel" class="mx-3 ${this.showTicketInfo ? 'mb-3 max-h-[480px] opacity-100 translate-y-0' : 'mb-0 max-h-0 opacity-0 -translate-y-1 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out" aria-hidden="${this.showTicketInfo ? 'false' : 'true'}">
                 <div class="p-2 bg-muted/5 rounded-lg border border-border">
                         <div id="ticket-info-header" class="flex items-center gap-2 cursor-pointer group">
@@ -1952,6 +2378,7 @@ class RightPanel {
                     </div>
                 </div>
             </div>
+            `}
 
             ${hasTickets && !hasApiKey && !this.currentTicket ? `
                 <div class="mx-3 mb-3 p-4">
@@ -1965,95 +2392,7 @@ class RightPanel {
             ` : ''}
 
             <!-- API Key Panel -->
-            ${hasApiKey ? `
-                <div class="p-3">
-                    <div class="mb-3">
-                        <div class="flex items-center gap-1.5 mb-2">
-                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span class="text-xs font-medium">Ephemeral Access Key</span>
-                            <button
-                                id="verifier-attestation-btn"
-                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                                title="Show verifier attestation"
-                                type="button"
-                            >?</button>
-                        </div>
-                        <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
-                            ${(() => {
-                                const keyInfo = this.getKeyDisplayInfo();
-                                const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
-                                return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
-                                    ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
-                            })()}
-                            <div class="flex items-center gap-0 flex-shrink-0 ml-1">
-                                <button
-                                    id="renew-key-btn"
-                                    class="inline-flex items-center justify-center w-4 h-4 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:pointer-events-none"
-                                    aria-label="Regenerate key"
-                                    title="Regenerate key"
-                                    ${this.isRenewingKey ? 'disabled' : ''}
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3 h-3 ${this.isRenewingKey ? 'animate-spin' : ''}">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                                    </svg>
-                                </button>
-                                <span id="api-key-expiry" class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.getExpiryWidthClass()} flex items-center ${this.getExpiryAlignmentClass()} gap-0.5 tabular-nums whitespace-nowrap ${this.getTimerClasses()}">
-                                    ${(this.currentSession?.shareInfo?.apiKeyShared || this.currentSession?.apiKeyInfo?.isShared)
-                                        ? `<span class="inline-flex w-3 h-3 items-center justify-center"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg></span>`
-                                        : ''}${this.timeRemaining || 'Loading...'}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="space-y-2 mb-3">
-
-                        ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
-                            <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
-                                <span class="text-[10px] text-muted-foreground">Issuing Station</span>
-                                <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.stationId || this.apiKeyInfo.station_name)}</span>
-                            </div>
-                        ` : ''}
-
-                        ${this.getSharedKeyCount() > 1 ? `
-                            <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
-                                <span class="text-[10px] text-muted-foreground">Shared across</span>
-                                <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
-                            </div>
-                        ` : ''}
-                    </div>
-
-                </div>
-            ` : `
-                <div class="p-3">
-                    <div class="mb-3">
-                        <div class="flex items-center gap-1.5 mb-2">
-                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                            </svg>
-                            <span class="text-xs font-medium">Ephemeral Access Key</span>
-                            <button
-                                id="verifier-attestation-btn"
-                                class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                                title="Show verifier attestation"
-                                type="button"
-                            >?</button>
-                        </div>
-                        <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
-                            <span class="flex-1 min-w-0">Requested on message send</span>
-                            <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
-                        </div>
-                    </div>
-                    <div class="space-y-2 mb-3">
-                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
-                            <span class="text-[10px] text-muted-foreground">Issuing Station</span>
-                            <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
-                        </div>
-                    </div>
-                </div>
-            `}
+            ${this.generateAccessKeyPanelHTML(hasApiKey)}
 
             ${this.generateProxySectionHTML()}
         `;
@@ -2228,6 +2567,21 @@ class RightPanel {
      * Attaches event listeners to the top section elements only.
      */
     attachTopSectionEventListeners() {
+        const ticketManagerButton = document.getElementById('open-ticket-manager-btn');
+        if (ticketManagerButton) {
+            ticketManagerButton.onclick = event => {
+                this.app.openTicketManagement?.(event.currentTarget);
+            };
+        }
+
+        const toggleExternalTicketInfo = document.getElementById('toggle-external-ticket-info-btn');
+        if (toggleExternalTicketInfo) {
+            toggleExternalTicketInfo.onclick = () => {
+                this.showExternalTicketInfo = !this.showExternalTicketInfo;
+                this.updateExternalTicketInfoVisibility();
+            };
+        }
+
         // Toggle invitation form button
         const toggleFormBtn = document.getElementById('toggle-invitation-form-btn');
         if (toggleFormBtn) {
@@ -2475,6 +2829,20 @@ class RightPanel {
                 stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
             });
         }
+
+        document.querySelectorAll('[data-council-attestation-lane]').forEach((button) => {
+            button.onclick = () => {
+                const laneId = button.dataset.councilAttestationLane || '';
+                const row = this.getCouncilAccessRows().find((entry) => entry.id === laneId);
+                const accessInfo = this.getLaneAttestationAccessInfo(row?.access);
+                if (!accessInfo) return;
+                verifierAttestationModal.open({
+                    session: this.currentSession || null,
+                    accessInfo,
+                    stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null
+                });
+            };
+        });
     }
 
     /**
@@ -2494,9 +2862,11 @@ class RightPanel {
 
         // Generate and update only the top section HTML
         topSection.innerHTML = this.generateTopSectionHTML();
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
         this.attachTopSectionEventListeners();
+        this.ensureLaneExpirationTimer();
     }
 
     /**
@@ -2727,6 +3097,8 @@ class RightPanel {
             </div>
         `;
 
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
+
         // Attach event listeners
         this.attachEventListeners();
 
@@ -2805,6 +3177,10 @@ class RightPanel {
         if (this.proxyUnsubscribe) {
             this.proxyUnsubscribe();
             this.proxyUnsubscribe = null;
+        }
+        if (this.accountUnsubscribe) {
+            this.accountUnsubscribe();
+            this.accountUnsubscribe = null;
         }
     }
 }

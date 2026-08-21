@@ -1,6 +1,7 @@
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
-import syncService from './syncService.js';
+import syncService from './encryptedSyncService.js';
+import { withAccountDataLock } from './accountDataLock.js';
 
 const PREF_KEYS = {
     theme: 'pref-theme',
@@ -107,6 +108,7 @@ class PreferencesStore {
         this.listeners = new Set();
         this.initPromise = null;
         this.storageUnsubscribe = null;
+        this.scopeStorageUnsubscribe = null;
         this.syncUnsubscribe = null;
     }
 
@@ -117,23 +119,37 @@ class PreferencesStore {
 
         this.initPromise = (async () => {
             await this.ensureDbReady();
+            await syncService.bootstrapLocalAccountScope();
             await this.migrateFromLocalStorage();
             await this.preloadKnownPreferences();
 
             if (!this.storageUnsubscribe) {
                 this.storageUnsubscribe = storageEvents.on('preferences-updated', (payload) => {
-                    if (!payload || !payload.key) return;
-                    this.cache.set(payload.key, payload.value);
-                    this.notify(payload.key, payload.value);
+                    this.handleExternalPreferenceUpdate(payload).catch(() => {});
                 });
+            }
+            if (!this.scopeStorageUnsubscribe) {
+                this.scopeStorageUnsubscribe = storageEvents.on(
+                    'account-scope-changed',
+                    payload => this.handleAccountScopeChange(payload, {
+                        external: true
+                    })
+                );
             }
 
             // Reload preferences when sync completes (sync writes directly to settings)
             if (!this.syncUnsubscribe) {
                 this.syncUnsubscribe = syncService.subscribe((payload) => {
+                    if (payload.event === 'account_scope_invalidated') {
+                        return this.clearAccountScopedCache();
+                    }
+                    if (payload.event === 'account_scope_changed') {
+                        return this.handleAccountScopeChange(payload.data);
+                    }
                     if (payload.event === 'blob_received' && payload.data?.type === 'preference' && payload.data?.logicalId) {
-                        // Reload and notify only the specific preference that was synced.
-                        this.reloadPreferenceFromDatabase(payload.data.logicalId);
+                        return this.reloadPreferenceFromDatabase(
+                            payload.data.logicalId
+                        );
                     }
                 });
             }
@@ -283,8 +299,7 @@ class PreferencesStore {
     async preloadKnownPreferences() {
         if (typeof chatDB === 'undefined' || !chatDB.db) return;
 
-        const keys = Object.keys(DEFAULT_PREFERENCES);
-        await Promise.all(keys.map(async (key) => {
+        const preload = async (keys) => Promise.all(keys.map(async (key) => {
             try {
                 const value = await chatDB.getSetting(key);
                 if (value !== undefined) {
@@ -295,6 +310,17 @@ class PreferencesStore {
                 console.warn('Failed to preload preference:', key, error);
             }
         }));
+
+        const keys = Object.keys(DEFAULT_PREFERENCES);
+        await preload(keys.filter(key => !this.isSyncablePreference(key)));
+        try {
+            await withAccountDataLock(async () => {
+                await syncService.assertAccountDataAccess();
+                await preload(keys.filter(key => this.isSyncablePreference(key)));
+            });
+        } catch (error) {
+            this.clearAccountScopedCache();
+        }
     }
 
     getDefaultValue(key, options = {}) {
@@ -325,7 +351,13 @@ class PreferencesStore {
         }
 
         try {
-            const value = await chatDB.getSetting(key);
+            const readValue = async () => chatDB.getSetting(key);
+            const value = this.isSyncablePreference(key)
+                ? await withAccountDataLock(async () => {
+                    await syncService.assertAccountDataAccess();
+                    return readValue();
+                })
+                : await readValue();
             if (value !== undefined) {
                 this.cache.set(key, value);
                 this.updateSnapshot(key, value);
@@ -341,6 +373,17 @@ class PreferencesStore {
     async savePreference(key, value, options = {}) {
         if (!options.skipInit) {
             await this.init();
+        }
+
+        if (this.isSyncablePreference(key) && !options.accountDataLockHeld) {
+            return withAccountDataLock(async () => {
+                await syncService.assertAccountDataAccess();
+                return this.savePreference(key, value, {
+                    ...options,
+                    skipInit: true,
+                    accountDataLockHeld: true
+                });
+            });
         }
 
         const shouldPersistSyncTimestamp = this.isSyncablePreference(key);
@@ -376,7 +419,13 @@ class PreferencesStore {
         this.cache.set(key, value);
         this.notify(key, value);
         if (options.broadcast !== false) {
-            storageEvents.broadcast('preferences-updated', { key, value });
+            storageEvents.broadcast('preferences-updated', {
+                accountId: shouldPersistSyncTimestamp
+                    ? syncService.getLocalAccountScope()
+                    : undefined,
+                key,
+                value
+            });
         }
 
         this.updateSnapshot(key, value);
@@ -389,13 +438,75 @@ class PreferencesStore {
         return persisted;
     }
 
-    async reloadPreferenceFromDatabase(key) {
+    async handleAccountScopeChange(payload, { external = false } = {}) {
+        const accountId = payload?.accountId || null;
+        if (external) {
+            try {
+                await withAccountDataLock(async () => {
+                    if (!syncService.canAccessAccountScope(accountId)) {
+                        throw new Error('Stale account scope event');
+                    }
+                    await syncService.assertAccountDataAccess();
+                    await this.handleAccountScopeChange(payload);
+                });
+            } catch (error) {
+                this.clearAccountScopedCache();
+            }
+            return;
+        }
+
+        await Promise.all(
+            [...SYNCABLE_PREF_KEYS].map(key =>
+                this.reloadPreferenceFromDatabase(key, {
+                    useDefaultWhenMissing: true
+                })
+            )
+        );
+    }
+
+    async handleExternalPreferenceUpdate(payload) {
+        if (!payload || !payload.key) return;
+        if (!this.isSyncablePreference(payload.key)) {
+            this.cache.set(payload.key, payload.value);
+            this.notify(payload.key, payload.value);
+            return;
+        }
+
+        try {
+            await withAccountDataLock(async () => {
+                if (!syncService.canAccessAccountScope(payload.accountId)) {
+                    throw new Error('Stale account-scoped preference update');
+                }
+                await syncService.assertAccountDataAccess();
+                this.cache.set(payload.key, payload.value);
+                this.notify(payload.key, payload.value);
+            });
+        } catch (error) {
+            const value = this.getDefaultValue(payload.key);
+            this.cache.set(payload.key, value);
+            this.notify(payload.key, value);
+        }
+    }
+
+    clearAccountScopedCache() {
+        SYNCABLE_PREF_KEYS.forEach(key => {
+            const value = this.getDefaultValue(key);
+            const changed = !this.valuesEqual(this.cache.get(key), value);
+            this.cache.set(key, value);
+            if (changed) this.notify(key, value);
+        });
+    }
+
+    async reloadPreferenceFromDatabase(key, { useDefaultWhenMissing = false } = {}) {
         if (!key) return;
         if (typeof chatDB === 'undefined' || !chatDB.db) return;
 
         try {
-            const value = await chatDB.getSetting(key);
-            if (value === undefined) return;
+            let value = await chatDB.getSetting(key);
+            if (value === undefined) {
+                if (!useDefaultWhenMissing) return;
+                value = this.getDefaultValue(key);
+            }
 
             const previous = this.cache.get(key);
             const changed = !this.valuesEqual(previous, value);

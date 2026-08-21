@@ -7,7 +7,7 @@
  * are used for models not explicitly configured.
  */
 
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE } from './orgEndpoints.js';
 import { fetchRetryJson } from './fetchRetry.js';
 
 // Cache key

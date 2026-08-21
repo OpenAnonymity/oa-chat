@@ -1,10 +1,17 @@
+import {
+    isVerifierProofApproved,
+    isVerifierResultApproved,
+    LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
+} from '../services/inference/verifiedAccess.js';
+
 export function isAccessCreditExhaustedError(error) {
     if (error?.status !== 402) return false;
+    const responseData = error.data || error.responseData || null;
     const details = [
         error.message,
-        error.data?.error?.message,
-        error.data?.detail,
-        error.data?.message
+        responseData?.error?.message,
+        responseData?.detail,
+        responseData?.message
     ].filter(Boolean).join(' ').toLowerCase();
 
     return details.includes('credit') ||
@@ -13,27 +20,99 @@ export function isAccessCreditExhaustedError(error) {
         details.includes('max_tokens');
 }
 
+export function buildSafeAccessErrorMetadata(error) {
+    const status = Number(error?.status ?? error?.response?.status);
+    const code = typeof error?.code === 'string'
+        ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
+        : null;
+
+    return {
+        name: typeof error?.name === 'string'
+            ? error.name.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
+            : 'Error',
+        code: code || null,
+        status: Number.isFinite(status) ? status : null,
+        retryable: typeof error?.retryable === 'boolean' ? error.retryable : null
+    };
+}
+
+function redactProofValue(value, accessInfo = null, fieldName = '') {
+    const sensitiveFields = new Set([
+        'key',
+        'api_key',
+        'apikey',
+        'token',
+        'access_token',
+        'accesstoken',
+        'client_token',
+        'clienttoken',
+        'session_token',
+        'sessiontoken',
+        'child_key',
+        'childkey',
+        'authorization',
+        'cookie',
+        'cookies',
+        'password'
+    ]);
+    const normalizedField = String(fieldName).replace(/[^a-z0-9_]/gi, '').toLowerCase();
+    if (sensitiveFields.has(normalizedField)) return '[REDACTED]';
+
+    if (Array.isArray(value)) {
+        return value.map(item => redactProofValue(item, accessInfo));
+    }
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value).map(([name, nested]) => [
+                name,
+                redactProofValue(nested, accessInfo, name)
+            ])
+        );
+    }
+    if (typeof value !== 'string') return value;
+
+    let redacted = value;
+    for (const secret of [accessInfo?.key, accessInfo?.token]) {
+        if (typeof secret === 'string' && secret) {
+            redacted = redacted.split(secret).join('[REDACTED]');
+        }
+    }
+    return redacted;
+}
+
 export function buildVerifierSubmitKeyProof(verifyResult, accessInfo = null, options = {}) {
     const now = typeof options.now === 'function'
         ? options.now
         : () => new Date().toISOString();
-    const detail = verifyResult?.detail || verifyResult?.data?.detail || null;
-    const verifierResponse = verifyResult?.data || null;
-    const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
-    const keyHashFromOrg = accessInfo?.keyHash || accessInfo?.key_hash || null;
-    const keyHashFromVerifier = verifierResponse?.key_hash || null;
+    const detail = redactProofValue(
+        verifyResult?.detail || verifyResult?.data?.detail || null,
+        accessInfo
+    );
+    const verifierResponse = redactProofValue(verifyResult?.data || null, accessInfo);
+    const stationId = redactProofValue(
+        accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null,
+        accessInfo,
+    );
+    const keyHashFromOrg = redactProofValue(
+        accessInfo?.keyHash || accessInfo?.key_hash || null,
+        accessInfo,
+    );
+    const keyHashFromVerifier = redactProofValue(
+        verifierResponse?.key_hash || null,
+        accessInfo,
+    );
 
     return {
         recordedAt: now(),
-        status: verifyResult?.status || 'unknown',
+        status: redactProofValue(verifyResult?.status || 'unknown', accessInfo),
         detail,
         stationId,
         keyHashFromOrg,
         keyHashFromVerifier,
         verifierResponse,
         retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
-        error: verifyResult?.error?.message || null,
-        bannedStation: verifyResult?.bannedStation || null
+        error: redactProofValue(verifyResult?.error?.message || null, accessInfo),
+        bannedStation: redactProofValue(verifyResult?.bannedStation || null, accessInfo)
     };
 }
 
@@ -46,14 +125,35 @@ export function persistVerifierSubmitKeyProof(session, verifyResult, options = {
     );
 }
 
-export async function acquireSessionAccess(options = {}) {
+function createVerificationFailure(verifyResult, proof) {
+    let message;
+    if (proof.bannedStation) {
+        const station = proof.bannedStation;
+        message = `Station ${station.stationId} is banned: ${station.reason || 'Unknown reason'}`;
+    } else {
+        const detail = proof.detail || proof.error || 'verification_not_confirmed';
+        if (verifyResult?.status === 'pending') {
+            message = `Key verification pending: ${detail}. The disposable key was not activated.`;
+        } else if (verifyResult?.status === 'unverified') {
+            message = `Key verification required: ${detail}. The disposable key was not activated.`;
+        } else {
+            message = `Key verification failed: ${detail}`;
+        }
+    }
+
+    const error = new Error(message);
+    error.code = 'ACCESS_VERIFICATION_FAILED';
+    error.verifierSubmitKeyProof = proof;
+    return error;
+}
+
+export async function acquireVerifiedAccess(options = {}) {
     const {
         session,
         models,
         reasoningEnabled,
         inferenceService,
         ticketClient,
-        chatDB,
         getTicketCost,
         getFallbackModelEntry,
         onTicketUsed = () => {},
@@ -61,14 +161,16 @@ export async function acquireSessionAccess(options = {}) {
         onGranted = null,
         onAccessRequestError = () => {},
         onVerificationWarning = () => {},
-        onSessionChanged = () => {},
         modelIdOverride = null,
         modelNameOverride = null,
-        signal = null
+        modelEntryOverride = null,
+        signal = null,
+        ticketsRequiredOverride = null,
+        ticketRequirementLabel = 'this model'
     } = options;
 
     if (!session) throw new Error('No active session found.');
-    if (!inferenceService || !ticketClient || !chatDB || typeof getTicketCost !== 'function') {
+    if (!inferenceService || !ticketClient || typeof getTicketCost !== 'function') {
         throw new Error('Access controller is missing required dependencies.');
     }
 
@@ -78,7 +180,7 @@ export async function acquireSessionAccess(options = {}) {
     }
 
     const modelName = modelNameOverride || session.model || inferenceService.getDefaultModelName(session);
-    const modelEntry = (modelIdOverride && Array.isArray(models)
+    const modelEntry = modelEntryOverride || (modelIdOverride && Array.isArray(models)
         ? models.find(model => model.id === modelIdOverride)
         : null) ||
         (Array.isArray(models) ? models : []).find(model => model.name === modelName) ||
@@ -87,10 +189,13 @@ export async function acquireSessionAccess(options = {}) {
         throw new Error('No enabled models are currently available. Please try again later.');
     }
     const modelId = modelEntry.id;
-    const ticketsRequired = getTicketCost(modelId, reasoningEnabled);
+    const overrideTickets = Number(ticketsRequiredOverride);
+    const ticketsRequired = Number.isFinite(overrideTickets) && overrideTickets > 0
+        ? Math.ceil(overrideTickets)
+        : getTicketCost(modelId, reasoningEnabled);
 
     if (availableTickets < ticketsRequired) {
-        throw new Error(`Not enough tickets for this model. Need ${ticketsRequired}, but only ${availableTickets} available.`);
+        throw new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${availableTickets} available.`);
     }
 
     if (signal?.aborted) {
@@ -119,7 +224,17 @@ export async function acquireSessionAccess(options = {}) {
                 await onTicketUsed(retries, error);
                 continue;
             }
-            onAccessRequestError(error);
+            if (error.code === 'TICKET_KEY_INVALIDATED') {
+                retries += 1;
+                const remainingTickets = ticketClient.getTicketCount();
+                if (remainingTickets >= ticketsRequired) {
+                    continue;
+                }
+                error.message = remainingTickets > 0
+                    ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
+                    : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+            }
+            onAccessRequestError(buildSafeAccessErrorMetadata(error));
             throw error;
         }
     }
@@ -132,42 +247,81 @@ export async function acquireSessionAccess(options = {}) {
         try {
             await onGranted(result);
         } catch (error) {
-            onVerificationWarning('Pending-state update after access grant failed:', error);
+            onVerificationWarning(
+                'Pending-state update after access grant failed:',
+                buildSafeAccessErrorMetadata(error)
+            );
         }
     }
 
-    inferenceService.setAccessInfo(session, result);
-
+    result.modelId = result.modelId || modelId;
+    result.modelName = result.modelName || modelName;
     const verifier = inferenceService.getVerificationAdapter(session);
     if (verifier?.supports) {
-        const accessInfo = inferenceService.getAccessInfo(session);
-        const verifyResult = await inferenceService.verifyAccess(session, accessInfo?.info);
-        persistVerifierSubmitKeyProof(session, verifyResult);
-
-        if (verifyResult?.status === 'unverified') {
-            const detail = verifyResult?.detail || verifyResult?.data?.detail;
-            if (detail === 'key_near_expiry') {
-                onVerificationWarning('Key expires too soon to verify, continuing without verification');
-            } else if (detail === 'ownership_check_error') {
-                onVerificationWarning('Ownership verification temporarily unavailable, continuing without verification');
-            } else {
-                onVerificationWarning('Key verification unverified, continuing without verification');
-            }
+        if (verifier.allowsLocalBypass?.() === true) {
+            const proof = buildVerifierSubmitKeyProof({
+                status: LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS,
+                detail: verifier.getLocalBypassDetail?.() ||
+                    'explicit_loopback_development'
+            }, result);
+            result = {
+                ...result,
+                verifierSubmitKeyProof: proof
+            };
+            return result;
         }
 
-        if (verifyResult?.status === 'rejected') {
+        let verifyResult;
+        try {
+            verifyResult = await inferenceService.verifyAccess(session, result);
+        } catch (error) {
+            verifyResult = { status: 'rejected', error };
+        }
+
+        const proof = buildVerifierSubmitKeyProof(verifyResult, result);
+        if (!isVerifierResultApproved(verifyResult)) {
+            throw createVerificationFailure(verifyResult, proof);
+        }
+
+        result = {
+            ...result,
+            verifierSubmitKeyProof: proof
+        };
+    }
+
+    return result;
+}
+
+export async function acquireSessionAccess(options = {}) {
+    const {
+        session,
+        inferenceService,
+        chatDB,
+        onSessionChanged = () => {}
+    } = options;
+
+    if (!session || !inferenceService || !chatDB) {
+        throw new Error('Access controller is missing required session dependencies.');
+    }
+
+    let result;
+    try {
+        result = await acquireVerifiedAccess(options);
+    } catch (error) {
+        if (error?.verifierSubmitKeyProof) {
             inferenceService.clearAccessInfo(session);
+            session.lastVerifierSubmitKeyProof = error.verifierSubmitKeyProof;
             await chatDB.saveSession(session);
-
-            const errorMsg = verifyResult.error?.message || 'Verification failed';
-            if (verifyResult.bannedStation) {
-                const bs = verifyResult.bannedStation;
-                throw new Error(`Station ${bs.stationId} is banned: ${bs.reason || 'Unknown reason'}`);
-            }
-            throw new Error(`Key verification failed: ${errorMsg}`);
+            onSessionChanged(session);
         }
+        throw error;
+    }
 
-        inferenceService.setCurrentAccess(session, accessInfo?.info);
+    delete session.lastVerifierSubmitKeyProof;
+    inferenceService.setAccessInfo(session, result);
+    if (inferenceService.getVerificationAdapter(session)?.supports &&
+        isVerifierProofApproved(result?.verifierSubmitKeyProof)) {
+        inferenceService.setCurrentAccess(session, result);
     }
 
     if (session.shareInfo?.apiKeyShared) {

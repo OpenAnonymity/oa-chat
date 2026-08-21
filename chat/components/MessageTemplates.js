@@ -12,6 +12,7 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { normalizeMemoryRetrievalFailureReason } from '../services/memoryRetrievalError.js';
+import { getCouncilDisplayState } from '../domain/councilDisplay.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -608,6 +609,24 @@ function buildUserMessage(message, options = {}) {
         const attachmentCount = editFiles.length;
         const attachmentLabel = `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}`;
         const safeMessageId = escapeHtmlAttribute(message.id);
+        const isParallelEdit = options.editParallelEnabled === true;
+        const primaryModelName = options.editPrimaryModelName || 'Primary model';
+        const secondaryModelName = options.editSecondaryModelName || 'Secondary model';
+        const editSecondaryModelChip = isParallelEdit ? `
+                                    <button
+                                        id="edit-secondary-model-picker-btn"
+                                        class="edit-secondary-model-picker-btn edit-prompt-model-chip btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
+                                        data-message-id="${safeMessageId}"
+                                        data-edit-model-lane="secondary"
+                                        title="${escapeHtmlAttribute(secondaryModelName)}"
+                                        aria-label="Secondary model: ${escapeHtmlAttribute(secondaryModelName)}"
+                                    >
+                                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                            <span class="text-[10px] font-semibold">...</span>
+                                        </div>
+                                        <span class="model-name-container min-w-0 truncate">${escapeHtml(secondaryModelName)}</span>
+                                    </button>
+        ` : '';
         return `
             <div class="${CLASSES.userWrapper}" data-message-id="${safeMessageId}"${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.userGroup}">
@@ -622,19 +641,24 @@ function buildUserMessage(message, options = {}) {
                                 >${escapeHtml(editContent)}</textarea>
                             </div>
                             <div class="flex items-center justify-between gap-2 pt-1.5">
-                                <div class="flex min-w-0 items-center gap-1">
-                                    <button
-                                        id="edit-model-picker-btn"
-                                        class="edit-model-picker-btn btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
-                                        data-message-id="${safeMessageId}"
-                                        title="Select model for regeneration"
-                                    >
-                                        <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
-                                        <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
-                                            <span class="text-[10px] font-semibold">...</span>
-                                        </div>
-                                        <span class="model-name-container min-w-0 truncate">Loading...</span>
-                                    </button>
+                                <div class="edit-prompt-toolbar-left flex min-w-0 items-center gap-1">
+                                    <div class="edit-prompt-model-group" aria-label="${isParallelEdit ? 'Models for Parallel regeneration' : 'Model for regeneration'}">
+                                        <button
+                                            id="edit-model-picker-btn"
+                                            class="edit-model-picker-btn edit-primary-model-picker-btn edit-prompt-model-chip btn-ghost-hover inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 border border-input h-7 px-2 gap-1.5 min-w-0"
+                                            data-message-id="${safeMessageId}"
+                                            data-edit-model-lane="primary"
+                                            title="${escapeHtmlAttribute(primaryModelName)}"
+                                            aria-label="Primary model: ${escapeHtmlAttribute(primaryModelName)}"
+                                        >
+                                            <!-- Content will be populated by ChatArea.updateEditModelPickerButton -->
+                                            <div class="flex items-center justify-center w-5 h-5 flex-shrink-0 rounded-full border border-border/50 bg-muted">
+                                                <span class="text-[10px] font-semibold">...</span>
+                                            </div>
+                                            <span class="model-name-container min-w-0 truncate">${escapeHtml(primaryModelName)}</span>
+                                        </button>
+                                        ${editSecondaryModelChip}
+                                    </div>
                                     <input
                                         type="file"
                                         class="edit-file-input hidden"
@@ -1330,6 +1354,15 @@ function buildCitationsSection(citations, messageId) {
     `;
 }
 
+function buildCitationScopeId(messageId, scope = '') {
+    const normalizedScope = String(scope || 'sources')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return normalizedScope ? `${messageId}-${normalizedScope}` : `${messageId}-sources`;
+}
+
 /**
  * Extracts just the model name from a full "Provider: ModelName" string.
  * @param {string} fullName - Full model name (e.g., "OpenAI: GPT-5.1 Thinking")
@@ -1359,6 +1392,478 @@ function extractShortModelName(fullName) {
             .join(' ');
     }
     return fullName;
+}
+
+function resolveCouncilProviderName(modelName, modelId = '') {
+    const candidates = [modelId, modelName].filter(candidate =>
+        typeof candidate === 'string' && candidate.trim()
+    );
+
+    for (const candidate of candidates) {
+        const resolved = resolveProviderFromModelReference(candidate);
+        if (resolved.displayName && resolved.displayName !== 'Unknown') {
+            return resolved.displayName;
+        }
+    }
+
+    return null;
+}
+
+function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
+    if (entry?.status !== 'complete' || !entry.response) {
+        return '';
+    }
+
+    const laneId = entry.laneId || '';
+    const label = entry.label || laneId || 'response';
+    const laneAttributes = `
+        data-message-id="${escapeHtmlAttribute(messageId)}"
+        data-council-lane-id="${escapeHtmlAttribute(laneId)}"
+        data-council-label="${escapeHtmlAttribute(label)}"
+    `;
+
+    return `
+        <div class="assistant-actions-anchor assistant-actions-row council-response-actions flex items-center justify-between gap-2 w-full -mt-1" aria-label="${escapeHtmlAttribute(`${label} actions`)}">
+            <div class="flex items-center gap-1">
+                <button
+                    class="message-action-btn council-lane-action-btn copy-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    ${laneAttributes}
+                    data-tooltip="Copy response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn council-lane-action-btn regenerate-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    ${laneAttributes}
+                    data-tooltip="Regenerate this response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                </button>
+            </div>
+            ${citationsToggle}
+        </div>
+    `;
+}
+
+function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
+    const { showLaneActions = false } = options;
+    const status = typeof entry?.status === 'string' ? entry.status : 'pending';
+    const hasRenderableOutput = !!(
+        entry?.response ||
+        entry?.reasoning ||
+        entry?.streamingReasoning
+    );
+    if ((status === 'complete' || status === 'running') && hasRenderableOutput) {
+        const citations = Array.isArray(entry.citations) ? entry.citations : [];
+        const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || 'lane');
+        const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
+        const citationsSection = buildCitationsSection(citations, citationScopeId);
+        let processedContent = '';
+        let rawContent = entry.response || '';
+        if (citations.length > 0) {
+            rawContent = insertRawCitationMarkers(rawContent, citations);
+        }
+        if (entry.response) {
+            processedContent = processContentWithLatex(rawContent);
+            if (citations.length > 0) {
+                processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
+            }
+            processedContent = enhanceInlineLinks(processedContent, `${messageId}-${entry.label}`);
+        }
+        const reasoningHtml = buildReasoningTrace(
+            entry.reasoning,
+            `${messageId}-${entry.laneId || entry.label || 'lane'}`,
+            entry.streamingReasoning || false,
+            processContentWithLatex,
+            entry.reasoningDuration
+        );
+        const contentHtml = entry.response
+            ? `
+                <div class="${CLASSES.assistantBubble} council-lane-content-shell">
+                    <div class="${CLASSES.assistantContent} council-lane-content">
+                        ${processedContent}
+                    </div>
+                </div>
+            `
+            : '';
+        return `
+            <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
+                ${reasoningHtml}
+                ${contentHtml}
+            </div>
+            ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
+            ${!showLaneActions && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${citationsSection}
+        `;
+    }
+
+    if (entry?.status === 'error') {
+        return `
+            <div class="council-response-placeholder council-response-placeholder-error">
+                ${escapeHtml(entry.error || 'This model failed to return a first opinion.')}
+            </div>
+        `;
+    }
+
+    if (entry?.status === 'cancelled') {
+        return `
+            <div class="council-response-placeholder">
+                Cancelled before this model finished.
+            </div>
+        `;
+    }
+
+    return `
+        <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry?.laneId || entry?.label || 'lane')}">
+        <div class="council-response-pending px-2 py-1">
+            ${buildPendingIndicatorContent('waiting-response')}
+        </div>
+        </div>
+    `;
+}
+
+function buildCouncilSynthesisSection(synthesis, processContentWithLatex, message) {
+    if (!synthesis || ['skipped', 'waiting', 'pending'].includes(synthesis.status)) return '';
+
+    const messageId = message.id;
+    const status = synthesis.status || 'pending';
+    const statusHtml = buildCouncilResponseStatus(status);
+    let bodyHtml = '';
+    const synthesisModel = synthesis.model || synthesis.modelId || '';
+    const synthesisModelHtml = synthesisModel
+        ? buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.modelId || '' })
+        : '';
+    const showMeta = !!(synthesisModelHtml || statusHtml);
+    const metaHtml = showMeta
+        ? `
+            <div class="council-response-meta">
+                ${synthesisModelHtml ? `<span class="council-response-model council-synthesis-title">${synthesisModelHtml}</span>` : ''}
+                ${statusHtml}
+            </div>
+        `
+        : '';
+
+    const hasRenderableOutput = !!(
+        synthesis.response ||
+        synthesis.reasoning ||
+        synthesis.streamingReasoning
+    );
+    const citations = Array.isArray(synthesis.citations) ? synthesis.citations : [];
+    const citationScopeId = buildCitationScopeId(messageId, 'synthesis');
+    const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
+    const citationsSection = buildCitationsSection(citations, citationScopeId);
+    const synthesisActionsRow = shouldShowCouncilAssistantActions(synthesis)
+        ? buildAssistantActionRow(message, citationsToggle, '', '', { includeFork: false })
+        : '';
+
+    if ((status === 'complete' || status === 'partial' || status === 'running') && hasRenderableOutput) {
+        let processedContent = '';
+        let rawContent = synthesis.response || '';
+        if (citations.length > 0) {
+            rawContent = insertRawCitationMarkers(rawContent, citations);
+        }
+        if (synthesis.response) {
+            processedContent = processContentWithLatex(rawContent);
+            if (citations.length > 0) {
+                processedContent = addInlineCitationMarkers(processedContent, citationScopeId);
+            }
+            processedContent = enhanceInlineLinks(processedContent, `${messageId}-synthesis`);
+        }
+        const reasoningHtml = buildReasoningTrace(
+            synthesis.reasoning,
+            `${messageId}-synthesis`,
+            synthesis.streamingReasoning || false,
+            processContentWithLatex,
+            synthesis.reasoningDuration
+        );
+        const contentHtml = synthesis.response
+            ? `
+                <div class="${CLASSES.assistantBubble} council-lane-content-shell">
+                    <div class="${CLASSES.assistantContent} council-lane-content">
+                        ${processedContent}
+                    </div>
+                </div>
+            `
+            : '';
+        bodyHtml = `
+            <div class="council-response-body" data-council-lane-body="synthesis">
+                ${reasoningHtml}
+                ${contentHtml}
+            </div>
+            ${synthesisActionsRow}
+            ${!synthesisActionsRow && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${citationsSection}
+        `;
+    } else if (status === 'error') {
+        const fallbackLabel = synthesis.fallbackLabel || 'Response A';
+        bodyHtml = `
+            <div class="council-response-placeholder council-response-placeholder-error">
+                Council synthesis failed. Continuing from ${escapeHtml(fallbackLabel)}.
+            </div>
+            ${synthesisActionsRow}
+        `;
+    } else if (status === 'cancelled') {
+        bodyHtml = `
+            <div class="council-response-placeholder">
+                Council synthesis was stopped. Continuing from the completed first response.
+            </div>
+            ${synthesisActionsRow}
+        `;
+    } else {
+        bodyHtml = `
+            <div class="council-response-body" data-council-lane-body="synthesis">
+            <div class="council-response-pending px-2 py-1">
+                ${buildPendingIndicatorContent('waiting-response')}
+            </div>
+            </div>
+        `;
+    }
+
+    return `
+        <div class="council-synthesis-block" data-council-lane-id="synthesis">
+            ${metaHtml}
+            ${bodyHtml}
+        </div>
+    `;
+}
+
+function formatCouncilModelDisplayName(modelName, options = {}) {
+    const { includeProvider = false } = options;
+    if (!modelName || typeof modelName !== 'string') return modelName || '';
+
+    const standardized = getStandardizedModelDisplayName(modelName) || modelName;
+    const shortName = extractShortModelName(standardized);
+    if (!includeProvider) {
+        return shortName || standardized;
+    }
+
+    if (standardized.includes(': ')) {
+        return standardized;
+    }
+
+    const provider = resolveCouncilProviderName(standardized, options.modelId || '');
+    return provider && shortName
+        ? `${provider}: ${shortName}`
+        : standardized;
+}
+
+function buildCouncilModelLabel(modelName, options = {}) {
+    const { roleLabel = '', modelId = '' } = options;
+    const displayName = formatCouncilModelDisplayName(modelName || '', options);
+    const shortName = extractShortModelName(modelName || '');
+    const provider = resolveCouncilProviderName(modelName || '', modelId);
+    const iconData = provider ? getProviderIcon(provider, 'w-3 h-3') : { html: '', hasIcon: false };
+    const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
+    const iconHtml = iconData.html || `<span class="text-[10px] font-semibold">${escapeHtml((shortName || displayName || '?').charAt(0).toUpperCase())}</span>`;
+    return `
+        <span class="council-response-model-label">
+            <span class="council-response-icon ${bgClass}">${iconHtml}</span>
+            <span class="council-response-model-name">${escapeHtml(displayName || modelName || '')}</span>
+            ${roleLabel ? `<span class="council-response-role-label">${escapeHtml(roleLabel)}</span>` : ''}
+        </span>
+    `;
+}
+
+function formatCouncilResponseStatus(status, options = {}) {
+    const normalizedStatus = typeof status === 'string'
+        ? status.trim().toLowerCase()
+        : '';
+    const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);
+    const statusLabel = {
+        error: 'Failed',
+        cancelled: 'Cancelled',
+        partial: 'Partial'
+    }[normalizedStatus] || (normalizedStatus && !hiddenStatuses.has(normalizedStatus) ? status : '');
+    const fallbackLabel = options.isFallbackContext ? 'Fallback context' : '';
+
+    return [statusLabel, fallbackLabel].filter(Boolean).join(' · ');
+}
+
+function buildCouncilResponseStatus(status, options = {}) {
+    const statusText = formatCouncilResponseStatus(status, options);
+    return statusText
+        ? `<span class="council-response-status">${escapeHtml(statusText)}</span>`
+        : '';
+}
+
+function buildCouncilModeIconHtml() {
+    return `
+        <svg class="w-3.5 h-3.5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7.2 13.8H6.4a3.4 3.4 0 0 1-3.4-3.4V7.1a3.4 3.4 0 0 1 3.4-3.4h5.3a3.4 3.4 0 0 1 3.4 3.4v.55" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.9 10.2a3.4 3.4 0 0 1 3.4-3.4h5.3a3.4 3.4 0 0 1 3.4 3.4v3.3a3.4 3.4 0 0 1-3.4 3.4h-2.1L12 20.3v-3.4h.3a3.4 3.4 0 0 1-3.4-3.4v-3.3Z" />
+        </svg>
+    `;
+}
+
+function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml = '', noResponseNotice = '', options = {}) {
+    const { includeFork = true } = options;
+    const forkButtonHtml = includeFork ? `
+                <button
+                    class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Fork conversation from here">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
+                    </svg>
+                </button>
+    ` : '';
+
+    return `
+        <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
+            <div class="flex items-center gap-1">
+                <button
+                    class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Copy message">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
+                    </svg>
+                </button>
+                <button
+                    class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    data-message-id="${message.id}"
+                    data-tooltip="Regenerate response">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                </button>
+                ${forkButtonHtml}
+                ${extraButtonsHtml}
+                ${noResponseNotice}
+            </div>
+            ${citationsToggle}
+        </div>
+    `;
+}
+
+function buildAssistantCitationsOnlyRow(citationsToggle = '') {
+    if (!citationsToggle) {
+        return '';
+    }
+
+    return `
+        <div class="assistant-actions-anchor assistant-actions-row flex items-center justify-between gap-2 w-full -mt-1">
+            <div></div>
+            ${citationsToggle}
+        </div>
+    `;
+}
+
+const COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES = new Set(['waiting', 'pending', 'running']);
+
+function shouldShowCouncilAssistantActions(synthesis) {
+    if (!synthesis) {
+        return true;
+    }
+
+    const status = typeof synthesis.status === 'string'
+        ? synthesis.status.trim().toLowerCase()
+        : '';
+    return !COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES.has(status);
+}
+
+function buildCouncilAssistantMessage({
+    message,
+    processContentWithLatex
+}) {
+    const council = message.council || {};
+    const stage1Entries = Array.isArray(council.stage1) ? council.stage1 : [];
+    const activeLabel = stage1Entries[0]?.label || null;
+    const hasSynthesis = !!council.synthesis;
+    const stageLabel = !hasSynthesis || council.currentStage === 'stage1'
+        ? 'Stage 1'
+        : 'Council';
+    const canonicalLabel = council.canonicalStage1Label || null;
+    const stage1ErrorCount = Array.isArray(council.errors)
+        ? council.errors.filter((error) => !error?.stage || error.stage === 'stage1').length
+        : 0;
+    const synthesis = council.synthesis || null;
+    const showLaneActions = !hasSynthesis;
+    const useSideBySide = stage1Entries.length > 1 && stage1Entries.length <= 2;
+    const stage1Tabs = stage1Entries.length > 1 && !useSideBySide
+        ? `
+            <div class="council-tabs" role="tablist" aria-label="Council first opinions">
+                ${stage1Entries.map((entry) => {
+                    const isActive = entry.label === activeLabel;
+                    const stateLabel = entry.status === 'complete'
+                        ? 'Ready'
+                        : entry.status === 'error'
+                            ? 'Failed'
+                            : entry.status === 'cancelled'
+                                ? 'Cancelled'
+                                : 'Pending';
+                    const shortName = extractShortModelName(entry.model || '');
+                    return `
+                        <button
+                            type="button"
+                            class="council-tab-btn${isActive ? ' council-tab-btn-active' : ''}"
+                            data-council-tab-label="${escapeHtmlAttribute(entry.label)}"
+                            aria-selected="${isActive ? 'true' : 'false'}"
+                        >
+                            <span class="council-tab-label">${escapeHtml(entry.label)}</span>
+                            <span class="council-tab-model">${escapeHtml(shortName || entry.model || '')}</span>
+                            <span class="council-tab-state">${escapeHtml(stateLabel)}${canonicalLabel === entry.label ? ' · Context' : ''}</span>
+                        </button>
+                    `;
+                }).join('')}
+            </div>
+        `
+        : '';
+
+    const stage1Panels = stage1Entries.map((entry) => {
+        const isActive = useSideBySide || entry.label === activeLabel;
+        return `
+            <div
+                class="council-response-panel${isActive ? '' : ' hidden'}"
+                data-council-panel-label="${escapeHtmlAttribute(entry.label)}"
+                data-council-lane-id="${escapeHtmlAttribute(entry.laneId || '')}"
+            >
+                <div class="council-response-meta">
+                    <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '', { modelId: entry.modelId || '' })}</span>
+                    ${buildCouncilResponseStatus(entry.status || 'pending', {
+                        isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
+                    })}
+                </div>
+                ${buildCouncilStage1EntryBody(entry, processContentWithLatex, message.id, { showLaneActions })}
+            </div>
+        `;
+    }).join('');
+
+    const { statusMessage, stage1Summary } = getCouncilDisplayState(council);
+    const stagePillHtml = hasSynthesis
+        ? `<span class="council-stage-pill">${escapeHtml(stageLabel)}</span>`
+        : '';
+    const stageStatusRow = statusMessage
+        ? `
+                    <div class="council-stage-row">
+                        ${stagePillHtml}
+                        <span class="council-stage-status">${escapeHtml(statusMessage)}</span>
+                    </div>
+        `
+        : '';
+    const stageNoteRow = stage1Summary
+        ? `<div class="council-stage-note">${escapeHtml(stage1Summary)}</div>`
+        : '';
+    const synthesisSection = buildCouncilSynthesisSection(synthesis, processContentWithLatex, message);
+
+    return `
+        <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${getRawContentAttribute(message.content)}>
+            <div class="${CLASSES.assistantGroup}">
+                <div class="council-stage-block">
+                    ${stageStatusRow}
+                    ${stageNoteRow}
+                    ${stage1ErrorCount > 0 ? `<div class="council-stage-warning">${stage1ErrorCount} model request${stage1ErrorCount === 1 ? '' : 's'} failed.</div>` : ''}
+                    ${stage1Tabs}
+                    <div class="${useSideBySide ? 'council-response-grid' : 'council-response-stack'}">
+                        ${stage1Panels}
+                    </div>
+                    ${synthesisSection}
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 /**
@@ -1409,6 +1914,13 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 </div>
             </div>
         `;
+    }
+
+    if (message.council?.enabled) {
+        return buildCouncilAssistantMessage({
+            message,
+            processContentWithLatex
+        });
     }
 
     // Build reasoning trace if present
@@ -1676,9 +2188,22 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
  * @returns {string} HTML string
  */
 function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'requesting-key') {
-    const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
+    const isCouncil = providerName === 'LLM Council'
+        || modelName === 'LLM Council'
+        || providerName === 'Council'
+        || modelName === 'Council'
+        || providerName === 'Compare'
+        || modelName === 'Compare'
+        || providerName === 'Parallel'
+        || modelName === 'Parallel';
+    const iconData = isCouncil
+        ? { html: buildCouncilModeIconHtml(), hasIcon: false }
+        : getProviderIcon(providerName, 'w-3.5 h-3.5');
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
-    const displayModelName = extractShortModelName(modelName);
+    const displayModelName = isCouncil ? '' : extractShortModelName(modelName);
+    const modelNameHtml = displayModelName
+        ? `<span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>`
+        : '';
     return `
         <div id="${id}" class="${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}">
             <div class="${CLASSES.assistantGroup}">
@@ -1686,7 +2211,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
                         ${iconData.html}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>
+                    ${modelNameHtml}
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatPendingTimestamp(timestamp)}</span>
                 </div>
                 <div class="px-2 py-1">

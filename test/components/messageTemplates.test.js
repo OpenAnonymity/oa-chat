@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 function installTemplateGlobals() {
+    const originalDocument = globalThis.document;
+    const originalWindow = globalThis.window;
     globalThis.document = {
         createElement() {
             return {
@@ -32,6 +34,12 @@ function installTemplateGlobals() {
             }
         }
     };
+    return () => {
+        if (originalDocument === undefined) delete globalThis.document;
+        else globalThis.document = originalDocument;
+        if (originalWindow === undefined) delete globalThis.window;
+        else globalThis.window = originalWindow;
+    };
 }
 
 function escapeHtml(value) {
@@ -44,7 +52,7 @@ function escapeHtml(value) {
 }
 
 test('memory agent failure messages render safe retrieval failure reason', async () => {
-    installTemplateGlobals();
+    const restoreGlobals = installTemplateGlobals();
     const originalWarn = console.warn;
     const originalError = console.error;
     console.warn = () => {};
@@ -78,23 +86,28 @@ test('memory agent failure messages render safe retrieval failure reason', async
         await new Promise((resolve) => setTimeout(resolve, 0));
         console.warn = originalWarn;
         console.error = originalError;
+        restoreGlobals();
     }
 });
 
 test('assistant model IDs use author providers without family-logo guessing', async () => {
-    installTemplateGlobals();
-    const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
-    const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '18:15:12' };
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '18:15:12' };
 
-    const downstream = buildMessageHTML({
-        id: 'downstream', role: 'assistant', model: 'future-lab/llama-model', content: 'hello'
-    }, helpers, [], 'future-lab/llama-model');
-    assert.match(downstream, /data-provider-icon-fallback[^>]*>F<\/span>/);
-    assert.doesNotMatch(downstream, /img\/meta\.svg/);
+        const downstream = buildMessageHTML({
+            id: 'downstream', role: 'assistant', model: 'future-lab/llama-model', content: 'hello'
+        }, helpers, [], 'future-lab/llama-model');
+        assert.match(downstream, /data-provider-icon-fallback[^>]*>F<\/span>/);
+        assert.doesNotMatch(downstream, /img\/meta\.svg/);
 
-    const unresolved = buildMessageHTML({
-        id: 'unresolved', role: 'assistant', model: 'arbitrary model', content: 'hello'
-    }, helpers, [], 'arbitrary model');
-    assert.match(unresolved, /data-provider-icon-fallback[^>]*>A<\/span>/);
-    assert.doesNotMatch(unresolved, /img\/openai\.svg/);
+        const unresolved = buildMessageHTML({
+            id: 'unresolved', role: 'assistant', model: 'arbitrary model', content: 'hello'
+        }, helpers, [], 'arbitrary model');
+        assert.match(unresolved, /data-provider-icon-fallback[^>]*>A<\/span>/);
+        assert.doesNotMatch(unresolved, /img\/openai\.svg/);
+    } finally {
+        restoreGlobals();
+    }
 });

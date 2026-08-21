@@ -4,6 +4,255 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-14: Public core and private commercial composition
+
+- Stripe presentation, Checkout orchestration, top-up state, and subscription
+  UI now live in the private `oa-commercial` composition. Standalone `oa-chat`
+  contains no billing modal, Stripe client, pricing copy, or upgrade CTA.
+- `chat/publicApi.js` is the only supported downstream import. Extension API v2
+  provides four isolated UI slots and narrow account, public-org, ticket, and
+  UI capabilities; downstream code must not import oa-chat internals.
+- Component rerenders refresh extension hosts through the narrow
+  `refreshExtensionSlot(name)` UI-facade method. Do not reach through the
+  component facade for `extensionSlots`: that registry is intentionally not
+  exposed, and doing so silently drops mounted commercial controls when a
+  modal replaces its contents.
+- The public entitlement preparer retains the privacy-sensitive browser work:
+  blinding, issuer-generation validation, strict response allowlisting,
+  unblinding, crash-safe IndexedDB recovery, and durable ordinary-wallet
+  import. This keeps the unlinkability boundary auditable in the public tree
+  without placing commercial product logic there.
+- The existing `oa-billing-local-v1` IndexedDB name is intentionally retained
+  so a pending preparation survives the extraction. The record format is
+  generic entitlement state and final wallet tickets contain no account,
+  payment, subscription, or claim metadata.
+- Account registration remains Google-only in the public Account surface.
+  A commercial extension observes only the sanitized account snapshot and can
+  resume an upgrade after the verified session becomes ready; Account itself
+  has no Checkout-specific callback.
+- A composition mounted below `/` passes `routeRoot` to `createChatApp`.
+  Ticket-code path cleanup and generated shared-chat links use that root, so a
+  refresh cannot fall back to the composition's separate landing document.
+- Same-origin production builds replace the production-org fallback at compile
+  time and remove the now-bundled raw `services/orgEndpoints.js` copy. The
+  build scans every published JavaScript file for that hostname, so an inert
+  source copy cannot silently weaken the disposable-demo isolation claim.
+- `createChatApp({ welcomePanel: false })` lets the commercial composition
+  suppress both legacy invite/free-access ticket panels: the first-run Welcome
+  modal and the post-ticket Thanks/no-tickets modal. The standalone public
+  default is unchanged. Guard both branches when changing ticket-startup logic;
+  otherwise an authenticated commercial account that once held tickets can
+  unexpectedly fall back into the old invite-code flow.
+- A disposable same-origin verifier-bypass build may use a credential-free
+  alternate Wisp endpoint through `OA_DEMO_PROXY_URL` when the ordinary relay
+  is unavailable. Production builds retain the normal relay. Same-origin demo
+  API requests have a ten-second hard timeout so an unresponsive WASM
+  transport closes and enters the existing visible direct-fallback path
+  instead of hanging forever. Provider inference streams remain unbounded.
+- Vercel demo config repeats the non-secret compile flags in `build.env`, and
+  the disposable project should store the same Production variables. A build
+  can otherwise succeed under a project-level command override while silently
+  retaining the production-org endpoint. Handoff must inspect the emitted app
+  bundle for both absence of that endpoint and presence of the demo relay.
+- The commercial composition now uses a three-panel, self-hosted-Newsreader
+  landing page from `oa-commercial/feature/pre-chat-landing`, reconciled with
+  the reviewed Google-only account handoff. Apple, passkey, recovery, and
+  access-code alternatives remain absent. Its Premium modal keeps server-owned
+  subscription/top-up prices and eligibility, exposes Customer Portal and
+  ticket-pack actions when status authorizes them, and adds a collapsed ticket
+  explanation without hard-coding model costs.
+
+See [EXTENSIONS.md](EXTENSIONS.md) for the supported contract. The Premium
+entries below describe the pre-extraction implementation history; the current
+commercial behavior is documented and tested in `oa-commercial`.
+
+## 2026-08-07: Disposable Demo Same-Origin Routing
+
+- Normal production builds still target `https://org.openanonymity.ai`.
+  Disposable Vercel builds must compile `OA_ORG_SAME_ORIGIN=true`; account,
+  billing, ticket, and sync calls then use the exact frontend origin.
+- `scripts/generate-demo-vercel-config.mjs` validates an HTTPS oa-org tunnel and
+  creates deployment-only rewrites for `/auth/*`, `/api/*`, and `/chat/*`
+  before the SPA fallback. Do not commit a rotating tunnel hostname or expose
+  backend/provider secrets as frontend variables.
+- Deploy the disposable Vercel project with `vercel deploy --prod` and use its
+  stable production hostname for SuperTokens, WebAuthn, Google OAuth, and
+  cookie origins. Preview hostnames rotate and cannot satisfy that fixed
+  identity/callback contract.
+- A disposable station that is absent from an isolated verifier may compile
+  `OA_DEMO_VERIFIER_BYPASS=true` only with same-origin HTTPS routing. The build
+  rejects production OA hostnames, points no request at the production
+  verifier, labels the result as an unverified demo bypass, and prevents access
+  sharing. This is an explicit test-only privacy/assurance deviation requiring
+  user acceptance; omit it when an isolated verifier is available.
+  The guard rejects `openanonymity.ai` and every subdomain, not only the known
+  production frontend names, so a demo-bypass artifact cannot be hosted under
+  any OA production namespace.
+- Same-origin builds strip the production-org DNS prefetch from built HTML.
+  The production build keeps that hint. `scripts/build.mjs` must preserve the
+  tracked `chat/nanomem` symlink rather than copying over it and dirtying the
+  source tree.
+- Immutable station archives still need an empty, secret-free `station/.env`
+  marker (`root:root`, mode `0444`) before service start, even when systemd
+  provides the real protected environment file. See the run record before a
+  clean redeploy; omitting the marker causes a restart loop.
+
+See [DEMO_DEPLOYMENT.md](DEMO_DEPLOYMENT.md) for the deployment contract and
+[DEMO_ENVIRONMENT_2026-08-11.md](DEMO_ENVIRONMENT_2026-08-11.md) for the
+secret-free record and teardown targets of the integrated disposable run.
+
+## 2026-08-07: Monthly Premium Ticket-Key Epoch
+
+- Premium renewal and the global Privacy Pass ticket generation share the
+  first-of-month 00:00 UTC boundary in oa-org. This must remain a global epoch,
+  not a per-account rotation: every subscription and invitation ticket uses the
+  same unlinkable issuer public key, and rotating it invalidates all earlier
+  generations immediately.
+- The Redis epoch marker includes both the UTC billing month and Stripe mode.
+  Changing a deployment from test to live rotates under the ordinary global
+  fence even within the same month, preventing sandbox-issued tickets from
+  crossing into live billing resources.
+- `BillingClient.runPreparation(...)` verifies the current RFC 9578 public-key
+  ID before generation, at the signed/finalization transition, and immediately
+  before durable wallet import. The same expected key ID is sent with the blind
+  claim so oa-org's generation fence can reject a rotation race before signing.
+  `BILLING_ISSUER_ROTATED` deletes the obsolete account-scoped pending record
+  and asks the user to retry the current allowance.
+- Pending records without `issuerFingerprintVersion: 2` use the pre-integration
+  hash-of-base64 convention. Accept one only when that legacy hash matches the
+  currently fetched key, then persist the RFC key ID and version before any
+  further recovery work; otherwise an already consumed signed allowance could
+  be discarded during upgrade.
+- An exact boundary race remains recoverable: oa-org rotates before reservation
+  and signing, and the claim completion transition is also atomically fenced
+  on the same key/month. Requests blinded to the old key fail without consuming
+  the entitlement; an issuance counted immediately before rotation is rolled
+  back, and the next browser attempt regenerates. Keep the issuer fingerprint
+  local-only and never add billing or account metadata to finalized tickets.
+- Invitation/ticket-code issuance and request-key, confidential-key, and split
+  redemption use exact-batch server replay records. Client retries must reuse
+  the identical serialized blind/ticket batch so a lost HTTP response cannot
+  consume a one-use credential, tickets, or an ephemeral key irrecoverably.
+  Ticket codes created by splitting are bound to their source key generation
+  and billing month so they cannot carry an allowance across rotation. The
+  split response carries that UTC month-end expiry and the right panel displays
+  it beside the one-show code.
+- oa-org keeps an owner-fenced, exact-request ticket-spend lease before any
+  downstream one-show key/code side effect. A crashed worker can be resumed by
+  the identical ticket batch; a completed request leaves a tombstone longer
+  than the spent-nonce record. After the secret replay window expires, the UI
+  must treat the request as completed/unrecoverable rather than trying to reuse
+  or release those tickets.
+
+The active lifecycle is documented in `oa-commercial/docs/BILLING.md`.
+
+## 2026-08-05: Premium $7 / 50-Ticket Top-Ups
+
+- The Premium modal renders the one-time pack only when both public
+  `plan.ticket_pack` exists and authenticated `status.ticket_pack.eligible` is
+  true. Price and count are server data; ineligible and signed-out users see no
+  pack copy or action.
+- Checkout recovery is now version 3:
+  `sessions[accountScope].subscription` and
+  `sessions[accountScope].topup` are independent. Version-2 and legacy records
+  migrate into the subscription slot. Reconciliation, clearing, frozen auth,
+  and account-switch abortion are scoped to both account and purchase kind.
+- A top-up claim is an explicit 50-ticket operation. Local IndexedDB recovery
+  adds `source: "topup"`, `claimRef`, and `targetCount: 50`; the claim request
+  sends that reference, while finalized wallet records retain the same four
+  ordinary ticket fields. The reference must never enter exports, shares,
+  redemptions, tickets, or logs.
+- If oa-org has committed a claim and reports the pack `ready` before local
+  wallet import finishes, the pending local record projects browser state back
+  to `claiming` and disables another purchase. That override is cleared only
+  after durable wallet write/read-back and archive-precedence verification.
+- Top-up and subscription work share the existing account-scoped Web Lock,
+  frozen authentication context, ten-ticket chunks, strict response allowlist,
+  and account-switch abort behavior. A claimable pack takes precedence over an
+  older implicit subscription entitlement, because only it has the explicit
+  `claim_ref`.
+- Stripe return values are distinct (`topup_success` / `topup_cancelled`). A
+  successful return prepares the pack automatically. A canceled return uses the
+  session ID saved by that specific tab in `sessionStorage`; it never guesses
+  from the durable account slot, so an old tab cannot cancel a newer Checkout.
+- `checkout_pending` now offers both **Continue ticket-pack Checkout** and
+  **Cancel Checkout**. Explicit cancellation expires the matching Stripe
+  session immediately. Tab close, reload, crash, and connectivity loss preserve
+  recovery; Stripe expires an unpaid pack after 30 minutes and status then
+  clears stale durable Checkout state. Completed asynchronous payments remain
+  pending, and payment winning a cancellation race proceeds to normal 50-ticket
+  preparation.
+- Checkout recovery and durable IndexedDB claim/import recovery remain separate.
+  No unload/beacon/tab-close cancellation exists, and the tab-scoped session ID
+  never enters sync, exports, wallet state, tickets, or logs. Purchase fills the
+  ordinary wallet and does not redeem a ticket or alter issuer-key rotation.
+
+The active contract and privacy boundary are documented in
+`oa-commercial/docs/BILLING.md`.
+
+## 2026-07-31: Stripe Premium and Genuine Ticket Issuance
+
+- The sidebar has one adaptive entry: signed-out users see `Register and upgrade`; any local
+  account changes it to `Account` without a reload. Free accounts get an
+  `Upgrade to Premium` action in Account, and subscribed accounts get
+  `Manage billing`. Logging out restores `Register and upgrade`.
+- `Register and upgrade` opens the public Premium modal without requiring an account, while
+  starting Checkout routes through account creation or sign-in and resumes
+  exactly once afterward. The initial Welcome screen uses the same
+  `Register and upgrade` entry. Explicitly
+  cancelling the account step clears the session-scoped Checkout intent and
+  returns to Premium. Public price and interval data come from oa-org's
+  Stripe-validated `/api/billing/plan`; the UI does not hard-code the amount.
+  A failed plan request shows `Price unavailable`, offers a retry, and removes
+  the Checkout action until a validated price and allowance are loaded.
+- Stripe success and saved-Checkout recovery wait for account initialization
+  and SuperTokens verification before reconciliation. Components mount before
+  `accountService.init()`, so billing must not interpret the initial
+  `sessionVerified=false` state as an authenticated user having signed out.
+  Explicit Checkout cancellation remains pending until the account scope is
+  settled; it must not time out into generic saved-Checkout recovery.
+- Signed-out registration currently exposes Google SSO only. Legacy direct
+  passkey creation, account-number passkey login, and recovery-code entry points
+  remain compatible in the service layer but are intentionally absent from the
+  registration picker. Google-first accounts still create or use an encryption
+  passkey after OAuth because that passkey protects synced ciphertext locally.
+- Checkout, status, portal access, and paid claims use `BillingAuthProvider`.
+  Local development may create a random identity only when both oa-chat and
+  oa-org are loopback. Non-loopback deployments require the account adapter.
+  Pending Checkout reconciliation is stored under that billing scope and resumes
+  after reload only for the same identity.
+- A full paid period creates a 300-ticket entitlement. The initial payment and
+  allowance may be prorated to a smaller positive count. A claim sends exactly
+  `next_claim_ticket_count` browser-blinded requests to the existing org issuer;
+  no alternate RSA or demo issuer exists in oa-chat.
+- Pending generation, signed responses, and finalization live in the separate
+  local-only `oa-billing-local-v1` IndexedDB database. Work is persisted every
+  ten tokens, survives reload, is scoped to the active billing identity, and is
+  intentionally excluded from settings sync and export.
+- Paid preparation freezes one authentication scope, holds a scope-specific Web
+  Lock across the complete operation, and fails closed if Web Locks are
+  unavailable in a browser. Account switches abort without deleting the old
+  scope's recovery state.
+- The ordinary ticket wallet receives only `blinded_request`,
+  `signed_response`, `finalized_ticket`, and `created_at`. Redemption continues
+  through the existing accountless endpoints and sends no billing metadata.
+- Recovery state is cleared only after a strict IndexedDB write and read-back
+  confirms every finalized ticket. Claim responses are field-allowlisted before
+  finalization, so server-provided billing or finalized-ticket metadata fails
+  closed.
+- Checkout recovery is stored per account scope and uses frozen authentication;
+  stale status responses are discarded after identity changes. Ticket recovery
+  treats active and archived wallet records as imported, preserving archive
+  precedence so a spent ticket is never resurrected.
+- One available allowance is prepared automatically per billing activation and
+  entitlement identity. Subscription auto-preparation is keyed by
+  `current_period_end`, so a tab that survives into the next paid month can
+  prepare the new period; top-ups remain keyed by `claim_ref`.
+  Additional accumulated allowances require an explicit action labeled with
+  the next server-provided count. The modal intentionally omits server allowance
+  counters such as `Current paid allowance`; those are not browser wallet counts.
+  See `oa-commercial/docs/BILLING.md` for the extracted implementation.
+
 ## How Agents Should Use This
 
 1. Read this file before changing UI-heavy or stateful parts of the app.
@@ -52,9 +301,361 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   The deadline is rechecked when the tab/app becomes visible or focused so
   background timer throttling cannot leave a stale find toolbar open.
 
+- 2026-08-07: The public chat shell now has an optional versioned extension seam.
+  - `chat/publicApi.js` exposes `createChatApp`, extension API version 2, and
+    stable slots including `sidebar.accountActions`, `account.menuActions`,
+    `account.commercial`, `welcome.actions`, and `modalLayer`.
+  - The sidebar footer remains core-owned. Signed-out users see Account;
+    verified sessions see the available account or SSO email identity (or Account fallback)
+    and a gear menu containing Account & security, extension actions, and Log
+    out. The menu restores focus on Escape and supports arrow/Home/End keys.
+  - `account.menuActions` is the preferred commercial membership entry. It
+    exposes no billing state or credentials to the core; older sidebar and
+    account-modal slots remain available for compatible integrations.
+  - Standalone startup passes no extensions. Empty slots are invisible and the
+    public Account UI remains fully functional.
+  - Account modal rerenders recreate their slot host and ask the slot registry
+    to reattach the existing extension-owned node. Extensions must never query
+    or import internal component/service implementation details.
+  - Client-side entitlement ticket blinding/finalization remains public through
+    `application/entitlementTicketPreparer.js`; downstream integrations supply
+    the authorized count and claim operation.
+  - Paid integrations can attach only `subscription` or
+    `topup:<64-hex-reference>` as local claim-recovery context. Reload recovery
+    reuses that saved context when invoking the blinded-claim callback. It stays
+    in the separate recovery record and never enters finalized tickets, wallet
+    exports, shares, redemptions, logs, or progress snapshots; progress exposes
+    only a redacted `subscription` or `topup` source.
+
+- 2026-07-31: Ticket signing-key rotation is an immediate invalidation
+  boundary.
+  - Every newly redeemed ticket stores the global RFC 9578 `token_key_id` as
+    `ticket_key_id`. Legacy/imported tickets are normalized by extracting the
+    same 32-byte field from the finalized token in
+    `chat/domain/ticketKeys.js`.
+  - Org ticket errors are unwrapped from FastAPI's structured `detail`. On
+    `TICKET_KEY_INVALIDATED`, `TicketStore.consumeTickets(...)` atomically
+    deletes every active or archived local ticket with `invalidated_key_id`
+    and leaves tickets from newer generations untouched. Deleted generations
+    cannot reappear through export or sync: the local, union-merged
+    `tickets-invalidated-key-ids` list filters local loads, imports, and
+    incoming sync blobs. Sync publishes one encrypted append-only record per
+    invalidated generation (plus the legacy aggregate migration record), so
+    concurrent devices cannot lose distinct tombstones through the org's LWW
+    blob store. Account-data transitions and sync merges share the outer
+    `oa-sync` Web Lock; local ticket mutations take their narrower ticket lock
+    inside that boundary. This nesting prevents local/remote unions and account
+    switches from overwriting each other. Sync schema v2 performs one full pull after upgrade
+    so records skipped by older clients are rediscovered. Tombstones contain
+    only global public-key fingerprints, never tickets or identity metadata.
+    Never infer a batch from invite metadata or timestamps; the embedded
+    public-key fingerprint is the grouping authority.
+  - `acquireSessionAccess(...)` automatically retries when enough tickets from
+    another generation remain. Otherwise it tells the user that the org
+    rotated its key and that a new invite must be redeemed. The
+    `ticket-key-invalidated` window event drives the seven-second removal toast.
+  - Invite issuance binds each blinded batch to the public `key_id` fetched by
+    the client. If rotation wins before issuance is committed, the org restores
+    the single-use credential reservation and returns `TICKET_KEY_CHANGED`;
+    the client tells the user the invite was not consumed and can be retried
+    against the newly fetched public key.
+  - The key ID is a shared public-generation fingerprint, not identity
+    metadata. It stays in the user's local ticket store and does not weaken the
+  blind-signature unlinkability boundary.
+- 2026-08-04: Account session refresh is owned by SuperTokens. See
+  [Account Sessions](ACCOUNT_SESSIONS.md). Browser requests use HttpOnly cookie
+  mode; Electron renderer requests use the same `sessionService` API but run the
+  SDK in the isolated desktop preload with header-mode tokens encrypted by the
+  main process. Keep access/refresh tokens out of OA response bodies,
+  IndexedDB/localStorage, renderer APIs, and hand-written `Authorization`
+  headers. `encryptedSyncService` retains only non-extractable client-side
+  derivation keys and relies on
+  the SDK's automatic refresh/retry. Keep both the SDK interception override and
+  `sessionService.fetch(...)` restricted to the org `/auth` and `/api/billing`
+  account paths. Premium claims belong inside this identity boundary because
+  they authorize paid blinded issuance; accountless redemption, request-key,
+  sharing, and model paths must remain outside it.
+
+- 2026-08-04: Local oa-org inference can bypass the external verifier only when
+  both the oa-chat page and configured oa-org URL use exact loopback hostnames.
+  The access proof is stored as `local-loopback-bypass`, not `verified`; the
+  same credential is discarded on non-loopback startup and cannot enter shared
+  access payloads. Ordinary Chat and Parallel/Council use the same policy.
+
 - 2026-07-31: OpenRouter catalog labels for Anthropic models are normalized to
   include the `Anthropic:` prefix when upstream omits it. Already-prefixed names
   remain unchanged.
+- 2026-07-16: Parallel/Council share and provider-display rebase notes.
+  - Shared chat payloads serialize `responseMode` and `councilConfig`, and both
+    first import plus update-import paths restore those fields. Otherwise imported
+    Parallel/Council transcripts render old aggregate messages but silently continue
+    as single-model chats.
+  - Parallel/Council composer and response labels should use catalog provider
+    metadata or `resolveProviderFromModelReference(...)` for explicit provider
+  prefixes/model IDs. Do not infer providers from bare model-family words such
+  as Llama, Gemini, Claude, or Nemotron; bare names should fall back to neutral
+  initials when catalog metadata is unavailable.
+
+- 2026-08-17: Insufficient-ticket preflight exposes a redacted commercial hook.
+  - After synchronized budget calculation blocks a send or regeneration,
+    `context.tickets.registerShortageHandler()` receives only aggregate
+    `availableTickets` and `requiredTickets` counts. Prompts, model identities,
+    Memory context, sessions, and account data stay inside core.
+  - The original inference request remains unsent. A commercial build may use
+    this user-initiated event to start an already-consented refill or show an
+    explicit purchase surface without risking a duplicate model request.
+  - Signed-in preflight never treats the temporary pre-sync balance as a
+    shortage. It asks the user to wait for ticket loading (or unlock) and does
+    not notify the commercial handler until account scope and ticket sync are
+    ready.
+
+- 2026-08-17: Commercial Checkout recovery can render beside the public ticket count.
+  - `rightPanel.ticketStatus` is a generic extension slot below the compact
+    Inference Tickets launcher. Core owns its location and reattaches mounted
+    nodes after each top-section rerender; it contains no billing copy or state.
+  - The commercial extension sends only aggregate preparation progress and
+    ticket counts into its own slot node. The slot never receives ticket
+    records, billing identifiers, account credentials, or inference content.
+  - Post-sign-in plan routing must wait for verified unlock, account-scope
+    activation, the first encrypted ticket sync, and a billing-ready ticket
+    snapshot. A transient startup zero must never open Membership.
+
+- 2026-08-18: Submitted prompt bubbles keep the normal chat reading width.
+  - Normal, manual-wide, and Parallel/Council layouts cap user prompts at the
+    shared `44rem` reading width. Short prompts remain content-sized and
+    right-aligned; only assistant lane responses use the expanded transcript
+    width in Parallel/Council.
+
+- 2026-08-16: Ticket-code share links stay within their issuing environment.
+  - Ticket codes are one-time and environment-scoped, so the sender's current
+    origin is retained instead of hard-coding the production chat host.
+  - Commercial/preview chat links use `/chat/?tickets=<code>`; root-mounted
+    public chat links use `/?tickets=<code>`. This keeps Sandbox codes on the
+    Sandbox backend and preserves automatic recipient redemption.
+  - A code that was already consumed is reported separately from a code that
+    is expired, missing, or belongs to a different OA environment.
+
+- 2026-08-16: The chat toolbar no longer draws a horizontal separator.
+  - The toolbar still switches between opaque and floating presentation as
+    side panels change the available width, but neither desktop nor mobile
+    adds a rule above the conversation content.
+
+- 2026-08-16: Extensions can subscribe to redacted ticket-count changes.
+  - `context.tickets.subscribe()` waits for local ticket storage, then emits
+    only the existing count/max-share/busy snapshot, never wallet records or
+    ticket cryptographic material. A transient startup zero is not emitted.
+  - Signed-in snapshots remain ineligible for automatic billing until the
+    account's initial encrypted sync succeeds. Returning accounts therefore
+    cannot be charged against a temporary empty wallet before remote tickets
+    arrive.
+  - This supports downstream opt-in zero-ticket refill UX without putting
+    Stripe, billing identity, or charging logic into the public client.
+
+- 2026-08-16: Parallel per-model regeneration uses the same combined ticket
+  preflight as send and full regeneration.
+  - The preflight counts a fresh Memory key when needed plus only the selected
+    lane's fresh model access, and runs before later messages are deleted.
+
+- 2026-08-16: The full signed-in identity row opens the account action menu.
+  - Clicking either the email/avatar row or its gear opens the same Account,
+    extension-action, and Log out menu; signed-out clicks still open Account.
+  - Focus returns to whichever control opened the menu, and the identity row
+    exposes menu semantics only while a verified, unlocked account is active.
+- 2026-08-16: Commercial Membership can host the public ticket tools.
+  - The extension context exposes count-only ticket-tool state plus the existing
+    import, export, split/share, and access-code operations. It never exposes
+    wallet records, account credentials, billing identifiers, or inference data.
+  - Ticket counts remain billing-unready until account startup finishes. For an
+    anonymous session, startup first archives any stale account-bound wallet and
+    restores the anonymous scope; for a signed-in session, readiness additionally
+    requires verified unlock, scope activation, and the first encrypted ticket
+    sync. This prevents checkout recovery or automatic refills from acting on a
+    transient zero balance.
+  - The account-data guard canonicalizes a missing persisted scope to the
+    anonymous `null` scope. It still rejects every real account mismatch while
+    allowing a clean anonymous wallet to accept prepared tickets.
+  - A commercial extension can register one compact right-panel ticket-count
+    action that opens Membership. While registered, the right panel omits its
+    ticket-code controls but keeps a collapsed question-mark explanation of
+    inference tickets. Membership supplies Import, Export, Share, and
+    account-free access-code redemption in one place.
+    Standalone public builds still render their original access-code controls.
+  - Signed-out commercial actions may transition from the Account dialog into
+    Membership through `context.ui.closeAccount()`. They must capture
+    `getAccountMenuReturnTarget()` first, close Account, and then open the next
+    dialog so only one modal and one keyboard focus trap are active.
+  - The compact ticket launcher's icon and label share the same left edge as
+    the Ephemeral Access Key heading below it; avoid adding nested horizontal
+    padding to the launcher.
+  - The commercial launcher deliberately preserves the production ticket
+    header treatment: `Inference Tickets: N` uses the same `text-xs font-medium`
+    typography as the public client, and its small question-mark control sits
+    immediately after the count. Do not replace it with a full-width navigation
+    row or move the help control to the far edge of the panel.
+  - Export remains a move operation and keeps the public confirmation that
+    clears the exported local wallet to prevent double spending.
+
+
+- 2026-08-07: Google is the only supported SSO provider.
+  - The account UI and client account state no longer expose GitHub sign-in,
+    GitHub-linked flags, or GitHub compatibility wrappers.
+  - The org no longer mounts `/auth/github/*` routes or accepts GitHub OAuth
+    configuration. Access and refresh tokens carrying GitHub authentication
+    provenance are rejected. Older provenance-less refresh records are also
+    retired because their original provider cannot be distinguished safely, so
+    sessions issued before provider removal cannot outlive the route removal.
+    Existing identity rows remain opaque storage records, but there is no
+    GitHub authentication path into them.
+
+- 2026-08-11: Popup OAuth completion creates the SuperTokens browser session
+  through an intercepted API response.
+  - The callback navigation cannot deliver its `front-token` header to the
+    Session SDK. It instead posts a short-lived, opaque single-use completion
+    token to its exact opener. The client sends that token in the body of
+    `/auth/google/complete`; the backend atomically consumes it and creates the
+    HttpOnly session on that SDK-intercepted response.
+  - Keep the order `complete -> verify -> provider session read`. Creating the
+    session on the callback navigation or checking `doesSessionExist()` first
+    leaves the SDK unaware of a valid Core session.
+  - `/auth/google/start` is deliberately session-independent. It must remain
+    usable when a browser carries a stale invalid SuperTokens access cookie;
+    linking mode is still rejected, and an `expectedAccountId` is only a
+    continuity hint that cannot create or retarget an identity mapping.
+
+- 2026-07-30: SSO encryption passkeys use the provider email as their WebAuthn
+  username and display name.
+  - Google requests `openid email`. The org stores the verified email with the
+    provider identity and returns it from the authenticated provider session.
+  - `accountService.oauthEmail` is populated by the Google session path and
+    is passed explicitly into every SSO encryption-passkey creation, including
+    legacy SSO migration. `encryptionPasskey.js` has no generic label fallback;
+    missing email requires a fresh SSO sign-in.
+  - Existing identity rows gain a nullable email column. If an older refresh
+    session restores `PRF_PENDING` or `LEGACY_SSO` before a new OAuth callback
+    has populated it, the client returns to the provider sign-in screen instead
+    of entering a passkey flow that cannot be labeled.
+
+- 2026-07-30: SSO accounts now sync encrypted inference tickets across devices.
+  - The SSO-only `syncTickets` gate was removed. Active and archived tickets,
+    preferences, and their timestamps use the same version-1 encrypted blob
+    format for identity-backed and legacy account-number accounts.
+  - Ticket additions/imports/clears schedule the normal debounced sync.
+    Redemption consumption deliberately does not for identity-backed accounts:
+    its encrypted archive record is uploaded by the next initial/periodic sync,
+    avoiding a deterministic
+    identity-authenticated request two seconds after anonymous redemption.
+    Legacy identity-free accounts retain immediate consumption sync.
+  - Empty wallet arrays are encrypted too. Cash-style clear/export removes
+    redeemable ticket secrets locally and syncs a separate encrypted SHA-256
+    deletion-tombstone blob so stale devices cannot resurrect them. Remote
+    active/archive merges always apply those tombstones.
+  - A new device must authenticate with Google and unlock the shared
+    master key with the PRF passkey before it can decrypt the restored wallet.
+    A newly created SSO account adopts and uploads tickets already on that
+    device, matching legacy account creation. Remote ticket merges immediately
+    broadcast a cache invalidation to other tabs; stale notifications for a
+    prior account are ignored instead of clearing the current account cache.
+  - The org sees identity-bound sync metadata (request timing, ciphertext size,
+    and stable opaque blob IDs), but not ticket plaintext or the HMAC-derived
+    logical IDs. Redemption remains separate from account authentication, but
+    optional identity-backed ticket sync weakens the strict metadata-level
+    unlinkability claim: a malicious org can still attempt timing/size
+    correlation around later syncs.
+
+- 2026-07-29: SSO uses a Confer-style authentication/encryption split; see
+  [ENCRYPTION_PASSKEYS.md](ENCRYPTION_PASSKEYS.md).
+  - Google authenticates and authorizes opaque account storage. A
+    separate client-only WebAuthn PRF passkey wraps the random sync master key.
+    The org stores `credentialId` plus the versioned AES-GCM wrapper and never
+    receives a WebAuthn assertion, PRF output, or plaintext key.
+  - New SSO users are no longer shown an OA account number or recovery code.
+    The required post-OAuth step is create/unlock encryption passkey. Losing all
+    copies of that passkey is unrecoverable by design.
+  - `oauthSetupRequired` means the authenticated account has no keyring and must
+    create its first encryption passkey. `oauthKeyringRequired` means wrappers
+    exist and a passkey must unlock one. `oauthRecoveryRequired` is only the
+    one-time migration path for SSO accounts from the recovery-wrapper build.
+    `oauthLegacyPasskeyRequired` is distinct: a legacy linked account still
+    authenticates through its original WebAuthn credential.
+  - `encryptionPasskey.js` handles the PRF-specific WebAuthn flow. Keep the
+    follow-up `credentials.get()` after creation: some authenticators report
+    PRF support at creation but return output only from an assertion.
+  - IndexedDB persists non-extractable AES-GCM, HKDF, and HMAC `CryptoKey`
+    objects in one account-bound `account-key-bundle-v1`, never new raw
+    master-key bytes. Loading rejects a bundle for any other account. A
+    one-time migration imports and deletes the old independent key values.
+    Logout/token invalidation deletes the bundle.
+  - Syncable tickets/preferences and their metadata now have per-account local
+    snapshots (`sync-account-data:<accountId>`). OAuth reauthentication and
+    logout must deactivate the active scope before clearing sync credentials,
+    or unsynced local wallet state can be lost. Clear credentials first to
+    invalidate in-flight work. Scope transitions and sync share the `oa-sync`
+    Web Lock, and sync verifies its account against the persisted active marker
+    before reading live values. Ticket mutations and syncable-preference writes
+    also take this lock; scope snapshot/live-key/marker changes commit through
+    one settings transaction, and stale store caches are cleared.
+  - Superseded by the 2026-07-30 entry above: identity-backed accounts now sync
+    encrypted ticket wallets as well as preferences. Google linking
+    remains rejected to preserve dedicated account identity/recovery semantics.
+  - Legacy unscoped values are adopted when the user creates a new account on
+    that device, matching the original account-number flow. For a returning
+    account, adoption requires persisted settings proving continuity with the
+    same account. Otherwise values are preserved under `sync-unclaimed-data`
+    and restored on logout; canceling setup before scope activation leaves them
+    untouched.
+  - Keep the legacy server-authentication `credentialId` separate from the
+    client-only `encryptionCredentialId`. A linked legacy account still needs
+    its original ID as the `/auth/challenge` hint and still displays its account
+    number.
+  - The sync blob format itself remains version 1. The service accepts the new
+    non-extractable key bundle while retaining raw-byte input only for existing
+    tests/compatibility.
+  - An OAuth refresh token records its original auth method and time. Refresh
+    preserves those claims, so a stale cookie cannot become a fresh provider-
+    linking step-up merely by calling `/auth/refresh`.
+
+- 2026-07-28: Account authentication supports Google OAuth in addition to
+  passkeys; see [GOOGLE_SIGN_IN.md](GOOGLE_SIGN_IN.md).
+  - `accountService.authenticateWithOAuth(provider, ...)` owns the shared popup,
+    setup, recovery-unlock, account-mismatch, and local-key restoration flow.
+    The Google-linked flag plus `lastOAuthProvider` are persisted so a locked
+    browser can recover through Google.
+  - Superseded by the 2026-07-30 passkey-label entry above: Google now requests
+    `openid email`, and the org retains the verified email with `sub` so it can
+    label the user's encryption passkey.
+  - `npm run dev` serves static assets and proxies non-static requests to the
+    local org on port `8005`. The browser therefore uses its own origin for
+    passkey, OAuth, ticket, and sync API calls, avoiding local-network/CORS
+    restrictions. OAuth callbacks still come directly from port `8005`, so
+    `ORG_AUTH_ORIGIN` remains separate from the local `ORG_API_BASE`.
+    The dev server injects a runtime-only proxy marker, so `npm run preview` on
+    localhost still uses `https://org.openanonymity.ai`. The callback host is
+    canonical `localhost`; requests to the dev server via `127.0.0.1` redirect
+    there before the app loads.
+  - `authenticateWithGoogle(...)` uses the shared popup
+    flow and the org's HttpOnly refresh cookie. OAuth/access tokens never travel
+    through the popup message or app URL.
+  - Superseded by the 2026-07-29 encryption-passkey entry above: new or
+    logged-out SSO browsers now unlock with WebAuthn PRF, not a recovery code.
+  - Superseded by the 2026-07-29 identity-partition rule above: provider linking
+    is rejected. A legacy passkey account and an OAuth identity account remain
+    separate namespaces.
+  - Refresh preserves the original provider/passkey method and authentication
+    time; refresh does not manufacture newer authentication provenance.
+  - Opting into Google makes the sync account identifiable to the org,
+    but does not put identity into blinded ticket redemption or inference
+    traffic.
+  - Superseded by the 2026-07-29 account-scope entry above: syncable local state
+    is now snapshotted and restored per account.
+
+- 2026-08-16: Sticky Parallel width can be collapsed with the existing width icon.
+  - Active Parallel/Council with two model columns stays wide and hides the
+    manual width control. A one-model Parallel configuration, or a session
+    returned to Chat after Parallel, shows the existing expand/collapse icon.
+  - The control has no visible label. Its assistive name switches between
+    `Expand view` and `Collapse view`, and a per-session collapsed hint keeps
+    old Parallel transcripts narrow until multi-column mode is active again.
+
 
 - 2026-07-11: OpenRouter `~author/*-latest` aliases normalize in the catalog adapter,
   while provider display/icon metadata resolves through the shared provider registry;
@@ -185,24 +786,385 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     the panel so a quick ask cannot linger across session switches. Starting a
     normal send or regeneration hides any active quick ask before the main
     session stream begins.
-- 2026-05-30: Fresh-chat default model follows the pinned model order.
-  - `modelConfig.getDefaultModelConfig()` now derives `defaultModelId` and
-    `defaultModelName` from the first current pinned model, falling back to the
-    local pinned list only before org availability data is cached or fetched.
-  - Send-time fallback also walks the pinned model IDs in order, so if the top
-    pinned model is unavailable in the loaded catalog the next visible pinned
-    model is selected before falling back to the catalog's first model.
+- 2026-08-14: Fresh-chat default model is OpenRouter Auto Router.
+  - `modelConfig.getDefaultModelConfig()` returns `openrouter/auto` / `Auto Router`
+    unless the org explicitly disables that model. The pinned model order is an
+    availability fallback rather than an override of the product default.
+  - Send-time fallback tries Auto Router first, then walks pinned model IDs in
+    order if Auto Router is absent from the loaded catalog, and finally uses the
+    catalog's first selectable model.
   - `ModelPicker` refreshes its default label when pinned-model config updates
     and asks `ChatApp.getDefaultModelName()` for empty-session display, keeping
     the button aligned with the rendered pinned section after models load.
-  - Stored preferences matching recent default labels (`GPT-5.1/5.2 Instant`)
-    upgrade to the current pinned default; per-session model choices are still
-    left intact.
+  - Stored preferences matching recent default labels (`GPT-5.1/5.2/5.3
+    Instant`) upgrade to Auto Router. Explicit custom preferences and
+    per-session model choices are still left intact.
   - When fresh pinned-model data arrives after a stale local cache, the
     availability refresh reruns the stored default preference upgrade and updates
     the no-session pending model if it was still tracking the old default.
     Initial model-catalog load also drains pinned updates that arrived while
     `modelsLoading` was true.
+- 2026-08-04: Parallel/Council lane access is bound to its selected model.
+  - Ordinary Chat keeps the existing key-based charging behavior: changing its
+    model does not redeem immediately, and a valid verified session key can be
+    tried until expiry or credit exhaustion. Parallel/Council is stricter for
+    cost preflight and lane isolation. Each lane reuses access only when its
+    verifier proof is approved, its station is not banned, it has not expired,
+    and its recorded model matches that lane's selected model. A lane model
+    change therefore makes only that lane stale and the next Parallel send
+    acquires a fresh key at the new model's ticket cost.
+- 2026-05-29: Parallel/Council response mode is wired as a session-level opt-in.
+  - The bottom response-mode slider has `Chat` and `Parallel` states. Memory is
+    a separate book-icon toggle immediately to the left of that slider, so users
+    can combine `Chat + Memory` or `Parallel + Memory`; clicking Parallel no
+    longer turns Memory off, and clicking the book no longer leaves Parallel. A
+    single book click toggles memory auto-attach; a quick double-click opens the
+    memory panel and leaves auto-attach on. Turning on user-facing `Parallel`
+    from the composer exposes an inline second-model picker beside the primary
+    model picker and, by default, keeps output to Stage 1 only: two model
+    responses, no synthesis/chairman request. Council is no longer a visible composer mode;
+    the settings menu has a `Parallel` section with a `Council review` switch.
+    Turning that switch on also turns Parallel on, writes
+    `outputMode: 'synthesis'`, reveals a Council model select inside settings,
+    and enables the existing review pass below the two first responses. The
+    primary picker uses `⌘K`, the secondary picker uses `⌘J`, and `⌘L` still
+    opens the shared searchable model picker for Council selection when Council
+    review is enabled or the settings menu is open. The visible Council setting
+    itself follows the Scrubber/Memory settings pattern: a compact native
+    select row, not a composer-style model chip. Its option values stay as raw
+    catalog names for model matching, but visible option labels omit provider
+    prefixes/company names like `OpenAI:` or `Anthropic:`. Secondary and Council selection can
+    choose any selectable model, including the current primary model. If a
+    persisted Council model is
+    no longer selectable, settings fall back to the same primary/default model
+    the controller will charge for instead of displaying a stale model name.
+    Ticket costs remain shown inside the modal options. While Parallel is
+    active, the composer shows primary and secondary model chips with provider
+    icons, provider-stripped names, and full model names in tooltip/aria labels;
+    the Council model is never shown in the composer. Turning Council review
+    off leaves the user in Parallel but skips the Council answer. Switching the composer
+    from Parallel back to Chat resets `outputMode` to plain Parallel, so the
+    next Parallel use starts as two-model comparison unless the user re-enables
+    Council review; synthesis access is still only preflighted/acquired when
+    Parallel is active with Council review on. Toggling Council review does not
+    alter the independent Memory book state.
+    The picker derives the same fallback secondary model as the controller,
+    including legacy model-id members and stale-member skipping, so its
+    displayed model matches the lane that will be charged, and refreshes when
+    model ticket tiers update. When there is no configured second model,
+    Parallel prefers Google Gemini 3.5 Flash as the secondary lane if it is
+    available and not already the primary model; otherwise it falls back to the
+    first available non-primary model. This keeps GPT OSS from becoming the
+    implicit second lane just because it appears earlier in the catalog. If the
+    session's primary model is stale or unavailable, both the composer and
+    controller resolve the primary lane to the default/fallback model before
+    assigning the secondary lane.
+    The settings menu no longer exposes duplicate legacy multi-model rows.
+    Parallel is an explicit session-level choice. Every empty New Chat composer
+    starts in Chat even if an older global `parallelModeEnabled` setting exists;
+    startup resets that setting so a historical toggle cannot trigger extra
+    requests or ticket spending in a new session. The last secondary model,
+    Council model, and Parallel/Council output mode are persisted as
+    `parallelSecondaryModel`, `parallelSynthesisModel`, and
+    `parallelOutputMode`. New single-chat sessions still keep the saved
+    secondary model in their disabled `councilConfig`, so turning Parallel on in
+    that session reuses the user's last secondary model instead of reverting to
+    the default. The empty New Chat composer rebuilds its pending council config
+    from those persisted model defaults before rendering, but leaves the mode
+    disabled until the user explicitly selects Parallel. Composer components update
+    the in-memory persisted defaults through `ChatApp.setParallelDefaults()`;
+    direct writes like `this.app.parallelModeEnabled = ...` will fail through
+    the strict component facade.
+  - The switch can be set before a session exists; `ChatApp.pendingCouncilConfig`
+    carries that choice into the first created session. Enabled sessions persist
+    `responseMode: 'council'` plus `councilConfig` with up to two member display
+    names, `outputMode`, `synthesisModel`, and `reviewEnabled` derived from
+    whether output mode is `synthesis`. The
+    active session model is the primary lane; the selected second model is the
+    comparison lane. Parallel with Council review off writes
+    `outputMode: 'parallel'`, so synthesis is skipped and no synthesis key is
+    acquired. Parallel with Council review on writes `outputMode: 'synthesis'`,
+    so the selected Council model gets its own synthesis key and writes the
+    final answer. Missing/legacy `outputMode` still normalizes to `parallel` to
+    avoid unexpected third-key redemption. If a config only names the primary
+    model, the controller adds the first available non-primary model as the
+    secondary lane.
+  - The Council synthesis prompt lives in `chat/domain/councilPrompts.js`. It
+    asks the synthesis model to act as an independent reviewer over anonymous
+    `Response A` / `Response B` drafts, briefly compare only material
+    differences, errors, missing caveats, and useful synthesis, then produce a
+    concise final answer to the original request. The review should be fair,
+    critical, concise, and evidence-oriented, but avoid generic praise, model/provider identities,
+    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
+    Partial synthesis is supported when only one draft response is available.
+  - `chat/application/councilController.js` runs the selected models in
+    parallel through `inferenceService.streamCompletion(...)`, preserving the
+    browser-only OpenRouter path and the existing ephemeral access flow. Strict
+    completion remains only as a fallback for tests or future backends that do
+    not expose streaming.
+  - Council access is lane-scoped under `session.councilAccess.primary` and
+    `session.councilAccess.secondary`, plus `session.councilAccess.synthesis`
+    for the Council answer. Each lane stores its own ephemeral key, access
+    metadata, expiry, and last-issued model id. Lane keys are both lane-scoped
+    and model-bound: primary only uses `councilAccess.primary`, secondary only
+    uses `councilAccess.secondary`, synthesis only uses
+    `councilAccess.synthesis`, and a model change refreshes that lane before
+    inference. There is no cross-lane key pooling.
+    `RightPanel` renders these lane records as separate Ephemeral Access Key
+    rows when Parallel/Council is active: `Model 1`, `Model 2`, and `Council`
+    only when synthesis/Council review is enabled. This is display-only and
+    does not change key acquisition, ticket preflight, or lane isolation. The
+    RHS panel intentionally shows lane roles, not model names; the current model
+    choice belongs in the composer/settings while the RHS panel represents
+    access-key state. The multi-lane panel notes that keys persist until expiry,
+    model change, or exhaustion. When there is no active session, the RHS panel
+    mirrors `pendingCouncilConfig` and shows pending `Model 1` / `Model 2` /
+    optional `Council` rows only after Parallel is explicitly selected. These no-session rows
+    are a preview only: they do not create a session, redeem tickets, or acquire
+    access until the first send.
+    Lane rows mask the actual lane token rather than the session's primary
+    ephemeral alias, and use their own lightweight expiry refresh when there is
+    no single-chat key timer active. If a single-chat key timer is active while
+    lane rows are displayed, that timer refreshes the lane panel instead of
+    looking for the single-key expiry chip; when the single key expires, it
+    forces one lane-panel refresh and lets the lane timer take over. Each lane
+    row owns its own verifier-attestation button and passes that lane token and
+    access metadata to the modal; do not reuse the single-session key
+    attestation context for the multi-lane panel.
+  - If a lane key is missing, expires, is banned, or OpenRouter reports credit
+    exhaustion, only that lane is cleared and refreshed. Reused lane keys are
+    also checked against the verifier's live/cached banned-station state before
+    use; a now-banned lane key is treated as stale, cleared, included in ticket
+    preflight, and replaced before inference. A lane model switch also counts
+    as stale access for ticket preflight and causes that lane to acquire a fresh
+    key priced for the selected model before inference.
+    Before acquiring any missing/expired/banned lane keys, the controller checks
+    that enough tickets exist for all fresh primary/secondary/synthesis lanes so
+    it does not partially charge one lane and then fail on another. Parallel
+    with Council review off preflights/acquires only the primary and secondary
+    lanes. Changing the Council model or toggling Council review does not
+    proactively clear `councilAccess.synthesis`; synthesis access refreshes only
+    when that lane actually needs a fresh key.
+  - Parallel/Council reasoning uses the same collapsed reasoning trace UI as
+    normal chat. Stage 1 lanes render `entry.reasoning` above each lane
+    response with lane-specific IDs, and Council synthesis stores and renders
+    `council.synthesis.reasoning` above the Council answer. Lane responses now
+    stream through lane-scoped DOM targets (`primary`, `secondary`, and
+    `synthesis`), so content and reasoning can appear token-by-token without
+    clobbering the other lane. `ChatArea` keeps a separate
+    `councilReasoningStreams` map for those concurrent traces while the normal
+    single-chat `reasoningBuffer` remains unchanged. Final lane/synthesis
+    completion still saves parsed reasoning, duration, citations, and canonical
+    message content as before.
+  - Persisted Memory mode can remain enabled globally, and send/regenerate now
+    run memory augmentation once before a Parallel/Council turn fans out to
+    model lanes. The approved `_lastApiContent` override is applied by
+    `processMessagesWithFiles(...)` to the shared last user turn, so primary
+    and secondary lanes receive the same memory-augmented prompt. The Council
+    synthesis prompt still uses the canonical chat context plus Stage 1
+    responses; memory is not injected a second time into synthesis. The
+    override is cleared by the app-level send/regenerate `finally` block after
+    the full turn completes, fails, or is cancelled. Council regenerate
+    preserves the current local-only Memory Agent status row while pruning old
+    model responses. A single book-toggle click only changes `memoryMode` and
+    does not alter Parallel/Council session config; double-clicking the book
+    opens the memory panel and keeps `memoryMode` enabled. Post-turn background
+    memory extraction still runs after successful Parallel responses, so a
+    separate confidential memory key redemption can appear after the visible
+    model requests finish; that is memory ingestion, not a hidden response lane.
+  - If Parallel is enabled after a normal single-model turn, the primary
+    lane can seed from the existing `session.apiKey` when the key is valid and
+    the access metadata identifies the same primary model. In that case,
+    opening Parallel only redeems tickets for missing/new lanes such as the
+    secondary model; seeded primary lane access records use
+    `ticketsConsumed: 0`. Newly acquired single-model access records are stamped
+    with `modelId`/`modelName` so council does not seed an old key whose model
+    ownership is ambiguous.
+  - If Parallel is disabled, `ChatApp.setCouncilModeForCurrentSession(...)`
+    seeds normal single-chat access back from a valid `councilAccess.primary`
+    record. Returning to single chat should therefore keep using the primary
+    lane key instead of redeeming a new ticket, unless that primary lane key is
+    missing, expired, banned, or later rejected by OpenRouter for exhausted
+    credit. Secondary and synthesis keys are never pooled into single-chat
+    access.
+  - A Stage 1 council turn is stored as one assistant message with
+    `message.council` metadata. `message.council.stage1` keeps the two
+    first-opinion responses. In Stage 1-only mode, each future lane request
+    builds API history from that lane's own prior Stage 1 responses, so the
+    secondary lane does not inherit the primary lane's previous answer.
+  - With Council review enabled, `message.council.synthesis` keeps the Council
+    answer status/response/error. When synthesis succeeds,
+    `message.content` is the Council answer and `message.model` is `Council`, so
+    future turns use the prior Council answer as normal assistant context. If
+    synthesis fails or the user chose Stage 1-only mode, `message.content` falls
+    back to the first completed Stage 1 response; synthesis failures set
+    `message.council.synthesis.fallbackUsed` to true.
+  - The current implementation covers Stage 1 "first opinions" plus one
+    Council review pass. It does not yet run Karpathy-style peer ranking or
+    scoring.
+  - `MessageTemplates` renders two council lanes side by side on desktop and
+    stacked on narrow screens, then renders the Council Answer below them only
+    after synthesis actually starts. Stage 1 response headers include provider
+    icons. Parallel/Council does not use the generic typing-indicator row during
+    access acquisition; `CouncilController` saves the assistant message before
+    lane access is acquired so the selected model cards and `Waiting for
+    response` shimmer appear immediately. The aggregate assistant row
+    intentionally omits a visible `Parallel`/`Council` text label and redundant
+    top-left mode icon; the lane cards and optional Council Answer section
+    already identify the mode. Completed lane and synthesis status chips are
+    also hidden, while error/cancelled/partial/fallback status remains visible.
+    Pending lane cards reuse the normal chat `Waiting for response` shimmer
+    instead of showing a `Pending` chip or custom `Waiting for this model to
+    finish...` copy. Stage 1-only mode removes the aggregate status/note row
+    instead of showing a waiting row, completion label, lane-history
+    implementation note, or canonical-context explanation. While synthesis
+    runs, the Council answer section is separated from the two draft responses
+    by a subtle horizontal rule, then shows the selected synthesis model with
+    its provider icon, providerless model name, and a visible `Council` role
+    badge. It reuses the normal chat `Waiting for response` shimmer while
+    omitting the aggregate `Council`/ready status row. Once the Council answer
+    is available, the same selected-model row remains above the answer,
+    matching the model the user chose and was charged for; redundant `Council
+    Answer` header copy and completed-status text stay hidden. On synthesis failure it shows `Council synthesis failed.
+    Continuing from Response A.` (or the actual fallback label). Council
+    review suppresses the aggregate copy/regenerate/fork action row while
+    synthesis is waiting/pending/running, then restores copy/regenerate inside
+    the Council synthesis block once synthesis reaches a final or fallback
+    state; fork stays disabled. Plain Parallel keeps normal actions directly
+    under each completed lane response instead of on the aggregate message,
+    because aggregate copy/regenerate/fork is ambiguous when two drafts are
+    visible. Both the synthesis and lane action rows reuse the normal
+    `assistant-actions-row` anchor so their spacing matches single-chat
+    assistant actions.
+    Web-search sources are also lane-local: each Stage 1 lane renders its own
+    Sources button and citation carousel at the bottom of that response only
+    when that lane produced citations. Council synthesis renders its own
+    separate Sources button when the synthesis response has citations; aggregate
+    Council/Parallel messages no longer reuse one canonical sources button for
+    all visible responses.
+    The Council answer block is width-capped, centered, and given extra top
+    spacing below the two lanes so synthesis reads like the normal narrow
+    transcript even when Parallel keeps the page wide. Lane copy copies only that lane response. Lane fork is
+    intentionally disabled for Parallel lanes for now, and completed aggregate
+    Council answers also omit fork; normal fork remains on single-chat
+    assistant messages only.
+    Lane regenerate refreshes only that lane, reusing or refreshing only that lane access; if the lane was not canonical, the
+    existing canonical response stays canonical. Like normal regenerate, lane
+    regenerate prunes later messages before rerunning so future context cannot
+    depend on the replaced answer. Canonical citation controls stay available
+    with the aggregate message.
+  - Parallel/Council layout has two separate stability rules. Transcript width
+    is sticky for any session that is actively in Parallel/Council or has ever
+    entered Parallel/Council; `session.hasCouncilLayoutPreference` preserves the
+    wider layout when the user toggles back to Chat, even before a Parallel
+    response is saved. Pending no-session Parallel state can also hold this
+    preference until the first session is created, but it must not force layout
+    changes onto unrelated existing sessions. `session.hasCouncilTranscript`
+    separately tracks saved `message.council` output across session switches and forks, and
+    `ChatArea.render(...)` backfills/recomputes it from stored messages for
+    older sessions. Regenerate, resend, prompt edit, and cancelled Council turns
+    recompute the transcript hint after pruning, but they do not clear the
+    user's sticky layout preference. The manual wide-screen toggle uses the
+    same message width as Parallel/Council (`min(92vw, 82rem)`) so switching
+    modes does not make Chat wide feel narrower. The top-left manual wide-mode
+    button is hidden whenever the current session is using Parallel/Council
+    layout, because that layout already owns the wider transcript width.
+    Background saves may mark a non-visible session as having a council
+    transcript, but root layout classes should only update for the currently
+    viewed session. Composer controls are
+    stable independently: the default composer keeps attachment and Settings
+    visible inline, while Web search moves to the bottom of the existing
+    Settings menu; there is no separate `+` menu. File upload, settings, and
+    web search keep their original element IDs/handlers, and response mode and
+    Memory stay visible beside them. Web search defaults on, but only the Web
+    search row shows `On`/`Off` and active styling. Compact model pickers sit on
+    the left side of the composer, with file/settings/mode/memory/send controls
+    anchored together on the right to reduce layout flash. Chat mode shows the
+    primary model icon plus a compact name; Parallel reveals the secondary
+    model chip after primary. Model chips use `fit-content` natural width up to
+    a shared responsive max width (`12.25rem` on desktop, `8.75rem` on small
+    screens) so short model names produce short buttons while long names cap
+    cleanly. The root `data-composer-mode` is refreshed from both the mode
+    toggle and the multi-model settings refresh so Chat/Parallel layout rules
+    apply immediately after switching modes. The composer label is the
+    full provider-stripped catalog name; JavaScript does not apply a character
+    budget or semantic/family-name rewrite. CSS owns the
+    visual ellipsis via the label span (`overflow: hidden`, `white-space:
+    nowrap`, `text-overflow: ellipsis`), so truncation follows actual rendered
+    button width across devices. Labels must not wrap to multiple lines. The
+    chip should not hide overflow at the button level because that clips
+    descenders in labels with letters like `g`, `p`, and `y`; horizontal
+    clipping belongs on the label span. The composer left action group allows
+    visible overflow so model-chip tooltips are not clipped. Composer model
+    chips set both
+    `data-tooltip` and native `title` to the full provider-stripped catalog
+    name, with no lane label like `Primary model:` or `Secondary model:` and no
+    provider prefix like `OpenAI:` or `Anthropic:`. Those hover labels stay on a
+    single line. When a user edits/rewrites a prompt, the edit box mirrors the
+    models that will receive the regenerated turn: Chat shows the primary chip,
+    while active Parallel/Council sessions show primary and secondary chips.
+    The Council/chair model remains Settings-only and is not shown in the edit
+    box. Changing either model while edit mode is open refreshes those edit
+    chips from the composer chips. Full provider names remain visible in the shared model picker. Run
+    `npm run audit:model-labels` to check the current live OpenRouter catalog
+    for labels that fail providerless normalization and to inspect the longest
+    CSS-truncated label. Chat mode primary chips use natural width and can grow
+    up to the same width as two Parallel chips plus their gap; Parallel stays
+    unchanged. Chat max width is calculated as two Parallel chip maxes plus
+    `--composer-model-chip-gap`, the same variable used for the actual Parallel
+    model-chip gap. Short model names still use natural button width. Keep the
+    Chat width selector at ID-level specificity because the base composer chip
+    width rule is also ID-scoped. The send button has a small
+    left margin (`0.9rem`) so the Memory-to-send gap is wider without changing
+    spacing between Memory and the other right-side controls. This targets only
+    `.composer-right-actions #send-btn`, not the shared right-side control gap.
+    The Chat/Parallel slider also has a small left margin so it breathes after
+    the Memory/book button without changing spacing between the other tool
+    buttons. The Memory book tooltip is two-line copy: the first line names
+    auto-attach, and the second line says double-click opens Memory with the
+    Beta badge. If the global Memory feature switch is off, only the Memory
+    book is marked disabled; the Chat/Parallel slider remains interactive.
+    OpenRouter catalog display names are trimmed on live ingest and cache
+    load/save, and model selection helpers compare by id plus trimmed display
+    name so provider catalog quirks
+    like `Baidu: ERNIE 4.5 VL 424B A47B ` do not make secondary selection fail
+    when the visible label omits the trailing whitespace. Parallel mode permits
+    the same model in both lanes. `session.councilConfig.members` may therefore
+    contain duplicate model names, and the controller preserves them as separate
+    primary/secondary lane entries with separate lane access records. If both
+    lanes need fresh access, they are still charged independently even when the
+    selected model is the same.
+  - The old `?composerVariant=...` and `?composerWidth=...` design comparison
+    knobs were removed after the composer direction settled. The fixed behavior
+    is full model-name chips, attachment and Settings visible inline, Web
+    search inside Settings, and wider Chat-mode model-chip capacity by default.
+  - Completed assistant Markdown finalization now funnels in-place content
+    updates through `ChatArea.renderCompletedAssistantContent(...)`, the same
+    citation -> Markdown/LaTeX -> inline-citation -> link-enhancement pipeline
+    used by the normal full render path. This guards the single-chat path where
+    finalized reasoning can otherwise update only `.message-content` in place.
+    Normal send completion must always call `finalizeStreamingMessage(...)`,
+    even when text content exists, because the streaming DOM may contain only a
+    partial Markdown render from the last chunk; regenerate already followed
+    this final-render pattern. Run that final message render before
+    `finalizeReasoningDisplay(...)` so the final action row and Sources UI are
+    rebuilt before the reasoning trace is polished. Citation metadata
+    enrichment must call `finalizeStreamingMessage(message, { forceFullRender:
+    true })`, because enriched source cards live outside `.message-content` and
+    would otherwise be skipped by the no-flash finalized-reasoning branch.
+  - `CouncilController` receives `chatDB`, `inferenceService`, and
+    `ticketClient` from `ChatApp` instead of importing the service singletons
+    directly. This keeps browser storage/network singleton initialization out
+    of unit tests and lets `test/application/councilController.test.js` lock
+    down mixed lane costs, model-switch refresh, synthesis 402 retry,
+    insufficient-ticket preflight behavior, lane-specific Stage 1 history,
+    partial synthesis, and synthesis fallback behavior with small stubs.
+  - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It
+    intentionally omits Stage 2 peer-ranking inputs, anonymizes first-opinion
+    drafts as `Response A`, `Response B`, and asks the Council model to briefly
+    compare only material differences, errors, missing caveats, and useful
+    synthesis before writing a concise final answer. It avoids model/provider identities,
+    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.
@@ -486,7 +1448,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Read [MEMORY_MODE.md](MEMORY_MODE.md) before touching this path.
   - The app-side contract is `chat/app.js -> chat/services/memoryBridge.js -> chat/nanomem/browser.js`; do not import `nanomem/src/...` from app code.
   - `chat/nanomem` is a tracked symlink and production build now hard-requires the `nanomem` submodule. If the bundle suddenly starts failing on `node:*` imports from `nanomem`, check that the browser entry is still pointing at `nanomem/src/browser.js`, not the generic index.
-  - Memory mode is a global toggle persisted in IndexedDB setting `memoryMode`, not a per-session mode.
+  - Memory mode is a global book toggle persisted in IndexedDB setting `memoryMode`, not a per-session mode.
   - Memory mode now also persists `memoryAutoInclude` and `memoryAgentModel`. The first short-circuits the in-chat approval wait, and the second is used by both live retrieval and memory backfill/import.
   - The retrieval summary is a local-only assistant message with an agent trace and explicit include/skip controls. Regeneration clears older local-only memory status messages after the last user turn before rerunning retrieval.
   - The pending approval row now has `Include memory`, `Always include`, `Skip`, and `Edit prompt`. After memory is approved/sent, the revised prompt remains visible in the local status message, so the approved row only shows the status chip and omits a separate view/edit button. `Always include` is not just a one-shot approve: it flips the global `memoryAutoInclude` setting on and the settings-menu switch should reflect that immediately.

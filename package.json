@@ -6,24 +6,34 @@
   "homepage": "https://openanonymity.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OpenAnonymity/oa-fastchat.git"
+    "url": "https://github.com/OpenAnonymity/oa-chat.git"
   },
   "private": true,
   "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
   "devDependencies": {
     "esbuild": "^0.27.2",
-    "terser": "^5.31.0",
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "terser": "^5.31.0"
   },
   "scripts": {
-    "prepare:nanomem": "if [ -n \"$GITHUB_PAT\" ]; then git submodule set-url nanomem \"https://${GITHUB_PAT}@github.com/OpenAnonymity/nanomem.git\" && git submodule sync; fi; git submodule update --init nanomem",
+    "prepare:nanomem": "if [ -d nanomem/src ]; then exit 0; fi; if [ -n \"$GITHUB_PAT\" ]; then git submodule set-url nanomem \"https://${GITHUB_PAT}@github.com/OpenAnonymity/nanomem.git\" && git submodule sync; fi; git submodule update --init nanomem",
+    "prebuild": "npm run vendor:supertokens",
     "build": "npm run prepare:nanomem && node scripts/build.mjs",
     "preview": "python3 -m http.server 8080 -d dist",
     "test": "node scripts/run-unit-tests.mjs",
+    "vercel:demo-config": "node scripts/generate-demo-vercel-config.mjs",
+    "vendor:supertokens": "node scripts/build-supertokens-vendor.mjs",
+    "audit:model-labels": "node --no-warnings scripts/audit-model-labels.mjs",
     "predev": "npm run prepare:nanomem",
-    "dev": "python3 -m http.server 8080 -d chat",
+    "dev": "node scripts/dev-server.mjs",
     "tailwind:build": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --minify",
     "tailwind:watch": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --watch",
     "fonts:sync": "node scripts/sync-fonts.mjs"
+  },
+  "dependencies": {
+    "supertokens-web-js": "^0.16.0"
   }
 }

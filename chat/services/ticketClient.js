@@ -31,15 +31,18 @@ import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
-import { ORG_API_BASE } from '../config.js';
+import { ORG_API_BASE } from './orgEndpoints.js';
+import {
+    buildTicketIssuanceRequest,
+    getStructuredTicketError
+} from '../domain/ticketKeys.js';
 
 class TicketClient {
     constructor() {
         console.log('🚀 Initializing TicketClient');
         this.ppExtension = privacyPassProvider;
         this.ticketStore = ticketStore;
-
-        console.log(`📊 TicketClient ready with ${this.ticketStore.getCount()} tickets`);
+        console.log('📊 TicketClient ready');
     }
 
     getNextTicket() {
@@ -74,6 +77,53 @@ class TicketClient {
 
     async importTickets(payload) {
         return this.ticketStore.importTickets(payload);
+    }
+
+    createTicketRedemptionError(data, status, fallbackMessage) {
+        const parsed = getStructuredTicketError(data, fallbackMessage);
+        const messageLower = String(parsed.message || '').toLowerCase();
+
+        if (parsed.code === 'TICKET_KEY_INVALIDATED') {
+            const error = new Error('The org rotated its ticket signing key. Tickets from the old key were invalidated.');
+            error.code = 'TICKET_KEY_INVALIDATED';
+            error.status = status;
+            error.invalidatedKeyId = parsed.invalidatedKeyId;
+            error.serverMessage = parsed.message;
+            return error;
+        }
+
+        if (parsed.code === 'TICKET_ALREADY_SPENT' ||
+            (!parsed.code && status === 401 && (
+                messageLower.includes('double') ||
+                messageLower.includes('spent') ||
+                messageLower.includes('used')
+            ))) {
+            const error = new Error('One or more tickets were already used. Please try again.');
+            error.code = 'TICKET_USED';
+            error.status = status;
+            error.consumeTickets = true;
+            return error;
+        }
+
+        const error = new Error(parsed.message || fallbackMessage);
+        error.code = parsed.code || undefined;
+        error.status = status;
+        error.data = data;
+        return error;
+    }
+
+    notifyTicketKeyInvalidation(error) {
+        if (error?.code !== 'TICKET_KEY_INVALIDATED' || error.invalidationNotified) return;
+        error.invalidationNotified = true;
+        if (typeof window === 'undefined') return;
+
+        window.dispatchEvent(new CustomEvent('ticket-key-invalidated', {
+            detail: {
+                keyId: error.invalidatedKeyId || null,
+                removedCount: Number(error.invalidatedTicketsRemoved || 0),
+                remainingCount: Number(error.remainingTickets || this.getTicketCount())
+            }
+        }));
     }
 
     getRetryAfterSeconds(response, data) {
@@ -512,16 +562,21 @@ class TicketClient {
             // unpredictable times, the org cannot serve per-user keys without
             // detection. Future: automated transparency log for key consistency.
             let publicKey;
+            let publicKeyId;
             try {
                 const { data: keyData } = await networkProxy.fetchWithRetryJson(
                     `${ORG_API_BASE}/api/ticket/issue/public-key`,
-                    {},
+                    { cache: 'no-store', credentials: 'omit' },
                     { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
                 );
                 publicKey = keyData.public_key;
 
                 if (!publicKey) {
                     throw new Error('Station did not return public key');
+                }
+                publicKeyId = await this.ppExtension.getPublicKeyId(publicKey);
+                if (keyData.key_id && keyData.key_id !== publicKeyId) {
+                    throw new Error('Station returned inconsistent ticket key metadata');
                 }
             } catch (error) {
                 throw new Error(`Failed to get public key: ${error.message}`);
@@ -574,10 +629,11 @@ class TicketClient {
             // these blinded requests. Even with complete records, the org cannot correlate
             // issuance to redemption. This is the core guarantee of blind signatures.
             const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
-            const registerBody = {
-                credential: invitationCode,
-                blinded_requests: indexedBlindedRequests
-            };
+            const registerBody = buildTicketIssuanceRequest(
+                invitationCode,
+                indexedBlindedRequests,
+                publicKeyId
+            );
 
             let signData;
             try {
@@ -590,7 +646,9 @@ class TicketClient {
                     },
                     {
                         context: 'Alpha register',
-                        maxAttempts: 1,  // No retry - blinded tickets consumed on success
+                        // Exact blinded batches are replay-safe on the org;
+                        // retrying recovers a response lost after atomic commit.
+                        maxAttempts: 3,
                         timeoutMs: Math.max(120000, ticketCount * 50)
                     }
                 );
@@ -611,7 +669,19 @@ class TicketClient {
                 });
 
                 if (!signResponse.ok) {
-                    throw new Error(signData.detail || signData.error || signData.message || 'Server error during registration');
+                    const parsed = getStructuredTicketError(
+                        signData,
+                        'Server error during registration'
+                    );
+                    const error = new Error(
+                        parsed.code === 'TICKET_KEY_CHANGED'
+                            ? 'The org rotated its ticket signing key before redemption. Your invite was not consumed; please try again.'
+                            : parsed.message
+                    );
+                    error.code = parsed.code || undefined;
+                    error.status = signResponse.status;
+                    error.data = signData;
+                    throw error;
                 }
             } catch (error) {
                 // Log failed request
@@ -632,6 +702,10 @@ class TicketClient {
             if (progressCallback) progressCallback('Signed tickets received...', 67);
 
             const indexedSignedResponses = signData.signed_responses;
+
+            if (signData.key_id && signData.key_id !== publicKeyId) {
+                throw new Error('Ticket signing key changed during invite redemption. Please retry.');
+            }
 
             if (!indexedSignedResponses || indexedSignedResponses.length === 0) {
                 throw new Error('Station did not return signed responses');
@@ -677,6 +751,7 @@ class TicketClient {
                     blinded_request: blindedRequest,
                     signed_response: signedResponse,
                     finalized_ticket: finalizedTicket,
+                    ticket_key_id: publicKeyId,
                     created_at: new Date().toISOString(),
                 });
 
@@ -809,23 +884,11 @@ class TicketClient {
                     });
 
                     if (!response.ok) {
-                        const errorMessage = data?.detail || data?.error || data?.message ||
-                            (typeof data === 'string' ? data : null) ||
-                            text ||
-                            `Failed to split tickets (${response.status})`;
-                        const errorMessageLower = String(errorMessage || '').toLowerCase();
-
-                        if (response.status === 401 ||
-                            errorMessageLower.includes('double') ||
-                            errorMessageLower.includes('spent') ||
-                            errorMessageLower.includes('used')) {
-                            const ticketError = new Error('One or more tickets were already used. Please try again.');
-                            ticketError.code = 'TICKET_USED';
-                            ticketError.consumeTickets = true;
-                            throw ticketError;
-                        }
-
-                        throw new Error(errorMessage);
+                        throw this.createTicketRedemptionError(
+                            data || text,
+                            response.status,
+                            `Failed to split tickets (${response.status})`
+                        );
                     }
 
                     const code = data?.code || data?.invitation_code || data?.credential;
@@ -856,6 +919,7 @@ class TicketClient {
                 expiresAt: data?.expires_at || data?.expires_at_unix || null
             };
         } catch (error) {
+            this.notifyTicketKeyInvalidation(error);
             console.error('Ticket split error:', error);
             throw error;
         }
@@ -967,18 +1031,11 @@ class TicketClient {
                     });
 
                     if (!response.ok) {
-                        const errorMessage = data.detail || data.error || data.message ||
-                            (typeof data === 'string' ? data : null) ||
-                            `Failed to request API key (${response.status})`;
-
-                        if (response.status === 401 || errorMessage.includes('double-spending')) {
-                            const ticketError = new Error('One or more tickets were already used. Please try again.');
-                            ticketError.code = 'TICKET_USED';
-                            ticketError.consumeTickets = true;
-                            throw ticketError;
-                        }
-
-                        throw new Error(errorMessage);
+                        throw this.createTicketRedemptionError(
+                            data,
+                            response.status,
+                            `Failed to request API key (${response.status})`
+                        );
                     }
 
                     const missingFields = [];
@@ -1029,6 +1086,7 @@ class TicketClient {
                 }))
             };
         } catch (error) {
+            this.notifyTicketKeyInvalidation(error);
             console.error('Request API key error:', error);
             throw error;
         }
@@ -1129,18 +1187,11 @@ class TicketClient {
                     });
 
                     if (!response.ok) {
-                        const errorMessage = data.detail || data.error || data.message ||
-                            (typeof data === 'string' ? data : null) ||
-                            `Failed to request confidential API key (${response.status})`;
-
-                        if (response.status === 401 || errorMessage.includes('double-spending')) {
-                            const ticketError = new Error('One or more tickets were already used. Please try again.');
-                            ticketError.code = 'TICKET_USED';
-                            ticketError.consumeTickets = true;
-                            throw ticketError;
-                        }
-
-                        throw new Error(errorMessage);
+                        throw this.createTicketRedemptionError(
+                            data,
+                            response.status,
+                            `Failed to request confidential API key (${response.status})`
+                        );
                     }
 
                     const missingFields = [];
@@ -1159,6 +1210,7 @@ class TicketClient {
 
             return result;
         } catch (error) {
+            this.notifyTicketKeyInvalidation(error);
             console.error('Request confidential API key error:', error);
             throw error;
         }

@@ -2,12 +2,12 @@
 # Keep package.json + build scripts so Vercel can run npm install/build.
 
 /*
-!/.git
-!/.git/**
 !/.gitmodules
 !/nanomem
 !/chat
 !/chat/**
+!/vector
+!/vector/**
 !/local_inference
 !/local_inference/**
 !/scripts
@@ -16,3 +16,12 @@
 !/package-lock.json
 !/vercel.json
 !/.vercelignore
+
+# Final deny rules must follow every broad allowlist above so a future nested
+# repository or local environment file cannot be re-included in the upload.
+**/.git
+**/.git/**
+.env
+.env.*
+**/.env
+**/.env.*

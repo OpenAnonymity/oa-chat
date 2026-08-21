@@ -5,9 +5,17 @@ This document describes the root `oa-chat` memory-mode integration that reuses
 
 ## Scope
 
-- Root `oa-chat` has a global memory feature switch plus a 2-mode slider:
-  normal chat vs. memory mode.
-- Memory mode only brings in the `augment_query` flow.
+- Root `oa-chat` now has an independent Memory book toggle beside the
+  Chat/Parallel response-mode slider.
+- Memory mode only brings in the `augment_query` flow; it can be combined with
+  either single-model Chat or Parallel/Council turns.
+- Before a send or regeneration can redeem either key, the client checks the
+  combined fresh-ticket budget for Memory and the selected model response(s).
+  If the wallet is short, neither path spends a ticket and an on-screen alert
+  explains the Memory and model portions of the requirement.
+- The global Memory feature switch can disable Memory across live retrieval,
+  post-turn extraction, editor/backfill/import/export entry points, and key
+  redemption.
 - Root `oa-chat` now also exposes the memory filesystem panel shell from
   `memory-chat` via `Cmd/Ctrl+Shift+M`.
 - The root panel is storage-first, with one backfill path:
@@ -185,6 +193,15 @@ When memory mode is enabled and the outgoing user message has text:
    that override for the real frontier-model request.
 10. The override is cleared after the send/regenerate flow finishes.
 
+Parallel/Council sessions use the same one-shot flow. Root runs memory
+augmentation once before `councilController.runSendTurn(...)` or
+`runRegenerateTurn(...)`, then each Stage 1 lane calls
+`processMessagesWithFiles()` and receives the same approved last-user override.
+Do not add retrieval inside `councilController`: there should be no per-lane
+memory key redemption and no lane-specific retrieved context. Council synthesis
+uses the canonical chat context and Stage 1 responses only; it must not receive
+the memory override a second time.
+
 If retrieval finds nothing, tickets are unavailable, or retrieval fails, the app
 falls back to a normal send without memory context.
 
@@ -215,17 +232,23 @@ forwarding its details into the final prompt.
   `memoryFeatureEnabled` and defaults on for existing users. When it is off,
   the app forces `memoryMode` false, skips live post-turn extraction, skips
   memory retrieval, aborts active memory retrieval/extraction work, blocks the
-  memory editor/backfill/import/export entry points, and leaves the chat/memory
-  slider visually locked on Chat. Confidential memory-key redemption is passed
-  the same abort signal, and returned keys are not stored if Memory is disabled
+  memory editor/backfill/import/export entry points, and disables only the
+  Memory book toggle beside the Chat/Parallel slider. The Chat/Parallel slider
+  remains interactive while Memory is globally off. Confidential memory-key
+  redemption is passed the same abort signal, and returned keys are not stored
+  if Memory is disabled
   during redemption. Memory-editor saves, imports, clean-up, and folder
   mutations also use an operation generation guard so stale local operations do
   not complete their UI path after the feature is turned off. The memory bridge,
   storage singleton, and OMF importer lazy-load `nanomem`; app startup and
   disabled settings/editor controls must not evaluate the nanomem browser
   module.
-- The chat/memory slider is global and persisted in IndexedDB setting
-  `memoryMode`, but it cannot enter Memory while `memoryFeatureEnabled` is false.
+- The Memory book toggle is global and persisted in IndexedDB setting
+  `memoryMode`, but it cannot enable auto-attach while `memoryFeatureEnabled`
+  is false.
+- A single book click toggles auto-attach. A quick double-click opens the memory
+  filesystem panel and leaves auto-attach enabled, so the next single click can
+  turn it off.
 - Memory mode also has two persisted privacy settings in IndexedDB:
   - `memoryAutoInclude`: shown in settings as `Always attach retrieval`;
     automatically approve memory prompts without waiting for the per-message
@@ -274,6 +297,9 @@ forwarding its details into the final prompt.
 - When auto-include is on, memory retrieval still renders the local `memory agent`
   summary message, but it immediately marks the prompt approved and continues the
   send flow without waiting on the buttons.
+- In Parallel/Council, that local `memory agent` row appears once above the
+  two-lane response card. It is not a third response lane and does not add
+  another model picker.
 - Regeneration clears prior local-only memory status messages after the last user
   turn before rerunning memory mode, so the chat does not accumulate stale
   retrieval summaries.

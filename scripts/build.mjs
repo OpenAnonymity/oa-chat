@@ -9,12 +9,53 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 
+const args = process.argv.slice(2);
+const readArg = (name) => {
+    const index = args.indexOf(name);
+    if (index === -1) return null;
+    if (!args[index + 1] || args[index + 1].startsWith('--')) {
+        throw new Error(`[build] ${name} requires a value`);
+    }
+    return args[index + 1];
+};
+const appEntryArgument = readArg('--app-entry');
+const outputDirectoryArgument = readArg('--out-dir');
+
 const srcDir = path.join(repoRoot, 'chat');
-const outDir = path.join(repoRoot, 'dist');
+const outDir = outputDirectoryArgument
+    ? path.resolve(process.cwd(), outputDirectoryArgument)
+    : path.join(repoRoot, 'dist');
 const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
+const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
+if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
+    throw new Error('[build] OA_ORG_SAME_ORIGIN must be exactly true or false');
+}
+const sameOriginOrg = sameOriginOrgSetting === 'true';
+const demoVerifierBypassSetting = process.env.OA_DEMO_VERIFIER_BYPASS;
+if (demoVerifierBypassSetting && !['true', 'false'].includes(demoVerifierBypassSetting)) {
+    throw new Error('[build] OA_DEMO_VERIFIER_BYPASS must be exactly true or false');
+}
+const demoVerifierBypass = demoVerifierBypassSetting === 'true';
+if (demoVerifierBypass && !sameOriginOrg) {
+    throw new Error('[build] verifier bypass is allowed only in an explicit same-origin demo build');
+}
+const demoProxyUrlSetting = process.env.OA_DEMO_PROXY_URL || '';
+if (demoProxyUrlSetting) {
+    let demoProxyUrl;
+    try {
+        demoProxyUrl = new URL(demoProxyUrlSetting);
+    } catch {
+        throw new Error('[build] OA_DEMO_PROXY_URL must be a valid WSS URL');
+    }
+    if (!sameOriginOrg || !demoVerifierBypass || demoProxyUrl.protocol !== 'wss:' ||
+        demoProxyUrl.username || demoProxyUrl.password || demoProxyUrl.search ||
+        demoProxyUrl.hash || demoProxyUrl.pathname !== '/') {
+        throw new Error('[build] OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo and an exact root WSS origin');
+    }
+}
 
 const pathExists = async (target) => {
     try {
@@ -26,7 +67,9 @@ const pathExists = async (target) => {
 };
 
 const entryPoints = {
-    app: path.join(srcDir, 'app.js'),
+    app: appEntryArgument
+        ? path.resolve(process.cwd(), appEntryArgument)
+        : path.join(srcDir, 'standalone.js'),
     prelude: path.join(srcDir, 'prelude.js')
 };
 
@@ -87,21 +130,6 @@ const build = async () => {
         }
     }
 
-    // Ensure chat/nanomem is a real directory so esbuild can resolve imports.
-    // In dev it's a symlink; in CI the symlink target may not survive filtering.
-    const chatNanomem = path.join(srcDir, 'nanomem');
-    await fs.rm(chatNanomem, { recursive: true, force: true });
-    await fs.cp(nanomemDir, chatNanomem, {
-        recursive: true,
-        filter: (src) => {
-            const rel = path.relative(nanomemDir, src);
-            if (!rel) return true;
-            if (rel === 'node_modules' || rel.startsWith('node_modules/')) return false;
-            if (rel === '.git' || rel.startsWith('.git')) return false;
-            return true;
-        }
-    });
-
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
     await fs.cp(srcDir, outDir, { recursive: true });
@@ -160,7 +188,27 @@ const build = async () => {
         chunkNames: 'chunk-[hash]',
         assetNames: 'asset-[hash]',
         target: ['es2020'],
-        define: { '__DEV__': 'false' },
+        loader: {
+            '.png': 'file',
+            '.jpg': 'file',
+            '.jpeg': 'file',
+            '.gif': 'file',
+            '.webp': 'file',
+            '.svg': 'file',
+            '.woff': 'file',
+            '.woff2': 'file',
+            '.ttf': 'file',
+            '.otf': 'file'
+        },
+        define: {
+            '__DEV__': 'false',
+            '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
+            '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
+                sameOriginOrg ? '' : 'https://org.openanonymity.ai'
+            ),
+            '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
+            '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting)
+        },
         minify: true,
         metafile: true,
         logLevel: 'silent'
@@ -178,17 +226,62 @@ const build = async () => {
 
     const appScriptPath = toPosixPath(path.relative(outDir, appOutput[0]));
     const preludeScriptPath = toPosixPath(path.relative(outDir, preludeOutput[0]));
+    const appCssPath = appOutput[1].cssBundle
+        ? toPosixPath(path.relative(outDir, path.resolve(appOutput[1].cssBundle)))
+        : null;
 
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
 
+    if (sameOriginOrg) {
+        // A disposable demo must not even warm production-org DNS. All org
+        // traffic is intentionally routed through the deployment origin.
+        html = html.replace(
+            /\s*<link\s+rel="dns-prefetch"\s+href="https:\/\/org\.openanonymity\.ai"\s*>/g,
+            ''
+        );
+    }
+
     html = replaceBundleBlock(html, 'PRELUDE', preludeScriptPath);
     html = replaceBundleBlock(html, 'APP', appScriptPath);
+    if (appCssPath) {
+        html = html.replace('</head>', `    <link rel="stylesheet" href="${appCssPath}">\n</head>`);
+    }
+
+    if (sameOriginOrg) {
+        const executableModuleSources = [...html.matchAll(
+            /<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"[^>]*>/g
+        )].map((match) => match[1].split('?')[0]);
+        const uncompiledModules = executableModuleSources.filter(
+            (source) => !source.startsWith('assets/')
+        );
+        if (uncompiledModules.length > 0 || /<script\b[^>]*\btype="module"[^>]*>\s*import\s*\(/.test(html)) {
+            throw new Error(
+                `[build] same-origin demo contains an uncompiled executable module: ${uncompiledModules.join(', ') || 'inline import'}`
+            );
+        }
+    }
 
     const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
     html = versionStaticAssetRefs(html, appHash);
 
     await fs.writeFile(indexPath, html, 'utf8');
+
+    if (sameOriginOrg) {
+        // The source tree is copied for non-module runtime assets, but this
+        // module is bundled into the executable graph. Do not publish its
+        // dormant production fallback in an isolated same-origin demo.
+        await fs.rm(path.join(outDir, 'services', 'orgEndpoints.js'), { force: true });
+        const publishedJs = await collectJsFiles(outDir);
+        for (const filePath of publishedJs) {
+            const source = await fs.readFile(filePath, 'utf8');
+            if (source.includes('org.openanonymity.ai')) {
+                throw new Error(
+                    `[build] same-origin demo artifact retains a production-org fallback: ${path.relative(outDir, filePath)}`
+                );
+            }
+        }
+    }
 
     const jsFiles = await collectJsFiles(assetsDir);
     await Promise.all(jsFiles.map(async (filePath) => {
@@ -214,6 +307,7 @@ const build = async () => {
     }
 
     console.log(`Built app bundle: ${appScriptPath}`);
+    if (appCssPath) console.log(`Built app styles: ${appCssPath}`);
     console.log(`Built prelude bundle: ${preludeScriptPath}`);
     if (appHash) console.log(`Build hash: ${appHash}`);
 };

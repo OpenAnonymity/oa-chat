@@ -1,13 +1,13 @@
-import { PROXY_URL } from '../config.js';
+import { DEMO_PROXY_FETCH_TIMEOUT_MS, PROXY_URL } from '../config.js';
 import transportHints from './inference/transportHints.js';
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
+import { guardProxyFetch, resolveProxyFetchTimeoutMs } from './proxyFetchGuard.js';
 
 const DEFAULT_SETTINGS = {
     enabled: true,
     fallbackToDirect: true
 };
-
 // TLS info parsing patterns (supports both OpenSSL and mbedTLS output formats)
 const TLS_PATTERNS = {
     // OpenSSL: "SSL connection using TLSv1.3 / ..."
@@ -638,6 +638,38 @@ class NetworkProxy {
         });
     }
 
+    async fetchThroughProxy(resource, init = {}) {
+        const session = this.httpSession;
+        const signal = init.signal || null;
+        if (!session) throw new Error('HTTPSession is unavailable');
+        const timeoutMs = resolveProxyFetchTimeoutMs(
+            resource,
+            typeof window !== 'undefined' ? window.location.origin : null,
+            DEMO_PROXY_FETCH_TIMEOUT_MS
+        );
+
+        try {
+            return await guardProxyFetch(
+                () => session.fetch(resource, init),
+                { signal, timeoutMs }
+            );
+        } catch (error) {
+            if (error?.code === 'PROXY_TIMEOUT' || error?.name === 'AbortError') {
+                try {
+                    session.close();
+                } catch {
+                    // Closing is best effort; the guarded request is already rejected.
+                }
+                if (this.httpSession === session) {
+                    this.httpSession = null;
+                    this.state.activeProxyUrl = null;
+                    this.state.ready = false;
+                }
+            }
+            throw error;
+        }
+    }
+
     async fetch(resource, init = {}, config = {}) {
         const preferProxy = config.bypassProxy ? false : this.state.settings.enabled;
         const forceProxy = !!config.forceProxy;
@@ -675,7 +707,7 @@ class NetworkProxy {
             const certSubject = this.tlsInfo.certSubject?.toLowerCase() || '';
             const needsTlsCapture = !!captureHost && !certSubject.includes(captureHost.toLowerCase());
             const fetchInit = (config.inspectTls || needsTlsCapture) ? { ...init, _libcurl_verbose: 1 } : init;
-            const response = await this.httpSession.fetch(resource, fetchInit);
+            const response = await this.fetchThroughProxy(resource, fetchInit);
             const duration = Date.now() - startTime;
             console.log('[networkProxy.fetch] ✅ HTTPSession.fetch succeeded in', duration + 'ms', 'status:', response.status);
 
@@ -711,6 +743,11 @@ class NetworkProxy {
             this.state.lastFailureAt = Date.now();
             this.state.lastError = error;
             this.state.transport = 'direct';
+
+            if (init.signal?.aborted) {
+                this.emitChange();
+                throw error;
+            }
 
             if (forceProxy || !this.state.settings.fallbackToDirect) {
                 this.emitChange();

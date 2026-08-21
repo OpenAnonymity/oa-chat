@@ -5,23 +5,39 @@
 
 import storageEvents from './storageEvents.js';
 import { chatDB } from '../db.js';
-import syncService from './syncService.js';
-import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
+import syncService from './encryptedSyncService.js';
+import { PREF_KEYS } from './preferencesStore.js';
+import { withAccountDataLock } from './accountDataLock.js';
+import {
+    createTicketTombstones,
+    filterTicketsByTombstones,
+    mergeTicketTombstones
+} from './ticketTombstones.js';
+import {
+    filterTicketsByInvalidatedKeyIds,
+    getTicketKeyId,
+    normalizeInvalidatedTicketKeyIds,
+    normalizeTicketKeyId,
+    partitionTicketsByKeyId
+} from '../domain/ticketKeys.js';
 
 const STORAGE_KEY = 'inference_tickets';
 const ARCHIVE_KEY = 'inference_tickets_archive';
 const DB_ACTIVE_KEY = 'tickets-active';
 const DB_ARCHIVE_KEY = 'tickets-archive';
+const DB_TOMBSTONES_KEY = 'tickets-tombstones';
 const LOCK_NAME = 'oa-inference-tickets';
+const DB_INVALIDATED_KEYS_KEY = 'tickets-invalidated-key-ids';
 const TICKETS_UPDATED_EVENT = 'tickets-updated';
 
-class TicketStore {
+export class TicketStore {
     constructor() {
         this.lockQueue = Promise.resolve();
         this.tickets = [];
         this.archive = [];
         this.initPromise = null;
         this.storageUnsubscribe = null;
+        this.scopeStorageUnsubscribe = null;
         this.syncUnsubscribe = null;
         this.hasMarkedTicketHistory = false;
     }
@@ -34,21 +50,54 @@ class TicketStore {
         this.initPromise = (async () => {
             storageEvents.init();
             await this.ensureDbReady();
-            await this.migrateFromLocalStorage();
-            await this.loadFromDatabase({ emitUpdate: false });
-            await this.cleanLegacyTickets();
-
-            if (!this.storageUnsubscribe) {
-                this.storageUnsubscribe = storageEvents.on('tickets-updated', () => {
-                    this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+            await syncService.bootstrapLocalAccountScope();
+            try {
+                await this.withLock(async () => {
+                    await this.migrateFromLocalStorage();
+                    await this.loadFromDatabase({ emitUpdate: false });
                 });
+            } catch (error) {
+                this.tickets = [];
+                this.archive = [];
             }
 
-            // Reload from database when sync completes (sync writes directly to settings)
+            if (!this.storageUnsubscribe) {
+                this.storageUnsubscribe = storageEvents.on('tickets-updated', payload => {
+                    this.handleAccountScopeChange(payload, {
+                        external: true,
+                        ignoreMismatched: true
+                    }).catch(() => {});
+                });
+            }
+            if (!this.scopeStorageUnsubscribe) {
+                this.scopeStorageUnsubscribe = storageEvents.on(
+                    'account-scope-changed',
+                    payload => this.handleAccountScopeChange(payload, {
+                        external: true
+                    })
+                );
+            }
+
             if (!this.syncUnsubscribe) {
                 this.syncUnsubscribe = syncService.subscribe((payload) => {
-                    if (payload.event === 'blob_received' && payload.data?.type === 'tickets') {
-                        this.loadFromDatabase({ emitUpdate: true, skipBroadcast: true });
+                    if (payload.event === 'account_scope_invalidated') {
+                        this.tickets = [];
+                        this.archive = [];
+                        this.emitUpdate();
+                        return;
+                    }
+                    if (payload.event === 'account_scope_changed') {
+                        return this.handleAccountScopeChange(payload.data);
+                    }
+                    if (payload.event === 'blob_received' && (
+                        payload.data?.type === 'tickets' ||
+                        payload.data?.type === 'ticket-invalidations' ||
+                        payload.data?.type === 'ticket-invalidation'
+                    )) {
+                        return this.loadFromDatabase({
+                            emitUpdate: true,
+                            skipBroadcast: true
+                        });
                     }
                 });
             }
@@ -82,9 +131,11 @@ class TicketStore {
         if (total <= 0) return;
 
         try {
-            const alreadyMarked = !!await preferencesStore.getPreference(PREF_KEYS.hadTicketsBefore);
+            const alreadyMarked = !!await chatDB.getSetting(
+                PREF_KEYS.hadTicketsBefore
+            );
             if (!alreadyMarked) {
-                await preferencesStore.savePreference(PREF_KEYS.hadTicketsBefore, true);
+                await chatDB.saveSetting(PREF_KEYS.hadTicketsBefore, true);
             }
             this.hasMarkedTicketHistory = true;
         } catch (error) {
@@ -98,16 +149,70 @@ class TicketStore {
         }
     }
 
-    async withLock(handler) {
+    async withLock(handler, { guardScope = true } = {}) {
+        const runWithAccountLock = () => withAccountDataLock(async () => {
+            if (guardScope) {
+                await syncService.assertAccountDataAccess();
+            }
+            return handler();
+        });
         if (typeof navigator !== 'undefined' &&
             navigator.locks &&
             typeof navigator.locks.request === 'function') {
-            return navigator.locks.request(LOCK_NAME, { mode: 'exclusive' }, () => handler());
+            return navigator.locks.request(
+                LOCK_NAME,
+                { mode: 'exclusive' },
+                runWithAccountLock
+            );
         }
 
-        const run = this.lockQueue.then(handler, handler);
+        const run = this.lockQueue.then(runWithAccountLock, runWithAccountLock);
         this.lockQueue = run.catch(() => {});
         return run;
+    }
+
+    async handleAccountScopeChange(
+        payload,
+        { external = false, ignoreMismatched = false } = {}
+    ) {
+        const accountId = payload?.accountId || null;
+        if (external) {
+            if (
+                ignoreMismatched &&
+                !syncService.canAccessAccountScope(accountId)
+            ) {
+                return;
+            }
+            try {
+                await this.withLock(async () => {
+                    if (!syncService.canAccessAccountScope(accountId)) {
+                        throw new Error('Stale account-scoped ticket update');
+                    }
+                    await this.loadFromDatabase({
+                        emitUpdate: true,
+                        skipBroadcast: true
+                    });
+                });
+            } catch (error) {
+                // The scope can change while this update waits behind the
+                // account lock. A stale ticket notification must never clear
+                // the newly activated account's cache.
+                if (
+                    ignoreMismatched &&
+                    !syncService.canAccessAccountScope(accountId)
+                ) {
+                    return;
+                }
+                this.tickets = [];
+                this.archive = [];
+                this.emitUpdate();
+            }
+            return;
+        }
+        await this.loadFromDatabase({
+            emitUpdate: true,
+            skipBroadcast: true
+        });
     }
 
     splitTicketsByStatus(tickets) {
@@ -118,7 +223,8 @@ class TicketStore {
             if (!ticket || !ticket.finalized_ticket) return;
             const status = typeof ticket.status === 'string' ? ticket.status.toLowerCase() : '';
             const isArchived = status === 'archived' || status === 'consumed' || status === 'used' ||
-                ticket.used === true || !!ticket.consumed_at;
+                status === 'invalidated' || ticket.used === true || !!ticket.consumed_at ||
+                !!ticket.invalidated_at;
 
             if (isArchived) {
                 archivedTickets.push(ticket);
@@ -190,6 +296,11 @@ class TicketStore {
             }
 
             const cleaned = { ...ticket };
+            const keyId = getTicketKeyId(cleaned);
+            if (keyId && cleaned.ticket_key_id !== keyId) {
+                cleaned.ticket_key_id = keyId;
+                changed = true;
+            }
             if ('used' in cleaned) {
                 delete cleaned.used;
                 changed = true;
@@ -226,6 +337,16 @@ class TicketStore {
                 return;
             }
 
+            const status = typeof cleaned.status === 'string'
+                ? cleaned.status.toLowerCase()
+                : '';
+            if (!allowUsed && (status === 'invalidated' || !!cleaned.invalidated_at)) {
+                cleaned.status = 'invalidated';
+                archived.push(cleaned);
+                changed = true;
+                return;
+            }
+
             normalized.push(cleaned);
         });
 
@@ -246,24 +367,42 @@ class TicketStore {
         return combined;
     }
 
-    async readFromDatabase() {
+    async readFromDatabase(options = {}) {
         if (typeof chatDB === 'undefined' || !chatDB.db) {
-            return { active: [], archived: [] };
+            if (options.requireDurable) {
+                throw new Error('The local ticket database is not available.');
+            }
+            return {
+                active: [],
+                archived: [],
+                tombstones: [],
+                invalidatedKeyIds: []
+            };
         }
 
         try {
-            const [active, archived] = await Promise.all([
+            const [active, archived, tombstones, invalidatedKeyIds] = await Promise.all([
                 chatDB.getSetting(DB_ACTIVE_KEY),
-                chatDB.getSetting(DB_ARCHIVE_KEY)
+                chatDB.getSetting(DB_ARCHIVE_KEY),
+                chatDB.getSetting(DB_TOMBSTONES_KEY),
+                chatDB.getSetting(DB_INVALIDATED_KEYS_KEY)
             ]);
 
             return {
                 active: Array.isArray(active) ? active : [],
-                archived: Array.isArray(archived) ? archived : []
+                archived: Array.isArray(archived) ? archived : [],
+                tombstones: Array.isArray(tombstones) ? tombstones : [],
+                invalidatedKeyIds: normalizeInvalidatedTicketKeyIds(invalidatedKeyIds)
             };
         } catch (error) {
             console.warn('Failed to load tickets from IndexedDB:', error);
-            return { active: [], archived: [] };
+            if (options.requireDurable) throw error;
+            return {
+                active: [],
+                archived: [],
+                tombstones: [],
+                invalidatedKeyIds: []
+            };
         }
     }
 
@@ -272,18 +411,48 @@ class TicketStore {
         if (typeof chatDB !== 'undefined' && chatDB.db) {
             try {
                 if (typeof chatDB.saveSettings === 'function') {
-                    await chatDB.saveSettings([
+                    const entries = [
                         { key: DB_ACTIVE_KEY, value: activeTickets },
                         { key: DB_ARCHIVE_KEY, value: archivedTickets }
-                    ]);
+                    ];
+                    if (Array.isArray(options.tombstones)) {
+                        entries.push({
+                            key: DB_TOMBSTONES_KEY,
+                            value: options.tombstones
+                        });
+                    }
+                    if (Array.isArray(options.invalidatedKeyIds)) {
+                        entries.push({
+                            key: DB_INVALIDATED_KEYS_KEY,
+                            value: normalizeInvalidatedTicketKeyIds(options.invalidatedKeyIds)
+                        });
+                    }
+                    await chatDB.saveSettings(entries);
                 } else {
                     await chatDB.saveSetting(DB_ACTIVE_KEY, activeTickets);
                     await chatDB.saveSetting(DB_ARCHIVE_KEY, archivedTickets);
+                    if (Array.isArray(options.tombstones)) {
+                        await chatDB.saveSetting(
+                            DB_TOMBSTONES_KEY,
+                            options.tombstones
+                        );
+                    }
+                    if (Array.isArray(options.invalidatedKeyIds)) {
+                        await chatDB.saveSetting(
+                            DB_INVALIDATED_KEYS_KEY,
+                            normalizeInvalidatedTicketKeyIds(options.invalidatedKeyIds)
+                        );
+                    }
                 }
                 persisted = true;
             } catch (error) {
                 console.warn('Failed to persist tickets:', error);
+                if (options.requireDurable) throw error;
             }
+        }
+
+        if (options.requireDurable && !persisted) {
+            throw new Error('The local ticket database did not confirm the write.');
         }
 
         this.tickets = activeTickets;
@@ -293,12 +462,17 @@ class TicketStore {
             this.emitUpdate();
         }
         if (!options.skipBroadcast) {
-            storageEvents.broadcast('tickets-updated', { updatedAt: Date.now() });
+            storageEvents.broadcast('tickets-updated', {
+                accountId: syncService.getLocalAccountScope(),
+                updatedAt: Date.now()
+            });
         }
 
-        // Trigger sync on local changes (debounced)
+        // Trigger sync on local changes (debounced). Redemption paths opt out:
+        // an immediate identity-authenticated request after anonymous ticket
+        // redemption would create a direct timing correlation.
         if (!options.skipSync) {
-            syncService.triggerSync();
+            syncService.triggerTicketSync();
         }
 
         return persisted;
@@ -312,22 +486,45 @@ class TicketStore {
             }
             return;
         }
-        const { active, archived } = await this.readFromDatabase();
+        const {
+            active,
+            archived,
+            tombstones,
+            invalidatedKeyIds
+        } = await this.readFromDatabase();
         const { tickets: normalizedActive, archived: reclassified, changed } = this.normalizeTickets(active);
         const { tickets: normalizedArchive, changed: archiveChanged } = this.normalizeTickets(archived, { allowUsed: true });
-        const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
+        const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+            normalizedActive,
+            invalidatedKeyIds
+        );
+        const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+            this.mergeTickets(normalizedArchive, reclassified),
+            invalidatedKeyIds
+        );
+        const [filteredActive, mergedArchive] = await Promise.all([
+            filterTicketsByTombstones(generationFilteredActive, tombstones),
+            filterTicketsByTombstones(generationFilteredArchive, tombstones)
+        ]);
+        const invalidatedTicketsRemoved = Math.max(
+            0,
+            active.length + archived.length - filteredActive.length - mergedArchive.length
+        );
 
-        if (changed || archiveChanged || reclassified.length > 0) {
-            await this.persistTickets(normalizedActive, mergedArchive, {
+        if (changed || archiveChanged || reclassified.length > 0 || invalidatedTicketsRemoved > 0) {
+            await this.persistTickets(filteredActive, mergedArchive, {
                 skipBroadcast: options.skipBroadcast,
-                emitUpdate: options.emitUpdate
+                emitUpdate: options.emitUpdate,
+                skipSync: options.skipSync ?? options.skipBroadcast,
+                tombstones,
+                invalidatedKeyIds
             });
             return;
         }
 
-        this.tickets = normalizedActive;
-        this.archive = normalizedArchive;
-        await this.markHadTicketsBeforeIfNeeded(normalizedActive.length, normalizedArchive.length);
+        this.tickets = filteredActive;
+        this.archive = mergedArchive;
+        await this.markHadTicketsBeforeIfNeeded(filteredActive.length, mergedArchive.length);
         if (options.emitUpdate !== false) {
             this.emitUpdate();
         }
@@ -360,8 +557,24 @@ class TicketStore {
         const mergedArchive = this.mergeTickets(normalizedArchive, reclassified);
 
         const existing = await this.readFromDatabase();
-        const combinedActive = this.mergeTickets(existing.active, normalizedActive);
-        const combinedArchive = this.mergeTickets(existing.archived, mergedArchive);
+        const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+            this.mergeTickets(existing.active, normalizedActive),
+            existing.invalidatedKeyIds
+        );
+        const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+            this.mergeTickets(existing.archived, mergedArchive),
+            existing.invalidatedKeyIds
+        );
+        const [combinedActive, combinedArchive] = await Promise.all([
+            filterTicketsByTombstones(
+                generationFilteredActive,
+                existing.tombstones
+            ),
+            filterTicketsByTombstones(
+                generationFilteredArchive,
+                existing.tombstones
+            )
+        ]);
         const archivedIds = new Set(combinedArchive.map(ticket => ticket.finalized_ticket));
         const filteredActive = combinedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
 
@@ -373,12 +586,6 @@ class TicketStore {
             this.tickets = filteredActive;
             this.archive = combinedArchive;
         }
-    }
-
-    async cleanLegacyTickets() {
-        await this.withLock(async () => {
-            await this.loadFromDatabase({ emitUpdate: false, skipBroadcast: true });
-        });
     }
 
     getTickets() {
@@ -411,55 +618,170 @@ class TicketStore {
         return this.peekTickets(1)[0] || null;
     }
 
-    async addTickets(newTickets) {
+    async addTickets(newTickets, options = {}) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { active, archived } = await this.readFromDatabase();
+            const stored = await this.readFromDatabase({
+                requireDurable: options.requireDurable === true
+            });
+            const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                stored.invalidatedKeyIds
+            );
+            // Reject reintroduced ticket generations during local additions.
+            const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+                stored.active,
+                invalidatedKeyIds
+            );
+            const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+                stored.archived,
+                invalidatedKeyIds
+            );
+            const [active, archived] = await Promise.all([
+                filterTicketsByTombstones(
+                    generationFilteredActive,
+                    stored.tombstones
+                ),
+                filterTicketsByTombstones(
+                    generationFilteredArchive,
+                    stored.tombstones
+                )
+            ]);
             const { tickets } = this.normalizeTickets(newTickets);
-            const combined = this.mergeTickets(active, tickets);
-            await this.persistTickets(combined, archived);
+            const archivedValues = new Set(
+                archived.map(ticket => ticket?.finalized_ticket).filter(Boolean)
+            );
+            const eligibleTickets = tickets.filter(
+                ticket => !archivedValues.has(ticket.finalized_ticket)
+            );
+            const generationFilteredCombined = filterTicketsByInvalidatedKeyIds(
+                this.mergeTickets(active, eligibleTickets),
+                invalidatedKeyIds
+            );
+            const combined = await filterTicketsByTombstones(
+                generationFilteredCombined,
+                stored.tombstones
+            );
+            await this.persistTickets(combined, archived, {
+                tombstones: stored.tombstones,
+                invalidatedKeyIds,
+                requireDurable: options.requireDurable === true
+            });
+            if (options.requireDurable === true) {
+                const confirmed = await this.readFromDatabase({ requireDurable: true });
+                const confirmedValues = new Set(
+                    [...confirmed.active, ...confirmed.archived]
+                        .map(ticket => ticket?.finalized_ticket)
+                        .filter(Boolean)
+                );
+                if (!tickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
+                    throw new Error('The local ticket database did not round-trip every prepared ticket.');
+                }
+                this.tickets = confirmed.active;
+                this.archive = confirmed.archived;
+            }
             return combined.length;
         });
     }
-
     async clearTickets() {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { archived } = await this.readFromDatabase();
-            await this.persistTickets([], archived);
+            const {
+                active,
+                archived,
+                tombstones
+            } = await this.readFromDatabase();
+            const nextTombstones = mergeTicketTombstones(
+                tombstones,
+                await createTicketTombstones(active)
+            );
+            await this.persistTickets([], archived, {
+                tombstones: nextTombstones
+            });
         });
     }
 
     async clearAllTickets() {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            await this.persistTickets([], []);
+            const {
+                active,
+                archived,
+                tombstones
+            } = await this.readFromDatabase();
+            const nextTombstones = mergeTicketTombstones(
+                tombstones,
+                await createTicketTombstones([...active, ...archived])
+            );
+            await this.persistTickets([], [], {
+                tombstones: nextTombstones
+            });
         });
     }
 
     async setActiveTickets(newActiveTickets) {
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { archived } = await this.readFromDatabase();
+            const {
+                active,
+                archived,
+                tombstones,
+                invalidatedKeyIds
+            } = await this.readFromDatabase();
             const { tickets: normalized } = this.normalizeTickets(newActiveTickets);
-            await this.persistTickets(normalized, archived);
-            return normalized.length;
+            const generationFiltered = filterTicketsByInvalidatedKeyIds(
+                normalized,
+                invalidatedKeyIds
+            );
+            const filtered = await filterTicketsByTombstones(
+                generationFiltered,
+                tombstones
+            );
+            const retainedIds = new Set(
+                filtered.map(ticket => ticket.finalized_ticket)
+            );
+            const removed = active.filter(
+                ticket => !retainedIds.has(ticket.finalized_ticket)
+            );
+            const nextTombstones = mergeTicketTombstones(
+                tombstones,
+                await createTicketTombstones(removed)
+            );
+            await this.persistTickets(filtered, archived, {
+                tombstones: nextTombstones,
+                invalidatedKeyIds
+            });
+            return filtered.length;
         });
     }
 
     async archiveTickets(tickets, consumedAt = null) {
-        const timestamp = consumedAt || new Date().toISOString();
-        const normalized = tickets
-            .filter(ticket => ticket && ticket.finalized_ticket)
-            .map(ticket => ({
-                ...ticket,
-                consumed_at: ticket.consumed_at || timestamp
-            }));
+        return this.withLock(async () => {
+            const timestamp = consumedAt || new Date().toISOString();
+            const normalized = tickets
+                .filter(ticket => ticket && ticket.finalized_ticket)
+                .map(ticket => ({
+                    ...ticket,
+                    consumed_at: ticket.consumed_at || timestamp
+                }));
 
-        const { active, archived } = await this.readFromDatabase();
-        const merged = this.mergeTickets(archived, normalized);
-        await this.persistTickets(active, merged);
-        return merged.length;
+            const stored = await this.readFromDatabase();
+            const active = await filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(
+                    stored.active,
+                    stored.invalidatedKeyIds
+                ),
+                stored.tombstones
+            );
+            const merged = await filterTicketsByTombstones(
+                filterTicketsByInvalidatedKeyIds(
+                    this.mergeTickets(stored.archived, normalized),
+                    stored.invalidatedKeyIds
+                ),
+                stored.tombstones
+            );
+            await this.persistTickets(active, merged);
+            return merged.length;
+        });
     }
 
     async consumeTickets(count, handler, options = {}) {
@@ -472,7 +794,30 @@ class TicketStore {
 
         return this.withLock(async () => {
             await this.ensureDbReady();
-            const { active, archived } = await this.readFromDatabase();
+            const stored = await this.readFromDatabase();
+            const invalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                stored.invalidatedKeyIds
+            );
+            // Apply tombstones again at the final selection boundary as
+            // defense in depth against direct or legacy writes.
+            const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+                stored.active,
+                invalidatedKeyIds
+            );
+            const generationFilteredArchive = filterTicketsByInvalidatedKeyIds(
+                stored.archived,
+                invalidatedKeyIds
+            );
+            const [active, archived] = await Promise.all([
+                filterTicketsByTombstones(
+                    generationFilteredActive,
+                    stored.tombstones
+                ),
+                filterTicketsByTombstones(
+                    generationFilteredArchive,
+                    stored.tombstones
+                )
+            ]);
 
             if (count <= 0) {
                 const error = new Error('Ticket count must be greater than zero.');
@@ -510,7 +855,9 @@ class TicketStore {
                     ...ticket,
                     consumed_at: ticket.consumed_at || new Date().toISOString()
                 })));
-                await this.persistTickets(remaining, updatedArchive);
+                await this.persistTickets(remaining, updatedArchive, {
+                    skipSync: syncService.shouldDeferRedemptionSync()
+                });
                 return {
                     tickets: selected,
                     totalCount: active.length,
@@ -518,7 +865,51 @@ class TicketStore {
                     result
                 };
             } catch (error) {
-                if (error && error.consumeTickets) {
+                if (error?.code === 'TICKET_KEY_INVALIDATED') {
+                    const invalidatedKeyId = normalizeTicketKeyId(error.invalidatedKeyId);
+                    const activePartition = partitionTicketsByKeyId(active, invalidatedKeyId);
+                    const archivedPartition = partitionTicketsByKeyId(archived, invalidatedKeyId);
+                    const invalidatedActiveTickets = activePartition.matching;
+                    const selectedInvalidated = invalidatedActiveTickets.length > 0
+                        ? invalidatedActiveTickets
+                        : selected.filter(ticket => {
+                            const ticketKeyId = getTicketKeyId(ticket);
+                            return !invalidatedKeyId || ticketKeyId === invalidatedKeyId;
+                        });
+                    const invalidatedTokens = new Set(
+                        selectedInvalidated.map(ticket => ticket.finalized_ticket)
+                    );
+                    const updatedActive = invalidatedActiveTickets.length > 0
+                        ? activePartition.remaining
+                        : active.filter(
+                            ticket => !invalidatedTokens.has(ticket.finalized_ticket)
+                        );
+                    const updatedArchive = invalidatedKeyId
+                        ? archivedPartition.remaining
+                        : archived.filter(
+                            ticket => !invalidatedTokens.has(ticket.finalized_ticket)
+                        );
+                    const removedCount = (active.length - updatedActive.length)
+                        + (archived.length - updatedArchive.length);
+                    const currentInvalidatedKeyIds = normalizeInvalidatedTicketKeyIds(
+                        invalidatedKeyIds
+                    );
+                    const nextInvalidatedKeyIds = normalizeInvalidatedTicketKeyIds([
+                        ...currentInvalidatedKeyIds,
+                        invalidatedKeyId
+                    ]);
+                    if (
+                        removedCount > 0 ||
+                        nextInvalidatedKeyIds.length > currentInvalidatedKeyIds.length
+                    ) {
+                        await this.persistTickets(updatedActive, updatedArchive, {
+                            invalidatedKeyIds: nextInvalidatedKeyIds,
+                            skipSync: syncService.shouldDeferRedemptionSync()
+                        });
+                    }
+                    error.invalidatedTicketsRemoved = removedCount;
+                    error.remainingTickets = updatedActive.length;
+                } else if (error && error.consumeTickets) {
                     const usedTokens = Array.isArray(error.usedTokens)
                         ? error.usedTokens
                         : Array.isArray(error.usedTickets)
@@ -538,13 +929,23 @@ class TicketStore {
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
                         const updatedActive = active.filter(ticket => !usedTokenSet.has(ticket.finalized_ticket));
-                        await this.persistTickets(updatedActive, updatedArchive);
+                        await this.persistTickets(
+                            updatedActive,
+                            updatedArchive,
+                            {
+                                skipSync:
+                                    syncService.shouldDeferRedemptionSync()
+                            }
+                        );
                     } else {
                         const updatedArchive = this.mergeTickets(archived, selected.map(ticket => ({
                             ...ticket,
                             consumed_at: ticket.consumed_at || new Date().toISOString()
                         })));
-                        await this.persistTickets(remaining, updatedArchive);
+                        await this.persistTickets(remaining, updatedArchive, {
+                            skipSync:
+                                syncService.shouldDeferRedemptionSync()
+                        });
                     }
                 }
                 throw error;
@@ -559,10 +960,31 @@ class TicketStore {
             const { tickets: normalizedActive } = this.normalizeTickets(activeTickets);
             const { tickets: normalizedArchived } = this.normalizeTickets(archivedTickets, { allowUsed: true });
 
-            const { active, archived } = await this.readFromDatabase();
+            const {
+                active,
+                archived,
+                tombstones,
+                invalidatedKeyIds
+            } = await this.readFromDatabase();
 
-            const mergedActive = this.mergeTickets(active, normalizedActive);
-            const mergedArchived = this.mergeTickets(archived, normalizedArchived);
+            const generationFilteredActive = filterTicketsByInvalidatedKeyIds(
+                this.mergeTickets(active, normalizedActive),
+                invalidatedKeyIds
+            );
+            const generationFilteredArchived = filterTicketsByInvalidatedKeyIds(
+                this.mergeTickets(archived, normalizedArchived),
+                invalidatedKeyIds
+            );
+            const [mergedActive, mergedArchived] = await Promise.all([
+                filterTicketsByTombstones(
+                    generationFilteredActive,
+                    tombstones
+                ),
+                filterTicketsByTombstones(
+                    generationFilteredArchived,
+                    tombstones
+                )
+            ]);
             const archivedIds = new Set(mergedArchived.map(ticket => ticket.finalized_ticket));
             const filteredActive = mergedActive.filter(ticket => !archivedIds.has(ticket.finalized_ticket));
 

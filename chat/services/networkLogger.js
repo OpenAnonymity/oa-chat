@@ -34,6 +34,10 @@ class NetworkLogger {
      * @param {string} details.action - Specific action type for local events
      */
     logRequest(details) {
+        const sanitizedRequest = this.sanitizeRequest(details.request || {});
+        const sanitizedResponse = details.type === 'openrouter'
+            ? this.sanitizeProviderResponse(details.response || {})
+            : this.sanitizeResponse(details.response || {});
         const logEntry = {
             id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             timestamp: Date.now(),
@@ -42,9 +46,9 @@ class NetworkLogger {
             method: details.method || 'GET',
             url: details.url || '',
             status: details.status || 0,
-            request: details.request || {},
-            response: details.response || {},
-            error: details.error || null,
+            request: sanitizedRequest,
+            response: sanitizedResponse,
+            error: this.sanitizeError(details.error || null),
             message: details.message || '',
             detail: details.detail || '',
             action: details.action || '',
@@ -163,19 +167,157 @@ class NetworkLogger {
     sanitizeHeaders(headers) {
         const sanitized = { ...headers };
 
-        // Mask authorization headers
-        if (sanitized.Authorization) {
-            const auth = sanitized.Authorization;
-            if (auth.includes('Bearer')) {
-                const token = auth.split('Bearer ')[1];
-                if (token && token.length > 20) {
-                    sanitized.Authorization = `Bearer ${token.slice(0, 12)}...${token.slice(-8)}`;
-                }
+        // Tickets can remain usable after transactional rollback, so redact every
+        // authorization credential rather than assuming the request consumed it.
+        for (const headerName of ['Authorization', 'authorization']) {
+            if (!sanitized[headerName]) continue;
+            const auth = String(sanitized[headerName]);
+            if (auth.startsWith('InferenceTicket')) {
+                sanitized[headerName] = 'InferenceTicket [REDACTED]';
+            } else if (auth.startsWith('Bearer')) {
+                sanitized[headerName] = 'Bearer [REDACTED]';
+            } else {
+                sanitized[headerName] = '[REDACTED]';
             }
-            // InferenceTicket tokens are single-use and already consumed, so no need to mask them
         }
 
         return sanitized;
+    }
+
+    sanitizeRequest(request) {
+        if (!request || typeof request !== 'object') return {};
+        let body = request.body;
+        if (typeof body === 'string') {
+            try {
+                body = JSON.parse(body);
+            } catch {
+                body = '[REDACTED]';
+            }
+        }
+        return {
+            ...request,
+            headers: this.sanitizeHeaders(request.headers || {}),
+            ...(Object.prototype.hasOwnProperty.call(request, 'body')
+                ? { body: this.sanitizePayload(body, 'body') }
+                : {})
+        };
+    }
+
+    sanitizePayload(value, fieldName = '') {
+        const normalizedField = String(fieldName).replace(/[^a-z0-9]/gi, '').toLowerCase();
+        const sensitiveFields = new Set([
+            'key', 'apikey', 'token', 'accesstoken', 'clienttoken', 'sessiontoken',
+            'childkey', 'authorization', 'cookie', 'cookies', 'password', 'email',
+            'credential', 'invitationcode', 'accesscode', 'ticket', 'tickets',
+            'finalizedticket', 'finalizedtickets', 'blindedrequest', 'blindedrequests',
+            'signedresponse', 'signedresponses', 'nonce', 'nonces', 'filedata'
+        ]);
+        const contentFields = new Set(['content', 'prompt', 'input', 'text', 'response']);
+
+        if (
+            sensitiveFields.has(normalizedField)
+            || contentFields.has(normalizedField)
+            || normalizedField.endsWith('preview')
+        ) {
+            return Array.isArray(value)
+                ? value.map(() => '[REDACTED]')
+                : '[REDACTED]';
+        }
+        if (normalizedField === 'messages' && Array.isArray(value)) {
+            return value.map(message => ({
+                role: typeof message?.role === 'string' ? message.role : null,
+                content: '[REDACTED]'
+            }));
+        }
+        if (Array.isArray(value)) {
+            return value.map(item => this.sanitizePayload(item));
+        }
+        if (!value || typeof value !== 'object') {
+            return value;
+        }
+
+        return Object.fromEntries(Object.entries(value).map(([name, nested]) => [
+            name,
+            this.sanitizePayload(nested, name)
+        ]));
+    }
+
+    sanitizeError(error) {
+        if (!error) return null;
+        const status = Number(error?.status ?? error?.response?.status);
+        const code = typeof error?.code === 'string'
+            ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
+            : '';
+        const details = [];
+        if (Number.isFinite(status)) details.push(`HTTP ${status}`);
+        if (code) details.push(code);
+        return details.length > 0
+            ? `Request failed (${details.join(', ')})`
+            : 'Request failed';
+    }
+
+    sanitizeNumericMetadata(value) {
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'boolean' || value === null) return value;
+        if (Array.isArray(value)) {
+            return value
+                .map(item => this.sanitizeNumericMetadata(item))
+                .filter(item => item !== undefined);
+        }
+        if (!value || typeof value !== 'object') return undefined;
+        return Object.fromEntries(
+            Object.entries(value)
+                .map(([name, nested]) => [name, this.sanitizeNumericMetadata(nested)])
+                .filter(([, nested]) => nested !== undefined)
+        );
+    }
+
+    /**
+     * Provider responses are untrusted and may add new content-bearing fields.
+     * Retain a small operational allow-list instead of trying to enumerate every
+     * possible prompt, reasoning, citation, image, or response field.
+     */
+    sanitizeProviderResponse(response) {
+        let parsed = response;
+        if (typeof parsed === 'string') {
+            try {
+                parsed = JSON.parse(parsed);
+            } catch {
+                return {};
+            }
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+        const sanitized = {};
+        if (typeof parsed.id === 'string') {
+            sanitized.id = parsed.id.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 120);
+        }
+        if (typeof parsed.model === 'string') {
+            sanitized.model = parsed.model.replace(/[^A-Za-z0-9_./:-]/g, '').slice(0, 160);
+        }
+        if (Number.isFinite(Number(parsed.created))) sanitized.created = Number(parsed.created);
+        if (typeof parsed.status === 'string') {
+            sanitized.status = parsed.status.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80);
+        }
+        if (parsed.usage && typeof parsed.usage === 'object') {
+            sanitized.usage = this.sanitizeNumericMetadata(parsed.usage);
+        }
+        if (parsed.error) sanitized.error = this.sanitizeError(parsed.error);
+        return sanitized;
+    }
+
+    /**
+     * Clone response diagnostics while removing bearer credentials.
+     */
+    sanitizeResponse(response) {
+        if (typeof response === 'string') {
+            try {
+                return this.sanitizePayload(JSON.parse(response), 'responseEnvelope');
+            } catch {
+                return '[REDACTED]';
+            }
+        }
+        return this.sanitizePayload(response, 'responseEnvelope');
     }
 
     /**

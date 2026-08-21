@@ -21,6 +21,9 @@ const providerDirectBackend = {
     sendCompletion() {
         throw new Error('Provider Direct backend not implemented: sendCompletion');
     },
+    sendCompletionStrict() {
+        throw new Error('Provider Direct backend not implemented: sendCompletionStrict');
+    },
     streamCompletion() {
         throw new Error('Provider Direct backend not implemented: streamCompletion');
     },

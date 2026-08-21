@@ -26,12 +26,12 @@ function sanitizeModel(model) {
         return null;
     }
 
-    const name = typeof model.name === 'string' && model.name.trim() ? model.name : id;
+    const name = typeof model.name === 'string' && model.name.trim() ? model.name.trim() : id;
     const provider = typeof model.provider === 'string' && model.provider.trim()
-        ? model.provider
+        ? model.provider.trim()
         : 'Unknown';
     const category = typeof model.category === 'string' && model.category.trim()
-        ? model.category
+        ? model.category.trim()
         : 'Other models';
     const categoryPriority = Number.isFinite(model.categoryPriority) ? model.categoryPriority : 5;
 
@@ -132,4 +132,3 @@ export function saveModelCatalog(backendId, models) {
     writeCache(cache);
     return true;
 }
-
