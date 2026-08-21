@@ -1170,9 +1170,6 @@ function enhanceInlineLinks(content, messageId) {
         const enhancedLink = doc.createElement('span');
         enhancedLink.className = 'inline-link-citation';
 
-        // Get favicon URL from DuckDuckGo (privacy-friendly)
-        const faviconUrl = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-
         enhancedLink.innerHTML = ` <a href="${escapeHtmlAttribute(safeUrl)}"
             target="_blank"
             rel="noopener noreferrer"
@@ -1180,11 +1177,7 @@ function enhanceInlineLinks(content, messageId) {
             data-link-id="${escapeHtmlAttribute(linkId)}"
             data-url="${escapeHtmlAttribute(safeUrl)}"
             data-domain="${escapeHtmlAttribute(domain)}">
-            <img class="inline-link-icon"
-                 src="${escapeHtmlAttribute(faviconUrl)}"
-                 alt="${escapeHtmlAttribute(domain)}"
-                 onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block';" />
-            <svg class="inline-link-icon-fallback" style="display: none;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <svg class="inline-link-icon-fallback" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
             </svg>
             <span class="inline-link-domain">${escapeHtml(domain)}</span>
@@ -1208,30 +1201,25 @@ function buildCitationsToggleButton(citations, messageId) {
 
     const toggleId = `citations-toggle-${messageId}`;
 
-    // Get unique domains for favicons (max 4)
+    // Build local domain markers. Remote favicons would disclose response-derived
+    // domains and the browser IP before the user chooses to open a source.
     const seenDomains = new Set();
-    const uniqueFavicons = [];
+    const uniqueDomains = [];
     for (const c of citations) {
         const domain = extractDomain(c.url);
         if (!seenDomains.has(domain)) {
             seenDomains.add(domain);
-            uniqueFavicons.push({ domain, favicon: c.favicon || `https://icons.duckduckgo.com/ip3/${domain}.ico` });
-            if (uniqueFavicons.length >= 4) break;
+            uniqueDomains.push(domain);
+            if (uniqueDomains.length >= 4) break;
         }
     }
 
-    // Build stacked favicon HTML
-    const faviconsHtml = uniqueFavicons.map((f, i) => {
-        const fallbackFavicon = `https://icons.duckduckgo.com/ip3/${f.domain}.ico`;
-        const safeFavicon = sanitizeUrl(f.favicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false }) ||
-            sanitizeUrl(fallbackFavicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false });
-        if (!safeFavicon) return '';
-        return `
-        <img src="${escapeHtmlAttribute(safeFavicon)}"
-             alt="${escapeHtmlAttribute(f.domain)}"
-             class="citations-toggle-favicon"
-             style="z-index: ${uniqueFavicons.length - i};"
-             onerror="this.style.display='none';" />`;
+    const faviconsHtml = uniqueDomains.map((domain, i) => {
+        const marker = domain.charAt(0).toUpperCase() || '•';
+        return `<span class="citations-toggle-favicon"
+            title="${escapeHtmlAttribute(domain)}"
+            aria-hidden="true"
+            style="z-index: ${uniqueDomains.length - i};">${escapeHtml(marker)}</span>`;
     }).join('');
 
     return `
@@ -1299,12 +1287,9 @@ function buildCitationsSection(citations, messageId) {
             }
         }
 
-        const fallbackFavicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
         const safeCitationUrl = sanitizeUrl(citation.url, { allowData: false, allowBlob: false });
         const linkHref = safeCitationUrl || '#';
         const linkExtras = safeCitationUrl ? ' target="_blank" rel="noopener noreferrer"' : ' aria-disabled="true"';
-        const safeFavicon = sanitizeUrl(citation.favicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false }) ||
-            sanitizeUrl(fallbackFavicon, { allowRelative: false, allowHash: false, allowMailto: false, allowTel: false });
 
         // Get description/preview from content or description (enrichment), distinct from title
         let description = '';
@@ -1324,12 +1309,7 @@ function buildCitationsSection(citations, messageId) {
                data-citation-index="${displayIndex}"
                title="${escapeHtmlAttribute(citation.url)}">
                 <div class="citation-card-header">
-                    <img src="${escapeHtmlAttribute(safeFavicon || '')}"
-                         alt="${escapeHtmlAttribute(domain)}"
-                         class="citation-favicon"
-                         loading="lazy"
-                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
-                    <div class="citation-favicon-fallback">
+                    <div class="citation-favicon-fallback" style="display: flex;" aria-hidden="true">
                         ${displayIndex}
                     </div>
                     <span class="citation-domain">${escapeHtml(domain)}</span>

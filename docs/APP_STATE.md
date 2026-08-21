@@ -456,6 +456,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The preflight counts a fresh Memory key when needed plus only the selected
     lane's fresh model access, and runs before later messages are deleted.
 
+- 2026-08-21: Citation and inline-link rendering is network-silent.
+  - URL display metadata is derived locally from the hostname. The client no
+    longer sends response-derived URLs to CORS preview proxies or loads remote
+    favicons automatically.
+  - Keep source cards and inline links on local SVG/domain markers. The cited
+    origin should see the browser only after the user explicitly opens a link.
+
 - 2026-08-16: The full signed-in identity row opens the account action menu.
   - Clicking either the email/avatar row or its gear opens the same Account,
     extension-action, and Log out menu; signed-out clicks still open Account.

@@ -1,6 +1,7 @@
 /**
  * URL Metadata Service
- * Fetches and caches metadata (title, description, favicon) for URLs.
+ * Derives and caches display-safe metadata without contacting the cited origin
+ * or any third-party preview/favicon service.
  */
 
 // In-memory cache for URL metadata
@@ -32,8 +33,8 @@ function extractDomain(url) {
 }
 
 /**
- * Fetches metadata for a URL using a CORS proxy.
- * Falls back to basic metadata if fetch fails.
+ * Derives local metadata for a URL. Citation and response URLs are sensitive
+ * inference output, so rendering them must not create automatic network traffic.
  * @param {string} url - The URL to fetch metadata for
  * @returns {Promise<Object>} Metadata object with title, description, favicon, domain
  */
@@ -45,105 +46,16 @@ async function fetchUrlMetadata(url) {
 
     const domain = extractDomain(url);
 
-    // Default metadata
-    const defaultMetadata = {
+    const metadata = {
         title: domain,
-        description: url,
-        favicon: `https://icons.duckduckgo.com/ip3/${domain}.ico`,
+        description: '',
+        favicon: '',
         domain: domain,
         url: url
     };
-
-    try {
-        // Try multiple approaches for better performance
-        // First, try a faster approach using a simple HEAD request for basic info
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5 second timeout
-
-        // Use cors-anywhere alternative or allorigins as fallback
-        const proxies = [
-            `https://corsproxy.io/?${encodeURIComponent(url)}`,
-            `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`
-        ];
-
-        let response;
-        let html = '';
-        let usedProxy = null;
-
-        // Try proxies in order until one works
-        for (const proxyUrl of proxies) {
-            try {
-                response = await fetch(proxyUrl, {
-                    signal: controller.signal,
-                    credentials: 'omit',
-                    headers: {
-                        'Accept': 'text/html',
-                        'User-Agent': 'Mozilla/5.0 (compatible; LinkPreview/1.0)'
-                    }
-                });
-
-                if (response.ok) {
-                    if (proxyUrl.includes('allorigins')) {
-                        const data = await response.json();
-                        html = data.contents;
-                    } else {
-                        html = await response.text();
-                    }
-                    usedProxy = proxyUrl;
-                    break;
-                }
-            } catch (e) {
-                // Try next proxy
-                continue;
-            }
-        }
-
-        clearTimeout(timeoutId);
-
-        if (!html) {
-            throw new Error('All proxies failed');
-        }
-
-        // Parse HTML to extract metadata
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-
-        // Extract title
-        let title = doc.querySelector('meta[property="og:title"]')?.content ||
-                   doc.querySelector('meta[name="twitter:title"]')?.content ||
-                   doc.querySelector('title')?.textContent ||
-                   domain;
-
-        // Extract description
-        let description = doc.querySelector('meta[property="og:description"]')?.content ||
-                         doc.querySelector('meta[name="twitter:description"]')?.content ||
-                         doc.querySelector('meta[name="description"]')?.content ||
-                         '';
-
-        // Extract favicon - always use Google's favicon service for consistency
-        // This is more reliable than trying to parse from HTML
-        let favicon = `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-
-        const metadata = {
-            title: title.trim().substring(0, 100),
-            description: description.trim().substring(0, 200),
-            favicon: favicon,
-            domain: domain,
-            url: url
-        };
-
-        // Cache the result
-        ensureCacheSize();
-        metadataCache.set(url, metadata);
-
-        return metadata;
-    } catch (error) {
-        console.debug('Failed to fetch metadata for', url, error.message);
-        // Cache the default metadata to avoid repeated failed requests
-        ensureCacheSize();
-        metadataCache.set(url, defaultMetadata);
-        return defaultMetadata;
-    }
+    ensureCacheSize();
+    metadataCache.set(url, metadata);
+    return metadata;
 }
 
 /**
@@ -183,7 +95,7 @@ function addToCache(url, metadata) {
     metadataCache.set(url, {
         title: metadata.title || extractDomain(url),
         description: metadata.description || '',
-        favicon: metadata.favicon || `https://icons.duckduckgo.com/ip3/${extractDomain(url)}.ico`,
+        favicon: '',
         domain: metadata.domain || extractDomain(url),
         url: url
     });
@@ -197,4 +109,3 @@ export {
     getFromCache,
     addToCache
 };
-
