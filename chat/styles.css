@@ -2291,6 +2291,12 @@ a.quick-ask-source:focus-visible {
     border: 1.5px solid hsl(var(--color-background));
     margin-right: -6px;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.55rem;
+    font-weight: 700;
 }
 
 .citations-toggle-favicon:last-child {

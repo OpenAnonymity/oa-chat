@@ -1607,8 +1607,9 @@ class ChatApp {
             const title = content.querySelector('.link-preview-title');
             const description = content.querySelector('.link-preview-description');
 
-            favicon.src = metadata.favicon || '';
-            favicon.alt = metadata.domain || '';
+            favicon.removeAttribute('src');
+            favicon.alt = '';
+            favicon.hidden = true;
             domain.textContent = metadata.domain || '';
             title.textContent = metadata.title || metadata.domain || '';
             description.textContent = metadata.description || '';
@@ -1713,7 +1714,8 @@ class ChatApp {
             this.showLinkPreview(linkButton, { loading: true });
 
             try {
-                // Fetch metadata
+                // Derive display metadata locally. This must not fetch the cited URL
+                // or contact a remote preview/favicon service.
                 const metadata = await fetchUrlMetadata(url);
 
                 // Check if we're still hovering this link
@@ -6166,7 +6168,7 @@ class ChatApp {
                 await chatDB.saveMessage(streamingMessage);
                 await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
-                // Fetch metadata for citations asynchronously and update UI
+                // Derive citation metadata locally and update UI.
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
                     this.enrichCitationsAndUpdateUI(streamingMessage);
                 }
@@ -6876,7 +6878,7 @@ class ChatApp {
                 await chatDB.saveMessage(streamingMessage);
                 await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
-                // Fetch metadata for citations asynchronously and update UI
+                // Derive citation metadata locally and update UI.
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
                     this.enrichCitationsAndUpdateUI(streamingMessage);
                 }
@@ -9576,17 +9578,17 @@ class ChatApp {
     }
 
     /**
-     * Enriches citations with metadata and updates the UI.
+     * Enriches citations with locally derived metadata and updates the UI.
      * @param {Object} message - The message containing citations
      */
     async enrichCitationsAndUpdateUI(message) {
         if (!message.citations || message.citations.length === 0) return;
 
         try {
-            // Import the URL metadata service
+            // Import the local-only URL metadata service.
             const { fetchUrlMetadata } = await import('./services/urlMetadata.js');
 
-            // Fetch metadata for all citations in parallel
+            // Derive metadata for all citations without network requests.
             const metadataPromises = message.citations.map(citation =>
                 fetchUrlMetadata(citation.url)
                     .then(metadata => {

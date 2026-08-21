@@ -120,6 +120,11 @@ station, and verifier do not receive any of these prompts or responses. Browser
 activity logs retain only operational metadata and redact
 prompt/response content at the logging sink.
 
+Response rendering also remains inside this boundary. Citation and inline-link
+domains are derived locally; the client does not automatically send response URLs
+to preview proxies, favicon services, or cited origins. A source origin sees the
+browser only after the user explicitly opens that link.
+
 ### 4. Key verification (verifier)
 
 The client submits the key to the verifier for station compliance verification:
