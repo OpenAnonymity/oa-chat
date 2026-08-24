@@ -754,18 +754,16 @@ class NetworkProxy {
                 throw error;
             }
 
-            // Silently disable proxy and auto-retry with direct fetch
-            // Use synchronous state update to avoid race conditions with parallel requests
-            console.warn('[networkProxy.fetch] Proxy failed, silently disabling and retrying direct:', url?.substring(0, 100));
-            this.state.settings.enabled = false;
+            // Fall back for this request only. Keeping the relay enabled means
+            // later requests can retry it instead of silently remaining direct.
+            console.warn('[networkProxy.fetch] Proxy failed, retrying direct for this request:', url?.substring(0, 100));
             this.state.fallbackActive = true;
-            await this.saveSettings(this.state.settings);
+            const directRequest = fetch(resource, { ...init, credentials: 'omit' });
 
             // Emit change to update UI to show failure status
             this.emitChange();
 
-            // Use credentials: 'omit' to prevent third-party cookie storage
-            return fetch(resource, { ...init, credentials: 'omit' });
+            return directRequest;
         }
     }
 
