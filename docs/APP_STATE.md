@@ -4,6 +4,17 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-24: Live ticket pricing and non-blocking relay fallback
+
+- Key acquisition waits for the live model-ticket map before selecting tickets,
+  including the synthetic `openrouter/auto` price. A failed refresh remains
+  retryable and fails the send clearly instead of redeeming cached or heuristic
+  ticket counts; stopping a send also cancels this wait promptly.
+- If the encrypted relay fails, only that request retries directly. No
+  account-scoped proxy preference is written, so an account sync lock cannot
+  leave the UI stuck on `Requesting ephemeral key`, and later requests still
+  retry the relay instead of remaining silently direct.
+
 ## 2026-08-14: Public core and private commercial composition
 
 - Stripe presentation, Checkout orchestration, top-up state, and subscription

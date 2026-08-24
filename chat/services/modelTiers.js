@@ -22,6 +22,9 @@ const eventTarget = new EventTarget();
  * Value: ticket cost
  */
 let modelTickets = {};
+let initializationPromise = null;
+let cacheLoaded = false;
+let livePricingReady = false;
 
 /**
  * Patterns for detecting model characteristics when not explicitly tiered.
@@ -56,6 +59,9 @@ const PREMIUM_PATTERNS = [
  * Load cached data from localStorage.
  */
 function loadCache() {
+    if (cacheLoaded) return;
+    cacheLoaded = true;
+
     try {
         const cache = localStorage.getItem(CACHE_KEY);
         if (cache) {
@@ -111,17 +117,78 @@ async function fetchModelTickets() {
  * Loads from cache immediately, then fetches fresh data in background.
  * Call this early in app init (non-blocking).
  */
-export async function initModelTiers() {
+export function initModelTiers() {
+    if (livePricingReady) return Promise.resolve(true);
+    if (initializationPromise) return initializationPromise;
+
     // Load cached data first (synchronous, fast)
     loadCache();
 
-    // Fetch fresh data in background
-    const ticketsData = await fetchModelTickets();
+    initializationPromise = (async () => {
+        const ticketsData = await fetchModelTickets();
 
-    if (ticketsData && typeof ticketsData === 'object') {
-        modelTickets = ticketsData;
-        saveCache(ticketsData);
-        eventTarget.dispatchEvent(new CustomEvent('update'));
+        const hasValidTicketMap = ticketsData
+            && typeof ticketsData === 'object'
+            && !Array.isArray(ticketsData)
+            && Object.keys(ticketsData).length > 0
+            && Object.values(ticketsData).every(
+                tickets => Number.isSafeInteger(tickets) && tickets > 0
+            );
+
+        if (hasValidTicketMap) {
+            modelTickets = ticketsData;
+            saveCache(ticketsData);
+            livePricingReady = true;
+            eventTarget.dispatchEvent(new CustomEvent('update'));
+            return true;
+        }
+
+        return false;
+    })().finally(() => {
+        // A failed refresh must remain retryable. Cached and heuristic prices
+        // are display hints only and must never authorize ticket redemption.
+        if (!livePricingReady) initializationPromise = null;
+    });
+
+    return initializationPromise;
+}
+
+function createPricingAbortError() {
+    const error = new Error('Model pricing request aborted');
+    error.name = 'AbortError';
+    error.isUserAbort = true;
+    return error;
+}
+
+async function waitForInitialization(promise, signal) {
+    if (!signal) return promise;
+    if (signal.aborted) throw createPricingAbortError();
+
+    let abortHandler;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                abortHandler = () => reject(createPricingAbortError());
+                signal.addEventListener('abort', abortHandler, { once: true });
+            })
+        ]);
+    } finally {
+        if (abortHandler) signal.removeEventListener('abort', abortHandler);
+    }
+}
+
+/**
+ * Wait for the live org pricing map before selecting tickets for a key request.
+ * The app starts initialization in the background, so this usually resolves
+ * immediately while preventing an early send from using stale fallback costs.
+ */
+export async function ensureModelTiersReady({ signal = null } = {}) {
+    const ready = await waitForInitialization(initModelTiers(), signal);
+    if (!ready) {
+        const error = new Error('Live model pricing is unavailable. Please try again.');
+        error.code = 'MODEL_TIER_CONFIG_UNAVAILABLE';
+        throw error;
     }
 }
 

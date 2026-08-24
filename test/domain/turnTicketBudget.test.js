@@ -55,3 +55,15 @@ test('Parallel lane regeneration preflights Memory with only that lane', () => {
         'preflight must run before later messages are deleted'
     );
 });
+
+test('pricing readiness failures block the turn with actionable UI and preserve unexpected errors', () => {
+    const source = fs.readFileSync('chat/app.js', 'utf8');
+    const start = source.indexOf('async preflightTurnTicketBudget(');
+    const end = source.indexOf('\n    async ', start + 20);
+    const method = source.slice(start, end);
+
+    assert.match(method, /error\?\.code !== 'MODEL_TIER_CONFIG_UNAVAILABLE'\) throw error/);
+    assert.match(method, /Ticket pricing is temporarily unavailable\. Please try again\./);
+    assert.match(method, /this\.showToast\(message, 'error', 7000\)/);
+    assert.match(method, /this\.floatingPanel\?\.showMessage\?\.\(message, 'error', 7000\)/);
+});

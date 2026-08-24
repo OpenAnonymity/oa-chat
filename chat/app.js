@@ -26,7 +26,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
-import { getTicketCost, initModelTiers } from './services/modelTiers.js';
+import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import sessionService from './services/sessionService.js';
@@ -4146,8 +4146,10 @@ class ChatApp {
         return getTicketCost(modelId, reasoningEnabled);
     }
 
-    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null } = {}) {
+    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
+
+        await ensureModelTiersReady({ signal });
 
         if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
             try {
@@ -4212,7 +4214,17 @@ class ChatApp {
             && !hasValidMemoryKey(session)
             ? CONFIDENTIAL_KEY_TICKETS
             : 0;
-        const inference = await this.getFreshInferenceTicketRequirement(session, options);
+        let inference;
+        try {
+            inference = await this.getFreshInferenceTicketRequirement(session, options);
+        } catch (error) {
+            if (error?.code !== 'MODEL_TIER_CONFIG_UNAVAILABLE') throw error;
+
+            const message = 'Ticket pricing is temporarily unavailable. Please try again.';
+            this.showToast(message, 'error', 7000);
+            this.floatingPanel?.showMessage?.(message, 'error', 7000);
+            return false;
+        }
         const budget = buildTurnTicketBudget({
             availableTickets: ticketClient.getTicketCount(),
             inferenceTickets: inference.tickets,
@@ -10061,6 +10073,8 @@ Your API key has been cleared. A new key from a different station will be obtain
     }
 
     async acquireAndSetAccess(session, options = {}) {
+        this.throwIfAborted(options.signal || null);
+        await ensureModelTiersReady({ signal: options.signal || null });
         this.throwIfAborted(options.signal || null);
         const key = this.getAccessAcquisitionKey(session, options.modelNameOverride, options.modelIdOverride);
         let entry = this.accessAcquisitionInFlight.get(key);
