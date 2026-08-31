@@ -12,9 +12,23 @@ ticket, station, verifier, and inference paths as ordinary Chat.
   settle, a separately selected synthesis model receives the canonical chat
   context plus the anonymous first-stage responses and writes one review.
 
-Parallel is session-scoped. A new chat always starts in Chat mode unless the
-user explicitly enables Parallel in that empty composer; remembered lane model
-choices do not enable extra requests by themselves.
+Parallel is selected explicitly and the latest Chat/Parallel composer choice is
+remembered across new chats and newly opened browser tabs/windows. If the user
+opens a new view while Parallel is selected, its empty composer starts in
+Parallel with the remembered lane models. Switching back to Chat updates that
+preference, so later views start in Chat. Merely opening the view never spends
+tickets; requests begin only after the user submits a prompt. The preference
+uses a versioned setting and is written only by an explicit mode choice, so an
+obsolete legacy value or a model change in another tab cannot silently switch
+future views into Parallel.
+
+Selecting Parallel keeps the normal transcript width while the user chooses
+models. When a turn with multiple models is submitted, the transcript expands
+to the same `66rem` maximum used by the manual wide-view control before the
+prompt and response lanes appear. This avoids a premature layout jump while
+still reserving enough space for two responses. The session remains wide after
+the turn so its Parallel transcript stays stable; the existing width control
+can collapse it after returning to a single-model layout.
 
 The persisted session uses `responseMode`, `councilConfig`, and lane-scoped
 `councilAccess` entries for `primary`, `secondary`, and `synthesis`. Existing

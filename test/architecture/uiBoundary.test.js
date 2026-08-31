@@ -467,8 +467,7 @@ test('parallel layout stays wide for transcripts and forks with council output',
     assert.equal(appSource.includes('messageUsesCouncilLayout(message)'), true);
     assert.equal(appSource.includes('messagesUseCouncilLayout(messages = [])'), true);
     assert.equal(appSource.includes('session?.hasCouncilLayoutPreference === true'), true);
-    assert.equal(appSource.includes('const isPendingCouncilLayoutPreference = !session'), true);
-    assert.equal(appSource.includes('this.pendingCouncilLayoutPreference === true'), true);
+    assert.equal(appSource.includes('pendingCouncilLayoutPreference'), false);
     assert.equal(appSource.includes('session?.hasCouncilTranscript === true'), true);
     assert.equal(appSource.includes('shouldUpdateCouncilLayoutForSession(session)'), true);
     assert.equal(appSource.includes('recomputeSessionCouncilTranscriptHint(session, messages = null, options = {})'), true);
@@ -489,9 +488,18 @@ test('parallel layout stays wide for transcripts and forks with council output',
         'forks should preserve the wide-layout hint when copied messages include Parallel/Council output'
     );
     assert.equal(
-        appSource.includes('session.hasCouncilLayoutPreference = true;'),
+        appSource.includes('async activateCouncilLayoutForSubmittedTurn(session = this.getCurrentSession())'),
         true,
-        'turning Parallel on should make the wider layout sticky for the session'
+        'submitting a multi-model Parallel turn should activate the wider layout'
+    );
+    const councilModeSetter = appSource.slice(
+        appSource.indexOf('async setCouncilModeForCurrentSession(options = {})'),
+        appSource.indexOf('getPendingCouncilConfig()')
+    );
+    assert.equal(
+        councilModeSetter.includes('session.hasCouncilLayoutPreference = true;'),
+        false,
+        'selecting Parallel should not widen the transcript before a turn is sent'
     );
     assert.equal(
         appSource.includes('hasCouncilLayoutPreference: session.hasCouncilLayoutPreference === true'),
@@ -514,14 +522,14 @@ test('parallel layout stays wide for transcripts and forks with council output',
         'Council regenerate pruning should recompute the persisted transcript layout hint'
     );
     assert.equal(
-        styles.includes('html.wide-mode #messages-container {\n    --messages-max-width: min(92vw, 82rem);'),
+        styles.includes('html.wide-mode #messages-container {\n    --messages-max-width: 66rem;'),
         true,
-        'manual wide mode should use the same message width as Parallel/Council layout'
+        'manual wide mode should match the production 66rem transcript cap'
     );
     assert.equal(
-        styles.includes('html.council-layout-mode #messages-container {\n    --messages-max-width: min(92vw, 82rem);'),
+        styles.includes('html.council-layout-mode #messages-container {\n    --messages-max-width: 66rem;'),
         true,
-        'Parallel/Council layout should stay aligned with manual wide mode width'
+        'Parallel/Council layout should share the production 66rem cap'
     );
     assert.equal(
         styles.includes('max-width: min(100%, var(--message-reading-width, 44rem));'),
@@ -531,15 +539,30 @@ test('parallel layout stays wide for transcripts and forks with council output',
     assert.equal(appSource.includes('councilLayoutRequiresMultipleColumns(session'), true);
     assert.equal(appSource.includes("btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view')"), true);
     assert.equal(
-        appSource.includes('if (hasSession && !isMobile && !parallelRequiresWide)'),
+        appSource.includes('const parallelRequiresWide = usesParallelLayout\n            && this.councilLayoutRequiresMultipleColumns(session);'),
         true,
-        'the existing width control should stay hidden only while multiple Parallel columns require wide layout'
+        'the width control should remain available while Parallel is configured but not yet submitted'
     );
     assert.equal(
         appSource.includes('session?.councilLayoutCollapsed === true && !requiresMultipleColumns'),
         true,
         'single-model and post-Parallel sessions should be able to collapse the sticky layout'
     );
+    assert.equal(
+        appSource.includes('session?.hasCouncilTranscript ||\n            this.isCouncilModeActive(session)'),
+        false,
+        'one-model Parallel configuration without a submitted transcript should keep the manual width toggle functional'
+    );
+
+    const sendStart = appSource.indexOf('async sendMessage()');
+    const sendEnd = appSource.indexOf('\n    async ', sendStart + 1);
+    const sendBlock = appSource.slice(sendStart, sendEnd);
+    const preflightIndex = sendBlock.indexOf('await this.preflightTurnTicketBudget(session, content)');
+    const activateIndex = sendBlock.indexOf('await this.activateCouncilLayoutForSubmittedTurn(session);');
+    const addMessageIndex = sendBlock.indexOf("await this.addMessage('user', content || '', metadata)");
+    assert.equal(preflightIndex >= 0, true);
+    assert.equal(activateIndex > preflightIndex, true, 'failed preflight must not expand Parallel layout');
+    assert.equal(addMessageIndex > activateIndex, true, 'Parallel should expand immediately before the submitted prompt renders');
 });
 
 test('composer model controls keep stable compact slots across Chat and Parallel', () => {
@@ -868,30 +891,31 @@ test('council review setting drives synthesis output mode in ChatInput', () => {
     );
 });
 
-test('new sessions default to Chat while Parallel model choices remain available', () => {
+test('new sessions and windows inherit the last explicit Chat or Parallel choice', () => {
     const appSource = read('chat/app.js');
     const chatInputSource = read('chat/components/ChatInput.js');
     const appInterfaceSource = read('chat/ui/appInterface.js');
 
-    assert.equal(appSource.includes("chatDB.getSetting('parallelModeEnabled')"), true);
+    assert.equal(appSource.includes("chatDB.getSetting('parallelModePreferenceV2')"), true);
+    assert.equal(appSource.includes("chatDB.getSetting('parallelModeEnabled')"), false);
     assert.equal(appSource.includes("chatDB.getSetting('parallelSecondaryModel')"), true);
     assert.equal(appSource.includes("chatDB.getSetting('parallelSynthesisModel')"), true);
     assert.equal(appSource.includes("chatDB.getSetting('parallelOutputMode')"), true);
-    assert.equal(appSource.includes('this.parallelModeEnabled = false;'), true);
-    assert.equal(appSource.includes("chatDB.saveSetting('parallelModeEnabled', false)"), true);
+    assert.equal(appSource.includes('this.parallelModeEnabled = savedParallelModePreferenceV2 === true;'), true);
+    assert.equal(appSource.includes("parallelModeEnabled'"), false);
     assert.equal(appSource.includes('this.parallelSecondaryModel = typeof savedParallelSecondaryModel ==='), true);
     assert.equal(appSource.includes('this.parallelOutputMode = normalizeCouncilOutputMode(savedParallelOutputMode);'), true);
     assert.equal(appSource.includes('buildPersistedParallelCouncilConfig(fallbackModelName = null)'), true);
     assert.match(
         appSource,
-        /buildPersistedParallelCouncilConfig[\s\S]*?return normalizeCouncilConfig\(\{[\s\S]*?enabled: false,/,
-        'remembered model choices must not enable Parallel for a new chat'
+        /buildPersistedParallelCouncilConfig[\s\S]*?return normalizeCouncilConfig\(\{[\s\S]*?enabled: this\.parallelModeEnabled,/,
+        'the last explicit Chat/Parallel choice should seed a fresh composer'
     );
     assert.equal(appSource.includes('applyPersistedParallelPendingConfig(fallbackModelName = null)'), true);
     assert.match(
         appSource,
-        /clearCurrentSession[\s\S]*?this\.state\.pendingModelName = normalizedSelectedModelName \|\| null;[\s\S]*?this\.applyPersistedParallelPendingConfig\(this\.state\.pendingModelName\);/,
-        'New Chat should rebuild pending Parallel config before rendering the empty composer'
+        /clearCurrentSession[\s\S]*?chatDB\.getSetting\('parallelModePreferenceV2'\)[\s\S]*?this\.parallelModeEnabled = storedParallelModePreferenceV2 === true;[\s\S]*?this\.applyPersistedParallelPendingConfig\(this\.state\.pendingModelName\);/,
+        'New Chat should refresh the latest cross-tab mode choice before rendering the empty composer'
     );
     assert.equal(
         appSource.includes('const pendingCouncilConfig = this.pendingCouncilConfig')
@@ -906,7 +930,8 @@ test('new sessions default to Chat while Parallel model choices remain available
     );
 
     assert.equal(chatInputSource.includes('async persistParallelDefaults(options = {})'), true);
-    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelModeEnabled', false)"), true);
+    assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelModePreferenceV2', enabled)"), true);
+    assert.equal(chatInputSource.includes('if (options.persistMode === true)'), true);
     assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelSecondaryModel', secondaryModel)"), true);
     assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelSynthesisModel', synthesisModel)"), true);
     assert.equal(chatInputSource.includes("this.app.data.saveSetting('parallelOutputMode', outputMode)"), true);
@@ -916,13 +941,22 @@ test('new sessions default to Chat while Parallel model choices remain available
     assert.equal(appInterfaceSource.includes("'setParallelDefaults'"), true);
     assert.match(
         chatInputSource,
-        /setCouncilModeFromComposer[\s\S]*?await this\.persistParallelDefaults\(\{/,
-        'Chat/Parallel changes should persist model choices while mode stays session-scoped'
+        /setCouncilModeFromComposer[\s\S]*?await this\.persistParallelDefaults\(\{[\s\S]*?persistMode: true/,
+        'Chat/Parallel changes should persist the explicit mode and model choices'
     );
     assert.match(
         chatInputSource,
-        /persistCouncilSelectionFromControls[\s\S]*?await this\.persistParallelDefaults\(\{/,
-        'secondary and Council model changes should persist globally'
+        /persistCouncilSelectionFromControls[\s\S]*?await this\.persistParallelDefaults\(\{[\s\S]*?outputMode[\s\S]*?\}\);/,
+        'secondary and Council model changes should persist their model defaults'
+    );
+    const selectionPersistence = chatInputSource.match(
+        /async persistCouncilSelectionFromControls\(\)[\s\S]*?\n    async selectCouncilSecondaryModel/
+    );
+    assert.ok(selectionPersistence);
+    assert.equal(
+        selectionPersistence[0].includes('persistMode:'),
+        false,
+        'model changes in a stale tab must not overwrite a newer explicit mode preference'
     );
     assert.match(
         appInterfaceSource,

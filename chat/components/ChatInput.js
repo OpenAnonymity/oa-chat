@@ -2118,7 +2118,8 @@ export default class ChatInput {
             enabled,
             members,
             synthesisModel,
-            outputMode
+            outputMode,
+            persistMode: true
         });
 
         if (!session) {
@@ -2160,14 +2161,19 @@ export default class ChatInput {
             outputMode
         });
 
-        await Promise.all([
-            // Mode is session-scoped. Keep this legacy setting false so a new
-            // chat cannot silently inherit multi-model ticket spending.
-            this.app.data.saveSetting('parallelModeEnabled', false),
+        const settingsWrites = [
             this.app.data.saveSetting('parallelSecondaryModel', secondaryModel),
             this.app.data.saveSetting('parallelSynthesisModel', synthesisModel),
             this.app.data.saveSetting('parallelOutputMode', outputMode)
-        ]);
+        ];
+        if (options.persistMode === true) {
+            // Use a versioned preference so an obsolete legacy `true` value
+            // cannot opt a user into extra model requests after an upgrade.
+            settingsWrites.push(
+                this.app.data.saveSetting('parallelModePreferenceV2', enabled)
+            );
+        }
+        await Promise.all(settingsWrites);
     }
 
     async setCouncilReviewEnabledFromSettings(enabled) {
@@ -2184,7 +2190,11 @@ export default class ChatInput {
             enabled: nextMultiModelEnabled,
             members,
             synthesisModel,
-            outputMode
+            outputMode,
+            // Enabling Council review from Chat is also an explicit switch
+            // into multi-model mode. Changes within Parallel do not rewrite a
+            // newer Chat/Parallel preference chosen in another tab.
+            persistMode: enabled && !currentlyMultiModelEnabled
         });
 
         if (!session) {

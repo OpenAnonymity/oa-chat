@@ -3017,11 +3017,11 @@ textarea:focus {
 }
 
 html.wide-mode #messages-container {
-    --messages-max-width: min(92vw, 82rem);
+    --messages-max-width: 66rem;
 }
 
 html.council-layout-mode #messages-container {
-    --messages-max-width: min(92vw, 82rem);
+    --messages-max-width: 66rem;
 }
 
 /* Wide mode button active state */

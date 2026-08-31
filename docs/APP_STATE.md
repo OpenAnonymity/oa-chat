@@ -285,6 +285,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-30: The user's explicit Chat/Parallel composer choice now persists in
+  the versioned `parallelModePreferenceV2` setting alongside the remembered lane models. A fresh chat or
+  newly opened tab/window starts in Parallel when Parallel was the last chosen
+  mode, and starts in Chat after the user switches back. Opening the view alone
+  never sends a request or spends tickets. Legacy mode flags are deliberately
+  ignored, and changing a lane/review model does not overwrite a newer explicit
+  mode choice from another tab.
+
 - 2026-08-11: Each chat session's sidebar options menu has an `Export as Markdown`
   action. It reads that session directly from local IndexedDB without switching the
   active chat, preserves message Markdown, and replaces user/model images and other
@@ -878,18 +886,20 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     controller resolve the primary lane to the default/fallback model before
     assigning the secondary lane.
     The settings menu no longer exposes duplicate legacy multi-model rows.
-    Parallel is an explicit session-level choice. Every empty New Chat composer
-    starts in Chat even if an older global `parallelModeEnabled` setting exists;
-    startup resets that setting so a historical toggle cannot trigger extra
-    requests or ticket spending in a new session. The last secondary model,
-    Council model, and Parallel/Council output mode are persisted as
+    Parallel is an explicit composer choice. A new chat/tab/window inherits the
+    last explicit Chat/Parallel choice from the versioned
+    `parallelModePreferenceV2` setting; an older global `parallelModeEnabled`
+    value is ignored so historical state cannot opt a user into extra requests.
+    Only the mode control writes the versioned preference, so model changes in
+    another tab cannot overwrite it. The last secondary model, Council model,
+    and Parallel/Council output mode are persisted as
     `parallelSecondaryModel`, `parallelSynthesisModel`, and
     `parallelOutputMode`. New single-chat sessions still keep the saved
     secondary model in their disabled `councilConfig`, so turning Parallel on in
     that session reuses the user's last secondary model instead of reverting to
     the default. The empty New Chat composer rebuilds its pending council config
-    from those persisted model defaults before rendering, but leaves the mode
-    disabled until the user explicitly selects Parallel. Composer components update
+    from those persisted model defaults and the versioned mode preference before
+    rendering. Composer components update
     the in-memory persisted defaults through `ChatApp.setParallelDefaults()`;
     direct writes like `this.app.parallelModeEnabled = ...` will fail through
     the strict component facade.
@@ -1071,22 +1081,23 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     regenerate prunes later messages before rerunning so future context cannot
     depend on the replaced answer. Canonical citation controls stay available
     with the aggregate message.
-  - Parallel/Council layout has two separate stability rules. Transcript width
-    is sticky for any session that is actively in Parallel/Council or has ever
-    entered Parallel/Council; `session.hasCouncilLayoutPreference` preserves the
-    wider layout when the user toggles back to Chat, even before a Parallel
-    response is saved. Pending no-session Parallel state can also hold this
-    preference until the first session is created, but it must not force layout
-    changes onto unrelated existing sessions. `session.hasCouncilTranscript`
+  - Parallel/Council layout has two separate stability rules. Selecting
+    Parallel changes the composer without changing transcript width. Submitting
+    a turn with more than one model sets `session.hasCouncilLayoutPreference`
+    and expands the transcript before the prompt and response lanes render.
+    That preference preserves the wider layout when the user toggles back to
+    Chat, even before a Parallel response is saved. Pending no-session Parallel
+    configuration is transferred into the first session without widening the
+    empty page; the submitted turn activates the layout. `session.hasCouncilTranscript`
     separately tracks saved `message.council` output across session switches and forks, and
     `ChatArea.render(...)` backfills/recomputes it from stored messages for
     older sessions. Regenerate, resend, prompt edit, and cancelled Council turns
     recompute the transcript hint after pruning, but they do not clear the
-    user's sticky layout preference. The manual wide-screen toggle uses the
-    same message width as Parallel/Council (`min(92vw, 82rem)`) so switching
-    modes does not make Chat wide feel narrower. The top-left manual wide-mode
-    button is hidden whenever the current session is using Parallel/Council
-    layout, because that layout already owns the wider transcript width.
+    user's sticky layout preference. The manual wide-screen toggle and
+    Parallel/Council share the production transcript cap (`66rem`) so switching
+    modes keeps a consistent readable measure. The top-left manual wide-mode
+    button remains available while Parallel is only being configured, then is
+    hidden while a submitted multi-model layout owns the wider transcript.
     Background saves may mark a non-visible session as having a council
     transcript, but root layout classes should only update for the currently
     viewed session. Composer controls are

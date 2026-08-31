@@ -302,7 +302,6 @@ class ChatApp {
         this.pendingModelAvailabilityRefresh = false;
         this.pendingTicketCode = null;
         this.pendingCouncilConfig = null;
-        this.pendingCouncilLayoutPreference = false;
         this.appRouteRoot = configureAppRouteRoot(options.routeRoot || '/');
         this.hasInitialLinkContext = this.detectInitialLinkContext();
         this.splitCodeWarningOverlay = null;
@@ -2098,7 +2097,7 @@ class ChatApp {
             chatDB.getSetting('memoryAutoInclude'),
             chatDB.getSetting('memoryAgentModel'),
             chatDB.getSetting('reasoningEffort'),
-            chatDB.getSetting('parallelModeEnabled'),
+            chatDB.getSetting('parallelModePreferenceV2'),
             chatDB.getSetting('parallelSecondaryModel'),
             chatDB.getSetting('parallelSynthesisModel'),
             chatDB.getSetting('parallelOutputMode')
@@ -2121,7 +2120,7 @@ class ChatApp {
             savedMemoryAutoInclude,
             savedMemoryAgentModel,
             savedReasoningEffort,
-            savedParallelModeEnabled,
+            savedParallelModePreferenceV2,
             savedParallelSecondaryModel,
             savedParallelSynthesisModel,
             savedParallelOutputMode
@@ -2163,13 +2162,10 @@ class ChatApp {
         this.reasoningEnabled = true;
         chatDB.saveSetting('reasoningEnabled', true).catch(() => {});
         this.reasoningEffort = normalizeReasoningEffort(savedReasoningEffort);
-        // Parallel is session-scoped and explicit. Preserve old model choices,
-        // but do not let a historical global toggle opt a new chat into extra
-        // model requests or ticket spending.
-        this.parallelModeEnabled = false;
-        if (savedParallelModeEnabled === true) {
-            chatDB.saveSetting('parallelModeEnabled', false).catch(() => {});
-        }
+        // Parallel remains explicit, but the last composer choice carries into
+        // a fresh tab/window so a user already working in Parallel does not
+        // have to re-enable it for the next conversation.
+        this.parallelModeEnabled = savedParallelModePreferenceV2 === true;
         this.parallelSecondaryModel = typeof savedParallelSecondaryModel === 'string' && savedParallelSecondaryModel.trim()
             ? savedParallelSecondaryModel.trim()
             : null;
@@ -3696,9 +3692,7 @@ class ChatApp {
             ? normalizeCouncilConfig(this.pendingCouncilConfig, modelNameForNewSession)
             : this.buildPersistedParallelCouncilConfig(modelNameForNewSession);
         const usePendingCouncilMode = pendingCouncilConfig.enabled === true;
-        const useCouncilLayoutPreference = this.pendingCouncilLayoutPreference === true || usePendingCouncilMode;
         this.pendingCouncilConfig = null;
-        this.pendingCouncilLayoutPreference = false;
         const session = {
             id: this.generateId(),
             title,
@@ -3716,8 +3710,7 @@ class ChatApp {
             memoryRetrievedContext: { version: 1, entries: [] },
             scrubberKey: null,
             scrubberKeyInfo: null,
-            searchEnabled: this.searchEnabled,
-            ...(useCouncilLayoutPreference ? { hasCouncilLayoutPreference: true } : {})
+            searchEnabled: this.searchEnabled
         };
 
         // Clear pending model since it's now part of the session
@@ -3905,16 +3898,28 @@ class ChatApp {
 
     sessionUsesCouncilLayout(session = this.getCurrentSession(), messages = null) {
         if (!COUNCIL_MODE_FEATURE_FLAG) return false;
-        const isPendingCouncilMode = !session && this.pendingCouncilConfig?.enabled === true;
-        const isPendingCouncilLayoutPreference = !session && this.pendingCouncilLayoutPreference === true;
         const requiresMultipleColumns = this.councilLayoutRequiresMultipleColumns(session);
         if (session?.councilLayoutCollapsed === true && !requiresMultipleColumns) return false;
-        return this.isCouncilModeActive(session)
-            || isPendingCouncilMode
-            || isPendingCouncilLayoutPreference
-            || session?.hasCouncilLayoutPreference === true
+        return session?.hasCouncilLayoutPreference === true
             || session?.hasCouncilTranscript === true
             || this.messagesUseCouncilLayout(messages);
+    }
+
+    async activateCouncilLayoutForSubmittedTurn(session = this.getCurrentSession()) {
+        if (!session || !this.councilLayoutRequiresMultipleColumns(session)) return false;
+
+        const changed = session.hasCouncilLayoutPreference !== true
+            || session.councilLayoutCollapsed === true;
+        session.hasCouncilLayoutPreference = true;
+        delete session.councilLayoutCollapsed;
+
+        if (this.shouldUpdateCouncilLayoutForSession(session)) {
+            this.updateCouncilLayoutMode(session);
+        }
+        if (changed) {
+            await chatDB.saveSession(session);
+        }
+        return changed;
     }
 
     shouldUpdateCouncilLayoutForSession(session) {
@@ -4003,10 +4008,6 @@ class ChatApp {
             },
             fallbackModelName
         );
-        if (requestedEnabled) {
-            session.hasCouncilLayoutPreference = true;
-            delete session.councilLayoutCollapsed;
-        }
         if (!requestedEnabled && this.councilController) {
             this.councilController.seedSessionAccessFromPrimaryLane(session);
         }
@@ -4028,9 +4029,6 @@ class ChatApp {
             || this.state.pendingModelName
             || inferenceService.getDefaultModelName();
         this.pendingCouncilConfig = normalizeCouncilConfig(config, fallbackModelName);
-        if (this.pendingCouncilConfig.enabled === true) {
-            this.pendingCouncilLayoutPreference = true;
-        }
         if (!this.state.currentSessionId) {
             this.rightPanel?.onSessionChange?.(null);
         }
@@ -4050,7 +4048,7 @@ class ChatApp {
             ? this.parallelSynthesisModel.trim()
             : primaryModel;
         return normalizeCouncilConfig({
-            enabled: false,
+            enabled: this.parallelModeEnabled,
             members: [primaryModel, secondaryModel].filter(Boolean),
             synthesisModel,
             outputMode: this.parallelOutputMode,
@@ -4077,7 +4075,6 @@ class ChatApp {
 
     applyPersistedParallelPendingConfig(fallbackModelName = null) {
         this.pendingCouncilConfig = this.buildPersistedParallelCouncilConfig(fallbackModelName);
-        this.pendingCouncilLayoutPreference = false;
         if (!this.state.currentSessionId) {
             this.rightPanel?.onSessionChange?.(null);
         }
@@ -4460,6 +4457,11 @@ class ChatApp {
             await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
         this.state.pendingModelName = normalizedSelectedModelName || null;
+        // Another open tab may have changed the explicit Chat/Parallel choice.
+        // Refresh the versioned preference before constructing this tab's next
+        // empty composer so New Chat follows the latest deliberate choice.
+        const storedParallelModePreferenceV2 = await chatDB.getSetting('parallelModePreferenceV2');
+        this.parallelModeEnabled = storedParallelModePreferenceV2 === true;
         this.cachedModelDisplayMetadata = inferenceService.getCachedModels();
         this.applyPersistedParallelPendingConfig(this.state.pendingModelName);
 
@@ -6474,6 +6476,11 @@ class ChatApp {
         // turn before either path can consume a ticket, so Memory cannot spend
         // the final ticket and leave the selected model unable to start.
         if (!await this.preflightTurnTicketBudget(session, content)) return;
+
+        // Keep the composer at normal reading width while Parallel is being
+        // configured. Expand only once a multi-model turn is actually sent,
+        // before its prompt and response lanes render.
+        await this.activateCouncilLayoutForSubmittedTurn(session);
 
         this.reserveAccessAcquisitionHandoff(session);
         this.chatArea?.closeQuickAskWindow?.();
@@ -8706,7 +8713,8 @@ class ChatApp {
         const isMobile = this.isMobileView();
         const session = this.getCurrentSession();
         const usesParallelLayout = this.sessionUsesCouncilLayout(session);
-        const parallelRequiresWide = this.councilLayoutRequiresMultipleColumns(session);
+        const parallelRequiresWide = usesParallelLayout
+            && this.councilLayoutRequiresMultipleColumns(session);
         const isWide = document.documentElement.classList.contains('wide-mode') || usesParallelLayout;
 
         if (hasSession && !isMobile && !parallelRequiresWide) {
@@ -8770,8 +8778,7 @@ class ChatApp {
         const session = this.getCurrentSession();
         const hasParallelLayoutHistory = Boolean(
             session?.hasCouncilLayoutPreference ||
-            session?.hasCouncilTranscript ||
-            this.isCouncilModeActive(session)
+            session?.hasCouncilTranscript
         );
         if (hasParallelLayoutHistory && !this.councilLayoutRequiresMultipleColumns(session)) {
             const isWide = document.documentElement.classList.contains('wide-mode') ||
