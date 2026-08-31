@@ -7,6 +7,21 @@ import accountService, {
     oauthSessionNeedsEmailRefresh
 } from '../../chat/services/accountService.js';
 
+test('account snapshot exposes only a boolean for a saved local binding', () => {
+    const originalAccountId = accountService.state.accountId;
+    const originalContinuity = accountService.localAccountContinuity;
+    try {
+        accountService.state.accountId = null;
+        accountService.localAccountContinuity = true;
+        const snapshot = accountService.getState();
+        assert.equal(snapshot.accountId, null);
+        assert.equal(snapshot.hasSavedAccountBinding, true);
+    } finally {
+        accountService.state.accountId = originalAccountId;
+        accountService.localAccountContinuity = originalContinuity;
+    }
+});
+
 test('desktop OAuth delegates browser handoff to the isolated bridge', async () => {
     const calls = [];
     const session = {

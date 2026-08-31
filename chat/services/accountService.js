@@ -667,7 +667,15 @@ class AccountService {
     }
 
     getState() {
-        return { ...this.state };
+        return {
+            ...this.state,
+            // The Account UI only needs to know whether an explicit local reset
+            // is available. Do not make rendering the recovery action depend on
+            // exposing or formatting the persisted account identifier itself.
+            hasSavedAccountBinding: Boolean(
+                this.state.accountId || this.localAccountContinuity
+            )
+        };
     }
 
     // =========================================================================

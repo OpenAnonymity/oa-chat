@@ -66,7 +66,8 @@ test('signed-out saved account exposes an explicit account-switch recovery', () 
         }
     };
     const state = {
-        accountId: '1234567890123456',
+        accountId: null,
+        hasSavedAccountBinding: true,
         sessionVerified: false,
         passkeySupported: true,
         busy: false,
@@ -92,6 +93,47 @@ test('signed-out saved account exposes an explicit account-switch recovery', () 
         const html = modal.renderAccountUI();
         assert.match(html, /Continue with Google/);
         assert.match(html, /This device remembers a signed-out OA account/);
+        assert.match(html, /id="account-forget-saved-btn"/);
+        assert.match(html, /Forget saved account/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
+test('desktop account-mismatch recovery does not depend on a visible account ID', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        getElementById() {
+            return null;
+        }
+    };
+    const state = {
+        accountId: null,
+        hasSavedAccountBinding: false,
+        sessionVerified: false,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: 'This Google account does not match the OA account saved on this device.'
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
         assert.match(html, /id="account-forget-saved-btn"/);
         assert.match(html, /Forget saved account/);
     } finally {

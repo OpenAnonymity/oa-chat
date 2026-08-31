@@ -13,6 +13,10 @@ reading code alone.
   OAuth account-binding check. The signed-out Account dialog exposes **Forget
   saved account** so switching Google identities requires an explicit local
   reset instead of silently replacing the account or weakening the check.
+  Rendering that recovery action uses the privacy-safe
+  `hasSavedAccountBinding` boolean (and the categorized mismatch failure as a
+  fallback), so it does not disappear merely because no account identifier is
+  visible in the signed-out UI.
 - The renderer-facing `sessionService` API is unchanged. Electron owns PKCE,
   custom-protocol callback handling, rotating SuperTokens header credentials,
   refresh/retry, and encrypted persistence; oa-chat never receives a token.

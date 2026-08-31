@@ -953,7 +953,14 @@ class AccountModal {
         const isBusy = state.busy;
         const action = state.action;
         const hasSignedOutSavedAccount = Boolean(
-            accountId && !state.sessionVerified
+            !state.sessionVerified &&
+            (
+                state.hasSavedAccountBinding ||
+                accountId ||
+                String(state.error || '').includes(
+                    'does not match the OA account saved on this device'
+                )
+            )
         );
         const usesIdentityLogin =
             state.googleLinked &&

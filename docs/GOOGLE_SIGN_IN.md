@@ -23,7 +23,9 @@ or entering the unlinkable-inference path. See
 - **Switching Desktop accounts:** A signed-out device still binds Google sign-in
   to its saved OA account to prevent silent identity replacement. The Account
   dialog exposes an explicit **Forget saved account** action when the user
-  intends to switch to a different Google account.
+  intends to switch to a different Google account. The action is driven by a
+  boolean saved-binding state rather than requiring the signed-out dialog to
+  display or otherwise expose the saved account identifier.
 - **Legacy SSO migration:** Accounts created by the recovery-wrapper build enter
   their five-word code once, then replace that unlock path with an encryption
   passkey.
