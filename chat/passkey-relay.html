@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; form-action http://127.0.0.1:*; base-uri 'none'; object-src 'none'">
+    <title>OA Desktop passkey</title>
+    <link rel="stylesheet" href="passkey-relay.css">
+</head>
+<body>
+    <main class="relay-card" aria-labelledby="relay-title">
+        <div id="relay-icon" class="relay-icon" aria-hidden="true">&#128273;</div>
+        <h1 id="relay-title">Unlock OA Desktop</h1>
+        <p id="relay-status" role="status" aria-live="polite">Preparing your passkey...</p>
+        <div id="relay-spinner" class="relay-spinner" aria-hidden="true"></div>
+        <button id="relay-action" type="button" hidden>Continue</button>
+    </main>
+    <script type="module" src="passkey-relay.js"></script>
+</body>
+</html>

@@ -6,7 +6,8 @@ import esbuild from 'esbuild';
 import { minify } from 'terser';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
-    resolveBuildOrgOrigin
+    resolveBuildOrgOrigin,
+    resolveBuildWebAuthnRelayUrl
 } from './buildConfig.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,6 +35,7 @@ const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
+const configuredWebAuthnRelayUrl = resolveBuildWebAuthnRelayUrl();
 const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
 if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
     throw new Error('[build] OA_ORG_SAME_ORIGIN must be exactly true or false');
@@ -319,7 +321,8 @@ const build = async () => {
                 builtAt: new Date().toISOString(),
                 orgOrigin: sameOriginOrg
                     ? 'same-origin'
-                    : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN
+                    : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN,
+                webauthnRelayUrl: configuredWebAuthnRelayUrl
             }, null, 2)
         );
     }

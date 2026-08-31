@@ -4,6 +4,23 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-31: Staging Desktop encryption-passkey relay
+
+- `/passkey-relay.html` is a static, same-origin WebAuthn bridge for OA
+  Desktop. It receives the one-use nonce, random `127.0.0.1` callback port,
+  operation, and serialized public-key options in the URL fragment, removes
+  that fragment immediately, evaluates WebAuthn in the system browser, and
+  form-posts the result only to the loopback listener.
+- The relay never calls oa-org and does not log or transmit the WebAuthn
+  assertion or PRF output. Desktop must still validate both the HTTPS relay
+  origin and one-time nonce.
+- `OA_WEBAUTHN_RELAY_URL` selects the exact relay page at build time and is
+  recorded in `dist/build.json`. Staging Desktop packages must use the stable
+  Vercel origin that also appears in oa-org's `WEBAUTHN_RP_ID` and
+  `WEBAUTHN_ORIGIN`; the production relay remains the default.
+- See [DESKTOP_PASSKEY_RELAY.md](DESKTOP_PASSKEY_RELAY.md) for the full handoff
+  and packaging contract.
+
 ## 2026-08-30: Native desktop browser sign-in
 
 - `accountService.authenticateWithOAuth(...)` uses the ordinary popup flow in
