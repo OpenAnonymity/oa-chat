@@ -9,6 +9,7 @@ import { exportChats, exportTickets } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
+import { renderMathContent } from '../services/mathRendering.js';
 
 export default class ChatArea {
     /**
@@ -718,14 +719,7 @@ export default class ChatArea {
         assistantBubble?.classList.remove('quick-ask-assistant-pending');
         this.updateQuickAskStatus(content ? '' : options.status);
         answerEl.innerHTML = this.app.processContentWithLatex(content || '');
-        renderMathInElement(answerEl, {
-            delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '\\[', right: '\\]', display: true},
-                {left: '\\(', right: '\\)', display: false}
-            ],
-            throwOnError: false
-        });
+        renderMathContent(answerEl);
         const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
         if (miniChat) {
             miniChat.scrollTop = miniChat.scrollHeight;
@@ -749,14 +743,7 @@ export default class ChatArea {
             !!options.streaming,
             this.app.processContentWithLatex.bind(this.app)
         );
-        renderMathInElement(reasoningEl, {
-            delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '\\[', right: '\\]', display: true},
-                {left: '\\(', right: '\\)', display: false}
-            ],
-            throwOnError: false
-        });
+        renderMathContent(reasoningEl);
     }
 
     updateQuickAskCitations(citations) {
@@ -1986,14 +1973,7 @@ export default class ChatArea {
      */
     renderLatex(scope = document) {
         scope.querySelectorAll('.message-content').forEach(el => {
-            renderMathInElement(el, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
-                ],
-                throwOnError: false
-            });
+            renderMathContent(el);
         });
     }
 
@@ -2214,14 +2194,7 @@ export default class ChatArea {
 
             this.patchStreamingContent(contentEl, processedContent);
             // Re-render LaTeX for the updated content
-            renderMathInElement(contentEl, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
-                ],
-                throwOnError: false
-            });
+            renderMathContent(contentEl);
             this.app.updateActivePromptScrollSpacer();
         }
     }
@@ -2274,14 +2247,7 @@ export default class ChatArea {
             `${messageId}-${laneId || 'lane'}`
         );
         this.patchStreamingContent(contentEl, processedContent);
-        renderMathInElement(contentEl, {
-            delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '\\[', right: '\\]', display: true},
-                {left: '\\(', right: '\\)', display: false}
-            ],
-            throwOnError: false
-        });
+        renderMathContent(contentEl);
         this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
@@ -2906,14 +2872,7 @@ export default class ChatArea {
             }
 
             // Render LaTeX in the reasoning content
-            renderMathInElement(reasoningContentEl, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
-                ],
-                throwOnError: false
-            });
+            renderMathContent(reasoningContentEl);
         }
 
         // Update the subtitle to show timing instead of the summary
@@ -3021,14 +2980,7 @@ export default class ChatArea {
                 // Re-run LaTeX on the replaced element
                 const contentEl = newMessageEl.querySelector('.message-content');
                 if (contentEl) {
-                    renderMathInElement(contentEl, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '\\[', right: '\\]', display: true},
-                            {left: '\\(', right: '\\)', display: false}
-                        ],
-                        throwOnError: false
-                    });
+                    renderMathContent(contentEl);
                 }
                 // Update scroll button visibility (no auto-scroll for appended messages)
                 this.app.updateActivePromptScrollSpacer();
@@ -3051,14 +3003,7 @@ export default class ChatArea {
 
                 const contentEl = newMessageEl.querySelector('.message-content');
                 if (contentEl) {
-                    renderMathInElement(contentEl, {
-                        delimiters: [
-                            {left: '$$', right: '$$', display: true},
-                            {left: '\\[', right: '\\]', display: true},
-                            {left: '\\(', right: '\\)', display: false}
-                        ],
-                        throwOnError: false
-                    });
+                    renderMathContent(contentEl);
                 }
                 this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
@@ -3093,14 +3038,7 @@ export default class ChatArea {
 
             const contentEl = newMessageEl.querySelector('.message-content');
             if (contentEl) {
-                renderMathInElement(contentEl, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '\\[', right: '\\]', display: true},
-                        {left: '\\(', right: '\\)', display: false}
-                    ],
-                    throwOnError: false
-                });
+                renderMathContent(contentEl);
             }
         }
 
@@ -3169,14 +3107,7 @@ export default class ChatArea {
                 // Remove streaming class to re-enable hover effects
                 contentEl.classList.remove('streaming');
                 contentEl.innerHTML = this.renderCompletedAssistantContent(message, message.id);
-                renderMathInElement(contentEl, {
-                    delimiters: [
-                        {left: '$$', right: '$$', display: true},
-                        {left: '\\[', right: '\\]', display: true},
-                        {left: '\\(', right: '\\)', display: false}
-                    ],
-                    throwOnError: false
-                });
+                renderMathContent(contentEl);
             }
 
             // Setup citation carousel if citations were added
@@ -3206,14 +3137,7 @@ export default class ChatArea {
 
         if (newMessageEl) {
             messageEl.parentElement.replaceChild(newMessageEl, messageEl);
-            renderMathInElement(newMessageEl, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
-                ],
-                throwOnError: false
-            });
+            renderMathContent(newMessageEl);
             this.setupCitationCarouselScroll();
         }
 

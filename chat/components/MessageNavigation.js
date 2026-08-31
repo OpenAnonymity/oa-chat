@@ -1,4 +1,6 @@
 // Message Navigation Component
+import { renderMathContent } from '../services/mathRendering.js';
+
 export default class MessageNavigation {
     constructor(app) {
         this.app = app;
@@ -188,16 +190,7 @@ export default class MessageNavigation {
 
         // Render LaTeX in the popover content
         const contentEl = popover.querySelector('.popover-content');
-        if (contentEl && typeof renderMathInElement === 'function') {
-            renderMathInElement(contentEl, {
-                delimiters: [
-                    {left: '$$', right: '$$', display: true},
-                    {left: '\\[', right: '\\]', display: true},
-                    {left: '\\(', right: '\\)', display: false}
-                ],
-                throwOnError: false
-            });
-        }
+        renderMathContent(contentEl);
 
         // Position popover to the left of navigation
         const navRect = this.container.getBoundingClientRect();

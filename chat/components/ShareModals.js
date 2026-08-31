@@ -5,6 +5,7 @@
  */
 
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
+import { renderMathContent } from '../services/mathRendering.js';
 
 // TTL preset options for segmented control
 const TTL_PRESETS = [
@@ -44,16 +45,8 @@ function processPreviewContent(text) {
  * Apply LaTeX rendering to an element's message-content children
  */
 function renderLatexInElement(container) {
-    if (typeof renderMathInElement !== 'function') return;
     container.querySelectorAll('.message-content').forEach(el => {
-        renderMathInElement(el, {
-            delimiters: [
-                {left: '$$', right: '$$', display: true},
-                {left: '\\[', right: '\\]', display: true},
-                {left: '\\(', right: '\\)', display: false}
-            ],
-            throwOnError: false
-        });
+        renderMathContent(el);
     });
 }
 

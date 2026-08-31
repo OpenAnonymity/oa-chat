@@ -285,6 +285,15 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-08-30: Math rendering accepts conservative single-dollar inline delimiters.
+  - `chat/services/mathRendering.js` is the shared KaTeX entry point for chat,
+    reasoning, Quick Ask, navigation, and share previews. Keep new message
+    surfaces on this helper so delimiter behavior does not drift.
+  - Gemini can return `$...$` despite the system prompt requesting `\(...\)`.
+    Text normalization protects valid single-dollar pairs before Markdown
+    parsing, while code/preformatted content, escaped dollars, ordinary prices,
+    and price ranges such as `$5-$10` remain literal text.
+
 - 2026-08-30: The user's explicit Chat/Parallel composer choice now persists in
   the versioned `parallelModePreferenceV2` setting alongside the remembered lane models. A fresh chat or
   newly opened tab/window starts in Parallel when Parallel was the last chosen
