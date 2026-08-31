@@ -4,6 +4,18 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-30: Native desktop browser sign-in
+
+- `accountService.authenticateWithOAuth(...)` uses the ordinary popup flow in
+  browsers and the Electron preload handoff in OA Desktop. Both paths converge
+  on the same Google session record and encryption-passkey setup/unlock logic.
+- The renderer-facing `sessionService` API is unchanged. Electron owns PKCE,
+  custom-protocol callback handling, rotating SuperTokens header credentials,
+  refresh/retry, and encrypted persistence; oa-chat never receives a token.
+- Desktop account traffic remains restricted to the configured org origin's
+  `/auth/*` and `/api/billing/*` routes. Public ticket redemption/inference
+  requests do not pass through the identity session bridge.
+
 ## 2026-08-24: Live ticket pricing and non-blocking relay fallback
 
 - Key acquisition waits for the live model-ticket map before selecting tickets,
@@ -103,6 +115,11 @@ commercial behavior is documented and tested in `oa-commercial`.
   The production build keeps that hint. `scripts/build.mjs` must preserve the
   tracked `chat/nanomem` symlink rather than copying over it and dirtying the
   source tree.
+
+Packaged OA Desktop builds may instead set `OA_ORG_ORIGIN` to an exact HTTPS
+oa-org origin. This is mutually exclusive with disposable same-origin mode and
+is recorded in `dist/build.json`; the Electron main process independently
+allowlists that origin before storing or attaching any account credentials.
 - Immutable station archives still need an empty, secret-free `station/.env`
   marker (`root:root`, mode `0444`) before service start, even when systemd
   provides the real protected environment file. See the run record before a

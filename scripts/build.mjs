@@ -4,6 +4,10 @@ import fs from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
+import {
+    DEFAULT_PRODUCTION_ORG_ORIGIN,
+    resolveBuildOrgOrigin
+} from './buildConfig.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,11 +33,15 @@ const assetsDir = path.join(outDir, 'assets');
 const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
+const configuredOrgOrigin = resolveBuildOrgOrigin();
 const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
 if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
     throw new Error('[build] OA_ORG_SAME_ORIGIN must be exactly true or false');
 }
 const sameOriginOrg = sameOriginOrgSetting === 'true';
+if (sameOriginOrg && configuredOrgOrigin) {
+    throw new Error('[build] OA_ORG_ORIGIN and OA_ORG_SAME_ORIGIN=true are mutually exclusive');
+}
 const demoVerifierBypassSetting = process.env.OA_DEMO_VERIFIER_BYPASS;
 if (demoVerifierBypassSetting && !['true', 'false'].includes(demoVerifierBypassSetting)) {
     throw new Error('[build] OA_DEMO_VERIFIER_BYPASS must be exactly true or false');
@@ -204,7 +212,9 @@ const build = async () => {
             '__DEV__': 'false',
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
             '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
-                sameOriginOrg ? '' : 'https://org.openanonymity.ai'
+                sameOriginOrg
+                    ? ''
+                    : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN
             ),
             '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
             '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting)
@@ -233,12 +243,14 @@ const build = async () => {
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
 
-    if (sameOriginOrg) {
-        // A disposable demo must not even warm production-org DNS. All org
-        // traffic is intentionally routed through the deployment origin.
+    if (sameOriginOrg || configuredOrgOrigin) {
+        // Never warm production-org DNS in a same-origin or staging build.
+        const replacement = configuredOrgOrigin
+            ? `\n    <link rel="dns-prefetch" href="${configuredOrgOrigin}">`
+            : '';
         html = html.replace(
             /\s*<link\s+rel="dns-prefetch"\s+href="https:\/\/org\.openanonymity\.ai"\s*>/g,
-            ''
+            replacement
         );
     }
 
@@ -302,7 +314,13 @@ const build = async () => {
     if (appHash) {
         await fs.writeFile(
             path.join(outDir, 'build.json'),
-            JSON.stringify({ hash: appHash, builtAt: new Date().toISOString() }, null, 2)
+            JSON.stringify({
+                hash: appHash,
+                builtAt: new Date().toISOString(),
+                orgOrigin: sameOriginOrg
+                    ? 'same-origin'
+                    : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN
+            }, null, 2)
         );
     }
 

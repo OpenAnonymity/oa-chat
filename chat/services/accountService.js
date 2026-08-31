@@ -571,6 +571,34 @@ export async function bootstrapOAuthSession(
     return fetchSession();
 }
 
+export async function bootstrapDesktopOAuthSession(
+    provider,
+    expectedAccountId,
+    {
+        bridge = window.electronAPI,
+        initializeSession = () => sessionService.init(),
+        verifySession = () => sessionService.verifySession(),
+        fetchSession = () => fetchJson(`/auth/${provider}/session`, null, {
+            method: 'GET'
+        })
+    } = {}
+) {
+    const providerConfig = getOAuthProvider(provider);
+    if (
+        bridge?.isElectron !== true ||
+        typeof bridge.authStartBrowserSignIn !== 'function'
+    ) {
+        throw new Error('Secure desktop sign-in bridge is unavailable');
+    }
+    await initializeSession();
+    await bridge.authStartBrowserSignIn(provider, expectedAccountId || null);
+    const verified = await verifySession().catch(() => false);
+    if (!verified) {
+        throw new Error(`${providerConfig.label} session could not be established`);
+    }
+    return fetchSession();
+}
+
 class AccountService {
     constructor() {
         this.state = {
@@ -1486,6 +1514,7 @@ class AccountService {
 
     async authenticateWithOAuth(provider, { link = false } = {}) {
         const providerConfig = getOAuthProvider(provider);
+        const isDesktopOAuth = window.electronAPI?.isElectron === true;
         if (this.state.busy) return null;
         if (link) {
             this.setError(
@@ -1493,13 +1522,6 @@ class AccountService {
             );
             return null;
         }
-        if (window.electronAPI?.isElectron === true) {
-            this.setError(
-                `${providerConfig.label} sign in is currently available in the web app`
-            );
-            return null;
-        }
-
         if (link && !this.state.accountId) {
             this.setError(
                 `Sign in to your OA account before connecting ${providerConfig.label}`
@@ -1509,17 +1531,20 @@ class AccountService {
 
         // Open synchronously from the click handler so popup blockers allow it,
         // before the optional asynchronous passkey step-up.
-        let popup = window.open(
-            '',
-            `oa-${provider}-auth`,
-            'popup,width=600,height=720'
-        );
-        if (!popup) {
-            this.setError(`Allow popups to continue with ${providerConfig.label}`);
-            return null;
+        let popup = null;
+        if (!isDesktopOAuth) {
+            popup = window.open(
+                '',
+                `oa-${provider}-auth`,
+                'popup,width=600,height=720'
+            );
+            if (!popup) {
+                this.setError(`Allow popups to continue with ${providerConfig.label}`);
+                return null;
+            }
+            popup.document.title = `Connecting to ${providerConfig.label}...`;
+            popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
         }
-        popup.document.title = `Connecting to ${providerConfig.label}...`;
-        popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
 
         if (link) {
             if (this.state.status !== 'unlocked') {
@@ -1556,27 +1581,34 @@ class AccountService {
                 await syncService.deactivateAccountScope(previousAccountId);
                 await syncService.clearAll();
             }
-            popup.document.title = `Connecting to ${providerConfig.label}...`;
-            popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
+            let session;
+            if (isDesktopOAuth) {
+                session = await bootstrapDesktopOAuthSession(
+                    provider,
+                    previousAccountId
+                );
+            } else {
+                popup.document.title = `Connecting to ${providerConfig.label}...`;
+                popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
 
-            const startData = await fetchJson(`/auth/${provider}/start`, {
-                mode: link ? 'link' : 'login',
-                returnOrigin: window.location.origin,
-                expectedAccountId: link ? undefined : previousAccountId || undefined
-            });
-            if (!startData.authorizationUrl) {
-                throw new Error(
-                    `${providerConfig.label} authorization URL was missing`
+                const startData = await fetchJson(`/auth/${provider}/start`, {
+                    mode: link ? 'link' : 'login',
+                    returnOrigin: window.location.origin,
+                    expectedAccountId: link ? undefined : previousAccountId || undefined
+                });
+                if (!startData.authorizationUrl) {
+                    throw new Error(
+                        `${providerConfig.label} authorization URL was missing`
+                    );
+                }
+
+                popup.location.replace(startData.authorizationUrl);
+                const completionToken = await waitForOAuthPopup(popup, provider);
+                session = await bootstrapOAuthSession(
+                    provider,
+                    completionToken
                 );
             }
-
-            popup.location.replace(startData.authorizationUrl);
-            const completionToken = await waitForOAuthPopup(popup, provider);
-
-            const session = await bootstrapOAuthSession(
-                provider,
-                completionToken
-            );
             const accountId = normalizeAccountId(session.accountId);
             if (!accountId) {
                 throw new Error(

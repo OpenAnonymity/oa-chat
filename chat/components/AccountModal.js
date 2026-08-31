@@ -722,13 +722,18 @@ class AccountModal {
         const providerLabel = this.getOAuthProviderLabel();
         switch (step) {
             case 'oauth_authorizing':
+                {
+                    const handoffLocation = window.electronAPI?.isElectron === true
+                        ? 'your browser'
+                        : 'the popup window';
                 return `
                     <div class="w-full text-center py-6">
                         <div class="w-10 h-10 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
                         <p class="text-sm font-medium text-foreground mb-1">Waiting for ${providerLabel}...</p>
-                        <p class="text-xs text-muted-foreground">Complete sign in in the popup window.</p>
+                        <p class="text-xs text-muted-foreground">Complete sign in in ${handoffLocation}.</p>
                     </div>
                 `;
+                }
 
             case 'passkey':
             case 'passkey_retry': {
@@ -836,11 +841,16 @@ class AccountModal {
     renderCreationActions(step) {
         switch (step) {
             case 'oauth_authorizing':
+                {
+                    const handoffLocation = window.electronAPI?.isElectron === true
+                        ? 'your browser'
+                        : 'the popup';
                 return `
                     <button class="w-full h-9 rounded-lg text-sm bg-muted text-muted-foreground cursor-not-allowed" type="button" disabled>
-                        Complete sign in in the popup
+                        Complete sign in in ${handoffLocation}
                     </button>
                 `;
+                }
 
             case 'passkey':
                 return `

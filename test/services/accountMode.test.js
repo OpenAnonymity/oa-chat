@@ -2,9 +2,36 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import accountService, {
+    bootstrapDesktopOAuthSession,
     inferPersistedEncryptionMode,
     oauthSessionNeedsEmailRefresh
 } from '../../chat/services/accountService.js';
+
+test('desktop OAuth delegates browser handoff to the isolated bridge', async () => {
+    const calls = [];
+    const session = {
+        accountId: '1234567890123456',
+        email: 'member@example.test'
+    };
+    const result = await bootstrapDesktopOAuthSession(
+        'google',
+        session.accountId,
+        {
+            bridge: {
+                isElectron: true,
+                authStartBrowserSignIn: async (...args) => calls.push(args)
+            },
+            initializeSession: async () => calls.push(['init']),
+            verifySession: async () => true,
+            fetchSession: async () => session
+        }
+    );
+    assert.deepEqual(calls, [
+        ['init'],
+        ['google', '1234567890123456']
+    ]);
+    assert.deepEqual(result, session);
+});
 
 test('removed SSO providers are rejected by the account service', async () => {
     await assert.rejects(

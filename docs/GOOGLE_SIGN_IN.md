@@ -16,6 +16,10 @@ or entering the unlinkable-inference path. See
   then uses the synced PRF passkey to decrypt the account master key locally.
   A browser that retains the non-extractable local keys restores without another
   passkey prompt.
+- **Desktop app:** Continue with Google opens the system browser. oa-org returns
+  a one-use code to the registered `openanonymity://auth/callback`; Electron
+  exchanges it with PKCE, then the same encryption-passkey setup/unlock flow
+  continues in the app.
 - **Legacy SSO migration:** Accounts created by the recovery-wrapper build enter
   their five-word code once, then replace that unlock path with an encryption
   passkey.
@@ -44,6 +48,9 @@ accounts' encrypted data unrecoverable even when Google authentication succeeds.
   authenticated account. `POST /auth/keyring` appends a client-produced wrapper;
   it never receives WebAuthn registration or assertion data.
 - Refresh sessions preserve the original authentication method and time.
+- The Electron renderer receives no OAuth code or rotating session token.
+  State, PKCE, code exchange, header-mode refresh, and encrypted credential
+  storage live behind the context-isolated desktop bridge.
 - `link` mode is rejected. A provider identity cannot be attached to a legacy
   account namespace with different identity and recovery semantics.
 - If the browser remembers a different local OA account, login carries it as an
@@ -74,6 +81,16 @@ GOOGLE_OAUTH_CALLBACK_URL=https://<org-host>/auth/google/callback
 GOOGLE_OAUTH_RETURN_ORIGINS=["https://<chat-host>"]
 ```
 
+Build the web client embedded in OA Desktop for the same org environment:
+
+```bash
+OA_ORG_ORIGIN=https://<org-host> npm run build
+```
+
+The value is compiled into the artifact and must be an exact HTTPS origin.
+Desktop additionally enforces its own exact allowlist in the main process, so
+renderer code cannot redirect account credentials to another service.
+
 For local development use `http://localhost:8005/auth/google/callback` as the
 authorized redirect URI. The org—not browser JavaScript—performs the code
 exchange, so a JavaScript origin is not required for the Google client.
@@ -95,3 +112,6 @@ callback remains on canonical `localhost:8005`.
    cross account scopes.
 5. Reject an unallowlisted return origin, missing/mismatched nonce, replayed
    OAuth state, every link request, and a keyring overwrite.
+6. In OA Desktop, verify the system-browser handoff returns to both a running
+   and cold-started app; reject a wrong state, wrong PKCE verifier, replayed
+   code, arbitrary callback host/path, and unallowlisted org origin.

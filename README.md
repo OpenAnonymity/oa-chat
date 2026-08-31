@@ -36,6 +36,15 @@ npm run preview
 # visit http://localhost:8080
 ```
 
+Select oa-org at build time without changing source code:
+
+```bash
+OA_ORG_ORIGIN=https://org.staging.openanonymity.ai npm run build
+```
+
+`OA_ORG_ORIGIN` must be an exact HTTPS origin (HTTP is accepted only for
+loopback development). If it is omitted, the build uses production oa-org.
+
 ### Architecture (1-minute overview)
 - `index.html` bootstraps Tailwind, Marked, KaTeX, then loads ES modules.
 - `app.js` coordinates state, components, streaming, and CRUD through `chatDB`.
