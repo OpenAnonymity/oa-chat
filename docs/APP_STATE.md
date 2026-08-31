@@ -9,6 +9,10 @@ reading code alone.
 - `accountService.authenticateWithOAuth(...)` uses the ordinary popup flow in
   browsers and the Electron preload handoff in OA Desktop. Both paths converge
   on the same Google session record and encryption-passkey setup/unlock logic.
+- Desktop preserves a saved OA account ID while signed out and sends it as an
+  OAuth account-binding check. The signed-out Account dialog exposes **Forget
+  saved account** so switching Google identities requires an explicit local
+  reset instead of silently replacing the account or weakening the check.
 - The renderer-facing `sessionService` API is unchanged. Electron owns PKCE,
   custom-protocol callback handling, rotating SuperTokens header credentials,
   refresh/retry, and encrypted persistence; oa-chat never receives a token.

@@ -648,6 +648,16 @@ class AccountModal {
         this.app?.showToast?.('Logged out', 'success');
     }
 
+    async handleForgetSavedAccount() {
+        await this.accountService.clearLocalAccount();
+        this.accountInputValue = '';
+        this.recoveryInputValue = '';
+        this.showRecoveryInput = false;
+        this.resetCreationFlow();
+        this.render();
+        this.app?.showToast?.('Saved account removed from this device', 'success');
+    }
+
     // =========================================================================
     // Render
     // =========================================================================
@@ -942,6 +952,9 @@ class AccountModal {
         const passkeySupported = state.passkeySupported;
         const isBusy = state.busy;
         const action = state.action;
+        const hasSignedOutSavedAccount = Boolean(
+            accountId && !state.sessionVerified
+        );
         const usesIdentityLogin =
             state.googleLinked &&
             state.encryptionMode !== 'LEGACY_PASSKEY';
@@ -1086,6 +1099,17 @@ class AccountModal {
                 </button>
 
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+
+                ${hasSignedOutSavedAccount ? `
+                    <div class="mt-4 pt-4 border-t border-border text-center">
+                        <p class="text-xs text-muted-foreground mb-2">
+                            This device remembers a signed-out OA account. Continue with the same Google account, or forget it before switching accounts.
+                        </p>
+                        <button id="account-forget-saved-btn" class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
+                            Forget saved account
+                        </button>
+                    </div>
+                ` : ''}
             </div>
         `;
     }
@@ -1239,6 +1263,11 @@ class AccountModal {
         const googleBtn = document.getElementById('account-google-btn');
         if (googleBtn) {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
+        }
+
+        const forgetSavedBtn = document.getElementById('account-forget-saved-btn');
+        if (forgetSavedBtn) {
+            forgetSavedBtn.onclick = () => this.handleForgetSavedAccount();
         }
 
         const connectGoogleBtn = document.getElementById('account-connect-google-btn');

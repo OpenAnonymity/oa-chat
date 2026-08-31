@@ -58,6 +58,73 @@ test('account registration offers only Google SSO', () => {
     }
 });
 
+test('signed-out saved account exposes an explicit account-switch recovery', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        getElementById() {
+            return null;
+        }
+    };
+    const state = {
+        accountId: '1234567890123456',
+        sessionVerified: false,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: 'This Google account does not match the OA account saved on this device.'
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /Continue with Google/);
+        assert.match(html, /This device remembers a signed-out OA account/);
+        assert.match(html, /id="account-forget-saved-btn"/);
+        assert.match(html, /Forget saved account/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
+test('forgetting a signed-out saved account clears only after explicit action', async () => {
+    let clearCount = 0;
+    let toast = '';
+    const modal = Object.create(AccountModal.prototype);
+    modal.accountService = {
+        async clearLocalAccount() {
+            clearCount += 1;
+        }
+    };
+    modal.accountInputValue = 'saved';
+    modal.recoveryInputValue = 'saved';
+    modal.showRecoveryInput = true;
+    modal.resetCreationFlow = () => {};
+    modal.render = () => {};
+    modal.app = { showToast(message) { toast = message; } };
+
+    await modal.handleForgetSavedAccount();
+
+    assert.equal(clearCount, 1);
+    assert.equal(modal.accountInputValue, '');
+    assert.equal(modal.recoveryInputValue, '');
+    assert.equal(modal.showRecoveryInput, false);
+    assert.equal(toast, 'Saved account removed from this device');
+});
+
 test('account service turns upstream failures into actionable Google copy', () => {
     assert.equal(
         toFriendlyOAuthError(Object.assign(new Error('Bad Gateway'), { status: 502 })),

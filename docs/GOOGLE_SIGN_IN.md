@@ -20,6 +20,10 @@ or entering the unlinkable-inference path. See
   a one-use code to the registered `openanonymity://auth/callback`; Electron
   exchanges it with PKCE, then the same encryption-passkey setup/unlock flow
   continues in the app.
+- **Switching Desktop accounts:** A signed-out device still binds Google sign-in
+  to its saved OA account to prevent silent identity replacement. The Account
+  dialog exposes an explicit **Forget saved account** action when the user
+  intends to switch to a different Google account.
 - **Legacy SSO migration:** Accounts created by the recovery-wrapper build enter
   their five-word code once, then replace that unlock path with an encryption
   passkey.
