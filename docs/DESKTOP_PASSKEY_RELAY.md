@@ -4,7 +4,33 @@ OA Desktop cannot evaluate an encryption passkey inside its `app://` renderer
 because WebAuthn credentials are scoped to a normal HTTPS relying-party origin.
 It opens a small, static page in the system browser instead.
 
-## Flow
+## Combined sign-in flow
+
+New Desktop builds negotiate flow version 2 with oa-org. When the server gate is
+enabled, one system-browser tab performs both account authentication and local
+encryption unlock:
+
+1. Desktop starts a one-use listener on a random `127.0.0.1` port and opens the
+   relay with a 128-bit nonce plus the exact same-origin Desktop authorization
+   URL in the fragment.
+2. The relay saves only the nonce, port, and creation time in tab-scoped
+   `sessionStorage`, removes the fragment, and navigates that tab through Google.
+3. After OAuth, oa-org returns the tab to the relay with an opaque, one-use
+   completion code and passkey-context token in a fragment. The relay removes
+   it immediately.
+4. The relay consumes the context from oa-org without cookies. It receives only
+   the operation, the verified email needed to label a new credential, or the
+   account's registered credential IDs.
+5. Touch ID or the passkey manager evaluates the PRF locally. The relay sends
+   the OAuth code and PRF result directly to Desktop through the nonce-bound
+   loopback listener. Desktop exchanges the PKCE-bound code, then oa-chat uses
+   the PRF output to wrap or unwrap the account master key locally.
+
+The PRF output and plaintext master key never reach oa-org. If the server does
+not negotiate flow 2, or if the combined passkey step cannot finish, Desktop
+retains the existing two-step flow below.
+
+## Legacy passkey-only flow
 
 1. Desktop starts a one-use HTTP listener on a random `127.0.0.1` port and
    creates a random nonce.
@@ -17,8 +43,9 @@ It opens a small, static page in the system browser instead.
    loopback listener. Desktop validates the request origin and nonce before
    returning the result to oa-chat.
 
-The relay has no account or org API calls. The WebAuthn assertion and PRF output
-return only to the local Desktop process and are never sent to oa-org.
+In the legacy flow the relay has no account or org API calls. In the combined
+flow its only org call atomically consumes the sanitized, account-bound context;
+the WebAuthn assertion and PRF output still return only to Desktop.
 
 ## Build configuration
 

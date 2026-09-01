@@ -151,6 +151,83 @@ async function unwrapMasterKey(wrappedKey, prfBytes) {
     return masterKey;
 }
 
+function normalizePrfBytes(value) {
+    const bytes = value instanceof Uint8Array
+        ? value
+        : typeof value === 'string'
+            ? base64ToBytes(value)
+            : null;
+    if (!bytes || bytes.length !== 32) {
+        bytes?.fill(0);
+        throw new Error('Invalid encryption passkey result');
+    }
+    return bytes;
+}
+
+function normalizePasskeyWrappers(wrappers) {
+    return (wrappers || []).filter(wrapper =>
+        wrapper?.type === 'PASSKEY' &&
+        typeof wrapper?.credentialId === 'string' &&
+        typeof wrapper?.wrappedKey === 'string'
+    );
+}
+
+/**
+ * Wrap a new master key using a PRF result already evaluated by the trusted
+ * system-browser relay. The PRF bytes are erased before this function returns.
+ */
+export async function createEncryptionKeyWrapperFromPrf(
+    masterKey,
+    credentialId,
+    prfResult
+) {
+    if (!(masterKey instanceof Uint8Array) || masterKey.length !== MASTER_KEY_LENGTH) {
+        throw new Error('Invalid account master key');
+    }
+    if (typeof credentialId !== 'string' || !credentialId) {
+        throw new Error('Invalid encryption passkey result');
+    }
+    const prfBytes = normalizePrfBytes(prfResult);
+    try {
+        return {
+            credentialId,
+            operation: 'INITIALIZE',
+            type: 'PASSKEY',
+            version: WRAPPER_VERSION,
+            wrappedKey: await wrapMasterKey(masterKey, prfBytes)
+        };
+    } finally {
+        prfBytes.fill(0);
+    }
+}
+
+/**
+ * Unwrap an existing master key using a relay-evaluated PRF result. The
+ * credential must still match the authenticated account's fetched keyring.
+ */
+export async function unlockEncryptionKeyringFromPrf(
+    wrappers,
+    credentialId,
+    prfResult
+) {
+    const passkeyWrappers = normalizePasskeyWrappers(wrappers);
+    const wrapper = passkeyWrappers.find(
+        candidate => candidate.credentialId === credentialId
+    );
+    if (!wrapper) {
+        throw new Error('The selected passkey is not registered for this account');
+    }
+    const prfBytes = normalizePrfBytes(prfResult);
+    try {
+        return {
+            credentialId,
+            masterKey: await unwrapMasterKey(wrapper.wrappedKey, prfBytes)
+        };
+    } finally {
+        prfBytes.fill(0);
+    }
+}
+
 export function isEncryptionPasskeySupported() {
     return typeof window !== 'undefined' &&
         !!window.PublicKeyCredential &&
@@ -229,28 +306,18 @@ export async function createEncryptionKeyWrapper(
         ({ prfBytes } = await requestPrf([credential.id]));
     }
 
-    try {
-        return {
-            credentialId: credential.id,
-            operation: 'INITIALIZE',
-            type: 'PASSKEY',
-            version: WRAPPER_VERSION,
-            wrappedKey: await wrapMasterKey(masterKey, prfBytes)
-        };
-    } finally {
-        prfBytes.fill(0);
-    }
+    return createEncryptionKeyWrapperFromPrf(
+        masterKey,
+        credential.id,
+        prfBytes
+    );
 }
 
 /**
  * Prompt for one of the keyring credentials and unwrap the account master key.
  */
 export async function unlockEncryptionKeyring(wrappers) {
-    const passkeyWrappers = (wrappers || []).filter(wrapper =>
-        wrapper?.type === 'PASSKEY' &&
-        typeof wrapper?.credentialId === 'string' &&
-        typeof wrapper?.wrappedKey === 'string'
-    );
+    const passkeyWrappers = normalizePasskeyWrappers(wrappers);
     if (passkeyWrappers.length === 0) {
         throw new Error('No encryption passkey is registered for this account');
     }
@@ -258,20 +325,11 @@ export async function unlockEncryptionKeyring(wrappers) {
     const { credential, prfBytes } = await requestPrf(
         passkeyWrappers.map(wrapper => wrapper.credentialId)
     );
-    try {
-        const wrapper = passkeyWrappers.find(
-            candidate => candidate.credentialId === credential.id
-        );
-        if (!wrapper) {
-            throw new Error('The selected passkey is not registered for this account');
-        }
-        return {
-            credentialId: credential.id,
-            masterKey: await unwrapMasterKey(wrapper.wrappedKey, prfBytes)
-        };
-    } finally {
-        prfBytes.fill(0);
-    }
+    return unlockEncryptionKeyringFromPrf(
+        passkeyWrappers,
+        credential.id,
+        prfBytes
+    );
 }
 
 export const ENCRYPTION_KEY_FORMAT = Object.freeze({

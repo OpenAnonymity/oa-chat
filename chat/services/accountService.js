@@ -32,7 +32,9 @@ import sessionService from './sessionService.js';
 import syncService from './encryptedSyncService.js';
 import {
     createEncryptionKeyWrapper,
-    unlockEncryptionKeyring
+    createEncryptionKeyWrapperFromPrf,
+    unlockEncryptionKeyring,
+    unlockEncryptionKeyringFromPrf
 } from './encryptionPasskey.js';
 import { withAccountDataLock } from './accountDataLock.js';
 
@@ -591,12 +593,27 @@ export async function bootstrapDesktopOAuthSession(
         throw new Error('Secure desktop sign-in bridge is unavailable');
     }
     await initializeSession();
-    await bridge.authStartBrowserSignIn(provider, expectedAccountId || null);
+    const desktopResult = await bridge.authStartBrowserSignIn(
+        provider,
+        expectedAccountId || null
+    );
     const verified = await verifySession().catch(() => false);
     if (!verified) {
         throw new Error(`${providerConfig.label} session could not be established`);
     }
-    return fetchSession();
+    const session = await fetchSession();
+    const passkey = desktopResult?.passkey;
+    if (
+        passkey
+        && (passkey.operation === 'create' || passkey.operation === 'get')
+        && typeof passkey.credentialId === 'string'
+        && passkey.credentialId
+        && typeof passkey.prf === 'string'
+        && passkey.prf
+    ) {
+        return { ...session, desktopPasskey: { ...passkey } };
+    }
+    return session;
 }
 
 class AccountService {
@@ -1695,8 +1712,25 @@ class AccountService {
             this.state.encryptionCredentialId = null;
             const keyring = await this.fetchOAuthKeyring();
             const mode = keyring.encryptionMode;
+            const desktopPasskey = isDesktopOAuth
+                ? session.desktopPasskey
+                : null;
 
             if (mode === 'PRF') {
+                if (desktopPasskey?.operation === 'get') {
+                    try {
+                        const { credentialId, masterKey } =
+                            await unlockEncryptionKeyringFromPrf(
+                                this.keyringWrappers,
+                                desktopPasskey.credentialId,
+                                desktopPasskey.prf
+                            );
+                        await this.finishOAuthKeyUnlock(masterKey, credentialId);
+                        return { status: 'unlocked', accountId };
+                    } catch {
+                        // Fall back to the existing explicit passkey control.
+                    }
+                }
                 this.state.oauthKeyringRequired = true;
                 await this.persistSettings();
                 this.updateStatus();
@@ -1722,6 +1756,35 @@ class AccountService {
                 this.updateStatus();
                 this.notify();
                 return { status: 'migration', accountId };
+            }
+
+            if (desktopPasskey?.operation === 'create') {
+                const masterKey = crypto.getRandomValues(new Uint8Array(32));
+                let wrapper = null;
+                try {
+                    wrapper = await createEncryptionKeyWrapperFromPrf(
+                        masterKey,
+                        desktopPasskey.credentialId,
+                        desktopPasskey.prf
+                    );
+                    await fetchJson('/auth/keyring', wrapper);
+                } catch {
+                    // A stale/raced context falls back to the ordinary setup UI.
+                    masterKey.fill(0);
+                    wrapper = null;
+                }
+                if (wrapper) {
+                    this.keyringWrappers = [wrapper];
+                    // The server now owns this wrapper. If local persistence or
+                    // sync fails, surface that failure instead of incorrectly
+                    // offering to create a second keyring.
+                    await this.finishOAuthKeyUnlock(
+                        masterKey,
+                        wrapper.credentialId,
+                        { newAccount: true }
+                    );
+                    return { status: 'unlocked', accountId };
+                }
             }
 
             this.state.oauthSetupRequired = true;

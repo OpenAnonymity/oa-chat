@@ -27,6 +27,12 @@ The WebAuthn registration and assertions are not sent to the org. The encryption
 passkey is not an account-authentication credential; OAuth already performed
 that job.
 
+OA Desktop can perform OAuth and this PRF evaluation in one system-browser tab.
+The relay receives a one-use server context containing only the required
+operation, passkey label, or account-bound credential IDs. It returns the PRF
+output over a nonce-bound loopback callback; oa-chat performs the same local
+wrap/unwrap operations used by the ordinary browser flow.
+
 ## Returning-device flow
 
 After OAuth authentication, the browser reads `GET /auth/keyring`, supplies the

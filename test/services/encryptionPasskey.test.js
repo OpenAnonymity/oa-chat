@@ -4,7 +4,9 @@ import { webcrypto } from 'node:crypto';
 
 import {
     createEncryptionKeyWrapper,
-    unlockEncryptionKeyring
+    createEncryptionKeyWrapperFromPrf,
+    unlockEncryptionKeyring,
+    unlockEncryptionKeyringFromPrf
 } from '../../chat/services/encryptionPasskey.js';
 
 const CREDENTIAL_ID = 'Y3JlZGVudGlhbC0x';
@@ -156,4 +158,30 @@ test('passkey creation requires an SSO email label', async () => {
     } finally {
         restore();
     }
+});
+
+test('relay-evaluated PRF wraps and unlocks only its matching account credential', async () => {
+    const masterKey = webcrypto.getRandomValues(new Uint8Array(32));
+    const expected = new Uint8Array(masterKey);
+    const prf = new Uint8Array(32).fill(23);
+    const wrapper = await createEncryptionKeyWrapperFromPrf(
+        masterKey,
+        CREDENTIAL_ID,
+        new Uint8Array(prf)
+    );
+    const unlocked = await unlockEncryptionKeyringFromPrf(
+        [wrapper],
+        CREDENTIAL_ID,
+        new Uint8Array(prf)
+    );
+    assert.deepEqual(unlocked.masterKey, expected);
+    assert.equal(unlocked.credentialId, CREDENTIAL_ID);
+    await assert.rejects(
+        unlockEncryptionKeyringFromPrf(
+            [wrapper],
+            'another-credential',
+            new Uint8Array(prf)
+        ),
+        /not registered for this account/
+    );
 });

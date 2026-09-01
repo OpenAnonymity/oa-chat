@@ -4,6 +4,22 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-08-31: One-trip Desktop Google and encryption-passkey handoff
+
+- Desktop-capable clients request flow version 2; oa-org explicitly negotiates
+  it behind a disabled-by-default gate, so existing clients and deployments
+  retain the custom-protocol plus separate-passkey flow.
+- The stable HTTPS relay keeps its random loopback port and nonce in tab-scoped
+  storage while the same tab travels through Google. oa-org returns opaque
+  one-use OAuth and passkey-context tokens in a fragment, which the relay removes
+  before consuming the context without cookies.
+- Touch ID evaluates the WebAuthn PRF in that browser tab. The PRF output goes
+  only to the local Desktop loopback listener; oa-chat validates the credential
+  against the authenticated account keyring and wraps or unwraps the master key
+  locally. oa-org never receives the PRF result or plaintext master key.
+- Passkey failure falls back to the established Desktop unlock UI after OAuth;
+  state, PKCE, exact-origin validation, and account continuity remain fail-closed.
+
 ## 2026-08-31: Staging Desktop encryption-passkey relay
 
 - `/passkey-relay.html` is a static, same-origin WebAuthn bridge for OA
@@ -11,9 +27,10 @@ reading code alone.
   operation, and serialized public-key options in the URL fragment, removes
   that fragment immediately, evaluates WebAuthn in the system browser, and
   form-posts the result only to the loopback listener.
-- The relay never calls oa-org and does not log or transmit the WebAuthn
-  assertion or PRF output. Desktop must still validate both the HTTPS relay
-  origin and one-time nonce.
+- The legacy passkey-only route never calls oa-org. The combined route consumes
+  only its one-use, sanitized context; neither route logs or transmits the
+  WebAuthn assertion or PRF output. Desktop must still validate both the HTTPS
+  relay origin and one-time nonce.
 - `OA_WEBAUTHN_RELAY_URL` selects the exact relay page at build time and is
   recorded in `dist/build.json`. Staging Desktop packages must use the stable
   Vercel origin that also appears in oa-org's `WEBAUTHN_RP_ID` and

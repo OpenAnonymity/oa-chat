@@ -16,10 +16,10 @@ or entering the unlinkable-inference path. See
   then uses the synced PRF passkey to decrypt the account master key locally.
   A browser that retains the non-extractable local keys restores without another
   passkey prompt.
-- **Desktop app:** Continue with Google opens the system browser. oa-org returns
-  a one-use code to the registered `openanonymity://auth/callback`; Electron
-  exchanges it with PKCE, then the same encryption-passkey setup/unlock flow
-  continues in the app.
+- **Desktop app:** Continue with Google opens one system-browser tab. On capable
+  deployments, that tab completes Google and then creates or unlocks the
+  encryption passkey before returning a one-use PKCE-bound code and local PRF
+  result to Desktop. Older deployments retain the two-step browser handoff.
 - **Switching Desktop accounts:** A signed-out device still binds Google sign-in
   to its saved OA account to prevent silent identity replacement. The Account
   dialog exposes an explicit **Forget saved account** action when the user

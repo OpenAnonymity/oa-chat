@@ -48,6 +48,38 @@ test('desktop OAuth delegates browser handoff to the isolated bridge', async () 
     assert.deepEqual(result, session);
 });
 
+test('desktop OAuth returns a validated relay passkey only after session verification', async () => {
+    const passkey = {
+        operation: 'get',
+        credentialId: 'credential-id',
+        prf: 'A'.repeat(43) + '='
+    };
+    const session = { accountId: '1234567890123456' };
+    const result = await bootstrapDesktopOAuthSession('google', null, {
+        bridge: {
+            isElectron: true,
+            authStartBrowserSignIn: async () => ({ success: true, passkey })
+        },
+        initializeSession: async () => {},
+        verifySession: async () => true,
+        fetchSession: async () => session
+    });
+    assert.deepEqual(result, { ...session, desktopPasskey: passkey });
+
+    await assert.rejects(
+        bootstrapDesktopOAuthSession('google', null, {
+            bridge: {
+                isElectron: true,
+                authStartBrowserSignIn: async () => ({ success: true, passkey })
+            },
+            initializeSession: async () => {},
+            verifySession: async () => false,
+            fetchSession: async () => session
+        }),
+        /session could not be established/
+    );
+});
+
 test('removed SSO providers are rejected by the account service', async () => {
     await assert.rejects(
         accountService.authenticateWithOAuth('github'),
