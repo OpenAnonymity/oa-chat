@@ -5701,13 +5701,13 @@ html {
 
 .account-settings-menu {
     position: absolute;
-    right: 0.5rem;
-    bottom: calc(100% + 0.25rem);
-    left: 0.5rem;
+    right: -0.5rem;
+    bottom: calc(100% - 0.25rem);
+    left: -0.5rem;
     z-index: 40;
-    padding: 0.35rem;
+    padding: 0.5rem 0.625rem;
     border: 1px solid hsl(var(--color-border));
-    border-radius: 0.75rem;
+    border-radius: 0.875rem;
     background: hsl(var(--color-popover, var(--color-background)));
     box-shadow: 0 12px 30px hsl(var(--color-foreground) / 0.14);
 }
@@ -5761,12 +5761,6 @@ html {
 
 .account-menu-item-danger svg {
     color: currentColor;
-}
-
-.account-menu-item-danger:hover,
-.account-menu-item-danger:focus-visible {
-    color: color-mix(in srgb, hsl(var(--color-destructive)) 50%, hsl(var(--color-foreground)));
-    background: hsl(var(--color-destructive) / 0.1);
 }
 
 .account-menu-item-danger:hover svg,

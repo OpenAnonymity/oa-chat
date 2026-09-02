@@ -47,6 +47,10 @@ reading code alone.
   reload beneath the two bordered offers; it is not presented as another card.
 - The chat search placeholder is **Search chats...**; shortcut space remains
   reserved at narrow sidebar widths.
+- The signed-in account menu is a floating popover that spans the sidebar edge
+  and overlaps the account/thread divider slightly. **Log out** uses the same
+  neutral hover surface as the other account actions; destructive color is not
+  used for hover emphasis.
 - Long conversation history settles its initial paint at the top row boundary
   and withholds one conversation that would otherwise be clipped at the bottom.
   The guard disengages permanently on the first user scroll/pointer/key
