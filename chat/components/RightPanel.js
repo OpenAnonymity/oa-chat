@@ -8,7 +8,6 @@ import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
 import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
-import { exportTickets } from '../services/globalExport.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
 import { COUNCIL_OUTPUT_SYNTHESIS } from '../domain/councilConfig.js';
@@ -796,57 +795,6 @@ class RightPanel {
                 }, 2500);
             }
         }
-    }
-
-    async handleExportTickets(options = {}) {
-        let outcome = null;
-        try {
-            const result = await exportTickets();
-            if (result.cancelled) {
-                // User cancelled - no message needed
-                outcome = Object.freeze({ cancelled: true });
-            } else if (result.success) {
-                const total = result.activeCount + result.archivedCount;
-                this.ticketCount = this.app.services.tickets.getTicketCount();
-                this.loadNextTicket();
-                this.importStatus = {
-                    type: 'success',
-                    message: `Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared local storage.`
-                };
-            } else {
-                this.importStatus = {
-                    type: 'error',
-                    message: 'Failed to export tickets.'
-                };
-            }
-            if (!outcome) {
-                outcome = Object.freeze({
-                    cancelled: false,
-                    success: result.success === true,
-                    activeCount: Number(result.activeCount || 0),
-                    archivedCount: Number(result.archivedCount || 0),
-                    ticketCount: this.ticketCount
-                });
-            }
-        } catch (error) {
-            this.importStatus = {
-                type: 'error',
-                message: error.message || 'Failed to export tickets.'
-            };
-            if (options.throwOnError) throw error;
-        } finally {
-            this.renderTopSectionOnly();
-
-            if (this.importStatus?.type === 'success') {
-                setTimeout(() => {
-                    if (this.importStatus?.type === 'success') {
-                        this.importStatus = null;
-                        this.renderTopSectionOnly();
-                    }
-                }, 2500);
-            }
-        }
-        return outcome;
     }
 
     handleSplitToggle() {
@@ -1862,7 +1810,7 @@ class RightPanel {
         this.updateStatusIndicator();
     }
 
-    generateCouncilAccessKeyPanelHTML(rows) {
+    generateCouncilAccessKeyPanelHTML(rows, { embedded = false } = {}) {
         const rowHtml = rows.map((row) => {
             const access = row.access || null;
             const hasKey = !!access?.apiKey;
@@ -1902,8 +1850,8 @@ class RightPanel {
         }).join('');
 
         return `
-            <div class="p-3">
-                <div class="mb-3">
+            <div class="${embedded ? 'pt-4' : 'p-3'}">
+                <div class="${embedded ? '' : 'mb-3'}">
                     <div class="flex items-center gap-1.5 mb-2">
                         <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
@@ -1921,10 +1869,10 @@ class RightPanel {
         `;
     }
 
-    generateSingleAccessKeyPanelHTML(hasApiKey) {
+    generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
         return hasApiKey ? `
-            <div class="p-3">
-                <div class="mb-3">
+            <div class="${embedded ? 'pt-4' : 'p-3'}">
+                <div class="${embedded ? 'mb-2' : 'mb-3'}">
                     <div class="flex items-center gap-1.5 mb-2">
                         <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
@@ -1965,7 +1913,7 @@ class RightPanel {
                     </div>
                 </div>
 
-                <div class="space-y-2 mb-3">
+                <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
 
                     ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
                         <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
@@ -1984,8 +1932,8 @@ class RightPanel {
 
             </div>
         ` : `
-            <div class="p-3">
-                <div class="mb-3">
+            <div class="${embedded ? 'pt-4' : 'p-3'}">
+                <div class="${embedded ? 'mb-2' : 'mb-3'}">
                     <div class="flex items-center gap-1.5 mb-2">
                         <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
@@ -2003,7 +1951,7 @@ class RightPanel {
                         <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
                     </div>
                 </div>
-                <div class="space-y-2 mb-3">
+                <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
                     <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
                         <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                         <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
@@ -2013,11 +1961,11 @@ class RightPanel {
         `;
     }
 
-    generateAccessKeyPanelHTML(hasApiKey) {
+    generateAccessKeyPanelHTML(hasApiKey, options = {}) {
         const councilAccessRows = this.getCouncilAccessRows();
         return councilAccessRows.length > 0
-            ? this.generateCouncilAccessKeyPanelHTML(councilAccessRows)
-            : this.generateSingleAccessKeyPanelHTML(hasApiKey);
+            ? this.generateCouncilAccessKeyPanelHTML(councilAccessRows, options)
+            : this.generateSingleAccessKeyPanelHTML(hasApiKey, options);
     }
 
     /**
@@ -2050,17 +1998,18 @@ class RightPanel {
         return `
                 ${hasExternalTicketManager ? `
                 <div class="p-3">
+                    <div class="border-b border-border/60 pb-3">
                     <div class="flex items-center gap-1.5">
                         <button
                             id="open-ticket-manager-btn"
                             type="button"
                             class="btn-ghost-hover inline-flex min-w-0 items-center gap-1.5 rounded-md text-left text-xs font-medium text-foreground transition-all duration-150"
-                            aria-label="Manage inference tickets, ${this.ticketCount} available"
+                            aria-label="${this.ticketCount === 0 ? 'Get inference tickets' : `Manage inference tickets, ${this.ticketCount} available`}"
                         >
                             <svg class="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
                             </svg>
-                            <span>Inference Tickets: <span class="font-semibold">${this.ticketCount}</span></span>
+                            <span>${this.ticketCount === 0 ? 'Get tickets' : `Inference Tickets: <span class="font-semibold">${this.ticketCount}</span>`}</span>
                         </button>
                         <button
                             id="toggle-external-ticket-info-btn"
@@ -2082,6 +2031,8 @@ class RightPanel {
                         </p>
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
+                    </div>
+                    ${this.generateAccessKeyPanelHTML(hasApiKey, { embedded: true })}
                 </div>
                 ` : `
                 <!-- Invitation Code Section -->
@@ -2126,13 +2077,6 @@ class RightPanel {
                         ${this.isImporting ? 'disabled' : ''}
                     >
                         <span>Import</span>
-                    </button>
-                    <button
-                        id="export-tickets-btn"
-                        class="btn-ghost-hover inline-flex items-center justify-center gap-1 px-2 py-1 text-[10px] rounded-md border border-border bg-background transition-all duration-200 shadow-sm flex-1"
-                        title="Export all tickets (clears local storage)"
-                    >
-                        <span>Export</span>
                     </button>
                     <button
                         id="split-tickets-btn"
@@ -2392,7 +2336,7 @@ class RightPanel {
             ` : ''}
 
             <!-- API Key Panel -->
-            ${this.generateAccessKeyPanelHTML(hasApiKey)}
+            ${hasExternalTicketManager ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
 
             ${this.generateProxySectionHTML()}
         `;
@@ -2663,11 +2607,6 @@ class RightPanel {
                     this.handleImportTickets(file, importInput);
                 }
             };
-        }
-
-        const exportBtn = document.getElementById('export-tickets-btn');
-        if (exportBtn) {
-            exportBtn.onclick = () => this.handleExportTickets();
         }
 
         // Split tickets controls

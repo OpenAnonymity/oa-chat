@@ -500,13 +500,3 @@ export async function downloadAllChats() {
     const { exportChats } = await import('./globalExport.js');
     return exportChats();
 }
-
-/**
- * Exports all inference tickets from persistent storage as a downloadable JSON file.
- * @deprecated Use exportTickets from globalExport.js instead.
- * This function is kept for backward compatibility and delegates to exportTickets.
- */
-export async function downloadInferenceTickets() {
-    const { exportTickets } = await import('./globalExport.js');
-    return exportTickets();
-}

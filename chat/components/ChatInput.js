@@ -6,7 +6,7 @@
 
 import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
-import { exportAllData, exportChats, exportTickets } from '../services/globalExport.js';
+import { exportAllData, exportChats } from '../services/globalExport.js';
 import { importFromFile, formatImportSummary } from '../services/globalImport.js';
 import scrubberService from '../services/scrubberService.js';
 import {
@@ -581,8 +581,6 @@ export default class ChatInput {
                     await this.handleExportChats();
                 } else if (action === 'import-history') {
                     this.app.chatHistoryImportModal?.open();
-                } else if (action === 'export-tickets') {
-                    await this.handleExportTickets();
                 } else if (action === 'import-tickets') {
                     this.handleImportTickets();
                     return; // Don't close menu until file is selected
@@ -2826,29 +2824,6 @@ export default class ChatInput {
         } catch (error) {
             console.error('Chat export failed:', error);
             this.app.showToast?.('Failed to export chats', 'error');
-        }
-    }
-
-    /**
-     * Handles the Export Tickets action.
-     * Exports inference tickets as a JSON file.
-     */
-    async handleExportTickets() {
-        try {
-            const result = await exportTickets();
-            if (result.cancelled) {
-                // User cancelled - no toast needed
-                return;
-            }
-            if (result.success) {
-                const total = result.activeCount + result.archivedCount;
-                this.app.showToast?.(`Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared storage`, 'success');
-            } else {
-                this.app.showToast?.('Failed to export tickets', 'error');
-            }
-        } catch (error) {
-            console.error('Ticket export failed:', error);
-            this.app.showToast?.('Failed to export tickets', 'error');
         }
     }
 

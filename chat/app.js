@@ -4,7 +4,7 @@ import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
 import { getFileIconSvg } from './services/fileUtils.js';
-import { exportChats, exportTickets } from './services/globalExport.js';
+import { exportChats } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
 import { fetchUrlMetadata } from './services/urlMetadata.js';
@@ -322,6 +322,7 @@ class ChatApp {
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
         this.ticketShortageHandler = null;
+        this.firstAccountReadyHandlers = new Set();
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -402,7 +403,11 @@ class ChatApp {
         }
         const computedKeyId = await ticketPublicKeyId(data.public_key);
         const advertisedKeyId = normalizeTicketKeyId(data.key_id);
-        if (!advertisedKeyId || advertisedKeyId !== computedKeyId) {
+        // Older oa-org deployments did not advertise key_id. The browser can
+        // derive the RFC 9578 identifier from the public key, so an omitted
+        // field is compatible. If the server does advertise one, it must
+        // still match the browser-derived value exactly.
+        if (Object.hasOwn(data, 'key_id') && advertisedKeyId !== computedKeyId) {
             const error = new Error('The OA ticket issuer returned an inconsistent key identifier.');
             error.code = 'TICKET_ISSUER_KEY_MISMATCH';
             throw error;
@@ -452,6 +457,22 @@ class ChatApp {
         } catch (error) {
             console.warn('Ticket shortage handler failed:', error);
             return false;
+        }
+    }
+
+    registerFirstAccountReadyHandler(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.firstAccountReadyHandlers.add(handler);
+        return () => this.firstAccountReadyHandlers.delete(handler);
+    }
+
+    notifyFirstAccountReady() {
+        for (const handler of [...this.firstAccountReadyHandlers]) {
+            try {
+                handler();
+            } catch (error) {
+                console.warn('First-account routing handler failed:', error);
+            }
         }
     }
 
@@ -514,7 +535,6 @@ class ChatApp {
                     null,
                     { throwOnError: true }
                 ),
-                exportTickets: () => this.rightPanel?.handleExportTickets?.({ throwOnError: true }),
                 shareTickets: (count) => this.rightPanel?.splitTicketsForMembership?.(count),
                 redeemAccessCode: (code, onProgress) => this.rightPanel?.handleRegister?.(
                     this.rightPanel.normalizeInvitationCode(code),
@@ -526,8 +546,10 @@ class ChatApp {
                 openAccount: () => this.accountModal?.open?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
+                ensureTicketStatusVisible: () => this.rightPanel?.show?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
+                registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
                 showToast: (...args) => this.showToast(...args)
             })
         });
@@ -1903,26 +1925,6 @@ class ChatApp {
                 }
             };
             document.addEventListener('keydown', escHandler);
-        };
-
-        // Setup global function to download inference tickets
-        window.downloadInferenceTickets = async () => {
-            try {
-                const result = await exportTickets();
-                if (result.cancelled) {
-                    // User cancelled - no toast needed
-                    return;
-                }
-                if (result.success) {
-                    const total = result.activeCount + result.archivedCount;
-                    this.showToast(`Exported ${total} ticket${total !== 1 ? 's' : ''} and cleared storage`, 'success');
-                } else {
-                    this.showToast('Failed to export tickets', 'error');
-                }
-            } catch (error) {
-                console.error('Ticket export failed:', error);
-                this.showToast('Failed to export tickets', 'error');
-            }
         };
 
         // Initialize storage events early for multi-tab sync.

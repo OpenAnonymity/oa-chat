@@ -23,12 +23,16 @@ const disposableDemoProxyUrl = (
     typeof __OA_DEMO_PROXY_URL__ !== 'undefined' &&
     typeof __OA_DEMO_PROXY_URL__ === 'string'
 ) ? __OA_DEMO_PROXY_URL__ : '';
+const configuredVerifierOrigin = (
+    typeof __OA_VERIFIER_ORIGIN__ !== 'undefined' &&
+    typeof __OA_VERIFIER_ORIGIN__ === 'string'
+) ? __OA_VERIFIER_ORIGIN__ : '';
 // A deliberately unverified disposable demo never contacts the production
 // verifier. Its same-origin endpoint will fail closed for ordinary verifier
 // calls while the explicit demo policy marks local mock keys as unverified.
 export const VERIFIER_URL = disposableDemoVerifierBypass
     ? ORG_API_BASE
-    : 'https://verifier2.openanonymity.ai';
+    : configuredVerifierOrigin || 'https://verifier2.openanonymity.ai';
 
 // WebSocket proxy -- a shared IP-hiding relay for all users (not a secret).
 // The "secret" parameter is a shared access token, not per-user. The proxy

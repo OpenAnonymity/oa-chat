@@ -43,6 +43,7 @@ test('commercial extensions receive redacted ticket-count updates without wallet
     assert.match(source, /toExtensionTicketShortage/);
     assert.match(context, /closeAccount:\s*\(\) => this\.accountModal\?\.handleCloseAttempt\?\.\(\)/);
     assert.match(source, /return Object\.freeze\(\{ publicKey: data\.public_key, keyId: computedKeyId \}\);\s*\}\s*registerTicketManagementAction/);
+    assert.match(source, /Object\.hasOwn\(data, 'key_id'\) && advertisedKeyId !== computedKeyId/);
     assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
 });
 
@@ -52,7 +53,8 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     const sidebarSlotIndex = html.indexOf('data-oa-extension-slot="sidebar.accountActions"');
     assert.ok(accountIndex >= 0, 'public Account button must remain present');
     assert.ok(sidebarSlotIndex > accountIndex, 'sidebar slot must immediately follow Account');
-    assert.match(html, /id="account-settings-btn"[^>]+aria-haspopup="menu"/);
+    assert.doesNotMatch(html, /id="account-settings-btn"/);
+    assert.match(html, /id="account-tab-btn"[\s\S]*account-control-icon/);
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
     assert.match(html, /data-oa-extension-slot="account\.menuActions" hidden/);
     assert.match(html, /data-oa-extension-slot="sidebar\.accountActions" hidden/);

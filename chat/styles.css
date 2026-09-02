@@ -5575,9 +5575,9 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
-    height: 2.75rem;
-    padding: 0.35rem 0.45rem;
-    border: 0;
+    min-height: 3rem;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid transparent;
     border-radius: 0.625rem;
     background: transparent;
     color: hsl(var(--color-foreground));
@@ -5587,10 +5587,10 @@ html {
 
 .account-tab-btn:hover {
     background-color: hsl(var(--color-hover));
+    border-color: hsl(var(--color-border));
 }
 
 .account-tab-btn:focus-visible,
-.account-settings-btn:focus-visible,
 .account-menu-item:focus-visible {
     outline: 2px solid hsl(var(--color-ring));
     outline-offset: 1px;
@@ -5616,6 +5616,7 @@ html {
 }
 
 .account-identity-label {
+    flex: 1;
     overflow: hidden;
     min-width: 0;
     font-size: 0.8rem;
@@ -5624,37 +5625,21 @@ html {
     white-space: nowrap;
 }
 
+.account-control-icon {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    color: hsl(var(--color-muted-foreground));
+    transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.account-tab-btn[aria-expanded="true"] .account-control-icon {
+    transform: rotate(-90deg);
+    color: hsl(var(--color-foreground));
+}
+
 .account-tab-btn[data-status="logged-in"] .account-tab-avatar {
     color: hsl(var(--color-foreground));
-}
-
-.account-settings-btn {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border: 0;
-    border-radius: 0.625rem;
-    background: transparent;
-    color: hsl(var(--color-muted-foreground));
-    transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.account-settings-btn[hidden] {
-    display: none;
-}
-
-.account-settings-btn:hover,
-.account-settings-btn[aria-expanded="true"] {
-    background: hsl(var(--color-hover));
-    color: hsl(var(--color-foreground));
-}
-
-.account-settings-btn svg {
-    width: 1.05rem;
-    height: 1.05rem;
 }
 
 .account-settings-menu {
@@ -5703,7 +5688,15 @@ html {
 
 .account-menu-item-danger,
 .account-menu-item-danger svg {
+    color: hsl(var(--color-muted-foreground));
+}
+
+.account-menu-item-danger:hover,
+.account-menu-item-danger:focus-visible,
+.account-menu-item-danger:hover svg,
+.account-menu-item-danger:focus-visible svg {
     color: hsl(var(--color-destructive));
+    background: hsl(var(--color-destructive) / 0.08);
 }
 
 @keyframes accountGlowPulse {

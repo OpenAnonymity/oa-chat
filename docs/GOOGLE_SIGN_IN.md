@@ -106,7 +106,9 @@ callback remains on canonical `localhost:8005`.
 ## Regression checks
 
 1. Create a Google-first account; verify the only post-OAuth secret step is
-   creating a PRF passkey and encrypted sync succeeds.
+   creating a PRF passkey and encrypted sync succeeds. Account closes without
+   an intermediate success screen; commercial builds open Membership through
+   the first-account-ready extension seam.
 2. Log out, sign in with Google, unlock with the passkey, and verify no account
    number or recovery code is requested.
 3. Exercise the legacy SSO recovery migration and verify later unlocks use only

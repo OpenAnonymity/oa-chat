@@ -1783,7 +1783,7 @@ class AccountService {
                         wrapper.credentialId,
                         { newAccount: true }
                     );
-                    return { status: 'unlocked', accountId };
+                    return { status: 'unlocked', accountId, newAccount: true };
                 }
             }
 

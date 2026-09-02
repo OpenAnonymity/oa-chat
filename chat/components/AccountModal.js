@@ -5,7 +5,7 @@
 
 import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
-const MODAL_CLASSES = 'w-full max-w-sm rounded-xl border border-border bg-background shadow-2xl p-5 mx-4 flex flex-col';
+const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border/80 bg-background shadow-xl p-5 mx-4 flex flex-col';
 const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 class AccountModal {
@@ -89,19 +89,9 @@ class AccountModal {
                 }
             };
         }
-        const settingsBtn = document.getElementById('account-settings-btn');
         const menu = document.getElementById('account-settings-menu');
         const accountItem = document.getElementById('account-security-menu-item');
         const logoutItem = document.getElementById('account-logout-menu-item');
-        if (settingsBtn) {
-            settingsBtn.onclick = () => this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(settingsBtn);
-            settingsBtn.onkeydown = event => {
-                if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
-                    event.preventDefault();
-                    this.openAccountMenu(settingsBtn);
-                }
-            };
-        }
         if (menu) {
             menu.onkeydown = event => this.handleAccountMenuKeydown(event);
             menu.onclick = event => {
@@ -110,7 +100,7 @@ class AccountModal {
         }
         if (accountItem) accountItem.onclick = () => {
             this.closeAccountMenu();
-            this.open(settingsBtn);
+            this.open(tabBtn);
         };
         if (logoutItem) logoutItem.onclick = () => {
             this.closeAccountMenu();
@@ -140,27 +130,23 @@ class AccountModal {
 
     openAccountMenu(trigger = null) {
         const tabBtn = document.getElementById('account-tab-btn');
-        const settingsBtn = document.getElementById('account-settings-btn');
         const menu = document.getElementById('account-settings-menu');
-        if (!settingsBtn || !menu || !this.isAccountMenuAvailable()) return;
+        if (!tabBtn || !menu || !this.isAccountMenuAvailable()) return;
         this.close();
         this.menuOpen = true;
-        this.accountMenuTrigger = trigger || tabBtn || settingsBtn;
+        this.accountMenuTrigger = trigger || tabBtn;
         menu.hidden = false;
-        settingsBtn.setAttribute('aria-expanded', 'true');
         tabBtn?.setAttribute('aria-expanded', 'true');
         this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
         this.getAccountMenuItems()[0]?.focus();
     }
 
     closeAccountMenu(restoreFocus = false) {
-        const settingsBtn = document.getElementById('account-settings-btn');
         const tabBtn = document.getElementById('account-tab-btn');
         const menu = document.getElementById('account-settings-menu');
-        const returnTarget = this.accountMenuTrigger || settingsBtn || tabBtn;
+        const returnTarget = this.accountMenuTrigger || tabBtn;
         this.menuOpen = false;
         if (menu) menu.hidden = true;
-        settingsBtn?.setAttribute('aria-expanded', 'false');
         tabBtn?.setAttribute('aria-expanded', 'false');
         this.accountMenuTrigger = null;
         if (restoreFocus) returnTarget?.focus?.();
@@ -190,7 +176,6 @@ class AccountModal {
     updateTabIndicator() {
         const tabBtn = document.getElementById('account-tab-btn');
         const identityLabel = document.getElementById('account-identity-label');
-        const settingsBtn = document.getElementById('account-settings-btn');
         if (!tabBtn) return;
         // Only show logged-in (green) after session is verified with server
         const isLoggedIn = this.accountState?.accountId &&
@@ -207,7 +192,6 @@ class AccountModal {
         tabBtn.setAttribute('aria-controls', isLoggedIn ? 'account-settings-menu' : 'account-modal');
         if (isLoggedIn) tabBtn.setAttribute('aria-haspopup', 'menu');
         else tabBtn.removeAttribute?.('aria-haspopup');
-        if (settingsBtn) settingsBtn.hidden = !isLoggedIn;
         if (!isLoggedIn) this.closeAccountMenu();
     }
 
@@ -398,7 +382,13 @@ class AccountModal {
         this.render();
         if (result.status === 'unlocked') {
             this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+            if (result.newAccount === true) this.completeFirstAccountRouting();
         }
+    }
+
+    completeFirstAccountRouting() {
+        this.close();
+        this.app?.notifyFirstAccountReady?.();
     }
 
     async handleConnectOAuth(provider) {
@@ -609,6 +599,7 @@ class AccountModal {
 
     async handleOAuthKeyringUnlock() {
         const state = this.accountService.getState();
+        const isFirstAccountSetup = state.oauthSetupRequired === true;
         const success = state.oauthLegacyPasskeyRequired
             ? await this.accountService.unlockWithPasskey(
                 state.accountId,
@@ -619,6 +610,7 @@ class AccountModal {
                 : await this.accountService.unlockOAuthKeyring();
         if (success) {
             this.app?.showToast?.('Encrypted data unlocked', 'success');
+            if (isFirstAccountSetup) this.completeFirstAccountRouting();
         }
     }
 
@@ -1030,50 +1022,66 @@ class AccountModal {
                 if (isStale) return 'text-amber-500';
                 return 'text-emerald-500';
             })();
+            const syncNeedsAttention = !isSyncing && (
+                !lastSync || lastResult?.success === false || isStale
+            );
+            const accountIdentity = state.oauthEmail || state.email || formattedAccountId;
             return `
                 <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                     ${this.renderHeader('Account')}
-                    <div class="flex-1 flex flex-col items-center justify-center py-4">
-                        <div class="flex items-center gap-4 mb-3">
-                            <div class="flex items-center gap-1.5">
-                                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                <span class="text-xs text-muted-foreground">Logged in</span>
+                    <div class="grid gap-3">
+                        <section class="rounded-xl border border-border/70 bg-muted/15 p-3" aria-labelledby="account-identity-heading">
+                            <div class="flex items-center justify-between gap-3">
+                                <div class="min-w-0">
+                                    <p id="account-identity-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Account identity</p>
+                                    <p class="mt-1 truncate text-sm font-medium text-foreground" title="${this.escapeHtml(accountIdentity)}">${this.escapeHtml(accountIdentity)}</p>
+                                </div>
+                                <span class="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Logged in
+                                </span>
                             </div>
-                            <div class="flex items-center gap-1.5">
-                                <span class="w-2 h-2 rounded-full ${syncIndicatorColor} ${isSyncing ? 'animate-pulse' : ''}"></span>
-                                <span class="text-xs ${syncStatusColor}">${syncStatusText}</span>
+                        </section>
+
+                        <section class="rounded-xl border border-border/70 p-3" aria-labelledby="account-encryption-heading">
+                            <p id="account-encryption-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Passkey encryption</p>
+                            <p class="mt-1 text-sm font-medium text-foreground">${usesIdentityLogin ? 'Encrypted and unlocked' : 'Passkey unlocked'}</p>
+                            <p class="mt-1 text-[11px] leading-relaxed text-muted-foreground">Tickets and preferences synchronize as encrypted data.</p>
+                        </section>
+
+                        <section class="rounded-xl border border-border/70 p-3" aria-labelledby="account-sync-heading">
+                            <div class="flex items-center justify-between gap-3">
+                                <div class="min-w-0">
+                                    <p id="account-sync-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Synchronization</p>
+                                    <p class="mt-1 flex items-center gap-1.5 text-xs ${syncStatusColor}">
+                                        <span class="h-1.5 w-1.5 rounded-full ${syncIndicatorColor} ${isSyncing ? 'animate-pulse' : ''}"></span>${syncStatusText}
+                                    </p>
+                                </div>
+                                <button id="account-sync-btn" class="inline-flex h-8 flex-shrink-0 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors disabled:opacity-50 ${syncNeedsAttention ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}" type="button" ${isSyncing || isBusy ? 'disabled' : ''}>
+                                    <svg class="h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
+                                    </svg>
+                                    ${isSyncing ? 'Syncing…' : syncNeedsAttention ? 'Retry sync' : 'Sync now'}
+                                </button>
                             </div>
-                        </div>
-                        ${usesIdentityLogin ? `
-                            <p class="text-sm font-medium text-foreground mb-1">Encrypted with your passkey</p>
-                        ` : `
-                            <button id="account-copy-id-btn" class="account-number-text font-mono text-lg tracking-widest text-foreground mb-1 whitespace-nowrap hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer bg-transparent border-none p-0" type="button" title="Copy account ID">
-                                ${this.escapeHtml(formattedAccountId)}
+                            <p class="mt-2 text-[11px] text-muted-foreground">Chat history sync is coming later.</p>
+                        </section>
+
+                        ${state.googleLinked ? `
+                            <section class="rounded-xl border border-border/70 p-3" aria-labelledby="account-provider-heading">
+                                <p id="account-provider-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Connected provider</p>
+                                <div class="mt-2">${this.renderOAuthConnection('google', state, isBusy, action)}</div>
+                            </section>
+                        ` : ''}
+
+                        ${!usesIdentityLogin ? `
+                            <button id="account-copy-id-btn" class="account-number-text truncate rounded-lg px-2 py-1 text-left font-mono text-xs text-muted-foreground hover:bg-accent hover:text-foreground" type="button" title="Copy account ID">${this.escapeHtml(formattedAccountId)}</button>
+                        ` : ''}
+
+                        <div class="flex justify-end border-t border-border/70 pt-3" data-account-actions>
+                            <button id="account-clear-btn" class="rounded-lg border border-border bg-transparent px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/5 hover:text-destructive disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
+                                Log out
                             </button>
-                        `}
-                        <p class="text-[11px] text-muted-foreground">
-                            Encrypted sync for tickets & preferences
-                        </p>
-                    </div>
-
-                    <p class="text-[11px] text-muted-foreground text-center mb-3">Chat history sync coming soon</p>
-
-                    ${state.googleLinked ? `
-                        <div class="grid gap-2 mb-3">
-                            ${this.renderOAuthConnection('google', state, isBusy, action)}
                         </div>
-                    ` : ''}
-
-                    <div class="flex gap-3" data-account-actions>
-                        <button id="account-clear-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background text-foreground transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
-                            Log out
-                        </button>
-                        <button id="account-sync-btn" class="btn-ghost-hover flex-1 h-9 rounded-lg text-sm border border-border bg-background transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isSyncing || isBusy ? 'disabled' : ''}>
-                            <svg class="w-4 h-4 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
-                            </svg>
-                            ${isSyncing ? 'Syncing...' : 'Sync'}
-                        </button>
                     </div>
                 </div>
             `;

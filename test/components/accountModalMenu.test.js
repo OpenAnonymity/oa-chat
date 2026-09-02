@@ -54,13 +54,11 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         children: [accountItem, membershipItem, logoutItem]
     });
     const tab = createElement(documentImpl);
-    const settings = createElement(documentImpl, { hidden: true });
     const label = createElement(documentImpl);
     const overlay = createElement(documentImpl);
-    const nav = createElement(documentImpl, { children: [tab, settings, menu] });
+    const nav = createElement(documentImpl, { children: [tab, menu] });
     elements.set('account-nav', nav);
     elements.set('account-tab-btn', tab);
-    elements.set('account-settings-btn', settings);
     elements.set('account-settings-menu', menu);
     elements.set('account-security-menu-item', accountItem);
     elements.set('account-logout-menu-item', logoutItem);
@@ -87,7 +85,6 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
 
     try {
         assert.equal(label.textContent, 'member@example.com');
-        assert.equal(settings.hidden, false);
         assert.equal(modal.getAccountMenuReturnTarget(), tab);
 
         tab.onclick();
@@ -100,9 +97,9 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         assert.equal(menu.hidden, true);
         assert.equal(tab.focusCount, 1);
 
-        settings.onclick();
+        tab.onclick();
         assert.equal(menu.hidden, false);
-        assert.equal(settings.getAttribute('aria-expanded'), 'true');
+        assert.equal(tab.getAttribute('aria-expanded'), 'true');
         assert.equal(accountItem.focusCount, 2);
         assert.deepEqual(refreshedSlots, [
             SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
@@ -114,17 +111,16 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
 
         menu.onkeydown({ key: 'Escape', target: membershipItem, preventDefault() {} });
         assert.equal(menu.hidden, true);
-        assert.equal(settings.getAttribute('aria-expanded'), 'false');
-        assert.equal(settings.focusCount, 1);
+        assert.equal(tab.getAttribute('aria-expanded'), 'false');
+        assert.equal(tab.focusCount, 2);
 
-        settings.onclick();
+        tab.onclick();
         documentListeners.get('pointerdown')({ target: {} });
         assert.equal(menu.hidden, true);
 
         accountState = { isReady: true, accountId: null, sessionVerified: false, status: 'none' };
         accountListener({ ...accountState });
         assert.equal(label.textContent, 'Account');
-        assert.equal(settings.hidden, true);
         assert.equal(menu.hidden, true);
     } finally {
         modal.destroy();

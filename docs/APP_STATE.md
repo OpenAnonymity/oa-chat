@@ -4,6 +4,84 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-01: Commercial onboarding and ticket surfaces use core UI seams
+
+- A newly created Google account closes Account after passkey setup and emits
+  `registerFirstAccountReady`; the commercial extension opens Membership and
+  focuses its heading. Returning accounts do not emit this signal.
+- Avatar, account label, and settings affordance are one accessible sidebar
+  button. There is no separate gear. Long labels truncate within the shared hit
+  target, and logout is muted until hover/focus.
+- The public extension ticket capabilities no longer expose ticket export.
+  Membership and standalone ticket management retain Import, Share, and Redeem.
+  Account-data/chat/memory export remains independent and never includes
+  inference tickets.
+- The right panel groups the inference-ticket row and ephemeral-key section
+  under one wrapper with a divider and one spacing rhythm. A commercial zero
+  balance labels its action **Get tickets**.
+- The chat search placeholder is **Search chats**; shortcut space remains
+  reserved at narrow sidebar widths.
+- The public entitlement preparer accepts an issuer response whose `key_id` is
+  absent for rollout compatibility, while still deriving the key ID locally and
+  rejecting any advertised value that does not match. Monthly rotation may
+  therefore discard stale unsigned recovery without weakening issuer binding;
+  the commercial extension immediately restarts the paid allowance.
+
+## 2026-09-01: Browser Back cancels unpaid ticket-bundle Checkout
+
+- Ticket-bundle Checkout now stores the exact Stripe Session and initiating
+  billing scope in its tab marker, matching the subscription return boundary.
+- A full navigation return or BFCache `pageshow` clears **Opening Checkout…**
+  and asks oa-org to cancel that exact unpaid bundle automatically. A confirmed
+  payment still wins the race and proceeds into private ticket preparation.
+- A definitive unpaid return restores **Choose your plan** with both purchase
+  actions enabled and no cancellation notice. Subscription and ticket-bundle
+  returns now share this behavior for browser Back and Stripe cancel URLs.
+- The modal is made visible synchronously when the exact tab marker is detected,
+  before account readiness and server cancellation. Purchase actions remain
+  briefly disabled, so a cold ticket-bundle return cannot flash the chat shell
+  or start a second Checkout while the payment race is unresolved.
+- This temporary purchase lock is independent of ordinary modal `busy` state.
+  It survives close/reopen and respects a modal the user leaves closed. An
+  unresolved payment or transient cancellation error may hide Membership while
+  presenting **Check status**, but it keeps the purchase lock until that exact
+  Checkout resolves. An account/readiness change clears the lock and exact tab
+  marker without sending the old Checkout Session under the new identity.
+- `checkout_pending` no longer renders **Continue Checkout** or **Cancel
+  Checkout**. An exact ticket-bundle return keeps the normal disabled purchase
+  action in place and shows no transient cleanup copy. Marker-less durable
+  recovery is also silent; cancellation and retry status remain owned by the
+  navigation-return flow.
+- Scope-less, mismatched-account, and mismatched durable records fail closed
+  without sending the Checkout Session ID across account partitions.
+- Paid-success reconciliation uses the same current/marker/durable scope
+  validation before submitting the Session ID. Loopback demo cancellation and
+  its **Check status** retry require the exact demo scope but not an Account ID.
+- A stale marker-less top-up recovery no longer strands Membership without a
+  button. Startup or Membership refresh schedules cleanup of only the exact
+  durable Session stored under the current billing scope. The same tab and
+  legacy records use a two-minute grace; new records bind a random local
+  owner-tab ID, and a different or restored tab waits until 31 minutes, after
+  oa-org's fixed 30-minute Checkout lifetime. Matching live tab markers remain
+  owned by their return flow. Payment still wins a cancellation race, and
+  loopback demo scopes participate without an Account ID.
+
+## 2026-08-31: Browser Back cancels unpaid subscription Checkout
+
+- The commercial subscription flow saves its exact Stripe Checkout session ID
+  and initiating account scope in tab-scoped storage in addition to durable
+  account-scoped recovery.
+- Returning to chat in that tab without a Stripe outcome, including a BFCache
+  `pageshow`, clears the transient **Opening Checkout…** state and asks oa-org
+  to cancel that exact Session automatically. It never cancels from unload or
+  guesses a Session from another tab/account.
+- The tab marker scope must match the active account and any durable recovery
+  scope before the Session ID is sent. Mismatched or legacy scope-less markers
+  are cleared and fail closed without crossing account privacy partitions.
+- oa-org remains authoritative for the payment race: confirmed payment proceeds
+  to ticket preparation, a pending result keeps retry recovery, and only a
+  confirmed cancellation restores Membership. No cancellation banner is shown.
+
 ## 2026-08-31: One-trip Desktop Google and encryption-passkey handoff
 
 - Desktop-capable clients request flow version 2; oa-org explicitly negotiates
@@ -245,13 +323,12 @@ The active lifecycle is documented in `oa-commercial/docs/BILLING.md`.
   successful return prepares the pack automatically. A canceled return uses the
   session ID saved by that specific tab in `sessionStorage`; it never guesses
   from the durable account slot, so an old tab cannot cancel a newer Checkout.
-- `checkout_pending` now offers both **Continue ticket-pack Checkout** and
-  **Cancel Checkout**. Explicit cancellation expires the matching Stripe
-  session immediately. Tab close, reload, crash, and connectivity loss preserve
-  recovery; Stripe expires an unpaid pack after 30 minutes and status then
-  clears stale durable Checkout state. Completed asynchronous payments remain
-  pending, and payment winning a cancellation race proceeds to normal 50-ticket
-  preparation.
+- `checkout_pending` has no manual Continue or Cancel controls. Returning with
+  browser Back in the opening tab cancels the matching unpaid Session
+  automatically; tab close, crash, and connectivity loss preserve durable
+  recovery. Stripe expiration and status reconciliation clear older unpaid
+  records, while payment winning a cancellation race proceeds to normal
+  50-ticket preparation.
 - Checkout recovery and durable IndexedDB claim/import recovery remain separate.
   No unload/beacon/tab-close cancellation exists, and the tab-scoped session ID
   never enters sync, exports, wallet state, tickets, or logs. Purchase fills the
@@ -393,9 +470,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     stable slots including `sidebar.accountActions`, `account.menuActions`,
     `account.commercial`, `welcome.actions`, and `modalLayer`.
   - The sidebar footer remains core-owned. Signed-out users see Account;
-    verified sessions see the available account or SSO email identity (or Account fallback)
-    and a gear menu containing Account & security, extension actions, and Log
-    out. The menu restores focus on Escape and supports arrow/Home/End keys.
+    verified sessions see the available account or SSO email identity (or Account fallback).
+    The full identity row opens a menu containing Account & security, extension
+    actions, and Log out; there is no separate gear. The menu restores focus on
+    Escape and supports arrow/Home/End keys.
   - `account.menuActions` is the preferred commercial membership entry. It
     exposes no billing state or credentials to the core; older sidebar and
     account-modal slots remain available for compatible integrations.
@@ -551,13 +629,13 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     origin should see the browser only after the user explicitly opens a link.
 
 - 2026-08-16: The full signed-in identity row opens the account action menu.
-  - Clicking either the email/avatar row or its gear opens the same Account,
-    extension-action, and Log out menu; signed-out clicks still open Account.
-  - Focus returns to whichever control opened the menu, and the identity row
+  - The email/avatar/settings affordance is one button with one hit target;
+    signed-out clicks still open Account.
+  - Focus returns to that control, and the identity row
     exposes menu semantics only while a verified, unlocked account is active.
 - 2026-08-16: Commercial Membership can host the public ticket tools.
   - The extension context exposes count-only ticket-tool state plus the existing
-    import, export, split/share, and access-code operations. It never exposes
+    import, split/share, and access-code operations. It never exposes
     wallet records, account credentials, billing identifiers, or inference data.
   - Ticket counts remain billing-unready until account startup finishes. For an
     anonymous session, startup first archives any stale account-bound wallet and
@@ -571,7 +649,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - A commercial extension can register one compact right-panel ticket-count
     action that opens Membership. While registered, the right panel omits its
     ticket-code controls but keeps a collapsed question-mark explanation of
-    inference tickets. Membership supplies Import, Export, Share, and
+    inference tickets. Membership supplies Import, Share, and
     account-free access-code redemption in one place.
     Standalone public builds still render their original access-code controls.
   - Signed-out commercial actions may transition from the Account dialog into
@@ -586,8 +664,6 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     typography as the public client, and its small question-mark control sits
     immediately after the count. Do not replace it with a full-width navigation
     row or move the help control to the far edge of the panel.
-  - Export remains a move operation and keeps the public confirmation that
-    clears the exported local wallet to prevent double spending.
 
 
 - 2026-08-07: Google is the only supported SSO provider.

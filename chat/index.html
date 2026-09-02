@@ -324,7 +324,7 @@
                                 autocorrect="off"
                                 autocapitalize="off"
                                 spellcheck="false"
-                                placeholder="Search chats..."
+                                placeholder="Search chats"
                                 value="">
                             <div class="sidebar-search-shortcut">
                                 <span class="opacity-60">⌘</span>
@@ -392,11 +392,8 @@
                             </svg>
                         </span>
                         <span id="account-identity-label" class="account-identity-label">Account</span>
-                    </button>
-                    <button id="account-settings-btn" class="account-settings-btn" type="button" aria-label="Open account settings" aria-haspopup="menu" aria-controls="account-settings-menu" aria-expanded="false" hidden>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.592c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.197.72.258 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.244c.275.476.183 1.077-.224 1.447l-.961.877c-.28.255-.42.63-.411 1.009a6.78 6.78 0 010 .255c-.01.378.13.753.41 1.008l.962.877c.407.37.5.971.224 1.447l-1.296 2.244a1.125 1.125 0 01-1.37.49l-1.217-.456c-.355-.133-.75-.073-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.542-.56.94-1.11.94h-2.592c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.063-.374-.313-.686-.645-.87a6.52 6.52 0 01-.22-.127c-.325-.197-.72-.258-1.075-.124l-1.217.456a1.125 1.125 0 01-1.37-.49l-1.296-2.244a1.125 1.125 0 01.224-1.447l.961-.877c.28-.255.42-.63.411-1.009a6.78 6.78 0 010-.255c.01-.378-.13-.753-.41-1.008l-.962-.877a1.125 1.125 0 01-.224-1.447l1.296-2.244a1.125 1.125 0 011.37-.49l1.217.456c.355.133.75.073 1.076-.124.072-.044.146-.086.22-.128.331-.183.581-.495.644-.869l.213-1.281z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <svg class="account-control-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
                         </svg>
                     </button>
                 </div>
@@ -632,7 +629,6 @@
                                                     <!-- Tickets row -->
                                                     <div class="px-3 py-1 flex items-center gap-2">
                                                         <span class="text-xs text-muted-foreground w-12 shrink-0">Tickets</span>
-                                                        <button data-action="export-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
                                                         <button data-action="import-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
                                                     </div>
                                                     <div class="px-3 py-1 flex items-center gap-2">

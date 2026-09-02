@@ -5,7 +5,7 @@
  */
 
 import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, buildReasoningTrace, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
-import { exportChats, exportTickets } from '../services/globalExport.js';
+import { exportChats } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
@@ -3164,17 +3164,6 @@ export default class ChatArea {
             });
         }
 
-        const exportLink = document.querySelector('a[href="#download-tickets-link"]');
-        if (exportLink && exportLink.dataset.downloadTicketsBound !== 'true') {
-            exportLink.dataset.downloadTicketsBound = 'true';
-            exportLink.addEventListener('click', async (e) => {
-                e.preventDefault();
-                const result = await exportTickets();
-                if (!result.success && !result.cancelled) {
-                    console.error('Failed to export inference tickets');
-                }
-            });
-        }
     }
 
     /**

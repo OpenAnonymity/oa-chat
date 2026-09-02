@@ -66,6 +66,23 @@ if (demoProxyUrlSetting) {
         throw new Error('[build] OA_DEMO_PROXY_URL requires an explicit same-origin verifier-bypass demo and an exact root WSS origin');
     }
 }
+const verifierOriginSetting = process.env.OA_VERIFIER_ORIGIN || '';
+if (verifierOriginSetting) {
+    let verifierOrigin;
+    try {
+        verifierOrigin = new URL(verifierOriginSetting);
+    } catch {
+        throw new Error('[build] OA_VERIFIER_ORIGIN must be a valid HTTPS origin');
+    }
+    if (verifierOrigin.protocol !== 'https:' || verifierOrigin.username ||
+        verifierOrigin.password || verifierOrigin.pathname !== '/' ||
+        verifierOrigin.search || verifierOrigin.hash || verifierOrigin.origin !== verifierOriginSetting) {
+        throw new Error('[build] OA_VERIFIER_ORIGIN must be an exact HTTPS origin');
+    }
+    if (demoVerifierBypass) {
+        throw new Error('[build] OA_VERIFIER_ORIGIN cannot be used with verifier bypass');
+    }
+}
 
 const pathExists = async (target) => {
     try {
@@ -219,7 +236,8 @@ const build = async () => {
                     : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN
             ),
             '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
-            '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting)
+            '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting),
+            '__OA_VERIFIER_ORIGIN__': JSON.stringify(verifierOriginSetting)
         },
         minify: true,
         metafile: true,
@@ -322,7 +340,8 @@ const build = async () => {
                 orgOrigin: sameOriginOrg
                     ? 'same-origin'
                     : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN,
-                webauthnRelayUrl: configuredWebAuthnRelayUrl
+                webauthnRelayUrl: configuredWebAuthnRelayUrl,
+                verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai'
             }, null, 2)
         );
     }

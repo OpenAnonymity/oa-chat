@@ -1,10 +1,11 @@
 /**
  * Global Export Service
- * Collects all user data (chats, tickets, preferences) and exports as a single JSON file.
+ * Collects portable chat data and preferences for a single JSON export.
+ * Inference tickets are intentionally excluded; tickets move only through the
+ * explicit Share flow so a generic backup cannot create a second spendable copy.
  */
 
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
-import ticketStore from './ticketStore.js';
 import { chatDB } from '../db.js';
 import { normalizeReasoningEffort } from './reasoningConfig.js';
 
@@ -156,16 +157,6 @@ export async function collectChats() {
 }
 
 /**
- * Collect all tickets from persistent storage.
- * @returns {Object} Object with active and archived ticket arrays
- */
-export async function collectTickets() {
-    await ticketStore.init();
-    const tickets = { active: ticketStore.getTickets(), archived: ticketStore.getArchiveTickets() };
-    return tickets;
-}
-
-/**
  * Export chats as a downloadable JSON file.
  * Uses the same format as the chats section in the full export.
  * @returns {Promise<boolean>} True if export succeeded
@@ -249,108 +240,6 @@ export async function saveWithConfirmation(blob, suggestedName) {
 }
 
 /**
- * Export tickets as a downloadable JSON file.
- * Clears tickets only after user confirms save (cash semantics).
- * @returns {{ success: boolean, activeCount: number, archivedCount: number, cancelled: boolean }} Export result
- */
-export async function exportTickets() {
-    try {
-        const tickets = await collectTickets();
-        const activeCount = tickets.active.length;
-        const archivedCount = tickets.archived.length;
-
-        if (activeCount === 0 && archivedCount === 0) {
-            return { success: false, activeCount: 0, archivedCount: 0, cancelled: false };
-        }
-
-        const exportData = {
-            formatVersion: FORMAT_VERSION,
-            exportedAt: new Date().toISOString(),
-            app: APP_NAME,
-            exportType: 'tickets',
-            data: {
-                tickets
-            }
-        };
-
-        const jsonString = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const filename = `oa-chat-tickets-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-
-        const { saved, usedFallback } = await saveWithConfirmation(blob, filename);
-
-        if (!saved) {
-            // User cancelled
-            return { success: false, activeCount, archivedCount, cancelled: true };
-        }
-
-        // Clear both active and archived tickets after confirmed save (cash semantics)
-        await ticketStore.clearAllTickets();
-
-        console.log(`✅ Exported and cleared ${activeCount} active, ${archivedCount} archived tickets`);
-        return { success: true, activeCount, archivedCount, cancelled: false, usedFallback };
-    } catch (error) {
-        console.error('Error exporting tickets:', error);
-        return { success: false, activeCount: 0, archivedCount: 0, cancelled: false };
-    }
-}
-
-/**
- * Split and export a subset of tickets from the bottom of the active list.
- * Removes exported tickets only after user confirms save (cash semantics).
- * @param {number} count - Number of tickets to export
- * @returns {{ success: boolean, exportedCount: number, cancelled: boolean }} Export result
- */
-export async function splitAndExportTickets(count) {
-    try {
-        await ticketStore.init();
-        const allActive = ticketStore.getTickets();
-
-        if (count <= 0 || count > allActive.length) {
-            throw new Error(`Invalid count: ${count}. Available: ${allActive.length}`);
-        }
-
-        // Take from bottom of list
-        const startIndex = allActive.length - count;
-        const ticketsToExport = allActive.slice(startIndex);
-        const ticketsToKeep = allActive.slice(0, startIndex);
-
-        const exportData = {
-            formatVersion: FORMAT_VERSION,
-            exportedAt: new Date().toISOString(),
-            app: APP_NAME,
-            exportType: 'tickets',
-            data: {
-                tickets: {
-                    active: ticketsToExport,
-                    archived: []
-                }
-            }
-        };
-
-        const jsonString = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const filename = `oa-chat-tickets-split-${count}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-
-        const { saved, usedFallback } = await saveWithConfirmation(blob, filename);
-
-        if (!saved) {
-            // User cancelled
-            return { success: false, exportedCount: 0, cancelled: true };
-        }
-
-        // Remove exported tickets after confirmed save
-        await ticketStore.setActiveTickets(ticketsToKeep);
-
-        console.log(`✅ Split and exported ${ticketsToExport.length} tickets, ${ticketsToKeep.length} remaining`);
-        return { success: true, exportedCount: ticketsToExport.length, cancelled: false, usedFallback };
-    } catch (error) {
-        console.error('Error splitting tickets:', error);
-        return { success: false, exportedCount: 0, cancelled: false };
-    }
-}
-
-/**
  * Export all user data as a downloadable JSON file.
  * @returns {Promise<boolean>} True if export succeeded
  */
@@ -358,7 +247,6 @@ export async function exportAllData() {
     try {
         // Collect all data
         const chats = await collectChats();
-        const tickets = await collectTickets();
         const localPreferences = await collectPreferencesFromStore();
         const dbPreferences = await collectPreferencesFromIndexedDB();
         const preferences = { ...localPreferences, ...dbPreferences };
@@ -370,7 +258,6 @@ export async function exportAllData() {
             app: APP_NAME,
             data: {
                 chats,
-                tickets,
                 preferences
             }
         };
@@ -388,7 +275,7 @@ export async function exportAllData() {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        console.log(`✅ Exported ${chats.sessions.length} sessions, ${tickets.active.length + tickets.archived.length} tickets`);
+        console.log(`✅ Exported ${chats.sessions.length} sessions and preferences`);
         return true;
     } catch (error) {
         console.error('Error exporting data:', error);
@@ -403,12 +290,8 @@ export async function exportAllData() {
  */
 export async function getExportSummary() {
     const chats = await collectChats();
-    const tickets = collectTickets();
-
     return {
         sessionCount: chats.sessions.length,
-        messageCount: chats.messages.length,
-        activeTicketCount: tickets.active.length,
-        archivedTicketCount: tickets.archived.length
+        messageCount: chats.messages.length
     };
 }

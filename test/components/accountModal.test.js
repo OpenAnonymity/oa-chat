@@ -189,6 +189,43 @@ test('an already-unlocked Google account completes without commercial coupling',
     assert.equal('resumePremiumCheckoutIfPending' in modal, false);
 });
 
+test('a first Google account closes authentication and routes directly to Membership', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let closed = 0;
+    let firstAccountReady = 0;
+    modal.accountService = {
+        authenticateWithOAuth: async () => ({ status: 'unlocked', newAccount: true })
+    };
+    modal.render = () => {};
+    modal.close = () => { closed += 1; };
+    modal.app = {
+        showToast() {},
+        notifyFirstAccountReady() { firstAccountReady += 1; }
+    };
+
+    await modal.handleOAuthAuthentication('google');
+
+    assert.equal(closed, 1);
+    assert.equal(firstAccountReady, 1);
+});
+
+test('a returning Google account stays in Chat without first-account routing', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let firstAccountReady = 0;
+    modal.accountService = {
+        authenticateWithOAuth: async () => ({ status: 'unlocked', newAccount: false })
+    };
+    modal.render = () => {};
+    modal.app = {
+        showToast() {},
+        notifyFirstAccountReady() { firstAccountReady += 1; }
+    };
+
+    await modal.handleOAuthAuthentication('google');
+
+    assert.equal(firstAccountReady, 0);
+});
+
 test('legacy linked account uses its existing passkey unlock path', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
@@ -276,7 +313,10 @@ test('identity account describes ticket and preference sync', () => {
 
     try {
         const html = modal.renderAccountUI();
-        assert.match(html, /Encrypted sync for tickets & preferences/);
+        assert.match(html, /Tickets and preferences synchronize as encrypted data/);
+        assert.match(html, /Account identity/);
+        assert.match(html, /Passkey encryption/);
+        assert.match(html, /Synchronization/);
         assert.doesNotMatch(html, /device-only/);
     } finally {
         modal.destroy();

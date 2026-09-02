@@ -73,7 +73,7 @@ only resumes an already-saved preparation for that scope.
   actions.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
-`getToolsSnapshot`, `subscribe`, `importTickets`, `exportTickets`, `shareTickets`,
+`getToolsSnapshot`, `subscribe`, `importTickets`, `shareTickets`,
 `redeemAccessCode`, and `registerShortageHandler`. `subscribe` emits the same
 redacted count/busy snapshot after ticket storage is ready and after local wallet updates; it never emits the
 temporary zero used while IndexedDB is loading. It is the supported seam for a
@@ -87,13 +87,14 @@ wallet ticket material, account credentials, billing identifiers, or inference
 content.
 
 `tickets.registerShortageHandler(handler)` is called only after a user tries to
-send or regenerate a request whose synchronized wallet balance is below the
+send or regenerate a request whose account ticket balance is below the
 complete turn budget. Its frozen payload contains only `availableTickets` and
 `requiredTickets`; it excludes the prompt, model identities, Memory context,
-session identifiers, and account data. A commercial extension may use this
-user-initiated signal to start a previously consented refill or present an
-explicit purchase surface. The core request remains unsent, so a refill or
-purchase cannot duplicate an inference request.
+session identifiers, and account data. A commercial extension may present an
+explicit purchase surface, but this signal must not initiate automatic billing.
+Automatic reloads are limited to an independently observed synchronized zero
+balance. The core request remains unsent, so a purchase cannot duplicate an
+inference request.
 Signed-in core preflight does not call this handler until the account is
 verified, unlocked, scope-ready, and ticket-synchronized.
 
@@ -102,6 +103,11 @@ surface replace the standalone ticket-code controls in the right panel with one
 compact ticket-count button. The handler receives that button as the dialog's
 focus-return target. Unmounting the extension restores the standalone controls,
 so code redemption remains available in public builds with no extension.
+
+`context.ui.registerFirstAccountReady(handler)` is the one-shot routing seam for
+a newly created Google-plus-passkey account. Core Account UI closes before it
+notifies the extension. The commercial client opens Membership; returning
+accounts do not emit this notification.
 
 Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does
