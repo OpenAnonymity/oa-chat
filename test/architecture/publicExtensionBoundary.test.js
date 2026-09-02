@@ -38,6 +38,8 @@ test('commercial extensions receive redacted ticket-count updates without wallet
     assert.match(context, /if \(!active \|\| !ready\) return/);
     assert.match(context, /getMembershipTicketToolsSnapshot/);
     assert.match(context, /toExtensionTicketSnapshot/);
+    assert.match(context, /publishPreparedTicketUpdate/);
+    assert.match(context, /releasePreparedTicketPublication/);
     assert.match(context, /registerTicketManagement/);
     assert.match(context, /registerShortageHandler/);
     assert.match(source, /toExtensionTicketShortage/);
@@ -45,6 +47,28 @@ test('commercial extensions receive redacted ticket-count updates without wallet
     assert.match(source, /return Object\.freeze\(\{ publicKey: data\.public_key, keyId: computedKeyId \}\);\s*\}\s*registerTicketManagementAction/);
     assert.match(source, /Object\.hasOwn\(data, 'key_id'\) && advertisedKeyId !== computedKeyId/);
     assert.doesNotMatch(context, /getTickets\(|peekTicket|finalized_ticket|signature|nonce/);
+});
+
+test('paid preparation publishes the aggregate ticket count only after durable completion', () => {
+    const preparer = read('chat/application/entitlementTicketPreparer.js');
+    const store = read('chat/services/ticketStore.js');
+
+    assert.match(preparer, /emitUpdate:\s*false/);
+    assert.match(preparer, /skipBroadcast:\s*true/);
+    assert.match(preparer, /skipSync:\s*true/);
+    assert.match(preparer, /ticketUpdateDeferred:\s*true/);
+    assert.match(preparer, /pending\.phase = 'ready-to-publish'/);
+    const publicationStart = preparer.indexOf('async publishPreparedTicketUpdate(result)');
+    assert.ok(publicationStart >= 0);
+    assert.ok(
+        preparer.indexOf('this.ticketStore.addTickets(missingTickets', publicationStart) > publicationStart,
+        'staged ticket material must enter the live wallet only through the explicit publication seam'
+    );
+    assert.match(preparer, /expectedAccountId/);
+    assert.match(preparer, /oa-entitlement-publication-v1/);
+    assert.match(preparer, /publicationObserved:\s*true/);
+    assert.match(store, /publishUpdate\(options = \{\}\)/);
+    assert.match(store, /Object\.hasOwn\(options, 'expectedAccountId'\)/);
 });
 
 test('public HTML keeps Account and contains only invisible generic extension hosts', () => {
@@ -56,10 +80,28 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.doesNotMatch(html, /id="account-settings-btn"/);
     assert.match(html, /id="account-tab-btn"[\s\S]*account-control-icon/);
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
+    assert.doesNotMatch(html, /account-menu-separator/);
+    assert.match(html, /placeholder="Search chats\.\.\."/);
+    assert.match(html, /class="session-scroll-shell[^\"]*"[\s\S]*id="sessions-scroll-area"[\s\S]*class="session-scroll-fade"/);
+    assert.doesNotMatch(html, /maximum-scale|user-scalable/);
     assert.match(html, /data-oa-extension-slot="account\.menuActions" hidden/);
     assert.match(html, /data-oa-extension-slot="sidebar\.accountActions" hidden/);
     assert.match(html, /data-oa-extension-slot="modalLayer" hidden/);
     assert.doesNotMatch(html, /upgrade-tab-btn|billing-modal|Upgrade with Stripe|subscription status/i);
+});
+
+test('session history ends above the account row with an intentional continuation cue', () => {
+    const styles = read('chat/styles.css');
+    const sidebar = read('chat/components/Sidebar.js');
+    assert.match(styles, /\.session-scroll-fade\s*\{[^}]*linear-gradient/s);
+    assert.match(styles, /\.session-list-end-spacer\s*\{[^}]*height:\s*40px/s);
+    assert.match(styles, /\.session-scroll-shell\.has-more-below \.session-scroll-fade\s*\{[^}]*opacity:\s*1/s);
+    assert.match(styles, /\.session-initially-clipped\s*\{[^}]*visibility:\s*hidden/s);
+    assert.match(sidebar, /const END_SPACER_HEIGHT = 40/);
+    assert.match(sidebar, /scheduleInitialViewportSettlement/);
+    assert.match(sidebar, /releaseInitialViewportGuard/);
+    assert.match(sidebar, /items\.push\(\{ type: 'end-spacer' \}\)/);
+    assert.match(sidebar, /class="session-list-end-spacer" aria-hidden="true"/);
 });
 
 test('public UI and startup have no billing presentation dependency', () => {
@@ -81,7 +123,8 @@ test('the right-panel ticket status is an invisible generic extension slot', () 
     const panel = read('chat/components/RightPanel.js');
     assert.match(host, /RIGHT_PANEL_TICKET_STATUS:\s*'rightPanel\.ticketStatus'/);
     assert.match(panel, /data-oa-extension-slot="\$\{SLOT_NAMES\.RIGHT_PANEL_TICKET_STATUS\}" hidden/);
-    assert.match(panel, /extensionSlots\?\.refresh\?\.\(SLOT_NAMES\.RIGHT_PANEL_TICKET_STATUS\)/);
+    assert.match(panel, /refreshExtensionSlot\?\.\(SLOT_NAMES\.RIGHT_PANEL_TICKET_STATUS\)/);
+    assert.doesNotMatch(panel, /extensionSlots/);
     assert.doesNotMatch(panel, /Payment received|private tickets ready|Checkout canceled/);
 });
 

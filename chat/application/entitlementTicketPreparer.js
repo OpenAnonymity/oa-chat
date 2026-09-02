@@ -89,10 +89,76 @@ export class EntitlementTicketPreparer {
         this.privacyPass = options.privacyPass || privacyPassProvider;
         this.ticketStore = options.ticketStore || ticketStore;
         this.lockManager = options.lockManager || globalThis.navigator?.locks || null;
+        this.pendingPublications = new WeakMap();
+        this.publicationTasks = new WeakMap();
+        this.publishedResults = new WeakSet();
+    }
+
+    async acquirePublicationOwnership(scope, signal) {
+        if (!this.lockManager?.request) {
+            const error = new Error('This browser cannot safely coordinate ticket publication across tabs.');
+            error.code = 'ENTITLEMENT_BROWSER_LOCK_UNAVAILABLE';
+            throw error;
+        }
+        const lockName = `oa-entitlement-publication-v1:${await sha256(scope)}`;
+        let acquiredResolve;
+        let acquiredReject;
+        let releaseGate;
+        let acquiredLock = false;
+        let committing = false;
+        let released = false;
+        const acquired = new Promise((resolve, reject) => {
+            acquiredResolve = resolve;
+            acquiredReject = reject;
+        });
+        const gate = new Promise(resolve => { releaseGate = resolve; });
+        const release = () => {
+            if (released) return;
+            released = true;
+            signal?.removeEventListener?.('abort', handleAbort);
+            releaseGate();
+        };
+        const handleAbort = () => {
+            if (!committing) release();
+        };
+        signal?.addEventListener?.('abort', handleAbort, { once: true });
+        const lockTask = this.lockManager.request(
+            lockName,
+            { mode: 'exclusive', signal },
+            async () => {
+                if (signal?.aborted) throw abortError();
+                acquiredLock = true;
+                acquiredResolve();
+                await gate;
+            }
+        );
+        void Promise.resolve(lockTask).catch(error => {
+            if (!acquiredLock) {
+                signal?.removeEventListener?.('abort', handleAbort);
+                acquiredReject(error);
+            }
+        });
+        await acquired;
+        return {
+            beginCommit() {
+                if (released || signal?.aborted) throw abortError();
+                committing = true;
+                signal?.removeEventListener?.('abort', handleAbort);
+            },
+            release
+        };
     }
 
     getPending(scope) {
-        return this.pendingStore.get(scope);
+        return this.pendingStore.get(scope).then(record => {
+            if (!record) return null;
+            return Object.freeze({
+                source: record.source === 'topup' ? 'topup' : 'subscription',
+                claimRef: record.source === 'topup' ? record.claimRef || null : null,
+                issuerFingerprint: record.issuerFingerprint || null,
+                phase: record.phase || null
+            });
+        });
     }
 
     async prepare(options = {}) {
@@ -308,31 +374,217 @@ export class EntitlementTicketPreparer {
 
         assertActive();
         await assertIssuerCurrent(pending.issuerFingerprint);
-        const before = this.ticketStore.getCount();
-        await this.ticketStore.addTickets(
-            pending.finalizedTickets.map(validatePreparedTicket),
-            { requireDurable: true }
-        );
-        const walletValues = new Set([
-            ...this.ticketStore.getTickets(),
-            ...(this.ticketStore.getArchiveTickets?.() || [])
-        ].map(ticket => ticket.finalized_ticket));
-        if (!pending.finalizedTickets.every(ticket => walletValues.has(ticket.finalized_ticket))) {
-            throw new Error('Prepared tickets were not imported into the local wallet.');
+        if (!['ready-to-publish', 'imported', 'published'].includes(pending.phase)) {
+            const before = this.ticketStore.getCount();
+            const walletValues = new Set([
+                ...this.ticketStore.getTickets(),
+                ...(this.ticketStore.getArchiveTickets?.() || [])
+            ].map(ticket => ticket.finalized_ticket));
+            const stagedTicketsAdded = pending.finalizedTickets
+                .map(validatePreparedTicket)
+                .filter(ticket => !walletValues.has(ticket.finalized_ticket))
+                .length;
+            pending.phase = 'ready-to-publish';
+            pending.walletCountBefore = before;
+            pending.walletCountAfter = before + stagedTicketsAdded;
+            pending.stagedTicketsAdded = stagedTicketsAdded;
+            pending = await this.pendingStore.put(pending);
         }
 
-        const after = this.ticketStore.getCount();
-        pending.phase = 'imported';
-        pending.walletCountBefore = before;
-        pending.walletCountAfter = after;
-        await this.pendingStore.put(pending);
-        await this.pendingStore.delete(scope);
-        return {
-            ticketsAdded: Math.max(0, after - before),
-            totalActive: after,
-            source: intendedSource,
-            claimRef: intendedSource === 'topup' ? intendedClaimRef : null
-        };
+        const ownership = await this.acquirePublicationOwnership(scope, signal);
+        try {
+            // Another tab may have completed publication while this tab waited
+            // for the per-scope publication lock. Never replay its completion.
+            pending = await this.pendingStore.get(scope);
+            if (!pending) {
+                ownership.release();
+                return {
+                    ticketsAdded: 0,
+                    totalActive: this.ticketStore.getCount(),
+                    source: intendedSource,
+                    claimRef: intendedSource === 'topup' ? intendedClaimRef : null,
+                    publicationObserved: true
+                };
+            }
+            if (pending.accountScope !== scope ||
+                !['ready-to-publish', 'imported', 'published'].includes(pending.phase)) {
+                throw new Error('Saved entitlement publication does not match this account or batch.');
+            }
+
+            const walletValues = new Set([
+                ...this.ticketStore.getTickets(),
+                ...(this.ticketStore.getArchiveTickets?.() || [])
+            ].map(ticket => ticket.finalized_ticket));
+            const preparedTickets = pending.finalizedTickets.map(validatePreparedTicket);
+            const missingTickets = preparedTickets.filter(
+                ticket => !walletValues.has(ticket.finalized_ticket)
+            );
+            if (missingTickets.length === 0) {
+                // A prior owner may have reached the live-wallet commit before
+                // closing. A published checkpoint needs cleanup only. A
+                // ready/imported checkpoint still owes its aggregate update,
+                // which must use the same post-panel publication handshake.
+                const stagedTicketsAdded = Math.max(
+                    0,
+                    Number(pending.stagedTicketsAdded || 0)
+                );
+                if (pending.phase !== 'published' && stagedTicketsAdded > 0) {
+                    const result = {
+                        ticketsAdded: stagedTicketsAdded,
+                        totalActive: this.ticketStore.getCount(),
+                        source: intendedSource,
+                        claimRef: intendedSource === 'topup' ? intendedClaimRef : null,
+                        ticketUpdateDeferred: true,
+                        publicationOnly: true
+                    };
+                    this.pendingPublications.set(result, { scope, ownership });
+                    return result;
+                }
+                await this.cleanupPublicationRecord(scope);
+                ownership.release();
+                return {
+                    ticketsAdded: 0,
+                    totalActive: this.ticketStore.getCount(),
+                    source: intendedSource,
+                    claimRef: intendedSource === 'topup' ? intendedClaimRef : null,
+                    publicationObserved: true
+                };
+            }
+
+            const result = {
+                ticketsAdded: Math.max(0, Number(pending.stagedTicketsAdded || missingTickets.length)),
+                totalActive: Math.max(0, this.ticketStore.getCount() + missingTickets.length),
+                source: intendedSource,
+                claimRef: intendedSource === 'topup' ? intendedClaimRef : null,
+                ticketUpdateDeferred: true
+            };
+            this.pendingPublications.set(result, { scope, ownership });
+            return result;
+        } catch (error) {
+            ownership.release();
+            throw error;
+        }
+    }
+
+    expectedAccountId(scope) {
+        const value = String(scope || '');
+        if (value.startsWith('account:') && value.length > 'account:'.length) {
+            return value.slice('account:'.length);
+        }
+        if (value.startsWith('demo:') && value.length > 'demo:'.length) return null;
+        throw new Error('Prepared ticket publication has an invalid account scope.');
+    }
+
+    async cleanupPublicationRecord(scope) {
+        try {
+            await this.pendingStore.delete(scope);
+            return true;
+        } catch (error) {
+            // The live wallet commit is authoritative. Leaving an imported
+            // recovery record is safe and lets a later startup retry cleanup.
+            console.warn(
+                '[Tickets] Prepared-ticket recovery cleanup paused:',
+                String(error?.code || error?.name || 'UNKNOWN')
+            );
+            return false;
+        }
+    }
+
+    async publishPreparedTicketUpdate(result) {
+        if (!result || typeof result !== 'object' || result.ticketUpdateDeferred !== true) return false;
+        if (this.publishedResults.has(result)) return false;
+        const existingTask = this.publicationTasks.get(result);
+        if (existingTask) return existingTask;
+        const publication = this.pendingPublications.get(result);
+        if (!publication?.scope) return false;
+        publication.ownership?.beginCommit?.();
+
+        const task = (async () => {
+            const expectedAccountId = this.expectedAccountId(publication.scope);
+            await this.ticketStore.assertAccountScope?.(expectedAccountId);
+            const pending = await this.pendingStore.get(publication.scope);
+            if (!pending || pending.accountScope !== publication.scope) {
+                throw new Error('Prepared ticket publication could not restore its account scope.');
+            }
+            const preparedTickets = pending.finalizedTickets?.map(validatePreparedTicket) || [];
+            if (preparedTickets.length !== pending.targetCount) {
+                throw new Error('Prepared ticket publication is incomplete.');
+            }
+
+            const walletValues = new Set([
+                ...this.ticketStore.getTickets(),
+                ...(this.ticketStore.getArchiveTickets?.() || [])
+            ].map(ticket => ticket.finalized_ticket));
+            const missingTickets = preparedTickets.filter(
+                ticket => !walletValues.has(ticket.finalized_ticket)
+            );
+            if (missingTickets.length > 0) {
+                await this.ticketStore.addTickets(missingTickets, {
+                    requireDurable: true,
+                    emitUpdate: false,
+                    skipBroadcast: true,
+                    skipSync: true,
+                    expectedAccountId
+                });
+                const confirmedWalletValues = new Set([
+                    ...this.ticketStore.getTickets(),
+                    ...(this.ticketStore.getArchiveTickets?.() || [])
+                ].map(ticket => ticket.finalized_ticket));
+                if (!preparedTickets.every(ticket => confirmedWalletValues.has(ticket.finalized_ticket))) {
+                    throw new Error('Prepared tickets were not imported into the local wallet.');
+                }
+            }
+            if (pending.phase !== 'imported' && pending.phase !== 'published') {
+                pending.phase = 'imported';
+                pending.walletCountAfter = this.ticketStore.getCount();
+                try {
+                    await this.pendingStore.put(pending);
+                } catch (error) {
+                    // The prepared tickets are already durable in the live
+                    // wallet. Continue to the scoped aggregate update; the
+                    // older staged checkpoint remains safe for later cleanup.
+                    console.warn(
+                        '[Tickets] Prepared-ticket checkpoint paused:',
+                        String(error?.code || error?.name || 'UNKNOWN')
+                    );
+                }
+            }
+
+            // Account state can change while the durable wallet write and
+            // recovery checkpoint are in flight. Re-check immediately before
+            // any observable update leaves this tab.
+            await this.ticketStore.assertAccountScope?.(expectedAccountId);
+            this.ticketStore.publishUpdate({ expectedAccountId });
+            pending.phase = 'published';
+            try {
+                await this.pendingStore.put(pending);
+            } catch {
+                // The aggregate update is already visible. Cleanup remains a
+                // best-effort idempotent operation.
+            }
+            this.publishedResults.add(result);
+            this.pendingPublications.delete(result);
+            await this.cleanupPublicationRecord(publication.scope);
+            return true;
+        })();
+        this.publicationTasks.set(result, task);
+        try {
+            return await task;
+        } finally {
+            this.publicationTasks.delete(result);
+            publication.ownership?.release();
+        }
+    }
+
+    releasePreparedTicketPublication(result) {
+        const publication = result && typeof result === 'object'
+            ? this.pendingPublications.get(result)
+            : null;
+        if (!publication) return false;
+        if (this.publicationTasks.has(result)) return false;
+        this.pendingPublications.delete(result);
+        publication.ownership?.release();
+        return true;
     }
 }
 
@@ -344,4 +596,12 @@ export function prepareEntitlementBatch(options) {
 
 export function getPendingEntitlementClaim(scope) {
     return defaultPreparer.getPending(scope);
+}
+
+export function publishPreparedTicketUpdate(result) {
+    return defaultPreparer.publishPreparedTicketUpdate(result);
+}
+
+export function releasePreparedTicketPublication(result) {
+    return defaultPreparer.releasePreparedTicketPublication(result);
 }

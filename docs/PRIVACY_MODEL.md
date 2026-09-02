@@ -209,6 +209,17 @@ API. It never exposes finalized tickets, blind-signature material, access codes,
 account credentials, Checkout session IDs, claim references, prompts, or model
 responses. Signed-in ticket snapshots remain unavailable until verified unlock,
 account-scope activation, and the first encrypted wallet sync complete.
+For paid preparation, finalized tickets are committed durably to an
+account-scoped recovery store outside the live wallet while the success
+animation is visible. The commercial completion seam accepts only the opaque
+aggregate result object created by the public core. After that seam is called,
+the public core revalidates the active account scope, imports the staged tickets
+into the live wallet, and starts the account-scoped update, cross-tab notice,
+and encrypted sync. A per-account Web Lock gives one tab ownership through this
+publication boundary; losing the account releases uncommitted ownership without
+moving the staged batch. A commit in flight retains the lock and revalidates the
+account before its observable update. The extension never receives or supplies
+ticket material.
 
 ## What Each Component Can and Cannot See
 

@@ -118,6 +118,20 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         documentListeners.get('pointerdown')({ target: {} });
         assert.equal(menu.hidden, true);
 
+        accountState = {
+            isReady: true,
+            accountId: 'account-123',
+            sessionVerified: true,
+            status: 'locked',
+            oauthKeyringRequired: true
+        };
+        accountListener({ ...accountState });
+        assert.equal(label.textContent, 'Unlock encrypted data');
+        assert.equal(tab.dataset.status, 'locked');
+        assert.equal(tab.getAttribute('aria-label'), 'Unlock encrypted data; Google is signed in');
+        assert.equal(tab.getAttribute('aria-controls'), 'account-modal');
+        assert.equal(tab.getAttribute('aria-haspopup'), null);
+
         accountState = { isReady: true, accountId: null, sessionVerified: false, status: 'none' };
         accountListener({ ...accountState });
         assert.equal(label.textContent, 'Account');

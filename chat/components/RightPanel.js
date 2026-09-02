@@ -1850,7 +1850,7 @@ class RightPanel {
         }).join('');
 
         return `
-            <div class="${embedded ? 'pt-4' : 'p-3'}">
+            <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? '' : 'mb-3'}">
                     <div class="flex items-center gap-1.5 mb-2">
                         <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1871,7 +1871,7 @@ class RightPanel {
 
     generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
         return hasApiKey ? `
-            <div class="${embedded ? 'pt-4' : 'p-3'}">
+            <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? 'mb-2' : 'mb-3'}">
                     <div class="flex items-center gap-1.5 mb-2">
                         <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1932,7 +1932,7 @@ class RightPanel {
 
             </div>
         ` : `
-            <div class="${embedded ? 'pt-4' : 'p-3'}">
+            <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? 'mb-2' : 'mb-3'}">
                     <div class="flex items-center gap-1.5 mb-2">
                         <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1971,6 +1971,24 @@ class RightPanel {
     /**
      * Generates HTML for the top section (tickets and API key) only.
      */
+    getExternalTicketSummary(accountState = {}) {
+        const ticketCount = Math.max(0, Number(this.ticketCount || 0));
+        const hasUnlockedAccount = Boolean(
+            accountState.accountId &&
+            accountState.sessionVerified &&
+            accountState.status === 'unlocked'
+        );
+        const showGetTickets = hasUnlockedAccount && ticketCount === 0;
+        return {
+            hasUnlockedAccount,
+            showGetTickets,
+            ticketCount,
+            ariaLabel: showGetTickets
+                ? 'Get inference tickets'
+                : `Manage inference tickets, ${ticketCount} available`
+        };
+    }
+
     generateTopSectionHTML() {
         const hasTickets = this.ticketCount > 0;
         const hasApiKey = this.hasAnyAccessKey();
@@ -1987,29 +2005,26 @@ class RightPanel {
         const splitShareUrlEscaped = splitShareUrl ? this.escapeHtml(splitShareUrl) : '';
         const splitShareUrlAttribute = splitShareUrl ? this.escapeHtmlAttribute(splitShareUrl) : '';
         const accountState = this.app.services.account?.getState?.() || {};
-        const showGuestAccessCode = !(
-            accountState.accountId &&
-            accountState.sessionVerified &&
-            accountState.status === 'unlocked'
-        );
+        const ticketSummary = this.getExternalTicketSummary(accountState);
+        const showGuestAccessCode = !ticketSummary.hasUnlockedAccount;
         const showLegacyTicketTools = false;
         const hasExternalTicketManager = this.app.hasTicketManagementAction?.() === true;
 
         return `
                 ${hasExternalTicketManager ? `
-                <div class="p-3">
-                    <div class="border-b border-border/60 pb-3">
+                <div class="oa-right-panel-access-stack grid gap-4 p-3">
+                    <div class="oa-right-panel-ticket-summary min-w-0">
                     <div class="flex items-center gap-1.5">
                         <button
                             id="open-ticket-manager-btn"
                             type="button"
                             class="btn-ghost-hover inline-flex min-w-0 items-center gap-1.5 rounded-md text-left text-xs font-medium text-foreground transition-all duration-150"
-                            aria-label="${this.ticketCount === 0 ? 'Get inference tickets' : `Manage inference tickets, ${this.ticketCount} available`}"
+                            aria-label="${ticketSummary.ariaLabel}"
                         >
                             <svg class="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
                             </svg>
-                            <span>${this.ticketCount === 0 ? 'Get tickets' : `Inference Tickets: <span class="font-semibold">${this.ticketCount}</span>`}</span>
+                            <span>${ticketSummary.showGetTickets ? 'Get tickets' : `Inference Tickets: <span class="font-semibold">${ticketSummary.ticketCount}</span>`}</span>
                         </button>
                         <button
                             id="toggle-external-ticket-info-btn"
@@ -2801,7 +2816,7 @@ class RightPanel {
 
         // Generate and update only the top section HTML
         topSection.innerHTML = this.generateTopSectionHTML();
-        this.app.extensionSlots?.refresh?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
+        this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
         this.attachTopSectionEventListeners();
@@ -3036,7 +3051,7 @@ class RightPanel {
             </div>
         `;
 
-        this.app.extensionSlots?.refresh?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
+        this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Attach event listeners
         this.attachEventListeners();

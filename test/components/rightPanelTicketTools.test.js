@@ -100,9 +100,61 @@ test('commercial ticket management replaces right-panel redemption with one comp
     assert.match(source, /text-left text-xs font-medium/);
     assert.match(source, /Inference Tickets: <span class="font-semibold">\$\{this\.ticketCount\}<\/span>/);
     assert.doesNotMatch(source, /id="open-ticket-manager-btn"[\s\S]{0,900}d="m9 18 6-6-6-6"/);
-    assert.match(source, /Manage inference tickets, \$\{this\.ticketCount\} available/);
+    assert.match(source, /Manage inference tickets, \$\{ticketCount\} available/);
+    assert.match(source, /aria-label="\$\{ticketSummary\.ariaLabel\}"/);
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-4 p-3/);
+    assert.match(source, /oa-right-panel-ticket-summary min-w-0/);
+    assert.match(source, /oa-right-panel-access-key min-w-0/);
+    assert.doesNotMatch(source, /border-b border-border\/60 pb-3/);
+});
+
+test('commercial zero balance is actionable only for an unlocked account', () => {
+    const panel = createPanel(0);
+
+    const signedOut = panel.getExternalTicketSummary({});
+    assert.equal(signedOut.showGetTickets, false);
+    assert.equal(signedOut.ticketCount, 0);
+    assert.equal(signedOut.ariaLabel, 'Manage inference tickets, 0 available');
+
+    const signedIn = panel.getExternalTicketSummary({
+        accountId: 'account-1',
+        sessionVerified: true,
+        status: 'unlocked'
+    });
+    assert.equal(signedIn.showGetTickets, true);
+    assert.equal(signedIn.ariaLabel, 'Get inference tickets');
+});
+
+test('right-panel rerenders reattach commercial ticket status through the public facade', () => {
+    const originalDocument = globalThis.document;
+    const calls = [];
+    const topSection = { innerHTML: '' };
+    const panel = Object.create(RightPanel.prototype);
+    panel.app = {
+        refreshExtensionSlot(name) {
+            calls.push(name);
+            return true;
+        }
+    };
+    panel.generateTopSectionHTML = () => '<div>updated</div>';
+    panel.attachTopSectionEventListeners = () => {};
+    panel.ensureLaneExpirationTimer = () => {};
+    globalThis.document = {
+        getElementById(id) {
+            if (id !== 'right-panel-content') return null;
+            return { querySelector: () => topSection };
+        }
+    };
+
+    try {
+        panel.renderTopSectionOnly();
+        assert.equal(topSection.innerHTML, '<div>updated</div>');
+        assert.deepEqual(calls, ['rightPanel.ticketStatus']);
+    } finally {
+        globalThis.document = originalDocument;
+    }
 });
 
 test('commercial ticket launcher keeps a question-mark ticket explanation', () => {

@@ -9,6 +9,7 @@ const SESSION_ROW_HEIGHT = 36;
 const HEADER_ROW_HEIGHT = 36;
 const GROUP_SPACER_HEIGHT = 12;
 const FOOTER_ROW_HEIGHT = 32;
+const END_SPACER_HEIGHT = 40;
 const VIRTUALIZE_THRESHOLD = 400;
 const VIRTUAL_OVERSCAN = 8;
 const SIDEBAR_DEFAULT_WIDTH = 220;
@@ -31,6 +32,11 @@ export default class Sidebar {
         };
         this.virtualScrollRaf = null;
         this.listenersAttached = false;
+        this.requestAnimationFrame = globalThis.requestAnimationFrame?.bind(globalThis) ||
+            (callback => globalThis.setTimeout?.(callback, 0));
+        this.initialViewportSettled = false;
+        this.initialViewportUserControlled = false;
+        this.initialViewportFrame = null;
         this.isResizing = false;
         this.resizeStartX = 0;
         this.resizeStartWidth = 0;
@@ -113,10 +119,12 @@ export default class Sidebar {
         if (shouldVirtualize) {
             this.prepareVirtualItems(sessionsToRender);
             this.renderVirtualRange(true);
-            return;
+        } else {
+            this.renderFullList(sessionsToRender);
         }
-
-        this.renderFullList(sessionsToRender);
+        this.applyInitialViewportGuard();
+        this.scheduleInitialViewportSettlement(sessionsToRender.length > 0);
+        this.updateScrollFade();
     }
 
     /**
@@ -209,7 +217,15 @@ export default class Sidebar {
 
         this.listenersAttached = true;
 
+        const scrollArea = this.app.elements.sessionsScrollArea;
+        const releaseInitialViewport = () => this.releaseInitialViewportGuard();
+        scrollArea?.addEventListener('wheel', releaseInitialViewport, { passive: true });
+        scrollArea?.addEventListener('touchstart', releaseInitialViewport, { passive: true });
+        scrollArea?.addEventListener('pointerdown', releaseInitialViewport, { passive: true });
+        scrollArea?.addEventListener('keydown', releaseInitialViewport);
+
         list.addEventListener('click', async (e) => {
+            this.releaseInitialViewportGuard();
             const starBtn = e.target.closest('.session-star-btn');
             if (starBtn) {
                 e.preventDefault();
@@ -620,8 +636,11 @@ export default class Sidebar {
         const emptyHtml = !html && !footerHtml
             ? `<div class="px-3 py-3 text-xs text-muted-foreground">${this.escapeHtml(this.app.getSessionListEmptyText())}</div>`
             : '';
+        const endSpacerHtml = html || footerHtml
+            ? '<div class="session-list-end-spacer" aria-hidden="true"></div>'
+            : '';
 
-        list.innerHTML = html + footerHtml + emptyHtml;
+        list.innerHTML = html + footerHtml + emptyHtml + endSpacerHtml;
     }
 
     prepareVirtualItems(sessionsToRender) {
@@ -644,6 +663,9 @@ export default class Sidebar {
         const footerText = this.getFooterText();
         if (footerText) {
             items.push({ type: 'footer', text: footerText });
+        }
+        if (items.length) {
+            items.push({ type: 'end-spacer' });
         }
 
         const offsets = [];
@@ -668,6 +690,8 @@ export default class Sidebar {
                 return GROUP_SPACER_HEIGHT;
             case 'footer':
                 return FOOTER_ROW_HEIGHT;
+            case 'end-spacer':
+                return END_SPACER_HEIGHT;
             default:
                 return SESSION_ROW_HEIGHT;
         }
@@ -695,6 +719,8 @@ export default class Sidebar {
     }
 
     handleScroll(force = false) {
+        this.updateScrollFade();
+        this.applyInitialViewportGuard();
         if (!this.virtualState.enabled) return;
         if (!force) {
             const editingInput = this.app.elements.sessionsList?.querySelector('.session-title-input:not([readonly])');
@@ -711,7 +737,74 @@ export default class Sidebar {
         this.virtualScrollRaf = requestAnimationFrame(() => {
             this.virtualScrollRaf = null;
             this.renderVirtualRange();
+            this.applyInitialViewportGuard();
+            this.updateScrollFade();
         });
+    }
+
+    scheduleInitialViewportSettlement(hasSessions) {
+        if (
+            !hasSessions ||
+            this.initialViewportSettled ||
+            this.initialViewportUserControlled ||
+            this.initialViewportFrame != null
+        ) return;
+
+        this.initialViewportFrame = this.requestAnimationFrame(() => {
+            this.initialViewportFrame = null;
+            if (this.initialViewportUserControlled) return;
+            const scrollArea = this.app.elements.sessionsScrollArea;
+            if (!scrollArea) return;
+
+            // Browser scroll restoration can leave the first painted history
+            // between rows. Normalize only this initial paint; once the user
+            // interacts, scrolling is completely free.
+            scrollArea.scrollTop = 0;
+            if (this.virtualState.enabled) this.renderVirtualRange(true);
+            this.initialViewportSettled = true;
+            this.applyInitialViewportGuard();
+            this.updateScrollFade();
+        });
+    }
+
+    applyInitialViewportGuard() {
+        const list = this.app.elements.sessionsList;
+        const scrollArea = this.app.elements.sessionsScrollArea;
+        if (!list || !scrollArea) return;
+
+        list.querySelectorAll?.('.session-initially-clipped').forEach(row => {
+            row.classList.remove('session-initially-clipped');
+        });
+        if (!this.initialViewportSettled || this.initialViewportUserControlled) return;
+
+        const viewport = scrollArea.getBoundingClientRect?.();
+        if (!viewport) return;
+        const rows = list.querySelectorAll?.('.chat-session') || [];
+        for (const row of rows) {
+            const bounds = row.getBoundingClientRect?.();
+            if (!bounds) continue;
+            if (bounds.top < viewport.bottom - 0.5 && bounds.bottom > viewport.bottom + 0.5) {
+                row.classList.add('session-initially-clipped');
+                break;
+            }
+        }
+    }
+
+    releaseInitialViewportGuard() {
+        if (this.initialViewportUserControlled) return;
+        this.initialViewportUserControlled = true;
+        this.initialViewportSettled = true;
+        this.app.elements.sessionsList
+            ?.querySelectorAll?.('.session-initially-clipped')
+            .forEach(row => row.classList.remove('session-initially-clipped'));
+    }
+
+    updateScrollFade() {
+        const scrollArea = this.app.elements.sessionsScrollArea;
+        const shell = scrollArea?.closest?.('.session-scroll-shell');
+        if (!scrollArea || !shell) return;
+        const hasMoreBelow = scrollArea.scrollHeight - scrollArea.scrollTop - scrollArea.clientHeight > 1;
+        shell.classList.toggle('has-more-below', hasMoreBelow);
     }
 
     renderVirtualRange(force = false) {
@@ -776,6 +869,9 @@ export default class Sidebar {
         }
         if (item.type === 'footer') {
             return `<div class="px-3 py-2 text-xs text-muted-foreground">${item.text}</div>`;
+        }
+        if (item.type === 'end-spacer') {
+            return '<div class="session-list-end-spacer" aria-hidden="true"></div>';
         }
         return this.buildSessionHTML(item.session);
     }

@@ -500,6 +500,41 @@ html.switching-theme *::after {
 }
 
 /* Session list styles */
+.session-scroll-shell {
+    position: relative;
+    overflow: hidden;
+}
+
+.session-scroll-fade {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2;
+    height: 1.25rem;
+    pointer-events: none;
+    background: linear-gradient(
+        to bottom,
+        hsl(var(--color-background) / 0),
+        hsl(var(--color-background) / 0.96)
+    );
+    opacity: 0;
+    transition: opacity 0.14s ease-out;
+}
+
+.session-scroll-shell.has-more-below .session-scroll-fade {
+    opacity: 1;
+}
+
+.session-list-end-spacer {
+    height: 40px;
+    flex: 0 0 40px;
+}
+
+.session-initially-clipped {
+    visibility: hidden;
+}
+
 .chat-session {
     transition: all 0.15s ease;
     -webkit-tap-highlight-color: transparent; /* Remove iOS tap highlight */
@@ -5582,12 +5617,16 @@ html {
     background: transparent;
     color: hsl(var(--color-foreground));
     text-align: left;
-    transition: background-color 0.15s ease;
+    transition: background-color 0.14s ease-out, border-color 0.14s ease-out, transform 0.1s ease-out;
 }
 
 .account-tab-btn:hover {
-    background-color: hsl(var(--color-hover));
-    border-color: hsl(var(--color-border));
+    background-color: hsl(var(--color-foreground) / 0.1);
+    border-color: transparent;
+}
+
+.account-tab-btn:active {
+    transform: scale(0.985);
 }
 
 .account-tab-btn:focus-visible,
@@ -5619,8 +5658,8 @@ html {
     flex: 1;
     overflow: hidden;
     min-width: 0;
-    font-size: 0.8rem;
-    font-weight: 500;
+    font-size: 0.875rem;
+    font-weight: 400;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -5638,8 +5677,26 @@ html {
     color: hsl(var(--color-foreground));
 }
 
+.account-tab-btn[aria-expanded="true"] {
+    background-color: hsl(var(--color-foreground) / 0.08);
+}
+
+.account-tab-btn[aria-expanded="true"]:hover {
+    background-color: hsl(var(--color-foreground) / 0.13);
+}
+
+.account-tab-btn[aria-expanded="true"] .account-identity-label {
+    font-weight: 500;
+}
+
 .account-tab-btn[data-status="logged-in"] .account-tab-avatar {
     color: hsl(var(--color-foreground));
+}
+
+.account-tab-btn[data-status="locked"] .account-tab-avatar {
+    border-color: hsl(var(--color-primary) / 0.55);
+    background: hsl(var(--color-primary) / 0.1);
+    color: hsl(var(--color-primary));
 }
 
 .account-settings-menu {
@@ -5664,19 +5721,31 @@ html {
     align-items: center;
     gap: 0.625rem;
     width: 100%;
-    min-height: 2.4rem;
+    min-height: 2.625rem;
     padding: 0.5rem 0.625rem;
     border: 0;
     border-radius: 0.5rem;
     background: transparent;
     color: hsl(var(--color-foreground));
-    font-size: 0.8rem;
+    font-size: 0.875rem;
+    font-weight: 400;
     text-align: left;
+    transition: background-color 0.14s ease-out, color 0.14s ease-out, transform 0.1s ease-out;
+}
+
+.account-menu-item[aria-current="page"],
+.account-menu-item[aria-pressed="true"] {
+    font-weight: 500;
 }
 
 .account-menu-item:hover,
 .account-menu-item:focus-visible {
-    background: hsl(var(--color-hover));
+    background: hsl(var(--color-foreground) / 0.1);
+}
+
+.account-menu-item:active {
+    background: hsl(var(--color-foreground) / 0.14);
+    transform: scale(0.985);
 }
 
 .account-menu-item svg {
@@ -5686,17 +5755,23 @@ html {
     color: hsl(var(--color-muted-foreground));
 }
 
-.account-menu-item-danger,
+.account-menu-item-danger {
+    color: hsl(var(--color-foreground));
+}
+
 .account-menu-item-danger svg {
-    color: hsl(var(--color-muted-foreground));
+    color: currentColor;
 }
 
 .account-menu-item-danger:hover,
-.account-menu-item-danger:focus-visible,
+.account-menu-item-danger:focus-visible {
+    color: color-mix(in srgb, hsl(var(--color-destructive)) 50%, hsl(var(--color-foreground)));
+    background: hsl(var(--color-destructive) / 0.1);
+}
+
 .account-menu-item-danger:hover svg,
 .account-menu-item-danger:focus-visible svg {
-    color: hsl(var(--color-destructive));
-    background: hsl(var(--color-destructive) / 0.08);
+    color: currentColor;
 }
 
 @keyframes accountGlowPulse {

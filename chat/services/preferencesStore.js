@@ -455,13 +455,21 @@ class PreferencesStore {
             return;
         }
 
+        const deviceTheme = accountId ? null : this.getAccountScopeFallback(PREF_KEYS.theme);
         await Promise.all(
-            [...SYNCABLE_PREF_KEYS].map(key =>
+            [...SYNCABLE_PREF_KEYS]
+                .filter(key => accountId || key !== PREF_KEYS.theme)
+                .map(key =>
                 this.reloadPreferenceFromDatabase(key, {
                     useDefaultWhenMissing: true
                 })
             )
         );
+        if (!accountId) {
+            const changed = !this.valuesEqual(this.cache.get(PREF_KEYS.theme), deviceTheme);
+            this.cache.set(PREF_KEYS.theme, deviceTheme);
+            if (changed) this.notify(PREF_KEYS.theme, deviceTheme);
+        }
     }
 
     async handleExternalPreferenceUpdate(payload) {
@@ -488,9 +496,17 @@ class PreferencesStore {
         }
     }
 
+    getAccountScopeFallback(key) {
+        if (key !== PREF_KEYS.theme) return this.getDefaultValue(key);
+        const current = this.cache.get(key);
+        return ['light', 'dark', 'system'].includes(current)
+            ? current
+            : this.getDefaultValue(key);
+    }
+
     clearAccountScopedCache() {
         SYNCABLE_PREF_KEYS.forEach(key => {
-            const value = this.getDefaultValue(key);
+            const value = this.getAccountScopeFallback(key);
             const changed = !this.valuesEqual(this.cache.get(key), value);
             this.cache.set(key, value);
             if (changed) this.notify(key, value);

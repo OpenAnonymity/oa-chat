@@ -15,7 +15,10 @@ or entering the unlinkable-inference path. See
 - **Returning browser:** Google authenticates first. A logged-out or new browser
   then uses the synced PRF passkey to decrypt the account master key locally.
   A browser that retains the non-extractable local keys restores without another
-  passkey prompt.
+  passkey prompt. Until that unlock succeeds, the sidebar says **Unlock encrypted
+  data** rather than presenting the Google session as a fully unlocked account.
+  Closing the unlock dialog does not end the Google session; tickets and
+  preferences stay locked, and the dialog's explicit **Log out** action ends it.
 - **Desktop app:** Continue with Google opens one system-browser tab. On capable
   deployments, that tab completes Google and then creates or unlocks the
   encryption passkey before returning a one-use PKCE-bound code and local PRF

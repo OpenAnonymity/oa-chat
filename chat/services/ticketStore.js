@@ -149,10 +149,36 @@ export class TicketStore {
         }
     }
 
-    async withLock(handler, { guardScope = true } = {}) {
+    publishUpdate(options = {}) {
+        if (
+            Object.hasOwn(options, 'expectedAccountId') &&
+            (syncService.getLocalAccountScope() || null) !== (options.expectedAccountId || null)
+        ) {
+            throw new Error('Prepared tickets belong to a different account scope');
+        }
+        this.emitUpdate();
+        if (!options.skipBroadcast) {
+            storageEvents.broadcast('tickets-updated', {
+                accountId: syncService.getLocalAccountScope(),
+                updatedAt: Date.now()
+            });
+        }
+        if (!options.skipSync) {
+            syncService.triggerTicketSync();
+        }
+    }
+
+    async withLock(handler, options = {}) {
+        const { guardScope = true } = options;
         const runWithAccountLock = () => withAccountDataLock(async () => {
             if (guardScope) {
-                await syncService.assertAccountDataAccess();
+                const activeAccountId = await syncService.assertAccountDataAccess();
+                if (
+                    Object.hasOwn(options, 'expectedAccountId') &&
+                    (activeAccountId || null) !== (options.expectedAccountId || null)
+                ) {
+                    throw new Error('Prepared tickets belong to a different account scope');
+                }
             }
             return handler();
         });
@@ -169,6 +195,13 @@ export class TicketStore {
         const run = this.lockQueue.then(runWithAccountLock, runWithAccountLock);
         this.lockQueue = run.catch(() => {});
         return run;
+    }
+
+    async assertAccountScope(expectedAccountId) {
+        return this.withLock(
+            () => true,
+            { expectedAccountId: expectedAccountId || null }
+        );
     }
 
     async handleAccountScopeChange(
@@ -459,20 +492,20 @@ export class TicketStore {
         this.archive = archivedTickets;
         await this.markHadTicketsBeforeIfNeeded(activeTickets.length, archivedTickets.length);
         if (options.emitUpdate !== false) {
-            this.emitUpdate();
-        }
-        if (!options.skipBroadcast) {
-            storageEvents.broadcast('tickets-updated', {
-                accountId: syncService.getLocalAccountScope(),
-                updatedAt: Date.now()
-            });
-        }
-
-        // Trigger sync on local changes (debounced). Redemption paths opt out:
-        // an immediate identity-authenticated request after anonymous ticket
-        // redemption would create a direct timing correlation.
-        if (!options.skipSync) {
-            syncService.triggerTicketSync();
+            this.publishUpdate(options);
+        } else {
+            if (!options.skipBroadcast) {
+                storageEvents.broadcast('tickets-updated', {
+                    accountId: syncService.getLocalAccountScope(),
+                    updatedAt: Date.now()
+                });
+            }
+            // Trigger sync on local changes (debounced). Redemption paths opt out:
+            // an immediate identity-authenticated request after anonymous ticket
+            // redemption would create a direct timing correlation.
+            if (!options.skipSync) {
+                syncService.triggerTicketSync();
+            }
         }
 
         return persisted;
@@ -664,7 +697,10 @@ export class TicketStore {
             await this.persistTickets(combined, archived, {
                 tombstones: stored.tombstones,
                 invalidatedKeyIds,
-                requireDurable: options.requireDurable === true
+                requireDurable: options.requireDurable === true,
+                emitUpdate: options.emitUpdate,
+                skipBroadcast: options.skipBroadcast,
+                skipSync: options.skipSync
             });
             if (options.requireDurable === true) {
                 const confirmed = await this.readFromDatabase({ requireDurable: true });
@@ -680,7 +716,9 @@ export class TicketStore {
                 this.archive = confirmed.archived;
             }
             return combined.length;
-        });
+        }, Object.hasOwn(options, 'expectedAccountId')
+            ? { expectedAccountId: options.expectedAccountId || null }
+            : undefined);
     }
     async clearTickets() {
         return this.withLock(async () => {

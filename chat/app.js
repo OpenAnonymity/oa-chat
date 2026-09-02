@@ -89,7 +89,9 @@ import {
 import CouncilController from './application/councilController.js';
 import {
     getPendingEntitlementClaim,
-    prepareEntitlementBatch
+    prepareEntitlementBatch,
+    publishPreparedTicketUpdate,
+    releasePreparedTicketPublication
 } from './application/entitlementTicketPreparer.js';
 import { ExtensionHost } from './extensions/extensionHost.js';
 import { toExtensionAccountSnapshot } from './extensions/extensionAccountSnapshot.js';
@@ -497,6 +499,8 @@ class ChatApp {
             tickets: Object.freeze({
                 getPendingEntitlementClaim,
                 prepareEntitlementBatch,
+                publishPreparedTicketUpdate,
+                releasePreparedTicketPublication,
                 getIssuerPublicKey: signal => this.getExtensionTicketIssuer(signal),
                 getToolsSnapshot: () => this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
                     Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),

@@ -2,7 +2,7 @@
 <html lang="en" class="theme-light flat-mode">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <base href="/">
     <title>oa-chat</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -324,7 +324,7 @@
                                 autocorrect="off"
                                 autocapitalize="off"
                                 spellcheck="false"
-                                placeholder="Search chats"
+                                placeholder="Search chats..."
                                 value="">
                             <div class="sidebar-search-shortcut">
                                 <span class="opacity-60">⌘</span>
@@ -367,18 +367,21 @@
                             </div>
                         </div>
 
-                        <div id="sessions-scroll-area" class="flex-1 min-h-0 overflow-y-auto">
-                            <!-- Loading indicator shown while sessions load -->
-                            <div id="sessions-skeleton" class="sessions-loader">
-                                <div class="loader-text">
-                                    <span>Loading chat history</span>
-                                    <span>from local browser storage</span>
+                        <div class="session-scroll-shell flex-1 min-h-0">
+                            <div id="sessions-scroll-area" class="h-full min-h-0 overflow-y-auto">
+                                <!-- Loading indicator shown while sessions load -->
+                                <div id="sessions-skeleton" class="sessions-loader">
+                                    <div class="loader-text">
+                                        <span>Loading chat history</span>
+                                        <span>from local browser storage</span>
+                                    </div>
+                                    <div class="loader-bar">
+                                        <div class="loader-bar-fill"></div>
+                                    </div>
                                 </div>
-                                <div class="loader-bar">
-                                    <div class="loader-bar-fill"></div>
-                                </div>
+                                <div id="sessions-list" class="flex flex-col gap-0.5"></div>
                             </div>
-                            <div id="sessions-list" class="flex flex-col gap-0.5"></div>
+                            <div class="session-scroll-fade" aria-hidden="true"></div>
                         </div>
                     </div>
                 </div>

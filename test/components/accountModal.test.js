@@ -226,6 +226,47 @@ test('a returning Google account stays in Chat without first-account routing', a
     assert.equal(firstAccountReady, 0);
 });
 
+test('a Google-authenticated locked account explains that passkey unlock is still required', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById() { return null; } };
+    const state = {
+        accountId: 'identity-account',
+        sessionVerified: true,
+        status: 'locked',
+        oauthProvider: 'google',
+        oauthKeyringRequired: true,
+        busy: false,
+        error: 'No passkey found for this account on this device'
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderOAuthUnlockUI();
+        assert.match(html, /Signed in with Google/);
+        assert.match(html, /Encrypted data is still locked/);
+        assert.match(html, /Google sign-in alone cannot decrypt it/);
+        assert.match(html, /Closing this dialog keeps Google signed in/);
+        assert.match(html, />\s*Log out\s*</);
+        assert.doesNotMatch(html, /Cancel and log out/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 test('legacy linked account uses its existing passkey unlock path', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {

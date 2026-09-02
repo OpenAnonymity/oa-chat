@@ -218,6 +218,30 @@ test('delayed preference broadcast cannot repopulate a stale tab cache', async (
     }
 });
 
+test('logging out preserves the current device theme while clearing account-scoped preferences', async () => {
+    const fixture = installSettingsMap([
+        [PREF_KEYS.theme, 'light'],
+        [PREF_KEYS.wideMode, true]
+    ]);
+    const previousCache = new Map(preferencesStore.cache);
+    preferencesStore.cache.set(PREF_KEYS.theme, 'dark');
+    preferencesStore.cache.set(PREF_KEYS.wideMode, true);
+
+    try {
+        await preferencesStore.handleAccountScopeChange({ accountId: null });
+        assert.equal(preferencesStore.cache.get(PREF_KEYS.theme), 'dark');
+        assert.equal(preferencesStore.cache.get(PREF_KEYS.wideMode), true);
+
+        preferencesStore.clearAccountScopedCache();
+        assert.equal(preferencesStore.cache.get(PREF_KEYS.theme), 'dark');
+        assert.equal(preferencesStore.cache.get(PREF_KEYS.wideMode), false);
+    } finally {
+        preferencesStore.cache.clear();
+        previousCache.forEach((value, key) => preferencesStore.cache.set(key, value));
+        fixture.restore();
+    }
+});
+
 test('stale remote ticket notification cannot clear the next account cache', async () => {
     const fixture = installSettingsMap([
         ['sync-account-scope', 'account-b'],

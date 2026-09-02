@@ -61,6 +61,13 @@ switch. A page reload therefore does not prompt again. Explicit logout or token
 invalidation deletes the bundle. A fresh device or logged-out browser must use
 the encryption passkey again.
 
+Google authentication may remain valid when a user closes an unsuccessful
+encryption-passkey prompt. That state is deliberately shown as locked, not as a
+fully logged-in account: OAuth can identify the account and fetch its opaque
+keyring wrappers, but it cannot decrypt the master key or expose tickets and
+preferences. Reloading may therefore restore the Google session while still
+requiring the same encryption passkey.
+
 The encrypted-sync blob format remains compatible: HKDF-derived AES-GCM keys and
 HMAC-derived opaque IDs still use the same version-1 labels. This change replaces
 the SSO key-unlock mechanism; it does not re-encrypt existing sync blobs into a

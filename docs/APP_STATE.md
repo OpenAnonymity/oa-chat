@@ -11,16 +11,60 @@ reading code alone.
   focuses its heading. Returning accounts do not emit this signal.
 - Avatar, account label, and settings affordance are one accessible sidebar
   button. There is no separate gear. Long labels truncate within the shared hit
-  target, and logout is muted until hover/focus.
+  target. The new account identity and menu actions match the existing sidebar
+  type scale at 14px regular; only an open/selected state uses medium weight.
+  Existing chat-history typography is unchanged. Log out is separated from account actions and remains fully legible
+  in both themes, with destructive color reserved for hover/focus.
 - The public extension ticket capabilities no longer expose ticket export.
   Membership and standalone ticket management retain Import, Share, and Redeem.
   Account-data/chat/memory export remains independent and never includes
   inference tickets.
 - The right panel groups the inference-ticket row and ephemeral-key section
-  under one wrapper with a divider and one spacing rhythm. A commercial zero
-  balance labels its action **Get tickets**.
-- The chat search placeholder is **Search chats**; shortcut space remains
+  with a deliberate 16px whitespace gap and no divider. Commercial ticket
+  preparation mounts directly below the ticket row; component rerenders must
+  reattach that extension slot through `refreshExtensionSlot(...)`, never an
+  internal registry. Paid preparation uses the same compact text and progress
+  bar presentation as ordinary ticket issuance, without a separate spinner.
+  A commercial zero balance labels its action **Get tickets** only while an
+  account is verified and unlocked; signed-out zero balances remain the neutral
+  **Inference Tickets: 0** state.
+- Paid preparation stages finalized tickets durably in the account/purchase-
+  scoped recovery store, outside the live wallet, until the commercial
+  controller has removed its completed progress state. The narrow public
+  completion method revalidates the active account, imports that staged batch,
+  then publishes the scoped aggregate UI/broadcast update and starts encrypted
+  sync without exposing ticket records to the extension. This keeps every live
+  ticket consumer behind the loading UI without making preparation durability
+  depend on presentation. A per-account Web Lock is held through the completion
+  fade and publication. Other tabs wait, then observe the owner's single
+  aggregate update without replaying a second success panel; account changes
+  release an uncommitted owner while leaving staged recovery intact. Once the
+  live-wallet commit begins, external cleanup cannot release its lock; scope is
+  revalidated after the durable write, and ready/imported/published recovery
+  checkpoints make interrupted publication and cleanup idempotent.
+- Commercial Membership inherits the public `--font-sans` token and stays on a
+  compact 12/14/20/24–28px interface scale. Negative space groups automatic
+  reload beneath the two bordered offers; it is not presented as another card.
+- The chat search placeholder is **Search chats...**; shortcut space remains
   reserved at narrow sidebar widths.
+- Long conversation history settles its initial paint at the top row boundary
+  and withholds one conversation that would otherwise be clipped at the bottom.
+  The guard disengages permanently on the first user scroll/pointer/key
+  interaction: there is no scroll snapping and no later automatic repositioning,
+  so a deliberately half-visible row remains where the user leaves it. A short
+  bottom fade appears only while more history exists below, and a real trailing
+  spacer remains in both full and virtualized lists. The last title can therefore
+  scroll fully above the account footer. The account identity row and menu keep the existing 14px
+  typography but use a stronger full-row neutral hover/focus surface.
+- Explicit logout preserves the current device theme while account-scoped
+  preferences and encrypted wallet state are deactivated. A Google-authenticated
+  session that still needs its encryption passkey is labeled **Unlock encrypted
+  data** in the sidebar instead of looking fully logged in. Closing the unlock
+  dialog keeps Google authentication but never marks encrypted data or tickets
+  unlocked; the dialog explains this distinction and offers an explicit Log out.
+- The viewport permits browser zoom. Do not restore `maximum-scale` or
+  `user-scalable=no`; authentication, Membership, and ticket recovery must remain
+  usable under magnification.
 - The public entitlement preparer accepts an issuer response whose `key_id` is
   absent for rollout compatibility, while still deriving the key ID locally and
   rejecting any advertised value that does not match. Monthly rotation may
@@ -34,7 +78,7 @@ reading code alone.
 - A full navigation return or BFCache `pageshow` clears **Opening Checkout…**
   and asks oa-org to cancel that exact unpaid bundle automatically. A confirmed
   payment still wins the race and proceeds into private ticket preparation.
-- A definitive unpaid return restores **Choose your plan** with both purchase
+- A definitive unpaid return restores **Membership** with both purchase
   actions enabled and no cancellation notice. Subscription and ticket-bundle
   returns now share this behavior for browser Back and Stripe cancel URLs.
 - The modal is made visible synchronously when the exact tab marker is detected,
@@ -310,8 +354,8 @@ The active lifecycle is documented in `oa-commercial/docs/BILLING.md`.
   sends that reference, while finalized wallet records retain the same four
   ordinary ticket fields. The reference must never enter exports, shares,
   redemptions, tickets, or logs.
-- If oa-org has committed a claim and reports the pack `ready` before local
-  wallet import finishes, the pending local record projects browser state back
+- If oa-org has committed a claim and reports the pack `ready` before staged
+  ticket publication finishes, the pending local record projects browser state back
   to `claiming` and disables another purchase. That override is cleared only
   after durable wallet write/read-back and archive-precedence verification.
 - Top-up and subscription work share the existing account-scoped Web Lock,

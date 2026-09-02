@@ -181,14 +181,55 @@ class AccountModal {
         const isLoggedIn = this.accountState?.accountId &&
             this.accountState?.sessionVerified &&
             this.accountState?.status === 'unlocked';
-        tabBtn.dataset.status = isLoggedIn ? 'logged-in' : 'none';
-        tabBtn.title = isLoggedIn ? 'Account (logged in)' : 'Account';
+        const needsEncryptionUnlock = Boolean(
+            this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            !isLoggedIn && (
+                this.accountState?.oauthKeyringRequired ||
+                this.accountState?.oauthRecoveryRequired ||
+                this.accountState?.oauthLegacyPasskeyRequired ||
+                this.accountState?.status === 'locked'
+            )
+        );
+        const needsEncryptionSetup = Boolean(
+            this.accountState?.accountId &&
+            this.accountState?.sessionVerified &&
+            this.accountState?.oauthSetupRequired
+        );
+        tabBtn.dataset.status = isLoggedIn
+            ? 'logged-in'
+            : needsEncryptionUnlock || needsEncryptionSetup
+                ? 'locked'
+                : 'none';
+        tabBtn.title = isLoggedIn
+            ? 'Account (logged in)'
+            : needsEncryptionSetup
+                ? 'Finish account setup'
+                : needsEncryptionUnlock
+                    ? 'Google is signed in; encrypted data is locked'
+                    : 'Account';
         const accountEmail = this.accountState?.oauthEmail || this.accountState?.email;
         const email = typeof accountEmail === 'string'
             ? accountEmail.trim()
             : '';
-        if (identityLabel) identityLabel.textContent = isLoggedIn && email ? email : 'Account';
-        tabBtn.setAttribute('aria-label', isLoggedIn && email ? `Account for ${email}` : 'Account');
+        const identityText = isLoggedIn && email
+            ? email
+            : needsEncryptionSetup
+                ? 'Finish account setup'
+                : needsEncryptionUnlock
+                    ? 'Unlock encrypted data'
+                    : 'Account';
+        if (identityLabel) identityLabel.textContent = identityText;
+        tabBtn.setAttribute(
+            'aria-label',
+            isLoggedIn && email
+                ? `Account for ${email}`
+                : needsEncryptionSetup
+                    ? 'Finish account setup'
+                    : needsEncryptionUnlock
+                        ? 'Unlock encrypted data; Google is signed in'
+                        : 'Account'
+        );
         tabBtn.setAttribute('aria-controls', isLoggedIn ? 'account-settings-menu' : 'account-modal');
         if (isLoggedIn) tabBtn.setAttribute('aria-haspopup', 'menu');
         else tabBtn.removeAttribute?.('aria-haspopup');
@@ -1148,10 +1189,11 @@ class AccountModal {
                             ? 'Encrypt your data'
                             : 'Unlock encrypted data'
                 )}
-                <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-3">
+                <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-2">
                     <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    ${providerLabel} sign in complete
+                    Signed in with ${providerLabel}
                 </div>
+                ${!isSetup ? '<p class="mb-3 text-center text-sm font-medium text-foreground">Encrypted data is still locked.</p>' : ''}
                 ${isLegacyPasskey ? `
                     <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
                         ${this.escapeHtml(this.formatAccountId(state.accountId))}
@@ -1164,7 +1206,7 @@ class AccountModal {
                             ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it; its account number and recovery path remain available.'
                         : isSetup
                             ? 'Create an encryption passkey. Its PRF output wraps your data key locally and never reaches the org.'
-                            : 'Use your encryption passkey. Its PRF output unlocks your data locally and never reaches the org.'
+                            : 'Use the encryption passkey created for this OA account. It unlocks your data locally; Google sign-in alone cannot decrypt it.'
                     }
                 </p>
                 ${isLegacyMigration ? `
@@ -1194,9 +1236,14 @@ class AccountModal {
                     </button>
                 `}
                 <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
-                    Cancel and log out
+                    Log out
                 </button>
-                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+                ${state.error ? `
+                    <div class="mt-3 text-center">
+                        <p class="text-xs text-destructive">${this.escapeHtml(state.error)}</p>
+                        ${state.oauthKeyringRequired ? '<p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Try the browser profile or password manager where you created this encryption passkey. Closing this dialog keeps Google signed in, but your tickets and preferences stay locked.</p>' : ''}
+                    </div>
+                ` : ''}
             </div>
         `;
     }
