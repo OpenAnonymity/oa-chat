@@ -4,6 +4,29 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-02: Authentication intent waits for account restoration
+
+- The commercial landing page now hands Google entry to `/chat/?auth=google`;
+  this is distinct from `membership=1`, which remains an explicit billing UI
+  request. Core chat owns the one-use auth intent and removes it with
+  `history.replaceState` after the initial authentication bootstrap settles.
+- Initial account restoration has an explicit `authBootstrapComplete` state
+  and `waitForAuthBootstrap()` gate. A remembered verified/unlocked account
+  proceeds directly into chat; a verified locked account opens the encryption-
+  passkey UI; and a genuinely signed-out account opens the Google UI. The
+  signed-in Account summary is never opened by this route.
+- The footer ships a dimensionally stable **Restoring account…** state and is
+  non-interactive with `aria-busy` until verification settles. As soon as
+  account-bound cached email is loaded, it replaces the loading copy without
+  claiming the session is verified; the menu becomes interactive atomically
+  only after verification. Profile refresh and encrypted sync continue in the
+  background.
+- Preserve the existing footer geometry: the full-width trigger is 3.25rem
+  tall, the settings menu is anchored to the footer row with `left/right:
+  -0.5rem`, and its rows remain 2.625rem tall. The settings gear, flat open
+  trigger, menu typography, hover states, focus restoration, and keyboard
+  navigation remain part of the contract.
+
 ## 2026-09-01: Commercial onboarding and ticket surfaces use core UI seams
 
 - A newly created Google account closes Account after passkey setup and emits

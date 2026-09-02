@@ -79,6 +79,8 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.ok(sidebarSlotIndex > accountIndex, 'sidebar slot must immediately follow Account');
     assert.doesNotMatch(html, /id="account-settings-btn"/);
     assert.match(html, /id="account-tab-btn"[\s\S]*account-control-icon/);
+    assert.match(html, /id="account-tab-btn"[^>]+data-status="loading"[^>]+aria-busy="true"[^>]+disabled/);
+    assert.match(html, /id="account-identity-label"[^>]*>Restoring account…<\/span>/);
     assert.match(html, /account-control-icon[\s\S]*M10\.343 3\.94/);
     assert.doesNotMatch(html, /account-control-icon[\s\S]{0,250}m9 18 6-6-6-6/);
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
@@ -90,6 +92,16 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.match(html, /data-oa-extension-slot="sidebar\.accountActions" hidden/);
     assert.match(html, /data-oa-extension-slot="modalLayer" hidden/);
     assert.doesNotMatch(html, /upgrade-tab-btn|billing-modal|Upgrade with Stripe|subscription status/i);
+});
+
+test('account footer keeps stable full-row trigger and menu dimensions', () => {
+    const styles = read('chat/styles.css');
+    assert.match(styles, /\.account-tab-btn\s*\{[^}]*min-height:\s*3\.25rem/s);
+    assert.match(styles, /\.account-settings-menu\s*\{[^}]*right:\s*-0\.5rem;[^}]*left:\s*-0\.5rem/s);
+    assert.match(styles, /\.account-menu-item\s*\{[^}]*min-height:\s*2\.625rem/s);
+    assert.match(styles, /\.account-tab-btn\[data-status="loading"\]\s*\{[^}]*cursor:\s*wait/s);
+    assert.match(styles, /\.account-tab-btn:hover:not\(:disabled\)\s*\{/);
+    assert.match(styles, /\.account-tab-btn:active:not\(:disabled\)\s*\{/);
 });
 
 test('session history ends above the account row with an intentional continuation cue', () => {

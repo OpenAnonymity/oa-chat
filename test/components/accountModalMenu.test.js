@@ -142,6 +142,69 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     }
 });
 
+test('account footer stays stable while cached identity verification settles', () => {
+    const previousDocument = globalThis.document;
+    const elements = new Map();
+    const documentImpl = {
+        getElementById(id) { return elements.get(id) || null; }
+    };
+    const tab = createElement(documentImpl);
+    const label = createElement(documentImpl);
+    const menu = createElement(documentImpl, { hidden: true });
+    elements.set('account-tab-btn', tab);
+    elements.set('account-identity-label', label);
+    elements.set('account-settings-menu', menu);
+    globalThis.document = documentImpl;
+
+    const modal = Object.create(AccountModal.prototype);
+    modal.menuOpen = false;
+    modal.accountMenuTrigger = null;
+    modal.accountState = {
+        isReady: true,
+        authBootstrapComplete: false,
+        accountId: 'account-123',
+        sessionVerified: false,
+        status: 'unlocked',
+        oauthEmail: 'member@example.com'
+    };
+
+    try {
+        modal.updateTabIndicator();
+        assert.equal(label.textContent, 'member@example.com');
+        assert.equal(tab.dataset.status, 'loading');
+        assert.equal(tab.disabled, true);
+        assert.equal(tab.getAttribute('aria-busy'), 'true');
+        assert.equal(tab.getAttribute('aria-label'), 'Restoring account for member@example.com');
+        assert.equal(tab.getAttribute('aria-haspopup'), null);
+
+        modal.accountState = {
+            ...modal.accountState,
+            authBootstrapComplete: true,
+            sessionVerified: true
+        };
+        modal.updateTabIndicator();
+        assert.equal(label.textContent, 'member@example.com');
+        assert.equal(tab.dataset.status, 'logged-in');
+        assert.equal(tab.disabled, false);
+        assert.equal(tab.getAttribute('aria-busy'), null);
+        assert.equal(tab.getAttribute('aria-haspopup'), 'menu');
+
+        modal.accountState = {
+            isReady: true,
+            authBootstrapComplete: true,
+            accountId: null,
+            sessionVerified: false,
+            status: 'none'
+        };
+        modal.updateTabIndicator();
+        assert.equal(label.textContent, 'Account');
+        assert.equal(tab.dataset.status, 'none');
+        assert.equal(tab.disabled, false);
+    } finally {
+        globalThis.document = previousDocument;
+    }
+});
+
 test('account dialog traps keyboard focus and restores the focused control after rerender', () => {
     const previousDocument = globalThis.document;
     const elements = new Map();

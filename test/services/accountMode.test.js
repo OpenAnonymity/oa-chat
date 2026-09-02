@@ -166,6 +166,7 @@ test('restored sessions expose the cached identity before profile refresh finish
 
     Object.assign(accountService.state, {
         accountId: '1234567890123456',
+        authBootstrapComplete: false,
         sessionVerified: false,
         oauthEmail: 'member@example.test',
         busy: false
@@ -195,6 +196,7 @@ test('restored sessions expose the cached identity before profile refresh finish
         assert.equal(snapshots[0].sessionVerified, true);
         assert.equal(snapshots[0].status, 'unlocked');
         assert.equal(snapshots[0].oauthEmail, 'member@example.test');
+        assert.equal(accountService.state.authBootstrapComplete, true);
 
         releaseProfileRefresh();
         await verification;
@@ -209,5 +211,30 @@ test('restored sessions expose the cached identity before profile refresh finish
         accountService.cryptoKey = originals.cryptoKey;
         accountService.syncDerivationKey = originals.syncDerivationKey;
         accountService.syncIdKey = originals.syncIdKey;
+    }
+});
+
+test('account bootstrap waiters resolve only after initial authentication settles', async () => {
+    const originalState = { ...accountService.state };
+    const originalInit = accountService.init;
+    accountService.state.authBootstrapComplete = false;
+    accountService.init = async () => {};
+    let resolved = false;
+
+    try {
+        const waiting = accountService.waitForAuthBootstrap().then(snapshot => {
+            resolved = true;
+            return snapshot;
+        });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(resolved, false);
+
+        accountService.completeAuthBootstrap();
+        const snapshot = await waiting;
+        assert.equal(resolved, true);
+        assert.equal(snapshot.authBootstrapComplete, true);
+    } finally {
+        accountService.init = originalInit;
+        Object.assign(accountService.state, originalState);
     }
 });

@@ -177,6 +177,7 @@ class AccountModal {
         const tabBtn = document.getElementById('account-tab-btn');
         const identityLabel = document.getElementById('account-identity-label');
         if (!tabBtn) return;
+        const isAuthResolving = this.accountState?.authBootstrapComplete === false;
         // Only show logged-in (green) after session is verified with server
         const isLoggedIn = this.accountState?.accountId &&
             this.accountState?.sessionVerified &&
@@ -196,12 +197,19 @@ class AccountModal {
             this.accountState?.sessionVerified &&
             this.accountState?.oauthSetupRequired
         );
-        tabBtn.dataset.status = isLoggedIn
+        tabBtn.dataset.status = isAuthResolving
+            ? 'loading'
+            : isLoggedIn
             ? 'logged-in'
             : needsEncryptionUnlock || needsEncryptionSetup
                 ? 'locked'
                 : 'none';
-        tabBtn.title = isLoggedIn
+        tabBtn.disabled = isAuthResolving;
+        if (isAuthResolving) tabBtn.setAttribute('aria-busy', 'true');
+        else tabBtn.removeAttribute?.('aria-busy');
+        tabBtn.title = isAuthResolving
+            ? 'Restoring account'
+            : isLoggedIn
             ? 'Account (logged in)'
             : needsEncryptionSetup
                 ? 'Finish account setup'
@@ -212,7 +220,9 @@ class AccountModal {
         const email = typeof accountEmail === 'string'
             ? accountEmail.trim()
             : '';
-        const identityText = isLoggedIn && email
+        const identityText = isAuthResolving
+            ? email || 'Restoring account…'
+            : isLoggedIn && email
             ? email
             : needsEncryptionSetup
                 ? 'Finish account setup'
@@ -222,7 +232,11 @@ class AccountModal {
         if (identityLabel) identityLabel.textContent = identityText;
         tabBtn.setAttribute(
             'aria-label',
-            isLoggedIn && email
+            isAuthResolving
+                ? email
+                    ? `Restoring account for ${email}`
+                    : 'Restoring account'
+                : isLoggedIn && email
                 ? `Account for ${email}`
                 : needsEncryptionSetup
                     ? 'Finish account setup'
@@ -231,9 +245,9 @@ class AccountModal {
                         : 'Account'
         );
         tabBtn.setAttribute('aria-controls', isLoggedIn ? 'account-settings-menu' : 'account-modal');
-        if (isLoggedIn) tabBtn.setAttribute('aria-haspopup', 'menu');
+        if (isLoggedIn && !isAuthResolving) tabBtn.setAttribute('aria-haspopup', 'menu');
         else tabBtn.removeAttribute?.('aria-haspopup');
-        if (!isLoggedIn) this.closeAccountMenu();
+        if (!isLoggedIn || isAuthResolving) this.closeAccountMenu();
     }
 
     open(returnFocusEl = null) {

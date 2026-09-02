@@ -620,6 +620,7 @@ class AccountService {
     constructor() {
         this.state = {
             isReady: false,
+            authBootstrapComplete: false,
             accountId: null,
             credentialId: null,
             encryptionCredentialId: null,
@@ -1030,66 +1031,90 @@ class AccountService {
         this.notify();
     }
 
+    completeAuthBootstrap() {
+        if (this.state.authBootstrapComplete === true) return;
+        this.state.authBootstrapComplete = true;
+        this.notify();
+    }
+
+    async waitForAuthBootstrap() {
+        await this.init();
+        if (this.state.authBootstrapComplete === true) return this.getState();
+        return new Promise(resolve => {
+            const unsubscribe = this.subscribe(snapshot => {
+                if (snapshot.authBootstrapComplete !== true) return;
+                unsubscribe();
+                resolve(snapshot);
+            });
+        });
+    }
+
     async init() {
         if (this.state.isReady) return;
-        await sessionService.init();
-        if (!chatDB) {
-            this.setState({ isReady: true });
-            return;
-        }
-        if (!chatDB.db && typeof chatDB.init === 'function') {
-            await chatDB.init();
-        }
-        // Load account settings (accountId, credentialId, etc.)
-        const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
-        if (settings?.accountId) {
-            this.localAccountContinuity = true;
-            this.state.accountId = settings.accountId;
-            syncService.setLocalAccountScope(settings.accountId);
-            this.state.credentialId = settings.credentialId || null;
-            this.state.encryptionCredentialId =
-                settings.encryptionCredentialId || null;
-            this.state.encryptionMode = inferPersistedEncryptionMode(settings);
-            this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
-            this.state.googleLinked = !!settings.googleLinked;
-            this.state.oauthProvider = settings.lastOAuthProvider || null;
-            this.state.oauthEmail = typeof settings.oauthEmail === 'string'
-                ? settings.oauthEmail.trim() || null
-                : null;
-            
-            // Try to restore session from persisted CryptoKey
-            const hasKey = await this.loadMasterKey();
-            if (hasKey) {
-                // Mark ready immediately - UI can render, models can load
-                // Token refresh happens in background (non-blocking)
-                this.state.isReady = true;
-                this.updateStatus();
-                this.notify();
-                
-                // Verify/refresh the SuperTokens session in the background.
-                this.verifySessionInBackground();
+        try {
+            await sessionService.init();
+            if (!chatDB) {
+                this.setState({ isReady: true });
+                this.completeAuthBootstrap();
                 return;
             }
-            // No persisted key - will need passkey
-        } else {
-            // A previous account can leave its active data scope behind if the
-            // browser closes between clearing account settings and completing
-            // logout. Preserve that account-bound wallet in its scoped snapshot
-            // and restore the anonymous wallet before extensions can observe a
-            // billing-ready zero balance.
-            await syncService.deactivateAccountScope(null);
-            syncService.setLocalAccountScope(null);
-        }
-        
-        this.state.isReady = true;
-        this.updateStatus();
-        this.notify();
+            if (!chatDB.db && typeof chatDB.init === 'function') {
+                await chatDB.init();
+            }
+            // Load account settings (accountId, credentialId, etc.)
+            const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
+            if (settings?.accountId) {
+                this.localAccountContinuity = true;
+                this.state.accountId = settings.accountId;
+                syncService.setLocalAccountScope(settings.accountId);
+                this.state.credentialId = settings.credentialId || null;
+                this.state.encryptionCredentialId =
+                    settings.encryptionCredentialId || null;
+                this.state.encryptionMode = inferPersistedEncryptionMode(settings);
+                this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
+                this.state.googleLinked = !!settings.googleLinked;
+                this.state.oauthProvider = settings.lastOAuthProvider || null;
+                this.state.oauthEmail = typeof settings.oauthEmail === 'string'
+                    ? settings.oauthEmail.trim() || null
+                    : null;
 
-        if (
-            this.state.accountId &&
-            this.state.googleLinked
-        ) {
-            this.restoreOAuthLockedSession().catch(() => {});
+                // Try to restore session from persisted CryptoKey.
+                const hasKey = await this.loadMasterKey();
+                if (hasKey) {
+                    // Expose the cached identity immediately, but keep the
+                    // account control non-interactive until verification ends.
+                    this.state.isReady = true;
+                    this.updateStatus();
+                    this.notify();
+
+                    void this.verifySessionInBackground();
+                    return;
+                }
+                // No persisted key - the verified OAuth session may need a passkey.
+            } else {
+                // A previous account can leave its active data scope behind if the
+                // browser closes between clearing account settings and completing
+                // logout. Preserve that account-bound wallet in its scoped snapshot
+                // and restore the anonymous wallet before extensions can observe a
+                // billing-ready zero balance.
+                await syncService.deactivateAccountScope(null);
+                syncService.setLocalAccountScope(null);
+            }
+
+            this.state.isReady = true;
+            this.updateStatus();
+            this.notify();
+
+            if (this.state.accountId && this.state.googleLinked) {
+                void this.restoreOAuthLockedSession()
+                    .catch(() => false)
+                    .finally(() => this.completeAuthBootstrap());
+                return;
+            }
+            this.completeAuthBootstrap();
+        } catch (error) {
+            this.completeAuthBootstrap();
+            throw error;
         }
     }
 
@@ -1110,6 +1135,7 @@ class AccountService {
             this.state.sessionVerified = true;
             this.updateStatus();
             this.notify();
+            this.completeAuthBootstrap();
 
             // Existing cached identities can refresh quietly after the prior
             // burst-protection delay. Older settings without an email migrate
@@ -1134,6 +1160,8 @@ class AccountService {
             // If verification failed, local data remains usable until re-authentication.
         } catch (error) {
             console.warn('[AccountService] Background session verification failed:', error);
+        } finally {
+            this.completeAuthBootstrap();
         }
     }
 

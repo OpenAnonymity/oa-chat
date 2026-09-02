@@ -5620,12 +5620,12 @@ html {
     transition: background-color 0.14s ease-out, border-color 0.14s ease-out, transform 0.1s ease-out;
 }
 
-.account-tab-btn:hover {
+.account-tab-btn:hover:not(:disabled) {
     background-color: hsl(var(--color-foreground) / 0.1);
     border-color: transparent;
 }
 
-.account-tab-btn:active {
+.account-tab-btn:active:not(:disabled) {
     transform: scale(0.985);
 }
 
@@ -5692,6 +5692,15 @@ html {
     border-color: hsl(var(--color-primary) / 0.55);
     background: hsl(var(--color-primary) / 0.1);
     color: hsl(var(--color-primary));
+}
+
+.account-tab-btn[data-status="loading"] {
+    cursor: wait;
+}
+
+.account-tab-btn[data-status="loading"] .account-tab-avatar,
+.account-tab-btn[data-status="loading"] .account-control-icon {
+    color: hsl(var(--color-muted-foreground));
 }
 
 .account-settings-menu {

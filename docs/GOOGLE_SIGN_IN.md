@@ -7,6 +7,14 @@ or entering the unlinkable-inference path. See
 
 ## User flows
 
+- **Commercial landing handoff:** `/chat/?auth=google` is a one-use UI intent,
+  not proof of authentication and not a Membership request. The chat waits for
+  initial account restoration before routing it. Signed-out visitors see the
+  Google sign-in surface, verified but locked accounts see the encryption-
+  passkey surface, and verified unlocked accounts enter chat directly. The
+  client then removes `auth` with `history.replaceState`, preserving unrelated
+  query parameters and the hash. It never opens the signed-in Account summary
+  automatically.
 - **Registration picker:** Google SSO is the only option currently displayed.
   Direct passkey registration, account-number passkey login, and recovery-code
   controls are hidden from this entry surface.
@@ -108,21 +116,26 @@ callback remains on canonical `localhost:8005`.
 
 ## Regression checks
 
-1. Create a Google-first account; verify the only post-OAuth secret step is
+1. From the commercial landing page, verify a signed-out visit opens exactly
+   one Google sign-in surface, a remembered unlocked session opens no dialog,
+   and a remembered locked session opens only its passkey surface. No signed-
+   out or Account-summary dialog may flash while authentication is unresolved,
+   and `auth=google` must be removed without dropping unrelated URL state.
+2. Create a Google-first account; verify the only post-OAuth secret step is
    creating a PRF passkey and encrypted sync succeeds. Account closes without
    an intermediate success screen; commercial builds open Membership through
    the first-account-ready extension seam.
-2. Log out, sign in with Google, unlock with the passkey, and verify no account
+3. Log out, sign in with Google, unlock with the passkey, and verify no account
    number or recovery code is requested.
-3. Exercise the legacy SSO recovery migration and verify later unlocks use only
+4. Exercise the legacy SSO recovery migration and verify later unlocks use only
    the new encryption passkey.
-4. Create an account with an existing local wallet, then verify that wallet and
+5. Create an account with an existing local wallet, then verify that wallet and
    later ticket additions/clears restore on a second passkey-unlocked browser.
    Verify redemption itself schedules no immediate sync, its consumed state
    restores after a periodic/next-login sync, and tickets/preferences do not
    cross account scopes.
-5. Reject an unallowlisted return origin, missing/mismatched nonce, replayed
+6. Reject an unallowlisted return origin, missing/mismatched nonce, replayed
    OAuth state, every link request, and a keyring overwrite.
-6. In OA Desktop, verify the system-browser handoff returns to both a running
+7. In OA Desktop, verify the system-browser handoff returns to both a running
    and cold-started app; reject a wrong state, wrong PKCE verifier, replayed
    code, arbitrary callback host/path, and unallowlisted org origin.

@@ -86,6 +86,7 @@ import {
     isAccessCreditExhaustedError as isAccessCreditExhaustedErrorValue,
     persistVerifierSubmitKeyProof as persistVerifierSubmitKeyProofValue
 } from './application/accessController.js';
+import { routeAuthenticationIntent } from './application/authIntent.js';
 import CouncilController from './application/councilController.js';
 import {
     getPendingEntitlementClaim,
@@ -1941,6 +1942,12 @@ class ChatApp {
         // Start DB init in background - components can show skeleton state
         const dbReady = chatDB.init();
         this.dbReadyPromise = dbReady;
+        // Account restoration shares the same IndexedDB initialization and can
+        // begin before the rest of the shell finishes mounting. Keep the
+        // promise handled here; its result is awaited after the DB gate below.
+        const accountReady = accountService.init();
+        accountReady.catch(() => {});
+        this.accountReadyPromise = accountReady;
 
         // Initialize UI components immediately (sync, fast) - shows loading states
         this.ui = new VanillaChatUi(this);
@@ -1996,9 +2003,20 @@ class ChatApp {
         // Establish this tab's account context before any account-scoped stores
         // read the shared live settings keys.
         try {
-            await accountService.init();
+            await accountReady;
         } catch (error) {
             console.warn('Account init failed:', error);
+        }
+
+        try {
+            await routeAuthenticationIntent({
+                accountService,
+                accountModal: this.accountModal,
+                locationImpl: window.location,
+                historyImpl: window.history
+            });
+        } catch (error) {
+            console.warn('Initial account route could not be completed:', error);
         }
 
         // Initialize preference-backed layout only after account context exists.
