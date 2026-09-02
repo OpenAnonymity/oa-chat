@@ -51,6 +51,9 @@ reading code alone.
   and overlaps the account/thread divider slightly. **Log out** uses the same
   neutral hover surface as the other account actions; destructive color is not
   used for hover emphasis.
+- Its trigger remains a flat, full-width footer row while open, with the
+  account identity on the left and a settings glyph on the right. It does not
+  turn into an inset selected pill or use a disclosure chevron.
 - A restored signed-in account reuses its account-bound cached identity label
   immediately after session validation. Profile refresh and encrypted sync
   continue in the background, so the footer does not briefly fall back to the

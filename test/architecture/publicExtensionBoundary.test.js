@@ -79,6 +79,8 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.ok(sidebarSlotIndex > accountIndex, 'sidebar slot must immediately follow Account');
     assert.doesNotMatch(html, /id="account-settings-btn"/);
     assert.match(html, /id="account-tab-btn"[\s\S]*account-control-icon/);
+    assert.match(html, /account-control-icon[\s\S]*M10\.343 3\.94/);
+    assert.doesNotMatch(html, /account-control-icon[\s\S]{0,250}m9 18 6-6-6-6/);
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
     assert.doesNotMatch(html, /account-menu-separator/);
     assert.match(html, /placeholder="Search chats\.\.\."/);

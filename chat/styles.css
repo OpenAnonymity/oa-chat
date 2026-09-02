@@ -5590,7 +5590,7 @@ html {
     bottom: 0;
     left: 0;
     z-index: 30;
-    padding: 0.5rem;
+    padding: 0.5rem 0.75rem;
     border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background) / 0.96);
     backdrop-filter: blur(12px);
@@ -5610,10 +5610,10 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
-    min-height: 3rem;
-    padding: 0.4rem 0.55rem;
+    min-height: 3.25rem;
+    padding: 0.35rem 0.25rem;
     border: 1px solid transparent;
-    border-radius: 0.625rem;
+    border-radius: 0.5rem;
     background: transparent;
     color: hsl(var(--color-foreground));
     text-align: left;
@@ -5641,8 +5641,8 @@ html {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 1.9rem;
-    height: 1.9rem;
+    width: 2.25rem;
+    height: 2.25rem;
     border: 1px solid hsl(var(--color-border));
     border-radius: 9999px;
     background: hsl(var(--color-muted) / 0.7);
@@ -5650,8 +5650,8 @@ html {
 }
 
 .account-tab-avatar > svg {
-    width: 1rem;
-    height: 1rem;
+    width: 1.125rem;
+    height: 1.125rem;
 }
 
 .account-identity-label {
@@ -5665,28 +5665,23 @@ html {
 }
 
 .account-control-icon {
-    width: 1rem;
-    height: 1rem;
+    width: 1.25rem;
+    height: 1.25rem;
     flex: 0 0 auto;
     color: hsl(var(--color-muted-foreground));
-    transition: transform 0.15s ease, color 0.15s ease;
+    transition: color 0.15s ease, transform 0.15s ease;
 }
 
 .account-tab-btn[aria-expanded="true"] .account-control-icon {
-    transform: rotate(-90deg);
     color: hsl(var(--color-foreground));
 }
 
 .account-tab-btn[aria-expanded="true"] {
-    background-color: hsl(var(--color-foreground) / 0.08);
+    background-color: transparent;
 }
 
 .account-tab-btn[aria-expanded="true"]:hover {
-    background-color: hsl(var(--color-foreground) / 0.13);
-}
-
-.account-tab-btn[aria-expanded="true"] .account-identity-label {
-    font-weight: 500;
+    background-color: hsl(var(--color-foreground) / 0.1);
 }
 
 .account-tab-btn[data-status="logged-in"] .account-tab-avatar {
