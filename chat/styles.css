@@ -5590,7 +5590,7 @@ html {
     bottom: 0;
     left: 0;
     z-index: 30;
-    padding: 0.5rem 0.75rem;
+    padding: 0.375rem 0.75rem;
     border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background) / 0.96);
     backdrop-filter: blur(12px);
@@ -5610,8 +5610,8 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
-    min-height: 3.25rem;
-    padding: 0.35rem 0.25rem;
+    min-height: 3rem;
+    padding: 0.25rem;
     border: 1px solid transparent;
     border-radius: 0.5rem;
     background: transparent;
@@ -5705,9 +5705,9 @@ html {
 
 .account-settings-menu {
     position: absolute;
-    right: -0.5rem;
+    right: 0.5rem;
     bottom: calc(100% - 0.25rem);
-    left: -0.5rem;
+    left: 0.5rem;
     z-index: 40;
     padding: 0.5rem 0.625rem;
     border: 1px solid hsl(var(--color-border));
