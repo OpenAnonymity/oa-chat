@@ -1053,6 +1053,9 @@ class AccountService {
             this.state.recoveryConfirmed = !!settings.recoveryConfirmed;
             this.state.googleLinked = !!settings.googleLinked;
             this.state.oauthProvider = settings.lastOAuthProvider || null;
+            this.state.oauthEmail = typeof settings.oauthEmail === 'string'
+                ? settings.oauthEmail.trim() || null
+                : null;
             
             // Try to restore session from persisted CryptoKey
             const hasKey = await this.loadMasterKey();
@@ -1093,19 +1096,41 @@ class AccountService {
     /** Verify the persisted SuperTokens session without blocking app startup. */
     async verifySessionInBackground() {
         try {
-            // Small delay to prevent rate limiting on burst page refreshes
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
+            const expectedAccountId = normalizeAccountId(this.state.accountId);
             const sessionVerified = await sessionService.verifySession().catch(() => false);
-            if (sessionVerified) {
-                // Session verified with server - now show logged-in state
-                this.state.sessionVerified = true;
-                await this.refreshOAuthLinkStatuses();
-                await this.persistSettings();
-                this.notify();
-                // Initialize sync for restored session
-                this.initializeSync(false).catch(() => {});
+            if (
+                !sessionVerified ||
+                !expectedAccountId ||
+                normalizeAccountId(this.state.accountId) !== expectedAccountId
+            ) return;
+
+            // Restore the account footer as soon as the existing session is
+            // confirmed. The account-bound cached email avoids holding the
+            // visible identity behind a second profile request.
+            this.state.sessionVerified = true;
+            this.updateStatus();
+            this.notify();
+
+            // Existing cached identities can refresh quietly after the prior
+            // burst-protection delay. Older settings without an email migrate
+            // immediately so their first upgraded load is also responsive.
+            if (this.state.oauthEmail) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
+            if (
+                this.state.sessionVerified !== true ||
+                normalizeAccountId(this.state.accountId) !== expectedAccountId
+            ) return;
+
+            await this.refreshOAuthLinkStatuses();
+            if (
+                this.state.sessionVerified !== true ||
+                normalizeAccountId(this.state.accountId) !== expectedAccountId
+            ) return;
+            await this.persistSettings();
+            this.notify();
+            // Initialize sync for restored session
+            this.initializeSync(false).catch(() => {});
             // If verification failed, local data remains usable until re-authentication.
         } catch (error) {
             console.warn('[AccountService] Background session verification failed:', error);
@@ -1241,6 +1266,7 @@ class AccountService {
             recoveryConfirmed: this.state.recoveryConfirmed,
             googleLinked: this.state.googleLinked,
             lastOAuthProvider: this.state.oauthProvider,
+            oauthEmail: this.state.oauthEmail,
             updatedAt: Date.now()
         };
         await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);

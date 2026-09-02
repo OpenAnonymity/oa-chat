@@ -51,6 +51,10 @@ reading code alone.
   and overlaps the account/thread divider slightly. **Log out** uses the same
   neutral hover surface as the other account actions; destructive color is not
   used for hover emphasis.
+- A restored signed-in account reuses its account-bound cached identity label
+  immediately after session validation. Profile refresh and encrypted sync
+  continue in the background, so the footer does not briefly fall back to the
+  generic **Account** label on every reload.
 - Long conversation history settles its initial paint at the top row boundary
   and withholds one conversation that would otherwise be clipped at the bottom.
   The guard disengages permanently on the first user scroll/pointer/key

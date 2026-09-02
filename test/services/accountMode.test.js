@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { chatDB } from '../../chat/db.js';
 import accountService, {
     bootstrapDesktopOAuthSession,
     inferPersistedEncryptionMode,
     oauthSessionNeedsEmailRefresh
 } from '../../chat/services/accountService.js';
+import sessionService from '../../chat/services/sessionService.js';
 
 test('account snapshot exposes only a boolean for a saved local binding', () => {
     const originalAccountId = accountService.state.accountId;
@@ -120,4 +122,92 @@ test('old SSO setup sessions refresh OAuth before creating an email-labeled pass
         encryptionMode: 'PRF',
         email: null
     }), false);
+});
+
+test('account settings retain the account-bound OAuth identity label', async () => {
+    const originalSaveSetting = chatDB.saveSetting;
+    const originalState = { ...accountService.state };
+    let saved = null;
+    chatDB.saveSetting = async (key, value) => { saved = { key, value }; };
+    Object.assign(accountService.state, {
+        accountId: '1234567890123456',
+        googleLinked: true,
+        oauthProvider: 'google',
+        oauthEmail: 'member@example.test'
+    });
+
+    try {
+        await accountService.persistSettings();
+        assert.equal(saved.key, 'account-settings');
+        assert.equal(saved.value.accountId, '1234567890123456');
+        assert.equal(saved.value.oauthEmail, 'member@example.test');
+    } finally {
+        chatDB.saveSetting = originalSaveSetting;
+        Object.assign(accountService.state, originalState);
+    }
+});
+
+test('restored sessions expose the cached identity before profile refresh finishes', async () => {
+    const originals = {
+        state: { ...accountService.state },
+        cryptoKey: accountService.cryptoKey,
+        syncDerivationKey: accountService.syncDerivationKey,
+        syncIdKey: accountService.syncIdKey,
+        verifySession: sessionService.verifySession,
+        refreshOAuthLinkStatuses: accountService.refreshOAuthLinkStatuses,
+        persistSettings: accountService.persistSettings,
+        initializeSync: accountService.initializeSync,
+        setTimeout: globalThis.setTimeout
+    };
+    let releaseProfileRefresh;
+    let refreshStarted = false;
+    const profileRefresh = new Promise(resolve => { releaseProfileRefresh = resolve; });
+    const snapshots = [];
+
+    Object.assign(accountService.state, {
+        accountId: '1234567890123456',
+        sessionVerified: false,
+        oauthEmail: 'member@example.test',
+        busy: false
+    });
+    accountService.cryptoKey = {};
+    accountService.syncDerivationKey = {};
+    accountService.syncIdKey = {};
+    sessionService.verifySession = async () => true;
+    accountService.refreshOAuthLinkStatuses = async () => {
+        refreshStarted = true;
+        await profileRefresh;
+        return true;
+    };
+    accountService.persistSettings = async () => {};
+    accountService.initializeSync = async () => {};
+    globalThis.setTimeout = callback => {
+        queueMicrotask(callback);
+        return 1;
+    };
+    const unsubscribe = accountService.subscribe(snapshot => snapshots.push(snapshot));
+
+    try {
+        const verification = accountService.verifySessionInBackground();
+        await new Promise(resolve => setImmediate(resolve));
+
+        assert.equal(refreshStarted, true);
+        assert.equal(snapshots[0].sessionVerified, true);
+        assert.equal(snapshots[0].status, 'unlocked');
+        assert.equal(snapshots[0].oauthEmail, 'member@example.test');
+
+        releaseProfileRefresh();
+        await verification;
+    } finally {
+        unsubscribe();
+        sessionService.verifySession = originals.verifySession;
+        accountService.refreshOAuthLinkStatuses = originals.refreshOAuthLinkStatuses;
+        accountService.persistSettings = originals.persistSettings;
+        accountService.initializeSync = originals.initializeSync;
+        globalThis.setTimeout = originals.setTimeout;
+        Object.assign(accountService.state, originals.state);
+        accountService.cryptoKey = originals.cryptoKey;
+        accountService.syncDerivationKey = originals.syncDerivationKey;
+        accountService.syncIdKey = originals.syncIdKey;
+    }
 });
