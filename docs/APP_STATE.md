@@ -39,7 +39,9 @@ reading code alone.
 
 - A newly created Google account closes Account after passkey setup and emits
   `registerFirstAccountReady`; the commercial extension opens Membership and
-  focuses its heading. Returning accounts do not emit this signal.
+  focuses its heading. Returning accounts close the authentication dialog and
+  remain in Chat; they do not emit this signal. The signed-in Account summary
+  is opened only by an explicit Account action.
 - Avatar, account label, and settings affordance are one accessible sidebar
   button. There is no separate gear. Long labels truncate within the shared hit
   target. The new account identity and menu actions match the existing sidebar

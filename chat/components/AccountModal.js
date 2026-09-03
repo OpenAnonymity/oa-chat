@@ -34,6 +34,7 @@ class AccountModal {
         this.creationError = null;
         this.isLoadingAccountId = false;
         this.oauthProvider = null;
+        this.authenticationExitPending = false;
 
         // Animation state
         this.revealedDigits = 0;
@@ -56,20 +57,34 @@ class AccountModal {
         this.accountUnsubscribe = this.accountService.subscribe(state => {
             this.accountState = state;
             this.updateTabIndicator();
-            if (this.isOpen && (this.creationStep === 'idle' || this.creationStep === 'complete')) {
+            if (
+                this.isOpen &&
+                !this.shouldSuppressAuthenticationExitRender(state) &&
+                (this.creationStep === 'idle' || this.creationStep === 'complete')
+            ) {
                 this.render();
             }
         });
 
         this.syncUnsubscribe = this.syncService.subscribe(() => {
             this.syncStatus = this.syncService.getStatus();
-            if (this.isOpen && this.accountState?.accountId) {
+            if (
+                this.isOpen &&
+                this.accountState?.accountId &&
+                !this.shouldSuppressAuthenticationExitRender()
+            ) {
                 this.render();
             }
         });
 
         this.attachAccountNavListeners();
         this.updateTabIndicator();
+    }
+
+    shouldSuppressAuthenticationExitRender(state = this.accountState) {
+        return this.authenticationExitPending &&
+            state?.sessionVerified === true &&
+            state?.status === 'unlocked';
     }
 
     attachAccountNavListeners() {
@@ -442,11 +457,16 @@ class AccountModal {
 
         const providerLabel = this.getOAuthProviderLabel(provider);
         this.creationStep = 'idle';
-        this.render();
         if (result.status === 'unlocked') {
             this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
-            if (result.newAccount === true) this.completeFirstAccountRouting();
+            if (result.newAccount === true) {
+                this.completeFirstAccountRouting();
+            } else {
+                this.close();
+            }
+            return;
         }
+        this.render();
     }
 
     completeFirstAccountRouting() {
@@ -601,9 +621,15 @@ class AccountModal {
 
     async handleAccountPasskeyUnlock() {
         const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
-        const success = await this.accountService.unlockWithPasskey(accountId);
-        if (success) {
-            this.app?.showToast?.('Account unlocked', 'success');
+        this.authenticationExitPending = true;
+        try {
+            const success = await this.accountService.unlockWithPasskey(accountId);
+            if (success) {
+                this.close();
+                this.app?.showToast?.('Account unlocked', 'success');
+            }
+        } finally {
+            this.authenticationExitPending = false;
         }
     }
 
@@ -621,22 +647,17 @@ class AccountModal {
         // Brief delay for user to see the message before passkey prompt
         await new Promise(resolve => setTimeout(resolve, 0));
 
+        this.authenticationExitPending = true;
         try {
             // Step 3: Call recovery (this triggers the passkey prompt)
             const success = await this.accountService.unlockWithRecoveryCode(accountId, recoveryCode);
 
             if (success) {
-                // Step 4: Show success
-                this.recoveryStep = 'complete';
-                this.render();
-                // Brief delay to show success state
-                setTimeout(() => {
-                    this.recoveryStep = 'idle';
-                    this.showRecoveryInput = false;
-                    this.recoveryInputValue = '';
-                    this.render();
-                    this.app?.showToast?.('Account recovered successfully', 'success');
-                }, 1500);
+                this.recoveryStep = 'idle';
+                this.showRecoveryInput = false;
+                this.recoveryInputValue = '';
+                this.close();
+                this.app?.showToast?.('Account recovered successfully', 'success');
             } else {
                 this.recoveryStep = 'idle';
                 this.render();
@@ -644,6 +665,8 @@ class AccountModal {
         } catch (error) {
             this.recoveryStep = 'idle';
             this.render();
+        } finally {
+            this.authenticationExitPending = false;
         }
     }
 
@@ -651,29 +674,41 @@ class AccountModal {
         const providerLabel = this.getOAuthProviderLabel(
             this.accountState?.oauthProvider
         );
-        const success = await this.accountService.unlockOAuthWithRecoveryCode(
-            this.recoveryInputValue
-        );
-        if (success) {
-            this.recoveryInputValue = '';
-            this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+        this.authenticationExitPending = true;
+        try {
+            const success = await this.accountService.unlockOAuthWithRecoveryCode(
+                this.recoveryInputValue
+            );
+            if (success) {
+                this.recoveryInputValue = '';
+                this.close();
+                this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
+            }
+        } finally {
+            this.authenticationExitPending = false;
         }
     }
 
     async handleOAuthKeyringUnlock() {
         const state = this.accountService.getState();
         const isFirstAccountSetup = state.oauthSetupRequired === true;
-        const success = state.oauthLegacyPasskeyRequired
-            ? await this.accountService.unlockWithPasskey(
-                state.accountId,
-                { action: 'oauth_legacy_passkey' }
-            )
-            : state.oauthSetupRequired
-                ? await this.accountService.setupOAuthKeyring()
-                : await this.accountService.unlockOAuthKeyring();
-        if (success) {
-            this.app?.showToast?.('Encrypted data unlocked', 'success');
-            if (isFirstAccountSetup) this.completeFirstAccountRouting();
+        this.authenticationExitPending = true;
+        try {
+            const success = state.oauthLegacyPasskeyRequired
+                ? await this.accountService.unlockWithPasskey(
+                    state.accountId,
+                    { action: 'oauth_legacy_passkey' }
+                )
+                : state.oauthSetupRequired
+                    ? await this.accountService.setupOAuthKeyring()
+                    : await this.accountService.unlockOAuthKeyring();
+            if (success) {
+                this.app?.showToast?.('Encrypted data unlocked', 'success');
+                if (isFirstAccountSetup) this.completeFirstAccountRouting();
+                else this.close();
+            }
+        } finally {
+            this.authenticationExitPending = false;
         }
     }
 

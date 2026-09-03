@@ -350,11 +350,14 @@ test('a first Google account closes authentication and routes directly to Member
 
 test('a returning Google account stays in Chat without first-account routing', async () => {
     const modal = Object.create(AccountModal.prototype);
+    let closed = 0;
     let firstAccountReady = 0;
+    let renders = 0;
     modal.accountService = {
         authenticateWithOAuth: async () => ({ status: 'unlocked', newAccount: false })
     };
-    modal.render = () => {};
+    modal.render = () => { renders += 1; };
+    modal.close = () => { closed += 1; };
     modal.app = {
         showToast() {},
         notifyFirstAccountReady() { firstAccountReady += 1; }
@@ -362,7 +365,155 @@ test('a returning Google account stays in Chat without first-account routing', a
 
     await modal.handleOAuthAuthentication('google');
 
+    assert.equal(closed, 1);
     assert.equal(firstAccountReady, 0);
+    assert.equal(renders, 1);
+});
+
+test('returning passkey and recovery unlocks close Account without Membership routing', async () => {
+    const cases = [
+        ['handleAccountPasskeyUnlock', 'unlockWithPasskey'],
+        ['handleOAuthRecoveryUnlock', 'unlockOAuthWithRecoveryCode'],
+        ['handleOAuthKeyringUnlock', 'unlockOAuthKeyring']
+    ];
+
+    for (const [handler, serviceMethod] of cases) {
+        const modal = Object.create(AccountModal.prototype);
+        let closed = 0;
+        let firstAccountReady = 0;
+        modal.accountState = {
+            accountId: 'account-1',
+            oauthProvider: 'google'
+        };
+        modal.accountInputValue = '';
+        modal.recoveryInputValue = 'recovery-code';
+        modal.accountService = {
+            getState: () => ({
+                accountId: 'account-1',
+                oauthSetupRequired: false,
+                oauthLegacyPasskeyRequired: false
+            }),
+            [serviceMethod]: async () => true
+        };
+        modal.close = () => { closed += 1; };
+        modal.app = {
+            showToast() {},
+            notifyFirstAccountReady() { firstAccountReady += 1; }
+        };
+
+        await modal[handler]();
+
+        assert.equal(closed, 1, handler);
+        assert.equal(firstAccountReady, 0, handler);
+        assert.equal(modal.authenticationExitPending, false, handler);
+    }
+});
+
+test('legacy recovery closes Account after the replacement passkey succeeds', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let closed = 0;
+    let toast = '';
+    modal.accountState = { accountId: 'account-1' };
+    modal.accountInputValue = '';
+    modal.recoveryInputValue = 'recovery-code';
+    modal.showRecoveryInput = true;
+    modal.recoveryStep = 'idle';
+    modal.accountService = {
+        clearErrors() {},
+        unlockWithRecoveryCode: async () => true
+    };
+    modal.render = () => {};
+    modal.close = () => { closed += 1; };
+    modal.app = { showToast(message) { toast = message; } };
+
+    await modal.handleAccountRecoveryUnlock();
+
+    assert.equal(closed, 1);
+    assert.equal(toast, 'Account recovered successfully');
+    assert.equal(modal.recoveryStep, 'idle');
+    assert.equal(modal.showRecoveryInput, false);
+    assert.equal(modal.recoveryInputValue, '');
+    assert.equal(modal.authenticationExitPending, false);
+});
+
+test('first Google keyring setup closes Account and routes once to Membership', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let closed = 0;
+    let firstAccountReady = 0;
+    modal.accountService = {
+        getState: () => ({
+            accountId: 'account-1',
+            oauthSetupRequired: true,
+            oauthLegacyPasskeyRequired: false
+        }),
+        setupOAuthKeyring: async () => true
+    };
+    modal.close = () => { closed += 1; };
+    modal.app = {
+        showToast() {},
+        notifyFirstAccountReady() { firstAccountReady += 1; }
+    };
+
+    await modal.handleOAuthKeyringUnlock();
+
+    assert.equal(closed, 1);
+    assert.equal(firstAccountReady, 1);
+    assert.equal(modal.authenticationExitPending, false);
+});
+
+test('successful unlock does not flash the signed-in Account summary before closing', () => {
+    const originalDocument = globalThis.document;
+    let accountListener = null;
+    let syncListener = null;
+    globalThis.document = {
+        getElementById() { return null; },
+        addEventListener() {},
+        removeEventListener() {}
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => ({ status: 'locked' }),
+                subscribe(listener) {
+                    accountListener = listener;
+                    return () => {};
+                }
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe(listener) {
+                    syncListener = listener;
+                    return () => {};
+                }
+            }
+        }
+    });
+    let renders = 0;
+    modal.isOpen = true;
+    modal.authenticationExitPending = true;
+    modal.render = () => { renders += 1; };
+
+    try {
+        accountListener({
+            accountId: 'account-1',
+            sessionVerified: true,
+            status: 'unlocked'
+        });
+        syncListener();
+        assert.equal(renders, 0);
+
+        accountListener({
+            accountId: 'account-1',
+            sessionVerified: true,
+            status: 'locked',
+            busy: false,
+            error: 'Try again'
+        });
+        assert.equal(renders, 1);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
 });
 
 test('a Google-authenticated locked account explains that passkey unlock is still required', () => {
@@ -419,6 +570,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         oauthLegacyPasskeyRequired: true
     };
     let unlockAccountId = null;
+    let closed = 0;
     const account = {
         getState: () => state,
         subscribe: () => () => {},
@@ -439,6 +591,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
     });
     modal.accountState = state;
     modal.escapeHtml = value => String(value ?? '');
+    modal.close = () => { closed += 1; };
 
     try {
         const html = modal.renderOAuthUnlockUI();
@@ -448,6 +601,7 @@ test('legacy linked account uses its existing passkey unlock path', async () => 
         assert.match(html, /1234 5678 9012 3456/);
         await modal.handleOAuthKeyringUnlock();
         assert.equal(unlockAccountId, state.accountId);
+        assert.equal(closed, 1);
         assert.equal('resumePremiumCheckoutIfPending' in modal, false);
     } finally {
         modal.destroy();
