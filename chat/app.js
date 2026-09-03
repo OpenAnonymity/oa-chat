@@ -9716,6 +9716,8 @@ class ChatApp {
     focusMessageInput({ force = false } = {}) {
         const input = this.elements.messageInput;
         if (!input || input.disabled) return;
+        // Startup autofocus must not steal focus from an authentication intent.
+        if (this.accountModal?.isOpen) return;
 
         const active = document.activeElement;
         if (!force && active && active !== document.body && active !== document.documentElement && active !== input) {

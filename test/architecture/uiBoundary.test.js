@@ -9,6 +9,17 @@ function read(relativePath) {
     return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+test('startup composer autofocus preserves the open authentication dialog', () => {
+    const source = read('chat/app.js');
+    const start = source.indexOf('    focusMessageInput({ force = false } = {}) {');
+    const end = source.indexOf('    updateInputState() {', start);
+    const focusSource = source.slice(start, end);
+    const accountGuard = focusSource.indexOf('if (this.accountModal?.isOpen) return;');
+    assert.ok(accountGuard >= 0);
+    assert.ok(accountGuard < focusSource.indexOf('input.focus({ preventScroll: true })'));
+    assert.ok(accountGuard < focusSource.indexOf('if (!force && active'));
+});
+
 test('app entrypoint does not import concrete UI components directly', () => {
     const appSource = read('chat/app.js');
     assert.equal(

@@ -42,7 +42,9 @@ reading code alone.
   while independent handlers preserve the existing Google and anonymous
   access-code routes. The username route is a one-use local UI intent; Chat
   removes the username from its URL and prefills Account only after the normal
-  authentication bootstrap settles.
+  authentication bootstrap settles. Startup composer autofocus also respects
+  an open Account dialog, including its forced first attempt, so focus stays
+  on the authentication surface rather than moving behind it.
 - Account entry now offers Google or a normalized, unique pseudonymous
   username. Username registration and returning login use one WebAuthn prompt:
   the assertion authenticates the opaque OA account while PRF unwraps its
