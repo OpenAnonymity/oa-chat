@@ -37,6 +37,12 @@ reading code alone.
 
 ## 2026-09-03: Pseudonymous username accounts use one authentication passkey
 
+- The commercial landing page renders Username directly below Google and above
+  the OR/access-code row. Both text rows share the same visual control rules,
+  while independent handlers preserve the existing Google and anonymous
+  access-code routes. The username route is a one-use local UI intent; Chat
+  removes the username from its URL and prefills Account only after the normal
+  authentication bootstrap settles.
 - Account entry now offers Google or a normalized, unique pseudonymous
   username. Username registration and returning login use one WebAuthn prompt:
   the assertion authenticates the opaque OA account while PRF unwraps its

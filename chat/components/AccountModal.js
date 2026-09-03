@@ -300,6 +300,16 @@ class AccountModal {
         document.addEventListener('keydown', this.escapeHandler);
     }
 
+    openForUsername(username, returnFocusEl = null) {
+        this.identifierMode = 'username';
+        this.usernameInputValue = String(username || '')
+            .normalize('NFKC')
+            .trim()
+            .toLowerCase();
+        this.open(returnFocusEl);
+        this.focusModal('account-username-input');
+    }
+
     getModalFocusable() {
         return this.overlay
             ? [...this.overlay.querySelectorAll(MODAL_FOCUSABLE_SELECTOR)]

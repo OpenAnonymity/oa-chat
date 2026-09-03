@@ -199,6 +199,58 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
     }
 });
 
+test('landing username handoff prefills and focuses the username field', () => {
+    const originalDocument = globalThis.document;
+    const focused = [];
+    const usernameInput = { focus() { focused.push('account-username-input'); } };
+    globalThis.document = {
+        activeElement: null,
+        addEventListener() {},
+        getElementById(id) {
+            return id === 'account-username-input' ? usernameInput : null;
+        }
+    };
+    const state = {
+        accountId: null,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: null
+    };
+    const overlay = {
+        classList: { remove() {} },
+        contains(node) { return node === usernameInput; },
+        querySelectorAll() { return []; },
+        querySelector() { return null; }
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {},
+                clearErrors() {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.overlay = overlay;
+    modal.render = () => {};
+
+    try {
+        modal.openForUsername('  Winter-OWL  ');
+        assert.equal(modal.isOpen, true);
+        assert.equal(modal.identifierMode, 'username');
+        assert.equal(modal.usernameInputValue, 'winter-owl');
+        assert.deepEqual(focused, ['account-username-input']);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 test('blank username creation cannot fall through to legacy account creation', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { getElementById() { return null; } };

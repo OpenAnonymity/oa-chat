@@ -6,6 +6,17 @@ unlock. They do not have a recovery code.
 
 ## User flow
 
+The commercial landing page places a username field directly below Google and
+before the access-code divider. Submitting a structurally valid username uses
+the one-use local route `/chat/?auth=username#username=...`. The username is in
+the fragment, so it is not sent in the document request or HTTP referrer. Chat
+waits for its normal account bootstrap, removes the authentication intent and
+username fragment with
+`history.replaceState`, and opens Account with the normalized username
+prefilled and focused. A remembered verified, unlocked account continues
+directly into Chat without opening Account. The route is only a UI handoff; it
+does not authenticate the username or bypass the passkey proof.
+
 For registration, the user chooses a username and approves one passkey prompt.
 The browser generates the random account master key locally, wraps it with the
 passkey PRF, completes registration, closes Account, and emits the same
@@ -65,6 +76,11 @@ Roll out the backend schema and API to every instance before enabling the
 frontend username UI. The client deliberately rejects an `/auth/init` response
 that does not echo the normalized username, preventing an older backend from
 silently creating a legacy account during a mixed-version deployment.
+
+The landing handoff deliberately leaves Google and access-code navigation on
+their existing routes. The username field and access-code field share the same
+visual control styles, but their submit handlers and query parameters remain
+separate so username onboarding cannot intercept anonymous ticket redemption.
 
 The frontend persists the username next to the opaque account ID only as a local
 label and login locator. Account-scoped key bundles, sync identifiers, sessions,

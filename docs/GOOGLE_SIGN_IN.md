@@ -14,10 +14,11 @@ or entering the unlinkable-inference path. See
   passkey surface, and verified unlocked accounts enter chat directly. The
   client then removes `auth` with `history.replaceState`, preserving unrelated
   query parameters and the hash. It never opens the signed-in Account summary
-  automatically.
-- **Registration picker:** Google SSO is the only option currently displayed.
-  Direct passkey registration, account-number passkey login, and recovery-code
-  controls are hidden from this entry surface.
+  automatically. The neighboring username field uses its own
+  `/chat/?auth=username#username=...` handoff and never enters Google OAuth.
+- **Registration picker:** Account entry offers Google or a pseudonymous
+  username. Legacy account-number passkey login remains available through its
+  explicit alternate mode; recovery controls appear only in that legacy mode.
 - **New SSO account:** Continue with Google, authorize the app, then create an
   encryption passkey. No OA account number or recovery code is shown.
 - **Returning browser:** Google authenticates first. A logged-out or new browser
@@ -116,8 +117,8 @@ callback remains on canonical `localhost:8005`.
 
 ## Regression checks
 
-1. From the commercial landing page, verify a signed-out visit opens exactly
-   one Google sign-in surface, a remembered unlocked session opens no dialog,
+1. From the commercial landing page, verify Google opens exactly one Google
+   sign-in surface, a remembered unlocked session opens no dialog,
    and a remembered locked session opens only its passkey surface. No signed-
    out or Account-summary dialog may flash while authentication is unresolved,
    and `auth=google` must be removed without dropping unrelated URL state.
