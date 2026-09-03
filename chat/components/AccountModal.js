@@ -116,6 +116,7 @@ class AccountModal {
 
     isAccountMenuAvailable() {
         return Boolean(
+            this.accountState?.authBootstrapComplete !== false &&
             this.accountState?.accountId &&
             this.accountState?.sessionVerified &&
             this.accountState?.status === 'unlocked'
@@ -204,7 +205,11 @@ class AccountModal {
             : needsEncryptionUnlock || needsEncryptionSetup
                 ? 'locked'
                 : 'none';
-        tabBtn.disabled = isAuthResolving;
+        // Account restoration can include a network round trip. Keep the visible
+        // control operable during that wait so it never behaves like a dead
+        // button; opening it renders a neutral progress view without exposing
+        // account actions before the session is verified.
+        tabBtn.disabled = false;
         if (isAuthResolving) tabBtn.setAttribute('aria-busy', 'true');
         else tabBtn.removeAttribute?.('aria-busy');
         tabBtn.title = isAuthResolving
@@ -729,7 +734,12 @@ class AccountModal {
         const dialog = this.overlay.querySelector('[role="dialog"]');
         const isCreationFlow = this.creationStep !== 'idle' &&
             (this.creationStep.startsWith('oauth_') || !accountId);
-        if (dialog && !isCreationFlow && this.recoveryStep === 'idle') {
+        if (
+            dialog &&
+            !isCreationFlow &&
+            this.recoveryStep === 'idle' &&
+            state.authBootstrapComplete !== false
+        ) {
             const commercialSlot = document.createElement('div');
             commercialSlot.dataset.oaExtensionSlot = SLOT_NAMES.ACCOUNT_COMMERCIAL;
             commercialSlot.hidden = true;
@@ -1012,6 +1022,27 @@ class AccountModal {
         const usesIdentityLogin =
             state.googleLinked &&
             state.encryptionMode !== 'LEGACY_PASSKEY';
+
+        if (state.authBootstrapComplete === false) {
+            const accountEmail = state.oauthEmail || state.email;
+            const email = typeof accountEmail === 'string'
+                ? accountEmail.trim()
+                : '';
+            return `
+                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" aria-describedby="account-restoring-description" aria-busy="true" tabindex="-1" class="${MODAL_CLASSES}">
+                    ${this.renderHeader('Account')}
+                    <div class="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/15 p-3">
+                        <span class="account-restoring-spinner h-4 w-4 flex-shrink-0 animate-spin rounded-full border-2 border-muted border-t-foreground" aria-hidden="true"></span>
+                        <div class="min-w-0">
+                            <p class="text-sm font-medium text-foreground">Restoring your account…</p>
+                            <p id="account-restoring-description" class="mt-1 truncate text-xs text-muted-foreground"${email ? ` title="${this.escapeHtml(email)}"` : ''}>
+                                ${email ? this.escapeHtml(email) : 'Checking your saved sign-in.'}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
 
         // Recovery flow UI (verifying/adding passkey)
         if (this.recoveryStep === 'verifying' || this.recoveryStep === 'adding_passkey') {

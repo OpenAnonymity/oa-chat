@@ -5869,6 +5869,10 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .account-restoring-spinner {
+        animation: none;
+    }
+
     .success-checkmark {
         animation: none;
         stroke-dashoffset: 0;

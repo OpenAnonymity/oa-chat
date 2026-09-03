@@ -15,8 +15,10 @@ reading code alone.
   proceeds directly into chat; a verified locked account opens the encryption-
   passkey UI; and a genuinely signed-out account opens the Google UI. The
   signed-in Account summary is never opened by this route.
-- The footer ships a dimensionally stable **Restoring account…** state and is
-  non-interactive with `aria-busy` until verification settles. As soon as
+- The footer ships a dimensionally stable **Restoring account…** state with
+  `aria-busy` until verification settles. It remains operable: opening it shows
+  a neutral restoration dialog, while verified account actions and commercial
+  slots remain unavailable until the session check completes. As soon as
   account-bound cached email is loaded, it replaces the loading copy without
   claiming the session is verified; the menu becomes interactive atomically
   only after verification. Profile refresh and encrypted sync continue in the

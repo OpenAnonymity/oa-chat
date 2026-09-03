@@ -172,7 +172,7 @@ test('account footer stays stable while cached identity verification settles', (
         modal.updateTabIndicator();
         assert.equal(label.textContent, 'member@example.com');
         assert.equal(tab.dataset.status, 'loading');
-        assert.equal(tab.disabled, true);
+        assert.equal(tab.disabled, false);
         assert.equal(tab.getAttribute('aria-busy'), 'true');
         assert.equal(tab.getAttribute('aria-label'), 'Restoring account for member@example.com');
         assert.equal(tab.getAttribute('aria-haspopup'), null);
@@ -201,6 +201,71 @@ test('account footer stays stable while cached identity verification settles', (
         assert.equal(tab.dataset.status, 'none');
         assert.equal(tab.disabled, false);
     } finally {
+        globalThis.document = previousDocument;
+    }
+});
+
+test('clicking the account footer during restoration opens progress then rerenders safely', () => {
+    const previousDocument = globalThis.document;
+    let accountState = {
+        isReady: true,
+        authBootstrapComplete: false,
+        accountId: 'account-123',
+        sessionVerified: true,
+        status: 'unlocked',
+        oauthEmail: 'member@example.com'
+    };
+    let accountListener = null;
+    const elements = new Map();
+    const documentImpl = {
+        activeElement: null,
+        getElementById(id) { return elements.get(id) || null; },
+        addEventListener() {},
+        removeEventListener() {}
+    };
+    const tab = createElement(documentImpl);
+    const label = createElement(documentImpl);
+    const menu = createElement(documentImpl, { hidden: true });
+    const overlay = createElement(documentImpl);
+    const nav = createElement(documentImpl, { children: [tab, menu] });
+    elements.set('account-nav', nav);
+    elements.set('account-tab-btn', tab);
+    elements.set('account-settings-menu', menu);
+    elements.set('account-identity-label', label);
+    elements.set('account-modal', overlay);
+    globalThis.document = documentImpl;
+
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => ({ ...accountState }),
+                subscribe(listener) { accountListener = listener; return () => {}; },
+                clearErrors() {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        },
+        refreshExtensionSlot() {}
+    });
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        assert.equal(modal.isAccountMenuAvailable(), false);
+        assert.equal(tab.disabled, false);
+        tab.onclick();
+        assert.equal(modal.isOpen, true);
+        assert.equal(menu.hidden, true);
+        assert.match(overlay.innerHTML, /Restoring your account…/);
+        assert.doesNotMatch(overlay.innerHTML, /Log out/);
+
+        accountState = { ...accountState, authBootstrapComplete: true };
+        accountListener({ ...accountState });
+        assert.match(overlay.innerHTML, /Account identity/);
+        assert.match(overlay.innerHTML, /Log out/);
+    } finally {
+        modal.destroy();
         globalThis.document = previousDocument;
     }
 });

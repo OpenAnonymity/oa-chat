@@ -4,6 +4,49 @@ import test from 'node:test';
 import AccountModal from '../../chat/components/AccountModal.js';
 import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
 
+test('account restoration renders an operable neutral progress dialog', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        getElementById() {
+            return null;
+        }
+    };
+    const state = {
+        authBootstrapComplete: false,
+        accountId: 'account-123',
+        sessionVerified: false,
+        status: 'unlocked',
+        oauthEmail: 'member@example.com'
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /Restoring your account…/);
+        assert.match(html, /member@example\.com/);
+        assert.match(html, /aria-busy="true"/);
+        assert.doesNotMatch(html, /Continue with Google/);
+        assert.doesNotMatch(html, /Log out/);
+        assert.doesNotMatch(html, /Synchronization/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 test('account rerenders refresh the commercial slot through the UI facade', () => {
     const source = String(AccountModal.prototype.render);
     assert.match(source, /refreshExtensionSlot\?\.\(SLOT_NAMES\.ACCOUNT_COMMERCIAL\)/);
