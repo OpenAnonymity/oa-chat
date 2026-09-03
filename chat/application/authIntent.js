@@ -65,7 +65,8 @@ export async function routeAuthenticationIntent({
     }
 
     if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {
-        accountModal.openForUsername(username);
+        // Do not hold the rest of Chat initialization behind a native prompt.
+        accountModal.openForUsername(username, null, { autoContinue: true });
     } else {
         accountModal?.open?.();
     }

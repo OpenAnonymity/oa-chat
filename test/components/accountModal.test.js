@@ -202,7 +202,7 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
     }
 });
 
-test('landing username handoff prefills and focuses the username field', () => {
+test('ordinary username entry prefills and focuses the username field', () => {
     const originalDocument = globalThis.document;
     const focused = [];
     const usernameInput = { focus() { focused.push('account-username-input'); } };
@@ -452,6 +452,120 @@ function continuationModal(next = 'register') {
     });
     return { modal, calls };
 }
+
+function landingContinuationModal(next = 'login') {
+    const { modal, calls } = continuationModal(next);
+    const frames = [];
+    Object.assign(modal, {
+        isOpen: false,
+        overlay: {
+            contains() { return false; },
+            querySelector() { return null; },
+            set innerHTML(html) { frames.push(html); }
+        },
+        recoveryStep: 'idle',
+        render: AccountModal.prototype.render,
+        renderAccountUI() { return '<form>Username form</form>'; },
+        renderCreationFlow() { return '<div>Registration progress</div>'; },
+        attachEventListeners() {},
+        focusModal() {},
+        open() { this.isOpen = true; this.render(); },
+        close() {
+            this.isOpen = false;
+            this.loginViewVersion += 1;
+            this.usernameHandoffPending = false;
+        }
+    });
+    return { modal, calls, frames };
+}
+
+test('landing handoff launches registration or login without rendering a second username form', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { activeElement: null };
+    try {
+        for (const next of ['login', 'register']) {
+            const { modal, calls, frames } = landingContinuationModal(next);
+            modal.handleAccountPasskeyUnlock = modal.handlePasskeyRegistration = async () => {
+                calls.push([next]);
+                modal.render(); // Account/sync updates during the ceremony.
+                modal.close();
+            };
+            await modal.openForUsername(' Winter-OWL ', null, { autoContinue: true });
+            assert.deepEqual(calls, [['prepare', 'winter-owl'], [next]]);
+            assert.match(frames[0], /Opening passkey…/);
+            assert.ok(frames.every(html => !html.includes('Username form')));
+            assert.equal(modal.isOpen, false);
+            assert.equal(modal.usernameHandoffPending, false);
+        }
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
+
+test('landing cancellation or lookup failure returns to the editable form without re-prompting', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { activeElement: null };
+    try {
+        for (const failure of ['cancel', 'network']) {
+            const { modal, calls, frames } = landingContinuationModal();
+            if (failure === 'network') {
+                modal.accountService.prepareUsernameContinuation = async () => { throw new Error('Offline'); };
+            }
+            await modal.openForUsername('winter-owl', null, { autoContinue: true });
+            assert.equal(frames.at(-1), '<form>Username form</form>');
+            assert.equal(modal.usernameHandoffPending, false);
+            assert.equal(modal.usernameInputValue, 'winter-owl');
+            assert.deepEqual(calls, failure === 'cancel'
+                ? [['prepare', 'winter-owl'], ['login']]
+                : [['error', 'Offline']]);
+        }
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
+
+test('landing auto-continue preserves missing-name, unsupported, busy, legacy and Google surfaces', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { activeElement: null };
+    try {
+        for (const state of [
+            { passkeySupported: false }, { busy: true },
+            { accountId: '1234567890123456', encryptionMode: 'LEGACY_PASSKEY' },
+            { oauthRecoveryRequired: true }, { oauthKeyringRequired: true },
+            { oauthSetupRequired: true }, { oauthLegacyPasskeyRequired: true }, {}
+        ]) {
+            const { modal, calls, frames } = landingContinuationModal();
+            Object.assign(modal.accountState, state);
+            await modal.openForUsername(Object.keys(state).length ? 'winter-owl' : '', null, { autoContinue: true });
+            assert.deepEqual(calls, []);
+            assert.deepEqual(frames, ['<form>Username form</form>']);
+        }
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
+
+test('closing a landing lookup prevents a late prompt and duplicate handoffs are ignored', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { activeElement: null };
+    try {
+        const { modal, calls, frames } = landingContinuationModal('register');
+        let finishLookup;
+        modal.accountService.prepareUsernameContinuation = () => new Promise(resolve => { finishLookup = resolve; });
+        const handoff = modal.openForUsername('winter-owl', null, { autoContinue: true });
+        await modal.openForUsername('other-name', null, { autoContinue: true });
+        assert.equal(modal.usernameInputValue, 'winter-owl');
+        modal.close();
+        const frameCount = frames.length;
+        finishLookup({ kind: 'register' });
+        await handoff;
+        assert.deepEqual(calls, [['cancel']]);
+        assert.equal(frames.length, frameCount);
+        assert.equal(modal.usernameHandoffPending, false);
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
 
 test('one Continue routes to registration or login without falling back after a failed passkey', async () => {
     for (const next of ['register', 'login']) {

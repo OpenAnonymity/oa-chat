@@ -22,6 +22,7 @@ class AccountModal {
         this.usernameInputValue = '';
         this.identifierMode = null;
         this.usernameContinuePending = false;
+        this.usernameHandoffPending = false;
         this.loginViewVersion = 0;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
@@ -302,14 +303,38 @@ class AccountModal {
         document.addEventListener('keydown', this.escapeHandler);
     }
 
-    openForUsername(username, returnFocusEl = null) {
+    async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
+        if (this.isOpen || !this.overlay) return;
         this.identifierMode = 'username';
         this.usernameInputValue = String(username || '')
             .normalize('NFKC')
             .trim()
             .toLowerCase();
+        const state = this.accountState || {};
+        // Only a submitted landing username skips the form. Preserve saved
+        // legacy/Google recovery and unlock surfaces, and unsupported browsers.
+        this.usernameHandoffPending = autoContinue && Boolean(this.usernameInputValue) &&
+            this.getIdentifierMode() === 'username' && !state.busy &&
+            state.passkeySupported !== false &&
+            !state.oauthRecoveryRequired && !state.oauthKeyringRequired &&
+            !state.oauthSetupRequired && !state.oauthLegacyPasskeyRequired;
         this.open(returnFocusEl);
-        this.focusModal('account-username-input');
+        if (!this.usernameHandoffPending) {
+            this.focusModal('account-username-input');
+            return;
+        }
+        const viewVersion = this.loginViewVersion;
+        try {
+            await this.handleAccountContinue();
+        } finally {
+            if (viewVersion === this.loginViewVersion) {
+                this.usernameHandoffPending = false;
+                if (this.isOpen) {
+                    this.render();
+                    this.focusModal('account-username-input');
+                }
+            }
+        }
     }
 
     getModalFocusable() {
@@ -373,6 +398,7 @@ class AccountModal {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
         this.loginViewVersion += 1;
+        this.usernameHandoffPending = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         this.clearAnimationTimeouts();
@@ -855,6 +881,16 @@ class AccountModal {
             (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
         if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
+        } else if (this.usernameHandoffPending) {
+            this.overlay.innerHTML = `
+                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
+                    ${this.renderHeader('Log in')}
+                    <div class="flex items-center justify-center gap-3 py-6" role="status">
+                        <span class="h-4 w-4 animate-spin rounded-full border-2 border-muted border-t-foreground" aria-hidden="true"></span>
+                        <p class="text-sm text-muted-foreground">Opening passkey…</p>
+                    </div>
+                </div>
+            `;
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
         }
@@ -863,6 +899,7 @@ class AccountModal {
         if (
             dialog &&
             !isCreationFlow &&
+            !this.usernameHandoffPending &&
             this.recoveryStep === 'idle' &&
             state.authBootstrapComplete !== false
         ) {

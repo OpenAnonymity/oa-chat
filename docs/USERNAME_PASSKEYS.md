@@ -12,10 +12,18 @@ the one-use local route `/chat/?auth=username#username=...`. The username is in
 the fragment, so it is not sent in the document request or HTTP referrer. Chat
 waits for its normal account bootstrap, removes the authentication intent and
 username fragment with
-`history.replaceState`, and opens Account with the normalized username
-prefilled and focused. A remembered verified, unlocked account continues
+`history.replaceState`, and starts the existing Continue/passkey flow immediately
+without a second username form or Continue click. A neutral **Opening passkey…**
+view covers lookup and returning authentication; registration uses its existing
+setup progress. Cancellation or lookup failure restores the editable login form
+without automatically retrying. A remembered verified, unlocked account continues
 directly into Chat without opening Account. The route is only a UI handoff; it
 does not authenticate the username or bypass the passkey proof.
+
+Missing usernames, unsupported passkeys, or an already-busy account retain the
+normal form. Saved legacy and Google unlock/recovery surfaces are not bypassed.
+The prompt runs independently of the rest of Chat startup; closing during lookup
+invalidates the pending handoff and cannot start a late passkey prompt.
 
 The login dialog says **Log in**, keeps Google, and presents an accessible
 **Username** input with one **Continue** button. It does not show introductory

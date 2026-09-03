@@ -55,8 +55,13 @@ reading code alone.
   the OR/access-code row. Both text rows share the same visual control rules,
   while independent handlers preserve the existing Google and anonymous
   access-code routes. The username route is a one-use local UI intent; Chat
-  removes the username from its URL and prefills Account only after the normal
-  authentication bootstrap settles. Startup composer autofocus also respects
+  removes the username from its URL after the normal authentication bootstrap
+  settles, then immediately starts the existing Continue/passkey flow. A neutral
+  **Opening passkey…** view replaces the redundant second username form. Errors
+  or cancellation restore the editable form; new-account setup retains its own
+  retry UI. Missing usernames (including no-JS entry), unsupported/busy states,
+  and remembered legacy/Google unlock or recovery still use their normal UI.
+  The native prompt does not block the rest of Chat initialization. Startup composer autofocus also respects
   an open Account dialog, including its forced first attempt, so focus stays
   on the authentication surface rather than moving behind it.
 - Account entry now offers Google or a normalized, unique pseudonymous

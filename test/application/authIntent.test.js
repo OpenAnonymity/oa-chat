@@ -14,6 +14,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
     const replacements = [];
     let opens = 0;
     const usernameOpens = [];
+    const usernameOptions = [];
     const accountService = {
         getState: () => ({ ...state }),
         waitForAuthBootstrap: () => bootstrap
@@ -31,13 +32,18 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
         accountService,
         accountModal: {
             open() { opens += 1; },
-            openForUsername(username) { usernameOpens.push(username); }
+            openForUsername(username, returnFocusEl, options) {
+                usernameOpens.push(username);
+                usernameOptions.push(options);
+                return new Promise(() => {}); // A native prompt must not block Chat startup.
+            }
         },
         locationImpl,
         historyImpl,
         releaseBootstrap,
         replacements,
         usernameOpens,
+        usernameOptions,
         get opens() { return opens; }
     };
 }
@@ -110,7 +116,7 @@ test('signed-out authentication intent opens only the Google sign-in surface', a
     assert.equal(harness.opens, 1);
 });
 
-test('signed-out username intent prefills the username sign-in surface', async () => {
+test('signed-out username intent starts the passkey handoff without blocking Chat startup', async () => {
     const harness = createHarness({
         accountId: null,
         sessionVerified: false,
@@ -122,6 +128,7 @@ test('signed-out username intent prefills the username sign-in surface', async (
     assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
     assert.equal(harness.opens, 0);
     assert.deepEqual(harness.usernameOpens, ['winter-owl']);
+    assert.deepEqual(harness.usernameOptions, [{ autoContinue: true }]);
     assert.deepEqual(harness.replacements, [[
         { preserved: true },
         '',
