@@ -85,13 +85,14 @@ reading code alone.
   generic **Account** label on every reload.
 - Long conversation history settles its initial paint at the top row boundary
   and withholds one conversation that would otherwise be clipped at the bottom.
-  The guard disengages permanently on the first user scroll/pointer/key
-  interaction: there is no scroll snapping and no later automatic repositioning,
-  so a deliberately half-visible row remains where the user leaves it. A short
-  bottom fade appears only while more history exists below, and a real trailing
-  spacer remains in both full and virtualized lists. The last title can therefore
-  scroll fully above the account footer. The account identity row and menu keep the existing 14px
-  typography but use a stronger full-row neutral hover/focus surface.
+  The same clean row boundary is restored whenever the list returns to its exact
+  top position. Away from the top there is no scroll snapping or automatic
+  repositioning, so a deliberately half-visible row remains where the user
+  leaves it. A short bottom fade appears only while more history exists below,
+  and a real trailing spacer remains in both full and virtualized lists. The last
+  title can therefore scroll fully above the account footer. The account identity
+  row and menu keep the existing 14px typography but use a stronger full-row
+  neutral hover/focus surface.
 - Explicit logout preserves the current device theme while account-scoped
   preferences and encrypted wallet state are deactivated. A Google-authenticated
   session that still needs its encryption passkey is labeled **Unlock encrypted

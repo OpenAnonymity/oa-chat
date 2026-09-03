@@ -17,7 +17,7 @@ function classList(initial = []) {
     };
 }
 
-test('initial history paint hides one clipped row and permanently releases on user control', () => {
+test('history hides a clipped bottom row whenever scrolling returns to the top boundary', () => {
     let scheduled = null;
     const shell = { classList: classList() };
     const completeRow = { classList: classList(), getBoundingClientRect: () => ({ top: 10, bottom: 46 }) };
@@ -60,13 +60,28 @@ test('initial history paint hides one clipped row and permanently releases on us
     assert.equal(shell.classList.contains('has-more-below'), true);
 
     Sidebar.prototype.releaseInitialViewportGuard.call(sidebar);
-    assert.equal(clippedRow.classList.contains('session-initially-clipped'), false);
+    assert.equal(clippedRow.classList.contains('session-initially-clipped'), true);
 
     scrollArea.scrollTop = 23;
+    Sidebar.prototype.handleScroll.call({
+        ...sidebar,
+        virtualState: { enabled: false },
+        updateScrollFade: Sidebar.prototype.updateScrollFade
+    });
+    assert.equal(clippedRow.classList.contains('session-initially-clipped'), false);
+
     scheduled = null;
     Sidebar.prototype.scheduleInitialViewportSettlement.call(sidebar, true);
     assert.equal(scheduled, null);
     assert.equal(scrollArea.scrollTop, 23);
+
+    scrollArea.scrollTop = 0;
+    Sidebar.prototype.handleScroll.call({
+        ...sidebar,
+        virtualState: { enabled: false },
+        updateScrollFade: Sidebar.prototype.updateScrollFade
+    });
+    assert.equal(clippedRow.classList.contains('session-initially-clipped'), true);
 
     scrollArea.scrollTop = 120;
     Sidebar.prototype.handleScroll.call({
@@ -75,5 +90,6 @@ test('initial history paint hides one clipped row and permanently releases on us
         updateScrollFade: Sidebar.prototype.updateScrollFade
     });
     assert.equal(scrollArea.scrollTop, 120);
+    assert.equal(clippedRow.classList.contains('session-initially-clipped'), false);
     assert.equal(shell.classList.contains('has-more-below'), false);
 });

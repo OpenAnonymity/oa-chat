@@ -757,8 +757,9 @@ export default class Sidebar {
             if (!scrollArea) return;
 
             // Browser scroll restoration can leave the first painted history
-            // between rows. Normalize only this initial paint; once the user
-            // interacts, scrolling is completely free.
+            // between rows. Normalize only this initial paint. Afterward the
+            // user can scroll freely; the visual guard returns only at the
+            // exact top boundary so that position remains as clean as startup.
             scrollArea.scrollTop = 0;
             if (this.virtualState.enabled) this.renderVirtualRange(true);
             this.initialViewportSettled = true;
@@ -775,7 +776,7 @@ export default class Sidebar {
         list.querySelectorAll?.('.session-initially-clipped').forEach(row => {
             row.classList.remove('session-initially-clipped');
         });
-        if (!this.initialViewportSettled || this.initialViewportUserControlled) return;
+        if (!this.initialViewportSettled || (scrollArea.scrollTop || 0) > 1) return;
 
         const viewport = scrollArea.getBoundingClientRect?.();
         if (!viewport) return;
@@ -791,12 +792,12 @@ export default class Sidebar {
     }
 
     releaseInitialViewportGuard() {
-        if (this.initialViewportUserControlled) return;
         this.initialViewportUserControlled = true;
         this.initialViewportSettled = true;
-        this.app.elements.sessionsList
-            ?.querySelectorAll?.('.session-initially-clipped')
-            .forEach(row => row.classList.remove('session-initially-clipped'));
+        // User interaction prevents the initial scroll reset, but must not make
+        // the top boundary render differently after the list returns there.
+        // applyInitialViewportGuard clears the class everywhere except at top.
+        this.applyInitialViewportGuard();
     }
 
     updateScrollFade() {
