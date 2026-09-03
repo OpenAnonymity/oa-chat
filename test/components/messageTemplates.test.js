@@ -51,7 +51,7 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-test('memory agent failure messages render safe retrieval failure reason', async () => {
+test('memory agent failures use the same compact status presentation as an empty retrieval', async () => {
     const restoreGlobals = installTemplateGlobals();
     const originalWarn = console.warn;
     const originalError = console.error;
@@ -66,7 +66,7 @@ test('memory agent failure messages render safe retrieval failure reason', async
             role: 'assistant',
             model: 'memory agent',
             timestamp: new Date('2026-07-02T08:15:12Z').toISOString(),
-            content: 'Memory context was not added this time. Sending without it.',
+            content: 'No added memory. Sending original prompt.',
             isLocalOnly: true,
             memoryRetrievalFailure: {
                 kind: 'network',
@@ -78,9 +78,8 @@ test('memory agent failure messages render safe retrieval failure reason', async
             formatTime: () => '18:15:12'
         }, [], 'memory agent');
 
-        assert.match(html, /Memory context was not added this time\. Sending without it\./);
-        assert.match(html, /Note:/);
-        assert.match(html, /Connection issue\./);
+        assert.match(html, /No added memory\. Sending original prompt\./);
+        assert.doesNotMatch(html, /memory-failure-detail|Note:|Connection issue/);
         assert.doesNotMatch(html, /confidential memory service|Check your connection|script|img|api_key=secret|<script>|<img>/);
     } finally {
         await new Promise((resolve) => setTimeout(resolve, 0));

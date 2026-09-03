@@ -271,17 +271,14 @@ forwarding its details into the final prompt.
   - the timestamp is rendered without hover-fade transitions so it does not
     flash during trace refreshes
   - status copy should stay one line. Prompt details belong in the revised
-    prompt preview, not in the summary text. Current non-preview summaries use
-    compact forms such as `No added memory. Sending original prompt.`,
-    `No new retrieval. Using previously approved memory.`, and
-    `Memory context was not added this time. Sending without it.`
-  - retrieval failures keep that generic one-line summary, but now also render a
-    compact `Note:` row from structured `memoryRetrievalFailure` metadata. The
-    default chat surface only shows the short title, not the longer detail.
-    User-facing note copy should stay calm and avoid raw diagnostic wording.
-    The classifier is intentionally allowlisted and must not expose raw
-    exception strings, provider response bodies, prompts, memory contents, URLs
-    containing secrets, or API keys.
+    prompt preview, not in the summary text. Both a normal empty retrieval and
+    a retrieval failure use `No added memory. Sending original prompt.`; reused
+    context uses `No new retrieval. Using previously approved memory.`
+  - Retrieval failures retain allowlisted `memoryRetrievalFailure` metadata for
+    safe diagnostics and shared-payload compatibility, but do not add a second
+    bordered note to the chat. The metadata must never contain raw exception
+    strings, provider response bodies, prompts, memory contents, URLs containing
+    secrets, or API keys.
 - Prompt preview/edit uses the same tagged prompt editor pattern as `memory-chat`:
   - `[[user_data]]...[[/user_data]]` spans render as highlighted user-data marks
   - edits persist into `ciPromptDraft.editedFullPrompt`
