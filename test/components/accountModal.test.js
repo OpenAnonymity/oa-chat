@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import AccountModal from '../../chat/components/AccountModal.js';
+import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
 import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
 
 test('account restoration renders an operable neutral progress dialog', () => {
@@ -50,7 +51,100 @@ test('account restoration renders an operable neutral progress dialog', () => {
 test('account rerenders refresh the commercial slot through the UI facade', () => {
     const source = String(AccountModal.prototype.render);
     assert.match(source, /refreshExtensionSlot\?\.\(SLOT_NAMES\.ACCOUNT_COMMERCIAL\)/);
+    assert.match(source, /actionRow\?\.parentNode/);
+    assert.match(source, /actionParent\.insertBefore\(commercialSlot, actionRow\)/);
+    assert.doesNotMatch(source, /dialog\.insertBefore\(commercialSlot, actionRow\)/);
     assert.doesNotMatch(source, /extensionSlots/);
+});
+
+test('signed-in Account opens after inserting its commercial slot beside the nested action row', () => {
+    const originalDocument = globalThis.document;
+    const inserted = [];
+    const refreshed = [];
+    const actionParent = {
+        insertBefore(node, reference) {
+            inserted.push({ node, reference });
+        }
+    };
+    const actionRow = { parentNode: actionParent };
+    const dialog = {
+        focus() {},
+        appendChild() {
+            throw new Error('The nested action row must use its own parent');
+        },
+        querySelector(selector) {
+            return selector === '[data-account-actions]' ? actionRow : null;
+        }
+    };
+    const removedClasses = [];
+    const overlay = {
+        classList: {
+            add() {},
+            remove(name) { removedClasses.push(name); }
+        },
+        contains() { return false; },
+        querySelector(selector) {
+            return selector === '[role="dialog"]' ? dialog : null;
+        },
+        querySelectorAll() { return []; },
+        set innerHTML(value) { this.html = value; }
+    };
+    const state = {
+        authBootstrapComplete: true,
+        accountId: 'account-123',
+        sessionVerified: true,
+        status: 'unlocked',
+        googleLinked: true,
+        encryptionMode: 'PRF',
+        passkeySupported: true,
+        busy: false,
+        action: null
+    };
+    globalThis.document = {
+        activeElement: null,
+        createElement() {
+            return { dataset: {}, hidden: false };
+        },
+        getElementById(id) {
+            return id === 'account-modal' ? overlay : null;
+        },
+        addEventListener() {},
+        removeEventListener() {}
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {},
+                clearErrors() {}
+            },
+            sync: {
+                getStatus: () => ({
+                    syncing: false,
+                    lastSyncTime: null,
+                    lastSyncResult: null
+                }),
+                subscribe: () => () => {}
+            }
+        },
+        refreshExtensionSlot(name) {
+            refreshed.push(name);
+        }
+    });
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        modal.open();
+        assert.equal(modal.isOpen, true);
+        assert.deepEqual(removedClasses, ['hidden']);
+        assert.equal(inserted.length, 1);
+        assert.equal(inserted[0].reference, actionRow);
+        assert.equal(inserted[0].node.dataset.oaExtensionSlot, SLOT_NAMES.ACCOUNT_COMMERCIAL);
+        assert.deepEqual(refreshed, [SLOT_NAMES.ACCOUNT_COMMERCIAL]);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
 });
 
 test('account registration offers only Google SSO', () => {

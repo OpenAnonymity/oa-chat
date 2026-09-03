@@ -744,7 +744,8 @@ class AccountModal {
             commercialSlot.dataset.oaExtensionSlot = SLOT_NAMES.ACCOUNT_COMMERCIAL;
             commercialSlot.hidden = true;
             const actionRow = dialog.querySelector('[data-account-actions]');
-            if (actionRow) dialog.insertBefore(commercialSlot, actionRow);
+            const actionParent = actionRow?.parentNode;
+            if (actionParent?.insertBefore) actionParent.insertBefore(commercialSlot, actionRow);
             else dialog.appendChild(commercialSlot);
             this.app.refreshExtensionSlot?.(SLOT_NAMES.ACCOUNT_COMMERCIAL);
         }
