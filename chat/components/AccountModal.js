@@ -1243,78 +1243,73 @@ class AccountModal {
 
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
-        const providerLabel = this.getOAuthProviderLabel(state.oauthProvider);
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
         const isLegacyMigration = state.oauthRecoveryRequired;
         const isSetup = state.oauthSetupRequired;
         const isLegacyPasskey = state.oauthLegacyPasskeyRequired;
+        const busy = Boolean(state.busy);
+        const error = state.error ? String(state.error) : '';
+
+        // Title / body / CTA per path. The plain unlock path is the Turn 6
+        // "Welcome back" card; setup and legacy paths share its shell.
+        const title = isLegacyMigration
+            ? 'Upgrade encrypted data'
+            : isSetup
+                ? 'Encrypt your data'
+                : 'Welcome back';
+        const body = busy
+            ? isLegacyMigration
+                ? 'Confirm with your passkey to finish the upgrade.'
+                : isSetup
+                    ? 'Confirm with your passkey to finish.'
+                    : 'Confirm with your passkey to continue.'
+            : isLegacyMigration
+                ? 'Enter the recovery code from the previous account system once. It will be replaced with an encryption passkey.'
+                : isLegacyPasskey
+                    ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it.'
+                    : isSetup
+                        ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
+                        : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
+        const idleCta = isLegacyMigration
+            ? 'Upgrade with passkey'
+            : isSetup
+                ? 'Create passkey'
+                : isLegacyPasskey
+                    ? 'Use legacy passkey'
+                    : 'Unlock';
+        const cta = busy ? 'Waiting…' : error ? 'Try again' : idleCta;
+        const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
 
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                ${this.renderHeader(
-                    isLegacyMigration
-                        ? 'Upgrade encrypted data'
-                        : isLegacyPasskey
-                            ? 'Unlock legacy encrypted data'
-                        : isSetup
-                            ? 'Encrypt your data'
-                            : 'Unlock encrypted data'
-                )}
-                <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-2">
-                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    Signed in with ${providerLabel}
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="account-unlock-card">
+                <div class="account-unlock-copy">
+                    <h2 id="account-modal-title" class="account-unlock-title">${title}</h2>
+                    <p class="account-unlock-body">${body}</p>
+                    ${isLegacyPasskey ? `
+                        <p class="account-unlock-account-id account-number-text">${this.escapeHtml(this.formatAccountId(state.accountId))}</p>
+                    ` : ''}
                 </div>
-                ${!isSetup ? '<p class="mb-3 text-center text-sm font-medium text-foreground">Encrypted data is still locked.</p>' : ''}
-                ${isLegacyPasskey ? `
-                    <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
-                        ${this.escapeHtml(this.formatAccountId(state.accountId))}
-                    </p>
-                ` : ''}
-                <p class="text-xs text-muted-foreground text-center mb-4">
-                    ${isLegacyMigration
-                        ? 'Enter the recovery code from the previous account system once. OA will replace it with a PRF encryption passkey.'
-                        : isLegacyPasskey
-                            ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it; its account number and recovery path remain available.'
-                        : isSetup
-                            ? 'Create an encryption passkey. Its PRF output wraps your data key locally and never reaches the org.'
-                            : 'Use the encryption passkey created for this OA account. It unlocks your data locally; Google sign-in alone cannot decrypt it.'
-                    }
-                </p>
-                ${isLegacyMigration ? `
-                    <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
+                <div class="account-unlock-actions">
+                    ${isLegacyMigration ? `
                         <input
                             id="oauth-recovery-code-input"
                             type="text"
+                            class="account-unlock-input"
                             placeholder="Legacy 5-word recovery code"
-                            class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            autocomplete="off"
                             value="${recoveryValue}"
-                            ${state.busy ? 'disabled' : ''}
+                            ${busy ? 'disabled' : ''}
                         />
-                    </div>
-                    <button id="oauth-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
-                        ${state.busy ? 'Upgrading...' : 'Upgrade with passkey'}
-                    </button>
-                ` : `
-                    <button id="oauth-keyring-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
-                        ${state.busy
-                            ? isSetup ? 'Creating passkey...' : 'Unlocking...'
-                            : isSetup
-                                ? 'Create encryption passkey'
-                                : isLegacyPasskey
-                                    ? 'Use legacy passkey'
-                                    : 'Unlock with passkey'
-                        }
-                    </button>
-                `}
-                <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
-                    Log out
-                </button>
-                ${state.error ? `
-                    <div class="mt-3 text-center">
-                        <p class="text-xs text-destructive">${this.escapeHtml(state.error)}</p>
-                        ${state.oauthKeyringRequired ? '<p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Try the browser profile or password manager where you created this encryption passkey. Closing this dialog keeps Google signed in, but your tickets and preferences stay locked.</p>' : ''}
-                    </div>
-                ` : ''}
+                        <button id="oauth-recovery-submit-btn" class="account-unlock-btn" type="button" ${busy ? 'disabled' : ''} aria-busy="${busy}">
+                            ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
+                        </button>
+                    ` : `
+                        <button id="oauth-keyring-submit-btn" class="account-unlock-btn" type="button" ${busy ? 'disabled' : ''} aria-busy="${busy}">
+                            ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
+                        </button>
+                    `}
+                    ${error && !busy ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
+                </div>
             </div>
         `;
     }

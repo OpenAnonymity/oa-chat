@@ -545,12 +545,14 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
 
     try {
         const html = modal.renderOAuthUnlockUI();
-        assert.match(html, /Signed in with Google/);
-        assert.match(html, /Encrypted data is still locked/);
-        assert.match(html, /Google sign-in alone cannot decrypt it/);
-        assert.match(html, /Closing this dialog keeps Google signed in/);
-        assert.match(html, />\s*Log out\s*</);
-        assert.doesNotMatch(html, /Cancel and log out/);
+        assert.match(html, /Welcome back/);
+        assert.match(html, /encrypts your tickets and preferences so only you can access them/);
+        assert.match(html, /id="oauth-keyring-submit-btn"/);
+        assert.match(html, />\s*Try again\s*</);
+        assert.match(html, /role="alert"[^>]*>No passkey found for this account on this device</);
+        assert.doesNotMatch(html, /Signed in with Google/);
+        assert.doesNotMatch(html, /Log out/);
+        assert.doesNotMatch(html, /id="close-account-modal"/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
