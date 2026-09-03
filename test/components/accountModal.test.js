@@ -1110,12 +1110,71 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
 
     try {
         const html = modal.renderOAuthUnlockUI();
-        assert.match(html, /Signed in with Google/);
-        assert.match(html, /Encrypted data is still locked/);
-        assert.match(html, /Google sign-in alone cannot decrypt it/);
-        assert.match(html, /Closing this dialog keeps Google signed in/);
-        assert.match(html, />\s*Log out\s*</);
-        assert.doesNotMatch(html, /Cancel and log out/);
+        assert.match(html, /Welcome back/);
+        assert.match(html, /encrypts your tickets and preferences so only you can access them/);
+        assert.match(html, /id="oauth-keyring-submit-btn"/);
+        assert.match(html, />\s*Try again\s*</);
+        assert.match(html, /role="alert"[^>]*>No passkey found for this account on this device</);
+        assert.doesNotMatch(html, /Signed in with Google/);
+        assert.match(html, /id="account-clear-btn"[^>]*>Log out<\/button>/);
+        assert.match(html, /id="close-account-modal"[^>]*aria-label="Close"/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
+test('unlock dismissal keeps the account locked and logout restores username entry', async () => {
+    const originalDocument = globalThis.document;
+    const buttons = { 'close-account-modal': {}, 'account-clear-btn': {} };
+    globalThis.document = {
+        getElementById(id) { return buttons[id] || null; },
+        removeEventListener() {}
+    };
+    const state = {
+        accountId: 'identity-account', sessionVerified: true, status: 'locked',
+        oauthProvider: 'google', oauthKeyringRequired: true,
+        passkeySupported: true, busy: false, authBootstrapComplete: true
+    };
+    let cleared = 0;
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {},
+                async clearLocalAccount() {
+                    cleared += 1;
+                    Object.assign(state, {
+                        accountId: null, sessionVerified: false,
+                        oauthProvider: null, oauthKeyringRequired: false
+                    });
+                }
+            },
+            sync: { getStatus: () => ({}), subscribe: () => () => {} }
+        }
+    });
+    modal.overlay = { classList: { add() {} }, innerHTML: '' };
+    modal.isOpen = true;
+    modal.render = () => {};
+    modal.escapeHtml = value => String(value ?? '');
+    try {
+        assert.match(modal.renderAccountUI(), /Welcome back/);
+        modal.attachEventListeners();
+        buttons['close-account-modal'].onclick();
+        assert.equal(modal.isOpen, false);
+        assert.equal(state.sessionVerified, true);
+        assert.equal(state.status, 'locked');
+        assert.equal(cleared, 0);
+
+        modal.isOpen = true;
+        state.busy = true;
+        assert.match(modal.renderAccountUI(), /id="account-clear-btn"[^>]*disabled/);
+        state.busy = false;
+        await buttons['account-clear-btn'].onclick();
+        assert.equal(cleared, 1);
+        assert.equal(state.sessionVerified, false);
+        assert.match(modal.renderAccountUI(), /id="account-username-input"/);
+        assert.doesNotMatch(modal.renderAccountUI(), /Welcome back/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;

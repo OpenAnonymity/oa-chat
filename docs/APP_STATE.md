@@ -4,6 +4,21 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-03: Welcome back unlock preserves username login
+
+- The Google encryption-keyring unlock uses the centered **Welcome back** card,
+  an outlined **Unlock** action, a disabled **Waiting…** spinner during the
+  passkey prompt, and **Try again** with an alert on failure. Setup and legacy
+  migration share the card with their own copy and existing action handlers.
+- The presentation change is scoped to `renderOAuthUnlockUI()`. The neutral Google/Username login,
+  immediate landing-to-username passkey handoff, first-account Membership signal,
+  saved legacy-account recovery, and muted footer focus remain intact.
+- Escape and the compact close button dismiss the unlock card without
+  decrypting data or signing Google out. The secondary **Log out** action
+  remains available after a failed/cancelled passkey so a locked account can
+  switch identities; it is disabled during an active operation. Successful
+  unlock closes the card through the existing account lifecycle.
+
 ## 2026-09-02: Authentication intent waits for account restoration
 
 - Returning focus to the account footer after unlock uses a thin, inset muted
@@ -52,7 +67,8 @@ reading code alone.
   divider. The arrow retains the accessible **Continue** name and the existing
   click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
   Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
-  account-number login and Google encryption unlock keep their existing layouts.
+  account-number login keeps its existing layout. Google encryption unlock uses
+  the Welcome back card described above.
   Username is an input placeholder with an accessible name, not a
   visible label or example handle. Introductory/helper copy and the separate
   signup/account-number rows are removed. Continue checks for a username
@@ -185,7 +201,7 @@ reading code alone.
   session that still needs its encryption passkey is labeled **Unlock encrypted
   data** in the sidebar instead of looking fully logged in. Closing the unlock
   dialog keeps Google authentication but never marks encrypted data or tickets
-  unlocked; the dialog explains this distinction and offers an explicit Log out.
+  unlocked; the Welcome back card explains that a passkey protects the data.
 - The viewport permits browser zoom. Do not restore `maximum-scale` or
   `user-scalable=no`; authentication, Membership, and ticket recovery must remain
   usable under magnification.
