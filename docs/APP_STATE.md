@@ -43,8 +43,13 @@ reading code alone.
   creation rendering active until close, even after sync publishes the new
   account ID; otherwise sync notifications could briefly show Account before
   the Membership handoff. Retry/error actions and returning login are unchanged.
-- Login is now the compact **Log in** / Google / **Username** / **Continue**
-  surface. Username is an input placeholder with an accessible name, not a
+- Username login centers **Log in**, keeps the close button at the upper right,
+  and places Google directly above a joined **Username →** control with no OR
+  divider. The arrow retains the accessible **Continue** name and the existing
+  click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
+  Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
+  account-number login and Google encryption unlock keep their existing layouts.
+  Username is an input placeholder with an accessible name, not a
   visible label or example handle. Introductory/helper copy and the separate
   signup/account-number rows are removed. Continue checks for a username
   challenge before reserving a new account; successful lookups reuse the

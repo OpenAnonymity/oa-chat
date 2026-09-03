@@ -25,9 +25,14 @@ normal form. Saved legacy and Google unlock/recovery surfaces are not bypassed.
 The prompt runs independently of the rest of Chat startup; closing during lookup
 invalidates the pending handoff and cannot start a late passkey prompt.
 
-The login dialog says **Log in**, keeps Google, and presents an accessible
-**Username** input with one **Continue** button. It does not show introductory
-copy, pseudonym guidance, separate signup/login buttons, or a manual
+The login dialog centers **Log in**, keeps Google, and presents an accessible
+**Username** input with an attached arrow immediately below it, with no OR
+divider. The arrow is named **Continue** for assistive technology and uses the
+same handler as Enter. It becomes a disabled spinner during authentication.
+The neutral control follows Chat's light/dark theme, including autofill. This
+styling is scoped to username login; saved legacy and Google encryption-unlock
+layouts are unchanged. It does not show introductory copy, pseudonym guidance,
+separate signup/login buttons, or a manual
 account-number switch. Continue handles both account creation and returning
 login; it never treats a canceled or failed passkey as permission to register.
 

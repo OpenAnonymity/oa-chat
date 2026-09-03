@@ -1345,8 +1345,8 @@ class AccountModal {
         );
         const recoveryVisible = this.showRecoveryInput;
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
-                <div class="flex items-center justify-between mb-4">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}${usesAccountId ? '' : ' account-login-dialog'}" style="padding:24px 24px 18px">
+                <div class="${usesAccountId ? 'flex items-center justify-between mb-4' : 'account-login-heading'}">
                     <h3 id="account-modal-title" class="text-base font-medium text-foreground">Log in</h3>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -1366,13 +1366,13 @@ class AccountModal {
                     Continue with Google
                 </button>
 
-                <div class="flex items-center gap-3 my-4" aria-hidden="true">
+                ${usesAccountId ? `<div class="flex items-center gap-3 my-4" aria-hidden="true">
                     <span class="h-px flex-1 bg-border"></span>
                     <span class="text-[11px] uppercase tracking-wider text-muted-foreground">or</span>
                     <span class="h-px flex-1 bg-border"></span>
-                </div>
+                </div>` : ''}
 
-                <div class="account-input-wrap flex items-center w-full h-10 rounded-lg border border-border bg-muted/25">
+                <div class="${usesAccountId ? 'account-input-wrap flex items-center w-full h-10 rounded-lg border border-border bg-muted/25' : 'account-login-control'}">
                     ${usesAccountId ? `
                         <input
                             id="account-id-input"
@@ -1396,15 +1396,18 @@ class AccountModal {
                             spellcheck="false"
                             maxlength="32"
                             placeholder="Username"
-                            class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            class="account-login-input"
                             value="${usernameValue}"
                             ${isBusy ? 'disabled' : ''}
                         />
+                        <button id="account-passkey-btn" class="account-login-submit" type="button" aria-label="${isBusy ? 'Continuing' : 'Continue'}" title="Continue" aria-busy="${Boolean(isBusy)}" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                            <span class="${isBusy ? 'account-login-spinner' : 'account-login-arrow'}" aria-hidden="true"></span>
+                        </button>
                     `}
                 </div>
-                <button id="account-passkey-btn" class="mt-3 w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                ${usesAccountId ? `<button id="account-passkey-btn" class="mt-3 w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                     ${isBusy ? 'Continuing…' : 'Continue'}
-                </button>
+                </button>` : ''}
 
                 ${usesAccountId ? `
                     <button id="account-recovery-toggle-btn" class="mt-2 w-full text-xs text-muted-foreground hover:text-foreground" type="button" ${isBusy ? 'disabled' : ''}>

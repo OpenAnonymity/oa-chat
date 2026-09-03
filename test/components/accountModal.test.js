@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
 
 import AccountModal from '../../chat/components/AccountModal.js';
 import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
@@ -185,7 +186,12 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.match(html, />Log in<\/h3>/);
         assert.match(html, /placeholder="Username"/);
         assert.match(html, /aria-label="Username"/);
-        assert.match(html, />\s*Continue\s*<\/button>/);
+        assert.match(html, /class="account-login-heading"/);
+        assert.match(html, /class="account-login-control"[\s\S]*id="account-username-input"[\s\S]*id="account-passkey-btn"[\s\S]*<\/div>/);
+        assert.match(html, /id="account-passkey-btn"[^>]*aria-label="Continue"/);
+        assert.match(html, /class="account-login-arrow" aria-hidden="true"/);
+        assert.equal((html.match(/id="account-passkey-btn"/g) || []).length, 1);
+        assert.doesNotMatch(html, />\s*or\s*<|bg-blue-600|>\s*Continue\s*<\/button>/);
         assert.doesNotMatch(html, /Sign in to OA|Choose Google|Use a pseudonym|winter-owl/);
         assert.doesNotMatch(html, /<label|Create a passkey account|account-identifier-mode-btn/);
         assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1"/);
@@ -196,10 +202,57 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.doesNotMatch(html, /Five-word recovery code/);
         assert.doesNotMatch(html, /Continue with GitHub/);
         assert.doesNotMatch(html, /account-github-btn/);
+
+        state.busy = true;
+        state.error = 'A previous error';
+        const busyHtml = modal.renderAccountUI();
+        assert.match(busyHtml, /id="account-passkey-btn"[^>]*aria-label="Continuing"[^>]*aria-busy="true"[^>]*disabled/);
+        assert.match(busyHtml, /class="account-login-spinner" aria-hidden="true"/);
+        assert.doesNotMatch(busyHtml, /class="account-login-arrow"/);
+        state.busy = false;
+        state.passkeySupported = false;
+        assert.match(modal.renderAccountUI(), /id="account-passkey-btn"[^>]*disabled/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
     }
+});
+
+test('username arrow and Enter retain the same Continue handler, and Google remains separate', () => {
+    const originalDocument = globalThis.document;
+    const nodes = {
+        'account-username-input': {},
+        'account-passkey-btn': {},
+        'account-google-btn': {}
+    };
+    globalThis.document = { getElementById: id => nodes[id] || null };
+    const modal = Object.create(AccountModal.prototype);
+    const calls = [];
+    modal.handleAccountContinue = () => calls.push(['username', modal.usernameInputValue]);
+    modal.handleOAuthAuthentication = provider => calls.push(['oauth', provider]);
+    try {
+        modal.attachEventListeners();
+        nodes['account-username-input'].oninput({ target: { value: 'preview-user' } });
+        nodes['account-passkey-btn'].onclick();
+        let prevented = false;
+        nodes['account-username-input'].onkeydown({ key: 'Enter', preventDefault() { prevented = true; } });
+        nodes['account-google-btn'].onclick();
+        assert.equal(prevented, true);
+        assert.deepEqual(calls, [['username', 'preview-user'], ['username', 'preview-user'], ['oauth', 'google']]);
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
+
+test('username login styles center only its heading and keep neutral accessible controls', () => {
+    const css = fs.readFileSync('chat/styles.css', 'utf8');
+    assert.match(css, /\.account-login-heading\s*\{[^}]*grid-template-columns: 2rem minmax\(0, 1fr\) 2rem/);
+    assert.match(css, /\.account-login-heading > h3\s*\{[^}]*grid-column: 2;[^}]*text-align: center/);
+    assert.match(css, /\.account-login-control\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) 2.75rem/);
+    assert.match(css, /\.account-login-input\s*\{[^}]*font-size: 1rem/);
+    assert.match(css, /\.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
+    assert.match(css, /\.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow: inset 0 0 0 1000px hsl\(var\(--color-background\)\)/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-login-spinner\s*\{\s*animation: none/);
 });
 
 test('ordinary username entry prefills and focuses the username field', () => {
