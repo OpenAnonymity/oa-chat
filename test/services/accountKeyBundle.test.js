@@ -146,6 +146,206 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
     }
 });
 
+test('recovery initialization exposes an initial sync failure for retry', async () => {
+    const originals = {
+        getSyncKeyMaterial: accountService.getSyncKeyMaterial,
+        activateAccountScope: syncService.activateAccountScope,
+        setCredentials: syncService.setCredentials,
+        init: syncService.init,
+        sync: syncService.sync,
+        startPeriodicSync: syncService.startPeriodicSync,
+        state: { ...accountService.state },
+        localAccountContinuity: accountService.localAccountContinuity
+    };
+    accountService.getSyncKeyMaterial = () => new Uint8Array(32).fill(7);
+    accountService.state.accountId = '5555555555555555';
+    accountService.state.sessionVerified = true;
+    accountService.state.accountScopeReady = false;
+    accountService.state.ticketSyncReady = false;
+    accountService.localAccountContinuity = false;
+    syncService.activateAccountScope = async () => {};
+    syncService.setCredentials = () => {};
+    syncService.init = async () => {};
+    syncService.sync = async () => ({ success: false, error: 'temporary pull failure' });
+    syncService.startPeriodicSync = () => {};
+
+    try {
+        await assert.rejects(
+            accountService.initializeSync(false, {
+                awaitInitialSync: true,
+                throwOnFailure: true
+            }),
+            error => error.code === 'ACCOUNT_INITIAL_SYNC_FAILED' &&
+                error.cause === 'temporary pull failure'
+        );
+        assert.equal(accountService.state.accountScopeReady, true);
+        assert.equal(accountService.state.ticketSyncReady, false);
+    } finally {
+        accountService.getSyncKeyMaterial = originals.getSyncKeyMaterial;
+        syncService.activateAccountScope = originals.activateAccountScope;
+        syncService.setCredentials = originals.setCredentials;
+        syncService.init = originals.init;
+        syncService.sync = originals.sync;
+        syncService.startPeriodicSync = originals.startPeriodicSync;
+        Object.assign(accountService.state, originals.state);
+        accountService.localAccountContinuity = originals.localAccountContinuity;
+    }
+});
+
+test('locking during the first encrypted sync cannot restore stale readiness', async () => {
+    const originals = {
+        getSyncKeyMaterial: accountService.getSyncKeyMaterial,
+        updateStatus: accountService.updateStatus,
+        notify: accountService.notify,
+        activateAccountScope: syncService.activateAccountScope,
+        setCredentials: syncService.setCredentials,
+        init: syncService.init,
+        sync: syncService.sync,
+        startPeriodicSync: syncService.startPeriodicSync,
+        clearCredentials: syncService.clearCredentials,
+        stopPeriodicSync: syncService.stopPeriodicSync,
+        state: { ...accountService.state },
+        generation: accountService.syncInitializationGeneration,
+        localAccountContinuity: accountService.localAccountContinuity,
+        cryptoKey: accountService.cryptoKey,
+        syncDerivationKey: accountService.syncDerivationKey,
+        syncIdKey: accountService.syncIdKey
+    };
+    let resolveSync;
+    let syncStarted;
+    const didStartSync = new Promise(resolve => { syncStarted = resolve; });
+    accountService.getSyncKeyMaterial = () => new Uint8Array(32).fill(3);
+    accountService.updateStatus = () => {};
+    accountService.notify = () => {};
+    accountService.state.accountId = '6666666666666666';
+    accountService.state.sessionVerified = true;
+    accountService.state.accountScopeReady = false;
+    accountService.state.ticketSyncReady = false;
+    syncService.activateAccountScope = async () => {};
+    syncService.setCredentials = () => {};
+    syncService.init = async () => {};
+    syncService.sync = () => {
+        syncStarted();
+        return new Promise(resolve => { resolveSync = resolve; });
+    };
+    syncService.startPeriodicSync = () => {};
+    syncService.clearCredentials = () => {};
+    syncService.stopPeriodicSync = () => {};
+
+    try {
+        const initialization = accountService.initializeSync(false, {
+            awaitInitialSync: true,
+            throwOnFailure: true
+        });
+        await didStartSync;
+        accountService.lock();
+        resolveSync({ success: true });
+        await assert.rejects(
+            initialization,
+            error => error.code === 'ACCOUNT_SYNC_CONTEXT_CHANGED'
+        );
+        assert.equal(accountService.state.accountScopeReady, false);
+        assert.equal(accountService.state.ticketSyncReady, false);
+    } finally {
+        accountService.getSyncKeyMaterial = originals.getSyncKeyMaterial;
+        accountService.updateStatus = originals.updateStatus;
+        accountService.notify = originals.notify;
+        syncService.activateAccountScope = originals.activateAccountScope;
+        syncService.setCredentials = originals.setCredentials;
+        syncService.init = originals.init;
+        syncService.sync = originals.sync;
+        syncService.startPeriodicSync = originals.startPeriodicSync;
+        syncService.clearCredentials = originals.clearCredentials;
+        syncService.stopPeriodicSync = originals.stopPeriodicSync;
+        Object.assign(accountService.state, originals.state);
+        accountService.syncInitializationGeneration = originals.generation;
+        accountService.localAccountContinuity = originals.localAccountContinuity;
+        accountService.cryptoKey = originals.cryptoKey;
+        accountService.syncDerivationKey = originals.syncDerivationKey;
+        accountService.syncIdKey = originals.syncIdKey;
+    }
+});
+
+test('locking during key persistence cannot repopulate stale account keys', async () => {
+    const originals = {
+        persistCryptoKeyBundle: accountService.persistCryptoKeyBundle,
+        updateStatus: accountService.updateStatus,
+        notify: accountService.notify,
+        clearCredentials: syncService.clearCredentials,
+        stopPeriodicSync: syncService.stopPeriodicSync,
+        state: { ...accountService.state },
+        generation: accountService.syncInitializationGeneration,
+        cryptoKey: accountService.cryptoKey,
+        syncDerivationKey: accountService.syncDerivationKey,
+        syncIdKey: accountService.syncIdKey
+    };
+    let releasePersistence;
+    let persistenceStarted;
+    let committed = false;
+    const didStartPersistence = new Promise(resolve => {
+        persistenceStarted = resolve;
+    });
+    const persistenceGate = new Promise(resolve => {
+        releasePersistence = resolve;
+    });
+    accountService.state.accountId = '1212121212121212';
+    accountService.state.sessionVerified = true;
+    accountService.cryptoKey = null;
+    accountService.syncDerivationKey = null;
+    accountService.syncIdKey = null;
+    accountService.updateStatus = () => {};
+    accountService.notify = () => {};
+    syncService.clearCredentials = () => {};
+    syncService.stopPeriodicSync = () => {};
+    accountService.persistCryptoKeyBundle = async (
+        _accountId,
+        _cryptoKey,
+        _derivationKey,
+        _idKey,
+        isCurrent
+    ) => {
+        persistenceStarted();
+        await persistenceGate;
+        if (isCurrent && !isCurrent()) return false;
+        committed = true;
+        return true;
+    };
+    const expectedGeneration = accountService.syncInitializationGeneration;
+    const isCurrent = () => (
+        accountService.syncInitializationGeneration === expectedGeneration &&
+        accountService.state.accountId === '1212121212121212' &&
+        accountService.state.sessionVerified === true
+    );
+    const masterKey = new Uint8Array(32).fill(6);
+
+    try {
+        const persistence = accountService.persistMasterKey(
+            masterKey,
+            '1212121212121212',
+            { isCurrent }
+        );
+        await didStartPersistence;
+        accountService.lock();
+        releasePersistence();
+        assert.equal(await persistence, false);
+        assert.equal(committed, false);
+        assert.equal(accountService.getCryptoKey(), null);
+        assert.equal(accountService.getSyncKeyMaterial(), null);
+    } finally {
+        masterKey.fill(0);
+        accountService.persistCryptoKeyBundle = originals.persistCryptoKeyBundle;
+        accountService.updateStatus = originals.updateStatus;
+        accountService.notify = originals.notify;
+        syncService.clearCredentials = originals.clearCredentials;
+        syncService.stopPeriodicSync = originals.stopPeriodicSync;
+        Object.assign(accountService.state, originals.state);
+        accountService.syncInitializationGeneration = originals.generation;
+        accountService.cryptoKey = originals.cryptoKey;
+        accountService.syncDerivationKey = originals.syncDerivationKey;
+        accountService.syncIdKey = originals.syncIdKey;
+    }
+});
+
 test('persisted non-extractable keys are bound to their account', async () => {
     const originals = {
         getSetting: chatDB.getSetting,

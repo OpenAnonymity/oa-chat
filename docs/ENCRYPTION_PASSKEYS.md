@@ -4,6 +4,20 @@ Google is the SSO account authenticator. It authorizes access to an OA
 account's opaque sync records, but they are never used as encryption keys. New
 SSO accounts use a separate WebAuthn PRF passkey to unlock encryption locally.
 
+Error reporting follows the same boundary: “passkey unavailable” applies only
+when the WebAuthn credential request itself returns `NotFoundError`. Storage,
+scope activation, and encrypted-ticket synchronization failures retain their
+own errors. After unwrapping and persisting the master key, OA keeps the account
+unlocked and retries a failed initial synchronization instead of asking for the
+passkey again. The unlock path awaits that first synchronization result so an
+activation, initialization, or pull failure actually schedules the bounded
+retry; ordinary startup keeps synchronization in the background. This
+distinction is especially important in private browsing,
+where credential availability and IndexedDB behavior can differ independently.
+Lock, logout, account-switch, and token-invalidation boundaries cancel both
+pending synchronization and the in-memory commit of an older key-persistence
+operation, so stale async work cannot repopulate a replacement account.
+
 ## New-account flow
 
 1. The org completes OAuth and maps the provider's stable subject to an internal

@@ -519,15 +519,18 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
     });
 }
 
-function toFriendlyError(error) {
+export function toFriendlyAccountError(error) {
     if (!error) return 'Unexpected error';
     if (error.name === 'AbortError') return 'Request timed out, please try again';
     if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled';
-    if (error.name === 'NotFoundError') return 'No passkey found for this account on this device';
+    if (error.code === 'ENCRYPTION_PASSKEY_NOT_AVAILABLE') return error.message;
+    if (error.code === 'ACCOUNT_KEY_PERSIST_FAILED') return error.message;
     if (error.name === 'OperationError') return 'Invalid recovery code, please check and try again';
     if (error.name === 'TokenInvalidatedError') return 'Session expired, please sign in again';
     return error.message || 'Unexpected error';
 }
+
+const toFriendlyError = toFriendlyAccountError;
 
 export function toFriendlyOAuthError(error) {
     if (Number(error?.status) >= 500) {
@@ -667,6 +670,9 @@ class AccountService {
         this.syncDerivationKey = null;
         this.syncIdKey = null;
         this.localAccountContinuity = false;
+        // Invalidates async scope activation/sync work across lock, logout,
+        // account switching, and a newer initialization attempt.
+        this.syncInitializationGeneration = 0;
 
         sessionService.onSessionExpired(() => this.handleTokenInvalidation());
 
@@ -800,7 +806,11 @@ class AccountService {
      * persisted. Separate imports give each primitive the minimum key usages it
      * needs while preserving the existing encrypted-sync format.
      */
-    async persistMasterKey(masterKeyBytes, accountId = this.state.accountId) {
+    async persistMasterKey(
+        masterKeyBytes,
+        accountId = this.state.accountId,
+        { isCurrent = null } = {}
+    ) {
         if (!chatDB) return;
         const normalizedAccountId = normalizeAccountId(accountId);
         if (!normalizedAccountId) {
@@ -831,22 +841,26 @@ class AccountService {
             )
         ]);
 
-        await this.persistCryptoKeyBundle(
+        const persisted = await this.persistCryptoKeyBundle(
             normalizedAccountId,
             cryptoKey,
             syncDerivationKey,
-            syncIdKey
+            syncIdKey,
+            isCurrent
         );
+        if (persisted === false || (isCurrent && !isCurrent())) return false;
         this.cryptoKey = cryptoKey;
         this.syncDerivationKey = syncDerivationKey;
         this.syncIdKey = syncIdKey;
+        return true;
     }
 
     async persistCryptoKeyBundle(
         accountId,
         cryptoKey,
         syncDerivationKey,
-        syncIdKey
+        syncIdKey,
+        isCurrent = null
     ) {
         return withAccountDataLock(async () => {
             const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
@@ -858,6 +872,7 @@ class AccountService {
                     'Account changed before the encryption key could be saved'
                 );
             }
+            if (isCurrent && !isCurrent()) return false;
             await chatDB.updateSettings(
                 [{
                     key: ACCOUNT_KEY_BUNDLE,
@@ -876,6 +891,7 @@ class AccountService {
                     ACCOUNT_SYNC_ID_KEY
                 ]
             );
+            return true;
         });
     }
 
@@ -1493,8 +1509,27 @@ class AccountService {
     /**
      * Initialize sync service after login/unlock.
      * @param {boolean} enableForNewAccount - If true, enables sync (for new accounts)
+     * @param {{awaitInitialSync?: boolean, throwOnFailure?: boolean}} options
+     *   Recovery callers can await the first sync and observe failures so they can
+     *   retry. Startup callers keep the historical fire-and-forget behavior.
      */
-    async initializeSync(enableForNewAccount = false) {
+    async initializeSync(
+        enableForNewAccount = false,
+        { awaitInitialSync = false, throwOnFailure = false } = {}
+    ) {
+        const initializationGeneration = ++this.syncInitializationGeneration;
+        const expectedAccountId = this.state.accountId;
+        const assertInitializationCurrent = () => {
+            if (
+                this.syncInitializationGeneration !== initializationGeneration ||
+                this.state.accountId !== expectedAccountId ||
+                this.state.sessionVerified !== true
+            ) {
+                const error = new Error('Account changed while encrypted sync was starting');
+                error.code = 'ACCOUNT_SYNC_CONTEXT_CHANGED';
+                throw error;
+            }
+        };
         let accountScopeActivated = false;
         if (this.state.ticketSyncReady) {
             this.state.ticketSyncReady = false;
@@ -1505,9 +1540,11 @@ class AccountService {
             const keyMaterial = this.getSyncKeyMaterial();
             
             if (!keyMaterial || !this.state.sessionVerified) {
-                console.warn('[AccountService] Cannot initialize sync without credentials');
-                return;
+                const error = new Error('Cannot initialize sync without credentials');
+                error.code = 'ACCOUNT_SYNC_CREDENTIALS_UNAVAILABLE';
+                throw error;
             }
+            assertInitializationCurrent();
 
             await syncService.activateAccountScope(this.state.accountId, {
                 // Match the legacy account flow: creating an account from a
@@ -1516,7 +1553,12 @@ class AccountService {
                 adoptUnscoped: enableForNewAccount ||
                     this.localAccountContinuity
             });
+            assertInitializationCurrent();
             accountScopeActivated = true;
+            if (this.state.accountScopeReady !== true) {
+                this.state.accountScopeReady = true;
+                this.notify();
+            }
             this.localAccountContinuity = true;
             syncService.setCredentials(
                 keyMaterial,
@@ -1531,13 +1573,20 @@ class AccountService {
                 }
             );
             await syncService.init();
+            assertInitializationCurrent();
             
             // Sync is automatically enabled when credentials are set
             // Start sync immediately
             const syncAccountId = this.state.accountId;
-            syncService.sync().then(result => {
+            const initialSync = syncService.sync().then(result => {
+                assertInitializationCurrent();
+                if (result?.success !== true) {
+                    const error = new Error('Initial encrypted sync did not complete');
+                    error.code = 'ACCOUNT_INITIAL_SYNC_FAILED';
+                    error.cause = result?.error || null;
+                    throw error;
+                }
                 if (
-                    result?.success === true &&
                     this.state.accountId === syncAccountId &&
                     this.state.sessionVerified === true &&
                     this.state.accountScopeReady === true &&
@@ -1546,14 +1595,27 @@ class AccountService {
                     this.state.ticketSyncReady = true;
                     this.notify();
                 }
-            }).catch(err => {
-                console.warn('[AccountService] Initial sync failed:', err);
             });
             syncService.startPeriodicSync();
+            if (awaitInitialSync) {
+                await initialSync;
+            } else {
+                void initialSync.catch(err => {
+                    console.warn('[AccountService] Initial sync failed:', err);
+                });
+            }
+            return true;
         } catch (error) {
             console.warn('[AccountService] Failed to initialize sync:', error);
+            if (throwOnFailure) throw error;
+            return false;
         } finally {
-            if (this.state.accountScopeReady !== accountScopeActivated) {
+            if (
+                this.syncInitializationGeneration === initializationGeneration &&
+                this.state.accountId === expectedAccountId &&
+                this.state.sessionVerified === true &&
+                this.state.accountScopeReady !== accountScopeActivated
+            ) {
                 this.state.accountScopeReady = accountScopeActivated;
                 this.notify();
             }
@@ -1779,7 +1841,9 @@ class AccountService {
                                 desktopPasskey.credentialId,
                                 desktopPasskey.prf
                             );
-                        await this.finishOAuthKeyUnlock(masterKey, credentialId);
+                        if (!await this.finishOAuthKeyUnlock(masterKey, credentialId)) {
+                            return null;
+                        }
                         return { status: 'unlocked', accountId };
                     } catch {
                         // Fall back to the existing explicit passkey control.
@@ -1832,11 +1896,12 @@ class AccountService {
                     // The server now owns this wrapper. If local persistence or
                     // sync fails, surface that failure instead of incorrectly
                     // offering to create a second keyring.
-                    await this.finishOAuthKeyUnlock(
+                    const unlocked = await this.finishOAuthKeyUnlock(
                         masterKey,
                         wrapper.credentialId,
                         { newAccount: true }
                     );
+                    if (!unlocked) return null;
                     return { status: 'unlocked', accountId, newAccount: true };
                 }
             }
@@ -1907,11 +1972,34 @@ class AccountService {
     }
 
     async finishOAuthKeyUnlock(masterKey, credentialId, { newAccount = false } = {}) {
+        const expectedAccountId = this.state.accountId;
+        const unlockGeneration = this.syncInitializationGeneration;
+        const unlockIsCurrent = () => (
+            this.syncInitializationGeneration === unlockGeneration &&
+            this.state.accountId === expectedAccountId &&
+            this.state.sessionVerified === true
+        );
         try {
-            await this.persistMasterKey(masterKey);
+            try {
+                const persisted = await this.persistMasterKey(
+                    masterKey,
+                    expectedAccountId,
+                    { isCurrent: unlockIsCurrent }
+                );
+                if (persisted === false) return false;
+            } catch (cause) {
+                const error = new Error(
+                    'The passkey worked, but this browser could not save the encrypted data key. Try again.'
+                );
+                error.name = 'AccountKeyPersistError';
+                error.code = 'ACCOUNT_KEY_PERSIST_FAILED';
+                error.cause = cause;
+                throw error;
+            }
         } finally {
             masterKey.fill(0);
         }
+        if (!unlockIsCurrent()) return false;
         this.masterKey = null;
         this.state.encryptionCredentialId = credentialId;
         this.state.encryptionMode = 'PRF';
@@ -1925,9 +2013,48 @@ class AccountService {
         this.state.action = null;
         this.state.error = null;
         await this.persistSettings();
+        if (!unlockIsCurrent()) return false;
         this.updateStatus();
         this.notify();
-        await this.initializeSync(newAccount);
+        const expectedInitializationGeneration =
+            this.syncInitializationGeneration + 1;
+        try {
+            await this.initializeSync(newAccount, {
+                awaitInitialSync: true,
+                throwOnFailure: true
+            });
+        } catch (error) {
+            console.warn(
+                '[Account] Encrypted data unlocked; initial restoration deferred:',
+                String(error?.code || error?.name || 'UNKNOWN')
+            );
+            // The durable key is already saved. Keep the account unlocked and
+            // retry restoration instead of presenting this as a passkey error.
+            // A lock, logout, account switch, or newer initialization cancels
+            // this retry before it can touch the replacement account scope.
+            if (
+                this.syncInitializationGeneration !== expectedInitializationGeneration ||
+                this.state.accountId !== expectedAccountId ||
+                this.state.sessionVerified !== true
+            ) return false;
+            setTimeout(() => {
+                if (
+                    this.syncInitializationGeneration !== expectedInitializationGeneration ||
+                    this.state.accountId !== expectedAccountId ||
+                    this.state.sessionVerified !== true
+                ) return;
+                void this.initializeSync(newAccount, {
+                    awaitInitialSync: true,
+                    throwOnFailure: true
+                }).catch(retryError => {
+                    console.warn(
+                        '[Account] Encrypted data restoration retry paused:',
+                        String(retryError?.code || retryError?.name || 'UNKNOWN')
+                    );
+                });
+            }, 1000);
+        }
+        return true;
     }
 
     async setupOAuthKeyring() {
@@ -1949,9 +2076,10 @@ class AccountService {
             );
             await fetchJson('/auth/keyring', wrapper);
             this.keyringWrappers = [...this.keyringWrappers, wrapper];
-            await this.finishOAuthKeyUnlock(masterKey, wrapper.credentialId, {
+            const unlocked = await this.finishOAuthKeyUnlock(masterKey, wrapper.credentialId, {
                 newAccount: true
             });
+            if (!unlocked) return false;
             return true;
         } catch (error) {
             masterKey.fill(0);
@@ -2001,7 +2129,11 @@ class AccountService {
             const { credentialId, masterKey } = await unlockEncryptionKeyring(
                 this.keyringWrappers
             );
-            await this.finishOAuthKeyUnlock(masterKey, credentialId);
+            this.setState({
+                action: `${this.state.oauthProvider || 'oauth'}_key_restoring`,
+                error: null
+            });
+            if (!await this.finishOAuthKeyUnlock(masterKey, credentialId)) return false;
             return true;
         } catch (error) {
             this.setState({
@@ -2053,7 +2185,9 @@ class AccountService {
             );
             await fetchJson('/auth/keyring', wrapper);
             this.keyringWrappers = [wrapper];
-            await this.finishOAuthKeyUnlock(masterKey, wrapper.credentialId);
+            if (!await this.finishOAuthKeyUnlock(masterKey, wrapper.credentialId)) {
+                return false;
+            }
             masterKey = null;
             this.recoveryPayload = null;
             return true;
@@ -2426,6 +2560,7 @@ class AccountService {
      */
     async handleTokenInvalidation() {
         console.warn('[AccountService] Token invalidated - clearing session');
+        this.syncInitializationGeneration += 1;
 
         try {
             await syncService.clearAll();
@@ -2461,6 +2596,7 @@ class AccountService {
      * User can re-unlock with passkey without needing to re-login to server.
      */
     lock() {
+        this.syncInitializationGeneration += 1;
         if (this.masterKey) {
             this.masterKey.fill(0);
         }
@@ -2491,6 +2627,7 @@ class AccountService {
      * - Requires full passkey re-authentication to log back in
      */
     async logout() {
+        this.syncInitializationGeneration += 1;
         // Revoke the server session while its refresh token is still available.
         try {
             await sessionService.signOut();

@@ -177,6 +177,7 @@ class AccountModal {
     updateTabIndicator() {
         const tabBtn = document.getElementById('account-tab-btn');
         const identityLabel = document.getElementById('account-identity-label');
+        const bootstrapStatus = document.getElementById('account-bootstrap-status');
         if (!tabBtn) return;
         const isAuthResolving = this.accountState?.authBootstrapComplete === false;
         // Only show logged-in (green) after session is verified with server
@@ -226,7 +227,7 @@ class AccountModal {
             ? accountEmail.trim()
             : '';
         const identityText = isAuthResolving
-            ? email || 'Restoring account…'
+            ? ''
             : isLoggedIn && email
             ? email
             : needsEncryptionSetup
@@ -235,12 +236,13 @@ class AccountModal {
                     ? 'Unlock encrypted data'
                     : 'Account';
         if (identityLabel) identityLabel.textContent = identityText;
+        if (bootstrapStatus) {
+            bootstrapStatus.textContent = isAuthResolving ? 'Restoring account' : '';
+        }
         tabBtn.setAttribute(
             'aria-label',
             isAuthResolving
-                ? email
-                    ? `Restoring account for ${email}`
-                    : 'Restoring account'
+                ? 'Restoring account'
                 : isLoggedIn && email
                 ? `Account for ${email}`
                 : needsEncryptionSetup

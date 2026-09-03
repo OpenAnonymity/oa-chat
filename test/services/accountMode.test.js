@@ -5,7 +5,8 @@ import { chatDB } from '../../chat/db.js';
 import accountService, {
     bootstrapDesktopOAuthSession,
     inferPersistedEncryptionMode,
-    oauthSessionNeedsEmailRefresh
+    oauthSessionNeedsEmailRefresh,
+    toFriendlyAccountError
 } from '../../chat/services/accountService.js';
 import sessionService from '../../chat/services/sessionService.js';
 
@@ -21,6 +22,146 @@ test('account snapshot exposes only a boolean for a saved local binding', () => 
     } finally {
         accountService.state.accountId = originalAccountId;
         accountService.localAccountContinuity = originalContinuity;
+    }
+});
+
+test('a later storage NotFoundError is never reported as a missing passkey', async () => {
+    const laterFailure = new Error('IndexedDB object store was not found');
+    laterFailure.name = 'NotFoundError';
+    assert.equal(
+        toFriendlyAccountError(laterFailure),
+        'IndexedDB object store was not found'
+    );
+
+    const originals = {
+        persistMasterKey: accountService.persistMasterKey,
+        state: { ...accountService.state }
+    };
+    accountService.persistMasterKey = async () => { throw laterFailure; };
+    const masterKey = new Uint8Array(32).fill(9);
+    try {
+        await assert.rejects(
+            accountService.finishOAuthKeyUnlock(masterKey, 'credential-id'),
+            error => error.code === 'ACCOUNT_KEY_PERSIST_FAILED' &&
+                /passkey worked/.test(error.message)
+        );
+        assert.equal(masterKey.every(value => value === 0), true);
+    } finally {
+        accountService.persistMasterKey = originals.persistMasterKey;
+        Object.assign(accountService.state, originals.state);
+    }
+});
+
+test('a post-passkey sync failure schedules a real restoration retry', async () => {
+    const originals = {
+        persistMasterKey: accountService.persistMasterKey,
+        persistSettings: accountService.persistSettings,
+        initializeSync: accountService.initializeSync,
+        updateStatus: accountService.updateStatus,
+        notify: accountService.notify,
+        setTimeout: globalThis.setTimeout,
+        state: { ...accountService.state },
+        generation: accountService.syncInitializationGeneration
+    };
+    const calls = [];
+    accountService.persistMasterKey = async () => {};
+    accountService.persistSettings = async () => {};
+    accountService.updateStatus = () => {};
+    accountService.notify = () => {};
+    accountService.state.accountId = '7777777777777777';
+    accountService.state.sessionVerified = true;
+    accountService.initializeSync = async (newAccount, options) => {
+        accountService.syncInitializationGeneration += 1;
+        calls.push({ newAccount, options });
+        if (calls.length === 1) throw Object.assign(new Error('temporary'), {
+            code: 'ACCOUNT_INITIAL_SYNC_FAILED'
+        });
+        return true;
+    };
+    globalThis.setTimeout = (callback, delay) => {
+        assert.equal(delay, 1000);
+        queueMicrotask(callback);
+        return 1;
+    };
+    const masterKey = new Uint8Array(32).fill(5);
+
+    try {
+        await accountService.finishOAuthKeyUnlock(masterKey, 'credential-id');
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(masterKey.every(value => value === 0), true);
+        assert.deepEqual(calls, [
+            {
+                newAccount: false,
+                options: { awaitInitialSync: true, throwOnFailure: true }
+            },
+            {
+                newAccount: false,
+                options: { awaitInitialSync: true, throwOnFailure: true }
+            }
+        ]);
+    } finally {
+        accountService.persistMasterKey = originals.persistMasterKey;
+        accountService.persistSettings = originals.persistSettings;
+        accountService.initializeSync = originals.initializeSync;
+        accountService.updateStatus = originals.updateStatus;
+        accountService.notify = originals.notify;
+        globalThis.setTimeout = originals.setTimeout;
+        Object.assign(accountService.state, originals.state);
+        accountService.syncInitializationGeneration = originals.generation;
+    }
+});
+
+test('an account switch before the post-passkey retry cancels stale restoration', async () => {
+    const originals = {
+        persistMasterKey: accountService.persistMasterKey,
+        persistSettings: accountService.persistSettings,
+        initializeSync: accountService.initializeSync,
+        updateStatus: accountService.updateStatus,
+        notify: accountService.notify,
+        setTimeout: globalThis.setTimeout,
+        state: { ...accountService.state },
+        generation: accountService.syncInitializationGeneration
+    };
+    const calls = [];
+    let retryCallback = null;
+    accountService.persistMasterKey = async () => {};
+    accountService.persistSettings = async () => {};
+    accountService.updateStatus = () => {};
+    accountService.notify = () => {};
+    accountService.state.accountId = '8888888888888888';
+    accountService.state.sessionVerified = true;
+    accountService.initializeSync = async (...args) => {
+        accountService.syncInitializationGeneration += 1;
+        calls.push(args);
+        throw Object.assign(new Error('temporary'), {
+            code: 'ACCOUNT_INITIAL_SYNC_FAILED'
+        });
+    };
+    globalThis.setTimeout = callback => {
+        retryCallback = callback;
+        return 1;
+    };
+
+    try {
+        const masterKey = new Uint8Array(32).fill(4);
+        assert.equal(
+            await accountService.finishOAuthKeyUnlock(masterKey, 'credential-id'),
+            true
+        );
+        assert.equal(typeof retryCallback, 'function');
+        accountService.state.accountId = '9999999999999999';
+        retryCallback();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(calls.length, 1);
+    } finally {
+        accountService.persistMasterKey = originals.persistMasterKey;
+        accountService.persistSettings = originals.persistSettings;
+        accountService.initializeSync = originals.initializeSync;
+        accountService.updateStatus = originals.updateStatus;
+        accountService.notify = originals.notify;
+        globalThis.setTimeout = originals.setTimeout;
+        Object.assign(accountService.state, originals.state);
+        accountService.syncInitializationGeneration = originals.generation;
     }
 });
 

@@ -55,6 +55,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     });
     const tab = createElement(documentImpl);
     const label = createElement(documentImpl);
+    const bootstrapStatus = createElement(documentImpl);
     const overlay = createElement(documentImpl);
     const nav = createElement(documentImpl, { children: [tab, menu] });
     elements.set('account-nav', nav);
@@ -63,6 +64,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     elements.set('account-security-menu-item', accountItem);
     elements.set('account-logout-menu-item', logoutItem);
     elements.set('account-identity-label', label);
+    elements.set('account-bootstrap-status', bootstrapStatus);
     elements.set('account-modal', overlay);
 
     const refreshedSlots = [];
@@ -85,6 +87,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
 
     try {
         assert.equal(label.textContent, 'member@example.com');
+        assert.equal(bootstrapStatus.textContent, '');
         assert.equal(modal.getAccountMenuReturnTarget(), tab);
 
         tab.onclick();
@@ -150,9 +153,11 @@ test('account footer stays stable while cached identity verification settles', (
     };
     const tab = createElement(documentImpl);
     const label = createElement(documentImpl);
+    const bootstrapStatus = createElement(documentImpl);
     const menu = createElement(documentImpl, { hidden: true });
     elements.set('account-tab-btn', tab);
     elements.set('account-identity-label', label);
+    elements.set('account-bootstrap-status', bootstrapStatus);
     elements.set('account-settings-menu', menu);
     globalThis.document = documentImpl;
 
@@ -170,11 +175,12 @@ test('account footer stays stable while cached identity verification settles', (
 
     try {
         modal.updateTabIndicator();
-        assert.equal(label.textContent, 'member@example.com');
+        assert.equal(label.textContent, '');
+        assert.equal(bootstrapStatus.textContent, 'Restoring account');
         assert.equal(tab.dataset.status, 'loading');
         assert.equal(tab.disabled, false);
         assert.equal(tab.getAttribute('aria-busy'), 'true');
-        assert.equal(tab.getAttribute('aria-label'), 'Restoring account for member@example.com');
+        assert.equal(tab.getAttribute('aria-label'), 'Restoring account');
         assert.equal(tab.getAttribute('aria-haspopup'), null);
 
         modal.accountState = {
@@ -184,6 +190,7 @@ test('account footer stays stable while cached identity verification settles', (
         };
         modal.updateTabIndicator();
         assert.equal(label.textContent, 'member@example.com');
+        assert.equal(bootstrapStatus.textContent, '');
         assert.equal(tab.dataset.status, 'logged-in');
         assert.equal(tab.disabled, false);
         assert.equal(tab.getAttribute('aria-busy'), null);

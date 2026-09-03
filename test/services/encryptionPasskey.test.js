@@ -114,6 +114,30 @@ test('passkey creation fails when the authenticator does not enable PRF', async 
     }
 });
 
+test('missing browser-profile credential is classified only at the WebAuthn request', async () => {
+    const missing = new DOMException('credential unavailable', 'NotFoundError');
+    const restore = installBrowserCredentials({
+        create: async () => null,
+        get: async () => { throw missing; }
+    });
+
+    try {
+        await assert.rejects(
+            unlockEncryptionKeyring([{
+                credentialId: CREDENTIAL_ID,
+                type: 'PASSKEY',
+                version: 1,
+                wrappedKey: 'unused'
+            }]),
+            error => error.name === 'PasskeyUnavailableError' &&
+                error.code === 'ENCRYPTION_PASSKEY_NOT_AVAILABLE' &&
+                /private window/.test(error.message)
+        );
+    } finally {
+        restore();
+    }
+});
+
 test('passkey creation labels the WebAuthn user with the SSO email', async () => {
     const prf = new Uint8Array(32).fill(11);
     let creationOptions = null;

@@ -5621,6 +5621,18 @@ html {
     transition: background-color 0.14s ease-out, border-color 0.14s ease-out, transform 0.1s ease-out;
 }
 
+.account-bootstrap-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 .account-tab-btn:hover:not(:disabled) {
     background-color: hsl(var(--color-foreground) / 0.1);
     border-color: transparent;

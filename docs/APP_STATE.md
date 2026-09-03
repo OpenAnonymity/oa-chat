@@ -15,14 +15,20 @@ reading code alone.
   proceeds directly into chat; a verified locked account opens the encryption-
   passkey UI; and a genuinely signed-out account opens the Google UI. The
   signed-in Account summary is never opened by this route.
-- The footer ships a dimensionally stable **Restoring account…** state with
-  `aria-busy` until verification settles. It remains operable: opening it shows
-  a neutral restoration dialog, while verified account actions and commercial
-  slots remain unavailable until the session check completes. As soon as
-  account-bound cached email is loaded, it replaces the loading copy without
-  claiming the session is verified; the menu becomes interactive atomically
-  only after verification. Profile refresh and encrypted sync continue in the
-  background.
+- The footer keeps its stable 52px geometry but renders no visible provisional
+  identity until verification settles. A visually hidden live region announces
+  account restoration to assistive technology. Opening the footer during that
+  interval still shows the neutral restoration dialog; verified actions and
+  commercial slots remain unavailable. The account-bound identity appears only
+  when bootstrap completes, without caching it in `localStorage`. Profile
+  refresh and encrypted sync continue in the background.
+- Encryption-passkey errors are classified at the failing stage. Only a
+  `NotFoundError` from `navigator.credentials.get()` becomes “passkey not
+  available in this browser profile or private window.” A successful WebAuthn
+  unwrap followed by IndexedDB failure instead reports that the key could not
+  be saved. Once the durable key is stored, a later synchronization failure
+  keeps the account unlocked and schedules restoration again; it must never be
+  relabeled as a missing passkey.
 - Preserve the existing footer geometry: the full-width trigger is 3.25rem
   tall, the settings menu is anchored to the footer row with `left/right:
   -0.5rem`, and its rows remain 2.625rem tall. The settings gear, flat open

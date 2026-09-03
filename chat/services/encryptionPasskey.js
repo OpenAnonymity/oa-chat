@@ -73,7 +73,19 @@ async function requestPrf(credentialIds) {
             }
         }
     };
-    const credential = await navigator.credentials.get({ publicKey });
+    let credential;
+    try {
+        credential = await navigator.credentials.get({ publicKey });
+    } catch (error) {
+        if (error?.name !== 'NotFoundError') throw error;
+        const unavailable = new Error(
+            'This passkey is not available in this browser profile or private window.'
+        );
+        unavailable.name = 'PasskeyUnavailableError';
+        unavailable.code = 'ENCRYPTION_PASSKEY_NOT_AVAILABLE';
+        unavailable.cause = error;
+        throw unavailable;
+    }
     const prfBytes = getPrfResult(credential);
     if (!credential || !prfBytes) {
         throw new Error(
