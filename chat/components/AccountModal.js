@@ -849,15 +849,17 @@ class AccountModal {
         const accountId = state.accountId;
 
         const oauthCreationInProgress = this.creationStep.startsWith('oauth_');
-        if (this.creationStep !== 'idle' && (oauthCreationInProgress || !accountId)) {
+        // Registration owns this surface until it closes into Membership.
+        // Sync may publish the new account ID before registration returns.
+        const isCreationFlow = this.creationStep !== 'idle' &&
+            (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
+        if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
         }
 
         const dialog = this.overlay.querySelector('[role="dialog"]');
-        const isCreationFlow = this.creationStep !== 'idle' &&
-            (this.creationStep.startsWith('oauth_') || !accountId);
         if (
             dialog &&
             !isCreationFlow &&
@@ -896,10 +898,16 @@ class AccountModal {
     renderCreationFlow() {
         const step = this.creationStep;
         const providerLabel = this.getOAuthProviderLabel();
+        const title = this.generatedUsername && step !== 'error'
+            ? 'Log in'
+            : step === 'complete' ? 'Account Created'
+                : step === 'error' ? 'Error'
+                    : step.startsWith('oauth_') ? `Continue with ${providerLabel}`
+                        : 'Create a passkey account';
 
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create a passkey account')}
+                ${this.renderHeader(title)}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
                 </div>
@@ -912,6 +920,17 @@ class AccountModal {
 
     renderCreationBody(step) {
         const providerLabel = this.getOAuthProviderLabel();
+        if (this.generatedUsername && ['passkey', 'passkey_retry', 'confirming', 'complete'].includes(step)) {
+            const retry = step === 'passkey_retry';
+            return `
+                <div class="w-full text-center py-6" role="${retry ? 'alert' : 'status'}">
+                    ${retry ? '' : '<div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" aria-hidden="true"></div>'}
+                    <p class="text-sm ${retry ? 'text-destructive' : 'text-muted-foreground'}">${retry
+                        ? this.escapeHtml(this.creationError || 'Passkey cancelled. Try again.')
+                        : 'Setting up your account…'}</p>
+                </div>
+            `;
+        }
         switch (step) {
             case 'oauth_authorizing':
                 {
@@ -929,10 +948,7 @@ class AccountModal {
 
             case 'passkey':
             case 'passkey_retry': {
-                const isUsernameRegistration = Boolean(this.generatedUsername);
-                const isWaiting = this.isLoadingAccountId || (
-                    !isUsernameRegistration && this.revealedDigits < 16
-                );
+                const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
                 const accountIdDisplay = (() => {
                     if (!this.generatedAccountId || this.revealedDigits === 0) {
                         return '\u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007';
@@ -955,16 +971,12 @@ class AccountModal {
                 return `
                     <div class="w-full text-center">
                         ${errorMsg}
-                        <p class="text-xs text-muted-foreground mb-3">${isUsernameRegistration ? 'Your username' : 'Your account number'}</p>
-                        <div class="${isUsernameRegistration ? '' : 'account-number-text tracking-widest whitespace-nowrap '}font-mono text-xl text-foreground mb-4 ${isWaiting ? 'animate-pulse' : ''}">
-                            ${isUsernameRegistration
-                                ? (isWaiting ? 'Reserving…' : this.escapeHtml(this.generatedUsername || ''))
-                                : accountIdDisplay}
+                        <p class="text-xs text-muted-foreground mb-3">Your account number</p>
+                        <div class="account-number-text tracking-widest whitespace-nowrap font-mono text-xl text-foreground mb-4 ${isWaiting ? 'animate-pulse' : ''}">
+                            ${accountIdDisplay}
                         </div>
                         <p class="text-sm text-muted-foreground">
-                            ${isWaiting
-                                ? (isUsernameRegistration ? 'Preparing your account…' : 'Generating...')
-                                : (isUsernameRegistration ? 'Approve the passkey prompt to continue.' : 'Complete passkey registration...')}
+                            ${isWaiting ? 'Generating...' : 'Complete passkey registration...'}
                         </p>
                     </div>
                 `;

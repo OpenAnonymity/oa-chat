@@ -27,6 +27,11 @@ For registration, the user chooses a username and approves one passkey prompt.
 The browser generates the random account master key locally, wraps it with the
 passkey PRF, completes registration, closes Account, and emits the same
 first-account-ready event that opens Membership after first-time Google setup.
+The first-time passkey and finalization stages show only neutral setup progress,
+not a username reminder. Setup keeps ownership of the dialog even if account
+or sync notifications publish the new account before finalization returns, so
+the signed-in Account summary cannot flash before Membership. Passkey retry
+and registration errors remain actionable; returning login is unchanged.
 
 For a returning account, the user enters the username and approves one passkey
 prompt. The same WebAuthn assertion authenticates the account on the server and

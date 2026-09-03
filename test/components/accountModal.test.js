@@ -332,6 +332,98 @@ test('first username account completes after one passkey and routes to Membershi
     assert.equal(firstAccountReady, 1);
 });
 
+test('first username setup never displays the username while awaiting or finishing the passkey', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.generatedUsername = 'winter-owl';
+    modal.escapeHtml = value => String(value ?? '').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    for (const step of ['passkey', 'confirming', 'complete']) {
+        modal.creationStep = step;
+        const html = modal.renderCreationFlow();
+        assert.match(html, />Log in<\/h3>/);
+        assert.match(html, /role="status"/);
+        assert.match(html, /Setting up your account…/);
+        assert.doesNotMatch(html, /winter-owl|Your username|Your account number|Create a passkey account|You're all set/);
+    }
+    modal.creationStep = 'passkey_retry';
+    modal.creationError = '<cancelled>';
+    const retry = modal.renderCreationFlow();
+    assert.match(retry, /role="alert"/);
+    assert.match(retry, /&lt;cancelled&gt;/);
+    assert.match(retry, /id="retry-passkey-btn"/);
+    assert.match(retry, /id="cancel-creation-btn"/);
+    assert.doesNotMatch(retry, /winter-owl|Your username|Setting up your account/);
+    modal.creationStep = 'error';
+    assert.match(modal.renderCreationFlow(), /id="start-over-btn"/);
+});
+
+test('new username registration keeps progress through account/sync notifications until Membership', async () => {
+    const originalDocument = globalThis.document;
+    let accountListener;
+    let syncListener;
+    let finishRegistration;
+    let firstAccountReady = 0;
+    const frames = [];
+    const state = { accountId: null, passkeySupported: true };
+    globalThis.document = {
+        activeElement: null,
+        getElementById() { return null; },
+        removeEventListener() {}
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe(listener) { accountListener = listener; return () => {}; },
+                async registerPasskeyForPreparedAccount() { return true; },
+                completeAccountRegistration() {
+                    accountListener({ accountId: '1234567890123456', username: 'winter-owl', sessionVerified: true, status: 'unlocked' });
+                    syncListener();
+                    return new Promise(resolve => { finishRegistration = resolve; });
+                }
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe(listener) { syncListener = listener; return () => {}; }
+            }
+        },
+        showToast() {},
+        notifyFirstAccountReady() { firstAccountReady += 1; }
+    });
+    modal.overlay = {
+        contains() { return false; },
+        querySelector() { return null; },
+        classList: { add() {} },
+        set innerHTML(html) { frames.push(html); }
+    };
+    modal.attachEventListeners = () => {};
+    modal.isOpen = true;
+    modal.generatedUsername = 'winter-owl';
+    modal.creationStep = 'passkey';
+    modal.escapeHtml = value => String(value ?? '');
+    modal.renderAccountUI = () => { throw new Error('Account summary must not flash during setup'); };
+    try {
+        modal.render();
+        const registration = modal.handlePasskeyRegistration();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(modal.creationStep, 'confirming');
+        assert.equal(modal.isOpen, true);
+        assert.equal(frames.length, 3); // waiting, confirming, and sync notification
+        for (const html of frames) {
+            assert.match(html, /Setting up your account…/);
+            assert.doesNotMatch(html, /Your username|winter-owl|Your account number/);
+        }
+        assert.equal(firstAccountReady, 0);
+        finishRegistration();
+        await registration;
+        assert.equal(modal.isOpen, false);
+        assert.equal(firstAccountReady, 1);
+        assert.equal(frames.at(-1), '');
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 function continuationModal(next = 'register') {
     const modal = Object.create(AccountModal.prototype);
     const calls = [];

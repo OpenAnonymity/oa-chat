@@ -37,6 +37,12 @@ reading code alone.
 
 ## 2026-09-03: Pseudonymous username accounts use one authentication passkey
 
+- First-time username setup shows **Setting up your account…** rather than
+  redisplaying the username behind the native passkey prompt. The same neutral
+  body spans passkey creation and finalization. A generated username keeps
+  creation rendering active until close, even after sync publishes the new
+  account ID; otherwise sync notifications could briefly show Account before
+  the Membership handoff. Retry/error actions and returning login are unchanged.
 - Login is now the compact **Log in** / Google / **Username** / **Continue**
   surface. Username is an input placeholder with an accessible name, not a
   visible label or example handle. Introductory/helper copy and the separate
