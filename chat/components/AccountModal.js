@@ -272,7 +272,6 @@ class AccountModal {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) tabBtn.setAttribute('aria-expanded', 'true');
 
-        this.overlay.onclick = (e) => { if (e.target === this.overlay) this.handleCloseAttempt(); };
         this.escapeHandler = (e) => this.handleModalKeydown(e);
         document.addEventListener('keydown', this.escapeHandler);
     }

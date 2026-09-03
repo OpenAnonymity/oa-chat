@@ -555,6 +555,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     The full identity row opens a menu containing Account & security, extension
     actions, and Log out; there is no separate gear. The menu restores focus on
     Escape and supports arrow/Home/End keys.
+  - The Account dialog ignores backdrop clicks so an accidental click beside
+    the card cannot dismiss it. Its close button remains the explicit pointer
+    action, while Escape remains available for keyboard users.
   - `account.menuActions` is the preferred commercial membership entry. It
     exposes no billing state or credentials to the core; older sidebar and
     account-modal slots remain available for compatible integrations.

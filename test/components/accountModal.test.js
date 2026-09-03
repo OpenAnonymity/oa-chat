@@ -57,7 +57,7 @@ test('account rerenders refresh the commercial slot through the UI facade', () =
     assert.doesNotMatch(source, /extensionSlots/);
 });
 
-test('signed-in Account opens after inserting its commercial slot beside the nested action row', () => {
+test('signed-in Account opens beside the nested action row without backdrop dismissal', () => {
     const originalDocument = globalThis.document;
     const inserted = [];
     const refreshed = [];
@@ -78,6 +78,7 @@ test('signed-in Account opens after inserting its commercial slot beside the nes
     };
     const removedClasses = [];
     const overlay = {
+        onclick: null,
         classList: {
             add() {},
             remove(name) { removedClasses.push(name); }
@@ -137,6 +138,7 @@ test('signed-in Account opens after inserting its commercial slot beside the nes
         modal.open();
         assert.equal(modal.isOpen, true);
         assert.deepEqual(removedClasses, ['hidden']);
+        assert.equal(overlay.onclick, null);
         assert.equal(inserted.length, 1);
         assert.equal(inserted[0].reference, actionRow);
         assert.equal(inserted[0].node.dataset.oaExtensionSlot, SLOT_NAMES.ACCOUNT_COMMERCIAL);
