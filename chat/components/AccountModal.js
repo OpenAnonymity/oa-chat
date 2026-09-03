@@ -637,7 +637,8 @@ class AccountModal {
         const state = this.accountState || {};
         // A landing-page username intent cannot hide a remembered legacy
         // account's unlock/recovery path. Switching still requires Forget.
-        if (state.accountId && !state.username && !state.googleLinked) return 'accountId';
+        if (state.accountId && !state.username &&
+            (!state.googleLinked || state.encryptionMode === 'LEGACY_PASSKEY')) return 'accountId';
         return this.identifierMode || 'username';
     }
 

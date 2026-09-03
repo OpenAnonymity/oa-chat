@@ -486,6 +486,16 @@ test('saved legacy passkey accounts keep the account-number login path', async (
         assert.doesNotMatch(html, /account-identifier-mode-btn/);
         await modal.handleAccountPasskeyUnlock();
         assert.equal(unlockedAccountId, state.accountId);
+        // Pre-migration Google-linked accounts still use the legacy passkey
+        // when their session has expired and OAuth unlock flags are unset.
+        state.googleLinked = true;
+        state.oauthLegacyPasskeyRequired = false;
+        assert.equal(modal.getIdentifierMode(), 'accountId');
+        const linkedLegacyHtml = modal.renderAccountUI();
+        assert.match(linkedLegacyHtml, /id="account-id-input"/);
+        assert.match(linkedLegacyHtml, /id="account-recovery-toggle-btn"/);
+        await modal.handleAccountContinue();
+        assert.equal(unlockedAccountId, state.accountId);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
