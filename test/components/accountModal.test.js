@@ -149,7 +149,7 @@ test('signed-in Account opens beside the nested action row without backdrop dism
     }
 });
 
-test('account registration offers only Google SSO', () => {
+test('account entry offers Google and pseudonymous username passkeys', () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
         getElementById() {
@@ -181,16 +181,174 @@ test('account registration offers only Google SSO', () => {
     try {
         const html = modal.renderAccountUI();
         assert.match(html, /Continue with Google/);
+        assert.match(html, /Username/);
+        assert.match(html, /Continue with passkey/);
+        assert.match(html, /Create a passkey account/);
+        assert.match(html, /Use a pseudonym—not your email or real name/);
         assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1"/);
         assert.match(html, /id="account-modal-title"/);
-        assert.doesNotMatch(html, /or use a passkey/i);
-        assert.doesNotMatch(html, /passkey login/i);
-        assert.doesNotMatch(html, /Recover your account/i);
-        assert.doesNotMatch(html, /generate-account-btn/);
-        assert.doesNotMatch(html, /account-passkey-btn/);
+        assert.match(html, /generate-account-btn/);
+        assert.match(html, /account-passkey-btn/);
         assert.doesNotMatch(html, /account-recovery-toggle-btn/);
+        assert.doesNotMatch(html, /Five-word recovery code/);
         assert.doesNotMatch(html, /Continue with GitHub/);
         assert.doesNotMatch(html, /account-github-btn/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
+test('blank username creation cannot fall through to legacy account creation', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById() { return null; } };
+    let requestedUsername;
+    const state = {
+        accountId: null,
+        username: null,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: null
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {},
+                async prepareAccount(username) {
+                    requestedUsername = username;
+                    throw new Error('Username is required');
+                }
+            },
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.render = () => {};
+
+    try {
+        await modal.handleGenerateAccountNumber();
+        assert.equal(requestedUsername, '');
+        assert.equal(modal.creationStep, 'error');
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
+test('first username account completes after one passkey and routes to Membership', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let completeCount = 0;
+    let recoveryGenerationCount = 0;
+    let closed = 0;
+    let firstAccountReady = 0;
+    modal.generatedUsername = 'winter-owl';
+    modal.creationStep = 'passkey';
+    modal.creationError = null;
+    modal.render = () => {};
+    modal.close = () => { closed += 1; };
+    modal.accountService = {
+        async registerPasskeyForPreparedAccount() { return true; },
+        generateRecoveryForPreparedAccount() {
+            recoveryGenerationCount += 1;
+            return 'should-not-be-generated';
+        },
+        async completeAccountRegistration() { completeCount += 1; }
+    };
+    modal.app = {
+        showToast() {},
+        notifyFirstAccountReady() { firstAccountReady += 1; }
+    };
+
+    await modal.handlePasskeyRegistration();
+
+    assert.equal(completeCount, 1);
+    assert.equal(recoveryGenerationCount, 0);
+    assert.equal(modal.creationStep, 'complete');
+    assert.equal(closed, 1);
+    assert.equal(firstAccountReady, 1);
+});
+
+test('returning username account closes sign-in without first-account routing', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let closed = 0;
+    let firstAccountReady = 0;
+    modal.identifierMode = 'username';
+    modal.usernameInputValue = 'winter-owl';
+    modal.accountState = { username: 'winter-owl' };
+    modal.close = () => { closed += 1; };
+    modal.accountService = {
+        async unlockWithUsername(username, options) {
+            assert.equal(username, 'winter-owl');
+            assert.deepEqual(options, { action: 'username_login' });
+            return true;
+        }
+    };
+    modal.app = {
+        showToast() {},
+        notifyFirstAccountReady() { firstAccountReady += 1; }
+    };
+
+    await modal.handleAccountPasskeyUnlock();
+
+    assert.equal(closed, 1);
+    assert.equal(firstAccountReady, 0);
+});
+
+test('saved legacy passkey accounts keep the account-number login path', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById() { return null; } };
+    const state = {
+        accountId: '1234567890123456',
+        username: null,
+        googleLinked: false,
+        encryptionMode: 'LEGACY_PASSKEY',
+        sessionVerified: false,
+        status: 'locked',
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: null
+    };
+    let unlockedAccountId = null;
+    const account = {
+        getState: () => state,
+        subscribe: () => () => {},
+        clearErrors() {},
+        async unlockWithPasskey(accountId) {
+            unlockedAccountId = accountId;
+            return true;
+        },
+        async unlockWithUsername() {
+            throw new Error('legacy account unexpectedly used username login');
+        }
+    };
+    const modal = new AccountModal({
+        services: {
+            account,
+            sync: {
+                getStatus: () => ({}),
+                subscribe: () => () => {}
+            }
+        },
+        showToast() {}
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /id="account-id-input"/);
+        assert.match(html, /1234 5678 9012 3456/);
+        assert.match(html, /Existing account numbers and their recovery codes continue to work/);
+        assert.match(html, /id="account-recovery-toggle-btn"/);
+        assert.match(html, /Use username/);
+        await modal.handleAccountPasskeyUnlock();
+        assert.equal(unlockedAccountId, state.accountId);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
@@ -234,6 +392,7 @@ test('signed-out saved account exposes an explicit account-switch recovery', () 
         assert.match(html, /This device remembers a signed-out OA account/);
         assert.match(html, /id="account-forget-saved-btn"/);
         assert.match(html, /Forget saved account/);
+        assert.doesNotMatch(html, /id="generate-account-btn"/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
@@ -668,6 +827,84 @@ test('identity account describes ticket and preference sync', () => {
         modal.destroy();
         globalThis.document = originalDocument;
     }
+});
+
+test('username account displays the pseudonym and hides its internal account ID', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById() { return null; } };
+    const state = {
+        accountId: '1234567890123456',
+        username: 'winter-owl',
+        googleLinked: false,
+        encryptionMode: 'LEGACY_PASSKEY',
+        sessionVerified: true,
+        status: 'unlocked',
+        busy: false,
+        action: null,
+        passkeySupported: true
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {}
+            },
+            sync: {
+                getStatus: () => ({
+                    syncing: false,
+                    lastSyncTime: null,
+                    lastSyncResult: null
+                }),
+                subscribe: () => () => {}
+            }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /winter-owl/);
+        assert.doesNotMatch(html, /1234 5678 9012 3456/);
+        assert.doesNotMatch(html, /Copy account ID/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
+test('legacy recovery completion displays only the account number', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.accountState = {
+        accountId: '1234567890123456',
+        username: null
+    };
+    modal.formatAccountId = accountId => accountId.replace(/(.{4})/g, '$1 ').trim();
+    modal.escapeHtml = value => String(value ?? '');
+    modal.renderHeader = title => `<h2>${title}</h2>`;
+
+    const html = modal.renderRecoveryCompleteUI();
+
+    assert.match(html, /Account Recovered/);
+    assert.match(html, /1234 5678 9012 3456/);
+});
+
+test('legacy registration recovery screen pairs the code with its account number', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.generatedAccountId = '1234567890123456';
+    modal.generatedUsername = null;
+    modal.generatedRecoveryCode = 'alpha-bravo-charlie-delta-echo';
+    modal.accountIdCopied = false;
+    modal.recoveryCodeCopied = false;
+    modal.escapeHtml = value => String(value ?? '');
+    modal.formatAccountId = accountId => accountId.replace(/(.{4})/g, '$1 ').trim();
+
+    const html = modal.renderCreationBody('recovery');
+
+    assert.match(html, /Your account number/);
+    assert.match(html, /1234 5678 9012 3456/);
+    assert.match(html, /alpha-bravo-charlie-delta-echo/);
+    assert.doesNotMatch(html, /Your username/);
 });
 
 test('missing legacy SSO email returns to provider sign in before passkey setup', () => {

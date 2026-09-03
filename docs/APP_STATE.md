@@ -35,6 +35,49 @@ reading code alone.
   trigger, menu typography, hover states, focus restoration, and keyboard
   navigation remain part of the contract.
 
+## 2026-09-03: Pseudonymous username accounts use one authentication passkey
+
+- Account entry now offers Google or a normalized, unique pseudonymous
+  username. Username registration and returning login use one WebAuthn prompt:
+  the assertion authenticates the opaque OA account while PRF unwraps its
+  random master key locally.
+- The server-generated 16-digit account ID remains the WebAuthn user handle and
+  all account/sync cryptographic scoping remains ID-bound. The username is only
+  the human-readable passkey label and login locator; it is stored in local
+  account settings so restored UI can display it immediately.
+- Username accounts do not generate, display, or upload recovery material. The
+  first passkey prompt completes registration immediately and emits
+  `registerFirstAccountReady`, matching the first-time Google-to-Membership
+  handoff. Losing every synced copy of the passkey is intentionally permanent;
+  remembering the public username alone cannot prove ownership or decrypt data.
+- Existing account-number clients and users remain supported. `/auth/init`
+  still accepts no body, old request/response fields and recovery derivation
+  remain unchanged, and a saved legacy account automatically receives the
+  account-number login UI. Users can also select that path manually.
+- Username challenge and login responses must resolve to the account already
+  saved on the device. Creating or switching to a different username requires
+  the existing explicit **Forget saved account** action, preserving the same
+  account-scope boundary as Google sign-in.
+- Each username login carries an opaque, single-use challenge transaction ID,
+  so concurrent public lookups cannot replace an in-progress passkey prompt.
+  OA limits every attempt by the trusted client IP and adds a hashed-username
+  bucket only after a failed lookup or proof; a third party therefore cannot
+  exhaust a public-name quota and lock out a valid owner.
+- The Create action passes an explicit username into account preparation. Blank
+  or invalid input fails validation and cannot fall through to the retained
+  no-body legacy account-number initializer.
+- Conditional auto-unlock also uses the username route for a saved username
+  account. Falling back to the legacy opaque-ID route would authenticate but
+  clear the local username label when settings are persisted.
+- Usernames are visible stable pseudonyms, so the UI tells users not to reuse an
+  email, real name, or identifying handle. They never accompany ticket
+  redemption or inference. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for
+  the protocol, compatibility, and privacy boundaries.
+- Username accounts mark encrypted sync as identity-backed, like SSO accounts,
+  so consuming a ticket does not trigger an immediate authenticated sync.
+  The consumed/archive state propagates during the next initial or periodic
+  sync; deletion tombstones remain reserved for cash-style transfers.
+
 ## 2026-09-01: Commercial onboarding and ticket surfaces use core UI seams
 
 - A newly created Google account closes Account after passkey setup and emits
@@ -256,7 +299,9 @@ reading code alone.
   so a pending preparation survives the extraction. The record format is
   generic entitlement state and final wallet tickets contain no account,
   payment, subscription, or claim metadata.
-- Account registration remains Google-only in the public Account surface.
+- At the time of the public/private extraction, account registration was
+  Google-only. The 2026-09-03 username-passkey entry above supersedes that
+  sign-in limitation without changing the extension boundary.
   A commercial extension observes only the sanitized account snapshot and can
   resume an upgrade after the verified session becomes ready; Account itself
   has no Checkout-specific callback.
@@ -285,9 +330,10 @@ reading code alone.
   retaining the production-org endpoint. Handoff must inspect the emitted app
   bundle for both absence of that endpoint and presence of the demo relay.
 - The commercial composition now uses a three-panel, self-hosted-Newsreader
-  landing page from `oa-commercial/feature/pre-chat-landing`, reconciled with
-  the reviewed Google-only account handoff. Apple, passkey, recovery, and
-  access-code alternatives remain absent. Its Premium modal keeps server-owned
+  landing page from `oa-commercial/feature/pre-chat-landing`, originally
+  reconciled with the reviewed Google-only account handoff. The Account modal
+  now adds a recovery-free username passkey path; Apple and access-code
+  authentication alternatives remain absent. Its Premium modal keeps server-owned
   subscription/top-up prices and eligibility, exposes Customer Portal and
   ticket-pack actions when status authorizes them, and adds a collapsed ticket
   explanation without hard-coding model costs.

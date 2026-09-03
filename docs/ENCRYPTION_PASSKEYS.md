@@ -1,8 +1,10 @@
 # Encryption Passkeys
 
-Google is the SSO account authenticator. It authorizes access to an OA
-account's opaque sync records, but they are never used as encryption keys. New
-SSO accounts use a separate WebAuthn PRF passkey to unlock encryption locally.
+Google accounts use SSO as the account authenticator and a separate WebAuthn
+PRF passkey to unlock encryption locally. Pseudonymous username accounts use a
+single WebAuthn credential for both account authentication and local PRF
+unlock. In both cases, authentication authorizes access to opaque sync records
+but never supplies an encryption key.
 
 Error reporting follows the same boundary: “passkey unavailable” applies only
 when the WebAuthn credential request itself returns `NotFoundError`. Storage,
@@ -47,6 +49,25 @@ operation, passkey label, or account-bound credential IDs. It returns the PRF
 output over a nonce-bound loopback callback; oa-chat performs the same local
 wrap/unwrap operations used by the ordinary browser flow.
 
+## Username-account flow
+
+The browser sends a normalized pseudonymous username to `/auth/init`. The org
+atomically maps it to a new opaque 16-digit account ID, and the browser creates
+a resident, user-verified PRF credential. WebAuthn `user.id` is the opaque
+account ID; the username is used only for `user.name` and `user.displayName`.
+
+The browser wraps the random master key only with the credential's PRF output.
+On login, the same WebAuthn assertion is verified by the org and its PRF output
+decrypts the master-key wrapper locally, so the user sees one passkey prompt.
+Cryptographic PRF input, local key bundles, sessions, and sync scope remain
+bound to the opaque account ID, not the user-chosen name. Username accounts do
+not create a recovery wrapper or verifier; losing every synced passkey copy
+makes their encrypted data unrecoverable.
+
+Username and Google identities are separate account types and cannot be linked
+in this version. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for the full
+protocol and compatibility contract.
+
 ## Returning-device flow
 
 After OAuth authentication, the browser reads `GET /auth/keyring`, supplies the
@@ -89,10 +110,10 @@ new wire format.
 
 ## Recovery and migration
 
-New SSO accounts do not receive an account number or recovery code in the UI and
-do not upload a recovery wrapper. Losing every copy of the encryption passkey
-means the encrypted data cannot be recovered; successful OAuth authentication
-alone is intentionally insufficient.
+New SSO and username accounts do not receive a recovery code in the UI and do
+not upload a recovery wrapper. Losing every copy of the encryption passkey
+means the encrypted data cannot be recovered; a Google session or public
+username alone is intentionally insufficient.
 
 SSO accounts created by the previous recovery-code build receive a one-time
 migration screen. After OAuth, the browser decrypts the legacy wrapper with the
@@ -109,8 +130,9 @@ The server exposes an explicit encryption mode:
 - `PRF_PENDING`: a new identity account must create its encryption passkey.
 - `PRF`: an identity account has an encryption-passkey keyring.
 - `LEGACY_SSO`: a pre-keyring identity account must migrate once with recovery.
-- `LEGACY_PASSKEY`: an identity-free account keeps its existing WebAuthn
-  authentication and account-number recovery flow.
+- `LEGACY_PASSKEY`: the authenticated-passkey wire/storage mode. Legacy
+  account-number accounts retain recovery; username accounts use the passkey
+  wrapper without a recovery row.
 
 ## Account isolation
 

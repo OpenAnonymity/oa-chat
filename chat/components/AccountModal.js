@@ -19,6 +19,8 @@ class AccountModal {
 
         // Login flow state
         this.accountInputValue = '';
+        this.usernameInputValue = '';
+        this.identifierMode = null;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
 
@@ -28,6 +30,7 @@ class AccountModal {
         // Creation flow state
         this.creationStep = 'idle';
         this.generatedAccountId = null;
+        this.generatedUsername = null;
         this.generatedRecoveryCode = null;
         this.accountIdCopied = false;
         this.recoveryCodeCopied = false;
@@ -238,14 +241,16 @@ class AccountModal {
                 : needsEncryptionUnlock
                     ? 'Google is signed in; encrypted data is locked'
                     : 'Account';
-        const accountEmail = this.accountState?.oauthEmail || this.accountState?.email;
-        const email = typeof accountEmail === 'string'
-            ? accountEmail.trim()
+        const accountLabel = this.accountState?.username ||
+            this.accountState?.oauthEmail ||
+            this.accountState?.email;
+        const identity = typeof accountLabel === 'string'
+            ? accountLabel.trim()
             : '';
         const identityText = isAuthResolving
             ? ''
-            : isLoggedIn && email
-            ? email
+            : isLoggedIn && identity
+                ? identity
             : needsEncryptionSetup
                 ? 'Finish account setup'
                 : needsEncryptionUnlock
@@ -259,8 +264,8 @@ class AccountModal {
             'aria-label',
             isAuthResolving
                 ? 'Restoring account'
-                : isLoggedIn && email
-                ? `Account for ${email}`
+                : isLoggedIn && identity
+                    ? `Account for ${identity}`
                 : needsEncryptionSetup
                     ? 'Finish account setup'
                     : needsEncryptionUnlock
@@ -372,6 +377,7 @@ class AccountModal {
     resetCreationFlow() {
         this.creationStep = 'idle';
         this.generatedAccountId = null;
+        this.generatedUsername = null;
         this.generatedRecoveryCode = null;
         this.accountIdCopied = false;
         this.recoveryCodeCopied = false;
@@ -420,15 +426,28 @@ class AccountModal {
         this.creationStep = 'passkey';
         this.creationError = null;
         this.generatedAccountId = null;
+        this.generatedUsername = null;
         this.isLoadingAccountId = true;
         this.revealedDigits = 0;
         this.render();
 
         try {
-            this.generatedAccountId = await this.accountService.prepareAccount();
+            // Pass an explicit empty string so the username validator fails
+            // closed instead of invoking prepareAccount's legacy no-argument path.
+            const requestedUsername = this.usernameInputValue ||
+                this.accountState?.username ||
+                '';
+            this.generatedAccountId = await this.accountService.prepareAccount(
+                requestedUsername
+            );
+            this.generatedUsername = this.accountService.getPendingUsername();
             this.isLoadingAccountId = false;
             this.render();
-            this.startDigitRevealAnimation();
+            const triggerTimeout = setTimeout(
+                () => this.handlePasskeyRegistration(),
+                200
+            );
+            this.animationTimeouts.push(triggerTimeout);
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Failed to create account. Please try again.';
@@ -516,6 +535,22 @@ class AccountModal {
         const success = await this.accountService.registerPasskeyForPreparedAccount();
 
         if (success) {
+            if (this.generatedUsername) {
+                this.creationStep = 'confirming';
+                this.creationError = null;
+                this.render();
+                try {
+                    await this.accountService.completeAccountRegistration();
+                    this.creationStep = 'complete';
+                    this.app?.showToast?.('Account created successfully', 'success');
+                    this.completeFirstAccountRouting();
+                } catch (error) {
+                    this.creationStep = 'error';
+                    this.creationError = error.message || 'Registration failed.';
+                    this.render();
+                }
+                return;
+            }
             this.generatedRecoveryCode = this.accountService.generateRecoveryForPreparedAccount();
             this.creationStep = 'recovery';
             this.recoveryCodeCopied = false;
@@ -587,7 +622,7 @@ class AccountModal {
             await this.accountService.completeAccountRegistration();
             this.creationStep = 'complete';
             this.app?.showToast?.('Account created successfully', 'success');
-            this.render();
+            this.completeFirstAccountRouting();
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Registration failed.';
@@ -619,14 +654,32 @@ class AccountModal {
     // Existing Account Handlers
     // =========================================================================
 
+    getIdentifierMode() {
+        if (this.identifierMode) return this.identifierMode;
+        const state = this.accountState || {};
+        return state.accountId && !state.username && !state.googleLinked
+            ? 'accountId'
+            : 'username';
+    }
+
     async handleAccountPasskeyUnlock() {
-        const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
+        const usesAccountId = this.getIdentifierMode() === 'accountId';
         this.authenticationExitPending = true;
         try {
-            const success = await this.accountService.unlockWithPasskey(accountId);
+            const success = usesAccountId
+                ? await this.accountService.unlockWithPasskey(
+                    this.accountState?.accountId || this.accountInputValue?.trim()
+                )
+                : await this.accountService.unlockWithUsername(
+                    this.usernameInputValue || this.accountState?.username,
+                    { action: 'username_login' }
+                );
             if (success) {
                 this.close();
                 this.app?.showToast?.('Account unlocked', 'success');
+            } else if (usesAccountId && this.accountService.getState().recoveryRequired) {
+                this.showRecoveryInput = true;
+                this.render();
             }
         } finally {
             this.authenticationExitPending = false;
@@ -634,7 +687,7 @@ class AccountModal {
     }
 
     async handleAccountRecoveryUnlock() {
-        const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
+        const usesAccountId = this.getIdentifierMode() === 'accountId';
         const recoveryCode = this.recoveryInputValue;
 
         // Clear any previous errors before starting
@@ -650,7 +703,13 @@ class AccountModal {
         this.authenticationExitPending = true;
         try {
             // Step 3: Call recovery (this triggers the passkey prompt)
-            const success = await this.accountService.unlockWithRecoveryCode(accountId, recoveryCode);
+            if (!usesAccountId) {
+                throw new Error('Username accounts do not support recovery codes');
+            }
+            const success = await this.accountService.unlockWithRecoveryCode(
+                this.accountState?.accountId || this.accountInputValue?.trim(),
+                recoveryCode
+            );
 
             if (success) {
                 this.recoveryStep = 'idle';
@@ -731,6 +790,8 @@ class AccountModal {
         this.closeAccountMenu();
         await this.accountService.clearLocalAccount();
         this.accountInputValue = '';
+        this.usernameInputValue = '';
+        this.identifierMode = null;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
         this.resetCreationFlow();
@@ -746,6 +807,8 @@ class AccountModal {
     async handleForgetSavedAccount() {
         await this.accountService.clearLocalAccount();
         this.accountInputValue = '';
+        this.usernameInputValue = '';
+        this.identifierMode = null;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
         this.resetCreationFlow();
@@ -818,7 +881,7 @@ class AccountModal {
 
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create Account')}
+                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create a passkey account')}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
                 </div>
@@ -848,9 +911,11 @@ class AccountModal {
 
             case 'passkey':
             case 'passkey_retry': {
-                const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
-                // Build display text manually to avoid formatAccountId stripping figure spaces
-                const displayText = (() => {
+                const isUsernameRegistration = Boolean(this.generatedUsername);
+                const isWaiting = this.isLoadingAccountId || (
+                    !isUsernameRegistration && this.revealedDigits < 16
+                );
+                const accountIdDisplay = (() => {
                     if (!this.generatedAccountId || this.revealedDigits === 0) {
                         return '\u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007';
                     }
@@ -872,12 +937,16 @@ class AccountModal {
                 return `
                     <div class="w-full text-center">
                         ${errorMsg}
-                        <p class="text-xs text-muted-foreground mb-3">Your account number</p>
-                        <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap ${isWaiting ? 'animate-pulse' : ''}">
-                            ${displayText}
+                        <p class="text-xs text-muted-foreground mb-3">${isUsernameRegistration ? 'Your username' : 'Your account number'}</p>
+                        <div class="${isUsernameRegistration ? '' : 'account-number-text tracking-widest whitespace-nowrap '}font-mono text-xl text-foreground mb-4 ${isWaiting ? 'animate-pulse' : ''}">
+                            ${isUsernameRegistration
+                                ? (isWaiting ? 'Reserving…' : this.escapeHtml(this.generatedUsername || ''))
+                                : accountIdDisplay}
                         </div>
                         <p class="text-sm text-muted-foreground">
-                            ${isWaiting ? 'Generating...' : 'Complete passkey registration...'}
+                            ${isWaiting
+                                ? (isUsernameRegistration ? 'Preparing your account…' : 'Generating...')
+                                : (isUsernameRegistration ? 'Approve the passkey prompt to continue.' : 'Complete passkey registration...')}
                         </p>
                     </div>
                 `;
@@ -893,7 +962,7 @@ class AccountModal {
                             </button>
                         </div>
                         <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap text-center">
-                            ${this.formatAccountId(this.generatedAccountId)}
+                            ${this.escapeHtml(this.formatAccountId(this.generatedAccountId))}
                         </div>
                         <div class="flex items-center justify-between mb-2">
                             <span class="text-xs text-muted-foreground">Recovery code</span>
@@ -907,6 +976,7 @@ class AccountModal {
                         <p class="text-[11px] text-muted-foreground mt-4 text-center">
                             <button id="copy-both-btn" class="text-blue-600 dark:text-blue-400 hover:underline" type="button">${this.accountIdCopied && this.recoveryCodeCopied ? 'Both copied' : 'Copy both'}</button> to continue
                         </p>
+                        <p class="text-[11px] leading-relaxed text-muted-foreground mt-3 text-center">Keep the recovery code private. It can replace a lost passkey.</p>
                     </div>
                 `;
 
@@ -927,7 +997,7 @@ class AccountModal {
                             </svg>
                         </div>
                         <p class="text-base font-medium text-foreground mb-1">You're all set!</p>
-                        <p class="account-number-text font-mono text-sm text-muted-foreground whitespace-nowrap">${this.formatAccountId(this.generatedAccountId)}</p>
+                        <p class="font-mono text-sm text-muted-foreground">${this.escapeHtml(this.generatedUsername || '')}</p>
                     </div>
                 `;
 
@@ -1066,6 +1136,7 @@ class AccountModal {
         const usesIdentityLogin =
             state.googleLinked &&
             state.encryptionMode !== 'LEGACY_PASSKEY';
+        const usesNamedLogin = usesIdentityLogin || Boolean(state.username);
 
         if (state.authBootstrapComplete === false) {
             const accountEmail = state.oauthEmail || state.email;
@@ -1151,7 +1222,7 @@ class AccountModal {
                 if (isStale) return 'is-attention';
                 return 'is-success';
             })();
-            const accountIdentity = state.oauthEmail || state.email || formattedAccountId;
+            const accountIdentity = state.username || state.oauthEmail || state.email || formattedAccountId;
             const accountInitial = String(accountIdentity || 'A').trim().charAt(0).toUpperCase() || 'A';
             const syncActionText = isSyncing
                 ? 'Syncing…'
@@ -1186,10 +1257,10 @@ class AccountModal {
                             <svg class="account-compact-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
                         </button>
                         <div id="account-passkey-details" class="account-compact-detail" ${this.passkeyDetailsOpen ? '' : 'hidden'}>
-                            <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesIdentityLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
+                            <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesNamedLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
                             <p>Tickets and preferences sync encrypted with your passkey.</p>
                             ${state.googleLinked ? `<p class="account-compact-provider">${this.renderOAuthProviderIcon('google', 'w-3.5 h-3.5')} Google connected</p>` : ''}
-                            ${!usesIdentityLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
+                            ${!usesNamedLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
                         </div>
                         <div data-account-actions>
                             <button id="account-clear-btn" class="account-compact-row" type="button" ${isBusy ? 'disabled' : ''}>Log out</button>
@@ -1199,12 +1270,17 @@ class AccountModal {
             `;
         }
 
-        // Registration is Google-only for now. The post-SSO encryption passkey
-        // remains mandatory because it, not Google, protects synced data.
+        const identifierMode = this.getIdentifierMode();
+        const usesAccountId = identifierMode === 'accountId';
+        const usernameValue = this.escapeHtml(this.usernameInputValue || state.username || '');
+        const accountIdValue = this.escapeHtml(
+            this.accountInputValue || formattedAccountId
+        );
+        const recoveryVisible = this.showRecoveryInput;
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
                 <div class="flex items-center justify-between mb-1">
-                    <h3 id="account-modal-title" class="text-base font-medium text-foreground">Continue with Google</h3>
+                    <h3 id="account-modal-title" class="text-base font-medium text-foreground">Sign in to OA</h3>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
@@ -1212,7 +1288,7 @@ class AccountModal {
                     </button>
                 </div>
 
-                <p class="text-xs text-muted-foreground" style="margin-bottom:20px">Google authenticates your account. A separate encryption passkey protects synced data so the org cannot read it.</p>
+                <p class="text-xs text-muted-foreground" style="margin-bottom:20px">Choose Google for convenience, or a pseudonymous username for a more private OA-native account.</p>
 
                 ${!passkeySupported ? `
                     <div class="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive mb-4">
@@ -1225,12 +1301,89 @@ class AccountModal {
                     Continue with Google
                 </button>
 
-                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+                <div class="flex items-center gap-3 my-4" aria-hidden="true">
+                    <span class="h-px flex-1 bg-border"></span>
+                    <span class="text-[11px] uppercase tracking-wider text-muted-foreground">or</span>
+                    <span class="h-px flex-1 bg-border"></span>
+                </div>
+
+                <label for="${usesAccountId ? 'account-id-input' : 'account-username-input'}" class="block text-xs font-medium text-foreground mb-1.5">${usesAccountId ? 'Account number' : 'Username'}</label>
+                <div class="account-input-wrap flex items-center w-full h-10 rounded-lg border border-border bg-muted/25">
+                    ${usesAccountId ? `
+                        <input
+                            id="account-id-input"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            maxlength="19"
+                            placeholder="1234 5678 9012 3456"
+                            class="account-number-text flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            value="${accountIdValue}"
+                            ${isBusy ? 'disabled' : ''}
+                        />
+                    ` : `
+                        <input
+                            id="account-username-input"
+                            type="text"
+                            autocomplete="username webauthn"
+                            autocapitalize="none"
+                            spellcheck="false"
+                            maxlength="32"
+                            placeholder="winter-owl"
+                            class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            value="${usernameValue}"
+                            ${isBusy ? 'disabled' : ''}
+                        />
+                    `}
+                </div>
+                <p class="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">${usesAccountId
+                    ? 'Existing account numbers and their recovery codes continue to work.'
+                    : 'Use a pseudonym—not your email or real name. Usernames are visible to OA.'
+                }</p>
+
+                <button id="account-passkey-btn" class="mt-3 w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                    ${isBusy && (action === 'username_login' || action === 'unlock') ? 'Waiting for passkey…' : 'Continue with passkey'}
+                </button>
+                ${usesAccountId || hasSignedOutSavedAccount ? '' : `
+                    <button id="generate-account-btn" class="mt-2 w-full h-9 rounded-lg text-sm text-foreground hover:bg-accent transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                        New here? Create a passkey account
+                    </button>
+                `}
+
+                <button id="account-identifier-mode-btn" class="mt-2 w-full text-xs text-muted-foreground hover:text-foreground" type="button" ${isBusy ? 'disabled' : ''}>
+                    ${usesAccountId ? 'Use username' : 'Use an existing account number'}
+                </button>
+
+                ${usesAccountId ? `
+                    <button id="account-recovery-toggle-btn" class="mt-2 w-full text-xs text-muted-foreground hover:text-foreground" type="button" ${isBusy ? 'disabled' : ''}>
+                        ${recoveryVisible ? 'Hide recovery' : 'Lost your passkey?'}
+                    </button>
+
+                    ${recoveryVisible ? `
+                        <div class="mt-3 border-t border-border pt-3">
+                            <label for="account-recovery-code-input" class="block text-xs font-medium text-foreground mb-1.5">Five-word recovery code</label>
+                            <input
+                                id="account-recovery-code-input"
+                                type="text"
+                                autocomplete="off"
+                                placeholder="word word word word word"
+                                class="w-full h-10 rounded-lg border border-border bg-muted/25 px-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                                value="${this.escapeHtml(this.recoveryInputValue || '')}"
+                                ${isBusy ? 'disabled' : ''}
+                            />
+                            <button id="account-recovery-submit-btn" class="mt-2 w-full h-9 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                                Replace passkey
+                            </button>
+                        </div>
+                    ` : ''}
+                ` : ''}
+
+                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center" role="alert">${this.escapeHtml(state.error)}</p>` : ''}
 
                 ${hasSignedOutSavedAccount ? `
                     <div class="mt-4 pt-4 border-t border-border text-center">
                         <p class="text-xs text-muted-foreground mb-2">
-                            This device remembers a signed-out OA account. Continue with the same Google account, or forget it before switching accounts.
+                            This device remembers a signed-out OA account. Sign in to that account, or forget it before switching accounts.
                         </p>
                         <button id="account-forget-saved-btn" class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             Forget saved account
@@ -1438,6 +1591,36 @@ class AccountModal {
                 this.accountInputValue = formatted;
             };
             accountInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); this.handleAccountPasskeyUnlock(); } };
+        }
+
+        const usernameInput = document.getElementById('account-username-input');
+        if (usernameInput) {
+            usernameInput.oninput = (event) => {
+                this.usernameInputValue = event.target.value;
+            };
+            usernameInput.onkeydown = (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    this.handleAccountPasskeyUnlock();
+                }
+            };
+        }
+
+        const identifierModeBtn = document.getElementById('account-identifier-mode-btn');
+        if (identifierModeBtn) {
+            identifierModeBtn.onclick = () => {
+                this.identifierMode = this.getIdentifierMode() === 'accountId'
+                    ? 'username'
+                    : 'accountId';
+                this.showRecoveryInput = false;
+                this.accountService.clearErrors();
+                this.render();
+                this.focusModal(
+                    this.identifierMode === 'accountId'
+                        ? 'account-id-input'
+                        : 'account-username-input'
+                );
+            };
         }
 
         const recoveryInput = document.getElementById('account-recovery-code-input');

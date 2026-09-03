@@ -11,8 +11,9 @@
  *   2. A local WebAuthn PRF result derives an AES-GCM wrapping key.
  *   3. That wrapping key decrypts the random account master key.
  *
- * Legacy passkey-only accounts retain their account-number/recovery flow only
- * for compatibility and migration.
+ * Username accounts use one authentication credential for both the server
+ * assertion and local PRF unlock. Legacy passkey-only accounts retain their
+ * account-number/recovery flow for compatibility and migration.
  *
  * Server stores: credential public keys, wrapped keys (ciphertext only).
  * Server never sees: master key, PRF output, recovery code.
@@ -46,6 +47,20 @@ const ACCOUNT_SYNC_DERIVATION_KEY = 'account-sync-derivation-key';
 const ACCOUNT_SYNC_ID_KEY = 'account-sync-id-key';
 const ACCOUNT_REQUEST_TIMEOUT_MS = 10000;
 const OAUTH_COMPLETION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const USERNAME_PATTERN = /^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])$/;
+const RESERVED_USERNAMES = new Set([
+    'account',
+    'accounts',
+    'admin',
+    'api',
+    'billing',
+    'help',
+    'openanonymity',
+    'root',
+    'security',
+    'support',
+    'system'
+]);
 const OAUTH_PROVIDERS = Object.freeze({
     google: Object.freeze({ label: 'Google' })
 });
@@ -90,6 +105,23 @@ const textDecoder = new TextDecoder();
 function normalizeAccountId(accountId) {
     if (!accountId) return '';
     return accountId.toString().replace(/[\s-]+/g, '').toUpperCase();
+}
+
+export function normalizeUsername(username) {
+    return String(username || '').normalize('NFKC').trim().toLowerCase();
+}
+
+export function validateUsername(username) {
+    const normalized = normalizeUsername(username);
+    if (!USERNAME_PATTERN.test(normalized)) {
+        throw new Error(
+            'Username must be 3–32 characters using letters, numbers, hyphens, or underscores'
+        );
+    }
+    if (RESERVED_USERNAMES.has(normalized)) {
+        throw new Error('That username is reserved');
+    }
+    return normalized;
 }
 
 function formatAccountId(accountId) {
@@ -280,7 +312,7 @@ function mapCredentials(credentials = []) {
     }));
 }
 
-function buildCreationOptions(data, accountId, prfInput) {
+function buildCreationOptions(data, accountId, prfInput, username = null) {
     const source = data?.publicKey || data?.options?.publicKey || data?.publicKeyOptions || {};
     let publicKey = { ...source };
 
@@ -296,11 +328,12 @@ function buildCreationOptions(data, accountId, prfInput) {
         publicKey.rp = { ...publicKey.rp, id: data.rpId || data.rp_id };
     }
     if (!publicKey.user) {
-        const display = formatAccountId(accountId) || accountId;
+        const usernameLabel = normalizeUsername(username);
+        const display = usernameLabel || formatAccountId(accountId) || accountId;
         publicKey.user = {
             id: textEncoder.encode(accountId),
-            name: accountId,
-            displayName: `OA ${display}`
+            name: usernameLabel || accountId,
+            displayName: usernameLabel || `OA ${display}`
         };
     } else if (publicKey.user.id && typeof publicKey.user.id === 'string') {
         publicKey.user.id = decodeBase64String(publicKey.user.id);
@@ -625,6 +658,7 @@ class AccountService {
             isReady: false,
             authBootstrapComplete: false,
             accountId: null,
+            username: null,
             credentialId: null,
             encryptionCredentialId: null,
             encryptionMode: null,
@@ -661,8 +695,8 @@ class AccountService {
         this.failedAttempts = [];
         this.lockedUntil = 0;
 
-        // Pending account for multi-step creation flow
-        // Holds { accountId, masterKey, credential, prfBytes, recoveryCode } during creation
+        // Pending account for multi-step creation. Username accounts omit the
+        // legacy recoveryCode field.
         this.pendingAccount = null;
         // The encryption key is persisted locally. Session tokens are owned by
         // SuperTokens (HttpOnly cookies in web, isolated preload/main in Electron).
@@ -1082,6 +1116,7 @@ class AccountService {
             if (settings?.accountId) {
                 this.localAccountContinuity = true;
                 this.state.accountId = settings.accountId;
+                this.state.username = settings.username || null;
                 syncService.setLocalAccountScope(settings.accountId);
                 this.state.credentialId = settings.credentialId || null;
                 this.state.encryptionCredentialId =
@@ -1304,6 +1339,7 @@ class AccountService {
         if (!chatDB) return;
         const payload = {
             accountId: this.state.accountId,
+            username: this.state.username,
             credentialId: this.state.credentialId,
             encryptionCredentialId: this.state.encryptionCredentialId,
             encryptionMode: this.state.encryptionMode,
@@ -1334,16 +1370,29 @@ class AccountService {
      * Also generates the master key client-side.
      * @returns {Promise<string>} The server-generated account ID
      */
-    async prepareAccount() {
+    async prepareAccount(usernameInput = null) {
         // Clean up any previous pending account
         this.cancelPendingAccount();
 
+        const username = usernameInput === null
+            ? null
+            : validateUsername(usernameInput);
+        if (username && (this.state.accountId || this.localAccountContinuity)) {
+            throw new Error('Forget the saved account before creating a different account');
+        }
+
         // Request account ID and challenge from server
-        const initData = await fetchJson('/auth/init', {});
+        const initData = await fetchJson('/auth/init', username ? { username } : {});
 
         const accountId = normalizeAccountId(initData.accountId || initData.account_id);
         if (!accountId) {
             throw new Error('Server did not return an account ID.');
+        }
+        const confirmedUsername = initData.username
+            ? validateUsername(initData.username)
+            : null;
+        if (username && confirmedUsername !== username) {
+            throw new Error('Username accounts are not supported by this server yet');
         }
 
         // Generate master key client-side (never sent to server)
@@ -1351,6 +1400,7 @@ class AccountService {
 
         this.pendingAccount = {
             accountId,
+            username: confirmedUsername,
             masterKey,
             initData,       // Store server response for passkey registration
             credential: null,
@@ -1374,12 +1424,17 @@ class AccountService {
             throw new Error('Passkeys are not supported in this browser');
         }
 
-        const { accountId, initData } = this.pendingAccount;
+        const { accountId, username, initData } = this.pendingAccount;
 
         // Build passkey creation options with PRF extension
         // Uses the challenge from the stored initData (from prepareAccount)
         const prfInput = await digestAccountId(accountId);
-        const publicKey = buildCreationOptions(initData, accountId, prfInput);
+        const publicKey = buildCreationOptions(
+            initData,
+            accountId,
+            prfInput,
+            username
+        );
 
         // Trigger passkey creation (user interaction required)
         let credential;
@@ -1421,13 +1476,13 @@ class AccountService {
         return true;
     }
 
-    /**
-     * Step 3: Generate recovery code for the pending account.
-     * @returns {string} The generated recovery code (5 words)
-     */
+    /** Generate the retained recovery code for a legacy account-number account. */
     generateRecoveryForPreparedAccount() {
         if (!this.pendingAccount?.masterKey) {
             throw new Error('No pending account with master key.');
+        }
+        if (this.pendingAccount.username) {
+            throw new Error('Username accounts do not use recovery codes.');
         }
 
         const recoveryCode = generateRecoveryCode();
@@ -1445,12 +1500,19 @@ class AccountService {
             throw new Error('No pending account.');
         }
 
-        const { accountId, masterKey, credential, prfBytes, recoveryCode } = this.pendingAccount;
+        const {
+            accountId,
+            username,
+            masterKey,
+            credential,
+            prfBytes,
+            recoveryCode
+        } = this.pendingAccount;
 
         if (!credential || !prfBytes) {
             throw new Error('Passkey not registered. Call registerPasskeyForPreparedAccount() first.');
         }
-        if (!recoveryCode) {
+        if (!username && !recoveryCode) {
             throw new Error('Recovery code not generated. Call generateRecoveryForPreparedAccount() first.');
         }
 
@@ -1460,33 +1522,38 @@ class AccountService {
             await encryptBytes(prfKey, masterKey)
         );
 
-        // Wrap master key with recovery code
-        const recoverySalt = crypto.getRandomValues(new Uint8Array(16));
-        const recoveryKey = await deriveRecoveryKey(recoveryCode, recoverySalt);
-        const recoveryPayload = await encryptBytes(recoveryKey, masterKey);
-        const wrappedRecovery = encodeWrappedKey({
-            ...recoveryPayload,
-            salt: bytesToBase64(recoverySalt)
-        });
-
-        // Compute recovery code hash for server verification
-        const recoveryCodeHash = await computeRecoveryCodeHash(recoveryCode, accountId);
+        let wrappedRecovery = null;
+        let recoveryCodeHash = null;
+        if (!username) {
+            // Recovery remains available only to legacy account-number users.
+            const recoverySalt = crypto.getRandomValues(new Uint8Array(16));
+            const recoveryKey = await deriveRecoveryKey(recoveryCode, recoverySalt);
+            const recoveryPayload = await encryptBytes(recoveryKey, masterKey);
+            wrappedRecovery = encodeWrappedKey({
+                ...recoveryPayload,
+                salt: bytesToBase64(recoverySalt)
+            });
+            recoveryCodeHash = await computeRecoveryCodeHash(recoveryCode, accountId);
+        }
 
         // Register with server
         await fetchJson('/auth/register', {
             accountId,
+            username: username || undefined,
             credential: credentialToJSON(credential),
             wrappedKeyPasskey: wrappedPasskey,
-            wrappedKeyRecovery: wrappedRecovery,
-            recoveryCodeHash
+            wrappedKeyRecovery: wrappedRecovery || undefined,
+            recoveryCodeHash: recoveryCodeHash || undefined
         });
 
         // Success - update state
         this.masterKey = masterKey;
         this.recoveryPayload = wrappedRecovery;
         this.state.accountId = accountId;
+        this.state.username = username || null;
         this.state.credentialId = credential.id;
-        this.state.recoveryConfirmed = true;  // User already confirmed before this step
+        this.state.encryptionMode = 'LEGACY_PASSKEY';
+        this.state.recoveryConfirmed = !username;
         this.state.recoveryCode = null;
 
         this.state.sessionVerified = await sessionService.doesSessionExist();
@@ -1566,6 +1633,7 @@ class AccountService {
                 {
                     identityBacked: !!(
                         this.state.googleLinked ||
+                        this.state.username ||
                         ['PRF', 'PRF_PENDING', 'LEGACY_SSO'].includes(
                             this.state.encryptionMode
                         )
@@ -1647,6 +1715,10 @@ class AccountService {
      */
     getPendingAccountId() {
         return this.pendingAccount?.accountId || null;
+    }
+
+    getPendingUsername() {
+        return this.pendingAccount?.username || null;
     }
 
     // =========================================================================
@@ -2303,9 +2375,20 @@ class AccountService {
         }
     }
 
+    async unlockWithUsername(usernameInput, options = {}) {
+        let username;
+        try {
+            username = validateUsername(usernameInput);
+        } catch (error) {
+            this.setError(error.message);
+            return false;
+        }
+        return this.unlockWithPasskey(null, { ...options, username });
+    }
+
     async unlockWithPasskey(
         accountIdInput,
-        { mediation, silent = false, action = 'unlock' } = {}
+        { mediation, silent = false, action = 'unlock', username = null } = {}
     ) {
         if (this.state.busy) return false;
         if (!this.state.passkeySupported) {
@@ -2322,18 +2405,40 @@ class AccountService {
             }
         }
 
-        const accountId = normalizeAccountId(accountIdInput || this.state.accountId);
-        if (!accountId) {
+        const normalizedUsername = username ? validateUsername(username) : null;
+        let accountId = normalizeAccountId(accountIdInput || this.state.accountId);
+        if (!accountId && !normalizedUsername) {
             if (!silent) this.setError('Enter your account ID to continue');
             return false;
         }
 
         this.setState({ busy: true, action, error: null, recoveryRequired: false });
         try {
+            const credentialMatchesIdentifier = normalizedUsername
+                ? this.state.username === normalizedUsername
+                : true;
             const challengeData = await fetchJson('/auth/challenge', {
-                accountId,
-                credentialId: this.state.credentialId || undefined
+                accountId: normalizedUsername ? undefined : accountId,
+                username: normalizedUsername || undefined,
+                credentialId: credentialMatchesIdentifier
+                    ? this.state.credentialId || undefined
+                    : undefined
             });
+            accountId = normalizeAccountId(challengeData.accountId || accountId);
+            if (!accountId) throw new Error('Authentication failed');
+            const challengeId = normalizedUsername ? challengeData.challengeId : null;
+            if (normalizedUsername && !challengeId) {
+                throw new Error('Authentication failed');
+            }
+            if (
+                normalizedUsername &&
+                this.state.accountId &&
+                accountId !== this.state.accountId
+            ) {
+                throw new Error(
+                    'This username does not match the OA account saved on this device'
+                );
+            }
             if (challengeData?.wrappedKeyRecovery) {
                 this.recoveryPayload = normalizeWrappedKeyPayload(challengeData.wrappedKeyRecovery);
             }
@@ -2352,11 +2457,14 @@ class AccountService {
             const prfBytes = getPrfOutput(assertion);
             if (!prfBytes) {
                 this.state.prfSupported = false;
+                const recoveryAvailable = !normalizedUsername;
                 this.setState({
                     busy: false,
                     action: null,
-                    recoveryRequired: true,
-                    error: 'This passkey does not provide PRF output, use your recovery code'
+                    recoveryRequired: recoveryAvailable,
+                    error: recoveryAvailable
+                        ? 'This passkey does not provide PRF output, use your recovery code'
+                        : 'This passkey cannot unlock the encrypted data for this username'
                 });
                 return false;
             }
@@ -2364,6 +2472,8 @@ class AccountService {
 
             const loginData = await fetchJson('/auth/login', {
                 accountId,
+                username: normalizedUsername || undefined,
+                challengeId: challengeId || undefined,
                 credentialId: assertion.id,
                 assertion: assertionToJSON(assertion)
             });
@@ -2384,6 +2494,7 @@ class AccountService {
             this.clearRateLimit();
             this.masterKey = masterKey;
             this.state.accountId = accountId;
+            this.state.username = normalizedUsername || null;
             this.state.credentialId = assertion.id;
             this.state.encryptionMode = 'LEGACY_PASSKEY';
             this.state.busy = false;
@@ -2412,11 +2523,13 @@ class AccountService {
             }
 
             const message = toFriendlyError(error);
-            const shouldOfferRecovery = !!this.recoveryPayload ||
+            const shouldOfferRecovery = !normalizedUsername && (
+                !!this.recoveryPayload ||
                 message.includes('No passkey') ||
                 message.toLowerCase().includes('prf') ||
                 message.toLowerCase().includes('unwrap') ||
-                message.toLowerCase().includes('decrypt');
+                message.toLowerCase().includes('decrypt')
+            );
             if (!silent && shouldOfferRecovery) {
                 this.setState({
                     busy: false,
@@ -2466,9 +2579,9 @@ class AccountService {
             const recoveryCodeHash = await computeRecoveryCodeHash(normalizedCode, accountId);
 
             // 2. Call /auth/recovery with hash - server verifies before returning data
-            const recoveryData = await fetchJson('/auth/recovery', { 
-                accountId, 
-                recoveryCodeHash 
+            const recoveryData = await fetchJson('/auth/recovery', {
+                accountId,
+                recoveryCodeHash
             });
             
             const wrappedRecovery = normalizeWrappedKeyPayload(recoveryData?.wrappedKeyRecovery);
@@ -2668,6 +2781,7 @@ class AccountService {
         await this.logout();  // Use logout instead of lock for full cleanup
         this.cancelPendingOAuthAccount();
         this.state.accountId = null;
+        this.state.username = null;
         this.state.credentialId = null;
         this.state.encryptionCredentialId = null;
         this.state.encryptionMode = null;
@@ -2703,7 +2817,12 @@ class AccountService {
         if (typeof PublicKeyCredential?.isConditionalMediationAvailable !== 'function') return;
         const supportsConditional = await PublicKeyCredential.isConditionalMediationAvailable();
         if (!supportsConditional) return;
-        await this.unlockWithPasskey(this.state.accountId, { mediation: 'silent', silent: true });
+        const options = { mediation: 'silent', silent: true };
+        if (this.state.username) {
+            await this.unlockWithUsername(this.state.username, options);
+        } else {
+            await this.unlockWithPasskey(this.state.accountId, options);
+        }
     }
 
     formatAccountId(accountId) {
