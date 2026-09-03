@@ -110,12 +110,15 @@ test('session history ends above the account row with an intentional continuatio
     const styles = read('chat/styles.css');
     const sidebar = read('chat/components/Sidebar.js');
     assert.match(styles, /\.session-scroll-fade\s*\{[^}]*linear-gradient/s);
+    assert.match(styles, /\.session-scroll-fade\s*\{[^}]*backdrop-filter:\s*blur\(2px\)/s);
+    assert.match(styles, /\.session-scroll-fade\s*\{[^}]*mask-image:\s*linear-gradient/s);
     assert.match(styles, /\.session-list-end-spacer\s*\{[^}]*height:\s*40px/s);
     assert.match(styles, /\.session-scroll-shell\.has-more-below \.session-scroll-fade\s*\{[^}]*opacity:\s*1/s);
-    assert.match(styles, /\.session-initially-clipped\s*\{[^}]*visibility:\s*hidden/s);
+    assert.doesNotMatch(styles, /\.session-initially-clipped/);
     assert.match(sidebar, /const END_SPACER_HEIGHT = 40/);
     assert.match(sidebar, /scheduleInitialViewportSettlement/);
-    assert.match(sidebar, /releaseInitialViewportGuard/);
+    assert.match(sidebar, /releaseInitialViewportSettlement/);
+    assert.doesNotMatch(sidebar, /session-initially-clipped/);
     assert.match(sidebar, /items\.push\(\{ type: 'end-spacer' \}\)/);
     assert.match(sidebar, /class="session-list-end-spacer" aria-hidden="true"/);
 });

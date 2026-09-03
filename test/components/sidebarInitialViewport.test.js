@@ -17,26 +17,14 @@ function classList(initial = []) {
     };
 }
 
-test('history hides a clipped bottom row whenever scrolling returns to the top boundary', () => {
+test('initial history position settles once while the bottom fade follows scroll state', () => {
     let scheduled = null;
     const shell = { classList: classList() };
-    const completeRow = { classList: classList(), getBoundingClientRect: () => ({ top: 10, bottom: 46 }) };
-    const clippedRow = { classList: classList(), getBoundingClientRect: () => ({ top: 82, bottom: 118 }) };
-    const rows = [completeRow, clippedRow];
-    const list = {
-        querySelectorAll(selector) {
-            if (selector === '.chat-session') return rows;
-            if (selector === '.session-initially-clipped') {
-                return rows.filter(row => row.classList.contains('session-initially-clipped'));
-            }
-            return [];
-        }
-    };
+    const list = {};
     const scrollArea = {
         scrollTop: 17,
         scrollHeight: 220,
         clientHeight: 100,
-        getBoundingClientRect: () => ({ top: 0, bottom: 100 }),
         closest: () => shell
     };
     const sidebar = {
@@ -46,7 +34,6 @@ test('history hides a clipped bottom row whenever scrolling returns to the top b
         initialViewportUserControlled: false,
         initialViewportFrame: null,
         requestAnimationFrame(callback) { scheduled = callback; return 1; },
-        applyInitialViewportGuard: Sidebar.prototype.applyInitialViewportGuard,
         updateScrollFade: Sidebar.prototype.updateScrollFade
     };
 
@@ -55,12 +42,9 @@ test('history hides a clipped bottom row whenever scrolling returns to the top b
     scheduled();
 
     assert.equal(scrollArea.scrollTop, 0);
-    assert.equal(completeRow.classList.contains('session-initially-clipped'), false);
-    assert.equal(clippedRow.classList.contains('session-initially-clipped'), true);
     assert.equal(shell.classList.contains('has-more-below'), true);
 
-    Sidebar.prototype.releaseInitialViewportGuard.call(sidebar);
-    assert.equal(clippedRow.classList.contains('session-initially-clipped'), true);
+    Sidebar.prototype.releaseInitialViewportSettlement.call(sidebar);
 
     scrollArea.scrollTop = 23;
     Sidebar.prototype.handleScroll.call({
@@ -68,20 +52,12 @@ test('history hides a clipped bottom row whenever scrolling returns to the top b
         virtualState: { enabled: false },
         updateScrollFade: Sidebar.prototype.updateScrollFade
     });
-    assert.equal(clippedRow.classList.contains('session-initially-clipped'), false);
+    assert.equal(shell.classList.contains('has-more-below'), true);
 
     scheduled = null;
     Sidebar.prototype.scheduleInitialViewportSettlement.call(sidebar, true);
     assert.equal(scheduled, null);
     assert.equal(scrollArea.scrollTop, 23);
-
-    scrollArea.scrollTop = 0;
-    Sidebar.prototype.handleScroll.call({
-        ...sidebar,
-        virtualState: { enabled: false },
-        updateScrollFade: Sidebar.prototype.updateScrollFade
-    });
-    assert.equal(clippedRow.classList.contains('session-initially-clipped'), true);
 
     scrollArea.scrollTop = 120;
     Sidebar.prototype.handleScroll.call({
@@ -90,6 +66,5 @@ test('history hides a clipped bottom row whenever scrolling returns to the top b
         updateScrollFade: Sidebar.prototype.updateScrollFade
     });
     assert.equal(scrollArea.scrollTop, 120);
-    assert.equal(clippedRow.classList.contains('session-initially-clipped'), false);
     assert.equal(shell.classList.contains('has-more-below'), false);
 });

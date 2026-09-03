@@ -511,15 +511,20 @@ html.switching-theme *::after {
     bottom: 0;
     left: 0;
     z-index: 2;
-    height: 1.25rem;
+    height: 2.5rem;
     pointer-events: none;
     background: linear-gradient(
         to bottom,
         hsl(var(--color-background) / 0),
-        hsl(var(--color-background) / 0.96)
+        hsl(var(--color-background) / 0.72) 58%,
+        hsl(var(--color-background) / 0.98)
     );
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48%, #000);
+    mask-image: linear-gradient(to bottom, transparent, #000 48%, #000);
     opacity: 0;
-    transition: opacity 0.14s ease-out;
+    transition: opacity 0.12s ease-out;
 }
 
 .session-scroll-shell.has-more-below .session-scroll-fade {
@@ -529,10 +534,6 @@ html.switching-theme *::after {
 .session-list-end-spacer {
     height: 40px;
     flex: 0 0 40px;
-}
-
-.session-initially-clipped {
-    visibility: hidden;
 }
 
 .chat-session {

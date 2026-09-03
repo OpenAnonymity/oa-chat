@@ -83,14 +83,12 @@ reading code alone.
   immediately after session validation. Profile refresh and encrypted sync
   continue in the background, so the footer does not briefly fall back to the
   generic **Account** label on every reload.
-- Long conversation history settles its initial paint at the top row boundary
-  and withholds one conversation that would otherwise be clipped at the bottom.
-  The same clean row boundary is restored whenever the list returns to its exact
-  top position. Away from the top there is no scroll snapping or automatic
-  repositioning, so a deliberately half-visible row remains where the user
-  leaves it. A short bottom fade appears only while more history exists below,
-  and a real trailing spacer remains in both full and virtualized lists. The last
-  title can therefore scroll fully above the account footer. The account identity
+- Long conversation history settles its initial paint at the top position, then
+  leaves scrolling completely free without snapping or delayed row visibility
+  changes. A short gradient blur softens a partially visible conversation only
+  while more history exists below, and a real trailing spacer remains in both
+  full and virtualized lists. The last title can therefore scroll fully above the
+  account footer. The account identity
   row and menu keep the existing 14px typography but use a stronger full-row
   neutral hover/focus surface.
 - Explicit logout preserves the current device theme while account-scoped

@@ -122,7 +122,6 @@ export default class Sidebar {
         } else {
             this.renderFullList(sessionsToRender);
         }
-        this.applyInitialViewportGuard();
         this.scheduleInitialViewportSettlement(sessionsToRender.length > 0);
         this.updateScrollFade();
     }
@@ -218,14 +217,14 @@ export default class Sidebar {
         this.listenersAttached = true;
 
         const scrollArea = this.app.elements.sessionsScrollArea;
-        const releaseInitialViewport = () => this.releaseInitialViewportGuard();
+        const releaseInitialViewport = () => this.releaseInitialViewportSettlement();
         scrollArea?.addEventListener('wheel', releaseInitialViewport, { passive: true });
         scrollArea?.addEventListener('touchstart', releaseInitialViewport, { passive: true });
         scrollArea?.addEventListener('pointerdown', releaseInitialViewport, { passive: true });
         scrollArea?.addEventListener('keydown', releaseInitialViewport);
 
         list.addEventListener('click', async (e) => {
-            this.releaseInitialViewportGuard();
+            this.releaseInitialViewportSettlement();
             const starBtn = e.target.closest('.session-star-btn');
             if (starBtn) {
                 e.preventDefault();
@@ -720,7 +719,6 @@ export default class Sidebar {
 
     handleScroll(force = false) {
         this.updateScrollFade();
-        this.applyInitialViewportGuard();
         if (!this.virtualState.enabled) return;
         if (!force) {
             const editingInput = this.app.elements.sessionsList?.querySelector('.session-title-input:not([readonly])');
@@ -737,7 +735,6 @@ export default class Sidebar {
         this.virtualScrollRaf = requestAnimationFrame(() => {
             this.virtualScrollRaf = null;
             this.renderVirtualRange();
-            this.applyInitialViewportGuard();
             this.updateScrollFade();
         });
     }
@@ -757,47 +754,18 @@ export default class Sidebar {
             if (!scrollArea) return;
 
             // Browser scroll restoration can leave the first painted history
-            // between rows. Normalize only this initial paint. Afterward the
-            // user can scroll freely; the visual guard returns only at the
-            // exact top boundary so that position remains as clean as startup.
+            // at a fractional offset. Normalize only this initial paint;
+            // afterward the user can scroll freely.
             scrollArea.scrollTop = 0;
             if (this.virtualState.enabled) this.renderVirtualRange(true);
             this.initialViewportSettled = true;
-            this.applyInitialViewportGuard();
             this.updateScrollFade();
         });
     }
 
-    applyInitialViewportGuard() {
-        const list = this.app.elements.sessionsList;
-        const scrollArea = this.app.elements.sessionsScrollArea;
-        if (!list || !scrollArea) return;
-
-        list.querySelectorAll?.('.session-initially-clipped').forEach(row => {
-            row.classList.remove('session-initially-clipped');
-        });
-        if (!this.initialViewportSettled || (scrollArea.scrollTop || 0) > 1) return;
-
-        const viewport = scrollArea.getBoundingClientRect?.();
-        if (!viewport) return;
-        const rows = list.querySelectorAll?.('.chat-session') || [];
-        for (const row of rows) {
-            const bounds = row.getBoundingClientRect?.();
-            if (!bounds) continue;
-            if (bounds.top < viewport.bottom - 0.5 && bounds.bottom > viewport.bottom + 0.5) {
-                row.classList.add('session-initially-clipped');
-                break;
-            }
-        }
-    }
-
-    releaseInitialViewportGuard() {
+    releaseInitialViewportSettlement() {
         this.initialViewportUserControlled = true;
         this.initialViewportSettled = true;
-        // User interaction prevents the initial scroll reset, but must not make
-        // the top boundary render differently after the list returns there.
-        // applyInitialViewportGuard clears the class everywhere except at top.
-        this.applyInitialViewportGuard();
     }
 
     updateScrollFade() {
