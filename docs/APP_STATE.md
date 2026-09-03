@@ -6,6 +6,10 @@ reading code alone.
 
 ## 2026-09-02: Authentication intent waits for account restoration
 
+- Returning focus to the account footer after unlock uses a thin, inset muted
+  outline and subtle surface tint in both themes, not the heavy menu-item ring.
+  Keyboard focus restoration is unchanged; forced-colors mode retains a stronger
+  system-color outline. Keep this scoped to the footer, not other controls.
 - The commercial landing page now hands Google entry to `/chat/?auth=google`;
   this is distinct from `membership=1`, which remains an explicit billing UI
   request. Core chat owns the one-use auth intent and removes it with

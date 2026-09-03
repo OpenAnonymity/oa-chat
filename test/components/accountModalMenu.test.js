@@ -1,7 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import AccountModal from '../../chat/components/AccountModal.js';
 import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
+
+test('account footer uses a subtle theme-aware focus indicator and preserves high-contrast focus', () => {
+    const css = readFileSync('chat/styles.css', 'utf8');
+    const focusRule = css.match(/\.account-tab-btn:focus-visible\s*\{([^}]+)\}/)?.[1];
+    assert.ok(focusRule);
+    assert.match(focusRule, /outline: 1px solid hsl\(var\(--color-muted-foreground\)\)/);
+    assert.match(focusRule, /outline-offset: -1px/);
+    assert.match(focusRule, /background-color: hsl\(var\(--color-foreground\) \/ 0\.04\)/);
+    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*\.account-tab-btn:focus-visible\s*\{\s*outline: 2px solid Highlight/);
+    assert.doesNotMatch(css, /\.account-tab-btn:focus-visible\s*,\s*\.account-menu-item:focus-visible/);
+});
 
 function createElement(documentImpl, options = {}) {
     const attributes = new Map();
