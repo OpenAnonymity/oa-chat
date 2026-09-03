@@ -269,7 +269,8 @@ test('clicking the account footer during restoration opens progress then rerende
 
         accountState = { ...accountState, authBootstrapComplete: true };
         accountListener({ ...accountState });
-        assert.match(overlay.innerHTML, /Account identity/);
+        assert.match(overlay.innerHTML, /account-compact-identity/);
+        assert.match(overlay.innerHTML, /member@example\.com/);
         assert.match(overlay.innerHTML, /Log out/);
     } finally {
         modal.destroy();

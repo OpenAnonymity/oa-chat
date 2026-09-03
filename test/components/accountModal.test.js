@@ -465,6 +465,7 @@ test('identity account describes ticket and preference sync', () => {
     const state = {
         accountId: '1234567890123456',
         googleLinked: true,
+        oauthEmail: 'dominic@example.com',
         encryptionMode: 'PRF',
         sessionVerified: true,
         status: 'unlocked',
@@ -492,12 +493,23 @@ test('identity account describes ticket and preference sync', () => {
     modal.escapeHtml = value => String(value ?? '');
 
     try {
-        const html = modal.renderAccountUI();
-        assert.match(html, /Tickets and preferences synchronize as encrypted data/);
-        assert.match(html, /Account identity/);
-        assert.match(html, /Passkey encryption/);
-        assert.match(html, /Synchronization/);
+        let html = modal.renderAccountUI();
+        assert.match(html, /account-compact-dialog/);
+        assert.match(html, /account-compact-avatar[^>]*>D</);
+        assert.match(html, /dominic@example\.com/);
+        assert.match(html, /Sync now|Retry sync/);
+        assert.match(html, /Passkey &amp; encryption/);
+        assert.match(html, /id="account-passkey-details"[^>]*hidden/);
+        assert.match(html, /Tickets and preferences sync encrypted with your passkey/);
+        assert.doesNotMatch(html, /Account identity|Synchronization|Connected provider/);
         assert.doesNotMatch(html, /device-only/);
+
+        modal.togglePasskeyDetails();
+        html = modal.renderAccountUI();
+        assert.match(html, /aria-expanded="true"/);
+        assert.match(html, /id="account-passkey-details" class="account-compact-detail" >/);
+        assert.match(html, /End-to-end encrypted/);
+        assert.match(html, /Google connected/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;

@@ -107,6 +107,17 @@ test('account footer keeps stable full-row trigger and menu dimensions', () => {
     assert.match(styles, /\.account-tab-btn:active:not\(:disabled\)\s*\{/);
 });
 
+test('signed-in Account uses the compact identity and disclosure treatment', () => {
+    const styles = read('chat/styles.css');
+    const accountModal = read('chat/components/AccountModal.js');
+    assert.match(styles, /\.account-compact-dialog\s*\{[^}]*max-width:\s*23rem[^}]*padding:\s*1rem/s);
+    assert.match(styles, /\.account-compact-row:hover:not\(:disabled\)\s*\{[^}]*background:/s);
+    assert.match(styles, /\.account-compact-row:active:not\(:disabled\)\s*\{[^}]*transform:\s*scale\(0\.985\)/s);
+    assert.match(styles, /\.account-compact-row\[aria-expanded="true"\] \.account-compact-chevron\s*\{[^}]*rotate\(90deg\)/s);
+    assert.match(accountModal, /id="account-passkey-details-btn"[^>]+aria-expanded="\$\{this\.passkeyDetailsOpen\}"/);
+    assert.match(accountModal, /id="account-clear-btn" class="account-compact-row"/);
+});
+
 test('session history ends above the account row with an intentional continuation cue', () => {
     const styles = read('chat/styles.css');
     const sidebar = read('chat/components/Sidebar.js');

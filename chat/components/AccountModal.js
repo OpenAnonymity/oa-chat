@@ -46,6 +46,7 @@ class AccountModal {
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.menuOpen = false;
+        this.passkeyDetailsOpen = false;
         this.accountMenuTrigger = null;
         this.onDocumentPointerDown = event => {
             const nav = document.getElementById('account-nav');
@@ -261,6 +262,7 @@ class AccountModal {
         if (this.isOpen || !this.overlay) return;
         this.closeAccountMenu();
         this.isOpen = true;
+        this.passkeyDetailsOpen = false;
         this.returnFocusEl = returnFocusEl || document.activeElement;
 
         this.resetCreationFlow();
@@ -701,6 +703,11 @@ class AccountModal {
         this.app?.showToast?.('Logged out', 'success');
     }
 
+    togglePasskeyDetails() {
+        this.passkeyDetailsOpen = !this.passkeyDetailsOpen;
+        this.render();
+    }
+
     async handleForgetSavedAccount() {
         await this.accountService.clearLocalAccount();
         this.accountInputValue = '';
@@ -755,9 +762,9 @@ class AccountModal {
         if (hadModalFocus) this.focusModal(activeElementId);
     }
 
-    renderHeader(title, showClose = true) {
+    renderHeader(title, showClose = true, className = '') {
         return `
-            <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center justify-between mb-4 ${className}">
                 <h3 id="account-modal-title" class="text-base font-medium text-foreground">${title}</h3>
                 ${showClose ? `
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
@@ -1082,15 +1089,14 @@ class AccountModal {
 
             // Determine sync freshness for indicator color
             const syncAgeMs = lastSync ? Date.now() - lastSync : Infinity;
-            const isFresh = syncAgeMs < 60 * 1000;  // < 1 minute = fresh
             const isStale = syncAgeMs > 5 * 60 * 1000;  // > 5 minutes = stale
 
             const syncIndicatorColor = (() => {
-                if (isSyncing) return 'bg-blue-500';
-                if (!lastSync) return 'bg-muted-foreground';
-                if (lastResult?.success === false) return 'bg-amber-500';
-                if (isStale) return 'bg-amber-500';
-                return 'bg-emerald-500';
+                if (isSyncing) return 'is-syncing';
+                if (!lastSync) return 'is-neutral';
+                if (lastResult?.success === false) return 'is-attention';
+                if (isStale) return 'is-attention';
+                return 'is-success';
             })();
 
             const syncStatusText = (() => {
@@ -1104,71 +1110,54 @@ class AccountModal {
             })();
 
             const syncStatusColor = (() => {
-                if (isSyncing) return 'text-blue-500';
-                if (!lastSync) return 'text-muted-foreground';
-                if (lastResult?.success === false) return 'text-amber-500';
-                if (isStale) return 'text-amber-500';
-                return 'text-emerald-500';
+                if (isSyncing) return 'is-syncing';
+                if (!lastSync) return 'is-neutral';
+                if (lastResult?.success === false) return 'is-attention';
+                if (isStale) return 'is-attention';
+                return 'is-success';
             })();
-            const syncNeedsAttention = !isSyncing && (
-                !lastSync || lastResult?.success === false || isStale
-            );
             const accountIdentity = state.oauthEmail || state.email || formattedAccountId;
+            const accountInitial = String(accountIdentity || 'A').trim().charAt(0).toUpperCase() || 'A';
+            const syncActionText = isSyncing
+                ? 'Syncing…'
+                : lastResult?.success === false
+                    ? 'Retry sync'
+                    : 'Sync now';
             return `
-                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                    ${this.renderHeader('Account')}
-                    <div class="grid gap-3">
-                        <section class="rounded-xl border border-border/70 bg-muted/15 p-3" aria-labelledby="account-identity-heading">
-                            <div class="flex items-center justify-between gap-3">
-                                <div class="min-w-0">
-                                    <p id="account-identity-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Account identity</p>
-                                    <p class="mt-1 truncate text-sm font-medium text-foreground" title="${this.escapeHtml(accountIdentity)}">${this.escapeHtml(accountIdentity)}</p>
-                                </div>
-                                <span class="inline-flex flex-shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                                    <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>Logged in
-                                </span>
-                            </div>
-                        </section>
-
-                        <section class="rounded-xl border border-border/70 p-3" aria-labelledby="account-encryption-heading">
-                            <p id="account-encryption-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Passkey encryption</p>
-                            <p class="mt-1 text-sm font-medium text-foreground">${usesIdentityLogin ? 'Encrypted and unlocked' : 'Passkey unlocked'}</p>
-                            <p class="mt-1 text-[11px] leading-relaxed text-muted-foreground">Tickets and preferences synchronize as encrypted data.</p>
-                        </section>
-
-                        <section class="rounded-xl border border-border/70 p-3" aria-labelledby="account-sync-heading">
-                            <div class="flex items-center justify-between gap-3">
-                                <div class="min-w-0">
-                                    <p id="account-sync-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Synchronization</p>
-                                    <p class="mt-1 flex items-center gap-1.5 text-xs ${syncStatusColor}">
-                                        <span class="h-1.5 w-1.5 rounded-full ${syncIndicatorColor} ${isSyncing ? 'animate-pulse' : ''}"></span>${syncStatusText}
-                                    </p>
-                                </div>
-                                <button id="account-sync-btn" class="inline-flex h-8 flex-shrink-0 items-center justify-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors disabled:opacity-50 ${syncNeedsAttention ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground'}" type="button" ${isSyncing || isBusy ? 'disabled' : ''}>
-                                    <svg class="h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
-                                    </svg>
-                                    ${isSyncing ? 'Syncing…' : syncNeedsAttention ? 'Retry sync' : 'Sync now'}
-                                </button>
-                            </div>
-                            <p class="mt-2 text-[11px] text-muted-foreground">Chat history sync is coming later.</p>
-                        </section>
-
-                        ${state.googleLinked ? `
-                            <section class="rounded-xl border border-border/70 p-3" aria-labelledby="account-provider-heading">
-                                <p id="account-provider-heading" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Connected provider</p>
-                                <div class="mt-2">${this.renderOAuthConnection('google', state, isBusy, action)}</div>
-                            </section>
-                        ` : ''}
-
-                        ${!usesIdentityLogin ? `
-                            <button id="account-copy-id-btn" class="account-number-text truncate rounded-lg px-2 py-1 text-left font-mono text-xs text-muted-foreground hover:bg-accent hover:text-foreground" type="button" title="Copy account ID">${this.escapeHtml(formattedAccountId)}</button>
-                        ` : ''}
-
-                        <div class="flex justify-end border-t border-border/70 pt-3" data-account-actions>
-                            <button id="account-clear-btn" class="rounded-lg border border-border bg-transparent px-3 py-2 text-xs text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/5 hover:text-destructive disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
-                                Log out
-                            </button>
+                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES} account-compact-dialog">
+                    ${this.renderHeader('Account', true, 'account-compact-header')}
+                    <section class="account-compact-identity" aria-labelledby="account-identity-heading">
+                        <span class="account-compact-avatar" aria-hidden="true">${this.escapeHtml(accountInitial)}</span>
+                        <div class="account-compact-identity-copy">
+                            <p id="account-identity-heading" title="${this.escapeHtml(accountIdentity)}">${this.escapeHtml(accountIdentity)}</p>
+                            <span><span class="account-compact-dot is-success"></span>Logged in</span>
+                        </div>
+                    </section>
+                    <div class="account-compact-divider" aria-hidden="true"></div>
+                    <div class="account-compact-list">
+                        <button id="account-sync-btn" class="account-compact-row" type="button" ${isSyncing || isBusy ? 'disabled' : ''}>
+                            <span class="account-compact-row-label">
+                                <svg class="${isSyncing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path>
+                                </svg>
+                                ${syncActionText}
+                            </span>
+                            <span class="account-compact-meta ${syncStatusColor}">
+                                <span class="account-compact-dot ${syncIndicatorColor} ${isSyncing ? 'animate-pulse' : ''}"></span>${syncStatusText}
+                            </span>
+                        </button>
+                        <button id="account-passkey-details-btn" class="account-compact-row" type="button" aria-expanded="${this.passkeyDetailsOpen}" aria-controls="account-passkey-details">
+                            <span class="account-compact-row-label">Passkey &amp; encryption</span>
+                            <svg class="account-compact-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+                        </button>
+                        <div id="account-passkey-details" class="account-compact-detail" ${this.passkeyDetailsOpen ? '' : 'hidden'}>
+                            <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesIdentityLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
+                            <p>Tickets and preferences sync encrypted with your passkey.</p>
+                            ${state.googleLinked ? `<p class="account-compact-provider">${this.renderOAuthProviderIcon('google', 'w-3.5 h-3.5')} Google connected</p>` : ''}
+                            ${!usesIdentityLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
+                        </div>
+                        <div data-account-actions>
+                            <button id="account-clear-btn" class="account-compact-row" type="button" ${isBusy ? 'disabled' : ''}>Log out</button>
                         </div>
                     </div>
                 </div>
@@ -1457,6 +1446,9 @@ class AccountModal {
 
         const clearBtn = document.getElementById('account-clear-btn');
         if (clearBtn) clearBtn.onclick = () => this.handleAccountClear();
+
+        const passkeyDetailsBtn = document.getElementById('account-passkey-details-btn');
+        if (passkeyDetailsBtn) passkeyDetailsBtn.onclick = () => this.togglePasskeyDetails();
 
         const syncBtn = document.getElementById('account-sync-btn');
         if (syncBtn) syncBtn.onclick = () => this.handleSyncNow();
