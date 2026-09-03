@@ -182,12 +182,15 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         const html = modal.renderAccountUI();
         assert.match(html, /Continue with Google/);
         assert.match(html, /Username/);
-        assert.match(html, /Continue with passkey/);
-        assert.match(html, /Create a passkey account/);
-        assert.match(html, /Use a pseudonym—not your email or real name/);
+        assert.match(html, />Log in<\/h3>/);
+        assert.match(html, /placeholder="Username"/);
+        assert.match(html, /aria-label="Username"/);
+        assert.match(html, />\s*Continue\s*<\/button>/);
+        assert.doesNotMatch(html, /Sign in to OA|Choose Google|Use a pseudonym|winter-owl/);
+        assert.doesNotMatch(html, /<label|Create a passkey account|account-identifier-mode-btn/);
         assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1"/);
         assert.match(html, /id="account-modal-title"/);
-        assert.match(html, /generate-account-btn/);
+        assert.doesNotMatch(html, /generate-account-btn/);
         assert.match(html, /account-passkey-btn/);
         assert.doesNotMatch(html, /account-recovery-toggle-btn/);
         assert.doesNotMatch(html, /Five-word recovery code/);
@@ -268,7 +271,9 @@ test('blank username creation cannot fall through to legacy account creation', a
             account: {
                 getState: () => state,
                 subscribe: () => () => {},
-                async prepareAccount(username) {
+                clearErrors() {},
+                setError(message) { state.error = message; },
+                async prepareUsernameContinuation(username) {
                     requestedUsername = username;
                     throw new Error('Username is required');
                 }
@@ -280,12 +285,14 @@ test('blank username creation cannot fall through to legacy account creation', a
         }
     });
     modal.accountState = state;
+    modal.isOpen = true;
     modal.render = () => {};
 
     try {
-        await modal.handleGenerateAccountNumber();
+        await modal.handleAccountContinue();
         assert.equal(requestedUsername, '');
-        assert.equal(modal.creationStep, 'error');
+        assert.equal(state.error, 'Username is required');
+        assert.equal(modal.creationStep, 'idle');
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
@@ -323,6 +330,83 @@ test('first username account completes after one passkey and routes to Membershi
     assert.equal(modal.creationStep, 'complete');
     assert.equal(closed, 1);
     assert.equal(firstAccountReady, 1);
+});
+
+function continuationModal(next = 'register') {
+    const modal = Object.create(AccountModal.prototype);
+    const calls = [];
+    Object.assign(modal, {
+        isOpen: true,
+        loginViewVersion: 0,
+        usernameContinuePending: false,
+        identifierMode: 'username',
+        usernameInputValue: 'winter-owl',
+        creationStep: 'idle',
+        accountState: { passkeySupported: true },
+        render() {},
+        accountService: {
+            clearErrors() {},
+            setError(message) { calls.push(['error', message]); },
+            async prepareUsernameContinuation(username) {
+                calls.push(['prepare', username]);
+                return { kind: next };
+            },
+            getPendingAccountId() { return '1234567890123456'; },
+            getPendingUsername() { return 'winter-owl'; },
+            cancelPendingAccount() { calls.push(['cancel']); }
+        },
+        async handlePasskeyRegistration() { calls.push(['register']); },
+        async handleAccountPasskeyUnlock() { calls.push(['login']); return false; }
+    });
+    return { modal, calls };
+}
+
+test('one Continue routes to registration or login without falling back after a failed passkey', async () => {
+    for (const next of ['register', 'login']) {
+        const { modal, calls } = continuationModal(next);
+        await modal.handleAccountContinue();
+        assert.deepEqual(calls, [['prepare', 'winter-owl'], [next]]);
+        assert.equal(modal.usernameContinuePending, false);
+        assert.equal(modal.creationStep, next === 'register' ? 'passkey' : 'idle');
+        if (next === 'register') assert.equal(modal.generatedUsername, 'winter-owl');
+    }
+});
+
+test('Continue is single-flight and closing during lookup never launches a passkey', async () => {
+    const { modal, calls } = continuationModal();
+    let resolve;
+    modal.accountService.prepareUsernameContinuation = () => new Promise(done => { resolve = done; });
+    const first = modal.handleAccountContinue();
+    await modal.handleAccountContinue();
+    assert.equal(modal.usernameContinuePending, true);
+    // A close/reopen must also invalidate the earlier request.
+    modal.loginViewVersion += 1;
+    resolve({ kind: 'register' });
+    await first;
+    assert.deepEqual(calls, [['cancel']]);
+    assert.equal(modal.usernameContinuePending, false);
+});
+
+test('lookup failures stay on the login form and do not launch a passkey', async () => {
+    const { modal, calls } = continuationModal();
+    modal.accountService.prepareUsernameContinuation = async () => { throw new Error('Try again later'); };
+    await modal.handleAccountContinue();
+    assert.deepEqual(calls, [['error', 'Try again later']]);
+    assert.equal(modal.creationStep, 'idle');
+    assert.equal(modal.usernameContinuePending, false);
+});
+
+test('Continue preserves saved legacy login and honors unsupported/busy guards', async () => {
+    const { modal, calls } = continuationModal();
+    modal.identifierMode = 'accountId';
+    await modal.handleAccountContinue();
+    assert.deepEqual(calls, [['login']]);
+    modal.accountState.busy = true;
+    await modal.handleAccountContinue();
+    modal.accountState.busy = false;
+    modal.accountState.passkeySupported = false;
+    await modal.handleAccountContinue();
+    assert.deepEqual(calls, [['login']]);
 });
 
 test('returning username account closes sign-in without first-account routing', async () => {
@@ -393,12 +477,13 @@ test('saved legacy passkey accounts keep the account-number login path', async (
     modal.escapeHtml = value => String(value ?? '');
 
     try {
+        modal.openForUsername('another-name');
+        assert.equal(modal.getIdentifierMode(), 'accountId');
         const html = modal.renderAccountUI();
         assert.match(html, /id="account-id-input"/);
         assert.match(html, /1234 5678 9012 3456/);
-        assert.match(html, /Existing account numbers and their recovery codes continue to work/);
         assert.match(html, /id="account-recovery-toggle-btn"/);
-        assert.match(html, /Use username/);
+        assert.doesNotMatch(html, /account-identifier-mode-btn/);
         await modal.handleAccountPasskeyUnlock();
         assert.equal(unlockedAccountId, state.accountId);
     } finally {

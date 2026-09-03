@@ -17,6 +17,12 @@ prefilled and focused. A remembered verified, unlocked account continues
 directly into Chat without opening Account. The route is only a UI handoff; it
 does not authenticate the username or bypass the passkey proof.
 
+The login dialog says **Log in**, keeps Google, and presents an accessible
+**Username** input with one **Continue** button. It does not show introductory
+copy, pseudonym guidance, separate signup/login buttons, or a manual
+account-number switch. Continue handles both account creation and returning
+login; it never treats a canceled or failed passkey as permission to register.
+
 For registration, the user chooses a username and approves one passkey prompt.
 The browser generates the random account master key locally, wraps it with the
 passkey PRF, completes registration, closes Account, and emits the same
@@ -31,14 +37,23 @@ alone is not proof of ownership.
 
 Usernames are normalized with NFKC, trimmed, lowercased, and limited to 3–32
 ASCII letters, numbers, hyphens, or underscores. They must begin and end with a
-letter or number. The UI advises users to choose a pseudonym rather than an
-email, real name, or handle reused elsewhere because the org stores and can see
-the username.
+letter or number. The org stores and can see the username; avoiding a real
+name or a handle reused elsewhere remains advisable even though the compact
+login dialog no longer displays that explanatory copy.
 
 ## Protocol and storage
 
 - `POST /auth/init` accepts an optional `username`. Omitting it preserves the
   old empty-body, server-generated account-number flow.
+- With no saved local binding, Continue first requests a username challenge.
+  A successful lookup reuses that same challenge for the normal passkey login,
+  avoiding registration quotas for returning owners. Only an explicit
+  `401 AUTHENTICATION_FAILED` from this pre-passkey lookup can try `/auth/init`.
+  Only its exact `409 USERNAME_UNAVAILABLE` conflict can select login instead
+  (a concurrent reservation/registration); other errors stay on the form.
+  Saved local accounts bypass initialization and use their existing login and
+  account-mismatch checks. Duplicate submissions are blocked, and closing the
+  dialog invalidates in-flight lookup results before any passkey prompt.
 - The server atomically reserves each normalized username for ten minutes and
   maps it to a server-generated opaque 16-digit account ID. Completing the
   initial credential write activates the mapping in one database transaction.
@@ -68,7 +83,11 @@ the username.
 
 Google accounts keep their separate OAuth-authentication plus encryption-passkey
 flow. Existing 16-digit passkey accounts keep the original endpoints, recovery
-hash salt, WebAuthn labels, and UI login option. Username and Google identities
+hash salt, and WebAuthn labels. Remembered legacy accounts retain their automatic
+account-number login and recovery UI. Manual account-number entry on a fresh
+device has been deliberately removed at the product owner's request; this is
+a UI availability change, not a backend migration or deletion of old accounts.
+Username and Google identities
 cannot be linked in this version, and an existing account cannot be renamed or
 given a username.
 

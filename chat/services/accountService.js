@@ -482,6 +482,7 @@ async function fetchJson(
             'Request failed';
         const requestError = new Error(message);
         requestError.status = response.status;
+        requestError.code = data?.code || (typeof detail === 'object' ? detail?.code : undefined);
         throw requestError;
     }
     return data || {};
@@ -1365,11 +1366,35 @@ class AccountService {
     // =========================================================================
 
     /**
-     * Step 1: Prepare a new account by requesting an ID from the server.
-     * Calls /auth/init to get server-generated account ID and challenge.
-     * Also generates the master key client-side.
-     * @returns {Promise<string>} The server-generated account ID
+     * Resolve the single username Continue action before any passkey ceremony.
+     * Existing users bypass registration quotas; successful challenges are reused.
      */
+    async prepareUsernameContinuation(usernameInput) {
+        const username = validateUsername(usernameInput);
+        // A saved partition must be unlocked or explicitly forgotten, never
+        // replaced by a new reservation just because the user edited the name.
+        if (this.state.accountId || this.localAccountContinuity) return { kind: 'login' };
+        try {
+            const data = await fetchJson('/auth/challenge', { username });
+            return { kind: 'login', challenge: { username, data } };
+        } catch (error) {
+            // This is the pre-ceremony lookup only, never a failed assertion.
+            if (error.status !== 401 || error.code !== 'AUTHENTICATION_FAILED') throw error;
+        }
+        try {
+            await this.prepareAccount(username);
+            return { kind: 'register' };
+        } catch (error) {
+            // Only the initializer's explicit conflict selects login. Network,
+            // rate-limit, server, and passkey failures must not change flows.
+            if (error.status === 409 && error.code === 'USERNAME_UNAVAILABLE') {
+                return { kind: 'login' };
+            }
+            throw error;
+        }
+    }
+
+    /** Prepare a new account ID, challenge, and locally generated master key. */
     async prepareAccount(usernameInput = null) {
         // Clean up any previous pending account
         this.cancelPendingAccount();
@@ -2388,7 +2413,7 @@ class AccountService {
 
     async unlockWithPasskey(
         accountIdInput,
-        { mediation, silent = false, action = 'unlock', username = null } = {}
+        { mediation, silent = false, action = 'unlock', username = null, preparedChallenge = null } = {}
     ) {
         if (this.state.busy) return false;
         if (!this.state.passkeySupported) {
@@ -2417,7 +2442,10 @@ class AccountService {
             const credentialMatchesIdentifier = normalizedUsername
                 ? this.state.username === normalizedUsername
                 : true;
-            const challengeData = await fetchJson('/auth/challenge', {
+            if (preparedChallenge && preparedChallenge.username !== normalizedUsername) {
+                throw new Error('Authentication failed');
+            }
+            const challengeData = preparedChallenge?.data || await fetchJson('/auth/challenge', {
                 accountId: normalizedUsername ? undefined : accountId,
                 username: normalizedUsername || undefined,
                 credentialId: credentialMatchesIdentifier

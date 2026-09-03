@@ -37,6 +37,14 @@ reading code alone.
 
 ## 2026-09-03: Pseudonymous username accounts use one authentication passkey
 
+- Login is now the compact **Log in** / Google / **Username** / **Continue**
+  surface. Username is an input placeholder with an accessible name, not a
+  visible label or example handle. Introductory/helper copy and the separate
+  signup/account-number rows are removed. Continue checks for a username
+  challenge before reserving a new account; successful lookups reuse the
+  challenge. Only typed lookup/registration errors select another flow, never
+  passkey cancellation, network failure, or rate limiting. The button is
+  single-flight and a close/reopen invalidates its pending lookup.
 - The commercial landing page renders Username directly below Google and above
   the OR/access-code row. Both text rows share the same visual control rules,
   while independent handlers preserve the existing Google and anonymous
@@ -61,7 +69,9 @@ reading code alone.
 - Existing account-number clients and users remain supported. `/auth/init`
   still accepts no body, old request/response fields and recovery derivation
   remain unchanged, and a saved legacy account automatically receives the
-  account-number login UI. Users can also select that path manually.
+  account-number login UI. Manual account-number entry on a fresh device is
+  intentionally removed per the product decision; saved legacy login/recovery
+  remains available and the backend protocol is unchanged.
 - Username challenge and login responses must resolve to the account already
   saved on the device. Creating or switching to a different username requires
   the existing explicit **Forget saved account** action, preserving the same
@@ -71,14 +81,14 @@ reading code alone.
   OA limits every attempt by the trusted client IP and adds a hashed-username
   bucket only after a failed lookup or proof; a third party therefore cannot
   exhaust a public-name quota and lock out a valid owner.
-- The Create action passes an explicit username into account preparation. Blank
+- The Continue action passes an explicit username into account preparation. Blank
   or invalid input fails validation and cannot fall through to the retained
   no-body legacy account-number initializer.
 - Conditional auto-unlock also uses the username route for a saved username
   account. Falling back to the legacy opaque-ID route would authenticate but
   clear the local username label when settings are persisted.
-- Usernames are visible stable pseudonyms, so the UI tells users not to reuse an
-  email, real name, or identifying handle. They never accompany ticket
+- Usernames are visible stable pseudonyms; the compact login no longer displays
+  pseudonym guidance. They never accompany ticket
   redemption or inference. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for
   the protocol, compatibility, and privacy boundaries.
 - Username accounts mark encrypted sync as identity-backed, like SSO accounts,
