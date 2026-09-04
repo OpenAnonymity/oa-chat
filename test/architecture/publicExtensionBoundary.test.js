@@ -99,10 +99,10 @@ test('public HTML keeps Account and contains only invisible generic extension ho
 test('account footer keeps stable full-row trigger and menu dimensions', () => {
     const styles = read('chat/styles.css');
     assert.match(styles, /\.account-nav\s*\{[^}]*padding:\s*0;/s);
-    assert.match(styles, /\.account-tab-btn\s*\{[^}]*min-height:\s*2\.5rem;[^}]*padding:\s*0\.25rem 1rem;[^}]*border:\s*0;[^}]*border-radius:\s*0;/s);
-    assert.match(styles, /@media \(any-pointer: coarse\)\s*\{\s*\.account-tab-btn\s*\{[^}]*min-height:\s*2\.75rem;/s);
+    assert.match(styles, /\.account-tab-btn\s*\{[^}]*min-height:\s*3rem;[^}]*padding:\s*0\.25rem 1rem;[^}]*border:\s*0;[^}]*border-radius:\s*0;/s);
+    assert.doesNotMatch(styles, /@media \(any-pointer: coarse\)\s*\{\s*\.account-tab-btn/);
     assert.match(styles, /\.account-tab-avatar\s*\{[^}]*width:\s*1\.75rem;[^}]*height:\s*1\.75rem;/s);
-    assert.match(styles, /\.sidebar-main-content\s*\{[^}]*padding-bottom:\s*3rem !important;/s);
+    assert.match(styles, /\.sidebar-main-content\s*\{[^}]*padding-bottom:\s*3\.5rem !important;/s);
     assert.match(styles, /\.account-settings-menu\s*\{[^}]*right:\s*0\.5rem;[^}]*left:\s*0\.5rem/s);
     assert.match(styles, /\.account-menu-item\s*\{[^}]*min-height:\s*2\.625rem/s);
     assert.match(styles, /\.account-tab-btn\[data-status="loading"\]\s*\{[^}]*cursor:\s*wait/s);

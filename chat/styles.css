@@ -5598,7 +5598,7 @@ html {
 }
 
 .sidebar-main-content {
-    padding-bottom: 3rem !important;
+    padding-bottom: 3.5rem !important;
 }
 
 .account-nav {
@@ -5627,7 +5627,8 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
-    min-height: 2.5rem;
+    /* Restore the previous 49px footer: 48px trigger plus its top divider. */
+    min-height: 3rem;
     padding: 0.25rem 1rem;
     border: 0;
     border-radius: 0;
@@ -5635,13 +5636,6 @@ html {
     color: hsl(var(--color-foreground));
     text-align: left;
     transition: background-color 0.14s ease-out;
-}
-
-/* Keep the compact desktop footer easy to tap on touch devices. */
-@media (any-pointer: coarse) {
-    .account-tab-btn {
-        min-height: 2.75rem;
-    }
 }
 
 .account-bootstrap-status {

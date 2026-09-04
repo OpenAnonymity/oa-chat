@@ -48,12 +48,13 @@ reading code alone.
   be saved. Once the durable key is stored, a later synchronization failure
   keeps the account unlocked and schedules restoration again; it must never be
   relabeled as a missing passkey.
-- The compact footer uses a 2.5rem full-width trigger (2.75rem with a coarse
-  pointer), a 1.75rem avatar, and no outer padding. The square-cornered trigger
+- The footer restores its previous 49px total height at the user's request:
+  a 3rem full-width trigger plus its 1px top border, for mouse and touch alike.
+  The 1.75rem avatar and zero outer padding remain. The square-cornered trigger
   paints hover/focus/pressed feedback edge-to-edge; horizontal spacing lives
   inside it, and pressing does not scale it into an inset highlight. The
-  sidebar reserves 3rem below its content so the shortened footer still clears
-  the last chat, including with the larger touch target. The settings menu stays
+  sidebar reserves 3.5rem below its content so the restored footer still clears
+  the last chat. The settings menu stays
   anchored to the footer row with 0.5rem side insets and 2.625rem rows.
   The settings gear, flat open
   trigger, menu typography, hover states, focus restoration, and keyboard
