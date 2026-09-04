@@ -34,7 +34,7 @@ reading code alone.
   proceeds directly into chat; a verified locked account opens the encryption-
   passkey UI; and a genuinely signed-out account opens the Google UI. The
   signed-in Account summary is never opened by this route.
-- The footer keeps its stable 52px geometry but renders no visible provisional
+- The footer keeps its compact 49px geometry but renders no visible provisional
   identity until verification settles. A visually hidden live region announces
   account restoration to assistive technology. Opening the footer during that
   interval still shows the neutral restoration dialog; verified actions and
@@ -48,9 +48,11 @@ reading code alone.
   be saved. Once the durable key is stored, a later synchronization failure
   keeps the account unlocked and schedules restoration again; it must never be
   relabeled as a missing passkey.
-- Preserve the existing footer geometry: the full-width trigger is 3.25rem
-  tall, the settings menu is anchored to the footer row with `left/right:
-  -0.5rem`, and its rows remain 2.625rem tall. The settings gear, flat open
+- The compact footer uses a 2.75rem full-width trigger, a 2rem avatar, and
+  0.125rem vertical outer padding. The sidebar reserves 3.5rem below its content
+  so the shortened footer still clears the last chat. The settings menu stays
+  anchored to the footer row with 0.5rem side insets and 2.625rem rows.
+  The settings gear, flat open
   trigger, menu typography, hover states, focus restoration, and keyboard
   navigation remain part of the contract.
 

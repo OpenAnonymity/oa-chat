@@ -5582,7 +5582,7 @@ html {
 }
 
 .sidebar-main-content {
-    padding-bottom: 4.25rem !important;
+    padding-bottom: 3.5rem !important;
 }
 
 .account-nav {
@@ -5591,7 +5591,7 @@ html {
     bottom: 0;
     left: 0;
     z-index: 30;
-    padding: 0.375rem 0.75rem;
+    padding: 0.125rem 0.75rem;
     border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background) / 0.96);
     backdrop-filter: blur(12px);
@@ -5611,7 +5611,7 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
-    min-height: 3rem;
+    min-height: 2.75rem;
     padding: 0.25rem;
     border: 1px solid transparent;
     border-radius: 0.5rem;
@@ -5668,8 +5668,8 @@ html {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 2rem;
+    height: 2rem;
     border: 1px solid hsl(var(--color-border));
     border-radius: 9999px;
     background: hsl(var(--color-muted) / 0.7);
