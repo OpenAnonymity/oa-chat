@@ -4049,8 +4049,8 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
     transition-timing-function: var(--system-panel-open-ease), var(--system-panel-open-ease), var(--system-panel-open-ease);
 }
 
-/* Retain the original compact rows and 16px gap; draw only the full-width
-   divider in that gap, including when ticket help or preparation is expanded. */
+/* Keep compact typography with 12px breathing room on either side of the
+   divider, including when ticket help or preparation is expanded. */
 .oa-right-panel-ticket-summary {
     position: relative;
 }
@@ -4058,7 +4058,7 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
 .system-panel-divider {
     position: absolute;
     right: -12px;
-    bottom: -8px;
+    bottom: -12px;
     left: -12px;
     height: 1px;
     background: hsl(var(--color-border));

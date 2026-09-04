@@ -104,7 +104,7 @@ test('commercial ticket management replaces right-panel redemption with one comp
     assert.match(source, /aria-label="\$\{ticketSummary\.ariaLabel\}"/);
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);
-    assert.match(source, /oa-right-panel-access-stack grid gap-4 p-3/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-6 p-3/);
     assert.match(source, /class="system-panel-divider" aria-hidden="true"/);
     assert.match(source, /oa-right-panel-ticket-summary min-w-0/);
     assert.match(source, /oa-right-panel-access-key min-w-0/);
@@ -244,9 +244,9 @@ test('System Panel restores original typography and retains only a non-layout di
     assert.match(source, /<h2 class="text-sm font-semibold text-foreground">System Panel<\/h2>/);
     assert.match(source, /text-left text-xs font-medium/);
     assert.match(source, /<span class="text-xs font-medium">Ephemeral Access Key<\/span>/);
-    assert.match(source, /oa-right-panel-access-stack grid gap-4 p-3/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-6 p-3/);
     assert.match(source, /data-oa-extension-slot="\$\{SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS\}" hidden><\/div>\s*<div class="system-panel-divider" aria-hidden="true"><\/div>/);
     assert.match(css, /\.oa-right-panel-ticket-summary \{[^}]*position: relative;/);
-    assert.match(css, /\.system-panel-divider \{[^}]*position: absolute;[^}]*right: -12px;[^}]*bottom: -8px;[^}]*left: -12px;[^}]*height: 1px;[^}]*var\(--color-border\)/);
+    assert.match(css, /\.system-panel-divider \{[^}]*position: absolute;[^}]*right: -12px;[^}]*bottom: -12px;[^}]*left: -12px;[^}]*height: 1px;[^}]*var\(--color-border\)/);
     assert.doesNotMatch(css, /\.system-panel-(?:header|row|help|close|ticket-trigger)/);
 });

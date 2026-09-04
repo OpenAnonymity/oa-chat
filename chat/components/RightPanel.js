@@ -2012,7 +2012,7 @@ class RightPanel {
 
         return `
                 ${hasExternalTicketManager ? `
-                <div class="oa-right-panel-access-stack grid gap-4 p-3">
+                <div class="oa-right-panel-access-stack grid gap-6 p-3">
                     <div class="oa-right-panel-ticket-summary min-w-0">
                     <div class="flex items-center gap-1.5">
                         <button

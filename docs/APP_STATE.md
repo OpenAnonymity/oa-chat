@@ -160,11 +160,12 @@ reading code alone.
   Account-data/chat/memory export remains independent and never includes
   inference tickets.
 - The System Panel uses its original compact styling: a 14px semibold title,
-  12px medium ticket/key headings, and the original icons, help buttons, and
-  spacing. The larger September 3 heading redesign was reverted at the user's
+  12px medium ticket/key headings, and the original icons and help buttons.
+  The larger September 3 heading redesign was reverted at the user's
   request; only the full-width theme-aware divider remains. It is positioned
-  midway through the commercial stack's original 16px gap without adding
-  layout height. Its anchor follows expanded ticket help and preparation
+  midway through the commercial stack's 24px gap, increased from 16px in a
+  follow-up request for 4px more space on each side of the line. The divider
+  itself adds no layout height. Its anchor follows expanded ticket help and preparation
   status, so the line stays below that content. Live counts, zero-balance,
   pending/live keys, expiry/renewal, and per-key Council attestation remain
   unchanged. The compact bottom-left footer and stylesheet cache versioning
