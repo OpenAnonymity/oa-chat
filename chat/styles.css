@@ -5661,11 +5661,14 @@ html {
 }
 
 .account-tab-btn:focus-visible {
-    /* Unlock restores focus here. Keep it visible without framing the footer
-       in the heavy foreground-colored ring used by menu actions. */
-    outline: 1px solid hsl(var(--color-muted-foreground));
-    outline-offset: -1px;
-    background-color: hsl(var(--color-foreground) / 0.04);
+    /* Unlock restores focus here. Indicate it on the avatar, not a box
+       around the entire footer; keep the row's hover/pressed surfaces intact. */
+    outline: none;
+}
+
+.account-tab-btn:focus-visible .account-tab-avatar {
+    outline: 2px solid hsl(var(--color-ring));
+    outline-offset: 2px;
 }
 
 .account-menu-item:focus-visible {
@@ -5674,9 +5677,8 @@ html {
 }
 
 @media (forced-colors: active) {
-    .account-tab-btn:focus-visible {
+    .account-tab-btn:focus-visible .account-tab-avatar {
         outline: 2px solid Highlight;
-        outline-offset: -2px;
     }
 }
 

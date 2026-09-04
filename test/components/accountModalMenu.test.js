@@ -4,14 +4,17 @@ import { readFileSync } from 'node:fs';
 import AccountModal from '../../chat/components/AccountModal.js';
 import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
 
-test('account footer uses a subtle theme-aware focus indicator and preserves high-contrast focus', () => {
+test('account footer focuses the avatar without boxing or tinting the row, including high contrast', () => {
     const css = readFileSync('chat/styles.css', 'utf8');
     const focusRule = css.match(/\.account-tab-btn:focus-visible\s*\{([^}]+)\}/)?.[1];
     assert.ok(focusRule);
-    assert.match(focusRule, /outline: 1px solid hsl\(var\(--color-muted-foreground\)\)/);
-    assert.match(focusRule, /outline-offset: -1px/);
-    assert.match(focusRule, /background-color: hsl\(var\(--color-foreground\) \/ 0\.04\)/);
-    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*\.account-tab-btn:focus-visible\s*\{\s*outline: 2px solid Highlight/);
+    assert.match(focusRule, /outline: none/);
+    assert.doesNotMatch(focusRule, /background(?:-color)?:|box-shadow:|border:/);
+    const avatarFocusRule = css.match(/\.account-tab-btn:focus-visible \.account-tab-avatar\s*\{([^}]+)\}/)?.[1];
+    assert.ok(avatarFocusRule);
+    assert.match(avatarFocusRule, /outline: 2px solid hsl\(var\(--color-ring\)\)/);
+    assert.match(avatarFocusRule, /outline-offset: 2px/);
+    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*\.account-tab-btn:focus-visible \.account-tab-avatar\s*\{\s*outline: 2px solid Highlight/);
     assert.doesNotMatch(css, /\.account-tab-btn:focus-visible\s*,\s*\.account-menu-item:focus-visible/);
 });
 

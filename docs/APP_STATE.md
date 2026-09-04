@@ -12,7 +12,7 @@ reading code alone.
   migration share the card with their own copy and existing action handlers.
 - The presentation change is scoped to `renderOAuthUnlockUI()`. The neutral Google/Username login,
   immediate landing-to-username passkey handoff, first-account Membership signal,
-  saved legacy-account recovery, and muted footer focus remain intact.
+  saved legacy-account recovery, and footer focus restoration remain intact.
 - Escape and the compact close button dismiss the unlock card without
   decrypting data or signing Google out. The secondary **Log out** action
   remains available after a failed/cancelled passkey so a locked account can
@@ -21,10 +21,12 @@ reading code alone.
 
 ## 2026-09-02: Authentication intent waits for account restoration
 
-- Returning focus to the account footer after unlock uses a thin, inset muted
-  outline and subtle surface tint in both themes, not the heavy menu-item ring.
-  Keyboard focus restoration is unchanged; forced-colors mode retains a stronger
-  system-color outline. Keep this scoped to the footer, not other controls.
+- Returning focus to the account footer after unlock no longer draws a rectangle
+  or a focus-only tint over the full row. `:focus-visible` instead outlines the
+  small round avatar with the theme's focus color (system `Highlight` in
+  forced-colors mode). Focus still returns to the same button; keyboard and
+  menu navigation are unchanged. Hover and pressed feedback remain full-width.
+  Keep this CSS-only treatment scoped to the footer, not other controls.
 - The commercial landing page now hands Google entry to `/chat/?auth=google`;
   this is distinct from `membership=1`, which remains an explicit billing UI
   request. Core chat owns the one-use auth intent and removes it with
@@ -51,7 +53,7 @@ reading code alone.
 - The footer restores its previous 49px total height at the user's request:
   a 3rem full-width trigger plus its 1px top border, for mouse and touch alike.
   The 1.75rem avatar and zero outer padding remain. The square-cornered trigger
-  paints hover/focus/pressed feedback edge-to-edge; horizontal spacing lives
+  paints hover/pressed feedback edge-to-edge; horizontal spacing lives
   inside it, and pressing does not scale it into an inset highlight. The
   sidebar reserves 3.5rem below its content so the restored footer still clears
   the last chat. The settings menu stays
