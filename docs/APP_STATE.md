@@ -4,6 +4,27 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Current-base modal title alignment
+
+- Port the intent of old commit `9f660e0` onto public Chat `b37e246`; do not
+  deploy or pin its obsolete `ca47d9d` parent. This preserves the later compact
+  login, unified username/Google encryption, Memory fallback, Welcome-back
+  no-logout behavior,
+  Account focus, Membership, and invoice behavior in the commercial composition.
+- `renderHeader()` and the compact login use semantic `h2.account-dialog-title`
+  at 22px/600/-0.01em, matching Billing & Plan's title scale. The current
+  left-aligned compact-login layout, 48px controls, 32px desktop/24px narrow
+  card padding, radii, close target, body copy, and handlers remain unchanged.
+  Its Google label alone moves from 16px to 15px.
+- The shared Welcome/Encrypt title keeps its existing 26px size, line height,
+  tracking, and card layout while moving from the newer 500 weight to the
+  explicitly requested 600. The account-number and recovery headers use the same
+  shared Account title rule.
+- The sans stack puts `system-ui` and `-apple-system` before the named SF Pro Text
+  font, allowing platform optical sizing for larger text. This is a global
+  family-order change, so browser verification covers body copy as well as the
+  compact Account, login, and Welcome surfaces in both themes and narrow widths.
+
 ## 2026-09-04: Quiet pointer focus in the Account menu
 
 - The menu still focuses its first item on opening for Escape/arrow navigation.

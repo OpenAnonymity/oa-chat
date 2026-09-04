@@ -14,6 +14,9 @@
     <input aria-label="Simulated login input" placeholder="Type to reproduce login focus">
     <button id="complete">Simulate focus after login</button>
     <button id="inherited">Simulate inherited login focus</button>
+    <button id="login">Open login</button>
+    <button id="account">Open Account</button>
+    <button id="welcome">Open Welcome back</button>
     <button id="theme">Switch theme</button>
 </nav>
 <p id="fixture-result" role="status">Fixture only: no real authentication, billing, or account changes.</p>
@@ -54,6 +57,24 @@ document.getElementById('inherited').onclick = () => {
     document.querySelector('input').focus();
     modal.openAccountMenu(document.getElementById('account-tab-btn'), { fromPointer: true });
     report('Inherited input focus simulated. No pointer-only Account ring should appear.');
+};
+document.getElementById('login').onclick = event => {
+    modal.closeAccountMenu();
+    modal.close();
+    modal.accountState = { authBootstrapComplete: true, accountId: null, sessionVerified: false, status: 'none', passkeySupported: true };
+    modal.open(event.currentTarget);
+};
+document.getElementById('account').onclick = event => {
+    modal.closeAccountMenu();
+    modal.close();
+    modal.accountState = { ...state };
+    modal.open(event.currentTarget);
+};
+document.getElementById('welcome').onclick = event => {
+    modal.closeAccountMenu();
+    modal.close();
+    modal.accountState = { ...state, status: 'locked', oauthKeyringRequired: true };
+    modal.open(event.currentTarget);
 };
 document.getElementById('theme').onclick = () => document.documentElement.classList.toggle('dark');
 </script>

@@ -1013,7 +1013,7 @@ class AccountModal {
     renderHeader(title, showClose = true, className = '') {
         return `
             <div class="flex items-center justify-between mb-4 ${className}">
-                <h3 id="account-modal-title" class="text-base font-medium text-foreground">${title}</h3>
+                <h2 id="account-modal-title" class="account-dialog-title">${title}</h2>
                 ${showClose ? `
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -1441,7 +1441,7 @@ class AccountModal {
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}${usesAccountId ? '' : ' account-login-dialog'}"${usesAccountId ? ' style="padding:24px 24px 18px"' : ''}>
                 <div class="${usesAccountId ? 'flex items-center justify-between mb-4' : 'account-login-heading'}">
-                    <h3 id="account-modal-title" class="text-base font-medium text-foreground">Log in</h3>
+                    <h2 id="account-modal-title" class="account-dialog-title">Log in</h2>
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
