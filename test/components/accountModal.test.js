@@ -191,6 +191,7 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.match(html, /id="account-google-btn"[\s\S]*class="account-login-divider" aria-hidden="true">or<\/div>[\s\S]*id="account-username-input"/);
         assert.match(html, /class="account-login-control"[\s\S]*id="account-username-input"[\s\S]*id="account-passkey-btn"[\s\S]*<\/div>/);
         assert.match(html, /id="account-passkey-btn"[^>]*aria-label="Continue"/);
+        assert.doesNotMatch(html, /id="account-google-btn"[^>]*hover:bg-accent/);
         assert.match(html, /<svg class="account-login-arrow" aria-hidden="true"[^>]*viewBox="0 0 16 16"[^>]*fill="none"[^>]*stroke="currentColor"[^>]*stroke-width="1.5"/);
         assert.equal((html.match(/id="account-passkey-btn"/g) || []).length, 1);
         assert.doesNotMatch(html, /bg-blue-600|>\s*Continue\s*<\/button>/);
@@ -327,6 +328,14 @@ test('username login uses the narrower reference card with neutral accessible co
     assert.match(css, /\.account-login-input\s*\{[^}]*font-size: 1rem/);
     assert.match(css, /html\[data-keyboard-nav\] \.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
     assert.match(css, /\.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow: inset 0 0 0 1000px hsl\(var\(--color-background\)\)/);
+    assert.match(css, /@media \(hover: hover\) and \(pointer: fine\)\s*\{/);
+    assert.match(css, /\.account-login-dialog #account-google-btn:hover:not\(:disabled\),\s*\.account-login-dialog \.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover\s*\{[^}]*background-color: hsl\(var\(--color-foreground\) \/ 0\.03\) !important;[^}]*border-color: hsl\(var\(--color-muted-foreground\) \/ 0\.5\) !important/);
+    assert.match(css, /\.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover \.account-login-submit\s*\{[^}]*border-left-color: hsl\(var\(--color-muted-foreground\) \/ 0\.5\)/);
+    assert.match(css, /\.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover \.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow:[^}]*hsl\(var\(--color-foreground\) \/ 0\.03\)[^}]*hsl\(var\(--color-background\)\)/);
+    assert.match(css, /\.dark \.account-login-dialog #account-google-btn:hover:not\(:disabled\),\s*\.dark \.account-login-dialog \.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover\s*\{[^}]*background-color: hsl\(0 0% 100% \/ 0\.06\) !important;[^}]*border-color: hsl\(0 0% 100% \/ 0\.3\) !important/);
+    assert.doesNotMatch(css, /\.dark \.account-login-dialog #account-google-btn:hover:not\(:disabled\)\s*\{/);
+    assert.doesNotMatch(css, /\.account-login-submit:hover:not\(:disabled\)/);
+    assert.doesNotMatch(css, /\.account-login-dialog #account-google-btn:hover:not\(:disabled\)[^{]*\{[^}]*(?:box-shadow|transform):/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-login-spinner\s*\{\s*animation: none/);
 });
 
@@ -962,6 +971,7 @@ test('saved legacy passkey accounts keep the account-number login path', async (
         assert.equal(modal.getIdentifierMode(), 'accountId');
         const html = modal.renderAccountUI();
         assert.match(html, /id="account-id-input"/);
+        assert.match(html, /id="account-google-btn"[^>]*hover:bg-accent/);
         assert.match(html, /style="padding:24px 24px 18px"/);
         assert.doesNotMatch(html, /account-login-dialog|account-login-heading|account-login-divider|account-login-arrow/);
         assert.match(html, /1234 5678 9012 3456/);
