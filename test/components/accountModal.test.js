@@ -1464,7 +1464,7 @@ test('identity account describes ticket and preference sync', () => {
         assert.match(html, /dominic@example\.com/);
         assert.match(html, /Sync now|Retry sync/);
         assert.match(html, /Passkey &amp; encryption/);
-        assert.match(html, /id="account-passkey-details"[^>]*hidden/);
+        assert.match(html, /id="account-passkey-details"[^>]*data-open="false"[^>]*aria-hidden="true" inert/);
         assert.match(html, /Tickets and preferences sync encrypted with your passkey/);
         assert.doesNotMatch(html, /Account identity|Synchronization|Connected provider/);
         assert.doesNotMatch(html, /device-only/);
@@ -1472,7 +1472,7 @@ test('identity account describes ticket and preference sync', () => {
         modal.togglePasskeyDetails();
         html = modal.renderAccountUI();
         assert.match(html, /aria-expanded="true"/);
-        assert.match(html, /id="account-passkey-details" class="account-compact-detail" >/);
+        assert.match(html, /id="account-passkey-details"[^>]*data-open="true"[^>]*aria-hidden="false">/);
         assert.match(html, /End-to-end encrypted/);
         assert.match(html, /Google connected/);
     } finally {
@@ -1488,6 +1488,7 @@ test('passkey disclosure updates mounted nodes without rerendering', () => {
         setAttribute(name, value) { attributes[name] = value; }
     };
     const detail = {
+        setAttribute(name, value) { detailAttributes[name] = value; },
         toggleAttribute(name, enabled) { detailAttributes[name] = enabled; }
     };
     const modal = {
@@ -1503,12 +1504,20 @@ test('passkey disclosure updates mounted nodes without rerendering', () => {
     AccountModal.prototype.togglePasskeyDetails.call(modal);
     assert.equal(modal.passkeyDetailsOpen, true);
     assert.deepEqual(attributes, { 'aria-expanded': 'true' });
-    assert.deepEqual(detailAttributes, { hidden: false });
+    assert.deepEqual(detailAttributes, {
+        'data-open': 'true',
+        'aria-hidden': 'false',
+        inert: false
+    });
 
     AccountModal.prototype.togglePasskeyDetails.call(modal);
     assert.equal(modal.passkeyDetailsOpen, false);
     assert.deepEqual(attributes, { 'aria-expanded': 'false' });
-    assert.deepEqual(detailAttributes, { hidden: true });
+    assert.deepEqual(detailAttributes, {
+        'data-open': 'false',
+        'aria-hidden': 'true',
+        inert: true
+    });
 });
 
 test('username account displays the pseudonym and hides its internal account ID', () => {

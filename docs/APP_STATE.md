@@ -4,6 +4,16 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Account disclosure opens with invoice-style motion
+
+- **Passkey & encryption** stays mounted and expands with the same 240ms
+  grid-row easing used by Membership's **Invoices** disclosure. Content opacity
+  settles during the height transition instead of appearing all at once.
+- The collapsed panel is `aria-hidden` and `inert`; reduced-motion users receive
+  the same state change without animation. The toggle still updates mounted
+  nodes without rebuilding the Account modal, and no authentication, passkey,
+  encryption, sync, or account-state behavior changes.
+
 ## 2026-09-04: Landing authentication handoffs require an identity match
 
 - A restored account now satisfies `/chat/?auth=google` only when it is a Google
@@ -28,7 +38,7 @@ reading code alone.
   same 18px downward chevron and 240ms easing as Membership's **Invoices**
   disclosure. It rotates upward when expanded and disables the transition under
   reduced motion.
-- Toggling updates the mounted `aria-expanded` and `hidden` state in place
+- Toggling updates the mounted `aria-expanded`, `aria-hidden`, and `inert` state in place
   instead of rebuilding the modal, preserving button focus and allowing the
   transition to complete. Authentication, passkey, encryption, and account
   state behavior are unchanged. Commercial compositions must pin the public

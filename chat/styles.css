@@ -6204,15 +6204,34 @@ html {
 
 .account-compact-detail {
     display: grid;
-    gap: 0.35rem;
-    padding: 0.125rem 0.5rem 0.75rem;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    visibility: hidden;
     color: hsl(var(--color-muted-foreground));
     font-size: 0.75rem;
     line-height: 1.5;
+    transition:
+        grid-template-rows 240ms cubic-bezier(.2, 0, 0, 1),
+        opacity 160ms cubic-bezier(.2, 0, 0, 1),
+        visibility 0s 240ms;
 }
 
-.account-compact-detail[hidden] {
-    display: none;
+.account-compact-detail[data-open="true"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+.account-compact-detail-clip {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.account-compact-detail-content {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.125rem 0.5rem 0.75rem;
 }
 
 .account-compact-detail p {
@@ -6258,7 +6277,8 @@ html {
 
 @media (prefers-reduced-motion: reduce) {
     .account-compact-row,
-    .account-compact-chevron {
+    .account-compact-chevron,
+    .account-compact-detail {
         transition: none;
     }
 }

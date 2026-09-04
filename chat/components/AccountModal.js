@@ -942,7 +942,9 @@ class AccountModal {
             return;
         }
         button.setAttribute('aria-expanded', String(this.passkeyDetailsOpen));
-        detail.toggleAttribute('hidden', !this.passkeyDetailsOpen);
+        detail.setAttribute('data-open', String(this.passkeyDetailsOpen));
+        detail.setAttribute('aria-hidden', String(!this.passkeyDetailsOpen));
+        detail.toggleAttribute('inert', !this.passkeyDetailsOpen);
     }
 
     async handleForgetSavedAccount() {
@@ -1424,11 +1426,13 @@ class AccountModal {
                             <span class="account-compact-row-label">Passkey &amp; encryption</span>
                             <svg class="account-compact-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                         </button>
-                        <div id="account-passkey-details" class="account-compact-detail" ${this.passkeyDetailsOpen ? '' : 'hidden'}>
-                            <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesNamedLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
-                            <p>Tickets and preferences sync encrypted with your passkey.</p>
-                            ${state.googleLinked ? `<p class="account-compact-provider">${this.renderOAuthProviderIcon('google', 'w-3.5 h-3.5')} Google connected</p>` : ''}
-                            ${!usesNamedLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
+                        <div id="account-passkey-details" class="account-compact-detail" data-open="${this.passkeyDetailsOpen}" aria-hidden="${!this.passkeyDetailsOpen}"${this.passkeyDetailsOpen ? '' : ' inert'}>
+                            <div class="account-compact-detail-clip"><div class="account-compact-detail-content">
+                                <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesNamedLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
+                                <p>Tickets and preferences sync encrypted with your passkey.</p>
+                                ${state.googleLinked ? `<p class="account-compact-provider">${this.renderOAuthProviderIcon('google', 'w-3.5 h-3.5')} Google connected</p>` : ''}
+                                ${!usesNamedLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
+                            </div></div>
                         </div>
                         <div data-account-actions>
                             <button id="account-clear-btn" class="account-compact-row" type="button" ${isBusy ? 'disabled' : ''}>Log out</button>

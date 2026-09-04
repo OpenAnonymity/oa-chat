@@ -121,6 +121,9 @@ test('signed-in Account uses the compact identity and disclosure treatment', () 
     assert.match(styles, /\.account-compact-row:active:not\(:disabled\)\s*\{[^}]*transform:\s*scale\(0\.985\)/s);
     assert.match(styles, /\.account-compact-chevron\s*\{[^}]*width:\s*1\.125rem;[^}]*height:\s*1\.125rem;[^}]*transition:\s*transform 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
     assert.match(styles, /\.account-compact-row\[aria-expanded="true"\] \.account-compact-chevron\s*\{[^}]*rotate\(180deg\)/s);
+    assert.match(styles, /\.account-compact-detail\s*\{[^}]*grid-template-rows:\s*0fr;[^}]*opacity:\s*0;[^}]*grid-template-rows 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
+    assert.match(styles, /\.account-compact-detail\[data-open="true"\]\s*\{[^}]*grid-template-rows:\s*1fr;[^}]*opacity:\s*1/s);
+    assert.match(styles, /\.account-compact-detail-clip\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/s);
     assert.match(accountModal, /id="account-passkey-details-btn"[^>]+aria-expanded="\$\{this\.passkeyDetailsOpen\}"/);
     assert.match(accountModal, /class="account-compact-chevron"[^>]+viewBox="0 0 24 24"[^>]+stroke-linecap="round"[^>]+stroke-linejoin="round"[^>]*><path d="m6 9 6 6 6-6"/);
     assert.match(accountModal, /id="account-clear-btn" class="account-compact-row"/);
