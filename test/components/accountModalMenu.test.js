@@ -12,7 +12,7 @@ test('account footer only outlines the avatar outside automatic post-auth focus,
     assert.doesNotMatch(focusRule, /background(?:-color)?:|box-shadow:|border:/);
     const avatarFocusRule = css.match(/\.account-tab-btn:focus-visible:not\(\[data-auth-restored-focus\]\) \.account-tab-avatar\s*\{([^}]+)\}/)?.[1];
     assert.ok(avatarFocusRule);
-    assert.match(avatarFocusRule, /outline: 2px solid hsl\(var\(--color-ring\)\)/);
+    assert.match(avatarFocusRule, /outline: 2px solid hsl\(var\(--color-focus-ring\)\)/);
     assert.match(avatarFocusRule, /outline-offset: 2px/);
     assert.match(css, /@media \(forced-colors: active\)\s*\{\s*\.account-tab-btn:focus-visible:not\(\[data-auth-restored-focus\]\) \.account-tab-avatar\s*\{\s*outline: 2px solid Highlight/);
     assert.doesNotMatch(css, /\.account-tab-btn:focus-visible \.account-tab-avatar\s*\{/);

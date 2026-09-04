@@ -4,6 +4,22 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Focus indicators do not use black UI boxes
+
+- All app-owned focus treatments share a dedicated OA-blue focus token rather
+  than the near-black light-theme foreground token. This covers the fallback
+  `:focus-visible` outline, Tailwind ring utilities, and component-specific
+  focus styles without changing non-focus borders. Controls with their own
+  component treatment continue to override the low-specificity fallback, and
+  pointer focus on non-text controls remains quiet.
+- The model picker still focuses search immediately so users can type without
+  a second click. Its full rectangular outline is replaced by a two-pixel blue
+  underline on the existing search row, avoiding a black box while preserving
+  a visible focus state. The underline clears when focus moves to the close
+  button. Forced-colors mode retains a system `Highlight` outline.
+- Model filtering, keyboard navigation, selection, modal focus movement, and
+  light/dark theme tokens are otherwise unchanged.
+
 ## 2026-09-04: Account footer uses a unified disclosure chevron
 
 - The bottom-left account identity row remains one full-width button. Its

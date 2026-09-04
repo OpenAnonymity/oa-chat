@@ -29,6 +29,7 @@
     /* Accent color (active toggles, primary highlights) */
     --color-accent-primary: var(--blue-500);
     --color-accent-primary-foreground: 0 0% 100%;
+    --color-focus-ring: var(--blue-500);
 
     /* Frosted glass effect - adjust opacity (0-1) and blur (px) */
     --glass-opacity: 0.82;
@@ -113,15 +114,15 @@
 :root,
 .dark {
     --tw-ring-offset-color: hsl(var(--color-background));
-    --tw-ring-color: hsl(var(--color-ring));
+    --tw-ring-color: hsl(var(--color-focus-ring));
 }
 
 /* One focus ring for the whole app. Low specificity (:where) so components
    that draw their own ring (Tailwind focus-visible:ring-2, in-page find)
-   keep it; everything else gets this instead of the browser default.
-   Mouse focus shows nothing. */
+   keep it; everything else gets the dedicated focus color instead of the
+   browser default or the near-black foreground token. Mouse focus shows nothing. */
 :where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
 :where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus:not(:focus-visible) {
@@ -172,8 +173,8 @@ code, pre, kbd, .font-mono {
 }
 
 .in-page-find:focus-within {
-    border-color: hsl(var(--color-ring) / 0.55);
-    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-ring) / 0.12);
+    border-color: hsl(var(--color-focus-ring) / 0.55);
+    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-focus-ring) / 0.12);
 }
 
 .in-page-find__search-icon {
@@ -233,7 +234,7 @@ code, pre, kbd, .font-mono {
 }
 
 .in-page-find__button:focus-visible {
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.3);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.3);
 }
 
 .in-page-find__button:disabled {
@@ -3037,6 +3038,25 @@ textarea:focus {
     align-items: center;
 }
 
+/* The picker intentionally focuses search as it opens. A full input outline
+   therefore reads as a selected black box even after pointer activation.
+   Keep the active field clear with a quiet accent underline instead. */
+.model-picker-search:has(> #model-search:focus) {
+    box-shadow: inset 0 -2px 0 hsl(var(--color-focus-ring));
+}
+
+#model-search:focus,
+#model-search:focus-visible {
+    outline: none;
+}
+
+@media (forced-colors: active) {
+    #model-search:focus-visible {
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+}
+
 /* Chat area styling */
 .chat-container {
     background: linear-gradient(to bottom, transparent, hsl(var(--color-background)) 10%);
@@ -5567,8 +5587,8 @@ html {
 
 /* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */
 .input-focus-clean:focus {
-    border-color: hsl(var(--color-ring) / 0.6);
-    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
     outline: none;
 }
 
@@ -5590,8 +5610,8 @@ html {
 
 /* Right panel invitation code: highlight the full input+button shell */
 .invitation-code-input-shell:focus-within {
-    border-color: hsl(var(--color-ring) / 0.6);
-    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
 }
 
 /* Shared subtle hover effect for secondary buttons */
@@ -5681,12 +5701,12 @@ html {
 }
 
 .account-tab-btn:focus-visible:not([data-auth-restored-focus]) .account-tab-avatar {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
 
 .account-menu-item:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
 
@@ -5955,7 +5975,7 @@ html {
 
 .account-compact-row:focus-visible,
 .account-compact-copy-id:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
 
@@ -6041,7 +6061,7 @@ html {
 
 .account-unlock-close:focus-visible,
 .account-unlock-signout:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
 
@@ -6116,7 +6136,7 @@ html {
 }
 
 .account-unlock-btn:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
 
@@ -6172,7 +6192,7 @@ html {
 }
 
 .account-unlock-input:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
 
@@ -6601,7 +6621,7 @@ html {
 
 .update-toast button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.5);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.5);
 }
 
 .update-toast--stacked {
@@ -6766,8 +6786,8 @@ html {
 }
 
 .account-login-control:focus-within {
-    border-color: hsl(var(--color-muted-foreground));
-    box-shadow: 0 0 0 1px hsl(var(--color-muted-foreground));
+    border-color: hsl(var(--color-focus-ring) / 0.7);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .account-login-submit {
@@ -6783,7 +6803,7 @@ html {
 }
 
 .account-login-submit:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: -3px;
 }
 
@@ -6960,7 +6980,7 @@ html {
 
 .split-result-icon-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .split-result-share {
@@ -6990,7 +7010,7 @@ html {
 
 .split-result-share-link:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .split-result-share-copy-btn {
@@ -7017,7 +7037,7 @@ html {
 
 .split-result-share-copy-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 @media (max-width: 400px) {
@@ -7610,8 +7630,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
 /* Focus state when input is focused */
 .pin-input-container:focus-within .pin-box:not(.filled):first-of-type,
 .pin-input-container:focus-within .pin-box.active {
-    border-color: hsl(var(--color-primary));
-    box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.2);
+    border-color: hsl(var(--color-focus-ring));
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.2);
 }
 
 .toggle-pin-visibility {
