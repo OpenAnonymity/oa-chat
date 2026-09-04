@@ -120,11 +120,11 @@
    that draw their own ring (Tailwind focus-visible:ring-2, in-page find)
    keep it; everything else gets this instead of the browser default.
    Mouse focus shows nothing. */
-:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
     outline: 2px solid hsl(var(--color-ring));
     outline-offset: 2px;
 }
-:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus:not(:focus-visible) {
+:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus:not(:focus-visible) {
     outline: none;
 }
 

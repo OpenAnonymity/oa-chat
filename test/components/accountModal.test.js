@@ -248,7 +248,8 @@ test('username arrow and Enter retain the same Continue handler, and Google rema
 
 test('account dialogs share one focus ring, close control, dark edges and mobile sheet', () => {
     const css = fs.readFileSync('chat/styles.css', 'utf8');
-    assert.match(css, /:where\(a\[href\], button, input, select, textarea, summary, \[role="button"\], \[tabindex\]\):focus-visible\s*\{[^}]*outline: 2px solid hsl\(var\(--color-ring\)\);[^}]*outline-offset: 2px/);
+    assert.match(css, /:where\(a\[href\], button, input, select, textarea, summary, \[role="button"\], \[tabindex\]:not\(\[tabindex="-1"\]\)\):focus-visible\s*\{[^}]*outline: 2px solid hsl\(var\(--color-ring\)\);[^}]*outline-offset: 2px/);
+    assert.doesNotMatch(css, /\[tabindex\]\):focus-visible/);
     assert.match(css, /:focus:not\(:focus-visible\)\s*\{[^}]*outline: none/);
     assert.match(css, /#close-account-modal\s*\{[^}]*width: 2rem;[^}]*height: 2rem;[^}]*border-radius: 0.625rem/);
     assert.match(css, /\.dark \.account-login-control\s*\{[^}]*border-color: hsl\(0 0% 100% \/ 0.18\)/);
