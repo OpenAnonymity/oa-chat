@@ -4,6 +4,17 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-03: Lighter login typography
+
+- The compact login card uses the supplied **Login Modal / 1a** proportions:
+  16px Google text, an 18px outlined inline arrow, 48px controls, and a 22px
+  medium heading with tighter line-height/tracking. Google text is regular (400)
+  to address the requested lighter appearance, while retaining OA's system font
+  and theme tokens. The smaller close glyph retains a 32px button target.
+- The shared **Welcome back / Encrypt your data** title now uses weight 500,
+  matching the **Account** title. Its size and layout are unchanged. These are
+  presentation-only changes; auth handlers, Membership, and landing are untouched.
+
 ## 2026-09-03: Preserve the restored compact Memory fallback
 
 - Restore the exact presentation fix from `40d9fad5bde7d7e0667666d91d73626b2cdd1ed7`

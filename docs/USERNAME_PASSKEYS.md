@@ -31,7 +31,11 @@ The login dialog is a compact, rounded card (360px maximum width) with a
 left-aligned **Log in** heading. Google sits above an accessible **Username**
 input with an attached stroked arrow, separated by a subtle lowercase **or**
 divider. Both controls are 48px high. This divider is modal-only: the landing
-still places Username directly below Google. The arrow is named **Continue**
+still places Username directly below Google. The supplied **1a** reference informs
+the 16px Google text, 18px arrow, and tightly set 22px medium heading. Google uses
+regular weight for a lighter appearance; OA's system font and colors are retained.
+The shared encryption-card heading uses the Account title's medium (500) weight.
+The arrow is named **Continue**
 for assistive technology and uses the
 same handler as Enter. It becomes a disabled spinner during authentication.
 The neutral control follows Chat's light/dark theme, including autofill. This

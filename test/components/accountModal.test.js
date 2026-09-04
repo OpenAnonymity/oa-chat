@@ -191,7 +191,7 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.match(html, /id="account-google-btn"[\s\S]*class="account-login-divider" aria-hidden="true">or<\/div>[\s\S]*id="account-username-input"/);
         assert.match(html, /class="account-login-control"[\s\S]*id="account-username-input"[\s\S]*id="account-passkey-btn"[\s\S]*<\/div>/);
         assert.match(html, /id="account-passkey-btn"[^>]*aria-label="Continue"/);
-        assert.match(html, /<svg class="account-login-arrow" aria-hidden="true"[^>]*fill="none"[^>]*stroke="currentColor"/);
+        assert.match(html, /<svg class="account-login-arrow" aria-hidden="true"[^>]*viewBox="0 0 16 16"[^>]*fill="none"[^>]*stroke="currentColor"[^>]*stroke-width="1.5"/);
         assert.equal((html.match(/id="account-passkey-btn"/g) || []).length, 1);
         assert.doesNotMatch(html, /bg-blue-600|>\s*Continue\s*<\/button>/);
         assert.doesNotMatch(html, /Sign in to OA|Choose Google|Use a pseudonym|winter-owl/);
@@ -250,8 +250,10 @@ test('username login uses the narrower reference card with neutral accessible co
     const css = fs.readFileSync('chat/styles.css', 'utf8');
     assert.match(css, /\.account-login-dialog\s*\{[^}]*width: calc\(100% - 2rem\);[^}]*max-width: 22.5rem;[^}]*padding: 2rem;[^}]*border-radius: 1.5rem/);
     assert.match(css, /\.account-login-heading\s*\{[^}]*display: flex;[^}]*justify-content: space-between/);
-    assert.match(css, /\.account-login-heading > h3\s*\{[^}]*font-size: 1.375rem;[^}]*text-align: left/);
-    assert.match(css, /\.account-login-dialog #account-google-btn\s*\{[^}]*height: 3rem/);
+    assert.match(css, /\.account-login-heading > h3\s*\{[^}]*font-size: 1.375rem;[^}]*font-weight: 500;[^}]*line-height: 1.2;[^}]*letter-spacing: -0.01em;[^}]*text-align: left/);
+    assert.match(css, /\.account-login-dialog #account-google-btn\s*\{[^}]*height: 3rem;[^}]*font-size: 1rem;[^}]*font-weight: 400;[^}]*line-height: 1.25/);
+    assert.match(css, /\.account-login-arrow\s*\{[^}]*width: 1.125rem;[^}]*height: 1.125rem/);
+    assert.match(css, /\.account-login-heading > button\s*\{[^}]*width: 2rem;[^}]*height: 2rem/);
     assert.match(css, /\.account-login-control\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) 3rem;[^}]*height: 3rem/);
     assert.match(css, /\.account-login-divider\s*\{[^}]*margin: 0.75rem 0/);
     assert.match(css, /@media \(max-width: 400px\)\s*\{\s*\.account-login-dialog\s*\{\s*padding: 1.5rem/);
@@ -259,6 +261,12 @@ test('username login uses the narrower reference card with neutral accessible co
     assert.match(css, /\.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
     assert.match(css, /\.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow: inset 0 0 0 1000px hsl\(var\(--color-background\)\)/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-login-spinner\s*\{\s*animation: none/);
+});
+
+test('shared Welcome heading uses the same medium weight as Account', () => {
+    const css = fs.readFileSync('chat/styles.css', 'utf8');
+    assert.match(css, /\.account-unlock-title\s*\{[^}]*font-size: 1.625rem;[^}]*font-weight: 500/);
+    assert.match(AccountModal.prototype.renderHeader('Account'), /class="text-base font-medium text-foreground">Account/);
 });
 
 test('ordinary username entry prefills and focuses the username field', () => {

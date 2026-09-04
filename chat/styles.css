@@ -6024,7 +6024,7 @@ html {
 .account-unlock-title {
     margin: 0;
     font-size: 1.625rem;
-    font-weight: 700;
+    font-weight: 500; /* Match the Account heading's medium weight. */
     line-height: 1.15;
     letter-spacing: -0.02em;
     text-wrap: balance;
@@ -6604,6 +6604,7 @@ html {
     max-width: 22.5rem;
     padding: 2rem;
     border-radius: 1.5rem;
+    -webkit-font-smoothing: antialiased;
 }
 
 .account-login-heading {
@@ -6617,7 +6618,8 @@ html {
 .account-login-heading > h3 {
     font-size: 1.375rem;
     font-weight: 500;
-    line-height: 1.25;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
     text-align: left;
 }
 
@@ -6625,20 +6627,22 @@ html {
     display: grid;
     place-items: center;
     flex-shrink: 0;
-    width: 1.75rem;
-    height: 1.75rem;
+    width: 2rem;
+    height: 2rem;
 }
 
 .account-login-heading > button > svg {
-    width: 1.25rem;
-    height: 1.25rem;
+    width: 1rem;
+    height: 1rem;
 }
 
 .account-login-dialog #account-google-btn {
     height: 3rem;
     border-radius: 0.75rem;
     gap: 0.625rem;
-    font-size: 1.0625rem;
+    font-size: 1rem;
+    font-weight: 400;
+    line-height: 1.25;
 }
 
 .account-login-dialog #account-google-btn > svg {
@@ -6653,7 +6657,7 @@ html {
     gap: 0.75rem;
     margin: 0.75rem 0;
     color: hsl(var(--color-muted-foreground));
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     line-height: 1rem;
 }
 
@@ -6734,8 +6738,8 @@ html {
 }
 
 .account-login-arrow {
-    width: 1.5rem;
-    height: 1.5rem;
+    width: 1.125rem;
+    height: 1.125rem;
 }
 
 .account-login-spinner {
