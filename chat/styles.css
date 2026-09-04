@@ -5710,7 +5710,7 @@ html {
 }
 
 .sidebar-main-content {
-    padding-bottom: 3.5rem !important;
+    padding-bottom: 3rem !important;
 }
 
 .account-nav {
@@ -5719,7 +5719,7 @@ html {
     bottom: 0;
     left: 0;
     z-index: 30;
-    padding: 0.125rem 0.75rem;
+    padding: 0;
     border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background) / 0.96);
     backdrop-filter: blur(12px);
@@ -5739,14 +5739,21 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
-    min-height: 2.75rem;
-    padding: 0.25rem;
-    border: 1px solid transparent;
-    border-radius: 0.5rem;
+    min-height: 2.5rem;
+    padding: 0.25rem 1rem;
+    border: 0;
+    border-radius: 0;
     background: transparent;
     color: hsl(var(--color-foreground));
     text-align: left;
-    transition: background-color 0.14s ease-out, border-color 0.14s ease-out, transform 0.1s ease-out;
+    transition: background-color 0.14s ease-out;
+}
+
+/* Keep the compact desktop footer easy to tap on touch devices. */
+@media (any-pointer: coarse) {
+    .account-tab-btn {
+        min-height: 2.75rem;
+    }
 }
 
 .account-bootstrap-status {
@@ -5767,7 +5774,8 @@ html {
 }
 
 .account-tab-btn:active:not(:disabled) {
-    transform: scale(0.985);
+    /* A pressed row must stay edge-to-edge, just like its hover surface. */
+    background-color: hsl(var(--color-foreground) / 0.14);
 }
 
 .account-tab-btn:focus-visible {
@@ -5796,8 +5804,8 @@ html {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    height: 2rem;
+    width: 1.75rem;
+    height: 1.75rem;
     border: 1px solid hsl(var(--color-border));
     border-radius: 9999px;
     background: hsl(var(--color-muted) / 0.7);
@@ -5805,8 +5813,8 @@ html {
 }
 
 .account-tab-avatar > svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: 1rem;
+    height: 1rem;
 }
 
 .account-identity-label {
