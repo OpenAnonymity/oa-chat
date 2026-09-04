@@ -151,8 +151,17 @@ reading code alone.
   Membership and standalone ticket management retain Import, Share, and Redeem.
   Account-data/chat/memory export remains independent and never includes
   inference tickets.
-- The right panel groups the inference-ticket row and ephemeral-key section
-  with a deliberate 16px whitespace gap and no divider. Commercial ticket
+- The System Panel header uses 17px semibold text and an 18px panel-toggle
+  icon, with 14px/12px/10px top/horizontal/bottom padding. The commercial
+  inference-ticket row starts 14px below it. Ticket/key heading rows are 32px
+  tall with 15px semibold labels, 18px icons/help circles, and 10px gaps. A
+  full-width theme-aware divider separates the commercial ticket and key
+  sections, with 12px above/below; their content keeps a 12px horizontal inset.
+  Counts remain live/tabular, and zero-balance, expanded-help, key pending/live,
+  expiry/renewal, and multi-key states remain intact. Small visible controls
+  retain larger pointer targets, keyboard focus, and existing event handlers.
+  Shared key-heading markup keeps pending/live/Council typography consistent;
+  Council retains its existing per-key attestation controls. Commercial ticket
   preparation mounts directly below the ticket row; component rerenders must
   reattach that extension slot through `refreshExtensionSlot(...)`, never an
   internal registry. Paid preparation uses the same compact text and progress
@@ -851,11 +860,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The compact ticket launcher's icon and label share the same left edge as
     the Ephemeral Access Key heading below it; avoid adding nested horizontal
     padding to the launcher.
-  - The commercial launcher deliberately preserves the production ticket
-    header treatment: `Inference Tickets: N` uses the same `text-xs font-medium`
-    typography as the public client, and its small question-mark control sits
+  - The commercial launcher uses the System Panel's 15px semibold heading
+    treatment (updated 2026-09-03), with its 18px question-mark control
     immediately after the count. Do not replace it with a full-width navigation
-    row or move the help control to the far edge of the panel.
+    row or move the help control to the far edge of the panel. Standalone
+    public ticket controls retain their existing compact typography.
 
 
 - 2026-08-07: Google is the only supported SSO provider.

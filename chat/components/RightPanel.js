@@ -1852,12 +1852,7 @@ class RightPanel {
         return `
             <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? '' : 'mb-3'}">
-                    <div class="flex items-center gap-1.5 mb-2">
-                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                        </svg>
-                        <span class="text-xs font-medium">Ephemeral Access Keys</span>
-                    </div>
+                    ${this.generateAccessKeyHeading('Ephemeral Access Keys', false)}
                     <div class="text-[10px] text-muted-foreground mb-2">
                         Keys persist until expiry, model change, or exhaustion.
                     </div>
@@ -1869,22 +1864,24 @@ class RightPanel {
         `;
     }
 
+    generateAccessKeyHeading(label = 'Ephemeral Access Key', showHelp = true) {
+        return `
+            <div class="system-panel-row system-panel-key-heading">
+                <svg class="system-panel-row-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"></path>
+                    <circle cx="16.5" cy="7.5" r=".5" fill="currentColor"></circle>
+                </svg>
+                <span class="system-panel-row-label">${this.escapeHtml(label)}</span>
+                ${showHelp ? `<button id="verifier-attestation-btn" class="system-panel-help" title="Show verifier attestation" aria-label="Show verifier attestation" type="button">?</button>` : ''}
+            </div>
+        `;
+    }
+
     generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
         return hasApiKey ? `
             <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? 'mb-2' : 'mb-3'}">
-                    <div class="flex items-center gap-1.5 mb-2">
-                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                        </svg>
-                        <span class="text-xs font-medium">Ephemeral Access Key</span>
-                        <button
-                            id="verifier-attestation-btn"
-                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                            title="Show verifier attestation"
-                            type="button"
-                        >?</button>
-                    </div>
+                    ${this.generateAccessKeyHeading()}
                     <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                         ${(() => {
                             const keyInfo = this.getKeyDisplayInfo();
@@ -1934,18 +1931,7 @@ class RightPanel {
         ` : `
             <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? 'mb-2' : 'mb-3'}">
-                    <div class="flex items-center gap-1.5 mb-2">
-                        <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
-                        </svg>
-                        <span class="text-xs font-medium">Ephemeral Access Key</span>
-                        <button
-                            id="verifier-attestation-btn"
-                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                            title="Show verifier attestation"
-                            type="button"
-                        >?</button>
-                    </div>
+                    ${this.generateAccessKeyHeading()}
                     <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
                         <span class="flex-1 min-w-0">Requested on message send</span>
                         <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
@@ -2012,24 +1998,25 @@ class RightPanel {
 
         return `
                 ${hasExternalTicketManager ? `
-                <div class="oa-right-panel-access-stack grid gap-4 p-3">
+                <div class="oa-right-panel-access-stack">
                     <div class="oa-right-panel-ticket-summary min-w-0">
-                    <div class="flex items-center gap-1.5">
+                    <div class="system-panel-row">
                         <button
                             id="open-ticket-manager-btn"
                             type="button"
-                            class="btn-ghost-hover inline-flex min-w-0 items-center gap-1.5 rounded-md text-left text-xs font-medium text-foreground transition-all duration-150"
+                            class="system-panel-ticket-trigger"
                             aria-label="${ticketSummary.ariaLabel}"
                         >
-                            <svg class="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
+                            <svg class="system-panel-row-icon" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"></path>
+                                <path d="M13 5v2M13 11v2M13 17v2"></path>
                             </svg>
-                            <span>${ticketSummary.showGetTickets ? 'Get tickets' : `Inference Tickets: <span class="font-semibold">${ticketSummary.ticketCount}</span>`}</span>
+                            <span class="system-panel-row-label">${ticketSummary.showGetTickets ? 'Get tickets' : `Inference Tickets: <span class="system-panel-ticket-count">${ticketSummary.ticketCount}</span>`}</span>
                         </button>
                         <button
                             id="toggle-external-ticket-info-btn"
                             type="button"
-                            class="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground transition-all hover:border-foreground/20 hover:bg-accent hover:text-foreground"
+                            class="system-panel-help"
                             title="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
                             aria-label="${this.showExternalTicketInfo ? 'Hide inference ticket description' : 'What is an inference ticket?'}"
                             aria-controls="external-ticket-info-panel"
@@ -2047,6 +2034,7 @@ class RightPanel {
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
                     </div>
+                    <div class="system-panel-divider" aria-hidden="true"></div>
                     ${this.generateAccessKeyPanelHTML(hasApiKey, { embedded: true })}
                 </div>
                 ` : `
@@ -3005,18 +2993,14 @@ class RightPanel {
         const hasApiKey = !!this.apiKey;
 
         panel.innerHTML = `
-            <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->
-            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 flex items-center">
-                <div class="flex items-center justify-between w-full">
-                    <h2 class="text-sm font-semibold text-foreground">System Panel</h2>
-                    <button id="close-right-panel" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
-                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <rect x="4" y="4" width="16" height="16" rx="2"/>
-                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
+            <div class="system-panel-header">
+                    <h2>System Panel</h2>
+                    <button id="close-right-panel" class="system-panel-close" type="button" aria-label="Close System Panel" title="Close System Panel">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true">
+                            <rect x="3" y="4" width="18" height="16" rx="3"/>
                             <path d="M14 4v16"/>
                         </svg>
                     </button>
-                </div>
             </div>
 
             <div class="flex flex-col flex-1 min-h-0">
