@@ -1540,12 +1540,15 @@ class AccountModal {
 
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
+        const showLogout = Boolean(state.oauthRecoveryRequired || state.oauthSetupRequired);
         return this.renderPasskeyUnlockCard({
             isLegacyMigration: state.oauthRecoveryRequired,
             isSetup: state.oauthSetupRequired,
             isLegacyPasskey: state.oauthLegacyPasskeyRequired,
             busy: Boolean(state.busy),
-            error: state.error ? String(state.error) : ''
+            error: state.error ? String(state.error) : '',
+            secondaryId: showLogout ? 'account-clear-btn' : '',
+            secondaryLabel: showLogout ? 'Log out' : ''
         });
     }
 
@@ -1568,7 +1571,7 @@ class AccountModal {
     renderPasskeyUnlockCard({
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false,
         busy = false, error = '', closeDisabled = false, actionId = 'oauth-keyring-submit-btn',
-        primaryLabel = '', secondaryId = 'account-clear-btn', secondaryLabel = 'Log out'
+        primaryLabel = '', secondaryId = '', secondaryLabel = ''
     } = {}) {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
@@ -1636,7 +1639,7 @@ class AccountModal {
                         </button>
                     `}
                     ${error && !busy ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
-                    <button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>
+                    ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
         `;

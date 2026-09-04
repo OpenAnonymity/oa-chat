@@ -38,7 +38,9 @@ reading code alone.
   or **Encrypt your data → Create passkey**. This explicitly supersedes the earlier
   direct-to-passkey request. The same step is used by landing and modal entry;
   landing still does not repeat the username form. Username uses **Back** because
-  authentication has not occurred yet; Google retains **Log out**.
+  authentication has not occurred yet. **Welcome back** has no **Log out** action,
+  including waiting/retry and legacy-passkey variants. Logout remains in unlocked
+  Account settings; setup and legacy-migration cards retain their existing exit.
 - No WebAuthn operation begins until that explicit action. Returning username
   Unlock obtains a fresh challenge, since the initial lookup challenge can expire
   while the explanation is open. New-account lookup is read-only: `/auth/init`,
@@ -57,10 +59,10 @@ reading code alone.
 - The first-account Membership signal, returning-account Chat route, saved legacy
   recovery, encrypted sync, and post-login footer focus restoration remain intact.
 - Escape and the compact close button dismiss the unlock card without
-  decrypting data or signing Google out. The secondary **Log out** action
-  remains available after a failed/cancelled passkey so a locked account can
-  switch identities; it is disabled during an active operation. Successful
-  unlock closes the card through the existing account lifecycle.
+  decrypting data or signing Google out. Per the revised UI request, a returning
+  locked Google account must unlock before reaching Account-settings logout;
+  dismissal itself is not a signout/account switch. Successful unlock closes
+  the card through the existing account lifecycle.
 
 ## 2026-09-02: Authentication intent waits for account restoration
 

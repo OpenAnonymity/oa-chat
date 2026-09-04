@@ -683,8 +683,10 @@ test('username and Google share exactly the same encryption explanation shell an
         modal.accountState.oauthSetupRequired = isSetup;
         const google = modal.renderOAuthUnlockUI();
         const username = modal.renderUsernameUnlockUI();
-        assert.equal(username.replaceAll('account-username-unlock-btn', 'oauth-keyring-submit-btn')
-            .replaceAll('account-username-back-btn', 'account-clear-btn').replace('>Back</button>', '>Log out</button>'), google);
+        const withoutSecondaryAction = html => html.replace(/<button[^>]*class="account-unlock-signout"[^>]*>[\s\S]*?<\/button>/, '');
+        assert.equal(withoutSecondaryAction(username).replaceAll('account-username-unlock-btn', 'oauth-keyring-submit-btn'), withoutSecondaryAction(google));
+        assert.match(username, /id="account-username-back-btn"[^>]*>Back<\/button>/);
+        assert.doesNotMatch(username, /Log out/);
         assert.doesNotMatch(username, /winter-owl|oauth-recovery-code-input|account-number-text/);
     }
 });
@@ -1273,7 +1275,7 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
         assert.match(html, />\s*Try again\s*</);
         assert.match(html, /role="alert"[^>]*>No passkey found for this account on this device</);
         assert.doesNotMatch(html, /Signed in with Google/);
-        assert.match(html, /id="account-clear-btn"[^>]*>Log out<\/button>/);
+        assert.doesNotMatch(html, /account-clear-btn|Log out/);
         assert.match(html, /id="close-account-modal"[^>]*aria-label="Close"/);
     } finally {
         modal.destroy();
@@ -1281,9 +1283,9 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
     }
 });
 
-test('unlock dismissal keeps the account locked and logout restores username entry', async () => {
+test('Welcome dismissal keeps the account locked and Account-settings logout still works', async () => {
     const originalDocument = globalThis.document;
-    const buttons = { 'close-account-modal': {}, 'account-clear-btn': {} };
+    const buttons = { 'close-account-modal': {} };
     globalThis.document = {
         getElementById(id) { return buttons[id] || null; },
         removeEventListener() {}
@@ -1323,10 +1325,16 @@ test('unlock dismissal keeps the account locked and logout restores username ent
         assert.equal(state.status, 'locked');
         assert.equal(cleared, 0);
 
+        // Logout remains in the normal Account settings after unlock, not Welcome.
         modal.isOpen = true;
+        state.status = 'unlocked';
+        state.oauthKeyringRequired = false;
+        buttons['account-clear-btn'] = {};
+        modal.attachEventListeners();
         state.busy = true;
         assert.match(modal.renderAccountUI(), /id="account-clear-btn"[^>]*disabled/);
         state.busy = false;
+        assert.match(modal.renderAccountUI(), /id="account-clear-btn"[^>]*>Log out<\/button>/);
         await buttons['account-clear-btn'].onclick();
         assert.equal(cleared, 1);
         assert.equal(state.sessionVerified, false);
@@ -1335,6 +1343,25 @@ test('unlock dismissal keeps the account locked and logout restores username ent
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
+    }
+});
+
+test('Welcome never shows logout, including waiting, retry, and legacy-passkey states', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.escapeHtml = value => String(value ?? '');
+    for (const oauthLegacyPasskeyRequired of [false, true]) {
+        for (const [busy, error] of [[false, null], [true, null], [false, 'Passkey cancelled']]) {
+            modal.accountState = { accountId: '1234567890123456', oauthKeyringRequired: true, oauthLegacyPasskeyRequired, busy, error };
+            const html = modal.renderOAuthUnlockUI();
+            assert.match(html, />Welcome back<\/h2>/);
+            assert.match(html, /id="close-account-modal"/);
+            assert.match(html, /id="oauth-keyring-submit-btn"/);
+            assert.doesNotMatch(html, /account-clear-btn|account-unlock-signout|Log out/);
+        }
+    }
+    for (const flag of ['oauthSetupRequired', 'oauthRecoveryRequired']) {
+        modal.accountState = { [flag]: true };
+        assert.match(modal.renderOAuthUnlockUI(), /id="account-clear-btn"[^>]*>Log out<\/button>/);
     }
 });
 

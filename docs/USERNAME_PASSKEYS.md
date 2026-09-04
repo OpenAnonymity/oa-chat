@@ -82,8 +82,9 @@ login dialog no longer displays that explanatory copy.
   produces an actionable setup error, not an automatic login or another passkey.
   The service's older immediate-continuation contract is retained for compatibility.
   Saved local accounts bypass initialization and use their existing login and
-  account-mismatch checks. The shared card uses **Back**, not Google's **Log out**,
-  because username authentication has not happened yet. Back returns to the form
+  account-mismatch checks. The username card uses **Back**; Google's returning
+  **Welcome back** card has no logout action. Since username authentication has
+  not happened yet, Back returns to the form
   without clearing a saved account. Duplicate submissions are blocked, and closing the
   dialog invalidates in-flight lookup results before any passkey prompt.
 - Cancelled initializers/credential operations cannot overwrite newer pending
