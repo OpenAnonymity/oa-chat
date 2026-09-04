@@ -51,6 +51,18 @@ wrap/unwrap operations used by the ordinary browser flow.
 
 ## Username-account flow
 
+Google and username entry share the same encryption explanation card. Username
+lookup selects **Encrypt your data → Create passkey** for registration or
+**Welcome back → Unlock** for returning accounts, and waits for that action before
+WebAuthn. Username Unlock fetches a fresh challenge rather than holding the initial
+lookup challenge while the user reads. This UI parity does not turn username into
+OAuth or add a second passkey ceremony; it remains one proof for authentication and PRF.
+New username lookup does not reserve the name or create a registration challenge;
+those start only on **Create passkey**, so reading or backing out of the explanation
+cannot expire the challenge. Finalization briefly disables dismissal while the
+master-key wrapper is committed. Late cancelled operations cannot change a new
+dialog or replacement pending account.
+
 The browser sends a normalized pseudonymous username to `/auth/init`. The org
 atomically maps it to a new opaque 16-digit account ID, and the browser creates
 a resident, user-verified PRF credential. WebAuthn `user.id` is the opaque

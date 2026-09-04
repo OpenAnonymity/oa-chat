@@ -699,6 +699,7 @@ class AccountService {
         // Pending account for multi-step creation. Username accounts omit the
         // legacy recoveryCode field.
         this.pendingAccount = null;
+        this.pendingAccountGeneration = 0;
         // The encryption key is persisted locally. Session tokens are owned by
         // SuperTokens (HttpOnly cookies in web, isolated preload/main in Electron).
         this.cryptoKey = null;  // Non-extractable CryptoKey for encryption
@@ -1367,9 +1368,10 @@ class AccountService {
 
     /**
      * Resolve the single username Continue action before any passkey ceremony.
-     * Existing users bypass registration quotas; successful challenges are reused.
+     * Existing users bypass registration quotas. Immediate callers may reuse a
+     * challenge; explanation UIs use lookupOnly and fetch fresh proof on click.
      */
-    async prepareUsernameContinuation(usernameInput) {
+    async prepareUsernameContinuation(usernameInput, { lookupOnly = false } = {}) {
         const username = validateUsername(usernameInput);
         // A saved partition must be unlocked or explicitly forgotten, never
         // replaced by a new reservation just because the user edited the name.
@@ -1381,6 +1383,7 @@ class AccountService {
             // This is the pre-ceremony lookup only, never a failed assertion.
             if (error.status !== 401 || error.code !== 'AUTHENTICATION_FAILED') throw error;
         }
+        if (lookupOnly) return { kind: 'register' };
         try {
             await this.prepareAccount(username);
             return { kind: 'register' };
@@ -1398,6 +1401,7 @@ class AccountService {
     async prepareAccount(usernameInput = null) {
         // Clean up any previous pending account
         this.cancelPendingAccount();
+        const generation = this.pendingAccountGeneration;
 
         const username = usernameInput === null
             ? null
@@ -1408,6 +1412,9 @@ class AccountService {
 
         // Request account ID and challenge from server
         const initData = await fetchJson('/auth/init', username ? { username } : {});
+        if (generation !== this.pendingAccountGeneration) {
+            throw new Error('Account setup was cancelled. Please start again.');
+        }
 
         const accountId = normalizeAccountId(initData.accountId || initData.account_id);
         if (!accountId) {
@@ -1449,11 +1456,13 @@ class AccountService {
             throw new Error('Passkeys are not supported in this browser');
         }
 
-        const { accountId, username, initData } = this.pendingAccount;
+        const pending = this.pendingAccount;
+        const { accountId, username, initData } = pending;
 
         // Build passkey creation options with PRF extension
         // Uses the challenge from the stored initData (from prepareAccount)
         const prfInput = await digestAccountId(accountId);
+        if (this.pendingAccount !== pending) return false;
         const publicKey = buildCreationOptions(
             initData,
             accountId,
@@ -1466,6 +1475,7 @@ class AccountService {
         try {
             credential = await navigator.credentials.create({ publicKey });
         } catch (error) {
+            if (this.pendingAccount !== pending) return false;
             // User cancelled or other WebAuthn error - don't clear pending account
             // so they can retry with the same account number
             if (error.name === 'NotAllowedError') {
@@ -1478,6 +1488,7 @@ class AccountService {
             return false;
         }
 
+        if (this.pendingAccount !== pending) return false;
         if (!credential) {
             this.state.error = 'Passkey creation failed';
             this.notify();
@@ -1495,8 +1506,8 @@ class AccountService {
         this.state.prfSupported = true;
 
         // Store credential for later registration
-        this.pendingAccount.credential = credential;
-        this.pendingAccount.prfBytes = prfBytes;
+        pending.credential = credential;
+        pending.prfBytes = prfBytes;
 
         return true;
     }
@@ -1525,6 +1536,12 @@ class AccountService {
             throw new Error('No pending account.');
         }
 
+        const pending = this.pendingAccount;
+        const assertCurrent = () => {
+            if (this.pendingAccount !== pending) {
+                throw new Error('Account setup was cancelled. Please start again.');
+            }
+        };
         const {
             accountId,
             username,
@@ -1532,7 +1549,7 @@ class AccountService {
             credential,
             prfBytes,
             recoveryCode
-        } = this.pendingAccount;
+        } = pending;
 
         if (!credential || !prfBytes) {
             throw new Error('Passkey not registered. Call registerPasskeyForPreparedAccount() first.');
@@ -1562,6 +1579,7 @@ class AccountService {
         }
 
         // Register with server
+        assertCurrent();
         await fetchJson('/auth/register', {
             accountId,
             username: username || undefined,
@@ -1570,6 +1588,9 @@ class AccountService {
             wrappedKeyRecovery: wrappedRecovery || undefined,
             recoveryCodeHash: recoveryCodeHash || undefined
         });
+        assertCurrent();
+        const sessionVerified = await sessionService.doesSessionExist();
+        assertCurrent();
 
         // Success - update state
         this.masterKey = masterKey;
@@ -1581,7 +1602,7 @@ class AccountService {
         this.state.recoveryConfirmed = !username;
         this.state.recoveryCode = null;
 
-        this.state.sessionVerified = await sessionService.doesSessionExist();
+        this.state.sessionVerified = sessionVerified;
         
         // Clear pending account (don't zero masterKey since we're using it)
         this.pendingAccount = null;
@@ -1720,6 +1741,7 @@ class AccountService {
      * Zeros out the master key for security.
      */
     cancelPendingAccount() {
+        this.pendingAccountGeneration += 1;
         if (this.pendingAccount?.masterKey) {
             this.pendingAccount.masterKey.fill(0);
         }

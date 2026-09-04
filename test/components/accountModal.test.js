@@ -360,6 +360,7 @@ test('blank username creation cannot fall through to legacy account creation', a
 
 test('first username account completes after one passkey and routes to Membership', async () => {
     const modal = Object.create(AccountModal.prototype);
+    modal.isOpen = true;
     let completeCount = 0;
     let recoveryGenerationCount = 0;
     let closed = 0;
@@ -398,18 +399,19 @@ test('first username setup never displays the username while awaiting or finishi
     for (const step of ['passkey', 'confirming', 'complete']) {
         modal.creationStep = step;
         const html = modal.renderCreationFlow();
-        assert.match(html, />Log in<\/h3>/);
-        assert.match(html, /role="status"/);
-        assert.match(html, /Setting up your account…/);
+        assert.match(html, /class="account-unlock-card"/);
+        assert.match(html, />Encrypt your data<\/h2>/);
+        assert.match(html, /Confirm with your passkey to finish\./);
+        assert.match(html, /id="account-username-unlock-btn"[^>]*disabled aria-busy="true"/);
         assert.doesNotMatch(html, /winter-owl|Your username|Your account number|Create a passkey account|You're all set/);
     }
     modal.creationStep = 'passkey_retry';
-    modal.creationError = '<cancelled>';
+    modal.creationError = '<unavailable>';
     const retry = modal.renderCreationFlow();
     assert.match(retry, /role="alert"/);
-    assert.match(retry, /&lt;cancelled&gt;/);
-    assert.match(retry, /id="retry-passkey-btn"/);
-    assert.match(retry, /id="cancel-creation-btn"/);
+    assert.match(retry, /&lt;unavailable&gt;/);
+    assert.match(retry, /id="account-username-unlock-btn"/);
+    assert.match(retry, /id="account-username-back-btn"/);
     assert.doesNotMatch(retry, /winter-owl|Your username|Setting up your account/);
     modal.creationStep = 'error';
     assert.match(modal.renderCreationFlow(), /id="start-over-btn"/);
@@ -468,7 +470,7 @@ test('new username registration keeps progress through account/sync notification
         assert.equal(modal.isOpen, true);
         assert.equal(frames.length, 3); // waiting, confirming, and sync notification
         for (const html of frames) {
-            assert.match(html, /Setting up your account…/);
+            assert.match(html, /Confirm with your passkey to finish\./);
             assert.doesNotMatch(html, /Your username|winter-owl|Your account number/);
         }
         assert.equal(firstAccountReady, 0);
@@ -495,13 +497,17 @@ function continuationModal(next = 'register') {
         creationStep: 'idle',
         accountState: { passkeySupported: true },
         render() {},
+        focusModal() {},
+        escapeHtml: value => String(value ?? '').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
         accountService: {
             clearErrors() {},
             setError(message) { calls.push(['error', message]); },
-            async prepareUsernameContinuation(username) {
+            async prepareUsernameContinuation(username, options) {
+                assert.deepEqual(options, { lookupOnly: true });
                 calls.push(['prepare', username]);
                 return { kind: next };
             },
+            async prepareAccount(username) { calls.push(['init', username]); },
             getPendingAccountId() { return '1234567890123456'; },
             getPendingUsername() { return 'winter-owl'; },
             cancelPendingAccount() { calls.push(['cancel']); }
@@ -525,7 +531,7 @@ function landingContinuationModal(next = 'login') {
         recoveryStep: 'idle',
         render: AccountModal.prototype.render,
         renderAccountUI() { return '<form>Username form</form>'; },
-        renderCreationFlow() { return '<div>Registration progress</div>'; },
+        renderCreationFlow: AccountModal.prototype.renderCreationFlow,
         attachEventListeners() {},
         focusModal() {},
         open() { this.isOpen = true; this.render(); },
@@ -533,12 +539,13 @@ function landingContinuationModal(next = 'login') {
             this.isOpen = false;
             this.loginViewVersion += 1;
             this.usernameHandoffPending = false;
+            this.usernameUnlockReady = false;
         }
     });
     return { modal, calls, frames };
 }
 
-test('landing handoff launches registration or login without rendering a second username form', async () => {
+test('landing handoff shows the encryption explanation and waits for an explicit passkey click', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
     try {
@@ -550,9 +557,16 @@ test('landing handoff launches registration or login without rendering a second 
                 modal.close();
             };
             await modal.openForUsername(' Winter-OWL ', null, { autoContinue: true });
-            assert.deepEqual(calls, [['prepare', 'winter-owl'], [next]]);
-            assert.match(frames[0], /Opening passkey…/);
+            assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+            assert.match(frames[0], /Checking username…/);
             assert.ok(frames.every(html => !html.includes('Username form')));
+            assert.match(frames.at(-1), next === 'login' ? /Welcome back/ : /Encrypt your data/);
+            assert.match(frames.at(-1), /encrypts your tickets and preferences/i);
+            assert.equal(modal.isOpen, true);
+            await modal.handleUsernamePasskeyContinue();
+            assert.deepEqual(calls, next === 'register'
+                ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], [next]]
+                : [['prepare', 'winter-owl'], [next]]);
             assert.equal(modal.isOpen, false);
             assert.equal(modal.usernameHandoffPending, false);
         }
@@ -561,7 +575,7 @@ test('landing handoff launches registration or login without rendering a second 
     }
 });
 
-test('landing cancellation or lookup failure returns to the editable form without re-prompting', async () => {
+test('a cancelled username prompt keeps retry on the explanation; lookup errors keep the editable form', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
     try {
@@ -571,7 +585,18 @@ test('landing cancellation or lookup failure returns to the editable form withou
                 modal.accountService.prepareUsernameContinuation = async () => { throw new Error('Offline'); };
             }
             await modal.openForUsername('winter-owl', null, { autoContinue: true });
-            assert.equal(frames.at(-1), '<form>Username form</form>');
+            if (failure === 'cancel') {
+                modal.handleAccountPasskeyUnlock = async () => {
+                    calls.push(['login']);
+                    modal.accountState.error = 'Passkey cancelled';
+                };
+                await modal.handleUsernamePasskeyContinue();
+                assert.match(frames.at(-1), /Welcome back/);
+                assert.match(frames.at(-1), /Try again/);
+                assert.match(frames.at(-1), /Passkey wasn't confirmed\./);
+            } else {
+                assert.equal(frames.at(-1), '<form>Username form</form>');
+            }
             assert.equal(modal.usernameHandoffPending, false);
             assert.equal(modal.usernameInputValue, 'winter-owl');
             assert.deepEqual(calls, failure === 'cancel'
@@ -618,7 +643,7 @@ test('closing a landing lookup prevents a late prompt and duplicate handoffs are
         const frameCount = frames.length;
         finishLookup({ kind: 'register' });
         await handoff;
-        assert.deepEqual(calls, [['cancel']]);
+        assert.deepEqual(calls, []);
         assert.equal(frames.length, frameCount);
         assert.equal(modal.usernameHandoffPending, false);
     } finally {
@@ -626,15 +651,130 @@ test('closing a landing lookup prevents a late prompt and duplicate handoffs are
     }
 });
 
-test('one Continue routes to registration or login without falling back after a failed passkey', async () => {
+test('Continue selects setup or unlock but does not invoke a passkey until the welcome action', async () => {
     for (const next of ['register', 'login']) {
         const { modal, calls } = continuationModal(next);
         await modal.handleAccountContinue();
-        assert.deepEqual(calls, [['prepare', 'winter-owl'], [next]]);
+        assert.deepEqual(calls, [['prepare', 'winter-owl']]);
         assert.equal(modal.usernameContinuePending, false);
-        assert.equal(modal.creationStep, next === 'register' ? 'passkey' : 'idle');
+        assert.equal(modal.creationStep, next === 'register' ? 'username_ready' : 'idle');
         if (next === 'register') assert.equal(modal.generatedUsername, 'winter-owl');
+        else assert.equal(modal.usernameUnlockReady, true);
+        await modal.handleUsernamePasskeyContinue();
+        assert.deepEqual(calls, next === 'register'
+            ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], [next]]
+            : [['prepare', 'winter-owl'], [next]]);
     }
+});
+
+test('username and Google share exactly the same encryption explanation shell and copy', () => {
+    for (const isSetup of [false, true]) {
+        const { modal } = continuationModal();
+        modal.generatedUsername = isSetup ? 'winter-owl' : null;
+        modal.creationStep = isSetup ? 'username_ready' : 'idle';
+        modal.accountState.oauthSetupRequired = isSetup;
+        const google = modal.renderOAuthUnlockUI();
+        const username = modal.renderUsernameUnlockUI();
+        assert.equal(username.replaceAll('account-username-unlock-btn', 'oauth-keyring-submit-btn')
+            .replaceAll('account-username-back-btn', 'account-clear-btn').replace('>Back</button>', '>Log out</button>'), google);
+        assert.doesNotMatch(username, /winter-owl|oauth-recovery-code-input|account-number-text/);
+    }
+});
+
+test('username Unlock fetches a fresh challenge and stays single-flight', async () => {
+    const { modal, calls } = continuationModal('login');
+    const staleChallenge = { challenge: 'do-not-reuse' };
+    modal.accountService.prepareUsernameContinuation = async () => ({ kind: 'login', challenge: staleChallenge });
+    await modal.handleAccountContinue();
+    let finish;
+    modal.handleAccountPasskeyUnlock = async (...args) => {
+        calls.push(['login', args]);
+        return new Promise(resolve => { finish = resolve; });
+    };
+    const first = modal.handleUsernamePasskeyContinue();
+    await modal.handleUsernamePasskeyContinue();
+    await modal.handleAccountContinue();
+    assert.deepEqual(calls, [['login', []]]);
+    assert.equal(modal.usernamePasskeyBusy, true);
+    assert.match(modal.renderUsernameUnlockUI(), /disabled aria-busy="true"/);
+    finish();
+    await first;
+    assert.equal(modal.usernamePasskeyBusy, false);
+});
+
+test('Back from username explanation preserves the identifier and does not sign out an account', async () => {
+    for (const next of ['login', 'register']) {
+        const { modal, calls } = continuationModal(next);
+        modal.animationTimeouts = [];
+        await modal.handleAccountContinue();
+        modal.handleUsernamePasskeyBack();
+        assert.equal(modal.usernameInputValue, 'winter-owl');
+        assert.equal(modal.usernameUnlockReady, false);
+        assert.equal(modal.creationStep, 'idle');
+        assert.deepEqual(calls, next === 'register' ? [['prepare', 'winter-owl'], ['cancel']] : [['prepare', 'winter-owl']]);
+    }
+});
+
+test('closing the username explanation never invokes authentication', async () => {
+    const { modal, calls } = continuationModal('login');
+    await modal.handleAccountContinue();
+    modal.isOpen = false;
+    await modal.handleUsernamePasskeyContinue();
+    assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+});
+
+test('delayed new-account setup does not reserve a username or start a challenge until Create', async () => {
+    const { modal, calls } = continuationModal('register');
+    await modal.handleAccountContinue();
+    assert.equal(modal.generatedAccountId, null);
+    assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+    // The card can remain open arbitrarily long: no registration challenge exists.
+    modal.animationTimeouts = [];
+    modal.handleUsernamePasskeyBack();
+    await modal.handleAccountContinue();
+    assert.equal(modal.generatedAccountId, null);
+    assert.equal(calls.filter(([action]) => action === 'init').length, 0);
+    await modal.handleUsernamePasskeyContinue();
+    assert.equal(calls.filter(([action]) => action === 'init').length, 1);
+    assert.equal(calls.at(-1)[0], 'register');
+});
+
+test('late username credential success or failure cannot mutate a reopened dialog', async () => {
+    for (const succeeds of [true, false]) {
+        const { modal } = continuationModal('register');
+        let finish;
+        let commits = 0;
+        let renders = 0;
+        modal.animationTimeouts = [];
+        modal.handlePasskeyRegistration = AccountModal.prototype.handlePasskeyRegistration;
+        modal.accountService.registerPasskeyForPreparedAccount = () => new Promise((resolve, reject) => {
+            finish = () => succeeds ? resolve(true) : reject(new Error('Late credential failure'));
+        });
+        modal.accountService.completeAccountRegistration = async () => { commits += 1; };
+        await modal.handleAccountContinue();
+        const operation = modal.handleUsernamePasskeyContinue();
+        await new Promise(resolve => setImmediate(resolve));
+        modal.loginViewVersion += 1;
+        modal.resetCreationFlow();
+        modal.render = () => { renders += 1; };
+        finish();
+        await operation;
+        assert.equal(modal.creationStep, 'idle');
+        assert.equal(modal.generatedUsername, null);
+        assert.equal(modal.creationError, null);
+        assert.equal(commits, 0);
+        assert.equal(renders, 0);
+    }
+});
+
+test('username registration finalization cannot be dismissed while committing its key', () => {
+    const { modal, calls } = continuationModal('register');
+    modal.generatedUsername = 'winter-owl';
+    modal.creationStep = 'confirming';
+    modal.close = () => calls.push(['close']);
+    modal.handleCloseAttempt();
+    assert.deepEqual(calls, []);
+    assert.match(modal.renderUsernameUnlockUI(), /id="close-account-modal"[^>]*disabled/);
 });
 
 test('Continue is single-flight and closing during lookup never launches a passkey', async () => {
@@ -648,7 +788,7 @@ test('Continue is single-flight and closing during lookup never launches a passk
     modal.loginViewVersion += 1;
     resolve({ kind: 'register' });
     await first;
-    assert.deepEqual(calls, [['cancel']]);
+    assert.deepEqual(calls, []);
     assert.equal(modal.usernameContinuePending, false);
 });
 

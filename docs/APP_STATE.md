@@ -4,15 +4,47 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
-## 2026-09-03: Welcome back unlock preserves username login
+## 2026-09-03: Preserve the restored compact Memory fallback
 
-- The Google encryption-keyring unlock uses the centered **Welcome back** card,
+- Restore the exact presentation fix from `40d9fad5bde7d7e0667666d91d73626b2cdd1ed7`
+  (08:46 PDT, **Restore compact memory fallback**). That branch's fix was missing
+  from the later combined login/Membership staging composition; do not revert the
+  whole client or the membership work to recover it.
+- Failed retrieval again says **No added memory. Sending original prompt.**
+  with no extra bordered **Note:** card, including when older saved messages
+  carry failure metadata. Allowlisted diagnostics, key invalidation, retrieval,
+  extraction, and ticket-budget behavior remain unchanged. This restores the
+  requested presentation; it does not claim to repair the underlying provider failure.
+
+## 2026-09-03: Google and username share the encryption explanation
+
+- Google and returning username unlock use the same centered **Welcome back** card,
   an outlined **Unlock** action, a disabled **Waiting…** spinner during the
   passkey prompt, and **Try again** with an alert on failure. Setup and legacy
   migration share the card with their own copy and existing action handlers.
-- The presentation change is scoped to `renderOAuthUnlockUI()`. The neutral Google/Username login,
-  immediate landing-to-username passkey handoff, first-account Membership signal,
-  saved legacy-account recovery, and footer focus restoration remain intact.
+- `renderPasskeyUnlockCard()` owns the shared copy, actions, and busy/error shell.
+  Username Continue now looks up the account and pauses at **Welcome back → Unlock**
+  or **Encrypt your data → Create passkey**. This explicitly supersedes the earlier
+  direct-to-passkey request. The same step is used by landing and modal entry;
+  landing still does not repeat the username form. Username uses **Back** because
+  authentication has not occurred yet; Google retains **Log out**.
+- No WebAuthn operation begins until that explicit action. Returning username
+  Unlock obtains a fresh challenge, since the initial lookup challenge can expire
+  while the explanation is open. New-account lookup is read-only: `/auth/init`,
+  username reservation, and the registration challenge wait until **Create passkey**.
+  Back before that click therefore leaves no ten-minute name reservation, and
+  reading the explanation cannot expire a sixty-second registration challenge.
+  Cancellation stays on **Try again**, never starts
+  registration, and does not retry automatically. Back abandons an uncompleted
+  registration without forgetting an existing saved account.
+- Pending-account generation/object guards discard late initializer or native
+  credential results after cancellation. Modal callbacks also belong to one
+  open-view version. Username finalization briefly disables dismissal while its
+  wrapper is committed, avoiding cancellation that zeroes the master key during
+  registration. A separately cancelled finalization cannot install that key or
+  overwrite a replacement account.
+- The first-account Membership signal, returning-account Chat route, saved legacy
+  recovery, encrypted sync, and post-login footer focus restoration remain intact.
 - Escape and the compact close button dismiss the unlock card without
   decrypting data or signing Google out. The secondary **Log out** action
   remains available after a failed/cancelled passkey so a locked account can
@@ -71,9 +103,9 @@ reading code alone.
 
 ## 2026-09-03: Pseudonymous username accounts use one authentication passkey
 
-- First-time username setup shows **Setting up your account…** rather than
-  redisplaying the username behind the native passkey prompt. The same neutral
-  body spans passkey creation and finalization. A generated username keeps
+- First-time username setup shows the shared **Encrypt your data** card before
+  the prompt and its **Waiting…** state through creation/finalization, never a
+  username reminder. A generated username keeps
   creation rendering active until close, even after sync publishes the new
   account ID; otherwise sync notifications could briefly show Account before
   the Membership handoff. Retry/error actions and returning login are unchanged.
@@ -86,13 +118,13 @@ reading code alone.
   and Username. The arrow retains the accessible **Continue** name and existing
   click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
   Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
-  account-number login keeps its existing layout. Google encryption unlock uses
-  the Welcome back card described above.
+  account-number login keeps its existing layout. Both Google and username then
+  use the encryption explanation described above.
   Username is an input placeholder with an accessible name, not a
   visible label or example handle. Introductory/helper copy and the separate
   signup/account-number rows are removed. Continue checks for a username
-  challenge before reserving a new account; successful lookups reuse the
-  challenge. Only typed lookup/registration errors select another flow, never
+  challenge before reserving a new account, then waits for the explicit passkey
+  action. Only typed lookup/registration errors select another flow, never
   passkey cancellation, network failure, or rate limiting. The button is
   single-flight and a close/reopen invalidates its pending lookup.
 - The commercial landing page renders Username directly below Google and above
@@ -100,10 +132,10 @@ reading code alone.
   while independent handlers preserve the existing Google and anonymous
   access-code routes. The username route is a one-use local UI intent; Chat
   removes the username from its URL after the normal authentication bootstrap
-  settles, then immediately starts the existing Continue/passkey flow. A neutral
-  **Opening passkey…** view replaces the redundant second username form. Errors
-  or cancellation restore the editable form; new-account setup retains its own
-  retry UI. Missing usernames (including no-JS entry), unsupported/busy states,
+  settles, then checks the username before showing the shared encryption step.
+  **Checking username…** covers only lookup, without a redundant username form.
+  Lookup errors restore the form; cancelled passkeys keep an explicit retry on
+  the encryption card. Missing usernames (including no-JS entry), unsupported/busy states,
   and remembered legacy/Google unlock or recovery still use their normal UI.
   The native prompt does not block the rest of Chat initialization. Startup composer autofocus also respects
   an open Account dialog, including its forced first attempt, so focus stays
@@ -1080,10 +1112,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     scary diagnostic wording such as raw HTTP statuses or provider exception
     strings. Do not render raw provider error bodies, prompts, memory file
     contents, URLs with secrets, or API keys in the chat.
-  - `MessageTemplates` renders the note as a compact sub-row under the Memory
-    Agent status, but only shows the short title by default to keep the chat
-    low-noise. The main fallback copy stays one line:
-    `Memory context was not added this time. Sending without it.`
+  - The visible Memory Agent fallback deliberately matches the normal empty
+    retrieval state: `No added memory. Sending original prompt.` Structured
+    failure metadata remains available for safe diagnostics and shared-payload
+    compatibility, but the chat does not add a second bordered `Note:` card.
   - `buildSharePayload(...)` now routes through `chat/services/sharePayload.js`
     so shared Memory Agent messages preserve this safe reason metadata without
     pulling share-service network side effects into payload tests.
@@ -1846,7 +1878,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Confidential retrieval keys are cached per session on `memoryKey` / `memoryKeyInfo` and must be invalidated on `401` / `403` auth failures.
   - Root `oa-chat` currently does not use that attested SDK path for memory mode. `chat/services/memoryBridge.js` intentionally forces the confidential memory client onto the plain OpenAI-compatible HTTPS path against `https://inference.tinfoil.sh/v1` (`provider: 'openai'`, not `provider: 'tinfoil'`).
   - `nanomem` still supports the SDK-backed, attested Tinfoil transport, but the root app is not opting into it right now.
-  - The generic root-app fallback text `Memory context was not added this time. Sending without it.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
+  - The generic root-app fallback text `No added memory. Sending original prompt.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
   - Root `oa-chat` now also has the memory filesystem modal shell from `memory-chat`, opened by `Cmd/Ctrl+Shift+M`. Storage editing and local-chat backfill are ported there, but the old `memory-chat` extractor/cancel UI is still not.
   - The settings menu `Data Controls` section now has a dedicated `Memory` row. `Export` uses the same OMF exporter as the memory panel header. `Import` uses a hidden settings-menu file input, then opens the memory panel and hands the selected file into the same OMF preview/merge flow as the panel header import button.
   - The root memory panel now also uses `memory-chat`'s OMF import/export UX, but the actual OMF logic has been moved into `nanomem`. `Export` now goes through `memoryBank.exportOmf()`, and import preview/merge go through `memoryBank.previewOmfImport()` / `memoryBank.importOmf()` instead of app-local format logic.

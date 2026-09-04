@@ -12,11 +12,13 @@ the one-use local route `/chat/?auth=username#username=...`. The username is in
 the fragment, so it is not sent in the document request or HTTP referrer. Chat
 waits for its normal account bootstrap, removes the authentication intent and
 username fragment with
-`history.replaceState`, and starts the existing Continue/passkey flow immediately
-without a second username form or Continue click. A neutral **Opening passkey…**
-view covers lookup and returning authentication; registration uses its existing
-setup progress. Cancellation or lookup failure restores the editable login form
-without automatically retrying. A remembered verified, unlocked account continues
+`history.replaceState`, and looks up the username without a second username form.
+**Checking username…** covers that lookup. Returning accounts then see the same
+**Welcome back → Unlock** encryption explanation as Google; new accounts see
+**Encrypt your data → Create passkey**. The explicit action opens the passkey.
+This supersedes the earlier direct-to-passkey behavior at the user's request.
+Lookup failures restore the editable form; passkey cancellation keeps **Try again**
+on the explanation, without automatically retrying. A remembered verified, unlocked account continues
 directly into Chat without opening Account. The route is only a UI handoff; it
 does not authenticate the username or bypass the passkey proof.
 
@@ -43,14 +45,14 @@ For registration, the user chooses a username and approves one passkey prompt.
 The browser generates the random account master key locally, wraps it with the
 passkey PRF, completes registration, closes Account, and emits the same
 first-account-ready event that opens Membership after first-time Google setup.
-The first-time passkey and finalization stages show only neutral setup progress,
-not a username reminder. Setup keeps ownership of the dialog even if account
+The first-time passkey and finalization stages keep the shared card in its disabled
+**Waiting…** state, not a username reminder. Setup keeps ownership of the dialog even if account
 or sync notifications publish the new account before finalization returns, so
 the signed-in Account summary cannot flash before Membership. Passkey retry
 and registration errors remain actionable; returning login is unchanged.
 
-For a returning account, the user enters the username and approves one passkey
-prompt. The same WebAuthn assertion authenticates the account on the server and
+For a returning account, the user enters the username, chooses **Unlock** on the
+Welcome back card, and approves one passkey prompt. The same WebAuthn assertion authenticates the account on the server and
 its PRF result unwraps the master key locally. The browser persists the username
 and non-extractable key bundle for that OA account. If every synced copy of the
 passkey is lost, the encrypted account cannot be recovered; the public username
@@ -67,14 +69,23 @@ login dialog no longer displays that explanatory copy.
 - `POST /auth/init` accepts an optional `username`. Omitting it preserves the
   old empty-body, server-generated account-number flow.
 - With no saved local binding, Continue first requests a username challenge.
-  A successful lookup reuses that same challenge for the normal passkey login,
-  avoiding registration quotas for returning owners. Only an explicit
-  `401 AUTHENTICATION_FAILED` from this pre-passkey lookup can try `/auth/init`.
-  Only its exact `409 USERNAME_UNAVAILABLE` conflict can select login instead
-  (a concurrent reservation/registration); other errors stay on the form.
+  A successful lookup selects the Welcome back card without reserving an account.
+  Its Unlock action fetches a fresh challenge, avoiding stale proofs if the user
+  pauses on the explanation. Only an explicit `401 AUTHENTICATION_FAILED` from
+  this pre-passkey lookup selects setup. This lookup-only mode does not call
+  `/auth/init`; **Create passkey** obtains the account reservation and fresh
+  registration challenge immediately before WebAuthn. A name claimed meanwhile
+  produces an actionable setup error, not an automatic login or another passkey.
+  The service's older immediate-continuation contract is retained for compatibility.
   Saved local accounts bypass initialization and use their existing login and
-  account-mismatch checks. Duplicate submissions are blocked, and closing the
+  account-mismatch checks. The shared card uses **Back**, not Google's **Log out**,
+  because username authentication has not happened yet. Back returns to the form
+  without clearing a saved account. Duplicate submissions are blocked, and closing the
   dialog invalidates in-flight lookup results before any passkey prompt.
+- Cancelled initializers/credential operations cannot overwrite newer pending
+  accounts. Setup finalization disables dismissal while uploading the wrapper;
+  no key may be zeroed during that commit and then installed locally. Modal
+  completion/error callbacks also verify their originating open-view version.
 - The server atomically reserves each normalized username for ten minutes and
   maps it to a server-generated opaque 16-digit account ID. Completing the
   initial credential write activates the mapping in one database transaction.

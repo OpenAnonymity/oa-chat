@@ -23,6 +23,8 @@ class AccountModal {
         this.identifierMode = null;
         this.usernameContinuePending = false;
         this.usernameHandoffPending = false;
+        this.usernameUnlockReady = false;
+        this.usernamePasskeyBusy = false;
         this.loginViewVersion = 0;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
@@ -334,7 +336,8 @@ class AccountModal {
                 this.usernameHandoffPending = false;
                 if (this.isOpen) {
                     this.render();
-                    this.focusModal('account-username-input');
+                    this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
+                        ? 'account-username-unlock-btn' : 'account-username-input');
                 }
             }
         }
@@ -385,9 +388,12 @@ class AccountModal {
 
     handleCloseAttempt() {
         // Don't allow closing during recovery step - user must save their codes
+        // Username finalization is also non-cancellable once its key is being
+        // registered; cancelling would zero the key during that commit.
         if (
             this.creationStep === 'recovery' ||
-            this.creationStep === 'oauth_authorizing'
+            this.creationStep === 'oauth_authorizing' ||
+            (this.generatedUsername && this.creationStep === 'confirming')
         ) {
             return;
         }
@@ -402,6 +408,7 @@ class AccountModal {
         this.isOpen = false;
         this.loginViewVersion += 1;
         this.usernameHandoffPending = false;
+        this.usernameUnlockReady = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         this.clearAnimationTimeouts();
@@ -424,6 +431,7 @@ class AccountModal {
     }
 
     resetCreationFlow() {
+        this.usernameUnlockReady = false;
         this.creationStep = 'idle';
         this.generatedAccountId = null;
         this.generatedUsername = null;
@@ -547,7 +555,10 @@ class AccountModal {
     }
 
     async handlePasskeyRegistration() {
+        const viewVersion = this.loginViewVersion;
+        const isCurrent = () => this.isOpen && viewVersion === this.loginViewVersion;
         const success = await this.accountService.registerPasskeyForPreparedAccount();
+        if (!isCurrent()) return;
 
         if (success) {
             if (this.generatedUsername) {
@@ -556,10 +567,12 @@ class AccountModal {
                 this.render();
                 try {
                     await this.accountService.completeAccountRegistration();
+                    if (!isCurrent()) return;
                     this.creationStep = 'complete';
                     this.app?.showToast?.('Account created successfully', 'success');
                     this.completeFirstAccountRouting();
                 } catch (error) {
+                    if (!isCurrent()) return;
                     this.creationStep = 'error';
                     this.creationError = error.message || 'Registration failed.';
                     this.render();
@@ -679,7 +692,8 @@ class AccountModal {
     }
 
     async handleAccountContinue() {
-        if (this.usernameContinuePending || this.accountState?.busy ||
+        if (this.usernameContinuePending || this.usernamePasskeyBusy || this.usernameUnlockReady ||
+            this.creationStep !== 'idle' || this.accountState?.busy ||
             this.accountState?.passkeySupported === false) return;
         if (this.getIdentifierMode() === 'accountId') {
             return this.handleAccountPasskeyUnlock();
@@ -690,21 +704,23 @@ class AccountModal {
         this.accountService.clearErrors();
         this.render();
         try {
-            const next = await this.accountService.prepareUsernameContinuation(username);
+            const next = await this.accountService.prepareUsernameContinuation(username, { lookupOnly: true });
             if (!this.isOpen || viewVersion !== this.loginViewVersion) {
-                if (next.kind === 'register') this.accountService.cancelPendingAccount();
                 return;
             }
             if (next.kind === 'login') {
-                await this.handleAccountPasskeyUnlock(next.challenge);
+                // The explanation can stay open longer than a login challenge's TTL.
+                // Unlock requests a fresh challenge, never reserves a new username.
+                this.usernameUnlockReady = true;
             } else {
-                this.generatedAccountId = this.accountService.getPendingAccountId();
-                this.generatedUsername = this.accountService.getPendingUsername();
-                this.creationStep = 'passkey';
+                // No /auth/init reservation or expiring registration challenge
+                // exists until the user clicks Create passkey on the explanation.
+                this.generatedAccountId = null;
+                this.generatedUsername = String(username).normalize('NFKC').trim().toLowerCase();
+                this.creationStep = 'username_ready';
                 this.creationError = null;
                 this.isLoadingAccountId = false;
                 this.render();
-                await this.handlePasskeyRegistration();
             }
         } catch (error) {
             if (this.isOpen && viewVersion === this.loginViewVersion) {
@@ -712,12 +728,66 @@ class AccountModal {
             }
         } finally {
             this.usernameContinuePending = false;
-            if (this.isOpen) this.render();
+            if (this.isOpen && viewVersion === this.loginViewVersion) {
+                this.render();
+                this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
+                    ? 'account-username-unlock-btn' : 'account-username-input');
+            }
         }
+    }
+
+    async handleUsernamePasskeyContinue() {
+        if (!this.isOpen || this.usernamePasskeyBusy || this.usernameContinuePending ||
+            this.accountState?.busy || this.accountState?.passkeySupported === false) return;
+        const isSetup = Boolean(this.generatedUsername) &&
+            ['username_ready', 'passkey_retry'].includes(this.creationStep);
+        if (!isSetup && !this.usernameUnlockReady) return;
+        const viewVersion = this.loginViewVersion;
+        const isCurrent = () => this.isOpen && viewVersion === this.loginViewVersion;
+        this.usernamePasskeyBusy = true;
+        this.accountService.clearErrors();
+        if (isSetup) {
+            this.creationStep = 'passkey';
+            this.creationError = null;
+        }
+        this.render();
+        try {
+            if (isSetup) {
+                if (!this.generatedAccountId) {
+                    await this.accountService.prepareAccount(this.generatedUsername);
+                    if (!isCurrent()) return;
+                    this.generatedAccountId = this.accountService.getPendingAccountId();
+                }
+                await this.handlePasskeyRegistration();
+            }
+            else await this.handleAccountPasskeyUnlock();
+        } catch (error) {
+            if (!isCurrent()) return;
+            if (isSetup) {
+                this.creationStep = this.generatedAccountId ? 'passkey_retry' : 'error';
+                this.creationError = error.message || 'Unable to create your passkey. Please try again.';
+            } else {
+                this.accountService.setError(error.message || 'Unable to unlock. Please try again.');
+            }
+        } finally {
+            this.usernamePasskeyBusy = false;
+            if (isCurrent()) this.render();
+        }
+    }
+
+    handleUsernamePasskeyBack() {
+        if (this.usernamePasskeyBusy || this.accountState?.busy) return;
+        if (this.generatedUsername) this.accountService.cancelPendingAccount();
+        this.resetCreationFlow();
+        this.accountService.clearErrors();
+        this.render();
+        this.focusModal('account-username-input');
     }
 
     async handleAccountPasskeyUnlock(preparedChallenge = null) {
         const usesAccountId = this.getIdentifierMode() === 'accountId';
+        const viewVersion = this.loginViewVersion;
+        const wasOpen = this.isOpen;
         this.authenticationExitPending = true;
         try {
             const success = usesAccountId
@@ -728,6 +798,7 @@ class AccountModal {
                     this.usernameInputValue || this.accountState?.username,
                     { action: 'username_login', ...(preparedChallenge ? { preparedChallenge } : {}) }
                 );
+            if (viewVersion !== this.loginViewVersion || (wasOpen && !this.isOpen)) return;
             if (success) {
                 this.close({ afterAuthentication: true });
                 this.app?.showToast?.('Account unlocked', 'success');
@@ -891,13 +962,15 @@ class AccountModal {
             (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
         if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
+        } else if (this.usernameUnlockReady) {
+            this.overlay.innerHTML = this.renderUsernameUnlockUI();
         } else if (this.usernameHandoffPending) {
             this.overlay.innerHTML = `
                 <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
                     ${this.renderHeader('Log in')}
                     <div class="flex items-center justify-center gap-3 py-6" role="status">
                         <span class="h-4 w-4 animate-spin rounded-full border-2 border-muted border-t-foreground" aria-hidden="true"></span>
-                        <p class="text-sm text-muted-foreground">Opening passkey…</p>
+                        <p class="text-sm text-muted-foreground">Checking username…</p>
                     </div>
                 </div>
             `;
@@ -909,6 +982,7 @@ class AccountModal {
         if (
             dialog &&
             !isCreationFlow &&
+            !this.usernameUnlockReady &&
             !this.usernameHandoffPending &&
             this.recoveryStep === 'idle' &&
             state.authBootstrapComplete !== false
@@ -944,6 +1018,7 @@ class AccountModal {
 
     renderCreationFlow() {
         const step = this.creationStep;
+        if (this.generatedUsername) return this.renderUsernameUnlockUI();
         const providerLabel = this.getOAuthProviderLabel();
         const title = this.generatedUsername && step !== 'error'
             ? 'Log in'
@@ -1465,12 +1540,38 @@ class AccountModal {
 
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
+        return this.renderPasskeyUnlockCard({
+            isLegacyMigration: state.oauthRecoveryRequired,
+            isSetup: state.oauthSetupRequired,
+            isLegacyPasskey: state.oauthLegacyPasskeyRequired,
+            busy: Boolean(state.busy),
+            error: state.error ? String(state.error) : ''
+        });
+    }
+
+    renderUsernameUnlockUI() {
+        const isSetup = Boolean(this.generatedUsername);
+        const failedRegistration = isSetup && this.creationStep === 'error';
+        return this.renderPasskeyUnlockCard({
+            isSetup,
+            closeDisabled: isSetup && this.creationStep === 'confirming',
+            busy: Boolean(this.usernamePasskeyBusy || this.accountState?.busy ||
+                (isSetup && ['passkey', 'confirming', 'complete'].includes(this.creationStep))),
+            error: String((isSetup ? this.creationError : this.accountState?.error) || ''),
+            actionId: failedRegistration ? 'start-over-btn' : 'account-username-unlock-btn',
+            primaryLabel: failedRegistration ? 'Start over' : '',
+            secondaryId: 'account-username-back-btn',
+            secondaryLabel: 'Back'
+        });
+    }
+
+    renderPasskeyUnlockCard({
+        isLegacyMigration = false, isSetup = false, isLegacyPasskey = false,
+        busy = false, error = '', closeDisabled = false, actionId = 'oauth-keyring-submit-btn',
+        primaryLabel = '', secondaryId = 'account-clear-btn', secondaryLabel = 'Log out'
+    } = {}) {
+        const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
-        const isLegacyMigration = state.oauthRecoveryRequired;
-        const isSetup = state.oauthSetupRequired;
-        const isLegacyPasskey = state.oauthLegacyPasskeyRequired;
-        const busy = Boolean(state.busy);
-        const error = state.error ? String(state.error) : '';
 
         // Setup and legacy paths share the Welcome back card's shell.
         const title = isLegacyMigration
@@ -1498,12 +1599,12 @@ class AccountModal {
                 : isLegacyPasskey
                     ? 'Use legacy passkey'
                     : 'Unlock';
-        const cta = busy ? 'Waiting…' : error ? 'Try again' : idleCta;
+        const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
         const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
 
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="account-unlock-card">
-                <button id="close-account-modal" class="account-unlock-close" type="button" aria-label="Close">
+                <button id="close-account-modal" class="account-unlock-close" type="button" aria-label="Close"${closeDisabled ? ' disabled' : ''}>
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                         <path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
@@ -1530,12 +1631,12 @@ class AccountModal {
                             ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
                         </button>
                     ` : `
-                        <button id="oauth-keyring-submit-btn" class="account-unlock-btn" type="button" ${busy ? 'disabled' : ''} aria-busy="${busy}">
+                        <button id="${actionId}" class="account-unlock-btn" type="button" ${busy ? 'disabled' : ''} aria-busy="${busy}">
                             ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
                         </button>
                     `}
                     ${error && !busy ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
-                    <button id="account-clear-btn" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>Log out</button>
+                    <button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>
                 </div>
             </div>
         `;
@@ -1680,6 +1781,12 @@ class AccountModal {
 
         const passkeyBtn = document.getElementById('account-passkey-btn');
         if (passkeyBtn) passkeyBtn.onclick = () => this.handleAccountContinue();
+
+        const usernameUnlockBtn = document.getElementById('account-username-unlock-btn');
+        if (usernameUnlockBtn) usernameUnlockBtn.onclick = () => this.handleUsernamePasskeyContinue();
+
+        const usernameBackBtn = document.getElementById('account-username-back-btn');
+        if (usernameBackBtn) usernameBackBtn.onclick = () => this.handleUsernamePasskeyBack();
 
         const recoveryToggleBtn = document.getElementById('account-recovery-toggle-btn');
         if (recoveryToggleBtn) recoveryToggleBtn.onclick = () => this.handleAccountToggleRecovery();
