@@ -21,12 +21,15 @@ reading code alone.
 
 ## 2026-09-02: Authentication intent waits for account restoration
 
-- Returning focus to the account footer after unlock no longer draws a rectangle
-  or a focus-only tint over the full row. `:focus-visible` instead outlines the
-  small round avatar with the theme's focus color (system `Highlight` in
-  forced-colors mode). Focus still returns to the same button; keyboard and
-  menu navigation are unchanged. Hover and pressed feedback remain full-width.
-  Keep this CSS-only treatment scoped to the footer, not other controls.
+- Successful authentication closes with `afterAuthentication: true`. If focus
+  returns to the account footer, its temporary `data-auth-restored-focus` marker
+  suppresses the automatic focus indicator: no black box, avatar ring, or
+  focus-only tint remains after login/unlock. Focus still returns to the same
+  button. Its next keydown or blur removes the marker, so later keyboard
+  navigation shows the avatar's theme-colored ring (system `Highlight` in
+  forced-colors mode). Ordinary dismissal, other return targets, menu focus,
+  full-width hover/pressed feedback, and first-account Membership routing are
+  unchanged. Do not replace this with unconditional outline removal or blur.
 - The commercial landing page now hands Google entry to `/chat/?auth=google`;
   this is distinct from `membership=1`, which remains an explicit billing UI
   request. Core chat owns the one-use auth intent and removes it with

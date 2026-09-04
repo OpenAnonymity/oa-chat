@@ -5661,12 +5661,12 @@ html {
 }
 
 .account-tab-btn:focus-visible {
-    /* Unlock restores focus here. Indicate it on the avatar, not a box
-       around the entire footer; keep the row's hover/pressed surfaces intact. */
+    /* Never frame the full row. Automatic post-login focus is quiet; only
+       subsequent keyboard focus outlines the avatar below. */
     outline: none;
 }
 
-.account-tab-btn:focus-visible .account-tab-avatar {
+.account-tab-btn:focus-visible:not([data-auth-restored-focus]) .account-tab-avatar {
     outline: 2px solid hsl(var(--color-ring));
     outline-offset: 2px;
 }
@@ -5677,7 +5677,7 @@ html {
 }
 
 @media (forced-colors: active) {
-    .account-tab-btn:focus-visible .account-tab-avatar {
+    .account-tab-btn:focus-visible:not([data-auth-restored-focus]) .account-tab-avatar {
         outline: 2px solid Highlight;
     }
 }

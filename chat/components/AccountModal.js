@@ -103,7 +103,10 @@ class AccountModal {
                 }
                 this.isOpen ? this.close() : this.open(tabBtn);
             };
+            tabBtn.onblur = () => tabBtn.removeAttribute('data-auth-restored-focus');
             tabBtn.onkeydown = event => {
+                // Automatic login focus is quiet until the user uses the keyboard.
+                tabBtn.removeAttribute('data-auth-restored-focus');
                 if (!this.isAccountMenuAvailable()) return;
                 if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
                     event.preventDefault();
@@ -394,7 +397,7 @@ class AccountModal {
         this.close();
     }
 
-    close() {
+    close({ afterAuthentication = false } = {}) {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
         this.loginViewVersion += 1;
@@ -409,7 +412,14 @@ class AccountModal {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;
         }
-        if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
+        if (this.returnFocusEl?.focus) {
+            // Preserve the return target without leaving a focus ring after login.
+            // Blur or the next keyboard interaction restores normal focus styling.
+            if (afterAuthentication && this.returnFocusEl === tabBtn) {
+                tabBtn.setAttribute('data-auth-restored-focus', 'true');
+            }
+            this.returnFocusEl.focus();
+        }
         this.returnFocusEl = null;
     }
 
@@ -486,7 +496,7 @@ class AccountModal {
             if (result.newAccount === true) {
                 this.completeFirstAccountRouting();
             } else {
-                this.close();
+                this.close({ afterAuthentication: true });
             }
             return;
         }
@@ -494,7 +504,7 @@ class AccountModal {
     }
 
     completeFirstAccountRouting() {
-        this.close();
+        this.close({ afterAuthentication: true });
         this.app?.notifyFirstAccountReady?.();
     }
 
@@ -719,7 +729,7 @@ class AccountModal {
                     { action: 'username_login', ...(preparedChallenge ? { preparedChallenge } : {}) }
                 );
             if (success) {
-                this.close();
+                this.close({ afterAuthentication: true });
                 this.app?.showToast?.('Account unlocked', 'success');
             } else if (usesAccountId && this.accountService.getState().recoveryRequired) {
                 this.showRecoveryInput = true;
@@ -759,7 +769,7 @@ class AccountModal {
                 this.recoveryStep = 'idle';
                 this.showRecoveryInput = false;
                 this.recoveryInputValue = '';
-                this.close();
+                this.close({ afterAuthentication: true });
                 this.app?.showToast?.('Account recovered successfully', 'success');
             } else {
                 this.recoveryStep = 'idle';
@@ -784,7 +794,7 @@ class AccountModal {
             );
             if (success) {
                 this.recoveryInputValue = '';
-                this.close();
+                this.close({ afterAuthentication: true });
                 this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
             }
         } finally {
@@ -808,7 +818,7 @@ class AccountModal {
             if (success) {
                 this.app?.showToast?.('Encrypted data unlocked', 'success');
                 if (isFirstAccountSetup) this.completeFirstAccountRouting();
-                else this.close();
+                else this.close({ afterAuthentication: true });
             }
         } finally {
             this.authenticationExitPending = false;
