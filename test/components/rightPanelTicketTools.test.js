@@ -97,14 +97,14 @@ test('commercial ticket management replaces right-panel redemption with one comp
     const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
     assert.match(source, /hasExternalTicketManager/);
     assert.match(source, /id="open-ticket-manager-btn"/);
-    assert.match(source, /class="system-panel-ticket-trigger"/);
+    assert.match(source, /text-left text-xs font-medium/);
     assert.match(source, /Inference Tickets: <span class="font-semibold">\$\{this\.ticketCount\}<\/span>/);
     assert.doesNotMatch(source, /id="open-ticket-manager-btn"[\s\S]{0,900}d="m9 18 6-6-6-6"/);
     assert.match(source, /Manage inference tickets, \$\{ticketCount\} available/);
     assert.match(source, /aria-label="\$\{ticketSummary\.ariaLabel\}"/);
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);
-    assert.match(source, /class="oa-right-panel-access-stack"/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-4 p-3/);
     assert.match(source, /class="system-panel-divider" aria-hidden="true"/);
     assert.match(source, /oa-right-panel-ticket-summary min-w-0/);
     assert.match(source, /oa-right-panel-access-key min-w-0/);
@@ -161,7 +161,7 @@ test('right-panel rerenders reattach commercial ticket status through the public
 test('commercial ticket launcher keeps a question-mark ticket explanation', () => {
     const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
     assert.match(source, /id="toggle-external-ticket-info-btn"/);
-    assert.match(source, /class="system-panel-help"/);
+    assert.match(source, /h-3\.5 w-3\.5 flex-shrink-0 items-center justify-center rounded-full/);
     assert.match(source, /aria-controls="external-ticket-info-panel"/);
     assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
     assert.match(source, /Inference tickets provide unlinkable access to frontier AI models/);
@@ -186,11 +186,11 @@ function createRenderPanel(ticketCount = 100, accountState = {}) {
 test('commercial layout renders live counts, one divider and pending key details', () => {
     const panel = createRenderPanel();
     const html = panel.generateTopSectionHTML();
-    assert.match(html, /system-panel-ticket-count">100<\/span>/);
+    assert.match(html, /font-semibold">100<\/span>/);
     assert.match(html, /aria-label="Manage inference tickets, 100 available"/);
     assert.equal((html.match(/class="system-panel-divider"/g) || []).length, 1);
     assert.ok(html.indexOf('open-ticket-manager-btn') < html.indexOf('system-panel-divider'));
-    assert.ok(html.indexOf('system-panel-divider') < html.indexOf('system-panel-key-heading'));
+    assert.ok(html.indexOf('system-panel-divider') < html.indexOf('Ephemeral Access Key'));
     assert.match(html, /Requested on message send/);
     assert.match(html, /To be assigned/);
     assert.match(html, /data-oa-extension-slot="rightPanel.ticketStatus"/);
@@ -200,7 +200,7 @@ test('commercial layout renders live counts, one divider and pending key details
     panel.ticketCount = 987654;
     panel.showExternalTicketInfo = true;
     const updated = panel.generateTopSectionHTML();
-    assert.match(updated, /system-panel-ticket-count">987654<\/span>/);
+    assert.match(updated, /font-semibold">987654<\/span>/);
     assert.match(updated, /aria-expanded="true"/);
     assert.match(updated, /id="external-ticket-info-panel"[\s\S]*?aria-hidden="false"/);
 });
@@ -212,7 +212,7 @@ test('commercial zero balance and active-key controls survive the layout change'
     panel.timeRemaining = '02:00';
     const html = panel.generateTopSectionHTML();
     assert.match(html, /aria-label="Get inference tickets"/);
-    assert.match(html, /system-panel-row-label">Get tickets<\/span>/);
+    assert.match(html, /<span>Get tickets<\/span>/);
     assert.match(html, /id="renew-key-btn"/);
     assert.match(html, /id="api-key-expiry"/);
     assert.match(html, /masked-key/);
@@ -232,21 +232,21 @@ test('parallel keys retain per-lane attestation without a duplicate header contr
         { id: 'lane-1', label: 'First model', access: { apiKey: 'fixture-key' } },
         { id: 'lane-2', label: 'Second model', access: null }
     ], { embedded: true });
-    assert.match(html, /system-panel-row-label">Ephemeral Access Keys<\/span>/);
+    assert.match(html, /text-xs font-medium">Ephemeral Access Keys<\/span>/);
     assert.match(html, /data-council-attestation-lane="lane-1"/);
     assert.match(html, /Requested on message send/);
     assert.doesNotMatch(html, /id="verifier-attestation-btn"/);
-    assert.doesNotMatch(panel.generateAccessKeyHeading('<unsafe>'), /<unsafe>/);
 });
 
-test('System Panel layout uses requested dimensions with theme and keyboard support', () => {
+test('System Panel restores original typography and retains only a non-layout divider', () => {
     const css = fs.readFileSync('chat/styles.css', 'utf8');
-    assert.match(css, /\.system-panel-header \{[^}]*padding: 14px 12px 10px;/);
-    assert.match(css, /\.system-panel-header h2 \{[^}]*font: 600 17px\/1\.2 var\(--font-sans\)/);
-    assert.match(css, /\.system-panel-row \{[^}]*gap: 10px;[^}]*height: 32px;/);
-    assert.match(css, /\.system-panel-row-icon \{[^}]*width: 18px;[^}]*height: 18px;/);
-    assert.match(css, /\.system-panel-ticket-count \{[^}]*font-variant-numeric: tabular-nums;/);
-    assert.match(css, /\.system-panel-divider \{[^}]*margin: 12px 0;[^}]*var\(--color-border\)/);
-    assert.match(css, /\.system-panel-help:focus-visible/);
-    assert.match(css, /\.system-panel-close:focus-visible/);
+    const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
+    assert.match(source, /<h2 class="text-sm font-semibold text-foreground">System Panel<\/h2>/);
+    assert.match(source, /text-left text-xs font-medium/);
+    assert.match(source, /<span class="text-xs font-medium">Ephemeral Access Key<\/span>/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-4 p-3/);
+    assert.match(source, /data-oa-extension-slot="\$\{SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS\}" hidden><\/div>\s*<div class="system-panel-divider" aria-hidden="true"><\/div>/);
+    assert.match(css, /\.oa-right-panel-ticket-summary \{[^}]*position: relative;/);
+    assert.match(css, /\.system-panel-divider \{[^}]*position: absolute;[^}]*right: -12px;[^}]*bottom: -8px;[^}]*left: -12px;[^}]*height: 1px;[^}]*var\(--color-border\)/);
+    assert.doesNotMatch(css, /\.system-panel-(?:header|row|help|close|ticket-trigger)/);
 });
