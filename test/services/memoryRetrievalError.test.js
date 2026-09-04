@@ -74,7 +74,7 @@ test('describeMemoryRetrievalError reads wrapped cause status shapes', () => {
     }).detail, 'Try again later if you need memory context.');
 });
 
-test('createMemoryRetrievalFailure preserves generic fallback copy with safe reason metadata', () => {
+test('createMemoryRetrievalFailure preserves compact fallback copy with safe reason metadata', () => {
     const failure = createMemoryRetrievalFailure({
         status: 500,
         responseText: '{"prompt":"do not leak this","error":"upstream crashed"}'
@@ -82,7 +82,7 @@ test('createMemoryRetrievalFailure preserves generic fallback copy with safe rea
 
     assert.equal(
         failure.content,
-        'Memory context was not added this time. Sending without it.'
+        'No added memory. Sending original prompt.'
     );
     assert.deepEqual(failure.reason, {
         kind: 'service',
