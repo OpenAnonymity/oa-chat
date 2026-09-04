@@ -302,6 +302,18 @@ class AccountModal {
         const sidebar = this.app?.elements?.sidebar;
         if (!sidebar?.classList?.contains('mobile-visible')) return;
         this.app?.hideSidebar?.({ persist: false });
+        this.restoreOverlaySidebar = true;
+    }
+
+    // Bring the overlay sidebar back when the dialog it made way for closes,
+    // so focus returns to a visible Account button and the user lands where
+    // they started. After a completed sign-in the app routes elsewhere, so
+    // the sidebar stays closed.
+    reopenOverlaySidebar({ afterAuthentication = false } = {}) {
+        if (!this.restoreOverlaySidebar) return;
+        this.restoreOverlaySidebar = false;
+        if (afterAuthentication) return;
+        this.app?.showSidebar?.({ persist: false });
     }
 
     open(returnFocusEl = null) {
@@ -439,6 +451,7 @@ class AccountModal {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;
         }
+        this.reopenOverlaySidebar({ afterAuthentication });
         if (this.returnFocusEl?.focus) {
             // Preserve the return target without leaving a focus ring after login.
             // Blur or the next keyboard interaction restores normal focus styling.

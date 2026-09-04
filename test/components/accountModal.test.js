@@ -272,6 +272,30 @@ test('opening an account dialog closes the overlay sidebar without persisting th
     assert.deepEqual(calls, [{ persist: false }]);
 });
 
+test('closing that dialog brings the overlay sidebar back, except after a completed sign-in', () => {
+    const shows = [];
+    const app = {
+        elements: { sidebar: { classList: { contains: name => name === 'mobile-visible' } } },
+        hideSidebar() {},
+        showSidebar: options => shows.push(options)
+    };
+    const modal = { app };
+    AccountModal.prototype.dismissOverlaySidebar.call(modal);
+    AccountModal.prototype.reopenOverlaySidebar.call(modal, {});
+    AccountModal.prototype.reopenOverlaySidebar.call(modal, {});
+    assert.deepEqual(shows, [{ persist: false }]);
+
+    const authModal = { app };
+    AccountModal.prototype.dismissOverlaySidebar.call(authModal);
+    AccountModal.prototype.reopenOverlaySidebar.call(authModal, { afterAuthentication: true });
+    assert.deepEqual(shows, [{ persist: false }]);
+    assert.equal(authModal.restoreOverlaySidebar, false);
+
+    const untouched = { app };
+    AccountModal.prototype.reopenOverlaySidebar.call(untouched, {});
+    assert.deepEqual(shows, [{ persist: false }]);
+});
+
 test('username login uses the narrower reference card with neutral accessible controls', () => {
     const css = fs.readFileSync('chat/styles.css', 'utf8');
     assert.match(css, /\.account-login-dialog\s*\{[^}]*width: calc\(100% - 2rem\);[^}]*max-width: 22.5rem;[^}]*padding: 2rem;[^}]*border-radius: 1.5rem/);
