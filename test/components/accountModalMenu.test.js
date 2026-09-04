@@ -19,6 +19,13 @@ test('account footer only outlines the avatar outside automatic post-auth focus,
     assert.doesNotMatch(css, /\.account-tab-btn:focus-visible\s*,\s*\.account-menu-item:focus-visible/);
 });
 
+test('account menu quiets pointer focus without removing keyboard or hover indicators', () => {
+    const css = readFileSync('chat/styles.css', 'utf8');
+    assert.match(css, /\.account-menu-item:focus-visible\s*\{\s*outline: 2px solid/);
+    assert.match(css, /\.account-settings-menu\[data-pointer-focus\] \.account-menu-item:focus-visible\s*\{[^}]*outline: none/);
+    assert.match(css, /\.account-menu-item:hover,\s*\.account-settings-menu:not\(\[data-pointer-focus\]\) \.account-menu-item:focus-visible\s*\{\s*background:/);
+});
+
 function createElement(documentImpl, options = {}) {
     const attributes = new Map();
     return {
@@ -106,6 +113,58 @@ test('automatic authentication focus stays on the footer without a highlight unt
         assert.equal(tab.getAttribute('data-auth-restored-focus'), null);
         tab.focus();
         assert.equal(tab.getAttribute('data-auth-restored-focus'), null);
+    } finally { h.cleanup(); }
+});
+
+test('pointer opening after authentication suppresses the menu highlight before focus, then keyboard restores it', () => {
+    const h = createFocusHarness({ accountId: 'test', sessionVerified: true, status: 'unlocked' });
+    try {
+        const membershipItem = createElement(h.documentImpl);
+        h.menu.children.push(membershipItem);
+        let markerAtFocus;
+        const focus = h.accountItem.focus.bind(h.accountItem);
+        h.accountItem.focus = () => { markerAtFocus = h.menu.getAttribute('data-pointer-focus'); focus(); };
+        h.modal.close({ afterAuthentication: true });
+        h.tab.onclick({ detail: 1 }); // Native mouse/touch click, unlike keyboard/AT activation.
+        assert.equal(h.menu.hidden, false);
+        assert.equal(markerAtFocus, 'true');
+        assert.equal(h.documentImpl.activeElement, h.accountItem, 'Keep focus for accessible menu navigation');
+        assert.equal(h.tab.getAttribute('data-auth-restored-focus'), null, 'Footer still cleans up on blur');
+
+        for (const [key, expected] of [['ArrowDown', membershipItem], ['ArrowUp', h.accountItem], ['End', membershipItem], ['Home', h.accountItem]]) {
+            h.menu.onkeydown({ key, target: h.documentImpl.activeElement, preventDefault() {} });
+            assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
+            assert.equal(h.documentImpl.activeElement, expected, key);
+        }
+        h.menu.onpointerdown();
+        assert.equal(h.menu.getAttribute('data-pointer-focus'), 'true');
+        h.menu.onkeydown({ key: 'Escape', target: h.accountItem, preventDefault() {} });
+        assert.equal(h.menu.hidden, true);
+        assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
+        assert.equal(h.documentImpl.activeElement, h.tab);
+
+        h.tab.onclick({ detail: 0 }); // Screen-reader/synthetic activation keeps visible focus.
+        assert.equal(markerAtFocus, null);
+        h.modal.closeAccountMenu();
+        h.tab.onclick({ detail: 1 });
+        h.menu.onkeydown({ key: 'Tab', target: h.accountItem });
+        assert.equal(h.menu.hidden, true);
+        assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
+    } finally { h.cleanup(); }
+});
+
+test('all keyboard menu entry keys reset pointer-only focus suppression', () => {
+    const h = createFocusHarness({ accountId: 'test', sessionVerified: true, status: 'unlocked' });
+    try {
+        h.modal.close({ afterAuthentication: true });
+        for (const key of ['ArrowDown', 'Enter', ' ']) {
+            h.tab.onclick({ detail: 1 });
+            assert.equal(h.menu.getAttribute('data-pointer-focus'), 'true');
+            h.tab.onkeydown({ key, preventDefault() {} });
+            assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
+            assert.equal(h.documentImpl.activeElement, h.accountItem);
+            h.modal.closeAccountMenu(true);
+        }
     } finally { h.cleanup(); }
 });
 

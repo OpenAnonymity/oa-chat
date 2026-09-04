@@ -98,9 +98,9 @@ class AccountModal {
     attachAccountNavListeners() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) {
-            tabBtn.onclick = () => {
+            tabBtn.onclick = event => {
                 if (this.isAccountMenuAvailable()) {
-                    this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn);
+                    this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn, { fromPointer: event?.detail > 0 });
                     return;
                 }
                 this.isOpen ? this.close() : this.open(tabBtn);
@@ -120,6 +120,7 @@ class AccountModal {
         const accountItem = document.getElementById('account-security-menu-item');
         const logoutItem = document.getElementById('account-logout-menu-item');
         if (menu) {
+            menu.onpointerdown = () => menu.setAttribute('data-pointer-focus', 'true');
             menu.onkeydown = event => this.handleAccountMenuKeydown(event);
             menu.onclick = event => {
                 if (event.target.closest?.('[role="menuitem"]')) this.closeAccountMenu();
@@ -156,13 +157,17 @@ class AccountModal {
         return document.getElementById('account-tab-btn');
     }
 
-    openAccountMenu(trigger = null) {
+    openAccountMenu(trigger = null, { fromPointer = false } = {}) {
         const tabBtn = document.getElementById('account-tab-btn');
         const menu = document.getElementById('account-settings-menu');
         if (!tabBtn || !menu || !this.isAccountMenuAvailable()) return;
         this.close();
         this.menuOpen = true;
         this.accountMenuTrigger = trigger || tabBtn;
+        // Keep menu focus for Escape/arrow navigation, but don't inherit the
+        // login input's focus-visible ring when the menu is opened by pointer.
+        if (fromPointer) menu.setAttribute('data-pointer-focus', 'true');
+        else menu.removeAttribute('data-pointer-focus');
         menu.hidden = false;
         tabBtn?.setAttribute('aria-expanded', 'true');
         this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
@@ -174,13 +179,17 @@ class AccountModal {
         const menu = document.getElementById('account-settings-menu');
         const returnTarget = this.accountMenuTrigger || tabBtn;
         this.menuOpen = false;
-        if (menu) menu.hidden = true;
+        if (menu) {
+            menu.hidden = true;
+            menu.removeAttribute('data-pointer-focus');
+        }
         tabBtn?.setAttribute('aria-expanded', 'false');
         this.accountMenuTrigger = null;
         if (restoreFocus) returnTarget?.focus?.();
     }
 
     handleAccountMenuKeydown(event) {
+        document.getElementById('account-settings-menu')?.removeAttribute('data-pointer-focus');
         const items = this.getAccountMenuItems();
         if (event.key === 'Escape') {
             event.preventDefault();

@@ -5676,6 +5676,11 @@ html {
     outline-offset: 1px;
 }
 
+.account-settings-menu[data-pointer-focus] .account-menu-item:focus-visible {
+    /* Programmatic focus after pointer opening is not keyboard navigation. */
+    outline: none;
+}
+
 @media (forced-colors: active) {
     .account-tab-btn:focus-visible:not([data-auth-restored-focus]) .account-tab-avatar {
         outline: 2px solid Highlight;
@@ -5790,7 +5795,7 @@ html {
 }
 
 .account-menu-item:hover,
-.account-menu-item:focus-visible {
+.account-settings-menu:not([data-pointer-focus]) .account-menu-item:focus-visible {
     background: hsl(var(--color-foreground) / 0.1);
 }
 

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Account menu focus — isolated fixture</title>
+<link rel="stylesheet" href="../../chat/tailwind.generated.css">
+<link rel="stylesheet" href="../../chat/styles.css">
+<style>
+    .fixture-controls { display: flex; gap: 16px; flex-wrap: wrap; padding: 24px; }
+    .fixture-sidebar { position: fixed; width: 280px; max-width: 100%; bottom: 0; left: 0; height: 300px; border: 1px solid hsl(var(--color-border)); }
+    #fixture-result { padding: 24px; }
+</style>
+<nav class="fixture-controls" aria-label="Fixture controls">
+    <input aria-label="Simulated login input" placeholder="Type to reproduce login focus">
+    <button id="complete">Simulate focus after login</button>
+    <button id="inherited">Simulate inherited login focus</button>
+    <button id="theme">Switch theme</button>
+</nav>
+<p id="fixture-result" role="status">Fixture only: no real authentication, billing, or account changes.</p>
+<aside class="fixture-sidebar" aria-label="Account sidebar"></aside>
+<div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"></div>
+<script type="module">
+import AccountModal from '../../chat/components/AccountModal.js';
+// Use the shipped footer markup so focus checks cover the actual menu/trigger.
+const source = await (await fetch('../../chat/index.html')).text();
+const parsed = new DOMParser().parseFromString(source, 'text/html');
+document.querySelector('aside').append(parsed.getElementById('account-nav'));
+const membership = document.createElement('button');
+membership.className = 'account-menu-item';
+membership.setAttribute('role', 'menuitem');
+membership.tabIndex = -1;
+membership.textContent = 'Membership';
+document.getElementById('account-logout-menu-item').before(membership);
+const report = text => { document.getElementById('fixture-result').textContent = text; };
+membership.onclick = () => report('Membership selected (fixture only).');
+const state = { isReady: true, authBootstrapComplete: true, accountId: 'fixture-account', username: 'fixture-user', sessionVerified: true, status: 'unlocked' };
+const modal = new AccountModal({
+    services: {
+        account: { getState: () => ({ ...state }), subscribe: () => () => {}, clearErrors() {}, async clearLocalAccount() { report('Log out selected (fixture only).'); } },
+        sync: { getStatus: () => ({}), subscribe: () => () => {} }
+    },
+    showToast: report
+});
+document.getElementById('complete').onclick = () => {
+    modal.closeAccountMenu();
+    modal.open(document.getElementById('account-tab-btn'));
+    modal.close({ afterAuthentication: true });
+    report('Post-authentication focus restored. Click the footer or use ArrowDown.');
+};
+document.getElementById('inherited').onclick = () => {
+    modal.closeAccountMenu();
+    // Input focus deterministically exercises browsers that carry focus-visible
+    // through automatic post-login focus, even when the menu opens by pointer.
+    document.querySelector('input').focus();
+    modal.openAccountMenu(document.getElementById('account-tab-btn'), { fromPointer: true });
+    report('Inherited input focus simulated. No pointer-only Account ring should appear.');
+};
+document.getElementById('theme').onclick = () => document.documentElement.classList.toggle('dark');
+</script>
+</html>

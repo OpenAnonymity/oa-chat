@@ -4,6 +4,22 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Quiet pointer focus in the Account menu
+
+- The menu still focuses its first item on opening for Escape/arrow navigation.
+  Mouse/touch opening now sets a menu-local `data-pointer-focus` marker **before**
+  moving focus. This suppresses the inherited focus-only outline and tint left
+  by the login input, including on the Account row, without blurring the item.
+- Any menu keydown removes that marker immediately. Keyboard/assistive activation
+  (zero-detail click), ArrowDown/Enter/Space opening, and later arrow/Home/End
+  navigation retain visible focus. Pointer interaction within the menu switches
+  back to quiet focus; closing clears the marker. Normal hover feedback remains.
+- This is menu presentation/input-modality state only: footer authentication
+  restoration, menu actions, Membership, logout, and login routing are unchanged.
+- `test/fixtures/account-menu-focus.html` uses the shipped footer markup with
+  fake services to check post-auth focus, pointer reopening, keyboard navigation,
+  and both themes without real authentication or billing.
+
 ## 2026-09-03: Lighter login typography
 
 - The compact login card uses the supplied **Login Modal / 1a** proportions:
