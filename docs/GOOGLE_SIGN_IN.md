@@ -9,12 +9,14 @@ or entering the unlinkable-inference path. See
 
 - **Commercial landing handoff:** `/chat/?auth=google` is a one-use UI intent,
   not proof of authentication and not a Membership request. The chat waits for
-  initial account restoration before routing it. Signed-out visitors see the
-  Google sign-in surface, verified but locked accounts see the encryption-
-  passkey surface, and verified unlocked accounts enter chat directly. The
-  client then removes `auth` with `history.replaceState`, preserving unrelated
-  query parameters and the hash. It never opens the signed-in Account summary
-  automatically. The neighboring username field uses its own
+  initial account restoration before routing it. A restored Google account may
+  continue directly when verified and unlocked, or show its encryption-passkey
+  surface when locked. If the restored identity is a username or legacy account,
+  the handoff logs it out, clears the saved local binding, and then shows the
+  Google sign-in surface without a switch confirmation. The client removes
+  `auth` with `history.replaceState`, preserving unrelated query parameters and
+  the hash. It never opens the signed-in Account summary automatically. The
+  neighboring username field uses its own
   `/chat/?auth=username#username=...` handoff and never enters Google OAuth.
 - **Registration picker:** Account entry offers Google or a pseudonymous
   username. Legacy account-number passkey login remains available through its

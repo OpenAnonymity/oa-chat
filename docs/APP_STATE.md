@@ -4,6 +4,21 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Landing authentication handoffs require an identity match
+
+- A restored account now satisfies `/chat/?auth=google` only when it is a Google
+  account. A username or legacy account is logged out and its saved local binding
+  is cleared before the Google sign-in surface opens.
+- A restored username account satisfies
+  `/chat/?auth=username#username=...` only when its NFKC-normalized, trimmed,
+  lowercase username matches the requested username. A different username,
+  Google account, or legacy account is logged out and cleared before the requested
+  username lookup begins.
+- Matching verified/unlocked identities still continue directly, while matching
+  locked identities keep their normal unlock flow. Switching is automatic and
+  does not add a confirmation prompt. A username handoff with no submitted
+  username keeps the saved binding and shows the normal form.
+
 ## 2026-09-04: Invoice-style Account disclosure chevron
 
 - The signed-in Account dialog's **Passkey & encryption** disclosure uses the

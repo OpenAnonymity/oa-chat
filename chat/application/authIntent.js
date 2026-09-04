@@ -5,6 +5,10 @@ const AUTHENTICATION_INTENTS = new Set([
     USERNAME_AUTH_INTENT
 ]);
 
+function normalizeUsername(value) {
+    return String(value || '').normalize('NFKC').trim().toLowerCase();
+}
+
 export function getAuthenticationIntent(locationImpl = globalThis.location) {
     const params = new URLSearchParams(locationImpl?.search || '');
     const intent = params.get('auth');
@@ -15,7 +19,19 @@ export function getUsernameAuthenticationValue(locationImpl = globalThis.locatio
     const params = new URLSearchParams(locationImpl?.search || '');
     if (params.get('auth') !== USERNAME_AUTH_INTENT) return null;
     const fragment = new URLSearchParams((locationImpl?.hash || '').replace(/^#/, ''));
-    return String(fragment.get('username') || '').normalize('NFKC').trim().toLowerCase();
+    return normalizeUsername(fragment.get('username'));
+}
+
+export function accountMatchesAuthenticationIntent(account, intent, username = null) {
+    if (!account?.accountId) return false;
+    if (intent === GOOGLE_AUTH_INTENT) {
+        return account.googleLinked === true && !normalizeUsername(account.username);
+    }
+    if (intent === USERNAME_AUTH_INTENT) {
+        const requestedUsername = normalizeUsername(username);
+        return !!requestedUsername && normalizeUsername(account.username) === requestedUsername;
+    }
+    return false;
 }
 
 export function clearAuthenticationIntent(
@@ -55,13 +71,21 @@ export async function routeAuthenticationIntent({
     await accountService.waitForAuthBootstrap();
     clearAuthenticationIntent(locationImpl, historyImpl);
 
-    const account = accountService.getState();
+    let account = accountService.getState();
+    const hasExplicitIdentity = intent === GOOGLE_AUTH_INTENT || !!username;
+    const matchesIntent = accountMatchesAuthenticationIntent(account, intent, username);
     if (
         account?.accountId &&
+        matchesIntent &&
         account.sessionVerified === true &&
         account.status === 'unlocked'
     ) {
         return Object.freeze({ handled: true, action: 'continue' });
+    }
+
+    if (account?.accountId && hasExplicitIdentity && !matchesIntent) {
+        await accountService.clearLocalAccount();
+        account = accountService.getState();
     }
 
     if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {

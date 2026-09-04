@@ -18,12 +18,16 @@ username fragment with
 **Encrypt your data → Create passkey**. The explicit action opens the passkey.
 This supersedes the earlier direct-to-passkey behavior at the user's request.
 Lookup failures restore the editable form; passkey cancellation keeps **Try again**
-on the explanation, without automatically retrying. A remembered verified, unlocked account continues
-directly into Chat without opening Account. The route is only a UI handoff; it
-does not authenticate the username or bypass the passkey proof.
+on the explanation, without automatically retrying. A remembered verified,
+unlocked username account continues directly into Chat only when its normalized
+username matches the submitted username. A different remembered username,
+Google account, or legacy account is logged out and its saved local binding is
+cleared before the submitted username handoff proceeds; there is no separate
+switch confirmation. The route is only a UI handoff; it does not authenticate
+the username or bypass the passkey proof.
 
 Missing usernames, unsupported passkeys, or an already-busy account retain the
-normal form. Saved legacy and Google unlock/recovery surfaces are not bypassed.
+normal form. A missing username does not clear any saved account binding.
 The prompt runs independently of the rest of Chat startup; closing during lookup
 invalidates the pending handoff and cannot start a late passkey prompt.
 

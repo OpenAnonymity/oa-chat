@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+    accountMatchesAuthenticationIntent,
     clearAuthenticationIntent,
     getAuthenticationIntent,
     getUsernameAuthenticationValue,
@@ -9,15 +10,28 @@ import {
 } from '../../chat/application/authIntent.js';
 
 function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#latest') {
+    let currentState = { ...state };
     let releaseBootstrap;
     const bootstrap = new Promise(resolve => { releaseBootstrap = resolve; });
     const replacements = [];
     let opens = 0;
+    let clears = 0;
     const usernameOpens = [];
     const usernameOptions = [];
     const accountService = {
-        getState: () => ({ ...state }),
-        waitForAuthBootstrap: () => bootstrap
+        getState: () => ({ ...currentState }),
+        waitForAuthBootstrap: () => bootstrap,
+        async clearLocalAccount() {
+            clears += 1;
+            currentState = {
+                accountId: null,
+                username: null,
+                googleLinked: false,
+                oauthProvider: null,
+                sessionVerified: false,
+                status: 'none'
+            };
+        }
     };
     const locationImpl = {
         pathname: '/chat/',
@@ -44,7 +58,8 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
         replacements,
         usernameOpens,
         usernameOptions,
-        get opens() { return opens; }
+        get opens() { return opens; },
+        get clears() { return clears; }
     };
 }
 
@@ -85,9 +100,33 @@ test('username authentication intent normalizes its value and removes it from th
     assert.equal(getUsernameAuthenticationValue({ search: '?auth=google', hash: '#username=keep' }), null);
 });
 
-test('remembered unlocked account enters chat without opening Account', async () => {
+test('authentication intents match only the requested identity partition', () => {
+    assert.equal(accountMatchesAuthenticationIntent({
+        accountId: 'google-account',
+        googleLinked: true
+    }, 'google'), true);
+    assert.equal(accountMatchesAuthenticationIntent({
+        accountId: 'username-account',
+        username: 'Winter-OWL'
+    }, 'username', ' winter-owl '), true);
+    assert.equal(accountMatchesAuthenticationIntent({
+        accountId: 'username-account',
+        username: 'winter-owl'
+    }, 'google'), false);
+    assert.equal(accountMatchesAuthenticationIntent({
+        accountId: 'google-account',
+        googleLinked: true
+    }, 'username', 'winter-owl'), false);
+    assert.equal(accountMatchesAuthenticationIntent({
+        accountId: 'username-account',
+        username: 'winter-owl'
+    }, 'username', ''), false);
+});
+
+test('remembered unlocked Google account enters chat without opening Account', async () => {
     const harness = createHarness({
         accountId: '1234567890123456',
+        googleLinked: true,
         sessionVerified: true,
         status: 'unlocked'
     });
@@ -100,7 +139,25 @@ test('remembered unlocked account enters chat without opening Account', async ()
     harness.releaseBootstrap();
     assert.deepEqual(await routing, { handled: true, action: 'continue' });
     assert.equal(harness.opens, 0);
+    assert.equal(harness.clears, 0);
     assert.equal(harness.replacements.length, 1);
+});
+
+test('Google intent signs out a remembered username account before opening sign-in', async () => {
+    const harness = createHarness({
+        accountId: 'username-account',
+        username: 'winter-owl',
+        googleLinked: false,
+        sessionVerified: true,
+        status: 'unlocked'
+    });
+    const routing = routeAuthenticationIntent(harness);
+    harness.releaseBootstrap();
+
+    assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
+    assert.equal(harness.clears, 1);
+    assert.equal(harness.opens, 1);
+    assert.deepEqual(harness.usernameOpens, []);
 });
 
 test('signed-out authentication intent opens only the Google sign-in surface', async () => {
@@ -113,6 +170,7 @@ test('signed-out authentication intent opens only the Google sign-in surface', a
     harness.releaseBootstrap();
 
     assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
+    assert.equal(harness.clears, 0);
     assert.equal(harness.opens, 1);
 });
 
@@ -129,6 +187,7 @@ test('signed-out username intent starts the passkey handoff without blocking Cha
     assert.equal(harness.opens, 0);
     assert.deepEqual(harness.usernameOpens, ['winter-owl']);
     assert.deepEqual(harness.usernameOptions, [{ autoContinue: true }]);
+    assert.equal(harness.clears, 0);
     assert.deepEqual(harness.replacements, [[
         { preserved: true },
         '',
@@ -147,14 +206,62 @@ test('remembered unlocked username account consumes the handoff without opening 
     harness.releaseBootstrap();
 
     assert.deepEqual(await routing, { handled: true, action: 'continue' });
+    assert.equal(harness.clears, 0);
     assert.equal(harness.opens, 0);
     assert.deepEqual(harness.usernameOpens, []);
     assert.deepEqual(harness.replacements, [[{ preserved: true }, '', '/chat/']]);
 });
 
+test('username intent signs out a different remembered username before its handoff', async () => {
+    const harness = createHarness({
+        accountId: 'summer-fox-account',
+        username: 'summer-fox',
+        sessionVerified: true,
+        status: 'unlocked'
+    }, '?auth=username', '#username=Winter-OWL');
+    const routing = routeAuthenticationIntent(harness);
+    harness.releaseBootstrap();
+
+    assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
+    assert.equal(harness.clears, 1);
+    assert.equal(harness.opens, 0);
+    assert.deepEqual(harness.usernameOpens, ['winter-owl']);
+});
+
+test('username intent signs out a remembered Google account before its handoff', async () => {
+    const harness = createHarness({
+        accountId: 'google-account',
+        googleLinked: true,
+        sessionVerified: true,
+        status: 'unlocked'
+    }, '?auth=username', '#username=winter-owl');
+    const routing = routeAuthenticationIntent(harness);
+    harness.releaseBootstrap();
+
+    assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
+    assert.equal(harness.clears, 1);
+    assert.deepEqual(harness.usernameOpens, ['winter-owl']);
+});
+
+test('username intent without a username keeps the remembered account binding', async () => {
+    const harness = createHarness({
+        accountId: 'summer-fox-account',
+        username: 'summer-fox',
+        sessionVerified: true,
+        status: 'unlocked'
+    }, '?auth=username', '');
+    const routing = routeAuthenticationIntent(harness);
+    harness.releaseBootstrap();
+
+    assert.deepEqual(await routing, { handled: true, action: 'unlock' });
+    assert.equal(harness.clears, 0);
+    assert.deepEqual(harness.usernameOpens, ['']);
+});
+
 test('verified locked account opens the encryption-passkey surface', async () => {
     const harness = createHarness({
         accountId: '1234567890123456',
+        googleLinked: true,
         sessionVerified: true,
         status: 'locked',
         oauthKeyringRequired: true
@@ -163,6 +270,7 @@ test('verified locked account opens the encryption-passkey surface', async () =>
     harness.releaseBootstrap();
 
     assert.deepEqual(await routing, { handled: true, action: 'unlock' });
+    assert.equal(harness.clears, 0);
     assert.equal(harness.opens, 1);
 });
 
