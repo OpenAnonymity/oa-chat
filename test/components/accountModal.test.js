@@ -1481,6 +1481,36 @@ test('identity account describes ticket and preference sync', () => {
     }
 });
 
+test('passkey disclosure updates mounted nodes without rerendering', () => {
+    const attributes = {};
+    const detailAttributes = {};
+    const button = {
+        setAttribute(name, value) { attributes[name] = value; }
+    };
+    const detail = {
+        toggleAttribute(name, enabled) { detailAttributes[name] = enabled; }
+    };
+    const modal = {
+        passkeyDetailsOpen: false,
+        overlay: {
+            querySelector(selector) {
+                return selector === '#account-passkey-details-btn' ? button : detail;
+            }
+        },
+        render() { throw new Error('Disclosure toggle must not rebuild the modal'); }
+    };
+
+    AccountModal.prototype.togglePasskeyDetails.call(modal);
+    assert.equal(modal.passkeyDetailsOpen, true);
+    assert.deepEqual(attributes, { 'aria-expanded': 'true' });
+    assert.deepEqual(detailAttributes, { hidden: false });
+
+    AccountModal.prototype.togglePasskeyDetails.call(modal);
+    assert.equal(modal.passkeyDetailsOpen, false);
+    assert.deepEqual(attributes, { 'aria-expanded': 'false' });
+    assert.deepEqual(detailAttributes, { hidden: true });
+});
+
 test('username account displays the pseudonym and hides its internal account ID', () => {
     const originalDocument = globalThis.document;
     globalThis.document = { getElementById() { return null; } };

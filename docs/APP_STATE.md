@@ -4,6 +4,18 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Invoice-style Account disclosure chevron
+
+- The signed-in Account dialog's **Passkey & encryption** disclosure uses the
+  same 18px downward chevron and 240ms easing as Membership's **Invoices**
+  disclosure. It rotates upward when expanded and disables the transition under
+  reduced motion.
+- Toggling updates the mounted `aria-expanded` and `hidden` state in place
+  instead of rebuilding the modal, preserving button focus and allowing the
+  transition to complete. Authentication, passkey, encryption, and account
+  state behavior are unchanged. Commercial compositions must pin the public
+  Chat revision containing this change.
+
 ## 2026-09-04: Current-base modal title alignment
 
 - Port the intent of old commit `9f660e0` onto public Chat `b37e246`; do not

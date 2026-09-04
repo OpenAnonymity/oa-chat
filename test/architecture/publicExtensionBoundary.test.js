@@ -119,8 +119,10 @@ test('signed-in Account uses the compact identity and disclosure treatment', () 
     assert.match(styles, /\.account-compact-dialog\s*\{[^}]*max-width:\s*23rem[^}]*padding:\s*1rem/s);
     assert.match(styles, /\.account-compact-row:hover:not\(:disabled\)\s*\{[^}]*background:/s);
     assert.match(styles, /\.account-compact-row:active:not\(:disabled\)\s*\{[^}]*transform:\s*scale\(0\.985\)/s);
-    assert.match(styles, /\.account-compact-row\[aria-expanded="true"\] \.account-compact-chevron\s*\{[^}]*rotate\(90deg\)/s);
+    assert.match(styles, /\.account-compact-chevron\s*\{[^}]*width:\s*1\.125rem;[^}]*height:\s*1\.125rem;[^}]*transition:\s*transform 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
+    assert.match(styles, /\.account-compact-row\[aria-expanded="true"\] \.account-compact-chevron\s*\{[^}]*rotate\(180deg\)/s);
     assert.match(accountModal, /id="account-passkey-details-btn"[^>]+aria-expanded="\$\{this\.passkeyDetailsOpen\}"/);
+    assert.match(accountModal, /class="account-compact-chevron"[^>]+viewBox="0 0 24 24"[^>]+stroke-linecap="round"[^>]+stroke-linejoin="round"[^>]*><path d="m6 9 6 6 6-6"/);
     assert.match(accountModal, /id="account-clear-btn" class="account-compact-row"/);
 });
 

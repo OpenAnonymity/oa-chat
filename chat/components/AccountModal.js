@@ -935,7 +935,14 @@ class AccountModal {
 
     togglePasskeyDetails() {
         this.passkeyDetailsOpen = !this.passkeyDetailsOpen;
-        this.render();
+        const button = this.overlay?.querySelector?.('#account-passkey-details-btn');
+        const detail = this.overlay?.querySelector?.('#account-passkey-details');
+        if (!button || !detail) {
+            this.render();
+            return;
+        }
+        button.setAttribute('aria-expanded', String(this.passkeyDetailsOpen));
+        detail.toggleAttribute('hidden', !this.passkeyDetailsOpen);
     }
 
     async handleForgetSavedAccount() {
@@ -1415,7 +1422,7 @@ class AccountModal {
                         </button>
                         <button id="account-passkey-details-btn" class="account-compact-row" type="button" aria-expanded="${this.passkeyDetailsOpen}" aria-controls="account-passkey-details">
                             <span class="account-compact-row-label">Passkey &amp; encryption</span>
-                            <svg class="account-compact-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+                            <svg class="account-compact-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                         </button>
                         <div id="account-passkey-details" class="account-compact-detail" ${this.passkeyDetailsOpen ? '' : 'hidden'}>
                             <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesNamedLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
