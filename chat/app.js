@@ -17,6 +17,7 @@ import {
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
+import ticketStore from './services/ticketStore.js';
 import scrubberService from './services/scrubberService.js';
 import {
     augmentQuery as runMemoryAugmentQuery,
@@ -31,6 +32,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
+import { saveNavigationSelection, restoreNavigationSelection } from './services/navigationState.js';
 import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -156,7 +158,6 @@ function emitDesktopEvent(name, detail = {}) {
         // No-op: desktop hooks should never break web behavior.
     }
 }
-const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
     body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see mixed and unlinkable traffic.',
@@ -402,6 +403,8 @@ class ChatApp {
         if (!response.ok || typeof data.public_key !== 'string' || !data.public_key) {
             const error = new Error('Unable to load the OA ticket issuer public key.');
             error.code = 'TICKET_ISSUER_UNAVAILABLE';
+            error.status = response.status;
+            error.retryAfter = response.headers?.get?.('Retry-After') || null;
             throw error;
         }
         const computedKeyId = await ticketPublicKeyId(data.public_key);
@@ -498,6 +501,19 @@ class ChatApp {
                 requestPublic: (path, init) => this.requestExtensionPublicApi(path, init)
             }),
             tickets: Object.freeze({
+                refreshSnapshot: async ({ signal } = {}) => {
+                    const before = getAccountSnapshot();
+                    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+                    await ticketStore.refreshForAccount(before.accountId || null, { signal });
+                    const after = getAccountSnapshot();
+                    if (signal?.aborted || after.accountId !== before.accountId) {
+                        throw new DOMException('Account changed', 'AbortError');
+                    }
+                    return toExtensionTicketSnapshot(
+                        this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
+                            { ticketCount: 0, maxShareCount: 0, busy: false }, after
+                    );
+                },
                 getPendingEntitlementClaim,
                 prepareEntitlementBatch,
                 publishPreparedTicketUpdate,
@@ -548,6 +564,7 @@ class ChatApp {
                 registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
             }),
             ui: Object.freeze({
+                persistNavigationForReturn: () => { saveNavigationSelection(this.state.currentSessionId); },
                 openAccount: () => this.accountModal?.open?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
@@ -2153,13 +2170,14 @@ class ChatApp {
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
-        const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (savedSessionId) {
-            await this.ensureSessionLoaded(savedSessionId);
-            if (this.state.sessionsById.has(savedSessionId)) {
-                this.state.currentSessionId = savedSessionId;
+        const selection = await restoreNavigationSelection({
+            search: window.location.search,
+            loadSession: async sessionId => {
+                await this.ensureSessionLoaded(sessionId);
+                return this.state.sessionsById.has(sessionId);
             }
-        }
+        });
+        if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
 
         const [
             storedModelPreference,
@@ -2860,7 +2878,7 @@ class ChatApp {
                 this.saveChatbarStateForSession(this.state.currentSessionId);
             }
             this.state.currentSessionId = existingSession.id;
-            sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
+            saveNavigationSelection(existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -2993,7 +3011,7 @@ class ChatApp {
                 this.saveChatbarStateForSession(this.state.currentSessionId);
             }
             this.state.currentSessionId = session.id;
-            sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+            saveNavigationSelection(session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -3773,7 +3791,7 @@ class ChatApp {
         this.chatInput.updateMemoryToggleUI();
 
         await chatDB.saveSession(session);
-        sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+        saveNavigationSelection(session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
 
         // Update URL to reflect new session
@@ -3830,7 +3848,7 @@ class ChatApp {
         this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
-        sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+        saveNavigationSelection(sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
         // Keep current search state (global setting)
@@ -4492,6 +4510,7 @@ class ChatApp {
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
         this.updateUrlWithSession(null);
+        saveNavigationSelection(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
@@ -7539,6 +7558,7 @@ class ChatApp {
             // Switch to another session if we deleted the current one
             if (deletedCurrentSession) {
                 this.state.currentSessionId = this.state.sessions.length > 0 ? this.state.sessions[0].id : null;
+                saveNavigationSelection(this.state.currentSessionId);
                 await chatDB.saveSetting('currentSessionId', this.state.currentSessionId);
             }
 
@@ -7960,6 +7980,7 @@ class ChatApp {
             this.saveChatbarStateForSession(this.state.currentSessionId);
         }
         this.state.currentSessionId = newSessionId;
+        saveNavigationSelection(newSessionId);
         await chatDB.saveSetting('currentSessionId', newSessionId);
 
         // Clear edit state
@@ -8005,6 +8026,7 @@ class ChatApp {
         this.state.sessions = [];
         this.state.sessionsById = new Map();
         this.state.currentSessionId = null;
+        saveNavigationSelection(null);
 
         if (typeof chatDB.clearAllChats === 'function') {
             await chatDB.clearAllChats();

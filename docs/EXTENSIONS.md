@@ -66,11 +66,26 @@ only resumes an already-saved preparation for that scope.
   with credentials omitted.
 - `tickets.getIssuerPublicKey()` fetches without caching and verifies the
   advertised key ID against the RFC 9578 public key bytes.
+- `tickets.refreshSnapshot({ signal })` refreshes the browser-local wallet
+  for the current account and returns the same redacted count/readiness shape
+  as `subscribe`. It does not synchronize from the server or return tickets.
+  Its queued wallet/account locks are cancelable and bounded to 30 seconds;
+  acquired ownership is retained until the scoped read finishes.
 - `tickets.prepareEntitlementBatch()` owns browser-side blinding, strict claim
   response validation, unblinding, durable wallet import, and crash recovery.
   Final tickets contain only ordinary ticket fields.
 - `ui` provides the supported Account, Welcome, ticket-management, and toast
   actions.
+- `ui.persistNavigationForReturn()` saves the currently displayed conversation
+  or explicit New Chat selection in tab-local session storage. Call it just
+  before leaving for an external billing page. It returns no conversation data;
+  do not put a conversation identifier in a billing request or return URL.
+
+Preparation progress may include `phase: 'waiting'` with a reason (`storage`,
+`lock`, `issuer`, or `publication`). Numeric generation/finalization progress
+describes completed work, not time waiting. Account scope is not part of the
+progress payload. Downstream orchestrators may attach ephemeral operation IDs
+to distinguish observers without logging identity or ticket data.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
 `getToolsSnapshot`, `subscribe`, `importTickets`, `shareTickets`,
@@ -112,4 +127,5 @@ accounts do not emit this notification.
 Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does
 not prevent standalone chat startup. Slot, capability, or lifecycle changes
-require a new extension API version.
+that break existing consumers require a new extension API version. The optional
+navigation persistence and wallet-refresh capabilities above are additive to v2.

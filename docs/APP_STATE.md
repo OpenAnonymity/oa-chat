@@ -4,6 +4,29 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Reliable external returns and ticket recovery
+
+- `navigationState.js` owns sessionStorage-only `oa-chat-navigation-v1`:
+  either a conversation selection or explicit New Chat. It synchronizes the
+  legacy `oa-current-session` key and removes that key for New Chat. Generic
+  return loads restore this record before hydration; explicit `?s=` links keep
+  precedence. Deleted conversations become New Chat; unavailable or malformed
+  storage cannot block startup. The commercial host calls the opaque
+  `ui.persistNavigationForReturn()` before Stripe navigation.
+- Preparation reports waiting for storage, issuer, or locks separately from
+  actual blinding/finalization. Existing staged recovery schemas, ticket fields,
+  publication ownership, and account guards remain unchanged. Queued preparation
+  and publication locks time out after 30 seconds without stealing ownership or
+  timing out a running durable commit.
+- `tickets.refreshSnapshot({ signal })` explicitly refreshes only browser-local
+  account-scoped wallet state and exposes redacted counts/readiness. Both its
+  wallet and nested account-data lock queues accept cancellation/deadlines;
+  scope is rechecked after reading. Existing broadcasts remain authoritative
+  notifications to refresh, never evidence that an unrelated purchase completed.
+- Regression coverage: `navigationState.test.js`, `ticketRefresh.test.js`, and
+  the existing entitlement recovery/account-isolation tests. Public interface
+  details are in [EXTENSIONS.md](EXTENSIONS.md).
+
 ## 2026-09-04: Focus indicators do not use black UI boxes
 
 - All app-owned focus treatments share a dedicated OA-blue focus token rather
