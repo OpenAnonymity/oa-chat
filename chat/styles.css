@@ -117,15 +117,18 @@
     --tw-ring-color: hsl(var(--color-focus-ring));
 }
 
-/* One focus ring for the whole app. Low specificity (:where) so components
-   that draw their own ring (Tailwind focus-visible:ring-2, in-page find)
-   keep it; everything else gets the dedicated focus color instead of the
-   browser default or the near-black foreground token. Mouse focus shows nothing. */
-:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
+/* Focus rings are keyboard-only. The app moves focus itself (dialog open,
+   restore after close, model search) and browsers report that as
+   :focus-visible until the next pointer interaction, which lit rings on
+   load, unlock and picker open. An inline script in index.html sets
+   html[data-keyboard-nav] after Tab/arrow keys and clears it on pointer
+   input; every ring keys off that. Low specificity (:where) so Tailwind
+   ring utilities and component rules still win. */
+:where(html[data-keyboard-nav] :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"]))):focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
-:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"])):focus:not(:focus-visible) {
+:where(html:not([data-keyboard-nav]) :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex])):focus-visible {
     outline: none;
 }
 
@@ -3042,6 +3045,10 @@ textarea:focus {
    therefore reads as a selected black box even after pointer activation.
    Keep the active field clear with a quiet accent underline instead. */
 .model-picker-search:has(> #model-search:focus) {
+    box-shadow: none;
+}
+
+html[data-keyboard-nav] .model-picker-search:has(> #model-search:focus-visible) {
     box-shadow: inset 0 -2px 0 hsl(var(--color-focus-ring));
 }
 
@@ -3051,7 +3058,7 @@ textarea:focus {
 }
 
 @media (forced-colors: active) {
-    #model-search:focus-visible {
+    html[data-keyboard-nav] #model-search:focus-visible {
         outline: 2px solid Highlight;
         outline-offset: -2px;
     }
@@ -5695,28 +5702,23 @@ html {
 }
 
 .account-tab-btn:focus-visible {
-    /* Never frame the full row. Automatic post-login focus is quiet; only
-       subsequent keyboard focus outlines the avatar below. */
+    /* Never frame the full row; keyboard focus outlines the avatar below.
+       Focus restored after login/unlock is programmatic and stays quiet. */
     outline: none;
 }
 
-.account-tab-btn:focus-visible:not([data-auth-restored-focus]) .account-tab-avatar {
+html[data-keyboard-nav] .account-tab-btn:focus-visible .account-tab-avatar {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
 
-.account-menu-item:focus-visible {
+html[data-keyboard-nav] .account-menu-item:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
 
-.account-settings-menu[data-pointer-focus] .account-menu-item:focus-visible {
-    /* Programmatic focus after pointer opening is not keyboard navigation. */
-    outline: none;
-}
-
 @media (forced-colors: active) {
-    .account-tab-btn:focus-visible:not([data-auth-restored-focus]) .account-tab-avatar {
+    html[data-keyboard-nav] .account-tab-btn:focus-visible .account-tab-avatar {
         outline: 2px solid Highlight;
     }
 }
@@ -5839,7 +5841,7 @@ html {
 }
 
 .account-menu-item:hover,
-.account-settings-menu:not([data-pointer-focus]) .account-menu-item:focus-visible {
+html[data-keyboard-nav] .account-menu-item:focus-visible {
     background: hsl(var(--color-foreground) / 0.1);
 }
 
@@ -5973,8 +5975,8 @@ html {
     transform: scale(0.985);
 }
 
-.account-compact-row:focus-visible,
-.account-compact-copy-id:focus-visible {
+html[data-keyboard-nav] .account-compact-row:focus-visible,
+html[data-keyboard-nav] .account-compact-copy-id:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
@@ -6059,8 +6061,8 @@ html {
     color: hsl(var(--color-foreground));
 }
 
-.account-unlock-close:focus-visible,
-.account-unlock-signout:focus-visible {
+html[data-keyboard-nav] .account-unlock-close:focus-visible,
+html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
@@ -6135,7 +6137,7 @@ html {
     transform: scale(0.98);
 }
 
-.account-unlock-btn:focus-visible {
+html[data-keyboard-nav] .account-unlock-btn:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
@@ -6191,7 +6193,7 @@ html {
     color: hsl(var(--color-muted-foreground) / 0.6);
 }
 
-.account-unlock-input:focus-visible {
+html[data-keyboard-nav] .account-unlock-input:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
@@ -6786,6 +6788,11 @@ html {
 }
 
 .account-login-control:focus-within {
+    border-color: hsl(var(--color-border));
+    box-shadow: none;
+}
+
+html[data-keyboard-nav] .account-login-control:focus-within {
     border-color: hsl(var(--color-focus-ring) / 0.7);
     box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.45);
 }
@@ -6802,7 +6809,7 @@ html {
     background: hsl(var(--color-accent));
 }
 
-.account-login-submit:focus-visible {
+html[data-keyboard-nav] .account-login-submit:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: -3px;
 }

@@ -4,26 +4,26 @@ import { readFileSync } from 'node:fs';
 import AccountModal from '../../chat/components/AccountModal.js';
 import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
 
-test('account footer only outlines the avatar outside automatic post-auth focus, including high contrast', () => {
+test('account footer rings are keyboard-only and never frame the full row, including high contrast', () => {
     const css = readFileSync('chat/styles.css', 'utf8');
     const focusRule = css.match(/\.account-tab-btn:focus-visible\s*\{([^}]+)\}/)?.[1];
     assert.ok(focusRule);
     assert.match(focusRule, /outline: none/);
     assert.doesNotMatch(focusRule, /background(?:-color)?:|box-shadow:|border:/);
-    const avatarFocusRule = css.match(/\.account-tab-btn:focus-visible:not\(\[data-auth-restored-focus\]\) \.account-tab-avatar\s*\{([^}]+)\}/)?.[1];
+    const avatarFocusRule = css.match(/html\[data-keyboard-nav\] \.account-tab-btn:focus-visible \.account-tab-avatar\s*\{([^}]+)\}/)?.[1];
     assert.ok(avatarFocusRule);
     assert.match(avatarFocusRule, /outline: 2px solid hsl\(var\(--color-focus-ring\)\)/);
     assert.match(avatarFocusRule, /outline-offset: 2px/);
-    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*\.account-tab-btn:focus-visible:not\(\[data-auth-restored-focus\]\) \.account-tab-avatar\s*\{\s*outline: 2px solid Highlight/);
-    assert.doesNotMatch(css, /\.account-tab-btn:focus-visible \.account-tab-avatar\s*\{/);
-    assert.doesNotMatch(css, /\.account-tab-btn:focus-visible\s*,\s*\.account-menu-item:focus-visible/);
+    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*html\[data-keyboard-nav\] \.account-tab-btn:focus-visible \.account-tab-avatar\s*\{\s*outline: 2px solid Highlight/);
+    assert.doesNotMatch(css, /(^|,\s*)\.account-tab-btn:focus-visible \.account-tab-avatar\s*\{/m);
+    assert.doesNotMatch(css, /data-auth-restored-focus|data-pointer-focus/);
 });
 
-test('account menu quiets pointer focus without removing keyboard or hover indicators', () => {
+test('account menu items show focus and tint only during keyboard navigation, hover always', () => {
     const css = readFileSync('chat/styles.css', 'utf8');
-    assert.match(css, /\.account-menu-item:focus-visible\s*\{\s*outline: 2px solid/);
-    assert.match(css, /\.account-settings-menu\[data-pointer-focus\] \.account-menu-item:focus-visible\s*\{[^}]*outline: none/);
-    assert.match(css, /\.account-menu-item:hover,\s*\.account-settings-menu:not\(\[data-pointer-focus\]\) \.account-menu-item:focus-visible\s*\{\s*background:/);
+    assert.match(css, /html\[data-keyboard-nav\] \.account-menu-item:focus-visible\s*\{\s*outline: 2px solid/);
+    assert.match(css, /\.account-menu-item:hover,\s*html\[data-keyboard-nav\] \.account-menu-item:focus-visible\s*\{\s*background:/);
+    assert.doesNotMatch(css, /(^|,\s*)\.account-menu-item:focus-visible\s*\{/m);
 });
 
 function createElement(documentImpl, options = {}) {
@@ -84,108 +84,71 @@ function createFocusHarness(state = {}) {
     };
 }
 
-test('automatic authentication focus stays on the footer without a highlight until keyboard use or blur', () => {
+test('authentication focus returns to the footer without any marker attributes', () => {
     const h = createFocusHarness({ accountId: 'test', sessionVerified: true, status: 'unlocked' });
     const { modal, tab, documentImpl, accountItem, menu } = h;
     try {
-        let markerAtFocus;
-        const focus = tab.focus.bind(tab);
-        tab.focus = () => { markerAtFocus = tab.getAttribute('data-auth-restored-focus'); focus(); };
         modal.close({ afterAuthentication: true });
         assert.equal(modal.isOpen, false);
         assert.equal(documentImpl.activeElement, tab);
-        assert.equal(markerAtFocus, 'true', 'Suppress before restoring focus, not after a flash');
+        assert.equal(tab.getAttribute('data-auth-restored-focus'), null, 'Ring visibility is html[data-keyboard-nav], not a per-element marker');
 
         tab.onkeydown({ key: 'ArrowDown', preventDefault() {} });
-        assert.equal(tab.getAttribute('data-auth-restored-focus'), null);
         assert.equal(documentImpl.activeElement, accountItem);
         assert.equal(menu.hidden, false);
         modal.handleAccountMenuKeydown({ key: 'Escape', target: accountItem, preventDefault() {} });
         assert.equal(documentImpl.activeElement, tab);
-        assert.equal(tab.getAttribute('data-auth-restored-focus'), null);
-
-        // The same account can unlock again; leaving then returning must not
-        // suppress a later keyboard focus (including Tab/Shift+Tab).
-        modal.isOpen = true;
-        modal.returnFocusEl = tab;
-        modal.close({ afterAuthentication: true });
-        createElement(documentImpl).focus();
-        assert.equal(tab.getAttribute('data-auth-restored-focus'), null);
-        tab.focus();
-        assert.equal(tab.getAttribute('data-auth-restored-focus'), null);
+        assert.equal(menu.hidden, true);
     } finally { h.cleanup(); }
 });
 
-test('pointer opening after authentication suppresses the menu highlight before focus, then keyboard restores it', () => {
+test('pointer and keyboard menu opening both focus the first item and set no pointer marker', () => {
     const h = createFocusHarness({ accountId: 'test', sessionVerified: true, status: 'unlocked' });
     try {
         const membershipItem = createElement(h.documentImpl);
         h.menu.children.push(membershipItem);
-        let markerAtFocus;
-        const focus = h.accountItem.focus.bind(h.accountItem);
-        h.accountItem.focus = () => { markerAtFocus = h.menu.getAttribute('data-pointer-focus'); focus(); };
         h.modal.close({ afterAuthentication: true });
-        h.tab.onclick({ detail: 1 }); // Native mouse/touch click, unlike keyboard/AT activation.
+        h.tab.onclick({ detail: 1 }); // Native mouse/touch click.
         assert.equal(h.menu.hidden, false);
-        assert.equal(markerAtFocus, 'true');
         assert.equal(h.documentImpl.activeElement, h.accountItem, 'Keep focus for accessible menu navigation');
-        assert.equal(h.tab.getAttribute('data-auth-restored-focus'), null, 'Footer still cleans up on blur');
+        assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
+        assert.equal(h.menu.onpointerdown, undefined);
 
         for (const [key, expected] of [['ArrowDown', membershipItem], ['ArrowUp', h.accountItem], ['End', membershipItem], ['Home', h.accountItem]]) {
             h.menu.onkeydown({ key, target: h.documentImpl.activeElement, preventDefault() {} });
-            assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
             assert.equal(h.documentImpl.activeElement, expected, key);
         }
-        h.menu.onpointerdown();
-        assert.equal(h.menu.getAttribute('data-pointer-focus'), 'true');
         h.menu.onkeydown({ key: 'Escape', target: h.accountItem, preventDefault() {} });
         assert.equal(h.menu.hidden, true);
-        assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
         assert.equal(h.documentImpl.activeElement, h.tab);
 
-        h.tab.onclick({ detail: 0 }); // Screen-reader/synthetic activation keeps visible focus.
-        assert.equal(markerAtFocus, null);
-        h.modal.closeAccountMenu();
+        for (const key of ['ArrowDown', 'Enter', ' ']) {
+            h.tab.onkeydown({ key, preventDefault() {} });
+            assert.equal(h.menu.hidden, false, key);
+            assert.equal(h.documentImpl.activeElement, h.accountItem, key);
+            h.modal.closeAccountMenu(true);
+        }
         h.tab.onclick({ detail: 1 });
         h.menu.onkeydown({ key: 'Tab', target: h.accountItem });
         assert.equal(h.menu.hidden, true);
-        assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
     } finally { h.cleanup(); }
 });
 
-test('all keyboard menu entry keys reset pointer-only focus suppression', () => {
-    const h = createFocusHarness({ accountId: 'test', sessionVerified: true, status: 'unlocked' });
-    try {
-        h.modal.close({ afterAuthentication: true });
-        for (const key of ['ArrowDown', 'Enter', ' ']) {
-            h.tab.onclick({ detail: 1 });
-            assert.equal(h.menu.getAttribute('data-pointer-focus'), 'true');
-            h.tab.onkeydown({ key, preventDefault() {} });
-            assert.equal(h.menu.getAttribute('data-pointer-focus'), null);
-            assert.equal(h.documentImpl.activeElement, h.accountItem);
-            h.modal.closeAccountMenu(true);
-        }
-    } finally { h.cleanup(); }
-});
-
-test('ordinary dismissal and non-footer authentication return targets retain normal focus', () => {
+test('ordinary dismissal and non-footer authentication return targets restore focus', () => {
     const h = createFocusHarness();
     try {
         h.modal.close();
         assert.equal(h.documentImpl.activeElement, h.tab);
-        assert.equal(h.tab.getAttribute('data-auth-restored-focus'), null);
 
         const otherTarget = createElement(h.documentImpl);
         h.modal.isOpen = true;
         h.modal.returnFocusEl = otherTarget;
         h.modal.close({ afterAuthentication: true });
         assert.equal(h.documentImpl.activeElement, otherTarget);
-        assert.equal(otherTarget.getAttribute('data-auth-restored-focus'), null);
-        assert.equal(h.tab.getAttribute('data-auth-restored-focus'), null);
     } finally { h.cleanup(); }
 });
 
-test('all successful authentication exits quietly restore footer focus without changing Membership routing', async () => {
+test('all successful authentication exits restore footer focus without changing Membership routing', async () => {
     const cases = [
         { handler: 'handleAccountPasskeyUnlock', method: 'unlockWithUsername', state: { username: 'member' } },
         { handler: 'handleAccountPasskeyUnlock', method: 'unlockWithPasskey' },
@@ -205,13 +168,12 @@ test('all successful authentication exits quietly restore footer focus without c
             await h.modal[entry.handler]();
             assert.equal(h.modal.isOpen, false, entry.handler);
             assert.equal(h.documentImpl.activeElement, h.tab, entry.handler);
-            assert.equal(h.tab.getAttribute('data-auth-restored-focus'), 'true', entry.handler);
             assert.equal(h.firstAccountReady(), Number(Boolean(entry.first)), entry.handler);
         } finally { h.cleanup(); }
     }
 });
 
-test('failed authentication does not mark the footer or move focus', async () => {
+test('failed authentication does not move focus', async () => {
     for (const entry of [
         { handler: 'handleAccountPasskeyUnlock', method: 'unlockWithUsername', state: { username: 'member' } },
         { handler: 'handleOAuthKeyringUnlock', method: 'unlockOAuthKeyring' },
@@ -224,7 +186,6 @@ test('failed authentication does not mark the footer or move focus', async () =>
             await h.modal[entry.handler]();
             assert.equal(h.modal.isOpen, true);
             assert.equal(h.documentImpl.activeElement, h.overlay);
-            assert.equal(h.tab.getAttribute('data-auth-restored-focus'), null);
             assert.equal(h.firstAccountReady(), 0);
         } finally { h.cleanup(); }
     }

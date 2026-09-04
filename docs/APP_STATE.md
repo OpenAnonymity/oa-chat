@@ -94,6 +94,28 @@ reading code alone.
   family-order change, so browser verification covers body copy as well as the
   compact Account, login, and Welcome surfaces in both themes and narrow widths.
 
+## 2026-09-04: Focus rings are keyboard-only
+
+- An inline script at the top of `chat/index.html` sets `html[data-keyboard-nav]`
+  on Tab/arrow/Home/End keydown and clears it on pointerdown/mousedown/touchstart.
+  It runs before any stylesheet or focus call.
+- `chat/styles.css` draws the app-wide ring only under `html[data-keyboard-nav]`
+  and forces `outline: none` on `:focus-visible` otherwise. Component rings
+  (account footer avatar, menu items, compact rows, unlock/login controls,
+  dialog close) are scoped the same way and retain the dedicated OA-blue focus
+  token. Model search and the username-login shell are quiet when opened by the
+  app and show their blue treatment only during keyboard navigation. Tailwind
+  ring utilities are unaffected.
+- Why: the app focuses elements itself — dialog open (`focusModal`), focus
+  restore in `close()`, the model search input in `ModelPicker.open()` — and
+  browsers report script focus as `:focus-visible` until the next pointer
+  interaction. That lit rings on first load, unlock, the Account dialog's X,
+  the footer avatar after closing, and under the model search. Prod
+  (`origin/main`) has no global ring and is the reference behaviour.
+- The earlier `data-auth-restored-focus` (footer) and `data-pointer-focus`
+  (menu) markers were per-component workarounds for the same heuristic and are
+  removed; `openAccountMenu` no longer takes `fromPointer`.
+
 ## 2026-09-04: Quiet pointer focus in the Account menu
 
 - The menu still focuses its first item on opening for Escape/arrow navigation.

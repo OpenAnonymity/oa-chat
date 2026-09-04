@@ -32,6 +32,24 @@
         })();
     </script>
     <script>
+        // Track input modality before anything can take focus. The app focuses
+        // elements itself (dialog open, focus restore after close, picker
+        // search) and browsers report that as :focus-visible until the next
+        // pointer interaction, so focus rings key off html[data-keyboard-nav]
+        // instead: set after a focus-moving key, cleared on pointer input.
+        (function () {
+            const root = document.documentElement;
+            const NAVIGATION_KEYS = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End']);
+            const clear = () => root.removeAttribute('data-keyboard-nav');
+            window.addEventListener('keydown', event => {
+                if (NAVIGATION_KEYS.has(event.key)) root.setAttribute('data-keyboard-nav', '');
+            }, true);
+            window.addEventListener('pointerdown', clear, true);
+            window.addEventListener('mousedown', clear, true);
+            window.addEventListener('touchstart', clear, { capture: true, passive: true });
+        })();
+    </script>
+    <script>
         // Apply left sidebar state immediately to prevent flash
         (function () {
             try {

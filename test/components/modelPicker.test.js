@@ -48,7 +48,7 @@ test('secondary model picker allows selecting the active primary model', () => {
     assert.deepEqual(modelNames, ['OpenAI: Primary', 'Anthropic: Secondary', 'Google: Other']);
 });
 
-test('model search replaces the automatic full outline with an accent underline', () => {
+test('model search replaces automatic focus with a keyboard-only accent underline', () => {
     const html = fs.readFileSync('chat/index.html', 'utf8');
     const fixture = fs.readFileSync('test/fixtures/model-picker-focus.html', 'utf8');
     const css = fs.readFileSync('chat/styles.css', 'utf8');
@@ -57,10 +57,11 @@ test('model search replaces the automatic full outline with an accent underline'
     assert.match(fixture, /id="model-search"[^>]*autofocus/);
     assert.match(css, /--color-focus-ring: var\(--blue-500\)/);
     assert.match(css, /--tw-ring-color: hsl\(var\(--color-focus-ring\)\)/);
-    assert.match(css, /\.model-picker-search:has\(> #model-search:focus\)\s*\{[^}]*box-shadow: inset 0 -2px 0 hsl\(var\(--color-focus-ring\)\)/);
+    assert.match(css, /\.model-picker-search:has\(> #model-search:focus\)\s*\{[^}]*box-shadow: none/);
+    assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)\s*\{[^}]*box-shadow: inset 0 -2px 0 hsl\(var\(--color-focus-ring\)\)/);
     assert.match(css, /#model-search:focus,\s*#model-search:focus-visible\s*\{\s*outline: none/);
-    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*#model-search:focus-visible\s*\{[^}]*outline: 2px solid Highlight/);
-    assert.match(css, /\.account-login-control:focus-within\s*\{[^}]*border-color: hsl\(var\(--color-focus-ring\)/);
+    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*html\[data-keyboard-nav\] #model-search:focus-visible\s*\{[^}]*outline: 2px solid Highlight/);
+    assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within\s*\{[^}]*border-color: hsl\(var\(--color-focus-ring\)/);
     assert.match(css, /\.pin-input-container:focus-within \.pin-box\.active\s*\{[^}]*border-color: hsl\(var\(--color-focus-ring\)\)/);
 
     const tailwindConfig = fs.readFileSync('tailwind.config.js', 'utf8');

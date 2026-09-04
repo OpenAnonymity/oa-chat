@@ -248,9 +248,22 @@ test('username arrow and Enter retain the same Continue handler, and Google rema
 
 test('account dialogs share one accent focus ring, close control, dark edges and mobile sheet', () => {
     const css = fs.readFileSync('chat/styles.css', 'utf8');
-    assert.match(css, /:where\(a\[href\], button, input, select, textarea, summary, \[role="button"\], \[tabindex\]:not\(\[tabindex="-1"\]\)\):focus-visible\s*\{[^}]*outline: 2px solid hsl\(var\(--color-focus-ring\)\);[^}]*outline-offset: 2px/);
-    assert.doesNotMatch(css, /\[tabindex\]\):focus-visible/);
-    assert.match(css, /:focus:not\(:focus-visible\)\s*\{[^}]*outline: none/);
+    // Rings are keyboard-only: programmatic focus (dialog open, restore after
+    // close, model search) must never draw one, whatever :focus-visible says.
+    assert.match(css, /:where\(html\[data-keyboard-nav\] :is\(a\[href\], button, input, select, textarea, summary, \[role="button"\], \[tabindex\]:not\(\[tabindex="-1"\]\)\)\):focus-visible\s*\{[^}]*outline: 2px solid hsl\(var\(--color-focus-ring\)\);[^}]*outline-offset: 2px/);
+    assert.match(css, /:where\(html:not\(\[data-keyboard-nav\]\) :is\([^)]*\)\):focus-visible\s*\{[^}]*outline: none/);
+    assert.doesNotMatch(css, /^:where\(a\[href\]/m);
+    for (const selector of ['.account-unlock-close', '.account-unlock-btn', '.account-unlock-input', '.account-login-submit', '.account-menu-item', '.account-compact-row']) {
+        const escaped = selector.replace(/[.\-]/g, '\\$&');
+        assert.match(css, new RegExp(`html\\[data-keyboard-nav\\] ${escaped}:focus-visible`), selector);
+        assert.doesNotMatch(css, new RegExp(`(^|,\\s*)${escaped}:focus-visible\\s*(,|\\{)`, 'm'), `${selector} ring must be gated`);
+    }
+    const html = fs.readFileSync('chat/index.html', 'utf8');
+    assert.match(html, /root\.setAttribute\('data-keyboard-nav', ''\)/);
+    assert.match(html, /addEventListener\('pointerdown', clear, true\)/);
+    assert.ok(html.indexOf('data-keyboard-nav') < html.indexOf('tailwind.generated.css'), 'modality script runs before any stylesheet or focus');
+    assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)/);
+    assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within/);
     assert.match(css, /#close-account-modal\s*\{[^}]*width: 2rem;[^}]*height: 2rem;[^}]*border-radius: 0.625rem/);
     assert.match(css, /\.dark \.account-login-control\s*\{[^}]*border-color: hsl\(0 0% 100% \/ 0.18\)/);
     assert.match(css, /\.dark \.account-login-dialog #account-google-btn\s*\{[^}]*border-color: hsl\(0 0% 100% \/ 0.18\) !important/);
@@ -312,7 +325,7 @@ test('username login uses the narrower reference card with neutral accessible co
     assert.match(css, /\.account-login-divider\s*\{[^}]*margin: 0.75rem 0/);
     assert.match(css, /@media \(max-width: 400px\)\s*\{\s*\.account-login-dialog\s*\{\s*padding: 1.5rem/);
     assert.match(css, /\.account-login-input\s*\{[^}]*font-size: 1rem/);
-    assert.match(css, /\.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
+    assert.match(css, /html\[data-keyboard-nav\] \.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
     assert.match(css, /\.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow: inset 0 0 0 1000px hsl\(var\(--color-background\)\)/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-login-spinner\s*\{\s*animation: none/);
 });

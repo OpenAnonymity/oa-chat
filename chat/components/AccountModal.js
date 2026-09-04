@@ -100,15 +100,12 @@ class AccountModal {
         if (tabBtn) {
             tabBtn.onclick = event => {
                 if (this.isAccountMenuAvailable()) {
-                    this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn, { fromPointer: event?.detail > 0 });
+                    this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn);
                     return;
                 }
                 this.isOpen ? this.close() : this.open(tabBtn);
             };
-            tabBtn.onblur = () => tabBtn.removeAttribute('data-auth-restored-focus');
             tabBtn.onkeydown = event => {
-                // Automatic login focus is quiet until the user uses the keyboard.
-                tabBtn.removeAttribute('data-auth-restored-focus');
                 if (!this.isAccountMenuAvailable()) return;
                 if (['ArrowDown', 'Enter', ' '].includes(event.key)) {
                     event.preventDefault();
@@ -120,7 +117,6 @@ class AccountModal {
         const accountItem = document.getElementById('account-security-menu-item');
         const logoutItem = document.getElementById('account-logout-menu-item');
         if (menu) {
-            menu.onpointerdown = () => menu.setAttribute('data-pointer-focus', 'true');
             menu.onkeydown = event => this.handleAccountMenuKeydown(event);
             menu.onclick = event => {
                 if (event.target.closest?.('[role="menuitem"]')) this.closeAccountMenu();
@@ -157,17 +153,15 @@ class AccountModal {
         return document.getElementById('account-tab-btn');
     }
 
-    openAccountMenu(trigger = null, { fromPointer = false } = {}) {
+    openAccountMenu(trigger = null) {
         const tabBtn = document.getElementById('account-tab-btn');
         const menu = document.getElementById('account-settings-menu');
         if (!tabBtn || !menu || !this.isAccountMenuAvailable()) return;
         this.close();
         this.menuOpen = true;
         this.accountMenuTrigger = trigger || tabBtn;
-        // Keep menu focus for Escape/arrow navigation, but don't inherit the
-        // login input's focus-visible ring when the menu is opened by pointer.
-        if (fromPointer) menu.setAttribute('data-pointer-focus', 'true');
-        else menu.removeAttribute('data-pointer-focus');
+        // Focus the first item for Escape/arrow navigation. Focus rings are
+        // gated on html[data-keyboard-nav], so a pointer-opened menu stays quiet.
         menu.hidden = false;
         tabBtn?.setAttribute('aria-expanded', 'true');
         this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
@@ -179,17 +173,13 @@ class AccountModal {
         const menu = document.getElementById('account-settings-menu');
         const returnTarget = this.accountMenuTrigger || tabBtn;
         this.menuOpen = false;
-        if (menu) {
-            menu.hidden = true;
-            menu.removeAttribute('data-pointer-focus');
-        }
+        if (menu) menu.hidden = true;
         tabBtn?.setAttribute('aria-expanded', 'false');
         this.accountMenuTrigger = null;
         if (restoreFocus) returnTarget?.focus?.();
     }
 
     handleAccountMenuKeydown(event) {
-        document.getElementById('account-settings-menu')?.removeAttribute('data-pointer-focus');
         const items = this.getAccountMenuItems();
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -452,14 +442,9 @@ class AccountModal {
             this.escapeHandler = null;
         }
         this.reopenOverlaySidebar({ afterAuthentication });
-        if (this.returnFocusEl?.focus) {
-            // Preserve the return target without leaving a focus ring after login.
-            // Blur or the next keyboard interaction restores normal focus styling.
-            if (afterAuthentication && this.returnFocusEl === tabBtn) {
-                tabBtn.setAttribute('data-auth-restored-focus', 'true');
-            }
-            this.returnFocusEl.focus();
-        }
+        // Restoring focus is programmatic; rings are gated on
+        // html[data-keyboard-nav], so nothing lights up after login/unlock.
+        if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
         this.returnFocusEl = null;
     }
 
