@@ -77,9 +77,13 @@ reading code alone.
   creation rendering active until close, even after sync publishes the new
   account ID; otherwise sync notifications could briefly show Account before
   the Membership handoff. Retry/error actions and returning login are unchanged.
-- Username login centers **Log in**, keeps the close button at the upper right,
-  and places Google directly above a joined **Username →** control with no OR
-  divider. The arrow retains the accessible **Continue** name and the existing
+- Username login uses the compact reference card: 360px maximum width, rounded
+  24px corners, a left-aligned **Log in** heading, and the close button at the
+  upper right. Google and the joined **Username →** control are 48px high,
+  separated by a subtle lowercase **or** divider. The arrow is a stroked SVG,
+  not the landing's filled arrow. Padding drops from 32px to 24px on narrow
+  screens. This is modal-only; the landing still has no divider between Google
+  and Username. The arrow retains the accessible **Continue** name and existing
   click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
   Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
   account-number login keeps its existing layout. Google encryption unlock uses

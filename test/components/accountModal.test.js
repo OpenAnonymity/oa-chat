@@ -187,11 +187,13 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.match(html, /placeholder="Username"/);
         assert.match(html, /aria-label="Username"/);
         assert.match(html, /class="account-login-heading"/);
+        assert.match(html, /account-login-dialog"\s*>/);
+        assert.match(html, /id="account-google-btn"[\s\S]*class="account-login-divider" aria-hidden="true">or<\/div>[\s\S]*id="account-username-input"/);
         assert.match(html, /class="account-login-control"[\s\S]*id="account-username-input"[\s\S]*id="account-passkey-btn"[\s\S]*<\/div>/);
         assert.match(html, /id="account-passkey-btn"[^>]*aria-label="Continue"/);
-        assert.match(html, /class="account-login-arrow" aria-hidden="true"/);
+        assert.match(html, /<svg class="account-login-arrow" aria-hidden="true"[^>]*fill="none"[^>]*stroke="currentColor"/);
         assert.equal((html.match(/id="account-passkey-btn"/g) || []).length, 1);
-        assert.doesNotMatch(html, />\s*or\s*<|bg-blue-600|>\s*Continue\s*<\/button>/);
+        assert.doesNotMatch(html, /bg-blue-600|>\s*Continue\s*<\/button>/);
         assert.doesNotMatch(html, /Sign in to OA|Choose Google|Use a pseudonym|winter-owl/);
         assert.doesNotMatch(html, /<label|Create a passkey account|account-identifier-mode-btn/);
         assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1"/);
@@ -244,11 +246,15 @@ test('username arrow and Enter retain the same Continue handler, and Google rema
     }
 });
 
-test('username login styles center only its heading and keep neutral accessible controls', () => {
+test('username login uses the narrower reference card with neutral accessible controls', () => {
     const css = fs.readFileSync('chat/styles.css', 'utf8');
-    assert.match(css, /\.account-login-heading\s*\{[^}]*grid-template-columns: 2rem minmax\(0, 1fr\) 2rem/);
-    assert.match(css, /\.account-login-heading > h3\s*\{[^}]*grid-column: 2;[^}]*text-align: center/);
-    assert.match(css, /\.account-login-control\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) 2.75rem/);
+    assert.match(css, /\.account-login-dialog\s*\{[^}]*width: calc\(100% - 2rem\);[^}]*max-width: 22.5rem;[^}]*padding: 2rem;[^}]*border-radius: 1.5rem/);
+    assert.match(css, /\.account-login-heading\s*\{[^}]*display: flex;[^}]*justify-content: space-between/);
+    assert.match(css, /\.account-login-heading > h3\s*\{[^}]*font-size: 1.375rem;[^}]*text-align: left/);
+    assert.match(css, /\.account-login-dialog #account-google-btn\s*\{[^}]*height: 3rem/);
+    assert.match(css, /\.account-login-control\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) 3rem;[^}]*height: 3rem/);
+    assert.match(css, /\.account-login-divider\s*\{[^}]*margin: 0.75rem 0/);
+    assert.match(css, /@media \(max-width: 400px\)\s*\{\s*\.account-login-dialog\s*\{\s*padding: 1.5rem/);
     assert.match(css, /\.account-login-input\s*\{[^}]*font-size: 1rem/);
     assert.match(css, /\.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
     assert.match(css, /\.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow: inset 0 0 0 1000px hsl\(var\(--color-background\)\)/);
@@ -740,6 +746,8 @@ test('saved legacy passkey accounts keep the account-number login path', async (
         assert.equal(modal.getIdentifierMode(), 'accountId');
         const html = modal.renderAccountUI();
         assert.match(html, /id="account-id-input"/);
+        assert.match(html, /style="padding:24px 24px 18px"/);
+        assert.doesNotMatch(html, /account-login-dialog|account-login-heading|account-login-divider|account-login-arrow/);
         assert.match(html, /1234 5678 9012 3456/);
         assert.match(html, /id="account-recovery-toggle-btn"/);
         assert.doesNotMatch(html, /account-identifier-mode-btn/);
@@ -1111,6 +1119,7 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
     try {
         const html = modal.renderOAuthUnlockUI();
         assert.match(html, /Welcome back/);
+        assert.doesNotMatch(html, /account-login-dialog|account-login-heading|account-login-divider|account-login-arrow/);
         assert.match(html, /encrypts your tickets and preferences so only you can access them/);
         assert.match(html, /id="oauth-keyring-submit-btn"/);
         assert.match(html, />\s*Try again\s*</);
