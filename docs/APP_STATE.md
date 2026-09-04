@@ -58,6 +58,10 @@ reading code alone.
   The settings gear, flat open
   trigger, menu typography, hover states, focus restoration, and keyboard
   navigation remain part of the contract.
+- The build versions copied `styles.css` from its own SHA-256 content digest,
+  independently of the JavaScript bundle hash. CSS-only footer updates must
+  produce a new stylesheet URL even when executable bundles are unchanged;
+  deployed stylesheets may otherwise remain browser-cached for hours.
 
 ## 2026-09-03: Pseudonymous username accounts use one authentication passkey
 
