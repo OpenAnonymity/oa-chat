@@ -4,6 +4,14 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Compact Log-in hover matches Account controls
+
+- On hover-capable pointers, the Google button and the complete username
+  input/arrow shell use the same restrained background and border change as the
+  Account `Unlock` button.
+- Keep hover separate from OA-blue keyboard focus, suppress it for disabled
+  controls, and do not add movement, shadow, or sticky touch hover.
+
 ## 2026-09-04: Reliable external returns and ticket recovery
 
 - `navigationState.js` owns sessionStorage-only `oa-chat-navigation-v1`:

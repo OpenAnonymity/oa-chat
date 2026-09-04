@@ -1475,7 +1475,7 @@ class AccountModal {
                     </div>
                 ` : ''}
 
-                <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground${usesAccountId ? ' hover:bg-accent' : ''} transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                     ${this.renderOAuthProviderIcon('google')}
                     Continue with Google
                 </button>
