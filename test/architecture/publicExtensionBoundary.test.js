@@ -83,8 +83,8 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.doesNotMatch(html, /id="account-tab-btn"[^>]+disabled/);
     assert.match(html, /id="account-identity-label"[^>]*><\/span>/);
     assert.match(html, /id="account-bootstrap-status"[^>]+role="status"[^>]*>Restoring account<\/span>/);
-    assert.match(html, /account-control-icon[\s\S]*M10\.343 3\.94/);
-    assert.doesNotMatch(html, /account-control-icon[\s\S]{0,250}m9 18 6-6-6-6/);
+    assert.match(html, /class="account-control-icon"[^>]+stroke-width="1\.8"[^>]+stroke-linecap="round"[^>]+stroke-linejoin="round"[^>]*>[\s\S]*?<path d="m6 9 6 6 6-6"/);
+    assert.doesNotMatch(html, /account-control-icon[\s\S]{0,250}M10\.343 3\.94/);
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
     assert.doesNotMatch(html, /account-menu-separator/);
     assert.match(html, /placeholder="Search chats\.\.\."/);
@@ -111,6 +111,9 @@ test('account footer keeps stable full-row trigger and menu dimensions', () => {
     const pressedRow = styles.match(/\.account-tab-btn:active:not\(:disabled\)\s*\{([^}]+)\}/)?.[1];
     assert.match(pressedRow, /background-color: hsl\(var\(--color-foreground\) \/ 0\.14\)/);
     assert.doesNotMatch(pressedRow, /transform/);
+    assert.match(styles, /\.account-control-icon\s*\{[^}]*transform-origin:\s*center;[^}]*transform 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
+    assert.match(styles, /\.account-tab-btn\[aria-expanded="true"\] \.account-control-icon\s*\{[^}]*transform:\s*rotate\(180deg\)/s);
+    assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-control-icon\s*\{\s*transition:\s*none/s);
 });
 
 test('signed-in Account uses the compact identity and disclosure treatment', () => {

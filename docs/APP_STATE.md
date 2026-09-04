@@ -4,6 +4,19 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-04: Account footer uses a unified disclosure chevron
+
+- The bottom-left account identity row remains one full-width button. Its
+  trailing affordance is now a downward chevron rather than a settings gear;
+  the existing `aria-expanded` state rotates it upward while the account menu
+  or Account dialog is open.
+- The rotation uses the established 240ms ease-out disclosure motion and is
+  disabled for reduced-motion users. The row is not rebuilt, so rapid reversal,
+  focus restoration, pointer/keyboard menu behavior, and full-row hover/press
+  feedback remain intact.
+- This is presentation only. Account restoration, authentication, menu actions,
+  Membership extension mounting, and logout behavior are unchanged.
+
 ## 2026-09-04: Account disclosure opens with invoice-style motion
 
 - **Passkey & encryption** stays mounted and expands with the same 240ms
@@ -280,7 +293,7 @@ reading code alone.
   focuses its heading. Returning accounts close the authentication dialog and
   remain in Chat; they do not emit this signal. The signed-in Account summary
   is opened only by an explicit Account action.
-- Avatar, account label, and settings affordance are one accessible sidebar
+- Avatar, account label, and disclosure affordance are one accessible sidebar
   button. There is no separate gear. Long labels truncate within the shared hit
   target. The new account identity and menu actions match the existing sidebar
   type scale at 14px regular; only an open/selected state uses medium weight.
@@ -332,8 +345,9 @@ reading code alone.
   neutral hover surface as the other account actions; destructive color is not
   used for hover emphasis.
 - Its trigger remains a flat, full-width footer row while open, with the
-  account identity on the left and a settings glyph on the right. It does not
-  turn into an inset selected pill or use a disclosure chevron.
+  account identity on the left and a disclosure chevron on the right. The
+  chevron points down while closed and rotates up while expanded; the row does
+  not turn into an inset selected pill.
 - A restored signed-in account reuses its account-bound cached identity label
   immediately after session validation. Profile refresh and encrypted sync
   continue in the background, so the footer does not briefly fall back to the
