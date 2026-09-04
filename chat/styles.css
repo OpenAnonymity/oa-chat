@@ -116,6 +116,18 @@
     --tw-ring-color: hsl(var(--color-ring));
 }
 
+/* One focus ring for the whole app. Low specificity (:where) so components
+   that draw their own ring (Tailwind focus-visible:ring-2, in-page find)
+   keep it; everything else gets this instead of the browser default.
+   Mouse focus shows nothing. */
+:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--color-ring));
+    outline-offset: 2px;
+}
+:where(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus:not(:focus-visible) {
+    outline: none;
+}
+
 /* Global font application */
 body {
     font-family: var(--font-sans);
@@ -6791,6 +6803,65 @@ html {
 @media (max-width: 400px) {
     .account-login-dialog {
         padding: 1.5rem;
+    }
+}
+
+/* Shared close control for account dialogs: 32px hit area, 10px radius,
+   same as the Billing & Plan close button. */
+#close-account-modal {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    place-items: center;
+    margin: 0 -0.375rem 0 0;
+    border-radius: 0.625rem;
+}
+#close-account-modal > svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Dark mode: interactive edges in the login card need more contrast than
+   the 25%-lightness border token gives on the 12% card. Matches the
+   Welcome back button (18% / 30% on hover). */
+.dark .account-login-control {
+    border-color: hsl(0 0% 100% / 0.18);
+}
+/* !important only because the global .border-border utility above is itself
+   !important; the button carries that class. */
+.dark .account-login-dialog #account-google-btn {
+    border-color: hsl(0 0% 100% / 0.18) !important;
+}
+.dark .account-login-dialog #account-google-btn:hover:not(:disabled) {
+    border-color: hsl(0 0% 100% / 0.3) !important;
+}
+.dark .account-login-submit {
+    border-left-color: hsl(0 0% 100% / 0.18);
+}
+
+/* Under 720px every account dialog is a bottom sheet, like Billing & Plan. */
+@media (max-width: 720px) {
+    #account-modal {
+        align-items: flex-end;
+        padding: 0;
+    }
+    #account-modal > [role="dialog"] {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        border-radius: 1.5rem 1.5rem 0 0;
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    }
+    #account-modal > .account-login-dialog,
+    #account-modal > .account-unlock-card {
+        padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+    }
+    #account-modal > .account-unlock-card {
+        padding-top: 2rem;
     }
 }
 

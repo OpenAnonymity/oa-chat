@@ -295,9 +295,19 @@ class AccountModal {
         if (!isLoggedIn || isAuthResolving) this.closeAccountMenu();
     }
 
+    // At narrow widths the sidebar is an overlay with its own scrim. Opening a
+    // dialog on top of it would stack two scrims, so close it first; the
+    // preference is not persisted because the user did not choose to hide it.
+    dismissOverlaySidebar() {
+        const sidebar = this.app?.elements?.sidebar;
+        if (!sidebar?.classList?.contains('mobile-visible')) return;
+        this.app?.hideSidebar?.({ persist: false });
+    }
+
     open(returnFocusEl = null) {
         if (this.isOpen || !this.overlay) return;
         this.closeAccountMenu();
+        this.dismissOverlaySidebar();
         this.isOpen = true;
         this.passkeyDetailsOpen = false;
         this.returnFocusEl = returnFocusEl || document.activeElement;
@@ -319,6 +329,7 @@ class AccountModal {
 
     async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
         if (this.isOpen || !this.overlay) return;
+        this.dismissOverlaySidebar();
         this.identifierMode = 'username';
         this.usernameInputValue = String(username || '')
             .normalize('NFKC')

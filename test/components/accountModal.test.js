@@ -246,6 +246,31 @@ test('username arrow and Enter retain the same Continue handler, and Google rema
     }
 });
 
+test('account dialogs share one focus ring, close control, dark edges and mobile sheet', () => {
+    const css = fs.readFileSync('chat/styles.css', 'utf8');
+    assert.match(css, /:where\(a\[href\], button, input, select, textarea, summary, \[role="button"\], \[tabindex\]\):focus-visible\s*\{[^}]*outline: 2px solid hsl\(var\(--color-ring\)\);[^}]*outline-offset: 2px/);
+    assert.match(css, /:focus:not\(:focus-visible\)\s*\{[^}]*outline: none/);
+    assert.match(css, /#close-account-modal\s*\{[^}]*width: 2rem;[^}]*height: 2rem;[^}]*border-radius: 0.625rem/);
+    assert.match(css, /\.dark \.account-login-control\s*\{[^}]*border-color: hsl\(0 0% 100% \/ 0.18\)/);
+    assert.match(css, /\.dark \.account-login-dialog #account-google-btn\s*\{[^}]*border-color: hsl\(0 0% 100% \/ 0.18\) !important/);
+    assert.match(css, /@media \(max-width: 720px\)\s*\{\s*#account-modal\s*\{[^}]*align-items: flex-end;[^}]*padding: 0/);
+    assert.match(css, /#account-modal > \[role="dialog"\]\s*\{[^}]*width: 100%;[^}]*max-width: none;[^}]*border-radius: 1.5rem 1.5rem 0 0/);
+});
+
+test('opening an account dialog closes the overlay sidebar without persisting the preference', () => {
+    const calls = [];
+    const make = visible => ({
+        app: {
+            elements: { sidebar: { classList: { contains: name => visible && name === 'mobile-visible' } } },
+            hideSidebar: options => calls.push(options)
+        }
+    });
+    AccountModal.prototype.dismissOverlaySidebar.call(make(true));
+    AccountModal.prototype.dismissOverlaySidebar.call(make(false));
+    AccountModal.prototype.dismissOverlaySidebar.call({ app: { elements: {} } });
+    assert.deepEqual(calls, [{ persist: false }]);
+});
+
 test('username login uses the narrower reference card with neutral accessible controls', () => {
     const css = fs.readFileSync('chat/styles.css', 'utf8');
     assert.match(css, /\.account-login-dialog\s*\{[^}]*width: calc\(100% - 2rem\);[^}]*max-width: 22.5rem;[^}]*padding: 2rem;[^}]*border-radius: 1.5rem/);

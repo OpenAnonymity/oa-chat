@@ -370,12 +370,20 @@ export default class ChatInput {
                 menu.classList.remove('hidden');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
-                // Position relative to settings button
-                menu.style.left = `${btnRect.left}px`;
-                menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
-                menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
-                menu.style.minWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
-                menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
+                // Position relative to the settings button, clamped so the menu
+                // never leaves the viewport (it used to hang off the right edge
+                // below ~900px) and scrolls instead of growing past the top.
+                const viewportMargin = 12;
+                const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
+                const left = Math.max(viewportMargin, Math.min(btnRect.left, window.innerWidth - width - viewportMargin));
+                const bottom = window.innerHeight - btnRect.top + 8;
+                menu.style.left = `${left}px`;
+                menu.style.bottom = `${bottom}px`;
+                menu.style.width = `${width}px`;
+                menu.style.minWidth = `${width}px`;
+                menu.style.maxWidth = `${width}px`;
+                menu.style.maxHeight = `${Math.max(160, btnRect.top - 8 - viewportMargin)}px`;
+                menu.style.overflowY = 'auto';
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
