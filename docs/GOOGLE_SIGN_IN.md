@@ -120,10 +120,11 @@ callback remains on canonical `localhost:8005`.
 ## Regression checks
 
 1. From the commercial landing page, verify Google opens exactly one Google
-   sign-in surface, a remembered unlocked session opens no dialog,
-   and a remembered locked session opens only its passkey surface. No signed-
-   out or Account-summary dialog may flash while authentication is unresolved,
-   and `auth=google` must be removed without dropping unrelated URL state.
+   sign-in surface. A matching remembered Google session opens no dialog when
+   unlocked and only its passkey surface when locked. A remembered username or
+   legacy account is cleared and opens Google sign-in instead. No signed-out or
+   Account-summary dialog may flash while authentication is unresolved, and
+   `auth=google` must be removed without dropping unrelated URL state.
 2. Create a Google-first account; verify the only post-OAuth secret step is
    creating a PRF passkey and encrypted sync succeeds. Account closes without
    an intermediate success screen; commercial builds open Membership through

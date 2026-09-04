@@ -635,6 +635,61 @@ test('restored sessions expose the cached identity before profile refresh finish
     }
 });
 
+test('a stale OAuth profile refresh cannot repopulate a cleared account binding', async () => {
+    const originals = {
+        state: { ...accountService.state },
+        generation: accountService.syncInitializationGeneration,
+        fetch: sessionService.fetch
+    };
+    let releaseResponse;
+    const responseReady = new Promise(resolve => { releaseResponse = resolve; });
+    let requestStarted = false;
+
+    Object.assign(accountService.state, {
+        accountId: '1234567890123456',
+        username: null,
+        sessionVerified: true,
+        googleLinked: false,
+        oauthEmail: null
+    });
+    accountService.syncInitializationGeneration = originals.generation;
+    sessionService.fetch = async () => {
+        requestStarted = true;
+        await responseReady;
+        return new Response(JSON.stringify({
+            accountId: '1234567890123456',
+            email: 'stale@example.test'
+        }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+        });
+    };
+
+    try {
+        const refresh = accountService.refreshOAuthLinkStatuses();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(requestStarted, true);
+
+        accountService.syncInitializationGeneration += 1;
+        Object.assign(accountService.state, {
+            accountId: null,
+            username: null,
+            sessionVerified: false,
+            googleLinked: false,
+            oauthEmail: null
+        });
+        releaseResponse();
+
+        assert.equal(await refresh, false);
+        assert.equal(accountService.state.googleLinked, false);
+        assert.equal(accountService.state.oauthEmail, null);
+    } finally {
+        sessionService.fetch = originals.fetch;
+        Object.assign(accountService.state, originals.state);
+        accountService.syncInitializationGeneration = originals.generation;
+    }
+});
+
 test('account bootstrap waiters resolve only after initial authentication settles', async () => {
     const originalState = { ...accountService.state };
     const originalInit = accountService.init;

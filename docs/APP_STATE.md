@@ -18,6 +18,9 @@ reading code alone.
   locked identities keep their normal unlock flow. Switching is automatic and
   does not add a confirmation prompt. A username handoff with no submitted
   username keeps the saved binding and shows the normal form.
+- OAuth profile refreshes capture the account and lifecycle generation before
+  requesting provider state. A response that finishes after logout, lock, or an
+  account switch cannot repopulate provider metadata onto the cleared identity.
 
 ## 2026-09-04: Invoice-style Account disclosure chevron
 

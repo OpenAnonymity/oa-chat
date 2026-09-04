@@ -1316,19 +1316,27 @@ class AccountService {
     }
 
     async refreshOAuthLinkStatuses() {
-        if (!this.state.sessionVerified || !this.state.accountId) return false;
+        const expectedAccountId = normalizeAccountId(this.state.accountId);
+        const expectedGeneration = this.syncInitializationGeneration;
+        const isCurrentAccount = () =>
+            this.state.sessionVerified === true &&
+            normalizeAccountId(this.state.accountId) === expectedAccountId &&
+            this.syncInitializationGeneration === expectedGeneration;
+        if (!expectedAccountId || !isCurrentAccount()) return false;
         let anyLinked = false;
         for (const provider of Object.keys(OAUTH_PROVIDERS)) {
             try {
                 const session = await fetchJson(`/auth/${provider}/session`, null, {
                     method: 'GET'
                 });
+                if (!isCurrentAccount()) return false;
                 this.state[`${provider}Linked`] = true;
                 if (session.email) {
                     this.state.oauthEmail = session.email;
                 }
                 anyLinked = true;
             } catch (error) {
+                if (!isCurrentAccount()) return false;
                 if (error?.status === 404) {
                     this.state[`${provider}Linked`] = false;
                 }
