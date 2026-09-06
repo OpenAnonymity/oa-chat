@@ -86,7 +86,13 @@ class AccountModal {
             }
         });
 
+        this.accountMenuSlotUnsubscribe = this.app.extensionSlots?.subscribe?.(
+            SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
+            () => this.syncCoreAccountMenuItem()
+        ) || null;
+
         this.attachAccountNavListeners();
+        this.syncCoreAccountMenuItem();
         this.updateTabIndicator();
     }
 
@@ -144,7 +150,10 @@ class AccountModal {
         if (!accountItem) return;
         // The composed commercial Account action replaces this core fallback;
         // standalone oa-chat must always retain a route to account security.
-        accountItem.hidden = this.app.extensionSlots?.hasMounted?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS) === true;
+        accountItem.hidden = this.app.extensionSlots?.hasMatchingNode?.(
+            SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
+            '[role="menuitem"]:not([disabled]):not([hidden])'
+        ) === true;
     }
 
     isAccountMenuAvailable() {
@@ -158,6 +167,7 @@ class AccountModal {
 
     /** Display name for the signed-in account: username, else the Google email. */
     getAccountIdentityLabel() {
+        if (!this.isAccountMenuAvailable()) return '';
         const label = this.accountState?.username ||
             this.accountState?.oauthEmail ||
             this.accountState?.email;
@@ -564,6 +574,10 @@ class AccountModal {
             return;
         }
         this.render();
+        // OAuth completes inside an already-open dialog. If it resolved to a
+        // returning keyring, open its passkey prompt now rather than waiting
+        // for a close/reopen that may never happen.
+        this.maybeAutoPromptPasskey();
     }
 
     completeFirstAccountRouting() {
@@ -829,7 +843,15 @@ class AccountModal {
             }
         } finally {
             this.usernamePasskeyBusy = false;
-            if (isCurrent()) this.render();
+            if (isCurrent()) {
+                this.render();
+                // Script-triggered WebAuthn can move focus outside the dialog.
+                // A cancelled/failed automatic prompt must return keyboard
+                // users to the enabled retry action.
+                if (!isSetup && this.usernameUnlockReady) {
+                    this.focusModal('account-username-unlock-btn');
+                }
+            }
         }
     }
 
@@ -1931,6 +1953,10 @@ class AccountModal {
         if (this.syncUnsubscribe) {
             this.syncUnsubscribe();
             this.syncUnsubscribe = null;
+        }
+        if (this.accountMenuSlotUnsubscribe) {
+            this.accountMenuSlotUnsubscribe();
+            this.accountMenuSlotUnsubscribe = null;
         }
     }
 }

@@ -64,8 +64,10 @@ or sync notifications publish the new account before finalization returns, so
 the signed-in Account summary cannot flash before Membership. Passkey retry
 and registration errors remain actionable; returning login is unchanged.
 
-For a returning account, the user enters the username, chooses **Unlock** on the
-Welcome back card, and approves one passkey prompt. The same WebAuthn assertion authenticates the account on the server and
+For a returning account, the user enters the username and the browser opens the
+passkey prompt immediately. While WebAuthn is active, the untitled encryption
+card shows a waiting state; cancellation or failure leaves an enabled **Try again**
+action without prompting a second time automatically. The same WebAuthn assertion authenticates the account on the server and
 its PRF result unwraps the master key locally. The browser persists the username
 and non-extractable key bundle for that OA account. If every synced copy of the
 passkey is lost, the encrypted account cannot be recovered; the public username
@@ -82,18 +84,18 @@ login dialog no longer displays that explanatory copy.
 - `POST /auth/init` accepts an optional `username`. Omitting it preserves the
   old empty-body, server-generated account-number flow.
 - With no saved local binding, Continue first requests a username challenge.
-  A successful lookup selects the Welcome back card without reserving an account.
-  Its Unlock action fetches a fresh challenge, avoiding stale proofs if the user
-  pauses on the explanation. Only an explicit `401 AUTHENTICATION_FAILED` from
+  A successful lookup opens the passkey prompt immediately without reserving an
+  account. A retry fetches a fresh challenge, avoiding stale proofs after a
+  cancelled or failed ceremony. Only an explicit `401 AUTHENTICATION_FAILED` from
   this pre-passkey lookup selects setup. This lookup-only mode does not call
   `/auth/init`; **Create passkey** obtains the account reservation and fresh
   registration challenge immediately before WebAuthn. A name claimed meanwhile
   produces an actionable setup error, not an automatic login or another passkey.
   The service's older immediate-continuation contract is retained for compatibility.
   Saved local accounts bypass initialization and use their existing login and
-  account-mismatch checks. The username card uses **Back**; Google's returning
-  **Welcome back** card has no logout action. Since username authentication has
-  not happened yet, Back returns to the form
+  account-mismatch checks. The username retry card uses **Back** and has no title;
+  Google's matching returning card is also untitled and has no logout action.
+  Since username authentication has not happened yet, Back returns to the form
   without clearing a saved account. Duplicate submissions are blocked, and closing the
   dialog invalidates in-flight lookup results before any passkey prompt.
 - Cancelled initializers/credential operations cannot overwrite newer pending

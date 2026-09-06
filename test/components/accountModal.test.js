@@ -706,6 +706,42 @@ test('a cancelled username prompt keeps retry on the explanation; lookup errors 
     }
 });
 
+test('a cancelled automatic username prompt restores focus to Try again', async () => {
+    const originalDocument = globalThis.document;
+    const body = { id: 'body' };
+    const retry = {
+        id: 'account-username-unlock-btn',
+        focus() { globalThis.document.activeElement = this; }
+    };
+    globalThis.document = {
+        activeElement: body,
+        getElementById(id) { return id === retry.id ? retry : null; }
+    };
+    try {
+        const { modal } = continuationModal('login');
+        modal.overlay = {
+            contains(element) { return element === retry; },
+            querySelectorAll() { return [retry]; },
+            querySelector() { return null; }
+        };
+        modal.focusModal = AccountModal.prototype.focusModal;
+        modal.handleAccountPasskeyUnlock = async () => {
+            globalThis.document.activeElement = body;
+            modal.accountState.error = 'Passkey cancelled';
+            return false;
+        };
+
+        await modal.handleAccountContinue();
+        await new Promise(resolve => setImmediate(resolve));
+
+        assert.equal(globalThis.document.activeElement, retry);
+        assert.equal(modal.usernamePasskeyBusy, false);
+        assert.equal(modal.usernameUnlockReady, true);
+    } finally {
+        globalThis.document = originalDocument;
+    }
+});
+
 test('landing auto-continue preserves missing-name, unsupported, busy, legacy and Google surfaces', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
@@ -1146,6 +1182,22 @@ test('an already-unlocked Google account completes without commercial coupling',
 
     assert.equal(toast, 'Signed in with Google');
     assert.equal('resumePremiumCheckoutIfPending' in modal, false);
+});
+
+test('OAuth resolving to a returning keyring starts the passkey without reopening Account', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    let prompts = 0;
+    modal.accountService = {
+        authenticateWithOAuth: async () => ({ status: 'keyring_unlock' })
+    };
+    modal.render = () => {};
+    modal.maybeAutoPromptPasskey = () => { prompts += 1; };
+    modal.app = {};
+
+    await modal.handleOAuthAuthentication('google');
+
+    assert.equal(prompts, 1);
+    assert.equal(modal.creationStep, 'idle');
 });
 
 test('a first Google account closes authentication and routes directly to Membership', async () => {

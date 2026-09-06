@@ -319,8 +319,10 @@ reachable from the menu only in the composed commercial app.
   and Username. The arrow retains the accessible **Continue** name and existing
   click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
   Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
-  account-number login keeps its existing layout. Both Google and username then
-  use the encryption explanation described above.
+  account-number login keeps its existing layout. Returning Google and username
+  accounts open the passkey prompt immediately; setup and legacy migration retain
+  their explanatory step. A cancelled automatic prompt stays on the untitled
+  encryption card with **Try again** focused, and never prompts again by itself.
   Username is an input placeholder with an accessible name, not a
   visible label or example handle. Introductory/helper copy and the separate
   signup/account-number rows are removed. Continue checks for a username
@@ -442,6 +444,14 @@ reachable from the menu only in the composed commercial app.
   and overlaps the account/thread divider slightly. **Log out** uses the same
   neutral hover surface as the other account actions; destructive color is not
   used for hover emphasis.
+- Commercial can replace the standalone **Account** menu item only with an
+  enabled, visible extension menu action. Slot mount/unmount notifications keep
+  that fallback correct even while the menu is open; an empty, malformed, hidden,
+  or disabled extension node never removes the only route to account security.
+- The public account identity label is empty until bootstrap has completed and
+  the session is both server-verified and unlocked. Cached usernames or emails
+  must not leak into commercial UI while an account is restoring, locked, or
+  signed out.
 - Its trigger remains a flat, full-width footer row while open, with the
   account identity on the left and a disclosure chevron on the right. The
   chevron points down while closed and rotates up while expanded; the row does

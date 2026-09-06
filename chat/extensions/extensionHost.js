@@ -15,6 +15,7 @@ export class ExtensionSlotRegistry {
     constructor(options = {}) {
         this.document = options.documentImpl || globalThis.document || null;
         this.nodesBySlot = new Map();
+        this.listenersBySlot = new Map();
     }
 
     mount(name, element) {
@@ -37,6 +38,7 @@ export class ExtensionSlotRegistry {
             if (nodes.size === 0) this.nodesBySlot.delete(name);
             throw error;
         }
+        this.notify(name);
 
         let mounted = true;
         return () => {
@@ -46,11 +48,35 @@ export class ExtensionSlotRegistry {
             element.remove?.();
             if (nodes.size === 0) this.nodesBySlot.delete(name);
             this.refresh(name);
+            this.notify(name);
         };
     }
 
     hasMounted(name) {
         return SUPPORTED_SLOTS.has(name) && (this.nodesBySlot.get(name)?.size || 0) > 0;
+    }
+
+    hasMatchingNode(name, selector) {
+        if (!SUPPORTED_SLOTS.has(name) || typeof selector !== 'string') return false;
+        return [...(this.nodesBySlot.get(name) || [])]
+            .some(node => typeof node.matches === 'function' && node.matches(selector));
+    }
+
+    subscribe(name, listener) {
+        if (!SUPPORTED_SLOTS.has(name) || typeof listener !== 'function') return () => {};
+        const listeners = this.listenersBySlot.get(name) || new Set();
+        listeners.add(listener);
+        this.listenersBySlot.set(name, listeners);
+        return () => {
+            listeners.delete(listener);
+            if (listeners.size === 0) this.listenersBySlot.delete(name);
+        };
+    }
+
+    notify(name) {
+        for (const listener of this.listenersBySlot.get(name) || []) {
+            listener();
+        }
     }
 
     refresh(name) {
@@ -80,6 +106,7 @@ export class ExtensionSlotRegistry {
             nodes.forEach(node => node.remove?.());
             this.nodesBySlot.delete(name);
             this.refresh(name);
+            this.notify(name);
         }
     }
 }

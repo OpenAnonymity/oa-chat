@@ -250,6 +250,8 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     elements.set('account-modal', overlay);
 
     const refreshedSlots = [];
+    let hasCommercialAccountAction = true;
+    let accountMenuSlotListener = null;
     const accountService = {
         getState: () => ({ ...accountState }),
         subscribe(listener) { accountListener = listener; return () => { accountListener = null; }; },
@@ -265,7 +267,16 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         services: { account: accountService, sync: syncService },
         extensionSlots: {
             refresh: name => refreshedSlots.push(name),
-            hasMounted: name => name === SLOT_NAMES.ACCOUNT_MENU_ACTIONS
+            hasMatchingNode(name, selector) {
+                assert.equal(name, SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+                assert.equal(selector, '[role="menuitem"]:not([disabled]):not([hidden])');
+                return hasCommercialAccountAction;
+            },
+            subscribe(name, listener) {
+                assert.equal(name, SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+                accountMenuSlotListener = listener;
+                return () => { accountMenuSlotListener = null; };
+            }
         },
         showToast() {}
     });
@@ -282,6 +293,15 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
         assert.equal(tab.getAttribute('aria-expanded'), 'true');
         assert.equal(membershipItem.focusCount, 1);
         assert.deepEqual(refreshedSlots, [SLOT_NAMES.ACCOUNT_MENU_ACTIONS]);
+
+        // If the commercial action disappears while the menu is open, the
+        // standalone Account route becomes available immediately.
+        hasCommercialAccountAction = false;
+        accountMenuSlotListener();
+        assert.equal(accountItem.hidden, false);
+        hasCommercialAccountAction = true;
+        accountMenuSlotListener();
+        assert.equal(accountItem.hidden, true);
 
         menu.onkeydown({ key: 'Escape', target: membershipItem, preventDefault() {} });
         assert.equal(menu.hidden, true);
@@ -329,6 +349,20 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     } finally {
         modal.destroy();
         globalThis.document = previousDocument;
+    }
+});
+
+test('identity labels are exposed only for a verified, unlocked account', () => {
+    const modal = Object.create(AccountModal.prototype);
+    for (const [state, expected] of [
+        [{ authBootstrapComplete: false, accountId: 'cached', sessionVerified: true, status: 'unlocked', username: 'cached-name' }, ''],
+        [{ authBootstrapComplete: true, accountId: 'locked', sessionVerified: true, status: 'locked', username: 'locked-name' }, ''],
+        [{ authBootstrapComplete: true, accountId: null, sessionVerified: false, status: 'none', oauthEmail: 'old@example.com' }, ''],
+        [{ authBootstrapComplete: true, accountId: 'ready', sessionVerified: true, status: 'unlocked', username: ' member ' }, 'member'],
+        [{ authBootstrapComplete: true, accountId: 'ready', sessionVerified: true, status: 'unlocked', oauthEmail: ' member@example.com ' }, 'member@example.com']
+    ]) {
+        modal.accountState = state;
+        assert.equal(modal.getAccountIdentityLabel(), expected);
     }
 });
 
