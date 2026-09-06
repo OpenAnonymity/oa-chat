@@ -131,6 +131,31 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
+    test('composer announcements reuse one screen-reader-only status node', () => {
+        const nodes = [];
+        document.getElementById = id => nodes.find(node => node.id === id) || null;
+        document.createElement = tagName => ({
+            tagName, attributes: {},
+            setAttribute(name, value) { this.attributes[name] = value; }
+        });
+        const app = { elements: { inputCard: { append: node => nodes.push(node) } } };
+
+        ChatApp.prototype.announceChatOperation.call(app, 'Message accepted.');
+        const status = nodes[0];
+        assert.equal(status.textContent, 'Message accepted.');
+        ChatApp.prototype.announceChatOperation.call(app, 'Response complete.');
+
+        assert.equal(nodes.length, 1);
+        assert.equal(nodes[0], status);
+        assert.equal(status.id, 'chat-operation-status');
+        assert.equal(status.tagName, 'span');
+        assert.equal(status.className, 'sr-only');
+        assert.equal(status.attributes.role, 'status');
+        assert.equal(status.attributes['aria-hidden'], undefined);
+        assert.equal(status.attributes.hidden, undefined);
+        assert.equal(status.textContent, 'Response complete.');
+    });
+
     test('Send captures composer state before awaits and deduplicates only its owned session', async () => {
         const app = appHarness();
         const gate = deferred();

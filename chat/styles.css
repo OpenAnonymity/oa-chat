@@ -1,3 +1,19 @@
+/* Accessibility primitives belong in the shared stylesheet: composed builds
+   may copy a generated utility stylesheet that predates a new live region.
+   Keep announcements in the accessibility tree without taking up layout space. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* ============================================
    CONFIGURABLE THEME - Edit these values to customize the app
    ============================================ */

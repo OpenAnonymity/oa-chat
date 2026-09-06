@@ -4,6 +4,16 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: Composer live announcements stay visually hidden
+
+- `Message accepted.` and `Response complete.` are screen-reader announcements,
+  not visible composer labels. Keep the single `chat-operation-status` node and
+  its `role="status"`; do not remove it or use `display: none` / `aria-hidden`.
+- The shared `styles.css` owns the `.sr-only` accessibility primitive so all
+  consumers stay clipped and out of layout even when a composed build copies an
+  older generated Tailwind stylesheet. This applies in both themes and reduced
+  motion. Do not fix future leaks only in a downstream payment-specific class.
+
 ## 2026-09-05: Product UI composition keeps the shared renderer
 
 - Optional `ui.components` factories replace only Account, Welcome, and the
