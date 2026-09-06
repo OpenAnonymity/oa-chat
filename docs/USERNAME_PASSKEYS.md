@@ -8,7 +8,7 @@ unlock. They do not have a recovery code.
 
 The commercial landing page offers Google and username only, with the username
 field directly below Google. Submitting a structurally valid username uses
-the one-use local route `/chat/?auth=username#username=...`. The username is in
+the one-use local route `/?auth=username#username=...` (the app now owns the site root; `/chat/?auth=…` redirects there). The username is in
 the fragment, so it is not sent in the document request or HTTP referrer. Chat
 waits for its normal account bootstrap, removes the authentication intent and
 username fragment with

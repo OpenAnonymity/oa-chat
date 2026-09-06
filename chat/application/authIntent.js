@@ -51,7 +51,7 @@ export function clearAuthenticationIntent(
         }
     }
     const search = params.toString();
-    const target = `${locationImpl?.pathname || '/chat/'}${search ? `?${search}` : ''}${hash}`;
+    const target = `${locationImpl?.pathname || '/'}${search ? `?${search}` : ''}${hash}`;
     historyImpl?.replaceState?.(historyImpl?.state ?? null, '', target);
     return true;
 }
