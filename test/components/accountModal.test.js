@@ -107,8 +107,10 @@ test('signed-in Account opens beside the nested action row without backdrop dism
         busy: false,
         action: null
     };
+    const removedRootAttributes = [];
     globalThis.document = {
         activeElement: null,
+        documentElement: { removeAttribute: name => removedRootAttributes.push(name) },
         createElement() {
             return { dataset: {}, hidden: false };
         },
@@ -149,6 +151,8 @@ test('signed-in Account opens beside the nested action row without backdrop dism
         assert.equal(inserted[0].reference, actionRow);
         assert.equal(inserted[0].node.dataset.oaExtensionSlot, SLOT_NAMES.ACCOUNT_COMMERCIAL);
         assert.deepEqual(refreshed, [SLOT_NAMES.ACCOUNT_COMMERCIAL]);
+        // Opening the dialog clears the early arrival dim + spinner painted by index.html.
+        assert.deepEqual(removedRootAttributes, ['data-auth-arriving']);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
@@ -277,7 +281,6 @@ test('account dialogs share one accent focus ring, close control, dark edges and
     assert.match(html, /html\[data-auth-arriving\] #auth-arrival\s*\{[^}]*position: fixed;[^}]*background: rgb\(0 0 0 \/ 0\.6\)/s);
     assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><\/div>\s*<div id="account-modal"/);
     assert.ok(html.indexOf('data-auth-arriving') < html.indexOf('fonts/fonts.css'), 'arrival layer is painted before any stylesheet');
-    assert.match(String(AccountModal.prototype.open), /removeAttribute\?\.\('data-auth-arriving'\)/);
     assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)/);
     assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within/);
     assert.match(css, /#close-account-modal\s*\{[^}]*width: 2rem;[^}]*height: 2rem;[^}]*border-radius: 0.625rem/);
