@@ -570,6 +570,7 @@ class ChatApp {
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
                 ensureTicketStatusVisible: () => this.rightPanel?.show?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
+                getAccountIdentityLabel: () => this.accountModal?.getAccountIdentityLabel?.() || '',
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
                 showToast: (...args) => this.showToast(...args)

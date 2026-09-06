@@ -628,7 +628,7 @@ function landingContinuationModal(next = 'login') {
     return { modal, calls, frames };
 }
 
-test('landing handoff shows the encryption explanation and waits for an explicit passkey click', async () => {
+test('landing handoff goes straight to the passkey for a returning account; new accounts get the setup card', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
     try {
@@ -640,17 +640,28 @@ test('landing handoff shows the encryption explanation and waits for an explicit
                 modal.close();
             };
             await modal.openForUsername(' Winter-OWL ', null, { autoContinue: true });
-            assert.deepEqual(calls, [['prepare', 'winter-owl']]);
             assert.match(frames[0], /Checking username…/);
             assert.ok(frames.every(html => !html.includes('Username form')));
-            assert.match(frames.at(-1), next === 'login' ? /Welcome back/ : /Encrypt your data/);
-            assert.match(frames.at(-1), /encrypts your tickets and preferences/i);
-            assert.equal(modal.isOpen, true);
-            await modal.handleUsernamePasskeyContinue();
-            assert.deepEqual(calls, next === 'register'
-                ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], [next]]
-                : [['prepare', 'winter-owl'], [next]]);
-            assert.equal(modal.isOpen, false);
+            assert.ok(frames.every(html => !html.includes('Welcome back')));
+            if (next === 'login') {
+                // The lookup resolved to an existing account: the passkey prompt
+                // opened at once, behind an untitled "Confirm with your passkey" card.
+                assert.deepEqual(calls, [['prepare', 'winter-owl'], ['login']]);
+                const waiting = frames.find(html => html.includes('aria-busy="true"'));
+                assert.match(waiting, /account-unlock-card-untitled/);
+                assert.match(waiting, /aria-label="Unlock your encrypted data"/);
+                assert.doesNotMatch(waiting, /<h2/);
+                assert.match(waiting, /Confirm with your passkey to continue\./);
+                assert.equal(modal.isOpen, false);
+            } else {
+                assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+                assert.match(frames.at(-1), />Encrypt your data<\/h2>/);
+                assert.match(frames.at(-1), /encrypts your tickets and preferences/i);
+                assert.equal(modal.isOpen, true);
+                await modal.handleUsernamePasskeyContinue();
+                assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
+                assert.equal(modal.isOpen, false);
+            }
             assert.equal(modal.usernameHandoffPending, false);
         }
     } finally {
@@ -667,16 +678,20 @@ test('a cancelled username prompt keeps retry on the explanation; lookup errors 
             if (failure === 'network') {
                 modal.accountService.prepareUsernameContinuation = async () => { throw new Error('Offline'); };
             }
-            await modal.openForUsername('winter-owl', null, { autoContinue: true });
             if (failure === 'cancel') {
                 modal.handleAccountPasskeyUnlock = async () => {
                     calls.push(['login']);
                     modal.accountState.error = 'Passkey cancelled';
                 };
-                await modal.handleUsernamePasskeyContinue();
-                assert.match(frames.at(-1), /Welcome back/);
+            }
+            await modal.openForUsername('winter-owl', null, { autoContinue: true });
+            if (failure === 'cancel') {
+                // The automatic prompt was cancelled: retry waits for a click.
+                assert.doesNotMatch(frames.at(-1), /Welcome back|<h2/);
+                assert.match(frames.at(-1), /account-unlock-card-untitled/);
                 assert.match(frames.at(-1), /Try again/);
                 assert.match(frames.at(-1), /Passkey wasn't confirmed\./);
+                assert.equal(modal.isOpen, true);
             } else {
                 assert.equal(frames.at(-1), '<form>Username form</form>');
             }
@@ -734,19 +749,21 @@ test('closing a landing lookup prevents a late prompt and duplicate handoffs are
     }
 });
 
-test('Continue selects setup or unlock but does not invoke a passkey until the welcome action', async () => {
+test('Continue prompts a returning account at once; setup waits for Create passkey', async () => {
     for (const next of ['register', 'login']) {
         const { modal, calls } = continuationModal(next);
         await modal.handleAccountContinue();
-        assert.deepEqual(calls, [['prepare', 'winter-owl']]);
         assert.equal(modal.usernameContinuePending, false);
         assert.equal(modal.creationStep, next === 'register' ? 'username_ready' : 'idle');
-        if (next === 'register') assert.equal(modal.generatedUsername, 'winter-owl');
-        else assert.equal(modal.usernameUnlockReady, true);
-        await modal.handleUsernamePasskeyContinue();
-        assert.deepEqual(calls, next === 'register'
-            ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], [next]]
-            : [['prepare', 'winter-owl'], [next]]);
+        if (next === 'register') {
+            assert.equal(modal.generatedUsername, 'winter-owl');
+            assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+            await modal.handleUsernamePasskeyContinue();
+            assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
+        } else {
+            assert.equal(modal.usernameUnlockReady, true);
+            assert.deepEqual(calls, [['prepare', 'winter-owl'], ['login']]);
+        }
     }
 });
 
@@ -770,20 +787,19 @@ test('username Unlock fetches a fresh challenge and stays single-flight', async 
     const { modal, calls } = continuationModal('login');
     const staleChallenge = { challenge: 'do-not-reuse' };
     modal.accountService.prepareUsernameContinuation = async () => ({ kind: 'login', challenge: staleChallenge });
-    await modal.handleAccountContinue();
     let finish;
     modal.handleAccountPasskeyUnlock = async (...args) => {
         calls.push(['login', args]);
         return new Promise(resolve => { finish = resolve; });
     };
-    const first = modal.handleUsernamePasskeyContinue();
+    await modal.handleAccountContinue(); // starts the automatic prompt
     await modal.handleUsernamePasskeyContinue();
     await modal.handleAccountContinue();
     assert.deepEqual(calls, [['login', []]]);
     assert.equal(modal.usernamePasskeyBusy, true);
     assert.match(modal.renderUsernameUnlockUI(), /disabled aria-busy="true"/);
     finish();
-    await first;
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(modal.usernamePasskeyBusy, false);
 });
 
@@ -796,16 +812,21 @@ test('Back from username explanation preserves the identifier and does not sign 
         assert.equal(modal.usernameInputValue, 'winter-owl');
         assert.equal(modal.usernameUnlockReady, false);
         assert.equal(modal.creationStep, 'idle');
-        assert.deepEqual(calls, next === 'register' ? [['prepare', 'winter-owl'], ['cancel']] : [['prepare', 'winter-owl']]);
+        assert.deepEqual(calls, next === 'register' ? [['prepare', 'winter-owl'], ['cancel']] : [['prepare', 'winter-owl'], ['login']]);
     }
 });
 
-test('closing the username explanation never invokes authentication', async () => {
+test('a closed dialog never invokes authentication, not even the automatic prompt', async () => {
     const { modal, calls } = continuationModal('login');
+    modal.accountService.prepareUsernameContinuation = async (username, options) => {
+        calls.push(['prepare', username]);
+        modal.isOpen = false; // closed during the lookup
+        return { kind: 'login' };
+    };
     await modal.handleAccountContinue();
-    modal.isOpen = false;
     await modal.handleUsernamePasskeyContinue();
     assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+    assert.ok(!modal.usernameUnlockReady);
 });
 
 test('delayed new-account setup does not reserve a username or start a challenge until Create', async () => {
@@ -1344,7 +1365,10 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
 
     try {
         const html = modal.renderOAuthUnlockUI();
-        assert.match(html, /Welcome back/);
+        assert.doesNotMatch(html, /Welcome back|<h2/);
+        assert.match(html, /account-unlock-card account-unlock-card-untitled/);
+        assert.match(html, /aria-label="Unlock your encrypted data"/);
+        assert.doesNotMatch(html, /aria-labelledby/);
         assert.doesNotMatch(html, /account-login-dialog|account-login-heading|account-login-divider|account-login-arrow/);
         assert.match(html, /encrypts your tickets and preferences so only you can access them/);
         assert.match(html, /id="oauth-keyring-submit-btn"/);
@@ -1357,6 +1381,63 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
         modal.destroy();
         globalThis.document = originalDocument;
     }
+});
+
+test('opening a locked Google account prompts its passkey at once, once, and only for the plain keyring unlock', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        activeElement: null,
+        getElementById() { return null; },
+        addEventListener() {},
+        removeEventListener() {}
+    };
+    const cases = [
+        [{ oauthKeyringRequired: true }, 1],
+        [{ oauthKeyringRequired: true, error: 'Passkey cancelled' }, 0],
+        [{ oauthKeyringRequired: true, busy: true }, 0],
+        [{ oauthKeyringRequired: true, passkeySupported: false }, 0],
+        [{ oauthKeyringRequired: true, oauthLegacyPasskeyRequired: true }, 0],
+        [{ oauthSetupRequired: true }, 0],
+        [{ oauthRecoveryRequired: true }, 0]
+    ];
+    for (const [flags, expectedPrompts] of cases) {
+        const state = {
+            accountId: 'identity-account', sessionVerified: true, status: 'locked',
+            oauthProvider: 'google', passkeySupported: true, busy: false,
+            authBootstrapComplete: true, ...flags
+        };
+        let prompts = 0;
+        const modal = new AccountModal({
+            services: {
+                account: {
+                    getState: () => state,
+                    subscribe: () => () => {},
+                    clearErrors() {},
+                    async unlockOAuthKeyring() { prompts += 1; return false; },
+                    async setupOAuthKeyring() { prompts += 100; return false; },
+                    async unlockWithPasskey() { prompts += 100; return false; }
+                },
+                sync: { getStatus: () => ({}), subscribe: () => () => {} }
+            },
+            showToast() {}
+        });
+        modal.overlay = { classList: { add() {}, remove() {} }, innerHTML: '', querySelector() { return null; }, querySelectorAll() { return []; } };
+        modal.render = () => {};
+        modal.focusModal = () => {};
+        modal.escapeHtml = value => String(value ?? '');
+        try {
+            modal.open();
+            await new Promise(resolve => setImmediate(resolve));
+            assert.equal(prompts, expectedPrompts, JSON.stringify(flags));
+            // A second render/open of the same dialog never re-prompts on its own.
+            modal.maybeAutoPromptPasskey();
+            await new Promise(resolve => setImmediate(resolve));
+            assert.equal(prompts, expectedPrompts, `repeat ${JSON.stringify(flags)}`);
+        } finally {
+            modal.destroy();
+        }
+    }
+    globalThis.document = originalDocument;
 });
 
 test('Welcome dismissal keeps the account locked and Account-settings logout still works', async () => {
@@ -1393,7 +1474,8 @@ test('Welcome dismissal keeps the account locked and Account-settings logout sti
     modal.render = () => {};
     modal.escapeHtml = value => String(value ?? '');
     try {
-        assert.match(modal.renderAccountUI(), /Welcome back/);
+        assert.match(modal.renderAccountUI(), /account-unlock-card-untitled/);
+        assert.doesNotMatch(modal.renderAccountUI(), /Welcome back/);
         modal.attachEventListeners();
         buttons['close-account-modal'].onclick();
         assert.equal(modal.isOpen, false);
@@ -1415,21 +1497,24 @@ test('Welcome dismissal keeps the account locked and Account-settings logout sti
         assert.equal(cleared, 1);
         assert.equal(state.sessionVerified, false);
         assert.match(modal.renderAccountUI(), /id="account-username-input"/);
-        assert.doesNotMatch(modal.renderAccountUI(), /Welcome back/);
+        assert.doesNotMatch(modal.renderAccountUI(), /account-unlock-card/);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
     }
 });
 
-test('Welcome never shows logout, including waiting, retry, and legacy-passkey states', () => {
+test('the unlock card never shows logout, including waiting, retry, and legacy-passkey states', () => {
     const modal = Object.create(AccountModal.prototype);
     modal.escapeHtml = value => String(value ?? '');
     for (const oauthLegacyPasskeyRequired of [false, true]) {
         for (const [busy, error] of [[false, null], [true, null], [false, 'Passkey cancelled']]) {
             modal.accountState = { accountId: '1234567890123456', oauthKeyringRequired: true, oauthLegacyPasskeyRequired, busy, error };
             const html = modal.renderOAuthUnlockUI();
-            assert.match(html, />Welcome back<\/h2>/);
+            // Only the legacy-passkey account keeps a heading; the ordinary
+            // returning account is prompted on arrival and its card is untitled.
+            if (oauthLegacyPasskeyRequired) assert.match(html, />Welcome back<\/h2>/);
+            else assert.doesNotMatch(html, /<h2|Welcome back/);
             assert.match(html, /id="close-account-modal"/);
             assert.match(html, /id="oauth-keyring-submit-btn"/);
             assert.doesNotMatch(html, /account-clear-btn|account-unlock-signout|Log out/);

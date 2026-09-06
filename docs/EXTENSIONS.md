@@ -31,11 +31,15 @@ Extension API version 2 supports these named slots:
 - `rightPanel.ticketStatus`
 - `modalLayer`
 
-`account.menuActions` is rendered inside the signed-in account settings menu.
-Nodes mounted there should be buttons with `role="menuitem"` and the shared
-`account-menu-item` class. The core menu owns focus movement, Escape handling,
-outside-click dismissal, and Account/logout actions. Extensions own their
-menu-item label and destination. A dialog opened from this slot should use
+`account.menuActions` is rendered inside the signed-in account settings menu,
+above the core **Log out** item; the core no longer adds an Account item of its
+own, so an extension mounted here is the account surface. Nodes mounted there
+should be buttons with `role="menuitem"` and the shared `account-menu-item`
+class. The core menu owns focus movement, Escape handling, outside-click
+dismissal, and the logout action. Extensions own their menu-item label and
+destination. `context.ui.getAccountIdentityLabel()` returns the signed-in
+display name (username, else Google email) for an extension-owned account
+dialog to show; it is a UI helper, not part of `account.getSnapshot()`. A dialog opened from this slot should use
 `context.ui.getAccountMenuReturnTarget()` as its focus-return target because
 the menu itself closes after selection. The legacy `sidebar.accountActions` and
 `account.commercial` slots remain supported for compatibility.

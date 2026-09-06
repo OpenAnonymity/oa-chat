@@ -4,6 +4,33 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-05: Returning accounts prompt their passkey on arrival
+
+The "Welcome back → Unlock" explanation is gone from the returning-user flow.
+`AccountModal.open()` calls `maybeAutoPromptPasskey()`, which runs
+`handleOAuthKeyringUnlock()` once per open for a locked Google keyring (never
+for setup, legacy migration, legacy passkey, busy, error or unsupported
+states), and `handleAccountContinue()` calls `handleUsernamePasskeyContinue()`
+as soon as a username lookup resolves to an existing account. The shared
+`renderPasskeyUnlockCard` renders no `<h2>` for that returning case — the
+dialog carries `aria-label="Unlock your encrypted data"` and the
+`account-unlock-card-untitled` class — so the card only ever shows the waiting
+and Try again states. Setup ("Encrypt your data"), legacy migration and the
+legacy-passkey account keep their headings. Safari's user-activation rule for
+WebAuthn is the known risk on the Google return path: a refused prompt lands
+on the untitled Try again card rather than an idle one.
+
+## 2026-09-05: The account menu is Account (extension) and Log out
+
+The core `#account-security-menu-item` and its compact Account dialog entry
+are gone from the sidebar menu; the commercial extension's menu item, now
+labelled **Account**, opens the unified Account dialog (identity row, Get
+tickets, Payment, Invoices) and is followed by the core **Log out** item.
+`context.ui.getAccountIdentityLabel()` gives extensions the signed-in display
+name (username, else Google email) for that identity row; it deliberately
+stays out of `account.getSnapshot()`. `renderCompactAccountUI` is no longer
+reachable from the menu.
+
 ## 2026-09-04: Compact Log-in hover matches Account controls
 
 - On hover-capable pointers, the Google button and the complete username

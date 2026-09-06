@@ -211,12 +211,13 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
             if (documentListeners.get(type) === listener) documentListeners.delete(type);
         }
     };
-    const accountItem = createElement(documentImpl);
+    // The core menu has no Account item of its own any more: the extension slot
+    // (the commercial Account dialog, formerly Membership) leads, then Log out.
     const membershipItem = createElement(documentImpl);
     const logoutItem = createElement(documentImpl);
     const menu = createElement(documentImpl, {
         hidden: true,
-        children: [accountItem, membershipItem, logoutItem]
+        children: [membershipItem, logoutItem]
     });
     const tab = createElement(documentImpl);
     const label = createElement(documentImpl);
@@ -226,7 +227,6 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     elements.set('account-nav', nav);
     elements.set('account-tab-btn', tab);
     elements.set('account-settings-menu', menu);
-    elements.set('account-security-menu-item', accountItem);
     elements.set('account-logout-menu-item', logoutItem);
     elements.set('account-identity-label', label);
     elements.set('account-bootstrap-status', bootstrapStatus);
@@ -252,32 +252,33 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
 
     try {
         assert.equal(label.textContent, 'member@example.com');
+        assert.equal(modal.getAccountIdentityLabel(), 'member@example.com');
         assert.equal(bootstrapStatus.textContent, '');
         assert.equal(modal.getAccountMenuReturnTarget(), tab);
 
         tab.onclick();
         assert.equal(menu.hidden, false);
         assert.equal(tab.getAttribute('aria-expanded'), 'true');
-        assert.equal(accountItem.focusCount, 1);
+        assert.equal(membershipItem.focusCount, 1);
         assert.deepEqual(refreshedSlots, [SLOT_NAMES.ACCOUNT_MENU_ACTIONS]);
 
-        menu.onkeydown({ key: 'Escape', target: accountItem, preventDefault() {} });
+        menu.onkeydown({ key: 'Escape', target: membershipItem, preventDefault() {} });
         assert.equal(menu.hidden, true);
         assert.equal(tab.focusCount, 1);
 
         tab.onclick();
         assert.equal(menu.hidden, false);
         assert.equal(tab.getAttribute('aria-expanded'), 'true');
-        assert.equal(accountItem.focusCount, 2);
+        assert.equal(membershipItem.focusCount, 2);
         assert.deepEqual(refreshedSlots, [
             SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
             SLOT_NAMES.ACCOUNT_MENU_ACTIONS
         ]);
 
-        menu.onkeydown({ key: 'ArrowDown', target: accountItem, preventDefault() {} });
-        assert.equal(membershipItem.focusCount, 1);
+        menu.onkeydown({ key: 'ArrowDown', target: membershipItem, preventDefault() {} });
+        assert.equal(logoutItem.focusCount, 1);
 
-        menu.onkeydown({ key: 'Escape', target: membershipItem, preventDefault() {} });
+        menu.onkeydown({ key: 'Escape', target: logoutItem, preventDefault() {} });
         assert.equal(menu.hidden, true);
         assert.equal(tab.getAttribute('aria-expanded'), 'false');
         assert.equal(tab.focusCount, 2);
@@ -355,6 +356,7 @@ test('account footer stays stable while cached identity verification settles', (
         };
         modal.updateTabIndicator();
         assert.equal(label.textContent, 'member@example.com');
+        assert.equal(modal.getAccountIdentityLabel(), 'member@example.com');
         assert.equal(bootstrapStatus.textContent, '');
         assert.equal(tab.dataset.status, 'logged-in');
         assert.equal(tab.disabled, false);

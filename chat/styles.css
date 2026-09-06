@@ -6081,6 +6081,17 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     text-wrap: balance;
 }
 
+.account-unlock-card-untitled .account-unlock-copy {
+    /* No heading: the body carries the card. Give it a touch more presence
+       and room so the close button never crowds the first line. */
+    padding-top: .25rem;
+}
+
+.account-unlock-card-untitled .account-unlock-body {
+    font-size: 1rem;
+    color: hsl(var(--color-foreground) / .82);
+}
+
 .account-unlock-body {
     margin: 0;
     max-width: 21.75rem;

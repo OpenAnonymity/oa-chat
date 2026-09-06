@@ -25,6 +25,7 @@ class AccountModal {
         this.usernameHandoffPending = false;
         this.usernameUnlockReady = false;
         this.usernamePasskeyBusy = false;
+        this.passkeyAutoPromptAttempted = false;
         this.loginViewVersion = 0;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
@@ -114,7 +115,6 @@ class AccountModal {
             };
         }
         const menu = document.getElementById('account-settings-menu');
-        const accountItem = document.getElementById('account-security-menu-item');
         const logoutItem = document.getElementById('account-logout-menu-item');
         if (menu) {
             menu.onkeydown = event => this.handleAccountMenuKeydown(event);
@@ -122,10 +122,6 @@ class AccountModal {
                 if (event.target.closest?.('[role="menuitem"]')) this.closeAccountMenu();
             };
         }
-        if (accountItem) accountItem.onclick = () => {
-            this.closeAccountMenu();
-            this.open(tabBtn);
-        };
         if (logoutItem) logoutItem.onclick = () => {
             this.closeAccountMenu();
             void this.handleAccountClear();
@@ -145,6 +141,14 @@ class AccountModal {
             this.accountState?.sessionVerified &&
             this.accountState?.status === 'unlocked'
         );
+    }
+
+    /** Display name for the signed-in account: username, else the Google email. */
+    getAccountIdentityLabel() {
+        const label = this.accountState?.username ||
+            this.accountState?.oauthEmail ||
+            this.accountState?.email;
+        return typeof label === 'string' ? label.trim() : '';
     }
 
     getAccountMenuReturnTarget() {
@@ -318,6 +322,7 @@ class AccountModal {
         this.recoveryStep = 'idle';
         // Clear any stale errors when opening
         this.accountService.clearErrors();
+        this.passkeyAutoPromptAttempted = false;
         this.render();
         this.overlay.classList.remove('hidden');
         this.focusModal();
@@ -327,6 +332,24 @@ class AccountModal {
 
         this.escapeHandler = (e) => this.handleModalKeydown(e);
         document.addEventListener('keydown', this.escapeHandler);
+        this.maybeAutoPromptPasskey();
+    }
+
+    /**
+     * A returning account goes straight to the passkey: no explanation card
+     * to click through. Only the plain Google keyring unlock qualifies — setup,
+     * legacy migration and legacy-passkey accounts still need their one line
+     * of context first. Runs once per open; a cancelled or failed prompt
+     * leaves the card in its untitled Try again state, never re-prompts.
+     */
+    maybeAutoPromptPasskey() {
+        const state = this.accountState || {};
+        if (!this.isOpen || this.passkeyAutoPromptAttempted) return;
+        if (!state.oauthKeyringRequired || state.oauthRecoveryRequired ||
+            state.oauthSetupRequired || state.oauthLegacyPasskeyRequired) return;
+        if (state.busy || state.error || state.passkeySupported === false) return;
+        this.passkeyAutoPromptAttempted = true;
+        void this.handleOAuthKeyringUnlock();
     }
 
     async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
@@ -750,6 +773,9 @@ class AccountModal {
                 this.render();
                 this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
                     ? 'account-username-unlock-btn' : 'account-username-input');
+                // A returning username account goes straight to its passkey;
+                // registration still waits for Create passkey on the setup card.
+                if (this.usernameUnlockReady) void this.handleUsernamePasskeyContinue();
             }
         }
     }
@@ -1605,12 +1631,17 @@ class AccountModal {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
 
-        // Setup and legacy paths share the Welcome back card's shell.
+        // Returning accounts get no heading: the passkey prompt opens on
+        // arrival and this card only covers waiting and retry. Setup and the
+        // legacy recovery-code migration keep a title because they explain
+        // something new.
         const title = isLegacyMigration
             ? 'Upgrade encrypted data'
             : isSetup
                 ? 'Encrypt your data'
-                : 'Welcome back';
+                : isLegacyPasskey
+                    ? 'Welcome back'
+                    : '';
         const body = busy
             ? isLegacyMigration
                 ? 'Confirm with your passkey to finish the upgrade.'
@@ -1635,14 +1666,14 @@ class AccountModal {
         const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
 
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="account-unlock-card">
+            <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : 'aria-label="Unlock your encrypted data"'} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}">
                 <button id="close-account-modal" class="account-unlock-close" type="button" aria-label="Close"${closeDisabled ? ' disabled' : ''}>
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                         <path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
                 </button>
                 <div class="account-unlock-copy">
-                    <h2 id="account-modal-title" class="account-unlock-title">${title}</h2>
+                    ${title ? `<h2 id="account-modal-title" class="account-unlock-title">${title}</h2>` : ''}
                     <p class="account-unlock-body">${body}</p>
                     ${isLegacyPasskey ? `
                         <p class="account-unlock-account-id account-number-text">${this.escapeHtml(this.formatAccountId(state.accountId))}</p>
