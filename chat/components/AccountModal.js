@@ -1581,20 +1581,22 @@ class AccountModal {
                             autocapitalize="none"
                             spellcheck="false"
                             maxlength="32"
-                            placeholder="Username"
+                            placeholder="Choose a username"
                             class="account-login-input"
                             value="${usernameValue}"
                             ${isBusy ? 'disabled' : ''}
                         />
-                        <button id="account-passkey-btn" class="account-login-submit" type="button" aria-label="${isBusy ? 'Continuing' : 'Continue'}" title="Continue" aria-busy="${Boolean(isBusy)}" ${isBusy || !passkeySupported ? 'disabled' : ''}>
-                            ${isBusy ? '<span class="account-login-spinner" aria-hidden="true"></span>' : `
-                                <svg class="account-login-arrow" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M2 8h12M9 3l5 5-5 5"></path>
-                                </svg>
-                            `}
-                        </button>
                     `}
                 </div>
+                ${usesAccountId ? '' : `
+                <button id="account-passkey-btn" class="account-login-submit" type="button" aria-busy="${Boolean(isBusy)}" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                    <span aria-hidden="true"></span>
+                    <span class="account-login-submit-label">Continue with username</span>
+                    <span class="account-login-submit-indicator" aria-hidden="true">${isBusy ? '<span class="account-login-spinner"></span>' : `
+                        <svg class="account-login-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 8h12M9 3l5 5-5 5"></path>
+                        </svg>`}</span>
+                </button>`}
                 ${usesAccountId ? `<button id="account-passkey-btn" class="mt-3 w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                     ${isBusy ? 'Continuing…' : 'Continue'}
                 </button>` : ''}
@@ -1748,6 +1750,7 @@ class AccountModal {
                     ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
+            ${!title && busy ? '<div class="account-unlock-waiting" role="status" aria-label="Confirming your passkey"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span></div>' : ''}
         `;
     }
 

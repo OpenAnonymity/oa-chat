@@ -37,22 +37,21 @@ The prompt runs independently of the rest of Chat startup; closing during lookup
 invalidates the pending handoff and cannot start a late passkey prompt.
 
 The login dialog is a compact, rounded card (360px maximum width) with a
-left-aligned **Log in** heading. Google sits above an accessible **Username**
-input with an attached stroked arrow, separated by a subtle lowercase **or**
-divider. Both controls are 48px high. This divider is modal-only: the landing
-still places Username directly below Google. The supplied **1a** reference informs
-the 16px Google text, 18px arrow, and tightly set 22px medium heading. Google uses
-regular weight for a lighter appearance; OA's system font and colors are retained.
-The shared encryption-card heading uses the Account title's medium (500) weight.
-The arrow is named **Continue**
-for assistive technology and uses the
-same handler as Enter. It becomes a disabled spinner during authentication.
-The neutral control follows Chat's light/dark theme, including autofill. This
-styling is scoped to username login; saved legacy and Google encryption-unlock
-layouts are unchanged. It does not show introductory copy, pseudonym guidance,
-separate signup/login buttons, or a manual
-account-number switch. Continue handles both account creation and returning
-login; it never treats a canceled or failed passkey as permission to register.
+left-aligned **Log in** heading. Google sits above a **Choose a username**
+input, separated by a subtle lowercase **or** divider, and a full-width filled
+**Continue with username** button follows the field — the same control as the
+landing card: black at all times (near-white in dark mode), lifting on hover,
+with the label optically centred and a stroked arrow on the right that becomes
+a spinner while authentication runs. All three controls are 48px high. The
+shared encryption-card heading uses the Account title's medium (500) weight.
+The button handles both account creation and returning login (Enter in the
+field does the same); it is disabled only while busy or when passkeys are
+unsupported, never by the field being empty. The neutral control follows Chat's
+light/dark theme, including autofill. This styling is scoped to username login;
+saved legacy and Google encryption-unlock layouts are unchanged. It does not
+show introductory copy, pseudonym guidance, separate signup/login buttons, or a
+manual account-number switch, and it never treats a canceled or failed passkey
+as permission to register.
 
 For registration, the user chooses a username and approves one passkey prompt.
 The browser generates the random account master key locally, wraps it with the

@@ -6089,11 +6089,28 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
 
 /* While the automatic prompt is up, the OS passkey sheet is the interface:
    the untitled card stays mounted for focus and the status text, but is not
-   drawn. It fades in only if the prompt fails (Try again). */
+   drawn — only a small spinner on the dimmed page says something is
+   happening. The card fades in only if the prompt fails (Try again). */
 .account-unlock-card-untitled[data-waiting="true"] {
     opacity: 0;
     pointer-events: none;
     transition: opacity 120ms ease;
+}
+
+.account-unlock-waiting {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+}
+
+.account-unlock-waiting-spinner {
+    width: 1.25rem;
+    height: 1.25rem;
+    border-width: 2px;
+    border-color: rgb(255 255 255 / .7);
+    border-top-color: transparent;
 }
 
 .account-unlock-card-untitled {
@@ -6783,7 +6800,7 @@ html[data-keyboard-nav] .account-unlock-input:focus-visible {
 
 .account-login-control {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 3rem;
+    grid-template-columns: minmax(0, 1fr);
     height: 3rem;
     overflow: hidden;
     border: 1px solid hsl(var(--color-border));
@@ -6792,8 +6809,7 @@ html[data-keyboard-nav] .account-unlock-input:focus-visible {
     transition: background-color 0.12s ease, border-color 0.12s ease;
 }
 
-.account-login-input,
-.account-login-submit {
+.account-login-input {
     min-width: 0;
     height: 100%;
     border: 0;
@@ -6829,27 +6845,58 @@ html[data-keyboard-nav] .account-login-control:focus-within {
     box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.45);
 }
 
+/* Same control as the landing card: the username step's button is the one
+   filled control in the dialog — ink at all times, lifting on hover — with
+   the label optically centred between an empty cell and the arrow. */
 .account-login-submit {
     display: grid;
-    place-items: center;
-    padding: 0;
-    border-left: 1px solid hsl(var(--color-border));
+    grid-template-columns: 1.125rem minmax(0, 1fr) 1.125rem;
+    align-items: center;
+    width: 100%;
+    height: 3rem;
+    margin-top: 0.625rem;
+    padding: 0 1rem;
+    border: 1px solid #000;
+    border-radius: 0.75rem;
+    background: #000;
+    color: #fff;
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.25;
     cursor: pointer;
-    transition: border-color 0.12s ease;
+    transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.account-login-submit-label {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.account-login-submit-indicator {
+    display: grid;
+    place-items: center;
 }
 
 html[data-keyboard-nav] .account-login-submit:focus-visible {
     outline: 2px solid hsl(var(--color-focus-ring));
-    outline-offset: -3px;
+    outline-offset: 2px;
 }
 
 .account-login-submit:disabled {
-    color: hsl(var(--color-muted-foreground));
+    opacity: 0.55;
     cursor: default;
 }
 
 .account-login-submit[aria-busy="true"] {
+    opacity: 0.7;
     cursor: progress;
+}
+
+.dark .account-login-submit {
+    border-color: hsl(0 0% 100% / 0.92);
+    background: hsl(0 0% 100% / 0.92);
+    color: hsl(222.2 84% 4.9%);
 }
 
 .account-login-arrow {
@@ -6870,35 +6917,37 @@ html[data-keyboard-nav] .account-login-submit:focus-visible {
    username input and arrow are one control, so their shell responds as one. */
 @media (hover: hover) and (pointer: fine) {
     .account-login-dialog #account-google-btn:hover:not(:disabled),
-    .account-login-dialog .account-login-control:has(.account-login-submit:not(:disabled)):hover {
+    .account-login-dialog .account-login-control:not(:focus-within):hover {
         background-color: hsl(var(--color-foreground) / 0.03) !important;
         border-color: hsl(var(--color-muted-foreground) / 0.5) !important;
     }
 
-    .account-login-dialog .account-login-control:has(.account-login-submit:not(:disabled)):hover .account-login-submit {
-        border-left-color: hsl(var(--color-muted-foreground) / 0.5);
-    }
-
-    .account-login-dialog .account-login-control:has(.account-login-submit:not(:disabled)):hover .account-login-input:is(:autofill, :-webkit-autofill) {
+    .account-login-dialog .account-login-control:not(:focus-within):hover .account-login-input:is(:autofill, :-webkit-autofill) {
         box-shadow:
             inset 0 0 0 1000px hsl(var(--color-foreground) / 0.03),
             inset 0 0 0 1000px hsl(var(--color-background));
     }
 
+    .account-login-submit:hover:not(:disabled) {
+        border-color: #262626;
+        background: #262626;
+    }
+
     .dark .account-login-dialog #account-google-btn:hover:not(:disabled),
-    .dark .account-login-dialog .account-login-control:has(.account-login-submit:not(:disabled)):hover {
+    .dark .account-login-dialog .account-login-control:not(:focus-within):hover {
         background-color: hsl(0 0% 100% / 0.06) !important;
         border-color: hsl(0 0% 100% / 0.3) !important;
     }
 
-    .dark .account-login-dialog .account-login-control:has(.account-login-submit:not(:disabled)):hover .account-login-submit {
-        border-left-color: hsl(0 0% 100% / 0.3);
-    }
-
-    .dark .account-login-dialog .account-login-control:has(.account-login-submit:not(:disabled)):hover .account-login-input:is(:autofill, :-webkit-autofill) {
+    .dark .account-login-dialog .account-login-control:not(:focus-within):hover .account-login-input:is(:autofill, :-webkit-autofill) {
         box-shadow:
             inset 0 0 0 1000px hsl(0 0% 100% / 0.06),
             inset 0 0 0 1000px hsl(var(--color-background));
+    }
+
+    .dark .account-login-submit:hover:not(:disabled) {
+        border-color: hsl(0 0% 100% / 0.8);
+        background: hsl(0 0% 100% / 0.8);
     }
 }
 
@@ -6934,9 +6983,6 @@ html[data-keyboard-nav] .account-login-submit:focus-visible {
    !important; the button carries that class. */
 .dark .account-login-dialog #account-google-btn {
     border-color: hsl(0 0% 100% / 0.18) !important;
-}
-.dark .account-login-submit {
-    border-left-color: hsl(0 0% 100% / 0.18);
 }
 
 /* Under 720px every account dialog is a bottom sheet, like Billing & Plan. */

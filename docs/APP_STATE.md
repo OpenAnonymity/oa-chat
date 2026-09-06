@@ -4,6 +4,16 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: Login dialog matches the landing card; spinner behind the passkey prompt
+
+The **Log in** dialog's username step is a standalone **Choose a username**
+field followed by a full-width filled **Continue with username** button
+(`.account-login-submit`, #000 / near-white in dark, hover lift), the same
+control as the landing card; the attached arrow cell is gone. While the
+automatic passkey prompt is in flight the dimmed page shows only a small
+spinner (`.account-unlock-waiting`, role=status) — no card, no text — and
+the untitled card fades in only for Try again.
+
 ## 2026-09-06: The core Account item hides through the app facade
 
 `AccountModal` reaches extension slots only via the component facade

@@ -31,6 +31,7 @@ test('account menu items show focus and tint only during keyboard navigation, ho
     assert.ok(css.indexOf('.account-menu-item[hidden]') < css.indexOf('.account-menu-item {'));
     // The untitled unlock card is not drawn while the automatic prompt is up.
     assert.match(css, /\.account-unlock-card-untitled\[data-waiting="true"\]\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none/s);
+    assert.match(css, /\.account-unlock-waiting\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0;[^}]*place-items:\s*center;[^}]*pointer-events:\s*none/s);
 });
 
 function createElement(documentImpl, options = {}) {

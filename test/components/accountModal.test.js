@@ -189,15 +189,18 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.match(html, /Continue with Google/);
         assert.match(html, /Username/);
         assert.match(html, />Log in<\/h2>/);
-        assert.match(html, /placeholder="Username"/);
+        assert.match(html, /placeholder="Choose a username"/);
         assert.match(html, /aria-label="Username"/);
         assert.match(html, /class="account-login-heading"/);
         assert.match(html, /account-login-dialog"\s*>/);
         assert.match(html, /id="account-google-btn"[\s\S]*class="account-login-divider" aria-hidden="true">or<\/div>[\s\S]*id="account-username-input"/);
-        assert.match(html, /class="account-login-control"[\s\S]*id="account-username-input"[\s\S]*id="account-passkey-btn"[\s\S]*<\/div>/);
-        assert.match(html, /id="account-passkey-btn"[^>]*aria-label="Continue"/);
+        // The field stands alone; the filled Continue button follows it, like the landing card.
+        assert.match(html, /class="account-login-control">[\s\S]*id="account-username-input"[\s\S]*<\/div>\s*<button id="account-passkey-btn" class="account-login-submit" type="button" aria-busy="false"\s*>/);
+        assert.doesNotMatch(html, /class="account-login-control"[\s\S]*id="account-passkey-btn"[\s\S]*<\/div>\s*<\/div>/);
+        assert.match(html, /<span class="account-login-submit-label">Continue with username<\/span>/);
+        assert.doesNotMatch(html, /id="account-passkey-btn"[^>]*aria-label=/);
         assert.doesNotMatch(html, /id="account-google-btn"[^>]*hover:bg-accent/);
-        assert.match(html, /<svg class="account-login-arrow" aria-hidden="true"[^>]*viewBox="0 0 16 16"[^>]*fill="none"[^>]*stroke="currentColor"[^>]*stroke-width="1.5"/);
+        assert.match(html, /<span class="account-login-submit-indicator" aria-hidden="true">\s*<svg class="account-login-arrow" viewBox="0 0 16 16"[^>]*fill="none"[^>]*stroke="currentColor"[^>]*stroke-width="1.5"/);
         assert.equal((html.match(/id="account-passkey-btn"/g) || []).length, 1);
         assert.doesNotMatch(html, /bg-blue-600|>\s*Continue\s*<\/button>/);
         assert.doesNotMatch(html, /Sign in to OA|Choose Google|Use a pseudonym|winter-owl/);
@@ -214,8 +217,9 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         state.busy = true;
         state.error = 'A previous error';
         const busyHtml = modal.renderAccountUI();
-        assert.match(busyHtml, /id="account-passkey-btn"[^>]*aria-label="Continuing"[^>]*aria-busy="true"[^>]*disabled/);
-        assert.match(busyHtml, /class="account-login-spinner" aria-hidden="true"/);
+        assert.match(busyHtml, /id="account-passkey-btn"[^>]*aria-busy="true"[^>]*disabled/);
+        assert.match(busyHtml, /<span class="account-login-submit-indicator" aria-hidden="true"><span class="account-login-spinner"><\/span><\/span>/);
+        assert.match(busyHtml, /Continue with username/);
         assert.doesNotMatch(busyHtml, /class="account-login-arrow"/);
         state.busy = false;
         state.passkeySupported = false;
@@ -327,19 +331,23 @@ test('username login uses the narrower reference card with neutral accessible co
     assert.match(css, /\.account-login-dialog #account-google-btn\s*\{[^}]*height: 3rem;[^}]*font-size: 0.9375rem;[^}]*font-weight: 400;[^}]*line-height: 1.25/);
     assert.match(css, /\.account-login-arrow\s*\{[^}]*width: 1.125rem;[^}]*height: 1.125rem/);
     assert.match(css, /\.account-login-heading > button\s*\{[^}]*width: 2rem;[^}]*height: 2rem/);
-    assert.match(css, /\.account-login-control\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\) 3rem;[^}]*height: 3rem/);
+    assert.match(css, /\.account-login-control\s*\{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*height: 3rem/);
+    // Filled ink Continue button under the field, matching the landing card.
+    assert.match(css, /\.account-login-submit\s*\{[^}]*grid-template-columns: 1\.125rem minmax\(0, 1fr\) 1\.125rem;[^}]*width: 100%;[^}]*height: 3rem;[^}]*margin-top: 0\.625rem;[^}]*border: 1px solid #000;[^}]*border-radius: 0\.75rem;[^}]*background: #000;[^}]*color: #fff;[^}]*font-weight: 500/s);
+    assert.match(css, /\.dark \.account-login-submit\s*\{[^}]*background: hsl\(0 0% 100% \/ 0\.92\);[^}]*color: hsl\(222\.2 84% 4\.9%\)/s);
+    assert.match(css, /\.account-login-submit:hover:not\(:disabled\)\s*\{[^}]*background: #262626/s);
+    assert.doesNotMatch(css, /border-left[^;]*;[^}]*\}[^{]*\.account-login-submit|\.account-login-submit\s*\{[^}]*border-left/);
     assert.match(css, /\.account-login-divider\s*\{[^}]*margin: 0.75rem 0/);
     assert.match(css, /@media \(max-width: 400px\)\s*\{\s*\.account-login-dialog\s*\{\s*padding: 1.5rem/);
     assert.match(css, /\.account-login-input\s*\{[^}]*font-size: 1rem/);
     assert.match(css, /html\[data-keyboard-nav\] \.account-login-submit:focus-visible\s*\{[^}]*outline: 2px solid/);
     assert.match(css, /\.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow: inset 0 0 0 1000px hsl\(var\(--color-background\)\)/);
     assert.match(css, /@media \(hover: hover\) and \(pointer: fine\)\s*\{/);
-    assert.match(css, /\.account-login-dialog #account-google-btn:hover:not\(:disabled\),\s*\.account-login-dialog \.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover\s*\{[^}]*background-color: hsl\(var\(--color-foreground\) \/ 0\.03\) !important;[^}]*border-color: hsl\(var\(--color-muted-foreground\) \/ 0\.5\) !important/);
-    assert.match(css, /\.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover \.account-login-submit\s*\{[^}]*border-left-color: hsl\(var\(--color-muted-foreground\) \/ 0\.5\)/);
-    assert.match(css, /\.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover \.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow:[^}]*hsl\(var\(--color-foreground\) \/ 0\.03\)[^}]*hsl\(var\(--color-background\)\)/);
-    assert.match(css, /\.dark \.account-login-dialog #account-google-btn:hover:not\(:disabled\),\s*\.dark \.account-login-dialog \.account-login-control:has\(\.account-login-submit:not\(:disabled\)\):hover\s*\{[^}]*background-color: hsl\(0 0% 100% \/ 0\.06\) !important;[^}]*border-color: hsl\(0 0% 100% \/ 0\.3\) !important/);
+    assert.match(css, /\.account-login-dialog #account-google-btn:hover:not\(:disabled\),\s*\.account-login-dialog \.account-login-control:not\(:focus-within\):hover\s*\{[^}]*background-color: hsl\(var\(--color-foreground\) \/ 0\.03\) !important;[^}]*border-color: hsl\(var\(--color-muted-foreground\) \/ 0\.5\) !important/);
+    assert.match(css, /\.account-login-control:not\(:focus-within\):hover \.account-login-input:is\(:autofill, :-webkit-autofill\)\s*\{[^}]*box-shadow:[^}]*hsl\(var\(--color-foreground\) \/ 0\.03\)[^}]*hsl\(var\(--color-background\)\)/);
+    assert.match(css, /\.dark \.account-login-dialog #account-google-btn:hover:not\(:disabled\),\s*\.dark \.account-login-dialog \.account-login-control:not\(:focus-within\):hover\s*\{[^}]*background-color: hsl\(0 0% 100% \/ 0\.06\) !important;[^}]*border-color: hsl\(0 0% 100% \/ 0\.3\) !important/);
     assert.doesNotMatch(css, /\.dark \.account-login-dialog #account-google-btn:hover:not\(:disabled\)\s*\{/);
-    assert.doesNotMatch(css, /\.account-login-submit:hover:not\(:disabled\)/);
+    assert.doesNotMatch(css, /:has\(\.account-login-submit/);
     assert.doesNotMatch(css, /\.account-login-dialog #account-google-btn:hover:not\(:disabled\)[^{]*\{[^}]*(?:box-shadow|transform):/);
     assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-login-spinner\s*\{\s*animation: none/);
 });
@@ -654,6 +662,8 @@ test('landing handoff goes straight to the passkey for a returning account; new 
                 assert.deepEqual(calls, [['prepare', 'winter-owl'], ['login']]);
                 const waiting = frames.find(html => html.includes('aria-busy="true"'));
                 assert.match(waiting, /account-unlock-card-untitled" data-waiting="true"/);
+                // Spinner only on the dimmed page; the card itself is not drawn.
+                assert.match(waiting, /<div class="account-unlock-waiting" role="status" aria-label="Confirming your passkey"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span><\/div>/);
                 assert.match(waiting, /aria-label="Unlock your encrypted data"/);
                 assert.doesNotMatch(waiting, /<h2/);
                 assert.match(waiting, /Confirm with your passkey to continue\./);
@@ -695,6 +705,7 @@ test('a cancelled username prompt keeps retry on the explanation; lookup errors 
                 assert.doesNotMatch(frames.at(-1), /Welcome back|<h2/);
                 assert.match(frames.at(-1), /account-unlock-card-untitled/);
                 assert.doesNotMatch(frames.at(-1), /data-waiting/); // failed: the card is drawn
+                assert.doesNotMatch(frames.at(-1), /account-unlock-waiting/);
                 assert.match(frames.at(-1), /Try again/);
                 assert.match(frames.at(-1), /Passkey wasn't confirmed\./);
                 assert.equal(modal.isOpen, true);
