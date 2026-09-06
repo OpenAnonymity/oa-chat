@@ -242,6 +242,8 @@ const COMPONENT_APP_KEYS = new Set([
     'processContentWithLatex',
     'pruneMemoryRetrievedContextFromMessage',
     'refreshExtensionSlot',
+    'hasExtensionSlotNode',
+    'subscribeExtensionSlot',
     'reasoningEffort',
     'reasoningEnabled',
     'regenerateCouncilLane',

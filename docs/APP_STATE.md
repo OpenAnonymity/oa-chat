@@ -4,6 +4,17 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: The core Account item hides through the app facade
+
+`AccountModal` reaches extension slots only via the component facade
+(`appInterface.js`): `refreshExtensionSlot`, and the new
+`hasExtensionSlotNode(name, selector)` and `subscribeExtensionSlot(name,
+listener)`. The earlier `this.app.extensionSlots?.…` calls were `undefined` in
+the real app (the facade never exposed the registry), so the core Account
+fallback was never hidden and the menu showed two Account entries on staging.
+`accountModal.test.js` now asserts the component never touches
+`app.extensionSlots`.
+
 ## 2026-09-06: Nothing is drawn behind the automatic passkey prompt
 
 The untitled unlock card carries `data-waiting="true"` while the automatic

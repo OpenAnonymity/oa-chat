@@ -272,18 +272,18 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     globalThis.document = documentImpl;
     const modal = new AccountModal({
         services: { account: accountService, sync: syncService },
-        extensionSlots: {
-            refresh: name => refreshedSlots.push(name),
-            hasMatchingNode(name, selector) {
-                assert.equal(name, SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
-                assert.equal(selector, '[role="menuitem"]:not([disabled]):not([hidden])');
-                return hasCommercialAccountAction;
-            },
-            subscribe(name, listener) {
-                assert.equal(name, SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
-                accountMenuSlotListener = listener;
-                return () => { accountMenuSlotListener = null; };
-            }
+        // The real app hands components a facade (appInterface.js) that exposes
+        // only these slot methods — never `extensionSlots` itself.
+        refreshExtensionSlot: name => refreshedSlots.push(name),
+        hasExtensionSlotNode(name, selector) {
+            assert.equal(name, SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+            assert.equal(selector, '[role="menuitem"]:not([disabled]):not([hidden])');
+            return hasCommercialAccountAction;
+        },
+        subscribeExtensionSlot(name, listener) {
+            assert.equal(name, SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+            accountMenuSlotListener = listener;
+            return () => { accountMenuSlotListener = null; };
         },
         showToast() {}
     });

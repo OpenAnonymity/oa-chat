@@ -582,6 +582,16 @@ class ChatApp {
         return this.extensionSlots.refresh(name);
     }
 
+    /** Whether an extension has mounted a node matching `selector` into `name`. */
+    hasExtensionSlotNode(name, selector) {
+        return this.extensionSlots.hasMatchingNode(name, selector);
+    }
+
+    /** Notify `listener` whenever the nodes mounted into `name` change. */
+    subscribeExtensionSlot(name, listener) {
+        return this.extensionSlots.subscribe(name, listener);
+    }
+
     detectInitialLinkContext() {
         try {
             const url = new URL(window.location.href);

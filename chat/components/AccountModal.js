@@ -86,7 +86,9 @@ class AccountModal {
             }
         });
 
-        this.accountMenuSlotUnsubscribe = this.app.extensionSlots?.subscribe?.(
+        // Components reach extension slots only through the app facade
+        // (appInterface.js), which does not expose the slot registry itself.
+        this.accountMenuSlotUnsubscribe = this.app.subscribeExtensionSlot?.(
             SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
             () => this.syncCoreAccountMenuItem()
         ) || null;
@@ -150,7 +152,7 @@ class AccountModal {
         if (!accountItem) return;
         // The composed commercial Account action replaces this core fallback;
         // standalone oa-chat must always retain a route to account security.
-        accountItem.hidden = this.app.extensionSlots?.hasMatchingNode?.(
+        accountItem.hidden = this.app.hasExtensionSlotNode?.(
             SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
             '[role="menuitem"]:not([disabled]):not([hidden])'
         ) === true;
@@ -187,7 +189,7 @@ class AccountModal {
         this.close();
         this.menuOpen = true;
         this.accountMenuTrigger = trigger || tabBtn;
-        this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+        this.app.refreshExtensionSlot?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
         this.syncCoreAccountMenuItem();
         // Focus the first item for Escape/arrow navigation. Focus rings are
         // gated on html[data-keyboard-nav], so a pointer-opened menu stays quiet.

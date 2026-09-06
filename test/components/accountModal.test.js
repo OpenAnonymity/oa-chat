@@ -56,6 +56,11 @@ test('account rerenders refresh the commercial slot through the UI facade', () =
     assert.match(source, /actionParent\.insertBefore\(commercialSlot, actionRow\)/);
     assert.doesNotMatch(source, /dialog\.insertBefore\(commercialSlot, actionRow\)/);
     assert.doesNotMatch(source, /extensionSlots/);
+    // The whole component must stay on the facade: `app.extensionSlots` is
+    // undefined in the real app, which silently disabled the menu-item sync.
+    assert.doesNotMatch(String(AccountModal), /this\.app\.extensionSlots/);
+    assert.match(String(AccountModal.prototype.syncCoreAccountMenuItem), /this\.app\.hasExtensionSlotNode\?\.\(/);
+    assert.match(String(AccountModal.prototype.openAccountMenu), /this\.app\.refreshExtensionSlot\?\.\(SLOT_NAMES\.ACCOUNT_MENU_ACTIONS\)/);
 });
 
 test('signed-in Account opens beside the nested action row without backdrop dismissal', () => {
