@@ -1293,7 +1293,7 @@ export default class CouncilController {
         hasRetriedAfterCredit = false,
         streamTarget = null
     }) {
-        const processedMessages = this.app.processMessagesWithFiles(sanitizedMessages, entry.id);
+        const processedMessages = this.app.processMessagesWithFiles(sanitizedMessages, entry.id, session.id);
         return this.sendLaneMessagesCompletion({
             session,
             entry,

@@ -6,7 +6,8 @@
  */
 
 const CACHE_KEY = 'oa-model-catalog-cache-v1';
-const CACHE_VERSION = 1;
+// Version 2 retains provider output limits alongside pricing for budget-aware clients.
+const CACHE_VERSION = 2;
 
 function isObject(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -49,6 +50,10 @@ function sanitizeModel(model) {
 
     if (isObject(model.pricing)) {
         normalized.pricing = model.pricing;
+    }
+
+    if (isObject(model.top_provider)) {
+        normalized.top_provider = model.top_provider;
     }
 
     return normalized;

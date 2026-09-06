@@ -4,72 +4,84 @@ import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
 import { getDefaultModelConfig } from '../modelConfig.js';
 
-const backends = new Map([
-    [openRouterBackend.id, openRouterBackend],
-    [enclaveStationBackend.id, enclaveStationBackend],
-    [providerDirectBackend.id, providerDirectBackend]
-]);
+const builtinBackends = [
+    openRouterBackend,
+    enclaveStationBackend,
+    providerDirectBackend
+];
 
-const DEFAULT_BACKEND_ID = openRouterBackend.id;
-
-function getBackend(backendId) {
-    if (backendId && backends.has(backendId)) {
-        return backends.get(backendId);
+export function createInferenceService(options = {}) {
+    const configuredBackends = options.backends || builtinBackends;
+    const backends = new Map(configuredBackends.map(backend => [backend.id, backend]));
+    const DEFAULT_BACKEND_ID = options.defaultBackendId || configuredBackends[0]?.id;
+    if (!DEFAULT_BACKEND_ID || !backends.has(DEFAULT_BACKEND_ID)) {
+        throw new Error('A registered default inference backend is required.');
     }
-    return backends.get(DEFAULT_BACKEND_ID);
-}
-
-function ensureSessionBackend(session) {
-    if (!session) return DEFAULT_BACKEND_ID;
-    if (!session.inferenceBackend) {
-        session.inferenceBackend = DEFAULT_BACKEND_ID;
-    }
-    return session.inferenceBackend;
-}
-
-function registerBackendTransportHints(backend) {
-    if (!backend?.tls) return;
-    transportHints.registerBackendHints(backend.id, {
-        tlsCaptureHosts: backend.tls.captureHosts || [],
-        tlsVerifyUrl: backend.tls.verifyUrl || '',
-        tlsDisplayName: backend.tls.displayName || backend.label
-    });
-}
-
-function getBackendForSession(session) {
-    const backendId = session?.inferenceBackend;
-    const backend = getBackend(backendId);
-    registerBackendTransportHints(backend);
-    return backend;
-}
-
-function syncTransportHints(session) {
-    if (session) {
-        getBackendForSession(session);
-        return;
-    }
-    backends.forEach(backend => registerBackendTransportHints(backend));
-}
-
-function getWelcomeContent(backend = getBackend()) {
-    const providerName = backend.label;
-    const accessLabel = backend.accessLabel;
-    return {
-        title: 'oa-chat',
-        subtitle: 'by [The Open Anonymity Project](https://openanonymity.ai/)',
-        content: ``.trim()
-    };
-}
-
-function getBackendDefaultModelConfig(backend) {
-    if (backend?.id === DEFAULT_BACKEND_ID) {
-        return getDefaultModelConfig();
+    if (backends.size !== configuredBackends.length) {
+        throw new Error('Inference backend IDs must be unique.');
     }
 
-    return {
-        defaultModelId: backend?.defaultModelId || '',
-        defaultModelName: backend?.defaultModelName || ''
-    };
+    function getBackend(backendId) {
+        if (backendId && backends.has(backendId)) {
+            return backends.get(backendId);
+        }
+        return backends.get(DEFAULT_BACKEND_ID);
+    }
+
+    function ensureSessionBackend(session) {
+        if (!session) return DEFAULT_BACKEND_ID;
+        if (!session.inferenceBackend) {
+            session.inferenceBackend = DEFAULT_BACKEND_ID;
+        }
+        return session.inferenceBackend;
+    }
+
+    function registerBackendTransportHints(backend) {
+        if (!backend?.tls) return;
+        transportHints.registerBackendHints(backend.id, {
+            tlsCaptureHosts: backend.tls.captureHosts || [],
+            tlsVerifyUrl: backend.tls.verifyUrl || '',
+            tlsDisplayName: backend.tls.displayName || backend.label
+        });
+    }
+
+    function getBackendForSession(session) {
+        const backendId = session?.inferenceBackend;
+        const backend = getBackend(backendId);
+        registerBackendTransportHints(backend);
+        return backend;
+    }
+
+    function syncTransportHints(session) {
+        if (session) {
+            getBackendForSession(session);
+            return;
+        }
+        backends.forEach(backend => registerBackendTransportHints(backend));
+    }
+
+    function getWelcomeContent(backend = getBackend()) {
+        const providerName = backend.label;
+        const accessLabel = backend.accessLabel;
+        return {
+            title: 'oa-chat',
+            subtitle: 'by [The Open Anonymity Project](https://openanonymity.ai/)',
+            content: ``.trim()
+        };
+    }
+
+    function getBackendDefaultModelConfig(backend) {
+        if (typeof options.resolveDefaultModelConfig === 'function') {
+            return options.resolveDefaultModelConfig(backend);
+        }
+        if (backend?.id === openRouterBackend.id) {
+            return getDefaultModelConfig();
+        }
+
+        return {
+            defaultModelId: backend?.defaultModelId || '',
+            defaultModelName: backend?.defaultModelName || ''
+        };
 }
 
 const inferenceService = {
@@ -146,7 +158,7 @@ const inferenceService = {
     },
     async requestAccess(session, options = {}) {
         const backend = getBackendForSession(session);
-        return backend.requestAccess(options);
+        return backend.requestAccess({ ...options, session });
     },
     async verifyAccess(session, accessInfo) {
         const backend = getBackendForSession(session);
@@ -162,7 +174,7 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.verification || null;
     },
-    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) {
+    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
         return backend.streamCompletion(
@@ -177,8 +189,14 @@ const inferenceService = {
             onStreamOpen,
             onReasoningChunk,
             reasoningEnabled,
-            reasoningEffort
+            reasoningEffort,
+            onAccessProgress
         );
+    },
+    isTransportAccessReady(session) {
+        const backend = getBackendForSession(session);
+        if (typeof backend.isTransportAccessReady === 'function') return backend.isTransportAccessReady(session);
+        return Boolean(backend.getAccessToken(session)) && !backend.isAccessExpired(session);
     },
     async sendCompletionStrict(messages, modelId, session, options = {}) {
         const backend = getBackendForSession(session);
@@ -289,6 +307,10 @@ const inferenceService = {
 };
 
 syncTransportHints();
+return inferenceService;
+}
+
+const inferenceService = createInferenceService();
 
 if (typeof window !== 'undefined') {
     window.inferenceService = inferenceService;

@@ -6,6 +6,7 @@
 // user identity binding -- OpenRouter sees inference traffic from an anonymous
 // ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
+import { consumeSseBody } from './services/inference/sseStream.js';
 import {
     cancelAndroidNativeInferenceJob,
     isAndroidNativeInferenceAvailable,
@@ -70,13 +71,108 @@ function applyPdfFileParserPlugin(body, messages = []) {
     ];
 }
 
-class OpenRouterAPI {
-    constructor() {
+export class OpenRouterAPI {
+    constructor(options = {}) {
+        this.options = options;
+        this.networkTransport = options.networkTransport || networkProxy;
         this.baseUrl = 'https://openrouter.ai/api/v1';
 
         // Load display name overrides from centralized config
         const defaults = getDefaultModelConfig();
         this.displayNameOverrides = { ...defaults.displayNameOverrides };
+    }
+
+
+    // Request-scoped leases isolate concurrent title/completion calls. Products
+    // own credential acquisition, budget policy and cleanup, not SSE parsing.
+    async withRequestAccess(token, options, operation) {
+        const access = this.options.acquireRequestAccess
+            ? await this.options.acquireRequestAccess(token, options)
+            : this.defaultRequestAccess(token);
+        try {
+            if (options.signal?.aborted) {
+                const error = new DOMException('The operation was aborted.', 'AbortError');
+                error.isCancelled = true;
+                throw error;
+            }
+            const request = Object.create(this);
+            request._requestAccess = access;
+            request.baseUrl = access.baseUrl;
+            return await operation(request, access.apiKey || token);
+        } catch (error) {
+            this.options.onRequestError?.(error);
+            throw error;
+        } finally {
+            try {
+                await access.release?.();
+            } finally {
+                // Refresh errors cannot turn a successful response into failure.
+                try { await this.options.onRequestFinished?.(); } catch { /* best effort */ }
+            }
+        }
+    }
+
+    defaultRequestAccess(token) {
+        const key = token || this.getApiKey();
+        if (!key) throw new Error('No API key available. Please obtain an API key first.');
+        return {
+            apiKey: key,
+            baseUrl: this.baseUrl,
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }
+        };
+    }
+
+    prepareRequestBody(body, access) {
+        return this.options.prepareRequestBody
+            ? this.options.prepareRequestBody(body, { access, model: this.getModelBudgetMetadata(body.model) })
+            : body;
+    }
+
+    prepareFetchOptions(access, init) {
+        return {
+            ...init,
+            headers: access.headers,
+            ...(init.body ? { body: JSON.stringify(this.prepareRequestBody(JSON.parse(init.body), access)) } : {})
+        };
+    }
+
+    fetchWithRetry(access, url, init, config) {
+        return this.networkTransport.fetchWithRetry(url, this.prepareFetchOptions(access, init), {
+            ...config,
+            proxyConfig: access.proxyConfig || config?.proxyConfig
+        });
+    }
+
+    fetchWithRetryJson(access, url, init, config) {
+        return this.networkTransport.fetchWithRetryJson(url, this.prepareFetchOptions(access, init), {
+            ...config,
+            proxyConfig: access.proxyConfig || config?.proxyConfig
+        });
+    }
+
+    getModelBudgetMetadata(modelId) {
+        const baseId = String(modelId || '').split(':')[0];
+        return this.getCachedModels().find(model => model.id === baseId) || null;
+    }
+
+    sendCompletionStrict(messages, modelId, token, options = {}) {
+        return this.withRequestAccess(token, options, request =>
+            request._sendCompletionStrict(messages, modelId, token, options));
+    }
+
+    generateSessionTitle(prompt, token, options = {}) {
+        if (!this.extractTextContent(prompt).trim()) return Promise.resolve('');
+        return this.withRequestAccess(token, options, request =>
+            request._generateSessionTitle(prompt, token, options));
+    }
+
+    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null) {
+        return this.withRequestAccess(token, {
+            signal: abortController?.signal,
+            onProgress: onAccessProgress
+        }, request => request._streamCompletion(messages, modelId, token, onChunk,
+            onTokenUpdate, files, searchEnabled, abortController, onStreamOpen,
+            onReasoningChunk, reasoningEnabled, reasoningEffort));
     }
 
     // Get API key - only use ticket-based key
@@ -203,7 +299,8 @@ class OpenRouterAPI {
                 categoryPriority: categoryPriority,
                 provider: providerName,
                 context_length: model.context_length,
-                pricing: model.pricing
+                pricing: model.pricing,
+                top_provider: model.top_provider
             };
         }).filter(Boolean);
 
@@ -301,18 +398,9 @@ class OpenRouterAPI {
     }
 
     // Send chat completion request
-    async sendCompletionStrict(messages, modelId, apiKey, options = {}) {
+    async _sendCompletionStrict(messages, modelId, apiKey, options = {}) {
         const url = `${this.baseUrl}/chat/completions`;
-        const key = apiKey || this.getApiKey();
-
-        if (!key) {
-            throw new Error('No API key available. Please obtain an API key first.');
-        }
-
-        const headers = {
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json'
-        };
+        const headers = this._requestAccess.headers;
 
         const {
             context = 'Inference completion',
@@ -355,7 +443,8 @@ class OpenRouterAPI {
         // POST is idempotent for same input - safe to retry
         // No timeout - provider manages timeouts; completions can take long
         try {
-            const { response, data, text } = await networkProxy.fetchWithRetryJson(
+            const { response, data, text } = await this.fetchWithRetryJson(
+                this._requestAccess,
                 url,
                 {
                     method: 'POST',
@@ -443,14 +532,7 @@ class OpenRouterAPI {
         }
     }
 
-    async generateSessionTitle(prompt, apiKey, options = {}) {
-        const url = `${this.baseUrl}/chat/completions`;
-        const key = apiKey || this.getApiKey();
-
-        if (!key) {
-            throw new Error('No API key available. Please obtain an API key first.');
-        }
-
+    async _generateSessionTitle(prompt, sessionId, options = {}) {
         const normalizedPrompt = this.extractTextContent(prompt)
             .replace(/\s+/g, ' ')
             .trim()
@@ -460,13 +542,13 @@ class OpenRouterAPI {
             return '';
         }
 
-        const headers = {
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json'
-        };
+        const access = this._requestAccess;
+        const url = `${access.baseUrl}/chat/completions`;
+        const headers = access.headers;
+        const titleModelId = options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID;
 
         const body = {
-            model: TITLE_SUMMARY_MODEL_ID,
+            model: titleModelId,
             messages: [
                 {
                     role: 'system',
@@ -487,58 +569,75 @@ class OpenRouterAPI {
             reasoning: { effort: 'minimal' }
         };
 
-        const { response, data, text } = await networkProxy.fetchWithRetryJson(
-            url,
-            {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(body)
-            },
-            {
-                context: 'Session title generation',
-                maxAttempts: 2,
-                timeoutMs: options.timeoutMs || 10000,
-                signal: options.signal
-            }
-        );
-
-        if (window.networkLogger) {
-            window.networkLogger.logRequest({
-                type: 'openrouter',
-                method: 'POST',
+        try {
+            const { response, data, text } = await this.fetchWithRetryJson(
+                access,
                 url,
-                status: response.status,
-                request: {
-                    headers: window.networkLogger.sanitizeHeaders(headers),
-                    body: {
-                        model: TITLE_SUMMARY_MODEL_ID,
-                        messages: 'title generation',
-                        max_tokens: body.max_tokens,
-                        temperature: body.temperature
-                    }
+                {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(body)
                 },
-                response: response.ok ? { titleGeneration: true } : data || text
-            });
-        }
+                {
+                    context: 'Session title generation',
+                    maxAttempts: 2,
+                    timeoutMs: options.timeoutMs || 10000,
+                    signal: options.signal
+                }
+            );
 
-        if (!response.ok) {
-            const errorMessage = data?.error?.message || data?.message || `HTTP error! status: ${response.status}`;
-            const error = new Error(errorMessage);
-            error.status = response.status;
-            error.data = data;
+            if (window.networkLogger) {
+                window.networkLogger.logRequest({
+                    type: 'openrouter',
+                    method: 'POST',
+                    url,
+                    status: response.status,
+                    request: {
+                        headers: window.networkLogger.sanitizeHeaders(headers),
+                        body: {
+                            model: titleModelId,
+                            messages: 'title generation',
+                            max_tokens: body.max_tokens,
+                            temperature: body.temperature
+                        }
+                    },
+                    response: response.ok ? { titleGeneration: true } : data || text
+                });
+            }
+
+            if (!response.ok) {
+                const errorMessage = data?.error?.message || data?.message || `HTTP error! status: ${response.status}`;
+                const error = new Error(errorMessage);
+                error.status = response.status;
+                error.data = data;
+                throw error;
+            }
+
+            if (data?.usage && typeof options.onUsage === 'function') {
+                try {
+                    await options.onUsage({
+                        totalTokens: Number(data.usage.total_tokens ??
+                            (Number(data.usage.prompt_tokens || 0) + Number(data.usage.completion_tokens || 0))),
+                        promptTokens: Number(data.usage.prompt_tokens || 0),
+                        completionTokens: Number(data.usage.completion_tokens || 0),
+                        cost: data.usage.cost,
+                        model: data.model || titleModelId,
+                        pricing: this.getModelBudgetMetadata(data.model || titleModelId)?.pricing
+                            || null
+                    });
+                } catch (usageError) {
+                    console.warn('Could not record title usage:', usageError);
+                }
+            }
+
+            return data?.choices?.[0]?.message?.content || '';
+        } catch (error) {
             throw error;
         }
-
-        return data?.choices?.[0]?.message?.content || '';
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async streamCompletion(messages, modelId, apiKey, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT) {
-        const key = apiKey || this.getApiKey();
-
-        if (!key) {
-            throw new Error('No API key available. Please obtain an API key first.');
-        }
+    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null) {
 
         // Handle web search - append :online suffix if enabled
         let effectiveModelId = modelId;
@@ -550,10 +649,6 @@ class OpenRouterAPI {
         const reasoningPayload = reasoningEnabled
             ? { effort: normalizedReasoningEffort }
             : null;
-
-        // Always use chat/completions endpoint
-        // We'll handle reasoning SSE events if they come through
-        const url = `${this.baseUrl}/chat/completions`;
 
         // Check if there are PDF files
         let hasPdfFiles = false;
@@ -589,17 +684,26 @@ class OpenRouterAPI {
             }
         }
 
-        const headers = {
-            'Authorization': `Bearer ${key}`,
-            'Content-Type': 'application/json'
+        const access = this._requestAccess;
+        const url = `${access.baseUrl}/chat/completions`;
+        const headers = access.headers;
+        const throwIfStreamAborted = () => {
+            if (!abortController?.signal?.aborted) return;
+            const error = new DOMException('The operation was aborted.', 'AbortError');
+            error.isCancelled = true;
+            throw error;
         };
 
         let totalTokens = 0;
         let promptTokens = 0;
         let completionTokens = 0;
+        let reportedCost = null;
         let modelUsed = effectiveModelId;
+        const modelPricing = this.getModelBudgetMetadata(effectiveModelId)?.pricing
+            || null;
         let accumulatedContent = '';
         let accumulatedReasoning = '';
+        let completionFinishReason = null;
         let hasReceivedFirstToken = false;
         let citations = []; // Track citations for web search results
         const annotationsMap = new Map(); // Track annotations with deduplication by URL
@@ -608,19 +712,32 @@ class OpenRouterAPI {
         // Buffering for reasoning chunks to reduce UI updates
         let reasoningBuffer = '';
         let reasoningBufferTimer = null;
+        let reasoningFlushPromise = Promise.resolve();
+        let reasoningFlushError = null;
         const REASONING_BUFFER_DELAY = 50; // ms - flush buffer after this delay
         const REASONING_BUFFER_SIZE = 20; // chars - flush when buffer reaches this size
 
         // Helper to flush reasoning buffer
         const flushReasoningBuffer = () => {
-            if (reasoningBuffer && onReasoningChunk) {
-                onReasoningChunk(reasoningBuffer);
-                reasoningBuffer = '';
-            }
             if (reasoningBufferTimer) {
                 clearTimeout(reasoningBufferTimer);
                 reasoningBufferTimer = null;
             }
+            if (reasoningBuffer && onReasoningChunk) {
+                const bufferedReasoning = reasoningBuffer;
+                reasoningBuffer = '';
+                reasoningFlushPromise = reasoningFlushPromise.then(async () => {
+                    if (reasoningFlushError) return;
+                    try {
+                        await onReasoningChunk(bufferedReasoning);
+                    } catch (error) {
+                        reasoningFlushError = error;
+                    }
+                });
+            }
+            return reasoningFlushPromise.then(() => {
+                if (reasoningFlushError) throw reasoningFlushError;
+            });
         };
 
         // Helper to normalize URLs for deduplication (strip trailing garbage, normalize trailing slashes)
@@ -782,7 +899,9 @@ class OpenRouterAPI {
             });
         };
 
-        const processSseLine = (line) => {
+        const processSseLine = async (line) => {
+            throwIfStreamAborted();
+
             // Skip empty lines
             if (line.trim() === '') return;
 
@@ -799,10 +918,15 @@ class OpenRouterAPI {
             }
 
             const data = line.slice(6);
-            if (data === '[DONE]') return;
+            if (data === '[DONE]') return false;
 
+            let parsed;
             try {
-                const parsed = JSON.parse(data);
+                parsed = JSON.parse(data);
+            } catch (error) {
+                console.error('Error parsing SSE chunk:', error, 'Raw line:', line);
+                return;
+            }
 
                 // Check for annotations in various possible locations in the response
                 // All formats use addAnnotations() which deduplicates by normalized URL
@@ -881,19 +1005,28 @@ class OpenRouterAPI {
                         // Flush buffer if it's large enough or on newline
                         if (reasoningBuffer.length >= REASONING_BUFFER_SIZE ||
                             reasoningContent.includes('\n')) {
-                            flushReasoningBuffer();
+                            await flushReasoningBuffer();
                         } else {
                             // Otherwise, set a timer to flush after delay
-                            reasoningBufferTimer = setTimeout(flushReasoningBuffer, REASONING_BUFFER_DELAY);
+                            reasoningBufferTimer = setTimeout(() => {
+                                // The next line or finalization surfaces the recorded
+                                // callback failure without creating an unhandled rejection.
+                                void flushReasoningBuffer().catch(() => {});
+                            }, REASONING_BUFFER_DELAY);
                         }
 
                         // Update token count for reasoning (estimated)
                         estimatedReasoningTokens = Math.ceil(accumulatedReasoning.length / 4);
                         if (onTokenUpdate) {
-                            onTokenUpdate({
+                            await onTokenUpdate({
+                                promptTokens,
                                 completionTokens: estimatedReasoningTokens,
+                                pricing: modelPricing,
+                                model: modelUsed,
+                                estimated: true,
                                 isStreaming: true
                             });
+                            throwIfStreamAborted();
                         }
                     }
 
@@ -909,28 +1042,34 @@ class OpenRouterAPI {
                     error.isStreamError = true;
                     error.hasReceivedTokens = hasReceivedFirstToken;
 
-                    // Check if this is a terminal error
-                    if (parsed.choices?.[0]?.finish_reason === 'error') {
-                        throw error;
-                    }
+                    // Any provider error event is terminal. Continuing would turn a
+                    // truncated response into an apparently successful completion.
+                    throw error;
                 }
 
                 // Handle message content delta events from reasoning API (if using separate endpoint)
                 if (parsed.type === 'response.output_text.delta') {
                     const contentDelta = parsed.delta || '';
                     if (contentDelta) {
+                        await flushReasoningBuffer();
                         hasReceivedFirstToken = true;
                         accumulatedContent += contentDelta;
-                        onChunk(contentDelta);
+                        await onChunk(contentDelta);
+                        throwIfStreamAborted();
 
                         // Add reasoning tokens to content tokens for cumulative display
                         const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
                         completionTokens = estimatedReasoningTokens + estimatedContentTokens;
                         if (onTokenUpdate) {
-                            onTokenUpdate({
+                            await onTokenUpdate({
+                                promptTokens,
                                 completionTokens,
+                                pricing: modelPricing,
+                                model: modelUsed,
+                                estimated: true,
                                 isStreaming: true
                             });
+                            throwIfStreamAborted();
                         }
                     }
                     return;
@@ -940,25 +1079,33 @@ class OpenRouterAPI {
                 const content = delta?.content;
 
                 if (content) {
+                    await flushReasoningBuffer();
                     hasReceivedFirstToken = true;
                     accumulatedContent += content;
-                    onChunk(content);
+                    await onChunk(content);
+                    throwIfStreamAborted();
 
                     // Add reasoning tokens to content tokens for cumulative display
                     const estimatedContentTokens = Math.ceil(accumulatedContent.length / 4);
                     completionTokens = estimatedReasoningTokens + estimatedContentTokens;
                     if (onTokenUpdate) {
-                        onTokenUpdate({
+                        await onTokenUpdate({
+                            promptTokens,
                             completionTokens,
+                            pricing: modelPricing,
+                            model: modelUsed,
+                            estimated: true,
                             isStreaming: true
                         });
+                        throwIfStreamAborted();
                     }
                 }
 
                 // Check for images in the delta (standard OpenRouter format)
                 if (delta?.images) {
                     hasReceivedFirstToken = true;
-                    onChunk(null, { images: delta.images });
+                    await onChunk(null, { images: delta.images });
+                    throwIfStreamAborted();
                 }
 
                 // Check for image data in reasoning_details (only treat recognised image payloads)
@@ -970,31 +1117,49 @@ class OpenRouterAPI {
                             type: 'image_url',
                             image_url: { url: this.buildImageUrlFromReasoningDetail(detail) }
                         }));
-                        onChunk(null, { images });
+                        await onChunk(null, { images });
+                        throwIfStreamAborted();
                     }
                 }
 
                 // Check for finish reason
                 const finishReason = parsed.choices?.[0]?.finish_reason;
+                if (finishReason) {
+                    completionFinishReason = finishReason;
+                }
                 if (finishReason && finishReason !== 'stop') {
                     console.warn('Stream finished with reason:', finishReason);
                 }
 
                 // Check for usage info in the stream
                 if (parsed.usage) {
-                    totalTokens = parsed.usage.total_tokens || 0;
                     promptTokens = parsed.usage.prompt_tokens || 0;
                     completionTokens = parsed.usage.completion_tokens || 0;
+                    totalTokens = parsed.usage.total_tokens ?? (Number(promptTokens) + Number(completionTokens));
+                    const rawUsageCost = parsed.usage.cost;
+                    const usageCost = rawUsageCost === null
+                        || rawUsageCost === undefined
+                        || rawUsageCost === ''
+                        || typeof rawUsageCost === 'boolean'
+                        ? Number.NaN
+                        : Number(rawUsageCost);
+                    reportedCost = Number.isFinite(usageCost) && usageCost >= 0
+                        ? usageCost
+                        : null;
 
 
                     // Update token count with final accurate values
                     if (onTokenUpdate) {
-                        onTokenUpdate({
+                        await onTokenUpdate({
                             totalTokens,
                             promptTokens,
                             completionTokens,
+                            cost: reportedCost,
+                            pricing: modelPricing,
+                            model: modelUsed,
                             isStreaming: false
                         });
+                        throwIfStreamAborted();
                     }
                 }
 
@@ -1002,15 +1167,13 @@ class OpenRouterAPI {
                 if (parsed.model) {
                     modelUsed = parsed.model;
                 }
-            } catch (e) {
-                console.error('Error parsing SSE chunk:', e, 'Raw line:', line);
-                // Continue processing other chunks
-            }
         };
 
-        const finalizeStreamResult = () => {
+        const finalizeStreamResult = async () => {
+            throwIfStreamAborted();
             // Flush any remaining reasoning buffer
-            flushReasoningBuffer();
+            await flushReasoningBuffer();
+            throwIfStreamAborted();
 
             // Parse citations - prefer annotations over content parsing
             if (searchEnabled) {
@@ -1035,7 +1198,10 @@ class OpenRouterAPI {
                 totalTokens,
                 promptTokens,
                 completionTokens,
+                cost: reportedCost,
+                pricing: modelPricing,
                 model: modelUsed,
+                finishReason: completionFinishReason,
                 reasoning: accumulatedReasoning || null,
                 citations: citations.length > 0 ? citations : null
             };
@@ -1047,6 +1213,20 @@ class OpenRouterAPI {
             const messagesWithSystem = systemPrompt
                 ? [{ role: 'system', content: systemPrompt }, ...processedMessages]
                 : processedMessages;
+            promptTokens = this.options.estimatePromptTokens?.(messagesWithSystem) || 0;
+            if (onTokenUpdate) {
+                await onTokenUpdate({
+                    totalTokens: promptTokens,
+                    promptTokens,
+                    completionTokens: 0,
+                    cost: null,
+                    pricing: modelPricing,
+                    model: effectiveModelId,
+                    estimated: true,
+                    isStreaming: true
+                });
+                throwIfStreamAborted();
+            }
 
             // Build request body - use standard format for now
             // OpenRouter might handle reasoning internally with the same endpoint
@@ -1069,7 +1249,7 @@ class OpenRouterAPI {
 
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
-            if (hasPdfFiles) {
+            if (hasPdfFiles || hasPdfContent(processedMessages)) {
                 applyPdfFileParserPlugin(requestBody, processedMessages);
             }
 
@@ -1095,8 +1275,8 @@ class OpenRouterAPI {
                     url,
                     method: 'POST',
                     headers,
-                    body: fetchOptions.body,
-                    debugMock: key === 'oa-debug-stream',
+                    body: JSON.stringify(this.prepareRequestBody(requestBody, access)),
+                    debugMock: access.apiKey === 'oa-debug-stream',
                 };
                 const { jobId } = startAndroidNativeInferenceJob(nativeRequest);
                 let afterSequence = 0;
@@ -1135,7 +1315,9 @@ class OpenRouterAPI {
                             }
 
                             if (event.type === 'sse-line' && typeof event.line === 'string') {
-                                processSseLine(event.line);
+                                if (await processSseLine(event.line) === false) {
+                                    terminal = true;
+                                }
                                 continue;
                             }
 
@@ -1166,13 +1348,14 @@ class OpenRouterAPI {
                     abortController?.signal?.removeEventListener('abort', cancelFromAbort);
                 }
 
-                return finalizeStreamResult();
+                return await finalizeStreamResult();
             }
 
             // Retry only the initial connection, not mid-stream
             // Once streaming starts, errors should surface to user
             // No timeout - provider manages timeouts; streams can take long
-            const response = await networkProxy.fetchWithRetry(
+            const response = await this.fetchWithRetry(
+                access,
                 url,
                 fetchOptions,
                 {
@@ -1199,27 +1382,17 @@ class OpenRouterAPI {
 
             logStreamingRequest(response.status, 'web');
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
+            await consumeSseBody(response.body, processSseLine);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    processSseLine(line);
-                }
-            }
-
-            return finalizeStreamResult();
+            return await finalizeStreamResult();
         } catch (error) {
             // Flush any remaining reasoning buffer before handling error
-            flushReasoningBuffer();
+            try {
+                await flushReasoningBuffer();
+            } catch {
+                // Preserve the primary stream failure. A reasoning callback failure
+                // is already the primary error when it originates from a flush.
+            }
 
             let streamError = error;
             if (!(streamError instanceof Error)) {

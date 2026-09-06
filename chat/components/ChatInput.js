@@ -798,6 +798,7 @@ export default class ChatInput {
     }
 
     async runScrubberShortcut() {
+        if (this.app.features?.scrubber === false) return;
         const text = this.app.elements.messageInput.value || '';
         if (!text.trim()) {
             this.app.showToast('Nothing to scrub', 'error');
@@ -1707,6 +1708,7 @@ export default class ChatInput {
     }
 
     async setupScrubberControls() {
+        if (this.app.features?.scrubber === false && this.app.features?.memory === false) return;
         const scrubberSelect = document.getElementById('scrubber-model-select');
         if (scrubberSelect) {
             scrubberSelect.addEventListener('click', (event) => event.stopPropagation());
@@ -1735,6 +1737,7 @@ export default class ChatInput {
     }
 
     setupMemoryFeatureToggle() {
+        if (this.app.features?.memory === false) return;
         const toggle = document.getElementById('memory-feature-toggle');
         if (!toggle) return;
 
@@ -1748,6 +1751,7 @@ export default class ChatInput {
     }
 
     async ensureScrubberModelsLoaded() {
+        if (this.app.features?.scrubber === false && this.app.features?.memory === false) return;
         if (this.scrubberModelsReady) {
             this.refreshMemorySettingsUI();
             return;

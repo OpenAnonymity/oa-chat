@@ -13,6 +13,7 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { normalizeMemoryRetrievalFailureReason } from '../services/memoryRetrievalError.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
+import { buildDetailedPendingIndicator } from './PendingIndicator.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -40,9 +41,11 @@ const AGENT_TOOL_LABELS = {
 // Welcome screen configuration
 const WELCOME_SHOW_LOGO = false;  // Set to true to show the logo icon
 let welcomeContentProvider = null;
+let presentationProvider = null;
 
 export function configureMessageTemplateServices(services) {
     welcomeContentProvider = services?.inference || null;
+    presentationProvider = services?.presentation || null;
 }
 
 // Welcome content is managed by inferenceService.js (single source of truth)
@@ -126,6 +129,7 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
+    if (phase === 'preparing-access') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -146,8 +150,12 @@ function getPendingIndicatorLabel(phase) {
         : 'Requesting ephemeral key';
 }
 
-function buildPendingIndicatorContent(phase = 'requesting-key') {
+function buildPendingIndicatorContent(phase = 'requesting-key', progress = null, traceId = '') {
     const normalizedPhase = normalizePendingPhase(phase);
+    const presentation = presentationProvider?.getPendingPresentation?.(normalizedPhase, progress);
+    if (presentation) {
+        return buildDetailedPendingIndicator(presentation, { phase: normalizedPhase, traceId });
+    }
     const shimmerClass = ' pending-response-streaming';
     const label = getPendingIndicatorLabel(normalizedPhase);
     return `
@@ -765,6 +773,7 @@ function buildUserMessage(message, options = {}) {
                         class="resend-prompt-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
                         data-tooltip="Resend prompt"
+                        aria-label="Resend prompt"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -774,6 +783,7 @@ function buildUserMessage(message, options = {}) {
                         class="copy-user-message-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
                         data-tooltip="Copy prompt"
+                        aria-label="Copy prompt"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
@@ -783,6 +793,7 @@ function buildUserMessage(message, options = {}) {
                         class="edit-prompt-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                         data-message-id="${message.id}"
                         data-tooltip="Edit prompt"
+                        aria-label="Edit prompt"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
@@ -1878,7 +1889,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     if (message.streamingPending) {
         const pendingPhase = message.streamingPhase || options.pendingPhase || 'requesting-key';
         return `
-            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
+            <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}" data-streaming-pending="true" data-pending-session-id="${escapeHtmlAttribute(message.sessionId || '')}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
                     <div class="${CLASSES.assistantHeader}">
                         <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
@@ -1888,7 +1899,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                         <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     </div>
                     <div class="px-2 py-1">
-                        ${buildPendingIndicatorContent(pendingPhase)}
+                        ${buildPendingIndicatorContent(pendingPhase, options.pendingProgress, message.sessionId || '')}
                     </div>
                     <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
                 </div>
@@ -2085,6 +2096,21 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
+    const outputLimitAction = message.finishReason === 'length' ? `
+        <span class="response-limit-notice inline-flex items-center gap-1.5 rounded-md border border-amber-300/70 bg-amber-50/70 px-2 py-1 text-[10px] text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+            Output limit reached
+        </span>
+        <button
+            class="message-action-btn continue-message-btn inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-[10px] font-medium text-foreground transition-colors hover:bg-muted/80"
+            data-message-id="${escapeHtmlAttribute(message.id)}"
+            aria-label="Continue this response"
+            data-tooltip="Continue this response">
+            Continue
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-3.5 w-3.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m9 18 6-6-6-6" />
+            </svg>
+        </button>
+    ` : '';
     const shouldShowMemoryStatusSpacer = hideAssistantActionsDuringReasoning && !isMemoryStatusMessage;
     const assistantActionsRow = (shouldShowMemoryStatusSpacer || isMemoryStatusMessage) ? (
         isMemoryStatusMessage
@@ -2120,6 +2146,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     </svg>
                 </button>
                 ${scrubberToggleButton}
+                ${outputLimitAction}
                 ${noResponseNotice}
             </div>
             ${citationsToggle}
@@ -2167,7 +2194,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
  * @param {string} providerName - Provider name (e.g., "OpenAI", "Anthropic")
  * @returns {string} HTML string
  */
-function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'requesting-key') {
+function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'requesting-key', progress = null, sessionId = '') {
     const isCouncil = providerName === 'LLM Council'
         || modelName === 'LLM Council'
         || providerName === 'Council'
@@ -2185,7 +2212,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
         ? `<span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>`
         : '';
     return `
-        <div id="${id}" class="${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}">
+        <div id="${id}" class="typing-indicator ${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}"${sessionId ? ` data-pending-session-id="${escapeHtmlAttribute(sessionId)}"` : ''}>
             <div class="${CLASSES.assistantGroup}">
                 <div class="${CLASSES.assistantHeader}">
                     <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
@@ -2195,7 +2222,7 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
                     <span class="${CLASSES.assistantTime}" style="font-size: 0.7rem;">${formatPendingTimestamp(timestamp)}</span>
                 </div>
                 <div class="px-2 py-1">
-                    ${buildPendingIndicatorContent(phase)}
+                    ${buildPendingIndicatorContent(phase, progress, sessionId)}
                 </div>
                 <div class="assistant-actions-anchor assistant-actions-placeholder w-full -mt-1" aria-hidden="true"></div>
             </div>

@@ -19,6 +19,28 @@ test('redacts bearer tokens without retaining prefixes or suffixes', () => {
     assert.equal(headers.authorization, 'Bearer [REDACTED]');
 });
 
+test('redacts mixed-case sensitive headers and accepts Headers and entry lists', () => {
+    assert.deepEqual(networkLogger.sanitizeHeaders([
+        ['AUTHORIZATION', 'Bearer secret'], ['X-Api-Key', 'secret'], ['Cookie', 'session=secret'], ['Accept', 'application/json']
+    ]), {
+        AUTHORIZATION: 'Bearer [REDACTED]', 'X-Api-Key': '[REDACTED]', Cookie: '[REDACTED]', Accept: 'application/json'
+    });
+    assert.equal(networkLogger.sanitizeHeaders(new Headers({ 'X-Auth-Token': 'secret' }))['x-auth-token'], '[REDACTED]');
+});
+
+test('shared logger preserves wallet/runtime secret redaction without dropping safe metadata', () => {
+    const entry = networkLogger.logRequest({
+        type: 'local',
+        response: {
+            private_key: 'private-secret', managementKey: 'management-secret',
+            nested: { shared_secret: 'shared-secret', refresh_token: 'refresh-secret' },
+            diagnostic: 'Rejected Bearer credential-secret', phase: 'preparing'
+        }
+    });
+    assert.doesNotMatch(JSON.stringify(entry), /private-secret|management-secret|shared-secret|refresh-secret|credential-secret/);
+    assert.equal(entry.response.phase, 'preparing');
+});
+
 test('log entries redact nested child keys without mutating the response', () => {
     const response = {
         key: 'child-secret-value',

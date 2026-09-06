@@ -1442,6 +1442,217 @@ a.quick-ask-source:focus-visible {
     opacity: 1; /* Override parent's 0.85 opacity to match bold subtitles */
 }
 
+.pending-response-simple,
+.pending-security-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+.pending-response-simple.hidden,
+.pending-security-trace.hidden {
+    display: none;
+}
+
+.pending-security-trace {
+    min-width: 0;
+    margin: 0;
+}
+
+.pending-security-summary {
+    width: fit-content;
+    max-width: 100%;
+    padding: 0.2rem 0.3rem;
+    margin: -0.2rem -0.3rem;
+    border-radius: 0.4rem;
+    cursor: pointer;
+    list-style: none;
+    transition: background-color 150ms ease;
+}
+
+.pending-security-summary::-webkit-details-marker {
+    display: none;
+}
+
+.pending-security-summary:hover,
+.pending-security-summary:focus-visible {
+    background: hsl(var(--color-muted) / 0.5);
+    outline: none;
+}
+
+.pending-security-summary:focus-visible {
+    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.35);
+}
+
+.pending-security-summary .pending-response-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pending-security-chevron {
+    width: 0.8rem;
+    height: 0.8rem;
+    flex: 0 0 auto;
+    color: hsl(var(--color-muted-foreground) / 0.55);
+    transition: transform 150ms ease;
+}
+
+.pending-security-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex: 0 0 auto;
+    color: hsl(var(--color-muted-foreground) / 0.72);
+}
+
+.pending-security-trace[open] .pending-security-chevron {
+    transform: rotate(180deg);
+}
+
+.pending-response-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.16rem;
+    flex: 0 0 auto;
+}
+
+.pending-response-dots i {
+    width: 0.2rem;
+    height: 0.2rem;
+    border-radius: 999px;
+    background: hsl(var(--color-muted-foreground) / 0.55);
+    animation: pendingSecurityDot 1.2s ease-in-out infinite;
+}
+
+.pending-response-dots i:nth-child(2) {
+    animation-delay: 120ms;
+}
+
+.pending-response-dots i:nth-child(3) {
+    animation-delay: 240ms;
+}
+
+@keyframes pendingSecurityDot {
+    0%, 70%, 100% { opacity: 0.35; transform: translateY(0); }
+    35% { opacity: 1; transform: translateY(-1px); }
+}
+
+.pending-security-content {
+    box-sizing: border-box;
+    width: min(31rem, calc(100% - 1rem));
+    max-width: calc(100% - 1rem);
+    margin: 0.45rem 0 0 1rem;
+    padding: 0.55rem 0.65rem;
+    border-left: 1px solid hsl(var(--color-border) / 0.7);
+    color: hsl(var(--color-muted-foreground) / 0.76);
+}
+
+.pending-security-category {
+    display: block;
+    margin-bottom: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--color-foreground) / 0.72);
+}
+
+.pending-security-steps {
+    display: grid;
+    gap: 0.28rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.pending-security-step {
+    display: grid;
+    grid-template-columns: 0.9rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    font-size: 0.75rem;
+    color: hsl(var(--color-muted-foreground) / 0.64);
+}
+
+.pending-security-step-marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 0.82rem;
+    height: 0.82rem;
+    border: 1px solid hsl(var(--color-border) / 0.7);
+    border-radius: 999px;
+    font-size: 0.52rem;
+    line-height: 1;
+}
+
+.pending-security-step[data-state="complete"] {
+    color: hsl(var(--color-muted-foreground) / 0.68);
+}
+
+.pending-security-step[data-state="complete"] .pending-security-step-marker {
+    border-color: hsl(var(--color-primary) / 0.28);
+    background: hsl(var(--color-primary) / 0.08);
+    color: hsl(var(--color-primary) / 0.82);
+}
+
+.pending-security-step[data-state="active"],
+.pending-security-step[data-state="waiting"] {
+    color: hsl(var(--color-foreground) / 0.82);
+}
+
+.pending-security-step[data-state="active"] .pending-security-step-marker,
+.pending-security-step[data-state="waiting"] .pending-security-step-marker {
+    border-color: hsl(var(--color-primary) / 0.42);
+    background: hsl(var(--color-primary) / 0.12);
+    box-shadow: 0 0 0 3px hsl(var(--color-primary) / 0.06);
+}
+
+.pending-security-step[data-state="error"] {
+    color: hsl(var(--color-destructive) / 0.9);
+}
+
+.pending-security-note {
+    margin: 0.5rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: hsl(var(--color-muted-foreground) / 0.7);
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+    .pending-response-dots i { animation: none; }
+    .pending-security-chevron, .pending-security-summary { transition: none; }
+}
+
+.session-operation-status {
+    display: inline-flex;
+    align-items: center;
+    color: hsl(var(--color-muted-foreground));
+}
+.session-operation-status.hidden { display: none; }
+.chat-session[data-deleting="true"] { cursor: wait; }
+.chat-session[data-deleting="true"] > a,
+.chat-session[data-deleting="true"] button { pointer-events: none; }
+.session-operation-status[data-tone="working"] > span,
+.session-operation-status[data-tone="waiting"] > span {
+    display: block;
+    width: 0.75rem;
+    height: 0.75rem;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: sessionOperationSpin 1s linear infinite;
+}
+.session-operation-status[data-tone="success"] { color: hsl(var(--color-primary)); }
+.session-operation-status[data-tone="error"] { color: hsl(var(--color-destructive)); }
+@keyframes sessionOperationSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .session-operation-status > span { animation: none !important; }
+}
+
 .pending-response-line {
     margin-left: 1.375rem;
     line-height: 1.25;
@@ -5259,6 +5470,24 @@ html {
     background-color: hsl(var(--color-muted) / 0.55);
     color: hsl(var(--color-foreground));
     transition-duration: 0s;
+}
+
+.chat-send-progress {
+    display: block;
+    width: 0.875rem;
+    height: 0.875rem;
+    border: 1.5px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: chat-send-progress-spin 1s linear infinite;
+}
+
+@keyframes chat-send-progress-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .chat-send-progress { animation: none; }
 }
 
 .dark .message-action-btn:active,

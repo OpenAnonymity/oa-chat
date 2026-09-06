@@ -86,8 +86,7 @@ class NetworkProxy {
             alpn: null,
             lastUpdated: null,
             requestCount: 0,
-            bytesEncrypted: 0,
-            rawLogs: []
+            bytesEncrypted: 0
         };
         this.tlsInspectionEnabled = false;
         this.originalStderr = null;
@@ -156,8 +155,7 @@ class NetworkProxy {
             alpn: null,
             lastUpdated: null,
             requestCount: 0,
-            bytesEncrypted: 0,
-            rawLogs: []
+            bytesEncrypted: 0
         };
     }
 
@@ -200,11 +198,8 @@ class NetworkProxy {
     parseTlsOutput(text) {
         if (!text || typeof text !== 'string') return;
 
-        // Store raw log (keep last 50 entries)
-        this.tlsInfo.rawLogs.push({ timestamp: Date.now(), text });
-        if (this.tlsInfo.rawLogs.length > 50) {
-            this.tlsInfo.rawLogs.shift();
-        }
+        // Verbose transport lines can contain credentials or request content.
+        // Keep parsed TLS metadata only; never retain those raw lines.
 
         let foundTlsInfo = false;
 
@@ -808,7 +803,7 @@ class NetworkProxy {
 }
 
 const networkProxy = new NetworkProxy();
-window.networkProxy = networkProxy;
+if (typeof window !== 'undefined') window.networkProxy = networkProxy;
 
 // Module initialization - libcurl is managed by index.html
 

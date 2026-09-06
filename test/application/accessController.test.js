@@ -9,6 +9,52 @@ import {
     persistVerifierSubmitKeyProof
 } from '../../chat/application/accessController.js';
 
+test('an explicitly composed access implementation does not require ticket dependencies', async () => {
+    const session = { id: 'custom-session', shareInfo: { apiKeyShared: true } };
+    const saves = [];
+    const customAccess = { token: 'opaque-chat-binding' };
+    const service = {
+        setAccessInfo: (target, info) => { target.access = info; },
+        getAccessToken: target => target.access?.token,
+        getVerificationAdapter: () => ({ supports: false })
+    };
+    const token = await acquireSessionAccess({
+        session,
+        inferenceService: service,
+        chatDB: { saveSession: async target => saves.push(target) },
+        acquireAccess: async options => {
+            assert.equal(options.session, session);
+            return customAccess;
+        }
+    });
+    assert.equal(token, 'opaque-chat-binding');
+    assert.equal(saves.length, 1);
+    assert.equal(session.shareInfo.apiKeyShared, false);
+});
+
+test('custom access failure or late cancellation never activates a credential', async () => {
+    for (const abortAfterGrant of [false, true]) {
+        const controller = new AbortController();
+        let activated = false;
+        let saved = false;
+        await assert.rejects(acquireSessionAccess({
+            session: { id: 'custom-session' },
+            inferenceService: { setAccessInfo: () => { activated = true; } },
+            chatDB: { saveSession: async () => { saved = true; } },
+            signal: controller.signal,
+            acquireAccess: async () => {
+                if (abortAfterGrant) {
+                    controller.abort();
+                    return { token: 'do-not-activate' };
+                }
+                throw new Error('Custom access unavailable');
+            }
+        }), abortAfterGrant ? /aborted/ : /Custom access unavailable/);
+        assert.equal(activated, false);
+        assert.equal(saved, false);
+    }
+});
+
 test('buildSafeAccessErrorMetadata excludes messages and response bodies', () => {
     const metadata = buildSafeAccessErrorMetadata({
         name: 'ProviderError',

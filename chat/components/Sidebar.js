@@ -32,6 +32,7 @@ export default class Sidebar {
         };
         this.virtualScrollRaf = null;
         this.listenersAttached = false;
+        this.deletingSessionIds = new Set();
         this.requestAnimationFrame = globalThis.requestAnimationFrame?.bind(globalThis) ||
             (callback => globalThis.setTimeout?.(callback, 0));
         this.initialViewportSettled = false;
@@ -133,6 +134,7 @@ export default class Sidebar {
      */
     buildSessionHTML(session) {
         const isActive = session.id === this.app.state.currentSessionId;
+        const isDeleting = this.deletingSessionIds.has(session.id);
         const titleClasses = [];
         if (session.title === 'New Chat') {
             titleClasses.push('italic', 'text-muted-foreground');
@@ -150,7 +152,13 @@ export default class Sidebar {
         const shareLabel = isShared ? 'Update Share' : 'Share';
 
         // Build indicator icons
-        let indicatorHtml = '';
+        let indicatorHtml = `<span class="session-delete-progress session-operation-status ${isDeleting ? '' : 'hidden'} ml-1 flex-shrink-0" data-tone="working" aria-hidden="true"><span></span></span>`;
+        const status = this.app.presentation?.getSessionStatus?.(session);
+        if (status?.label) {
+            const tone = ['working', 'waiting', 'success', 'error'].includes(status.tone) ? status.tone : 'working';
+            const label = this.escapeHtmlAttribute(status.label);
+            indicatorHtml += `<span class="session-operation-status ml-1 flex-shrink-0" data-tone="${tone}" title="${label}" aria-label="${label}"><span aria-hidden="true">${tone === 'success' ? '✓' : tone === 'error' ? '!' : ''}</span></span>`;
+        }
         if (isShared) {
             // Arrow up from box (opposite of import's arrow down to box)
             indicatorHtml += `<span class="text-primary flex-shrink-0 ml-1" title="Shared">
@@ -175,7 +183,7 @@ export default class Sidebar {
         const starMenuLabel = isStarred ? 'Unstar' : 'Star';
 
         return `
-            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}">
+            <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}" data-deleting="${isDeleting}" aria-busy="${isDeleting}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
                         <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
@@ -256,8 +264,16 @@ export default class Sidebar {
             if (deleteAction) {
                 e.stopPropagation();
                 const sessionId = deleteAction.dataset.sessionId;
+                if (this.deletingSessionIds.has(sessionId)) return;
+                this.deletingSessionIds.add(sessionId);
+                this.setSessionDeletionBusy(sessionId, true, deleteAction);
                 this.closeAllMenus();
-                this.app.deleteSession(sessionId);
+                try {
+                    await this.app.deleteSession(sessionId);
+                } finally {
+                    this.deletingSessionIds.delete(sessionId);
+                    this.setSessionDeletionBusy(sessionId, false, deleteAction);
+                }
                 return;
             }
 
@@ -337,6 +353,7 @@ export default class Sidebar {
             const sessionEl = e.target.closest('.chat-session');
             if (sessionEl) {
                 const sessionId = sessionEl.dataset.sessionId;
+                if (this.deletingSessionIds.has(sessionId)) return;
                 this.closeAllMenus();
                 this.app.switchSession(sessionId);
             }
@@ -588,6 +605,23 @@ export default class Sidebar {
             return this.app.state.isLoadingSessions ? 'Loading more...' : 'Scroll to load more';
         }
         return '';
+    }
+
+    setSessionDeletionBusy(sessionId, busy, action = null) {
+        const list = this.app.elements.sessionsList;
+        if (!list) return;
+        const row = [...list.querySelectorAll('.chat-session')]
+            .find(element => element.dataset.sessionId === sessionId);
+        if (!row) return;
+        row.dataset.deleting = busy ? 'true' : 'false';
+        row.setAttribute('aria-busy', busy ? 'true' : 'false');
+        row.querySelector('.session-delete-progress')?.classList.toggle('hidden', !busy);
+        row.querySelectorAll('.session-star-btn, .session-menu-btn').forEach(button => { button.disabled = busy; });
+        const deleteAction = action?.isConnected ? action : row.querySelector('.delete-session-action');
+        if (deleteAction) {
+            deleteAction.disabled = busy;
+            deleteAction.setAttribute('aria-busy', busy ? 'true' : 'false');
+        }
     }
 
     groupSessionsByDate(sessions) {

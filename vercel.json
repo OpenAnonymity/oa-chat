@@ -1,5 +1,6 @@
 {
   "outputDirectory": "dist",
+  "ignoreCommand": "node -e 'process.exit((process.env.VERCEL_GIT_COMMIT_MESSAGE || \"\").includes(\"[preserve-deployments]\") ? 0 : 1)'",
   "rewrites": [
     {
       "source": "/(.*)",

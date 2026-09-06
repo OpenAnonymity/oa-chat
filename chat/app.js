@@ -172,6 +172,26 @@ const DELETE_HISTORY_COPY = {
  */
 class ChatApp {
     constructor(options = {}) {
+        // Product integrations supply behavior; the shared controller owns the
+        // chat lifecycle. Missing integrations retain the standalone defaults.
+        this.runtime = options.runtime || {};
+        this.features = Object.freeze({ accounts: true, tickets: true, memory: true, scrubber: true, council: true, ...this.runtime.features });
+        this.inferenceService = this.runtime.inferenceService || inferenceService;
+        this.uiOptions = options.ui || {};
+        this.pendingProgress = new Map();
+        this.sendSubmissionsInFlight = new Map();
+        this.titleGenerationJobs = new Map();
+        this.quickAskJobs = new Map();
+        this.regenerationJobs = new Map();
+        this.deletingSessionIds = new Set();
+        this.deletedSessionIds = new Set();
+        this.sessionMutationReservations = new Map();
+        this.exclusiveSessionMutationOwners = new Map();
+        this.sessionNavigationGeneration = 0;
+        this.sessionSwitchInFlight = null;
+        this.messageFilePreparationInFlight = new Map();
+        this.messageFilePreparationSessions = new Map();
+        this.modelConfiguration = { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, ...this.runtime.modelConfiguration };
         this.state = {
             sessions: [],
             sessionsById: new Map(),
@@ -291,8 +311,8 @@ class ChatApp {
         this.memoryExtractionAbortControllers = new Map();
         this.memoryAugmentAbortControllers = new Set();
         this.memoryWorkGeneration = 0;
-        this._lastApiContent = null;
-        this._lastApiContentGeneration = null;
+        this.memoryApiOverrides = new Map();
+        this.memoryApiOverrideRevision = 0;
         this.parallelModeEnabled = false;
         this.parallelSecondaryModel = null;
         this.parallelSynthesisModel = null;
@@ -316,7 +336,7 @@ class ChatApp {
         this.councilController = new CouncilController({
             app: this,
             chatDB,
-            inferenceService,
+            inferenceService: this.inferenceService,
             ticketClient
         });
         this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
@@ -342,6 +362,11 @@ class ChatApp {
     }
 
     async resolveExtensionAuthContext() {
+        if (this.features.accounts === false) {
+            const error = new Error('Accounts are not enabled in this application.');
+            error.code = 'ACCOUNTS_DISABLED';
+            throw error;
+        }
         await accountService.init();
         const state = accountService.getState();
         if (
@@ -564,6 +589,270 @@ class ChatApp {
         return this.extensionSlots.refresh(name);
     }
 
+    stopSessionStreaming(sessionId) {
+        if (!sessionId) return;
+        const state = this.getSessionStreamingState(sessionId);
+        if (state.isStreaming && state.abortController) {
+            state.abortController.abort();
+            // The finally block in sendMessage will handle cleanup
+        }
+    }
+
+    async stopSessionStreamingAndWait(sessionId, options = {}) {
+        const { timeoutMs = 10000 } = options;
+        if (!sessionId) return true;
+        try {
+            // Also drain submissions/acquisition that have not mounted a stream
+            // yet. The caller owns a timeline reservation, so do not await that
+            // reservation here (Delete does wait for it before removing data).
+            await this.cancelSessionWork(sessionId, { timeoutMs });
+            return true;
+        } catch (error) {
+            this.showToast(error?.message || 'Unable to stop the current response', 'error');
+            return false;
+        }
+    }
+
+    beginSessionMutation(sessionId, options = {}) {
+        if (!sessionId || this.isSessionDeleted(sessionId) || this.historyDeletionInProgress) return null;
+        const reservations = this.sessionMutationReservations.get(sessionId) || new Set();
+        const exclusive = options.exclusive === true;
+        // Timeline-changing actions (Retry, Resend, Edit, Continue, Fork) must
+        // be mutually exclusive. Tracking them for Delete is not sufficient:
+        // two overlapping suffix deletions can otherwise corrupt the chat.
+        if (exclusive && (reservations.size > 0 || (options.interruptStreaming !== true && options.snapshotWhileStreaming !== true
+            && (this.getPendingSend(sessionId)
+                || this.regenerationJobs.has(sessionId)
+                || this.getSessionStreamingState(sessionId).isStreaming)))) return null;
+        if (!exclusive && this.exclusiveSessionMutationOwners.has(sessionId)) return null;
+        const token = { id: Symbol(sessionId), exclusive };
+        reservations.add(token);
+        this.sessionMutationReservations.set(sessionId, reservations);
+        if (exclusive) {
+            this.exclusiveSessionMutationOwners.set(sessionId, token);
+            this.updateInputState();
+        }
+        return token;
+    }
+
+    endSessionMutation(sessionId, token) {
+        const reservations = this.sessionMutationReservations.get(sessionId);
+        if (!reservations || !token) return;
+        reservations.delete(token);
+        if (this.exclusiveSessionMutationOwners.get(sessionId) === token) {
+            this.exclusiveSessionMutationOwners.delete(sessionId);
+            this.updateInputState();
+        }
+        if (reservations.size === 0) this.sessionMutationReservations.delete(sessionId);
+    }
+
+    async acknowledgeSessionMutationBusy(sessionId) {
+        if (this.isViewingSession(sessionId)) {
+            this.announceChatOperation('Another chat action is finishing.');
+        }
+        // Keep the initiating control visibly busy long enough to acknowledge
+        // the click without adding another toast or paragraph to the chat.
+        await new Promise(resolve => setTimeout(resolve, 450));
+    }
+
+    isSessionDeleted(sessionId) {
+        return Boolean(sessionId && (this.deletedSessionIds.has(sessionId) || this.deletingSessionIds.has(sessionId)));
+    }
+
+    announceChatOperation(message) {
+        let status = document.getElementById('chat-operation-status');
+        if (!status) {
+            status = document.createElement('span');
+            status.id = 'chat-operation-status';
+            status.className = 'sr-only';
+            status.setAttribute('role', 'status');
+            this.elements.inputCard.append(status);
+        }
+        status.textContent = message;
+    }
+
+    createRuntimeContext() {
+        return Object.freeze({
+            getCurrentSession: () => this.getCurrentSession(),
+            getSession: id => this.state.sessionsById.get(id) || null,
+            getMessages: id => chatDB.getSessionMessages(id),
+            saveSession: session => chatDB.saveSession(session),
+            getModels: () => this.state.models,
+            getStreamingState: id => this.getSessionStreamingState(id),
+            setProgress: (id, progress) => this.setSessionPendingProgress(id, progress),
+            openFunding: () => this.accountModal?.openFunding?.(),
+            showToast: (...args) => this.showToast(...args),
+            logLocalEvent: (action, message, response = {}) => window.networkLogger?.logRequest({
+                type: 'local', method: 'LOCAL', status: 200,
+                action, message, response, sessionId: response.sessionId || null
+            }),
+            refreshPresentation: ({ usageOnly = false } = {}) => {
+                this.rightPanel?.updateUsageEstimate?.();
+                if (!usageOnly) {
+                    this.renderSessions();
+                    this.rightPanel?.onRuntimePresentationChange?.();
+                }
+                this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
+            },
+            cancelSessionWork: id => this.cancelSessionWork(id)
+        });
+    }
+
+    getSessionPendingProgress(sessionId) {
+        return this.pendingProgress.get(sessionId) || null;
+    }
+
+    setSessionPendingProgress(sessionId, progress) {
+        if (!sessionId) return;
+        if (progress) this.pendingProgress.set(sessionId, progress);
+        else this.pendingProgress.delete(sessionId);
+        if (!this.isViewingSession(sessionId)) return;
+        const streamState = this.getSessionStreamingState(sessionId);
+        if (progress && streamState.isStreaming) streamState.phase = 'preparing-access';
+        const phase = streamState.phase;
+        for (const element of this.elements.messagesContainer.querySelectorAll('.typing-indicator, [data-streaming-pending="true"]')) {
+            this.ui.updatePendingIndicator(element, phase, progress);
+        }
+    }
+
+    async prepareRuntimeTurn(session, signal) {
+        this.throwIfAborted(signal);
+        try {
+            await this.runtime.prepareTurn?.({
+                sessionId: session.id,
+                signal,
+                onProgress: progress => this.setSessionPendingProgress(session.id, progress)
+            });
+        } catch (error) {
+            if (!signal?.aborted && !error?.isCancelled && error?.name !== 'AbortError') {
+                await this.addMessage('assistant', `Could not prepare access. ${error?.message || 'Please try again.'}`,
+                    { isLocalOnly: true }, session);
+            }
+            throw error;
+        }
+        this.throwIfAborted(signal);
+    }
+
+    async cancelSessionWork(sessionId, { timeoutMs = 15000, waitForMutations = false } = {}) {
+        const abortOwnedWork = () => {
+            for (const entry of this.sendSubmissionsInFlight.values()) {
+                if (!sessionId || entry.sessionId === sessionId) entry.controller.abort();
+            }
+            for (const [id, state] of this.sessionStreamingStates) {
+                if (!sessionId || id === sessionId) state.abortController?.abort();
+            }
+            for (const entry of this.accessAcquisitionInFlight.values()) {
+                if (!sessionId || entry.sessionId === sessionId) entry.controller.abort();
+            }
+            for (const [id, job] of this.titleGenerationJobs) {
+                if (!sessionId || id === sessionId) job.controller.abort();
+            }
+            for (const [id, jobs] of this.quickAskJobs) {
+                if (!sessionId || id === sessionId) for (const job of jobs) job.controller.abort();
+            }
+            for (const [id, job] of this.regenerationJobs) {
+                if (!sessionId || id === sessionId) job.controller.abort();
+            }
+        };
+        const started = Date.now();
+        do {
+            abortOwnedWork();
+            const active = [...this.sessionStreamingStates].some(([id, state]) => (!sessionId || id === sessionId) && state.isStreaming)
+                || [...this.sendSubmissionsInFlight.values()].some(entry => !sessionId || entry.sessionId === sessionId)
+                || [...this.titleGenerationJobs.keys()].some(id => !sessionId || id === sessionId)
+                || [...this.quickAskJobs.keys()].some(id => !sessionId || id === sessionId)
+                || [...this.regenerationJobs.keys()].some(id => !sessionId || id === sessionId)
+                || [...this.accessAcquisitionInFlight.values()].some(entry => !sessionId || entry.sessionId === sessionId)
+                || (waitForMutations && [...this.sessionMutationReservations].some(([id, entries]) => entries.size && (!sessionId || id === sessionId)))
+                || [...(this.messageFilePreparationSessions || new Map()).values()].some(id => !sessionId || id === sessionId);
+            if (!active) return;
+            if (Date.now() - started > timeoutMs) throw new Error('The previous response is still stopping. Try again shortly.');
+            await new Promise(resolve => setTimeout(resolve, 25));
+        } while (true);
+    }
+
+    async recordRuntimeUsage(session, message, usage, kind = 'response') {
+        if (!this.runtime.recordUsage) return;
+        const metadata = await this.tryRecordRuntimeUsage({
+            sessionId: session.id,
+            requestId: message.id,
+            usage: { ...usage, model: usage?.model || message.model },
+            kind
+        });
+        if (metadata) Object.assign(message, metadata);
+    }
+
+    async tryRecordRuntimeUsage(data) {
+        try { return await this.runtime.recordUsage?.(data); }
+        catch (error) {
+            // Accounting is an estimate. A storage failure must never replace
+            // a successful response or turn cancellation into a stream error.
+            console.warn('Could not save the local usage estimate:', error?.message || 'Storage unavailable');
+            return null;
+        }
+    }
+
+    preserveInterruptedResponse(message, content, reasoning, fallback = '') {
+        const hasPartialOutput = Boolean(content?.trim() || reasoning?.trim() || message.images?.length);
+        message.content = hasPartialOutput ? (content || '') : fallback;
+        message.reasoning = reasoning ? parseReasoningContent(reasoning) : null;
+        message.tokenCount = null;
+        message.streamingTokens = null;
+        message.streamingReasoning = false;
+        message.streamingPending = false;
+        message.streamingPhase = null;
+        message.isLocalOnly = !hasPartialOutput;
+        return hasPartialOutput;
+    }
+
+    getPendingSend(sessionId = this.state.currentSessionId) {
+        return [...this.sendSubmissionsInFlight.values()].find(entry => entry.sessionId === sessionId
+            || (!entry.sessionId && entry.generation === this.sessionNavigationGeneration)) || null;
+    }
+
+    async streamCompletionWithRuntime(messages, modelId, session, onChunk, onTokenUpdate,
+        files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
+        reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
+        const id = requestId || this.generateId();
+        const pricing = this.state.models.find(model => model.id === modelId)?.pricing || null;
+        let latestUsage = null;
+        let completed = false;
+        let receivedOutput = false;
+        let receivedProviderUsage = false;
+        try {
+            const result = await this.inferenceService.streamCompletion(messages, modelId, session,
+                async (chunk, imageData) => {
+                    if (chunk || imageData?.images?.length) receivedOutput = true;
+                    await onChunk?.(chunk, imageData);
+                }, async usage => {
+                    latestUsage = usage;
+                    if (usage?.isStreaming === false || usage?.estimated === false) receivedProviderUsage = true;
+                    await onTokenUpdate?.(usage);
+                    await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
+                        usage: { ...usage, model: usage?.model || modelId }, pricing, kind, final: false });
+                }, files, searchEnabled, controller, onStreamOpen, async chunk => {
+                    if (chunk) receivedOutput = true;
+                    await onReasoningChunk?.(chunk);
+                },
+                reasoningEnabled, reasoningEffort,
+                progress => this.setSessionPendingProgress(session.id, progress));
+            completed = true;
+            latestUsage = result || latestUsage;
+            return result;
+        } finally {
+            // A prompt-only estimate is published before connecting. A rejected
+            // HTTP request (or canceled queued request) must not turn it into a
+            // durable charge. Partial output and provider usage still count.
+            if (latestUsage && (completed || receivedOutput || receivedProviderUsage)) {
+                await this.tryRecordRuntimeUsage({ sessionId: session.id,
+                    requestId: id, usage: { ...latestUsage, model: latestUsage.model || modelId }, pricing, kind });
+            } else {
+                try { await this.runtime.discardUsagePreview?.({ sessionId: session.id, requestId: id }); }
+                catch (error) { console.warn('Could not clear the local usage preview:', error?.message || 'Storage unavailable'); }
+            }
+        }
+    }
+
     detectInitialLinkContext() {
         try {
             const url = new URL(window.location.href);
@@ -581,17 +870,17 @@ class ChatApp {
     getDefaultModelId() {
         const session = this.getCurrentSession();
         const fallbackModel = this.getFallbackModelEntry(session);
-        return fallbackModel?.id || inferenceService.getDefaultModelId(session);
+        return fallbackModel?.id || this.inferenceService.getDefaultModelId(session);
     }
 
     getDefaultModelName() {
         const session = this.getCurrentSession();
         const fallbackModel = this.getFallbackModelEntry(session);
-        return fallbackModel?.name || inferenceService.getDefaultModelName(session);
+        return fallbackModel?.name || this.inferenceService.getDefaultModelName(session);
     }
 
     getDisabledModelSet() {
-        return new Set(getDisabledModels());
+        return new Set(this.modelConfiguration.getDisabledModels());
     }
 
     filterDisabledModels(models) {
@@ -600,11 +889,11 @@ class ChatApp {
 
     getFallbackModelEntry(session) {
         const usePinnedDefaults = !session?.inferenceBackend ||
-            session.inferenceBackend === inferenceService.getDefaultBackendId();
+            session.inferenceBackend === this.inferenceService.getDefaultBackendId();
         return getFallbackModelEntryValue(
             this.state.models,
-            inferenceService.getDefaultModelId(session),
-            usePinnedDefaults ? getPinnedModels() : []
+            this.inferenceService.getDefaultModelId(session),
+            usePinnedDefaults ? this.modelConfiguration.getPinnedModels() : []
         );
     }
 
@@ -1945,13 +2234,14 @@ class ChatApp {
         // Account restoration shares the same IndexedDB initialization and can
         // begin before the rest of the shell finishes mounting. Keep the
         // promise handled here; its result is awaited after the DB gate below.
-        const accountReady = accountService.init();
+        const accountReady = this.features.accounts ? accountService.init() : Promise.resolve();
         accountReady.catch(() => {});
         this.accountReadyPromise = accountReady;
 
         // Initialize UI components immediately (sync, fast) - shows loading states
-        this.ui = new VanillaChatUi(this);
+        this.ui = new VanillaChatUi(this, this.uiOptions);
         Object.assign(this, this.ui.mountShell());
+        this.runtimeCleanup = this.runtime.attach?.(this.createRuntimeContext());
         this.setupSidebarFilterControls();
 
         // Extensions mount independently. Their failures never prevent the
@@ -2009,7 +2299,7 @@ class ChatApp {
         }
 
         try {
-            await routeAuthenticationIntent({
+            if (this.features.accounts) await routeAuthenticationIntent({
                 accountService,
                 accountModal: this.accountModal,
                 locationImpl: window.location,
@@ -2088,9 +2378,9 @@ class ChatApp {
         this.messageNavigation = this.ui.mountMessageNavigation();
 
         // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
-        initModelTiers();
-        initPinnedModels();
-        onPinnedModelsUpdate(() => {
+        if (this.features.tickets) initModelTiers();
+        this.modelConfiguration.initPinnedModels();
+        this.modelConfiguration.onPinnedModelsUpdate(() => {
             void this.refreshModelsForAvailabilityUpdate();
         });
 
@@ -2108,11 +2398,13 @@ class ChatApp {
                 console.warn('API key load failed:', error);
             }
 
-            this.scrubberService.init().catch((error) => {
+            if (this.features.scrubber) this.scrubberService.init().catch((error) => {
                 console.warn('Scrubber init failed:', error);
             });
 
-            if (typeof requestIdleCallback === 'function') {
+            if (!this.features.accounts) {
+                // Accountless compositions never bootstrap authentication/sync.
+            } else if (typeof requestIdleCallback === 'function') {
                 requestIdleCallback(() => accountService.maybeAutoUnlock());
             } else {
                 setTimeout(() => accountService.maybeAutoUnlock(), 800);
@@ -2193,8 +2485,8 @@ class ChatApp {
             savedMemoryFeatureEnabled,
             savedMemoryMode
         });
-        this.memoryFeatureEnabled = resolvedMemoryFeatureState.memoryFeatureEnabled;
-        this.memoryMode = resolvedMemoryFeatureState.memoryMode;
+        this.memoryFeatureEnabled = this.features.memory && resolvedMemoryFeatureState.memoryFeatureEnabled;
+        this.memoryMode = this.features.memory && resolvedMemoryFeatureState.memoryMode;
         if (resolvedMemoryFeatureState.shouldPersistMemoryMode) {
             chatDB.saveSetting('memoryMode', false).catch(() => {});
         }
@@ -2228,7 +2520,7 @@ class ChatApp {
 
         // This cache is display-only: request-time selection continues to use
         // state.models after the active backend's live catalog has loaded.
-        this.cachedModelDisplayMetadata = inferenceService.getCachedModels(this.getCurrentSession());
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(this.getCurrentSession());
 
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
@@ -2679,11 +2971,11 @@ class ChatApp {
         if (payload.sharedAccess?.token) {
             const backendId = payload.sharedAccess.backendId ||
                 payload.session?.inferenceBackend ||
-                inferenceService.getDefaultBackendId();
+                this.inferenceService.getDefaultBackendId();
             return { ...payload.sharedAccess, backendId };
         }
         if (payload.sharedApiKey?.key) {
-            return inferenceService.legacySharedApiKeyToSharedAccess(
+            return this.inferenceService.legacySharedApiKeyToSharedAccess(
                 payload.sharedApiKey,
                 payload.session?.inferenceBackend
             );
@@ -2700,11 +2992,11 @@ class ChatApp {
         // No access data to verify
         if (!sharedAccess?.token) return null;
 
-        const backendId = sharedAccess.backendId || inferenceService.getDefaultBackendId();
-        const backend = inferenceService.getBackend(backendId);
+        const backendId = sharedAccess.backendId || this.inferenceService.getDefaultBackendId();
+        const backend = this.inferenceService.getBackend(backendId);
         const verifier = backend?.verification;
 
-        const validation = inferenceService.validateSharedAccess(sharedAccess, backendId);
+        const validation = this.inferenceService.validateSharedAccess(sharedAccess, backendId);
         if (!validation.ok) {
             console.warn('⚠️ Shared access missing signature fields, cannot verify');
             const choice = await this.ui.shareModals.showSharedKeyVerificationFailedPrompt({
@@ -2727,7 +3019,7 @@ class ChatApp {
             return sharedAccess;
         }
 
-        const sessionAccess = inferenceService.sharedAccessToSessionAccess(backendId, sharedAccess);
+        const sessionAccess = this.inferenceService.sharedAccessToSessionAccess(backendId, sharedAccess);
         const accessInfo = sessionAccess?.info || sharedAccess;
 
         // Attempt verification with verifier
@@ -2829,7 +3121,7 @@ class ChatApp {
             existingSession.title = payload.session.title || existingSession.title;
             existingSession.model = payload.session.model;
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
-            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || inferenceService.getDefaultBackendId();
+            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || this.inferenceService.getDefaultBackendId();
             existingSession.responseMode = normalizeResponseMode(payload.session.responseMode);
             existingSession.councilConfig = normalizeCouncilConfig(payload.session.councilConfig, existingSession.model);
             existingSession.updatedAt = Date.now();
@@ -2841,8 +3133,8 @@ class ChatApp {
             // Apply the already-resolved shared access if present.
             if (sharedAccess?.token) {
                 if (verifiedAccess) {
-                    const backendId = verifiedAccess.backendId || inferenceService.getDefaultBackendId();
-                    const sessionAccess = inferenceService.sharedAccessToSessionAccess(backendId, verifiedAccess);
+                    const backendId = verifiedAccess.backendId || this.inferenceService.getDefaultBackendId();
+                    const sessionAccess = this.inferenceService.sharedAccessToSessionAccess(backendId, verifiedAccess);
                     existingSession.inferenceBackend = backendId;
                     if (sessionAccess) {
                         existingSession.apiKey = sessionAccess.token;
@@ -2851,7 +3143,7 @@ class ChatApp {
                     }
                 } else {
                     // Verification failed, user chose to proceed without access
-                    inferenceService.clearAccessInfo(existingSession);
+                    this.inferenceService.clearAccessInfo(existingSession);
                 }
             }
             await chatDB.saveSession(existingSession);
@@ -3504,7 +3796,7 @@ class ChatApp {
      * Initialize the verifier service for station verification
      */
     async initVerifier() {
-        const verifier = inferenceService.getVerificationAdapter();
+        const verifier = this.inferenceService.getVerificationAdapter();
         if (!verifier?.supports) {
             return;
         }
@@ -3516,7 +3808,7 @@ class ChatApp {
         verifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
             console.log(`🚫 Station ${stationId} banned: ${reason}`);
 
-            const accessInfo = session ? inferenceService.getAccessInfo(session) : null;
+            const accessInfo = session ? this.inferenceService.getAccessInfo(session) : null;
             if (accessInfo?.info?.stationId === stationId) {
                 // Show warning modal (which also clears the key)
                 await this.showBannedStationWarningModal({
@@ -3562,7 +3854,7 @@ class ChatApp {
         }
 
         try {
-            const fetchedModels = await inferenceService.fetchModels(this.getCurrentSession());
+            const fetchedModels = await this.inferenceService.fetchModels(this.getCurrentSession());
             this.state.models = this.filterDisabledModels(fetchedModels);
         } catch (error) {
             console.error('Failed to load models:', error);
@@ -3596,7 +3888,7 @@ class ChatApp {
             }
 
             if (!session.inferenceBackend) {
-                session.inferenceBackend = inferenceService.getDefaultBackendId();
+                session.inferenceBackend = this.inferenceService.getDefaultBackendId();
                 needsSave = true;
             }
 
@@ -3673,7 +3965,7 @@ class ChatApp {
     normalizeModelName(modelIdOrName) {
         return normalizeModelNameValue(modelIdOrName, {
             getStandardizedModelDisplayName,
-            getDisplayName: (modelId, fallback) => inferenceService.getDisplayName(modelId, fallback, this.getCurrentSession())
+            getDisplayName: (modelId, fallback) => this.inferenceService.getDisplayName(modelId, fallback, this.getCurrentSession())
         });
     }
 
@@ -3717,7 +4009,8 @@ class ChatApp {
      * @param {string} title - Session title
      * @returns {Promise<Object>} The created session
      */
-    async createSession(title = 'New Chat') {
+    async createSession(title = 'New Chat', options = {}) {
+        const navigationGeneration = this.sessionNavigationGeneration;
         if (!await this.ensureDatabaseReady()) {
             return null;
         }
@@ -3731,7 +4024,9 @@ class ChatApp {
             await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
 
-        const pendingModelName = this.normalizeModelName(this.state.pendingModelName);
+        this.throwIfAborted(options.signal);
+        if (navigationGeneration !== this.sessionNavigationGeneration) return null;
+        const pendingModelName = this.normalizeModelName(options.model || this.state.pendingModelName);
         if (pendingModelName !== this.state.pendingModelName) {
             this.state.pendingModelName = pendingModelName;
         }
@@ -3750,7 +4045,7 @@ class ChatApp {
             model: modelNameForNewSession,
             responseMode: usePendingCouncilMode ? RESPONSE_MODE_COUNCIL : RESPONSE_MODE_SINGLE,
             councilConfig: pendingCouncilConfig || buildDefaultCouncilConfig(modelNameForNewSession),
-            inferenceBackend: inferenceService.getDefaultBackendId(),
+            inferenceBackend: this.inferenceService.getDefaultBackendId(),
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
@@ -3768,13 +4063,16 @@ class ChatApp {
         this.state.sessions.unshift(session);
         this.state.sessionsById.set(session.id, session);
         this.state.currentSessionId = session.id;
+        options.onCreated?.(session);
 
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateMemoryToggleUI();
 
         await chatDB.saveSession(session);
+        if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(session.id)) return session;
         sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
+        if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(session.id)) return session;
 
         // Update URL to reflect new session
         this.updateUrlWithSession(session.id);
@@ -3808,6 +4106,12 @@ class ChatApp {
      * @param {string} sessionId - ID of the session to switch to
      */
     async switchSession(sessionId) {
+        this.sessionNavigationGeneration += 1;
+        const navigationGeneration = this.sessionNavigationGeneration;
+        const transition = { targetSessionId: sessionId, generation: navigationGeneration };
+        this.sessionSwitchInFlight = transition;
+        this.updateInputState();
+        try {
         if (!sessionId || sessionId === this.state.currentSessionId) {
             return;
         }
@@ -3816,7 +4120,7 @@ class ChatApp {
         await this.ensureSessionLoaded(sessionId);
 
         // Another user action may have switched/cleared sessions while loading.
-        if (this.state.currentSessionId !== previousSessionId) {
+        if (navigationGeneration !== this.sessionNavigationGeneration || this.state.currentSessionId !== previousSessionId) {
             return;
         }
 
@@ -3835,7 +4139,7 @@ class ChatApp {
 
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
-        this.cachedModelDisplayMetadata = inferenceService.getCachedModels(session);
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
         if (session) {
             this.chatInput.updateSearchToggleUI();
         }
@@ -3852,7 +4156,8 @@ class ChatApp {
         this.hideScrollToBottomButton();
 
         this.renderSessions();
-        this.renderMessages();
+        await this.renderMessages();
+        if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(sessionId)) return;
         this.renderCurrentModel();
         if (this.sidebar && !this.isMobileView()) {
             this.sidebar.scrollToSession(sessionId);
@@ -3875,6 +4180,12 @@ class ChatApp {
         if (this.isMobileView()) {
             this.hideSidebar();
         }
+        } finally {
+            if (this.sessionSwitchInFlight === transition) {
+                this.sessionSwitchInFlight = null;
+                this.updateInputState();
+            }
+        }
     }
 
     /**
@@ -3886,7 +4197,7 @@ class ChatApp {
         if (!sessionId) return null;
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         if (session) {
-            inferenceService.ensureSessionBackend(session);
+            this.inferenceService.ensureSessionBackend(session);
         }
         return session;
     }
@@ -3918,6 +4229,7 @@ class ChatApp {
     }
 
     isCouncilModeActive(session = this.getCurrentSession()) {
+        if (!this.features.council) return false;
         if (!COUNCIL_MODE_FEATURE_FLAG || !session) {
             return false;
         }
@@ -4027,7 +4339,7 @@ class ChatApp {
 
         const fallbackModelName = this.normalizeModelName(session.model)
             || session.model
-            || inferenceService.getDefaultModelName(session);
+            || this.inferenceService.getDefaultModelName(session);
         const requestedEnabled = options.enabled !== undefined
             ? options.enabled === true
             : true;
@@ -4076,7 +4388,7 @@ class ChatApp {
     setPendingCouncilConfig(config) {
         const fallbackModelName = this.normalizeModelName(this.state.pendingModelName)
             || this.state.pendingModelName
-            || inferenceService.getDefaultModelName();
+            || this.inferenceService.getDefaultModelName();
         this.pendingCouncilConfig = normalizeCouncilConfig(config, fallbackModelName);
         if (!this.state.currentSessionId) {
             this.rightPanel?.onSessionChange?.(null);
@@ -4089,7 +4401,7 @@ class ChatApp {
             || fallbackModelName
             || this.normalizeModelName(this.state.pendingModelName)
             || this.state.pendingModelName
-            || inferenceService.getDefaultModelName();
+            || this.inferenceService.getDefaultModelName();
         const secondaryModel = typeof this.parallelSecondaryModel === 'string' && this.parallelSecondaryModel.trim()
             ? this.parallelSecondaryModel.trim()
             : null;
@@ -4178,10 +4490,13 @@ class ChatApp {
     }
 
     advancePendingStateAfterAccessGranted(sessionId, typingId = null) {
-        this.updateSessionStreamingPhase(sessionId, 'waiting-response');
+        const session = this.state.sessionsById.get(sessionId);
+        const phase = this.resolvePendingPhaseForSession(session);
+        this.updateSessionStreamingPhase(sessionId, phase);
         if (typingId) {
-            this.updateTypingIndicator(typingId, 'waiting-response');
+            this.updateTypingIndicator(typingId, phase);
         }
+        return phase;
     }
 
     isAccessCreditExhaustedError(error) {
@@ -4192,7 +4507,8 @@ class ChatApp {
         return getTicketCost(modelId, reasoningEnabled);
     }
 
-    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null } = {}) {
+    async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
+        modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
 
         await ensureModelTiersReady({ signal });
@@ -4235,27 +4551,35 @@ class ChatApp {
             };
         }
 
-        const hasAccessToken = !!inferenceService.getAccessToken(session);
-        if (hasAccessToken && !inferenceService.isAccessExpired(session)) {
+        const hasAccessToken = !!this.inferenceService.getAccessToken(session);
+        if (hasAccessToken && !this.inferenceService.isAccessExpired(session)) {
             return { tickets: 0, label: session.model || 'the selected model' };
         }
 
-        const modelName = this.normalizeModelName(session.model)
-            || session.model
-            || inferenceService.getDefaultModelName(session);
+        const modelName = this.normalizeModelName(requestedModelName || session.model)
+            || requestedModelName || session.model
+            || this.inferenceService.getDefaultModelName(session);
         const modelEntry = this.state.models.find(model => model.name === modelName)
             || this.state.models.find(model => model.id === modelName)
             || this.getFallbackModelEntry(session);
 
         return {
-            tickets: modelEntry ? this.getTicketCost(modelEntry.id, this.reasoningEnabled) : 0,
+            tickets: modelEntry ? this.getTicketCost(modelEntry.id, reasoningEnabled) : 0,
             label: modelEntry?.name || modelName || 'the selected model'
         };
     }
 
     async preflightTurnTicketBudget(session, content, options = {}) {
-        const memoryTickets = this.memoryFeatureEnabled
-            && this.memoryMode
+        if (!this.features.tickets) {
+            // An alternate access runtime must authorize its own path. Never
+            // fabricate ticket balances or silently fall back to ticket access.
+            if (typeof this.runtime.checkCanSend !== 'function') {
+                throw new Error('This chat access integration is not configured.');
+            }
+            return this.runtime.checkCanSend({ sessionId: session?.id, signal: options.signal });
+        }
+        const memoryTickets = (options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
+            && (options.memoryMode ?? this.memoryMode)
             && Boolean(content)
             && !hasValidMemoryKey(session)
             ? CONFIDENTIAL_KEY_TICKETS
@@ -4301,19 +4625,22 @@ class ChatApp {
         return false;
     }
 
-    async refreshAccessAfterCreditExhaustion(session, { typingId = null } = {}) {
+    async refreshAccessAfterCreditExhaustion(session, { typingId = null, signal = null,
+        modelNameOverride = null, reasoningEnabled = this.reasoningEnabled } = {}) {
         if (!session) throw new Error('No active session found.');
+        this.throwIfAborted(signal);
 
-        const accessLabel = inferenceService.getAccessLabel(session);
+        const accessLabel = this.inferenceService.getAccessLabel(session);
         this.showToast('Exhausted current ephemeral key, requesting a new key', 'success');
 
-        inferenceService.clearAccessInfo(session);
+        this.inferenceService.clearAccessInfo(session);
         await chatDB.saveSession(session);
+        this.throwIfAborted(signal);
         this.updateSessionStreamingPhase(session.id, 'requesting-key');
         if (typingId) {
             this.updateTypingIndicator(typingId, 'requesting-key');
         }
-        if (this.rightPanel) {
+        if (this.rightPanel && this.isViewingSession(session.id)) {
             this.rightPanel.onSessionChange(session);
         }
         if (this.floatingPanel) {
@@ -4321,6 +4648,7 @@ class ChatApp {
         }
 
         await this.acquireAndSetAccess(session, {
+            signal, modelNameOverride, reasoningEnabled,
             onGranted: () => {
                 this.advancePendingStateAfterAccessGranted(session.id, typingId);
             }
@@ -4332,6 +4660,12 @@ class ChatApp {
     }
 
     setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
+        if (!isStreaming) {
+            this.pendingProgress.delete(sessionId);
+            for (const indicator of this.elements.messagesContainer.querySelectorAll('.typing-indicator')) {
+                if (indicator.dataset.sessionId === sessionId) indicator.remove();
+            }
+        }
         const existingState = this.getSessionStreamingState(sessionId);
         const normalizedPhase = this.normalizePendingPhase(phase);
         this.sessionStreamingStates.set(sessionId, {
@@ -4374,6 +4708,7 @@ class ChatApp {
      */
     isCurrentSessionStreaming() {
         const session = this.getCurrentSession();
+        if (this.getPendingSend(session?.id || null)) return true;
         if (!session) return false;
         const state = this.getSessionStreamingState(session.id);
         return state.isStreaming;
@@ -4391,6 +4726,7 @@ class ChatApp {
      */
     stopCurrentSessionStreaming() {
         const session = this.getCurrentSession();
+        this.getPendingSend(session?.id || null)?.controller.abort();
         if (!session) return;
 
         const state = this.getSessionStreamingState(session.id);
@@ -4435,9 +4771,21 @@ class ChatApp {
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
     async handleNewChatRequest(options = {}) {
+        this.sessionNavigationGeneration += 1;
+        const previousSession = this.getCurrentSession();
+        // Notify synchronously so the integration establishes its access
+        // barrier before the next Send. Background work never delays typing.
+        this.runtime.onNewChat?.({ sessionId: previousSession?.id || null });
+        if (this.runtime.onNewChat) {
+            this.sendSubmissionsInFlight.get('__new_chat__')?.controller.abort();
+            if (previousSession?.id) void this.cancelSessionWork(previousSession.id).catch(error => {
+                this.showToast(error.message, 'error');
+            });
+            this.chatArea?.closeQuickAskWindow?.({ abort: true, reset: true });
+        }
         // Clear current session - no session is selected
         // The session will be created when the user sends their first message
-        await this.clearCurrentSession(options);
+        await this.clearCurrentSession({ ...options, immediate: true });
 
         // Close sidebar on mobile after creating new chat
         if (this.isMobileView()) {
@@ -4485,6 +4833,8 @@ class ChatApp {
      */
     async clearCurrentSession(options = {}) {
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
+        const navigationGeneration = this.sessionNavigationGeneration;
+        this.sessionSwitchInFlight = null;
         const previousSessionId = this.state.currentSessionId;
         if (previousSessionId) {
             this.saveChatbarStateForSession(previousSessionId);
@@ -4492,6 +4842,10 @@ class ChatApp {
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
         this.updateUrlWithSession(null);
+        // Reset before the first asynchronous boundary. Later settings reads
+        // must not erase a draft typed into the immediately available composer.
+        this.resetMessageInputLayout({ resetScroll: true });
+        this.applyChatbarState(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
@@ -4499,29 +4853,28 @@ class ChatApp {
 
         // Load the selected model from settings so UI shows correct model
         const storedModelPreference = await chatDB.getSetting('selectedModel');
+        if (navigationGeneration !== this.sessionNavigationGeneration || this.state.currentSessionId) return;
         const normalizedSelectedModelName = this.upgradeDefaultModelPreference(
             this.normalizeModelName(storedModelPreference)
         );
         if (normalizedSelectedModelName && normalizedSelectedModelName !== storedModelPreference) {
             await chatDB.saveSetting('selectedModel', normalizedSelectedModelName);
         }
+        if (navigationGeneration !== this.sessionNavigationGeneration || this.state.currentSessionId) return;
         this.state.pendingModelName = normalizedSelectedModelName || null;
         // Another open tab may have changed the explicit Chat/Parallel choice.
         // Refresh the versioned preference before constructing this tab's next
         // empty composer so New Chat follows the latest deliberate choice.
         const storedParallelModePreferenceV2 = await chatDB.getSetting('parallelModePreferenceV2');
+        if (navigationGeneration !== this.sessionNavigationGeneration || this.state.currentSessionId) return;
         this.parallelModeEnabled = storedParallelModePreferenceV2 === true;
-        this.cachedModelDisplayMetadata = inferenceService.getCachedModels();
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels();
         this.applyPersistedParallelPendingConfig(this.state.pendingModelName);
 
         // Update UI to reflect no session selected
         this.renderSessions();
         const renderMessagesPromise = this.renderMessages();
         this.renderCurrentModel();
-
-        // New-chat state should always start with an empty composer.
-        this.resetMessageInputLayout({ resetScroll: true });
-        this.applyChatbarState(null);
 
         // Update input state
         this.updateShareButtonUI();
@@ -4549,6 +4902,7 @@ class ChatApp {
 
         // Focus input after UI updates complete
         requestAnimationFrame(() => {
+            if (navigationGeneration !== this.sessionNavigationGeneration || this.state.currentSessionId) return;
             if (this.elements.messageInput) {
                 this.elements.messageInput.focus();
             }
@@ -4646,15 +5000,31 @@ class ChatApp {
     }
 
     async generateSessionTitleIfNeeded(sessionId, userMessageId, options = {}) {
+        if (this.deletingSessionIds.has(sessionId)) return;
+        const previous = this.titleGenerationJobs.get(sessionId);
+        if (previous) return previous.promise;
+        const job = { controller: new AbortController(), promise: null };
+        this.titleGenerationJobs.set(sessionId, job);
+        job.promise = this.generateSessionTitleForJob(sessionId, userMessageId, {
+            ...options, signal: job.controller.signal
+        }).finally(() => {
+            if (this.titleGenerationJobs.get(sessionId) === job) this.titleGenerationJobs.delete(sessionId);
+        });
+        return job.promise;
+    }
+
+    async generateSessionTitleForJob(sessionId, userMessageId, options = {}) {
+        this.throwIfAborted(options.signal);
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         if (!session || session.titleSource === 'manual' || session.titleSource === 'generated' || !session.titleGenerationPending) return;
         const accessSession = options.accessSession || session;
-        if (!inferenceService.getAccessToken(accessSession) || inferenceService.isAccessExpired(accessSession)) {
+        if (!this.inferenceService.getAccessToken(accessSession) || this.inferenceService.isAccessExpired(accessSession)) {
             await this.clearSessionTitleGenerationPending(session.id);
             return;
         }
 
         const messages = await chatDB.getSessionMessages(session.id);
+        this.throwIfAborted(options.signal);
         const firstUserMessage = messages.find(message => message.role === 'user' && !message.isLocalOnly);
         if (!firstUserMessage || firstUserMessage.id !== userMessageId) return;
 
@@ -4668,7 +5038,11 @@ class ChatApp {
         const expectedSource = session.titleSource || 'local';
 
         try {
-            const generated = await inferenceService.generateSessionTitle(accessSession, prompt, { timeoutMs: 10000 });
+            const generated = await this.inferenceService.generateSessionTitle(accessSession, prompt, {
+                timeoutMs: 10000,
+                signal: options.signal,
+                onUsage: usage => this.tryRecordRuntimeUsage({ sessionId, requestId: `title-${userMessageId}`, usage, kind: 'title' })
+            });
             const title = this.cleanGeneratedSessionTitle(generated);
             if (!title) {
                 await this.clearSessionTitleGenerationPending(sessionId);
@@ -4702,8 +5076,8 @@ class ChatApp {
      * @param {Object} metadata - Optional metadata (model, tokenCount, etc.)
      * @returns {Promise<Object>} The created message
      */
-    async addMessage(role, content, metadata = {}) {
-        const session = this.getCurrentSession();
+    async addMessage(role, content, metadata = {}, targetSession = null) {
+        const session = targetSession || this.getCurrentSession();
         if (!session) return;
         const extraFields = metadata.extra && typeof metadata.extra === 'object'
             ? metadata.extra
@@ -4726,7 +5100,11 @@ class ChatApp {
             ...extraFields
         };
 
-        await chatDB.saveMessage(message);
+        // Commit the accepted message and its parent together. Once durable,
+        // later title/index/render failures must not leave the draft looking
+        // unsent and invite a duplicate submission.
+        await chatDB.saveSessionWithMessages(session, [message]);
+        metadata.onPersisted?.(message);
 
         // Update session's updatedAt timestamp
         session.updatedAt = Date.now();
@@ -4747,7 +5125,7 @@ class ChatApp {
         }
 
         // Use incremental update instead of full re-render
-        if (this.chatArea) {
+        if (this.chatArea && this.isViewingSession(session.id)) {
             await this.chatArea.appendMessage(message);
         }
         this.renderSessions(); // Re-render sessions to update sorting
@@ -4939,34 +5317,43 @@ class ChatApp {
         return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration;
     }
 
-    clearMemoryApiOverrideContent() {
-        this._lastApiContent = null;
-        this._lastApiContentGeneration = null;
+    clearMemoryApiOverrideContent(sessionId = this.state?.currentSessionId) {
+        if (sessionId) this.memoryApiOverrides?.delete(sessionId);
     }
 
-    setMemoryApiOverrideContent(content, generation = this.memoryWorkGeneration) {
+    setMemoryApiOverrideContent(content, generation = this.memoryWorkGeneration, sessionId = this.state?.currentSessionId) {
+        if (!sessionId) return false;
         if (!this.isMemoryFeatureActive(generation)) {
-            this.clearMemoryApiOverrideContent();
+            this.clearMemoryApiOverrideContent(sessionId);
             return false;
         }
         const normalizedContent = typeof content === 'string' ? content.trim() : '';
         if (!normalizedContent) {
-            this.clearMemoryApiOverrideContent();
+            this.clearMemoryApiOverrideContent(sessionId);
             return false;
         }
-        this._lastApiContent = content;
-        this._lastApiContentGeneration = generation;
+        this.memoryApiOverrides ||= new Map();
+        this.memoryApiOverrideRevision = (this.memoryApiOverrideRevision || 0) + 1;
+        this.memoryApiOverrides.set(sessionId, { content, generation, revision: this.memoryApiOverrideRevision });
         return true;
     }
 
-    getMemoryApiOverrideContent() {
-        if (!this.isMemoryFeatureActive(this._lastApiContentGeneration)) {
-            this.clearMemoryApiOverrideContent();
+    getMemoryApiOverrideEntry(sessionId = this.state?.currentSessionId) {
+        const entry = sessionId ? this.memoryApiOverrides?.get(sessionId) : null;
+        if (!entry) return null;
+        if (!this.isMemoryFeatureActive(entry.generation)) {
+            this.clearMemoryApiOverrideContent(sessionId);
             return null;
         }
-        return (typeof this._lastApiContent === 'string' && this._lastApiContent.trim().length > 0)
-            ? this._lastApiContent
-            : null;
+        return entry;
+    }
+
+    getMemoryApiOverrideContent(sessionId = this.state?.currentSessionId) {
+        return this.getMemoryApiOverrideEntry(sessionId)?.content || null;
+    }
+
+    getMemoryApiOverrideRevision(sessionId = this.state?.currentSessionId) {
+        return this.getMemoryApiOverrideEntry(sessionId)?.revision ?? null;
     }
 
     async setMemoryFeatureEnabled(enabled, options = {}) {
@@ -4978,7 +5365,7 @@ class ChatApp {
         this.memoryMode = resolvedState.memoryMode;
         if (!this.memoryFeatureEnabled) {
             this.memoryWorkGeneration += 1;
-            this.clearMemoryApiOverrideContent();
+            this.memoryApiOverrides?.clear();
             for (const controller of this.memoryExtractionAbortControllers.values()) {
                 controller.abort();
             }
@@ -5103,13 +5490,13 @@ class ChatApp {
                 ? draft.editedFullPrompt : draft.fullPrompt;
             const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
             if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
-                this.clearMemoryApiOverrideContent();
+                this.clearMemoryApiOverrideContent(session.id);
                 msg.content = 'Memory is off in settings. Sending without personal context.';
                 msg.memoryApprovalPrompt = null;
                 await this.persistLocalAssistantStatus(msg);
                 return;
             }
-            this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration);
+            this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration, session.id);
 
             const files = draft.memoryFiles || [];
             if (draft.reusedPriorContext || typeof draft.newMemoryFileCount === 'number') {
@@ -5128,13 +5515,13 @@ class ChatApp {
             msg.memoryApprovalPrompt = { status: 'approved', linkedUserMessageId: draft.linkedUserMessageId, autoIncluded: alwaysInclude };
         } else {
             draft.status = 'denied';
-            this.clearMemoryApiOverrideContent();
+            this.clearMemoryApiOverrideContent(session.id);
             msg.content = 'Memory skipped. Sending without personal context.';
             msg.memoryApprovalPrompt = null;
         }
 
         await this.persistLocalAssistantStatus(msg);
-        await this.regenerateResponse({ skipMemoryAugment: true });
+        await this.regenerateResponse({ skipMemoryAugment: true, sessionId: session.id });
     }
 
     async removeLocalOnlyMessagesAfter(sessionId, messageId) {
@@ -5329,7 +5716,10 @@ class ChatApp {
     }
 
     async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
-        if (!this.memoryFeatureEnabled || !this.memoryMode || !userMessage || !session) return null;
+        // Captured per-turn mode cannot be changed by later composer edits.
+        // Globally disabling Memory still stops in-flight work for privacy.
+        if (!this.memoryFeatureEnabled || !(options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
+            || !(options.memoryMode ?? this.memoryMode) || !userMessage || !session) return null;
         if (!query || !query.trim()) return null;
 
         const { conversationText = '', signal = null } = options;
@@ -5363,7 +5753,7 @@ class ChatApp {
                 agentTrace: [],
                 agentTraceStreaming: true
             }
-        });
+        }, session);
 
         if (!retrievalMessage) {
             cleanupMemoryAbortController();
@@ -5462,7 +5852,7 @@ class ChatApp {
             scheduleTraceRefresh();
         };
         const markMemoryDisabled = async () => {
-            this.clearMemoryApiOverrideContent();
+            this.clearMemoryApiOverrideContent(session.id);
             retrievalMessage.agentTraceStreaming = false;
             retrievalMessage.memoryApprovalPrompt = null;
             retrievalMessage.ciPromptDraft = null;
@@ -5574,7 +5964,7 @@ class ChatApp {
                     if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
                         return await markMemoryDisabled();
                     }
-                    this.setMemoryApiOverrideContent(stripMemoryPromptUserData(reusedPrompt), memoryRunGeneration);
+                    this.setMemoryApiOverrideContent(stripMemoryPromptUserData(reusedPrompt), memoryRunGeneration, session.id);
                     retrievalMessage.content = 'No new retrieval. Using previously approved memory.';
                 } else {
                     retrievalMessage.content = 'No added memory. Sending original prompt.';
@@ -5602,7 +5992,7 @@ class ChatApp {
                 fullPrompt,
                 editedFullPrompt: null,
                 apiPrompt,
-                model: this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session),
+                model: this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || this.inferenceService.getDefaultModelName(session),
                 memoryFiles: memoryFilePaths,
                 memoryContextEntry,
                 memoryRetrievalAssessment,
@@ -5626,7 +6016,7 @@ class ChatApp {
                 if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
                     return await markMemoryDisabled();
                 }
-                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(draft.fullPrompt), memoryRunGeneration);
+                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(draft.fullPrompt), memoryRunGeneration, session.id);
                 retrievalMessage.content = this.buildMemoryContextSummary({
                     fileCount: draft.newMemoryFileCount || 0,
                     reused: draft.reusedPriorContext === true,
@@ -5671,7 +6061,7 @@ class ChatApp {
                 if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
                     return await markMemoryDisabled();
                 }
-                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration);
+                this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration, session.id);
                 retrievalMessage.content = this.buildMemoryContextSummary({
                     fileCount: draft.newMemoryFileCount || 0,
                     reused: draft.reusedPriorContext === true,
@@ -5686,7 +6076,7 @@ class ChatApp {
                 };
             } else {
                 draft.status = 'denied';
-                this.clearMemoryApiOverrideContent();
+                this.clearMemoryApiOverrideContent(session.id);
                 retrievalMessage.content = 'Memory skipped. Sending without personal context.';
                 retrievalMessage.memoryApprovalPrompt = null;
             }
@@ -5850,8 +6240,8 @@ class ChatApp {
      * @param {string} currentModelId - The model ID for the current request
      * @returns {Array} Processed messages with multimodal content
      */
-    processMessagesWithFiles(messages, currentModelId) {
-        const apiOverrideContent = this.getMemoryApiOverrideContent();
+    processMessagesWithFiles(messages, currentModelId, sessionId = this.state?.currentSessionId) {
+        const apiOverrideContent = this.getMemoryApiOverrideContent(sessionId);
         return processMessagesForApi(messages, currentModelId, {
             apiOverrideContent,
             onTextFileDecodeError: (error, file) => {
@@ -5860,10 +6250,9 @@ class ChatApp {
         });
     }
 
-    refreshProcessedMessagesIfMemoryOverrideChanged(processedMessages, sourceMessages, modelIdForRequest, memoryGenerationAtProcess) {
-        const currentGeneration = this._lastApiContentGeneration;
-        const shouldRebuild = currentGeneration !== memoryGenerationAtProcess ||
-            (currentGeneration !== null && !this.isMemoryFeatureActive(currentGeneration));
+    refreshProcessedMessagesIfMemoryOverrideChanged(processedMessages, sourceMessages, modelIdForRequest, memoryGenerationAtProcess, sessionId = this.state?.currentSessionId) {
+        const currentGeneration = this.getMemoryApiOverrideRevision(sessionId);
+        const shouldRebuild = currentGeneration !== memoryGenerationAtProcess;
         if (!shouldRebuild) {
             return {
                 processedMessages,
@@ -5871,8 +6260,8 @@ class ChatApp {
             };
         }
         return {
-            processedMessages: this.processMessagesWithFiles(sourceMessages, modelIdForRequest),
-            memoryGenerationAtProcess: this._lastApiContentGeneration
+            processedMessages: this.processMessagesWithFiles(sourceMessages, modelIdForRequest, sessionId),
+            memoryGenerationAtProcess: currentGeneration
         };
     }
 
@@ -5880,15 +6269,75 @@ class ChatApp {
      * Regenerates the last assistant response without creating a new user message.
      * Used when the regenerate button is clicked on an assistant message.
      */
+    async continueLimitedResponse(messageId) {
+        const session = this.getCurrentSession();
+        if (!session || this.isCurrentSessionStreaming()) return;
+        const mutationToken = this.beginSessionMutation(session.id, { exclusive: true });
+        if (!mutationToken) {
+            await this.acknowledgeSessionMutationBusy(session.id);
+            return;
+        }
+        try {
+        if (this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0) {
+            this.showToast('Send or clear the current draft before continuing the response.', 'error', 4000);
+            this.elements.messageInput.focus();
+            return;
+        }
+        const messages = await chatDB.getSessionMessages(session.id);
+        if (this.isSessionDeleted(session.id)) return;
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage?.id !== messageId || lastMessage.role !== 'assistant' || lastMessage.finishReason !== 'length') {
+            this.showToast('Only the latest response can be continued.', 'error', 4000);
+            return;
+        }
+        const previousUserMessage = [...messages]
+            .reverse()
+            .find(message => message.role === 'user' && !message.isLocalOnly);
+        await this.sendMessage({
+            sessionId: session.id,
+            rawContent: 'Continue exactly where you left off without repeating the previous text.',
+            files: [],
+            consumeComposer: false,
+            modelName: previousUserMessage?.model || session.model,
+            searchEnabled: Boolean(previousUserMessage?.searchEnabled),
+            memoryMode: typeof previousUserMessage?.memoryMode === 'boolean'
+                ? previousUserMessage.memoryMode
+                : this.memoryFeatureEnabled !== false && this.memoryMode === true,
+            reasoningEnabled: typeof previousUserMessage?.reasoningEnabled === 'boolean'
+                ? previousUserMessage.reasoningEnabled
+                : this.reasoningEnabled !== false,
+            reasoningEffort: previousUserMessage?.reasoningEffort || this.reasoningEffort,
+            mutationToken
+        });
+        } finally {
+            this.endSessionMutation(session.id, mutationToken);
+        }
+    }
+
     async regenerateResponse(options = {}) {
-        let session = this.getCurrentSession();
+        const sessionId = options.sessionId || this.state.currentSessionId;
+        if (!sessionId || this.isDeletingAllChats || this.historyDeletionInProgress || this.isSessionDeleted(sessionId)
+            || this.regenerationJobs.has(sessionId) || this.getPendingSend(sessionId)) return;
+        const mutationOwner = this.exclusiveSessionMutationOwners.get(sessionId);
+        if (mutationOwner && mutationOwner !== options.mutationToken) return;
+        const job = { controller: new AbortController() };
+        this.regenerationJobs.set(sessionId, job);
+        try {
+            return await this.regenerateCapturedResponse({ ...options, sessionId, abortController: job.controller });
+        } finally {
+            if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
+        }
+    }
+
+    async regenerateCapturedResponse(options = {}) {
+        const session = this.state.sessionsById.get(options.sessionId);
         if (!session) return;
-        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent();
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
 
         // Any local regeneration on an imported session forks it from upstream updates.
         if (session.importedFrom) {
             await this.markImportedSessionAsForked(session);
-            this.updateUrlWithSession(session.id);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
         }
 
         // Check if current session is already streaming
@@ -5897,15 +6346,28 @@ class ChatApp {
 
         // Get the last user message to anchor during regeneration
         const messages = await chatDB.getSessionMessages(session.id);
-        const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+        this.throwIfAborted(options.abortController.signal);
+        const lastUserMessage = options.userMessageId
+            ? messages.find(message => message.id === options.userMessageId && message.role === 'user')
+            : [...messages].reverse().find(m => m.role === 'user');
+        if (!lastUserMessage) return;
+        if (lastUserMessage.pendingFileObjects?.length) await this.ensureMessageFileMetadata(lastUserMessage);
+        this.throwIfAborted(options.abortController.signal);
+        const retryModelName = this.normalizeModelName(lastUserMessage.model || session.model) || lastUserMessage.model || session.model;
+        const retrySearchEnabled = Boolean(lastUserMessage.searchEnabled);
+        const retryMemoryMode = typeof lastUserMessage.memoryMode === 'boolean' ? lastUserMessage.memoryMode : this.memoryMode;
+        const retryReasoningEnabled = typeof lastUserMessage.reasoningEnabled === 'boolean' ? lastUserMessage.reasoningEnabled : this.reasoningEnabled;
+        const retryReasoningEffort = lastUserMessage.reasoningEffort || this.reasoningEffort;
         const regenerationContent = this.getMessageTextContent(lastUserMessage?.content).trim();
-        if (!await this.preflightTurnTicketBudget(session, regenerationContent)) return;
+        if (!await this.preflightTurnTicketBudget(session, regenerationContent, {
+            signal: options.abortController.signal, modelName: retryModelName,
+            reasoningEnabled: retryReasoningEnabled, memoryMode: retryMemoryMode })) return;
 
         this.reserveAccessAcquisitionHandoff(session);
         this.chatArea?.closeQuickAskWindow?.();
 
         // Create abort controller for this stream
-        const abortController = new AbortController();
+        const abortController = options.abortController;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
@@ -5918,7 +6380,7 @@ class ChatApp {
         }
 
         try {
-            const shouldAttemptMemoryAugment = lastUserMessage && !options.skipMemoryAugment;
+            const shouldAttemptMemoryAugment = lastUserMessage && retryMemoryMode && !options.skipMemoryAugment;
             if (shouldAttemptMemoryAugment) {
                 await this.removeLocalOnlyMessagesAfter(session.id, lastUserMessage.id);
                 const memoryMessages = await chatDB.getSessionMessages(session.id);
@@ -5926,6 +6388,7 @@ class ChatApp {
                 try {
                     await this.runMemoryAugmentFlow(lastUserMessage.content || '', lastUserMessage, session, {
                         conversationText,
+                        memoryMode: retryMemoryMode,
                         signal: abortController.signal
                     });
                 } catch (error) {
@@ -5943,7 +6406,7 @@ class ChatApp {
                 await this.councilController.runRegenerateTurn({
                     session,
                     userMessage: lastUserMessage,
-                    searchEnabled: this.searchEnabled,
+                    searchEnabled: retrySearchEnabled,
                     abortController,
                     initialPendingPhase,
                     preserveLocalOnlyMessages: shouldAttemptMemoryAugment || options.skipMemoryAugment === true
@@ -5951,15 +6414,17 @@ class ChatApp {
                 return;
             }
 
-            const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
+            const typingModelName = retryModelName || this.inferenceService.getDefaultModelName(session);
             const typingId = this.isViewingSession(session.id)
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
                 : null;
 
+            await this.prepareRuntimeTurn(session, abortController.signal);
+
             // Automatically acquire API key if needed
-            const hasAccessToken = !!inferenceService.getAccessToken(session);
-            const isAccessExpired = inferenceService.isAccessExpired(session);
-            const accessLabel = inferenceService.getAccessLabel(session);
+            const hasAccessToken = !!this.inferenceService.getAccessToken(session);
+            const isAccessExpired = this.inferenceService.isAccessExpired(session);
+            const accessLabel = this.inferenceService.getAccessLabel(session);
             if (!hasAccessToken || isAccessExpired) {
                 try {
                     if (this.floatingPanel) {
@@ -5967,6 +6432,8 @@ class ChatApp {
                     }
                     await this.acquireAndSetAccess(session, {
                         signal: abortController.signal,
+                        modelNameOverride: retryModelName,
+                        reasoningEnabled: retryReasoningEnabled,
                         onGranted: () => {
                             this.advancePendingStateAfterAccessGranted(session.id, typingId);
                         }
@@ -5982,7 +6449,7 @@ class ChatApp {
                     if (lastUserMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
+                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true }, session);
                     return;
                 }
             }
@@ -5998,11 +6465,7 @@ class ChatApp {
                 window.networkLogger.setCurrentSession(session.id);
             }
 
-            let modelNameToUse = this.normalizeModelName(session.model);
-            if (modelNameToUse !== session.model) {
-                session.model = modelNameToUse;
-                await chatDB.saveSession(session);
-            }
+            let modelNameToUse = retryModelName;
 
             let selectedModelEntry = modelNameToUse
                 ? this.state.models.find(m => m.name === modelNameToUse)
@@ -6023,7 +6486,7 @@ class ChatApp {
 
             if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
-                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
+                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true }, session);
                 return;
             }
 
@@ -6056,8 +6519,8 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
-                let memoryGenerationAtProcess = this._lastApiContentGeneration;
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest, session.id);
+                let memoryGenerationAtProcess = this.getMemoryApiOverrideRevision(session.id);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -6088,7 +6551,8 @@ class ChatApp {
                     processedMessages,
                     sanitizedMessages,
                     modelIdForRequest,
-                    memoryGenerationAtProcess
+                    memoryGenerationAtProcess,
+                    session.id
                 ));
 
                 let lastSaveLength = 0;
@@ -6096,7 +6560,7 @@ class ChatApp {
                 let reasoningStartTime = null;
 
                 // Stream the response with token tracking
-                const tokenData = await inferenceService.streamCompletion(
+                const tokenData = await this.streamCompletionWithRuntime(
                     processedMessages,
                     modelIdForRequest,
                     session,
@@ -6162,7 +6626,7 @@ class ChatApp {
                         streamingTokenCount = tokenUpdate.completionTokens || 0;
                     },
                     [], // No files for regeneration (files are included in processedMessages)
-                    this.searchEnabled, // Use current search toggle state
+                    retrySearchEnabled, // Reuse the accepted prompt settings
                     abortController,
                     async () => {
                         this.updateSessionStreamingPhase(session.id, 'stream-open');
@@ -6199,8 +6663,9 @@ class ChatApp {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
                     },
-                    this.reasoningEnabled, // Use current reasoning toggle state
-                    this.reasoningEffort
+                    retryReasoningEnabled,
+                    retryReasoningEffort,
+                    streamingMessageId
                 );
 
                 // Save the final message content with token data, reasoning, and citations
@@ -6212,9 +6677,11 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
+                streamingMessage.finishReason = tokenData.finishReason || null;
+                await this.recordRuntimeUsage(session, streamingMessage, tokenData);
                 const streamReportedModel = tokenData.model || modelIdForRequest;
                 const resolvedFinalModelName = this.normalizeModelName(
-                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
+                    this.inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
                 ) || modelNameToUse;
                 streamingMessage.model = resolvedFinalModelName;
                 streamingMessage.streamingTokens = null;
@@ -6229,6 +6696,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                if (this.isViewingSession(session.id)) this.announceChatOperation('Response complete.');
                 await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
                 // Derive citation metadata locally and update UI.
@@ -6271,13 +6739,8 @@ class ChatApp {
                         }
                     }
                     if (streamingMessage && firstChunkReceived) {
-                        if (streamedContent.trim() || streamedReasoning.trim()) {
-                            streamingMessage.content = streamedContent;
-                            // Parse and save the cleaned reasoning
-                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
-                            streamingMessage.tokenCount = null;
-                            streamingMessage.streamingTokens = null;
-                            streamingMessage.streamingReasoning = false;
+                        if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
+                            this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning);
                             streamingMessage.streamingPending = false;
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
@@ -6301,11 +6764,8 @@ class ChatApp {
                     }
                 } else {
                     if (firstChunkReceived && streamingMessage) {
-                        streamingMessage.content = 'Sorry, I encountered an error while processing your request.';
-                        streamingMessage.tokenCount = null;
-                        streamingMessage.streamingTokens = null;
-                        streamingMessage.streamingReasoning = false;
-                        streamingMessage.streamingPending = false;
+                        this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning,
+                            'Sorry, I encountered an error while processing your request.');
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -6324,19 +6784,19 @@ class ChatApp {
                             }
                         }
                         if (this.isViewingSession(session.id)) {
-                            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true });
+                            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true }, session);
                         }
                     }
                 }
             }
         } finally {
-            this.clearMemoryApiOverrideContent();
+            this.clearMemoryApiOverrideContent(session.id);
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
             });
         }
     }
@@ -6344,11 +6804,11 @@ class ChatApp {
     async regenerateCouncilLane(messageId, laneId, options = {}) {
         let session = this.getCurrentSession();
         if (!session || !messageId || !laneId) return;
-        if (!options.skipMemoryAugment) this._lastApiContent = null;
+        if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
 
         if (session.importedFrom) {
             await this.markImportedSessionAsForked(session);
-            this.updateUrlWithSession(session.id);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
         }
 
         const streamingState = this.getSessionStreamingState(session.id);
@@ -6450,7 +6910,7 @@ class ChatApp {
                 }
             }
         } finally {
-            this._lastApiContent = null;
+            this.clearMemoryApiOverrideContent(session.id);
             this.setSessionStreamingState(session.id, false, null);
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
@@ -6464,36 +6924,88 @@ class ChatApp {
      * Sends a user message and streams the AI response.
      * Handles API key acquisition, model selection, and streaming updates.
      */
-    async sendMessage() {
+    async sendMessage(options = {}) {
+        if (this.sessionSwitchInFlight) return;
+        const sessionId = options.sessionId || this.state.currentSessionId;
+        if (this.isDeletingAllChats || this.historyDeletionInProgress || this.isSessionDeleted(sessionId)) return;
+        if (this.getPendingSend(sessionId)) return;
+        const owner = this.exclusiveSessionMutationOwners.get(sessionId);
+        if (owner && owner !== options.mutationToken) return;
+        const submissionKey = sessionId || '__new_chat__';
+        if (this.sendSubmissionsInFlight.has(submissionKey)) return;
+        const rawContent = options.rawContent ?? this.elements.messageInput.value ?? '';
+        const files = [...(options.files || this.uploadedFiles)];
+        if (!rawContent.trim() && !files.length) return;
+        const submission = {
+            sessionId,
+            generation: this.sessionNavigationGeneration,
+            controller: new AbortController(),
+            rawContent,
+            files,
+            searchEnabled: options.searchEnabled ?? this.searchEnabled,
+            reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
+            reasoningEffort: options.reasoningEffort ?? this.reasoningEffort,
+            memoryMode: options.memoryMode ?? this.memoryMode,
+            memoryFeatureEnabled: options.memoryFeatureEnabled ?? this.memoryFeatureEnabled,
+            scrubberPending: this.scrubberPending,
+            model: options.modelName || this.state.sessionsById.get(sessionId)?.model || this.state.pendingModelName,
+            consumeComposer: options.consumeComposer !== false,
+            accepted: false
+        };
+        this.sendSubmissionsInFlight.set(submissionKey, submission);
+        this.updateInputState();
+        try {
+            return await this.sendCapturedMessage(submission);
+        } catch (error) {
+            if (!error?.isCancelled && error?.name !== 'AbortError') {
+                this.showToast(error?.message || 'Could not send the message. Please try again.', 'error');
+            }
+        } finally {
+            if (this.sendSubmissionsInFlight.get(submissionKey) === submission) {
+                this.sendSubmissionsInFlight.delete(submissionKey);
+            }
+            this.updateInputState();
+        }
+    }
+
+    async sendCapturedMessage(submission) {
         if (!await this.ensureDatabaseReady()) {
             return;
         }
+        this.throwIfAborted(submission.controller.signal);
 
         // Check if there's content to send
-        const rawContent = this.elements.messageInput.value || '';
+        const rawContent = submission.rawContent;
         const content = rawContent.trim();
-        const hasFiles = this.uploadedFiles.length > 0;
+        const hasFiles = submission.files.length > 0;
         if (!content && !hasFiles) return;
-        this.clearMemoryApiOverrideContent();
+        this.clearMemoryApiOverrideContent(submission.sessionId);
 
         // Create session if none exists (first message creates the session)
-        if (!this.getCurrentSession()) {
-            await this.createSession();
+        if (!submission.sessionId) {
+            if (submission.generation !== this.sessionNavigationGeneration) return;
+            const created = await this.createSession('New Chat', {
+                model: submission.model,
+                signal: submission.controller.signal,
+                onCreated: session => { submission.sessionId = session.id; }
+            });
+            submission.sessionId = created?.id || this.state.currentSessionId;
         }
 
-        let session = this.getCurrentSession();
+        this.throwIfAborted(submission.controller.signal);
+        const session = this.state.sessionsById.get(submission.sessionId);
         if (!session) return; // Safety check
 
         // Any local user message on an imported session forks it from upstream updates.
         if (session.importedFrom) {
             await this.markImportedSessionAsForked(session);
-            this.updateUrlWithSession(session.id);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
         }
 
         // Block sending if station is banned (check both state and cached broadcast data)
-        const verifier = inferenceService.getVerificationAdapter(session);
-        const accessInfo = inferenceService.getAccessInfo(session);
-        const accessId = verifier?.getAccessId(accessInfo?.info);
+        const verifier = this.inferenceService.getVerificationAdapter(session);
+        const accessInfo = this.inferenceService.getAccessInfo(session);
+        const accessId = verifier?.getAccessId?.(accessInfo?.info);
         if (verifier?.supports &&
             accessId &&
             hasExplicitVerifierApprovalForAccessInfo(accessInfo?.info)) {
@@ -6524,7 +7036,10 @@ class ChatApp {
         // Memory and model access draw from the same wallet. Check the complete
         // turn before either path can consume a ticket, so Memory cannot spend
         // the final ticket and leave the selected model unable to start.
-        if (!await this.preflightTurnTicketBudget(session, content)) return;
+        if (!await this.preflightTurnTicketBudget(session, content, { signal: submission.controller.signal,
+            modelName: submission.model, reasoningEnabled: submission.reasoningEnabled,
+            memoryMode: submission.memoryMode, memoryFeatureEnabled: submission.memoryFeatureEnabled })) return;
+        this.throwIfAborted(submission.controller.signal);
 
         // Keep the composer at normal reading width while Parallel is being
         // configured. Expand only once a multi-model turn is actually sent,
@@ -6535,28 +7050,33 @@ class ChatApp {
         this.chatArea?.closeQuickAskWindow?.();
 
         // Create abort controller for this stream
-        const abortController = new AbortController();
+        const abortController = submission.controller;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
 
         // Store current files and search state before clearing
-        const currentFiles = [...this.uploadedFiles];
-        const searchEnabled = this.searchEnabled;
+        const currentFiles = submission.files;
+        const searchEnabled = submission.searchEnabled;
 
         try {
 
             let scrubberOriginalPrompt = null;
             let scrubberRedactedPrompt = null;
-            if (this.scrubberPending && this.scrubberPending.redacted?.trim() === content) {
-                scrubberOriginalPrompt = this.scrubberPending.original;
-                scrubberRedactedPrompt = this.scrubberPending.redacted;
+            if (submission.scrubberPending && submission.scrubberPending.redacted?.trim() === content) {
+                scrubberOriginalPrompt = submission.scrubberPending.original;
+                scrubberRedactedPrompt = submission.scrubberPending.redacted;
             }
-            this.scrubberPending = null;
+            if (this.scrubberPending === submission.scrubberPending) this.scrubberPending = null;
 
             // Add user message with file metadata
-            const metadata = {};
+            const metadata = { model: submission.model || session.model, extra: {
+                reasoningEnabled: submission.reasoningEnabled, reasoningEffort: submission.reasoningEffort,
+                memoryMode: Boolean(submission.memoryFeatureEnabled && submission.memoryMode) } };
             if (hasFiles) {
-                metadata.files = await this.buildMessageFileMetadata(currentFiles);
+                // IndexedDB can durably clone File objects before asynchronous
+                // decoding. A reload or failed conversion keeps them retryable.
+                metadata.files = currentFiles.map(file => ({ name: file.name, type: file.type, size: file.size }));
+                metadata.extra.pendingFileObjects = currentFiles;
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
@@ -6570,7 +7090,23 @@ class ChatApp {
                 };
             }
             this.isAutoScrollPaused = true;
-            const userMessage = await this.addMessage('user', content || '', metadata);
+            this.throwIfAborted(abortController.signal);
+            metadata.onPersisted = message => {
+                submission.accepted = true;
+                submission.messageId = message.id;
+                if (this.isViewingSession(session.id)) this.announceChatOperation('Message accepted.');
+                if (submission.consumeComposer && this.isViewingSession(session.id)) {
+                    if (this.elements.messageInput.value === rawContent) this.elements.messageInput.value = '';
+                    this.uploadedFiles = this.uploadedFiles.filter(file => !currentFiles.includes(file));
+                    this.fileUndoStack = [];
+                    this.renderFilePreviews();
+                    this.updateFileCountBadge();
+                    this.updateInputState();
+                    this.resetMessageInputLayout({ resetScroll: true });
+                }
+            };
+            const userMessage = await this.addMessage('user', content || '', metadata, session);
+            submission.accepted = Boolean(userMessage);
             if (userMessage?.id) {
                 emitDesktopEvent('oa-desktop:user-message-added', {
                     sessionId: session.id,
@@ -6578,26 +7114,22 @@ class ChatApp {
                 });
             }
 
-            // Clear input and files
-            this.elements.messageInput.value = '';
-            this.uploadedFiles = [];
-            this.fileUndoStack = []; // Clear undo stack when message is sent
-            this.renderFilePreviews();
-            this.updateFileCountBadge();
-            this.updateInputState();
-            this.resetMessageInputLayout({ resetScroll: true });
+            if (hasFiles) await this.ensureMessageFileMetadata(userMessage, currentFiles);
+            this.throwIfAborted(abortController.signal);
 
             // Auto-scroll remains paused while the response streams.
-            if (userMessage && userMessage.id) {
+            if (userMessage && userMessage.id && this.isViewingSession(session.id)) {
                 this.startPromptSlideUpEffect(userMessage.id);
             }
 
-            if (this.memoryFeatureEnabled && this.memoryMode && content && userMessage) {
+            if (submission.memoryFeatureEnabled && submission.memoryMode && content && userMessage) {
                 const memoryMessages = await chatDB.getSessionMessages(session.id);
                 const conversationText = this.buildConversationText(memoryMessages);
                 try {
                     await this.runMemoryAugmentFlow(content, userMessage, session, {
                         conversationText,
+                        memoryMode: submission.memoryMode,
+                        memoryFeatureEnabled: submission.memoryFeatureEnabled,
                         signal: abortController.signal
                     });
                 } catch (error) {
@@ -6624,15 +7156,17 @@ class ChatApp {
                 return;
             }
 
-            const typingModelName = this.normalizeModelName(session.model) || session.model || this.state.pendingModelName || inferenceService.getDefaultModelName(session);
+            const typingModelName = this.normalizeModelName(submission.model || session.model) || submission.model || session.model || this.inferenceService.getDefaultModelName(session);
             let typingId = this.isViewingSession(session.id)
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
                 : null;
 
+            await this.prepareRuntimeTurn(session, abortController.signal);
+
             // Automatically acquire API key if needed
-            const hasAccessToken = !!inferenceService.getAccessToken(session);
-            const isAccessExpired = inferenceService.isAccessExpired(session);
-            const accessLabel = inferenceService.getAccessLabel(session);
+            const hasAccessToken = !!this.inferenceService.getAccessToken(session);
+            const isAccessExpired = this.inferenceService.isAccessExpired(session);
+            const accessLabel = this.inferenceService.getAccessLabel(session);
             if (!hasAccessToken || isAccessExpired) {
                 try {
                     if (this.floatingPanel) {
@@ -6640,6 +7174,8 @@ class ChatApp {
                     }
                     await this.acquireAndSetAccess(session, {
                         signal: abortController.signal,
+                        modelNameOverride: submission.model,
+                        reasoningEnabled: submission.reasoningEnabled,
                         onGranted: () => {
                             this.advancePendingStateAfterAccessGranted(session.id, typingId);
                         }
@@ -6655,7 +7191,7 @@ class ChatApp {
                     if (userMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true });
+                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true }, session);
                     return; // Return early if key acquisition fails
                 }
             }
@@ -6671,8 +7207,8 @@ class ChatApp {
                 window.networkLogger.setCurrentSession(session.id);
             }
 
-            let modelNameToUse = this.normalizeModelName(session.model);
-            if (modelNameToUse !== session.model) {
+            let modelNameToUse = this.normalizeModelName(submission.model || session.model);
+            if (!submission.model && modelNameToUse !== session.model) {
                 session.model = modelNameToUse;
                 await chatDB.saveSession(session);
             }
@@ -6696,7 +7232,7 @@ class ChatApp {
 
             if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
-                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true });
+                await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true }, session);
                 return; // Return early
             }
 
@@ -6740,8 +7276,8 @@ class ChatApp {
                 });
 
                 // Process messages to include file content from stored metadata
-                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest);
-                let memoryGenerationAtProcess = this._lastApiContentGeneration;
+                let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest, session.id);
+                let memoryGenerationAtProcess = this.getMemoryApiOverrideRevision(session.id);
 
                 // Create a placeholder message for streaming
                 const streamingMessageId = this.generateId();
@@ -6780,11 +7316,12 @@ class ChatApp {
                     processedMessages,
                     sanitizedMessages,
                     modelIdForRequest,
-                    memoryGenerationAtProcess
+                    memoryGenerationAtProcess,
+                    session.id
                 ));
 
                 // Stream the response with token tracking
-                const tokenData = await inferenceService.streamCompletion(
+                const tokenData = await this.streamCompletionWithRuntime(
                     processedMessages,
                     modelIdForRequest,
                     session,
@@ -6914,8 +7451,9 @@ class ChatApp {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
                     },
-                    this.reasoningEnabled,
-                    this.reasoningEffort
+                    submission.reasoningEnabled,
+                    submission.reasoningEffort,
+                    streamingMessageId
                 );
 
                 // Save the final message content with token data, reasoning, and citations
@@ -6927,9 +7465,11 @@ class ChatApp {
                 // Parse and save the cleaned reasoning
                 streamingMessage.reasoning = rawReasoning ? parseReasoningContent(rawReasoning) : null;
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
+                streamingMessage.finishReason = tokenData.finishReason || null;
+                await this.recordRuntimeUsage(session, streamingMessage, tokenData);
                 const streamReportedModel = tokenData.model || modelIdForRequest;
                 const resolvedFinalModelName = this.normalizeModelName(
-                    inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
+                    this.inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
                 ) || modelNameToUse;
                 streamingMessage.model = resolvedFinalModelName;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
@@ -6944,6 +7484,7 @@ class ChatApp {
                 }
 
                 await chatDB.saveMessage(streamingMessage);
+                if (this.isViewingSession(session.id)) this.announceChatOperation('Response complete.');
                 await this.refreshSessionConversationSearchText(session, null, { persist: true });
 
                 // Derive citation metadata locally and update UI.
@@ -6977,14 +7518,9 @@ class ChatApp {
                 if (error.isCancelled) {
                     // Keep the partial message if there's content, otherwise remove it
                     if (streamingMessage && firstChunkReceived) {
-                        if (streamedContent.trim() || streamedReasoning.trim()) {
+                        if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
                             // Save the partial content with a note
-                            streamingMessage.content = streamedContent;
-                            // Parse and save the cleaned reasoning
-                            streamingMessage.reasoning = streamedReasoning ? parseReasoningContent(streamedReasoning) : null;
-                            streamingMessage.tokenCount = null;
-                            streamingMessage.streamingTokens = null;
-                            streamingMessage.streamingReasoning = false;
+                            this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning);
                             await chatDB.saveMessage(streamingMessage);
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
@@ -7019,7 +7555,9 @@ class ChatApp {
                     typingId = this.isViewingSession(session.id) ? this.showTypingIndicator(modelNameToUse, refreshPendingPhase) : null;
 
                     try {
-                        await this.refreshAccessAfterCreditExhaustion(session, { typingId });
+                        await this.refreshAccessAfterCreditExhaustion(session, { typingId,
+                            signal: abortController.signal, modelNameOverride: submission.model,
+                            reasoningEnabled: submission.reasoningEnabled });
                         continue retryLoop;
                     } catch (refreshError) {
                         console.error('Failed to refresh exhausted ephemeral key:', refreshError);
@@ -7071,13 +7609,7 @@ class ChatApp {
 
                 if (firstChunkReceived && streamingMessage) {
                     // Message was already added to UI, update it with error
-                    streamingMessage.content = userFriendlyMessage;
-                    streamingMessage.tokenCount = null;
-                    streamingMessage.streamingTokens = null;
-                    streamingMessage.streamingReasoning = false;
-                    streamingMessage.streamingPending = false;
-                    streamingMessage.streamingPhase = null;
-                    streamingMessage.isLocalOnly = true;
+                    this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning, userFriendlyMessage);
                     await chatDB.saveMessage(streamingMessage);
                     // Only update UI if still viewing the same session
                     if (this.chatArea && this.isViewingSession(session.id)) {
@@ -7086,13 +7618,13 @@ class ChatApp {
                 } else if (this.isViewingSession(session.id)) {
                     if (typingId) this.removeTypingIndicator(typingId);
                     // Error before first chunk - message never added to UI, add new error message
-                    await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true });
+                    await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true }, session);
                 }
                 break retryLoop; // Exit after showing error
             }
             } // End of retryLoop
         } finally {
-            this.clearMemoryApiOverrideContent();
+            this.clearMemoryApiOverrideContent(session.id);
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
@@ -7100,7 +7632,7 @@ class ChatApp {
             this.updateScrollButtonVisibility();
             // Use requestAnimationFrame to ensure focus happens after UI updates
             requestAnimationFrame(() => {
-                this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
             });
         }
     }
@@ -7120,7 +7652,8 @@ class ChatApp {
             : resolveProviderFromModelReference(modelName).displayName);
         const id = 'typing-' + Date.now();
         const timestamp = Date.now();
-        const typingHtml = this.ui.buildTypingIndicator(id, providerName, modelName, timestamp, phase);
+        const sessionId = this.getCurrentSession()?.id || '';
+        const typingHtml = this.ui.buildTypingIndicator(id, providerName, modelName, timestamp, phase, this.getSessionPendingProgress?.(sessionId) || null, sessionId);
         this.elements.messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
         this.updateActivePromptScrollSpacer();
         if (this.shouldAutoScrollChat()) {
@@ -7131,8 +7664,11 @@ class ChatApp {
 
     resolvePendingPhaseForSession(session) {
         if (!session) return 'requesting-key';
-        const hasAccessToken = !!inferenceService.getAccessToken(session);
-        const isAccessExpired = inferenceService.isAccessExpired(session);
+        if (this.inferenceService.isTransportAccessReady) {
+            return this.inferenceService.isTransportAccessReady(session) ? 'waiting-response' : 'requesting-key';
+        }
+        const hasAccessToken = !!this.inferenceService.getAccessToken(session);
+        const isAccessExpired = this.inferenceService.isAccessExpired(session);
         return (!hasAccessToken || isAccessExpired) ? 'requesting-key' : 'waiting-response';
     }
 
@@ -7163,13 +7699,13 @@ class ChatApp {
     }
 
     async resolveModelForQuickAsk(session) {
-        const defaults = getDefaultModelConfig();
-        const defaultModelId = defaults.defaultModelId || inferenceService.getDefaultModelId(session);
+        const defaults = this.modelConfiguration.getDefaultModelConfig();
+        const defaultModelId = defaults.defaultModelId || this.inferenceService.getDefaultModelId(session);
         const instantModel = this.getQuickAskPinnedInstantModel(defaults);
         let modelNameToUse = instantModel?.modelName ||
             this.normalizeModelName(defaults.defaultModelName || defaultModelId) ||
             defaults.defaultModelName ||
-            inferenceService.getDefaultModelName(session);
+            this.inferenceService.getDefaultModelName(session);
 
         let selectedModelEntry = instantModel?.model ||
             (defaultModelId
@@ -7220,9 +7756,9 @@ class ChatApp {
     }
 
     getBannedAccessWarning(accessSession) {
-        const verifier = inferenceService.getVerificationAdapter(accessSession);
-        const accessInfo = inferenceService.getAccessInfo(accessSession);
-        const accessId = verifier?.getAccessId(accessInfo?.info);
+        const verifier = this.inferenceService.getVerificationAdapter(accessSession);
+        const accessInfo = this.inferenceService.getAccessInfo(accessSession);
+        const accessId = verifier?.getAccessId?.(accessInfo?.info);
         if (!verifier?.supports ||
             !accessId ||
             !hasExplicitVerifierApprovalForAccessInfo(accessInfo?.info)) {
@@ -7243,7 +7779,7 @@ class ChatApp {
     }
 
     async ensureQuickAskAccess(session, quickAskModel, abortController, options = {}) {
-        const accessLabel = inferenceService.getAccessLabel(session);
+        const accessLabel = this.inferenceService.getAccessLabel(session);
 
         if (quickAskModel?.laneId && quickAskModel?.laneEntry && this.councilController) {
             const entry = quickAskModel.laneEntry;
@@ -7297,8 +7833,8 @@ class ChatApp {
             throw new Error('The current station is banned.');
         }
 
-        const hasAccessToken = !!inferenceService.getAccessToken(accessSession);
-        const isAccessExpired = inferenceService.isAccessExpired(accessSession);
+        const hasAccessToken = !!this.inferenceService.getAccessToken(accessSession);
+        const isAccessExpired = this.inferenceService.isAccessExpired(accessSession);
         if (!hasAccessToken || isAccessExpired) {
             options.onStatus?.('requesting-key');
             try {
@@ -7347,13 +7883,29 @@ class ChatApp {
     }
 
     async inlineQuickAsk(selectionText, options = {}) {
+        const sessionId = this.state.currentSessionId;
+        if (!sessionId || this.deletingSessionIds.has(sessionId)) throw new Error('This chat is unavailable.');
+        const job = { controller: options.abortController || new AbortController() };
+        let jobs = this.quickAskJobs.get(sessionId);
+        if (!jobs) this.quickAskJobs.set(sessionId, jobs = new Set());
+        jobs.add(job);
+        try {
+            return await this.performInlineQuickAsk(selectionText, { ...options,
+                abortController: job.controller, sessionId });
+        } finally {
+            jobs.delete(job);
+            if (!jobs.size) this.quickAskJobs.delete(sessionId);
+        }
+    }
+
+    async performInlineQuickAsk(selectionText, options = {}) {
         const selectedText = normalizeQuickAskSelection(selectionText);
         const question = buildQuickAskQuestion(selectedText);
         if (!question) {
             throw new Error('Select text in a model response to ask about it.');
         }
 
-        const session = this.getCurrentSession();
+        const session = this.state.sessionsById.get(options.sessionId);
         if (!session) {
             throw new Error('Start a chat before using inline quick ask.');
         }
@@ -7371,6 +7923,9 @@ class ChatApp {
 
         const quickAskModel = await this.resolveModelForQuickAsk(session);
         const { modelId, modelName } = quickAskModel;
+        await this.runtime.prepareTurn?.({ sessionId: session.id, signal: abortController.signal,
+            onProgress: () => options.onStatus?.('requesting-key') });
+        this.throwIfAborted(abortController.signal);
         let quickAskAccessSession = await this.ensureQuickAskAccess(session, quickAskModel, abortController, options);
         if (this.getSessionStreamingState(session.id).isStreaming) {
             throw new Error('Quick ask is unavailable while this chat is streaming.');
@@ -7384,7 +7939,7 @@ class ChatApp {
         const filteredMessages = messages.filter(msg => !msg.isLocalOnly);
         const conversationMessages = this.getQuickAskConversationMessages(filteredMessages, quickAskModel);
         const sanitizedMessages = this.sanitizeMessagesForApi(conversationMessages);
-        const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelId);
+        const processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelId, session.id);
         const quickAskMessages = buildQuickAskMessages(processedMessages, selectedText);
         if (this.getSessionStreamingState(session.id).isStreaming) {
             throw new Error('Quick ask is unavailable while this chat is streaming.');
@@ -7399,7 +7954,7 @@ class ChatApp {
         let reasoning = '';
         let streamingTokenCount = 0;
         let firstChunkReceived = false;
-        const streamQuickAsk = () => inferenceService.streamCompletion(
+        const streamQuickAsk = () => this.streamCompletionWithRuntime(
             quickAskMessages,
             modelId,
             quickAskAccessSession,
@@ -7431,7 +7986,9 @@ class ChatApp {
                 options.onReasoningChunk?.(reasoning, reasoningChunk);
             },
             this.reasoningEnabled,
-            this.reasoningEffort
+            this.reasoningEffort,
+            this.generateId(),
+            'quick-ask'
         );
 
         let tokenData;
@@ -7474,7 +8031,7 @@ class ChatApp {
             reasoning: rawReasoning ? parseReasoningContent(rawReasoning) : null,
             tokenCount: tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount || null,
             model: this.normalizeModelName(
-                inferenceService.getDisplayName(tokenData.model || modelId, modelName, session)
+                this.inferenceService.getDisplayName(tokenData.model || modelId, modelName, session)
             ) || modelName,
             citations: tokenData.citations || null
         };
@@ -7485,17 +8042,8 @@ class ChatApp {
     updateTypingIndicator(id, phase) {
         const indicator = document.getElementById(id);
         if (!indicator) return;
-        const normalizedPhase = this.normalizePendingPhase(phase);
-        if (indicator.dataset.phase === normalizedPhase) return;
-
-        indicator.dataset.phase = normalizedPhase;
-        const label = indicator.querySelector('.pending-response-label');
-        if (label) {
-            label.textContent = normalizedPhase === 'waiting-response'
-                ? 'Waiting for response'
-                : 'Requesting ephemeral key';
-            label.classList.add('pending-response-streaming');
-        }
+        this.ui.updatePendingIndicator(indicator, phase,
+            this.getSessionPendingProgress?.(indicator.dataset.pendingSessionId || this.state.currentSessionId) || null);
     }
 
     /**
@@ -7514,47 +8062,41 @@ class ChatApp {
      * @param {string} sessionId - ID of the session to delete
      */
     async deleteSession(sessionId) {
-        const index = this.state.sessions.findIndex(s => s.id === sessionId);
-        if (index > -1) {
-            const deletedCurrentSession = this.state.currentSessionId === sessionId;
-            this.state.sessions.splice(index, 1);
-            this.state.sessionsById.delete(sessionId);
-
-            // Delete from DB
-            await chatDB.deleteSession(sessionId);
-            await chatDB.deleteSessionMessages(sessionId);
-            this.sessionScrollPositions.delete(sessionId);
-            this.sessionPromptScrollAnchors.delete(sessionId);
-            if (this.activePromptScroll?.sessionId === sessionId) {
-                this.detachPromptSlideUpEffect();
-            }
-            this.clearChatbarStateForSession(sessionId);
-
-            // Clear edit state if deleting current session
-            if (deletedCurrentSession) {
-                this.editingMessageId = null;
-                this.editDrafts.clear();
-            }
-
-            // Switch to another session if we deleted the current one
-            if (deletedCurrentSession) {
-                this.state.currentSessionId = this.state.sessions.length > 0 ? this.state.sessions[0].id : null;
-                await chatDB.saveSetting('currentSessionId', this.state.currentSessionId);
-            }
-
-            this.renderSessions();
-            this.renderMessages();
-            this.renderCurrentModel();
-            if (deletedCurrentSession) {
-                this.resetMessageInputLayout({ resetScroll: true });
-                this.restoreChatbarStateForSession(this.state.currentSessionId);
-            }
-
-            // Create new session if none exist
-            if (this.state.sessions.length === 0) {
-                await this.createSession();
-            }
+        if (this.deletingSessionIds.has(sessionId)) return false;
+        this.deletingSessionIds.add(sessionId);
+        try {
+            await this.cancelSessionWork(sessionId, { waitForMutations: true });
+            await this.runtime.beforeDelete?.({ sessionIds: [sessionId] });
+            await this.deleteIdleSession(sessionId);
+            this.deletedSessionIds.add(sessionId);
+            return true;
+        } catch (error) {
+            this.showToast(error?.message || 'Could not delete the chat. Please try again.', 'error');
+            return false;
+        } finally {
+            this.deletingSessionIds.delete(sessionId);
         }
+    }
+
+    async deleteIdleSession(sessionId) {
+        if (!this.state.sessionsById.has(sessionId)) return;
+        const generation = this.sessionNavigationGeneration;
+        await chatDB.deleteSessionWithMessages(sessionId);
+        this.state.sessions = this.state.sessions.filter(session => session.id !== sessionId);
+        this.state.sessionsById.delete(sessionId);
+        this.sessionScrollPositions.delete(sessionId);
+        this.sessionPromptScrollAnchors.delete(sessionId);
+        if (this.activePromptScroll?.sessionId === sessionId) this.detachPromptSlideUpEffect();
+        this.clearChatbarStateForSession(sessionId);
+        this.renderSessions();
+        // Removing A must not overwrite the user's selection/draft in B while
+        // IndexedDB is finishing. Only the still-owned view may navigate.
+        if (generation !== this.sessionNavigationGeneration || !this.isViewingSession(sessionId)) return;
+        this.editingMessageId = null;
+        this.editDrafts.clear();
+        const next = this.state.sessions.find(session => !this.isSessionDeleted(session.id));
+        if (next) await this.switchSession(next.id);
+        else await this.clearCurrentSession({ immediate: true });
     }
 
     /**
@@ -7575,6 +8117,7 @@ class ChatApp {
             : '';
         return {
             isEditing: this.editingMessageId === messageId,
+            pendingProgress: this.getSessionPendingProgress(session?.id),
             editContent: editDraft?.content,
             editFiles: editDraft?.files,
             editParallelEnabled,
@@ -7588,6 +8131,86 @@ class ChatApp {
         return Array.isArray(files)
             ? files.map(file => ({ ...file }))
             : [];
+    }
+
+    async ensureMessageFileMetadata(message, rawFiles = null) {
+        if (!message?.id) return [];
+        if (this.isSessionDeleted(message.sessionId)) throw this.createCancelledError();
+        const pendingFiles = Array.isArray(rawFiles) && rawFiles.length
+            ? rawFiles
+            : Array.isArray(message.pendingFileObjects)
+                ? message.pendingFileObjects
+                : [];
+        if (!pendingFiles.length) return message.files || [];
+        const existing = this.messageFilePreparationInFlight.get(message.id);
+        if (existing) {
+            const files = await existing;
+            if (this.isSessionDeleted(message.sessionId)) throw this.createCancelledError();
+            message.files = files;
+            delete message.pendingFileObjects;
+            // The caller may be a separately loaded IndexedDB clone carrying a
+            // newer delivery state (for example, Cancel followed by Retry).
+            // Re-save that hydrated clone so the older preparation object cannot
+            // leave the durable receipt looking canceled while Retry is active.
+            await chatDB.saveMessage(message);
+            if (this.chatArea && this.isViewingSession(message.sessionId)) {
+                await this.chatArea.appendMessage(message);
+            }
+            return files;
+        }
+
+        const preparation = (async () => {
+            const preparedFiles = await this.buildMessageFileMetadata(pendingFiles);
+            if (this.isSessionDeleted(message.sessionId)) throw this.createCancelledError();
+            const latestMessages = await chatDB.getSessionMessages(message.sessionId);
+            if (this.isSessionDeleted(message.sessionId)) throw this.createCancelledError();
+            const latestMessage = latestMessages.find(entry => entry.id === message.id) || message;
+            const files = this.mergePreparedMessageFiles(
+                latestMessage.files || message.files,
+                pendingFiles,
+                preparedFiles
+            );
+            latestMessage.files = files;
+            delete latestMessage.pendingFileObjects;
+            await chatDB.saveMessage(latestMessage);
+            Object.assign(message, latestMessage);
+            delete message.pendingFileObjects;
+            if (this.chatArea && this.isViewingSession(latestMessage.sessionId)) {
+                await this.chatArea.appendMessage(latestMessage);
+            }
+            return files;
+        })().finally(() => {
+            if (this.messageFilePreparationInFlight.get(message.id) === preparation) {
+                this.messageFilePreparationInFlight.delete(message.id);
+                this.messageFilePreparationSessions.delete(message.id);
+            }
+        });
+        this.messageFilePreparationInFlight.set(message.id, preparation);
+        this.messageFilePreparationSessions.set(message.id, message.sessionId);
+        return preparation;
+    }
+
+    mergePreparedMessageFiles(existingFiles = [], pendingFiles = [], preparedFiles = []) {
+        const merged = this.cloneMessageFiles(existingFiles);
+        const usedIndexes = new Set();
+        for (let index = 0; index < preparedFiles.length; index += 1) {
+            const rawFile = pendingFiles[index];
+            const preparedFile = preparedFiles[index];
+            const placeholderIndex = merged.findIndex((file, candidateIndex) =>
+                !usedIndexes.has(candidateIndex)
+                && !file?.dataUrl
+                && file?.name === rawFile?.name
+                && file?.type === rawFile?.type
+                && file?.size === rawFile?.size
+            );
+            if (placeholderIndex >= 0) {
+                merged[placeholderIndex] = preparedFile;
+                usedIndexes.add(placeholderIndex);
+            } else {
+                merged.push(preparedFile);
+            }
+        }
+        return merged;
     }
 
     async buildMessageFileMetadata(files) {
@@ -7773,17 +8396,22 @@ class ChatApp {
         const draftFiles = this.cloneMessageFiles(draft?.files);
         if (!newContent && draftFiles.length === 0) return;
 
-        if (this.isCurrentSessionStreaming()) {
-            const stopped = await this.stopCurrentSessionStreamingAndWait();
-            if (!stopped) return;
+        const mutationToken = this.beginSessionMutation(session.id, { exclusive: true, interruptStreaming: true });
+        if (!mutationToken) {
+            await this.acknowledgeSessionMutationBusy(session.id);
+            return;
         }
+        try {
+        const stopped = await this.stopSessionStreamingAndWait(session.id);
+        if (!stopped || this.isSessionDeleted(session.id)) return;
 
         if (session.importedFrom) {
             await this.markImportedSessionAsForked(session);
-            this.updateUrlWithSession(session.id);
+            if (this.isViewingSession(session.id)) this.updateUrlWithSession(session.id);
         }
 
         const messages = await chatDB.getSessionMessages(session.id);
+        if (this.isSessionDeleted(session.id)) return;
         const messageIndex = messages.findIndex(m => m.id === messageId);
 
         if (messageIndex === -1) return;
@@ -7793,6 +8421,7 @@ class ChatApp {
         // Update the message content and attachment set as one committed edit.
         message.content = newContent;
         message.files = draftFiles.length > 0 ? draftFiles : null;
+        delete message.pendingFileObjects;
         message.timestamp = Date.now();
         await chatDB.saveMessage(message);
 
@@ -7822,7 +8451,7 @@ class ChatApp {
         await chatDB.saveSession(session);
 
         // Clear edit mode
-        this.editingMessageId = null;
+        if (this.isViewingSession(session.id)) this.editingMessageId = null;
         this.editDrafts.delete(messageId);
 
         // Log the edit action
@@ -7842,17 +8471,18 @@ class ChatApp {
         }
 
         // Optimally update DOM instead of full re-render
-        if (this.chatArea) {
+        if (this.chatArea && this.isViewingSession(session.id)) {
             this.chatArea.updateMessage(message);
             this.chatArea.removeMessagesAfter(message.id);
-        } else {
-            await this.chatArea.render();
         }
 
         this.renderSessions();
 
         // Trigger regeneration
-        await this.regenerateResponse();
+        await this.regenerateResponse({ sessionId: session.id, userMessageId: message.id, mutationToken });
+        } finally {
+            this.endSessionMutation(session.id, mutationToken);
+        }
     }
 
     /**
@@ -7862,132 +8492,169 @@ class ChatApp {
     async forkConversation(messageId) {
         const session = this.getCurrentSession();
         if (!session) return;
-
-        const messages = await chatDB.getSessionMessages(session.id);
-        const messageIndex = messages.findIndex(m => m.id === messageId);
-
-        if (messageIndex === -1) return;
-
-        // Copy messages up to and including the fork point
-        const messagesToCopy = messages
-            .slice(0, messageIndex + 1)
-            .map(message => this.createForkMessageSnapshot(message))
-            .filter(Boolean);
-
-        // Create new session with same model and access context
-        const newSessionId = this.generateId();
-        const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
-        const titleFields = this.buildForkSessionTitleFields(session, firstUserMessage?.content);
-
-        const newSession = {
-            id: newSessionId,
-            title: titleFields.title,
-            titleSource: titleFields.titleSource,
-            titleGenerationPending: false,
-            titleSearchText: titleFields.titleSearchText,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            model: session.model,
-            inferenceBackend: session.inferenceBackend || inferenceService.getDefaultBackendId(),
-            apiKey: null,
-            apiKeyInfo: null,
-            expiresAt: null,
-            searchEnabled: this.searchEnabled,
-            hasCouncilLayoutPreference: session.hasCouncilLayoutPreference === true
-                || this.messagesUseCouncilLayout(messagesToCopy),
-            hasCouncilTranscript: this.messagesUseCouncilLayout(messagesToCopy),
-            forkedFrom: session.id
-        };
-        this.applySessionConversationSearchText(newSession, messagesToCopy);
-
-        const accessInfo = inferenceService.getAccessInfo(session);
-        if (accessInfo?.token) {
-            newSession.apiKey = accessInfo.token;
-            newSession.apiKeyInfo = accessInfo.info;
-            newSession.expiresAt = accessInfo.expiresAt;
+        const sourceSessionId = session.id;
+        const forkNavigationGeneration = ++this.sessionNavigationGeneration;
+        const mutationToken = this.beginSessionMutation(sourceSessionId, { exclusive: true, snapshotWhileStreaming: true });
+        if (!mutationToken) {
+            await this.acknowledgeSessionMutationBusy(sourceSessionId);
+            return;
         }
+        let newSessionId = null;
+        try {
+            const messages = await chatDB.getSessionMessages(sourceSessionId);
+            if (this.isSessionDeleted(sourceSessionId)) return;
+            const messageIndex = messages.findIndex(m => m.id === messageId);
 
-        // Save new session
-        await chatDB.saveSession(newSession);
-        this.state.sessions.unshift(newSession);
-        this.state.sessionsById.set(newSession.id, newSession);
+            if (messageIndex === -1) return;
 
-        // Copy messages to new session
-        const baseTime = Date.now();
-        for (let i = 0; i < messagesToCopy.length; i++) {
-            const msg = messagesToCopy[i];
-            const newMessage = {
-                ...msg,
+            // Copy messages up to and including the fork point.
+            const messagesToCopy = messages
+                .slice(0, messageIndex + 1)
+                .map(message => {
+                    const snapshot = this.createForkMessageSnapshot(message);
+                    return snapshot ? (this.runtime.transformForkMessage?.(snapshot) || snapshot) : null;
+                })
+                .filter(Boolean);
+
+            // Product runtimes may require fresh access for each conversation.
+            newSessionId = this.generateId();
+            const firstUserMessage = messagesToCopy.find(m => m.role === 'user');
+            const titleFields = this.buildForkSessionTitleFields(session, firstUserMessage?.content);
+            const newSession = {
+                id: newSessionId,
+                title: titleFields.title,
+                titleSource: titleFields.titleSource,
+                titleGenerationPending: false,
+                titleSearchText: titleFields.titleSearchText,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                model: session.model,
+                inferenceBackend: session.inferenceBackend || this.inferenceService.getDefaultBackendId(),
+                apiKey: null,
+                apiKeyInfo: null,
+                expiresAt: null,
+                searchEnabled: this.searchEnabled,
+                hasCouncilLayoutPreference: session.hasCouncilLayoutPreference === true || this.messagesUseCouncilLayout(messagesToCopy),
+                hasCouncilTranscript: this.messagesUseCouncilLayout(messagesToCopy),
+                forkedFrom: sourceSessionId
+            };
+            this.applySessionConversationSearchText(newSession, messagesToCopy);
+
+            const accessInfo = this.runtime.reuseAccessOnFork === false
+                ? null : this.inferenceService.getAccessInfo(session);
+            if (accessInfo?.token) {
+                newSession.apiKey = accessInfo.token;
+                newSession.apiKeyInfo = accessInfo.info;
+                newSession.expiresAt = accessInfo.expiresAt;
+            }
+
+            const baseTime = Date.now();
+            const forkMessages = messagesToCopy.map((message, index) => ({
+                ...message,
                 id: this.generateId(),
                 sessionId: newSessionId,
-                timestamp: baseTime + i // Ensure strictly increasing timestamps to preserve order
-            };
-            await chatDB.saveMessage(newMessage);
-        }
-
-        // Insert divider message
-        const dividerMessage = {
-            id: this.generateId(),
-            sessionId: newSessionId,
-            role: 'system',
-            type: 'divider',
-            content: 'Branched from past session',
-            forkedFromSessionId: session.id,
-            timestamp: baseTime + messagesToCopy.length
-        };
-        await chatDB.saveMessage(dividerMessage);
-
-        // Log the fork action
-        if (window.networkLogger) {
-            window.networkLogger.logRequest({
-                type: 'local',
-                method: 'LOCAL',
-                status: 200,
+                timestamp: baseTime + index
+            }));
+            forkMessages.push({
+                id: this.generateId(),
                 sessionId: newSessionId,
-                action: 'session-fork',
-                message: 'Forked chat to new session',
-                response: {
-                    sourceSessionId: session.id,
-                    messagesCopied: messagesToCopy.length,
-                    sharedAccess: !!accessInfo?.token,
-                    sourceWasStreaming: this.getSessionStreamingState(session.id).isStreaming
-                }
+                role: 'system',
+                type: 'divider',
+                content: 'Branched from past session',
+                forkedFromSessionId: sourceSessionId,
+                timestamp: baseTime + messagesToCopy.length
             });
-        }
 
-        // Switch to new session
-        if (this.state.currentSessionId) {
-            this.saveChatbarStateForSession(this.state.currentSessionId);
-        }
-        this.state.currentSessionId = newSessionId;
-        await chatDB.saveSetting('currentSessionId', newSessionId);
+            // Persist the fork atomically so Clear History can never observe a
+            // session without its transcript (or half a transcript).
+            if (typeof chatDB.saveSessionWithMessages === 'function') {
+                await chatDB.saveSessionWithMessages(newSession, forkMessages);
+            } else {
+                await chatDB.saveSession(newSession);
+                for (const message of forkMessages) await chatDB.saveMessage(message);
+            }
+            if (this.isSessionDeleted(sourceSessionId)) {
+                await chatDB.deleteSessionMessages(newSessionId);
+                await chatDB.deleteSession(newSessionId);
+                return;
+            }
 
-        // Clear edit state
-        this.editingMessageId = null;
-        this.editDrafts.clear();
+            this.state.sessions.unshift(newSession);
+            this.state.sessionsById.set(newSession.id, newSession);
 
-        this.renderSessions();
-        // Scroll sidebar to top to show the new session
-        if (this.sidebar) {
-            this.sidebar.scrollToTop();
-        }
-        this.renderMessages();
-        this.renderCurrentModel();
-        this.resetMessageInputLayout({ resetScroll: true });
-        this.restoreChatbarStateForSession(newSessionId);
+            if (window.networkLogger) {
+                window.networkLogger.logRequest({
+                    type: 'local',
+                    method: 'LOCAL',
+                    status: 200,
+                    sessionId: newSessionId,
+                    action: 'session-fork',
+                    message: 'Forked chat to new session',
+                    response: {
+                        sourceSessionId,
+                        messagesCopied: messagesToCopy.length,
+                        sharedAccess: !!accessInfo?.token,
+                        sourceWasStreaming: this.getSessionStreamingState(sourceSessionId).isStreaming
+                    }
+                });
+            }
 
-        // Notify right panel of session change
-        if (this.rightPanel) {
-            this.rightPanel.onSessionChange(newSession);
-        }
+            const shouldSelectFork = this.sessionNavigationGeneration === forkNavigationGeneration
+                && this.state.currentSessionId === sourceSessionId
+                && !this.isSessionDeleted(sourceSessionId);
+            if (shouldSelectFork) {
+                this.saveChatbarStateForSession(sourceSessionId);
+                this.state.currentSessionId = newSessionId;
+                this.isAutoScrollPaused = false;
+                await chatDB.saveSetting('currentSessionId', newSessionId);
+            }
 
-        // Close sidebar on mobile
-        if (this.isMobileView()) {
-            this.hideSidebar();
+            const forkIsStillSelected = shouldSelectFork
+                && this.sessionNavigationGeneration === forkNavigationGeneration
+                && this.state.currentSessionId === newSessionId
+                && !this.isSessionDeleted(sourceSessionId)
+                && !this.isSessionDeleted(newSessionId);
+            this.renderSessions();
+            if (!forkIsStillSelected) return;
+
+            // Clear edit state only while this action still owns navigation.
+            this.editingMessageId = null;
+            this.editDrafts.clear();
+            sessionStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+            this.updateUrlWithSession(newSessionId);
+
+            if (this.sidebar) this.sidebar.scrollToTop();
+            this.renderMessages();
+            this.renderCurrentModel();
+            this.resetMessageInputLayout({ resetScroll: true });
+            this.restoreChatbarStateForSession(newSessionId);
+            this.rightPanel?.onSessionChange?.(newSession);
+
+            this.runtime.onNewChat?.({ sessionId: sourceSessionId });
+
+            if (this.isMobileView()) this.hideSidebar();
+        } finally {
+            this.endSessionMutation(sourceSessionId, mutationToken);
         }
     }
 
     async deleteAllChats() {
+        if (this.historyDeletionInProgress) return;
+        this.historyDeletionInProgress = true;
+        const ids = [...this.state.sessionsById.keys()];
+        for (const id of ids) this.deletingSessionIds.add(id);
+        try {
+            await this.cancelSessionWork(null, { waitForMutations: true });
+            await this.runtime.beforeDelete?.({ sessionIds: ids });
+            await this.deleteAllIdleChats();
+            for (const id of ids) this.deletedSessionIds.add(id);
+        } finally {
+            for (const id of ids) this.deletingSessionIds.delete(id);
+            this.historyDeletionInProgress = false;
+        }
+    }
+
+    async deleteAllIdleChats() {
         // Stop any in-flight streaming to prevent inconsistent state
         this.sessionStreamingStates.forEach((state) => {
             if (state?.abortController) {
@@ -8166,7 +8833,7 @@ class ChatApp {
     }
 
     sanitizePersistedSessionAccess(session) {
-        if (!inferenceService.sanitizePersistedAccess(session)) return;
+        if (!this.inferenceService.sanitizePersistedAccess(session)) return;
         chatDB.saveSession(session).catch(error => {
             console.warn(
                 'Failed to persist removal of an unverified session key:',
@@ -8743,10 +9410,25 @@ class ChatApp {
      * Renders all messages for the current session (delegated to ChatArea component).
      */
     async renderMessages() {
+        const session = this.getCurrentSession();
         if (this.chatArea) {
             await this.chatArea.render();
         }
         this.updateWideModeButtonVisibility();
+        // Recovery never holds up the transcript, and uses its captured owner
+        // rather than whichever chat happens to be selected after the read.
+        if (session && this.runtime.restoreSession) void this.restoreRuntimeSession(session);
+    }
+
+    async restoreRuntimeSession(session) {
+        if (!session || !this.runtime.restoreSession || this.deletingSessionIds.has(session.id)) return;
+        try {
+            const messages = await chatDB.getSessionMessages(session.id);
+            if (this.deletingSessionIds.has(session.id) || !this.state.sessionsById.has(session.id)) return;
+            await this.runtime.restoreSession(this.state.sessionsById.get(session.id), messages);
+        } catch (error) {
+            console.warn('Could not recover local usage estimates:', error?.message || 'Storage unavailable');
+        }
     }
 
     /**
@@ -9734,36 +10416,59 @@ class ChatApp {
     }
 
     updateInputState() {
-        const hasContent = this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0;
+        const hasContent = Boolean(this.elements.messageInput.value.trim() || this.uploadedFiles.length > 0);
         const isStreaming = this.isCurrentSessionStreaming();
-        const shouldBeDisabled = !isStreaming && !hasContent;
+        const sessionId = this.state.currentSessionId;
+        const isSwitchingSession = Boolean(this.sessionSwitchInFlight);
+        const isAcceptingSend = Boolean(this.getPendingSend(sessionId)) && !isStreaming;
+        const isTimelineBusy = Boolean(this.exclusiveSessionMutationOwners?.has(sessionId)) && !isStreaming;
+        const isPreparing = isStreaming && this.getSessionStreamingState(sessionId).phase === 'preparing-access';
+        const isBusy = isSwitchingSession || isAcceptingSend || isTimelineBusy || isPreparing;
+        const shouldBeDisabled = isSwitchingSession || isAcceptingSend || isTimelineBusy || (!isStreaming && !hasContent);
 
-        // Don't disable input during streaming - allow typing
-        this.elements.messageInput.disabled = false;
+        // Drafting remains available while work runs. Only navigation briefly
+        // locks it while the selected chat and its transcript are changing.
+        this.elements.messageInput.disabled = isSwitchingSession;
         this.elements.sendBtn.disabled = shouldBeDisabled;
 
-        this.elements.sendBtn.classList.toggle('opacity-40', shouldBeDisabled);
-        this.elements.sendBtn.classList.toggle('opacity-100', !shouldBeDisabled);
+        this.elements.sendBtn.classList.toggle('opacity-40', shouldBeDisabled && !isBusy);
+        this.elements.sendBtn.classList.toggle('opacity-100', !shouldBeDisabled || isBusy);
+        this.elements.sendBtn.setAttribute('aria-busy', String(isBusy));
+
+        const renderSendVisual = (state, html) => {
+            if (this.elements.sendBtn.dataset.visualState === state) return;
+            this.elements.sendBtn.dataset.visualState = state;
+            this.elements.sendBtn.innerHTML = html;
+        };
 
         // Update button icon based on streaming state
-        if (isStreaming) {
+        if (isBusy) {
+            renderSendVisual('busy', '<span class="chat-send-progress" aria-hidden="true"></span>');
+            this.elements.sendBtn.setAttribute('aria-label', isSwitchingSession ? 'Loading selected chat'
+                : isPreparing ? 'Cancel preparation' : isAcceptingSend ? 'Sending message' : 'Finishing chat action');
+            this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90', 'text-primary-foreground');
+            this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90', 'text-destructive-foreground');
+            this.elements.messageInput.placeholder = isSwitchingSession ? 'Loading selected chat…' : 'Ask anything';
+        } else if (isStreaming) {
             // Change to stop icon (simple square)
-            this.elements.sendBtn.innerHTML = `
+            renderSendVisual('streaming', `
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-3 h-3">
                     <rect x="4" y="4" width="16" height="16" rx="2"/>
                 </svg>
-            `;
+            `);
+            this.elements.sendBtn.setAttribute('aria-label', 'Stop response');
             // Change button style to indicate stop
             this.elements.sendBtn.classList.add('bg-destructive', 'hover:bg-destructive/90', 'text-destructive-foreground');
             this.elements.sendBtn.classList.remove('bg-primary', 'hover:bg-primary/90', 'text-primary-foreground');
             this.elements.messageInput.placeholder = "Waiting for response...";
         } else {
             // Restore send icon
-            this.elements.sendBtn.innerHTML = `
+            renderSendVisual('idle', `
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
                 </svg>
-            `;
+            `);
+            this.elements.sendBtn.setAttribute('aria-label', 'Send message');
             // Restore primary button style
             this.elements.sendBtn.classList.add('bg-primary', 'hover:bg-primary/90', 'text-primary-foreground');
             this.elements.sendBtn.classList.remove('bg-destructive', 'hover:bg-destructive/90', 'text-destructive-foreground');
@@ -9877,7 +10582,7 @@ class ChatApp {
 
         if (session) {
             // Clear the API key
-            inferenceService.clearAccessInfo(session);
+            this.inferenceService.clearAccessInfo(session);
             await chatDB.saveSession(session);
 
             // Update UI
@@ -10049,12 +10754,12 @@ Your API key has been cleared. A new key from a different station will be obtain
     }
 
     getAccessAcquisitionKey(session, modelNameOverride = null, modelIdOverride = null) {
-        const backendId = session?.inferenceBackend || inferenceService.getDefaultBackendId();
+        const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
         const modelKey = modelIdOverride ||
             this.normalizeModelName(modelNameOverride || session?.model) ||
             modelNameOverride ||
             session?.model ||
-            inferenceService.getDefaultModelName(session) ||
+            this.inferenceService.getDefaultModelName(session) ||
             'default-model';
         return `${backendId}:${session?.id || 'no-session'}:${modelKey}`;
     }
@@ -10130,7 +10835,7 @@ Your API key has been cleared. A new key from a different station will be obtain
 
     async acquireAndSetAccess(session, options = {}) {
         this.throwIfAborted(options.signal || null);
-        await ensureModelTiersReady({ signal: options.signal || null });
+        if (this.features.tickets) await ensureModelTiersReady({ signal: options.signal || null });
         this.throwIfAborted(options.signal || null);
         const key = this.getAccessAcquisitionKey(session, options.modelNameOverride, options.modelIdOverride);
         let entry = this.accessAcquisitionInFlight.get(key);
@@ -10139,6 +10844,7 @@ Your API key has been cleared. A new key from a different station will be obtain
             const controller = new AbortController();
             entry = {
                 key,
+                sessionId: session.id,
                 controller,
                 waiters: 0,
                 keepAliveUntil: 0,
@@ -10146,10 +10852,11 @@ Your API key has been cleared. A new key from a different station will be obtain
                 promise: null
             };
             entry.promise = acquireSessionAccess({
+                acquireAccess: this.runtime.acquireAccess,
                 session,
                 models: this.state.models,
-                reasoningEnabled: this.reasoningEnabled,
-                inferenceService,
+                reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
+                inferenceService: this.inferenceService,
                 ticketClient,
                 chatDB,
                 getTicketCost,
@@ -10174,7 +10881,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                     console.warn(...args);
                 },
                 onSessionChanged: (changedSession) => {
-                    if (this.rightPanel) {
+                    if (this.rightPanel && this.isViewingSession(changedSession.id)) {
                         this.rightPanel.onSessionChange(changedSession);
                     }
                 }
@@ -10429,7 +11136,7 @@ Your API key has been cleared. A new key from a different station will be obtain
 export function createChatApp(options = {}) {
     // This public analytics endpoint must never inherit the first-party
     // SuperTokens cookie in a same-origin disposable deployment.
-    fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, {
+    if (options.analytics !== false) fetch(`${ORG_API_BASE}/chat/v1/analytics/pageview`, {
         method: 'POST',
         credentials: 'omit'
     }).catch(() => {});

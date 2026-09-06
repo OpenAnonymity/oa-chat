@@ -13,6 +13,8 @@ import InPageFind from '../../components/InPageFind.js';
 import shareModals from '../../components/ShareModals.js';
 import { buildTypingIndicator, configureMessageTemplateServices } from '../../components/MessageTemplates.js';
 import { createVanillaUiInterface } from '../appInterface.js';
+import { updateDetailedPendingIndicator } from '../../components/PendingIndicator.js';
+import { normalizePendingPhase } from '../../domain/streamingState.js';
 import ticketClient from '../../services/ticketClient.js';
 import networkLogger from '../../services/networkLogger.js';
 import networkProxy from '../../services/networkProxy.js';
@@ -25,11 +27,13 @@ import syncService from '../../services/encryptedSyncService.js';
 export default class VanillaChatUi {
     constructor(app, options = {}) {
         this.app = app;
+        this.componentFactories = options.components || {};
+        this.shellMount = options.mountShell || null;
         this.interfaces = createVanillaUiInterface(app, {
             ticketClientImpl: ticketClient,
             networkLoggerImpl: networkLogger,
             networkProxyImpl: networkProxy,
-            inferenceServiceImpl: inferenceService,
+            inferenceServiceImpl: app.inferenceService || inferenceService,
             verifierServiceImpl: stationVerifier,
             shareServiceImpl: shareService,
             accountServiceImpl: accountService,
@@ -48,6 +52,10 @@ export default class VanillaChatUi {
         }
 
         const componentApp = this.interfaces.componentApp;
+        const createComponent = (name, Component, facade = componentApp) => {
+            const factory = this.componentFactories[name];
+            return typeof factory === 'function' ? factory(facade) : new Component(facade);
+        };
         this.components = {
             inPageFind: new InPageFind(),
             sidebar: new Sidebar(this.interfaces.sidebar),
@@ -55,13 +63,14 @@ export default class VanillaChatUi {
             chatInput: new ChatInput(componentApp),
             modelPicker: new ModelPicker(this.interfaces.modelPicker),
             chatHistoryImportModal: new ChatHistoryImportModal(componentApp),
-            accountModal: new AccountModal(componentApp),
+            accountModal: createComponent('accountModal', AccountModal),
             memoryEditor: new MemoryEditor(componentApp),
-            welcomePanel: new WelcomePanel(componentApp),
+            welcomePanel: createComponent('welcomePanel', WelcomePanel),
             thanksPanel: new ThanksPanel(componentApp),
-            rightPanel: new RightPanel(componentApp)
+            rightPanel: createComponent('rightPanel', RightPanel)
         };
         this.components.rightPanel.mount();
+        this.shellMount?.();
         return this.components;
     }
 
@@ -77,5 +86,24 @@ export default class VanillaChatUi {
 
     buildTypingIndicator(...args) {
         return buildTypingIndicator(...args);
+    }
+
+    updatePendingIndicator(indicator, phase, progress = null) {
+        if (!indicator) return;
+        const normalizedPhase = normalizePendingPhase(phase);
+        const presenter = this.interfaces.componentApp.services.presentation;
+        const presentation = presenter?.getPendingPresentation?.(normalizedPhase, progress);
+        if (presentation) {
+            updateDetailedPendingIndicator(indicator, presentation, normalizedPhase);
+            return;
+        }
+        if (indicator.dataset.phase === normalizedPhase) return;
+        indicator.dataset.phase = normalizedPhase;
+        const label = indicator.querySelector('.pending-response-label');
+        if (label) {
+            label.textContent = normalizedPhase === 'waiting-response'
+                ? 'Waiting for response' : 'Requesting ephemeral key';
+            label.classList.add('pending-response-streaming');
+        }
     }
 }

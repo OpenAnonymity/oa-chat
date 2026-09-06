@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('TLS inspection retains parsed metadata but never raw credential-bearing lines', async () => {
+    const { default: networkProxy } = await import('../../chat/services/networkProxy.js');
+    const originalEmit = networkProxy.emitChange;
+    networkProxy.emitChange = () => {};
+    try {
+        networkProxy.resetTlsInfo();
+        networkProxy.parseTlsOutput('Authorization: Bearer temporary-credential');
+        networkProxy.parseTlsOutput('SSL connection using TLSv1.3 / TLS_AES_256_GCM_SHA384');
+        assert.ok(networkProxy.tlsInfo.version);
+        assert.doesNotMatch(JSON.stringify(networkProxy.tlsInfo), /temporary-credential|Authorization/);
+        assert.equal(networkProxy.tlsInfo.rawLogs, undefined);
+    } finally {
+        networkProxy.emitChange = originalEmit;
+    }
+});
+
 
 test('direct fallback is per-request and does not persist a disabled relay', async () => {
     const previousFetch = globalThis.fetch;

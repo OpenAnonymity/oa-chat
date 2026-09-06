@@ -113,3 +113,100 @@ Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does
 not prevent standalone chat startup. Slot, capability, or lifecycle changes
 require a new extension API version.
+
+## Product UI composition
+
+### Runtime composition
+
+`createChatApp({ runtime, ui, analytics })` also accepts a trusted local product
+runtime. Omission preserves standalone OA's account, ticket and verifier path;
+these options do not change the commercial extension API or its redacted
+capabilities. Setting `analytics: false` disables the shared page-hit request.
+
+The runtime supplies an isolated `inferenceService` made by
+`createInferenceService` from `publicInferenceApi.js`, optional model
+configuration, and `features` (`accounts`, `tickets`, `memory`, `scrubber`,
+`council`, all enabled by default). Disabling tickets requires an explicit
+`checkCanSend` implementation; it never silently authorizes paid inference.
+An accountless app does not bootstrap authentication from `?auth=` either.
+
+Lifecycle methods:
+
+- `attach(context)` receives captured-session lookups/persistence, progress,
+  presentation refresh, cancellation, funding-dialog, toast and local-event
+  capabilities. It does not receive the raw ChatApp controller.
+- `checkCanSend({signal, ...})` validates access before accepting a turn.
+  `acquireAccess(options)` replaces only access issuance; default OA still
+  redeems tickets and requires verifier approval before activating credentials.
+- `prepareTurn({sessionId, signal, onProgress})` runs with an assistant pending
+  indicator already mounted. `onNewChat({sessionId})` establishes any background
+  retirement barrier synchronously; the composer opens immediately.
+- `beforeDelete({sessionIds})` runs after owned sends, title jobs, Quick Ask,
+  attachment preparation and timeline mutations drain. A failed hook retains
+  history so recovery remains possible.
+- `recordUsage({sessionId, requestId, usage, pricing, kind, final})` receives
+  per-request progress/final metadata, never another session's shared counter.
+  `discardUsagePreview` removes pre-request estimates when no output or provider
+  usage arrived. Accounting failures do not turn provider success into failure.
+- `restoreSession(session, messages)` can recover estimates from local history
+  without delaying its rendering. Deleted/stale references are not restored.
+- `reuseAccessOnFork: false` requests fresh access for a copied conversation;
+  `transformForkMessage(snapshot)` can remove product-only accounting fields
+  from historical messages. Standalone OA keeps its existing shared-access fork.
+
+`OpenRouterAPI` accepts request-scoped `acquireRequestAccess`, request-body
+policy, token estimation, transport, error and completion callbacks. A lease
+supplies `baseUrl`, `headers`, optional `apiKey`/`proxyConfig`, and `release()`.
+Every title/completion releases its own lease in `finally`. OA owns request
+construction and SSE parsing, including incremental reasoning/content, usage,
+provider errors and cancellation. Products must not fork that parser.
+
+Trusted product entry points can pass `ui` options to `createChatApp` while using
+the shared renderer. This is distinct from the redacted commercial extension
+context above: product components run locally as part of the configured app.
+
+- `components.accountModal`, `components.welcomePanel`, and
+  `components.rightPanel` are factories receiving the supported component app
+  facade. Omission keeps the ordinary component. A funding panel can extend the
+  public `RightPanel` and override `generateFundingSectionHTML()` instead of
+  copying its key, proxy, and activity sections.
+- `integration` is an explicit product-owned capability object exposed on that
+  facade; it does not expose unlisted ChatApp fields.
+- `mountShell()` runs once after the components have mounted. It can relocate
+  existing shell controls without replacing their event handlers. It must not
+  start funding work or install a timer that remounts the UI.
+- `presentation.getModelPricing(model)` may return `{label, description}` to
+  replace ticket prices with escaped plain-text pricing.
+- `presentation.getSessionStatus(session)` may return `{label, tone}` where
+  tone is `working`, `waiting`, `success`, or `error`.
+- `presentation.getPendingPresentation(phase, progress)` may return
+  `{mode, current, description, category, note, progressPhase, steps}`. Mode
+  `security` shows a collapsed preparation trace; mode `thinking` shows the
+  response-waiting row. Steps contain `{id, label, state}`; stable IDs preserve
+  DOM identity as progress advances. Copy is escaped and the default ticket
+  placeholder is unchanged when no presenter exists.
+
+These callbacks own presentation only. Durable funding and access lifecycle
+work belongs in the product runtime. They must not initiate payments from a
+render, expose secrets, or rebuild the shared chat application.
+
+## Shared runtime services
+
+Trusted bundled product runtimes may import `chat/publicRuntimeApi.js`
+(`RUNTIME_API_VERSION = 1`). It exports the same `networkProxy`, `networkLogger`,
+and `preferencesStore` instances used by the shared app, plus named file,
+provider, model-catalog, model-name, and reasoning utilities. Products must not
+instantiate or vendor duplicate copies of those services: separate proxy or
+preference singletons can show one transport in the UI while requests use
+another. This API is a composition boundary, not an extension of the redacted
+commercial billing context; ordinary billing extensions should continue using
+only `publicApi.js` and their scoped capabilities.
+
+Model catalog cache version 2 retains `top_provider` limits as well as pricing;
+older caches refresh without changing chat or ticket storage. The shared log
+sink redacts mixed-case sensitive headers, Headers objects, wallet/provider
+secrets, and embedded bearer credentials while retaining the existing strict
+provider-response metadata allowlist.
+TLS inspection retains parsed certificate/protocol metadata, not verbose raw
+transport lines that might carry credentials or request content. Runtime
+exports can be imported in headless tests without requiring a `window` global.

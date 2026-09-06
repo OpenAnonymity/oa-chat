@@ -4,6 +4,74 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-05: Product UI composition keeps the shared renderer
+
+- Optional `ui.components` factories replace only Account, Welcome, and the
+  right-panel funding integration; ordinary OA uses its existing components.
+  Downstream funding panels extend the public shared `RightPanel` and override
+  `generateFundingSectionHTML()`, preserving the shared key/proxy/activity UI.
+  Do not extract markup using comment markers or copy a snapshot of RightPanel.
+- `ui.presentation` supplies plain model-price copy, a session-operation badge,
+  and a detailed pending presentation. Product-specific progress calculation and
+  copy stay downstream. The default ticket product keeps its existing pending
+  labels and model ticket prices when no presenter is installed.
+- Pending details belong only in the assistant placeholder. The generic
+  `preparing-access` phase is not model reasoning or response output. Rendering
+  and updating use the same presenter for both a live placeholder and a restored
+  streaming session. Updates mutate keyed progress steps and text in place;
+  identical visual snapshots are no-ops so a timer cannot close a disclosure or
+  restart its animation. The hidden accessibility announcement must remain
+  visually hidden; it is not a second visible status paragraph.
+- A downstream `ui.integration` object is an explicitly supplied component
+  capability, not access to the underlying ChatApp. Product services can be
+  injected through `ui.services`; shared data, inference and UI facades retain
+  their existing boundary. Never place wallet or credential secrets in progress
+  presentations or session-status copy.
+- The UI inference service defaults to the controller's configured runtime
+  service, not a separate default backend. Renewal, access display, and key
+  tests must use the same backend as real inference. A semantic runtime
+  transition can notify the product right panel through
+  `onRuntimePresentationChange`; clock-only data must not remount the panel.
+- Optional `ui.mountShell` runs once after component construction. Product
+  shells must move existing controls rather than clone them so focus and event
+  handlers survive; state refreshes must never rerun shell mounting.
+- Regenerate and Resend capture their session and prompt IDs before yielding,
+  reserve an exclusive timeline mutation, and acknowledge conflicting actions
+  on the initiating button. They must not truncate the newly selected chat
+  after navigation. Sidebar deletion remains visibly busy until the controller
+  has stopped outstanding jobs and completed durable deletion.
+- A response with `finishReason: 'length'` offers one assistant-side Continue
+  action. Other finish reasons and user messages do not show this action.
+- Memory API overrides live only in an in-memory map keyed by session ID.
+  Async augmentation, approval recovery, file processing, Parallel lanes, and
+  cleanup all use their captured owner. Never restore a single global override:
+  simultaneous work in another chat could otherwise inject private context into
+  the wrong request. Each entry has a revision, separate from the global Memory
+  feature generation, so a changed approval within the same generation is
+  reprocessed before inference. Turning Memory off invalidates all entries;
+  finishing one chat clears only that chat.
+- `updateInputState` preserves send-button descendants when the semantic icon
+  state is unchanged. Navigation briefly disables input and Send with a loading
+  indicator; background preparation leaves drafting and cancellation available.
+  Repeated refreshes must not restart the progress animation.
+- Send captures session, draft, attachments and request settings before its
+  first await. Its acceptance callback runs only after the message and parent
+  session transaction commits, before optional indexing/title/UI work. Raw
+  attachment File objects remain durably retryable until conversion succeeds;
+  delayed conversion cannot recreate deleted history or overwrite edited files.
+- Fork persists its transcript atomically. It may snapshot an active response
+  without interrupting ordinary OA streaming. Product runtimes can decline
+  access reuse and transform copied billing metadata. Background writes never
+  navigate unless the initiating action still owns the selected view.
+- Delete first drains captured send/title/Quick Ask/attachment/timeline work,
+  then runs the product recovery hook and atomically removes session/messages.
+  A failed recovery hook retains history. A delete completing after navigation
+  cannot clear the new chat's draft or change its URL.
+- Accountless compositions skip account bootstrap, automatic unlock and
+  authentication-intent routing, including `?auth=google`; their extension auth
+  capability fails explicitly. Standalone/commercial account behavior remains
+  enabled by default, with the existing verified-ticket path unchanged.
+
 ## 2026-09-02: Authentication intent waits for account restoration
 
 - The commercial landing page now hands Google entry to `/chat/?auth=google`;
@@ -1853,3 +1921,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     launcher re-entry.
   - `MainActivity` now preserves the current page when a `singleTask` launcher intent has no
     deep-link URL, so the in-flight JS promise/state survive Home -> launcher reopen.
+- 2026-09-05: The composition merge is source-only for existing Vercel apps.
+  - `vercel.json` skips Git builds only when the commit message contains
+    `[preserve-deployments]`. This release marker preserves existing deployment
+    aliases while separately named downstream apps are deployed explicitly.
+  - Ordinary later commits still build normally; no project settings or domains
+    need changing. This does not change the chat runtime or ticket/account defaults.

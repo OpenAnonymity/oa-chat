@@ -46,3 +46,30 @@ test('secondary model picker allows selecting the active primary model', () => {
 
     assert.deepEqual(modelNames, ['OpenAI: Primary', 'Anthropic: Secondary', 'Google: Other']);
 });
+
+test('ordinary model rows retain ticket prices without a product presenter', () => {
+    const picker = createModelPicker();
+    const html = picker.buildModelOptionHTML(picker.app.state.models[0]);
+    assert.match(html, /title="\d+ tickets?"/);
+    assert.match(html, /data-model-name="OpenAI: Primary"/);
+    assert.match(html, /bg-accent/);
+});
+
+test('product pricing replaces only the ticket badge and safely escapes its copy', () => {
+    const picker = createModelPicker();
+    let suppliedModel;
+    picker.app.presentation = {
+        getModelPricing(model) {
+            suppliedModel = model;
+            return { label: '$1 <input>', description: 'Input " per token <script>' };
+        }
+    };
+    const model = picker.app.state.models[0];
+    const html = picker.buildModelOptionHTML(model);
+    assert.equal(suppliedModel, model);
+    assert.match(html, /\$1 &lt;input&gt;/);
+    assert.match(html, /title="Input &quot; per token &lt;script&gt;"/);
+    assert.doesNotMatch(html, /title="\d+ tickets?"|<input>|<script>/);
+    assert.match(html, /data-model-name="OpenAI: Primary"/);
+    assert.match(html, /bg-accent/);
+});

@@ -165,16 +165,27 @@ class NetworkLogger {
      * Sanitize headers (remove sensitive data)
      */
     sanitizeHeaders(headers) {
-        const sanitized = { ...headers };
+        const entries = !headers ? [] : Array.isArray(headers) ? headers
+            : typeof headers.entries === 'function' ? Array.from(headers.entries())
+                : Object.entries(headers);
+        const sanitized = {};
+        const sensitiveHeaders = new Set([
+            'authorization', 'proxy-authorization', 'cookie', 'set-cookie',
+            'api-key', 'x-api-key', 'x-auth-token', 'x-access-token', 'x-inference-ticket'
+        ]);
 
         // Tickets can remain usable after transactional rollback, so redact every
         // authorization credential rather than assuming the request consumed it.
-        for (const headerName of ['Authorization', 'authorization']) {
-            if (!sanitized[headerName]) continue;
-            const auth = String(sanitized[headerName]);
-            if (auth.startsWith('InferenceTicket')) {
+        for (const [headerName, value] of entries) {
+            const normalizedName = String(headerName).trim().toLowerCase();
+            if (!sensitiveHeaders.has(normalizedName)) {
+                sanitized[headerName] = value;
+                continue;
+            }
+            const auth = String(value);
+            if (normalizedName === 'authorization' && /^InferenceTicket\b/i.test(auth)) {
                 sanitized[headerName] = 'InferenceTicket [REDACTED]';
-            } else if (auth.startsWith('Bearer')) {
+            } else if (normalizedName === 'authorization' && /^Bearer\b/i.test(auth)) {
                 sanitized[headerName] = 'Bearer [REDACTED]';
             } else {
                 sanitized[headerName] = '[REDACTED]';
@@ -210,7 +221,9 @@ class NetworkLogger {
             'childkey', 'authorization', 'cookie', 'cookies', 'password', 'email',
             'credential', 'invitationcode', 'accesscode', 'ticket', 'tickets',
             'finalizedticket', 'finalizedtickets', 'blindedrequest', 'blindedrequests',
-            'signedresponse', 'signedresponses', 'nonce', 'nonces', 'filedata'
+            'signedresponse', 'signedresponses', 'nonce', 'nonces', 'filedata',
+            'secret', 'sharedsecret', 'privatekey', 'managementkey', 'refreshtoken',
+            'auth', 'setcookie', 'inferenceticket'
         ]);
         const contentFields = new Set(['content', 'prompt', 'input', 'text', 'response']);
 
@@ -231,6 +244,10 @@ class NetworkLogger {
         }
         if (Array.isArray(value)) {
             return value.map(item => this.sanitizePayload(item));
+        }
+        if (typeof value === 'string') {
+            return value.replace(/\bBearer\s+[^\s"',;]+/gi, 'Bearer [REDACTED]')
+                .replace(/\bsk-(?:or-v1-)?[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]');
         }
         if (!value || typeof value !== 'object') {
             return value;

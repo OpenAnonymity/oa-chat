@@ -1869,7 +1869,16 @@ class RightPanel {
         `;
     }
 
+    getMissingApiKeyStatus() {
+        return {
+            label: 'Requested on message send',
+            badge: 'Pending',
+            badgeClass: 'bg-muted/30 text-muted-foreground'
+        };
+    }
+
     generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
+        const missingAccess = this.getMissingApiKeyStatus();
         return hasApiKey ? `
             <div class="${embedded ? 'oa-right-panel-access-key min-w-0' : 'p-3'}">
                 <div class="${embedded ? 'mb-2' : 'mb-3'}">
@@ -1947,8 +1956,8 @@ class RightPanel {
                         >?</button>
                     </div>
                     <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
-                        <span class="flex-1 min-w-0">Requested on message send</span>
-                        <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 bg-muted/30 text-muted-foreground">Pending</span>
+                        <span class="flex-1 min-w-0">${this.escapeHtml(missingAccess.label)}</span>
+                        <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.escapeHtmlAttribute(missingAccess.badgeClass)}">${this.escapeHtml(missingAccess.badge)}</span>
                     </div>
                 </div>
                 <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
@@ -1990,6 +1999,16 @@ class RightPanel {
     }
 
     generateTopSectionHTML() {
+        const hasExternalTicketManager = this.app.hasTicketManagementAction?.() === true;
+        const hasApiKey = this.hasAnyAccessKey();
+        return `${this.generateFundingSectionHTML()}
+            ${hasExternalTicketManager ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
+            ${this.generateProxySectionHTML()}`;
+    }
+
+    // Compositions may replace funding while sharing the access, proxy and
+    // activity UI. The default remains the standalone/commercial ticket flow.
+    generateFundingSectionHTML() {
         const hasTickets = this.ticketCount > 0;
         const hasApiKey = this.hasAnyAccessKey();
         const fallbackTicketValue = 'Not stored';
@@ -2350,10 +2369,6 @@ class RightPanel {
                 </div>
             ` : ''}
 
-            <!-- API Key Panel -->
-            ${hasExternalTicketManager ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
-
-            ${this.generateProxySectionHTML()}
         `;
     }
 

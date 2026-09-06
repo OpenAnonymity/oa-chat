@@ -47,8 +47,11 @@ test('vanilla UI adapter is the owner of concrete component construction', () =>
     ];
 
     for (const component of requiredComponents) {
+        const usesDefaultOrFactory = component === 'RightPanel'
+            && uiSource.includes("createComponent('rightPanel', RightPanel)")
+            && uiSource.includes("typeof factory === 'function' ? factory(facade) : new Component(facade)");
         assert.equal(
-            uiSource.includes(`new ${component}(`),
+            uiSource.includes(`new ${component}(`) || usesDefaultOrFactory,
             true,
             `VanillaChatUi should construct ${component}`
         );
@@ -554,12 +557,12 @@ test('parallel layout stays wide for transcripts and forks with council output',
         'one-model Parallel configuration without a submitted transcript should keep the manual width toggle functional'
     );
 
-    const sendStart = appSource.indexOf('async sendMessage()');
+    const sendStart = appSource.indexOf('async sendCapturedMessage(');
     const sendEnd = appSource.indexOf('\n    async ', sendStart + 1);
     const sendBlock = appSource.slice(sendStart, sendEnd);
-    const preflightIndex = sendBlock.indexOf('await this.preflightTurnTicketBudget(session, content)');
+    const preflightIndex = sendBlock.indexOf('await this.preflightTurnTicketBudget(session, content,');
     const activateIndex = sendBlock.indexOf('await this.activateCouncilLayoutForSubmittedTurn(session);');
-    const addMessageIndex = sendBlock.indexOf("await this.addMessage('user', content || '', metadata)");
+    const addMessageIndex = sendBlock.indexOf("await this.addMessage('user', content || '', metadata, session)");
     assert.equal(preflightIndex >= 0, true);
     assert.equal(activateIndex > preflightIndex, true, 'failed preflight must not expand Parallel layout');
     assert.equal(addMessageIndex > activateIndex, true, 'Parallel should expand immediately before the submitted prompt renders');
@@ -979,7 +982,7 @@ test('turning off Parallel restores primary lane access to single chat', () => {
 test('memory augmentation runs once before Parallel fan-out and clears the one-shot override', () => {
     const source = read('chat/app.js');
     const regenerateStart = source.indexOf('async regenerateResponse');
-    const sendStart = source.indexOf('async sendMessage()');
+    const sendStart = source.indexOf('async sendCapturedMessage(');
     const regenerateEnd = source.indexOf('/**\n     * Sends a user message', regenerateStart);
     const sendEnd = source.indexOf('/**\n     * Shows a typing indicator', sendStart);
     const regenerateBlock = source.slice(regenerateStart, regenerateEnd);
@@ -1010,11 +1013,11 @@ test('memory augmentation runs once before Parallel fan-out and clears the one-s
         'council regenerate should preserve the current Memory Agent status row after approval/auto-include'
     );
     assert.ok(
-        regenerateBlock.includes('} finally {\n            this._lastApiContent = null;'),
+        regenerateBlock.includes('} finally {\n            this.clearMemoryApiOverrideContent(session.id);'),
         'regenerate should clear the one-shot memory API override in a finally block'
     );
     assert.ok(
-        sendBlock.includes('} finally {\n            this.clearMemoryApiOverrideContent();'),
+        sendBlock.includes('} finally {\n            this.clearMemoryApiOverrideContent(session.id);'),
         'send should clear the one-shot memory API override in a finally block'
     );
 });
@@ -1075,7 +1078,7 @@ test('cached provider metadata stays display-only and hydrates before the saved-
         appSource.indexOf('    async clearCurrentSession(options = {})'),
         appSource.indexOf('    async updateSessionTitle(')
     );
-    const hydrationIndex = initSource.indexOf('this.cachedModelDisplayMetadata = inferenceService.getCachedModels(this.getCurrentSession())');
+    const hydrationIndex = initSource.indexOf('this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(this.getCurrentSession())');
     const savedModelRenderIndex = initSource.lastIndexOf('this.renderCurrentModel();');
 
     assert.ok(backendSource.includes('getCachedModels:'), 'OpenRouter backend should expose its local catalog cache');
@@ -1095,11 +1098,11 @@ test('cached provider metadata stays display-only and hydrates before the saved-
         'current-model provider lookup should use display-only cached metadata as a fallback'
     );
     assert.ok(
-        switchSessionSource.includes('this.cachedModelDisplayMetadata = inferenceService.getCachedModels(session);'),
+        switchSessionSource.includes('this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);'),
         'switching sessions should refresh display metadata for the restored backend'
     );
     assert.ok(
-        clearSessionSource.includes('this.cachedModelDisplayMetadata = inferenceService.getCachedModels();'),
+        clearSessionSource.includes('this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels();'),
         'clearing a session should restore default-backend display metadata'
     );
 });
@@ -1128,7 +1131,7 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
     assert.ok(quickAskAccessMatch, 'ensureQuickAskAccess method should be present');
     assert.ok(
         /onStatus\?\.\('requesting-key'\)[\s\S]*?acquireAndSetAccess[\s\S]*?abortController\.signal\.aborted/.test(quickAskAccessMatch[0]) &&
-        /inferenceService\.streamCompletion\([\s\S]*?quickAskAccessSession/.test(inlineQuickAskMatch[0]),
+        /this\.streamCompletionWithRuntime\([\s\S]*?quickAskAccessSession/.test(inlineQuickAskMatch[0]),
         'inline quick ask should acquire access for expired past sessions and re-check cancellation before inference'
     );
     assert.ok(
@@ -1179,7 +1182,7 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'inline quick ask should not run concurrently with the main session stream'
     );
     assert.ok(
-        /buildQuickAskMessages[\s\S]*?abortController\.signal\.aborted[\s\S]*?inferenceService\.streamCompletion/.test(inlineQuickAskMatch[0]),
+        /buildQuickAskMessages[\s\S]*?abortController\.signal\.aborted[\s\S]*?this\.streamCompletionWithRuntime/.test(inlineQuickAskMatch[0]),
         'inline quick ask should re-check cancellation immediately before starting inference'
     );
     assert.ok(
@@ -1214,8 +1217,8 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'quick ask window should portal above chat chrome but below app modals while preserving a scroll anchor'
     );
 
-    const sendMessageMatch = appSource.match(/async sendMessage\(\) \{[\s\S]*?const abortController = new AbortController\(\);/);
-    assert.ok(sendMessageMatch, 'sendMessage should be present');
+    const sendMessageMatch = appSource.match(/async sendCapturedMessage\([\s\S]*?const abortController = submission\.controller;/);
+    assert.ok(sendMessageMatch, 'the captured send implementation should be present');
     assert.ok(
         sendMessageMatch[0].includes('this.reserveAccessAcquisitionHandoff(session);') &&
         sendMessageMatch[0].includes('this.chatArea?.closeQuickAskWindow?.();'),

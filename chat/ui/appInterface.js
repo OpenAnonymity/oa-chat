@@ -74,6 +74,8 @@ export function createComponentDataInterface(options = {}) {
 
 export function createComponentServicesInterface(options = {}) {
     return {
+        ...options.services,
+        presentation: options.presentation || null,
         tickets: options.ticketClientImpl || globalThis.ticketClient || null,
         networkLogger: options.networkLoggerImpl || globalThis.networkLogger || null,
         networkProxy: options.networkProxyImpl || globalThis.networkProxy || null,
@@ -100,6 +102,7 @@ export function createModelPickerInterface(app, options = {}) {
     return {
         elements,
         state: app.state,
+        presentation: options.presentation || null,
         get reasoningEnabled() {
             return app.reasoningEnabled;
         },
@@ -158,7 +161,7 @@ export function createModelPickerInterface(app, options = {}) {
     };
 }
 
-export function createSidebarInterface(app) {
+export function createSidebarInterface(app, options = {}) {
     const elements = pickElements(app, [
         'sessionsScrollArea',
         'sessionsList',
@@ -168,6 +171,7 @@ export function createSidebarInterface(app) {
     return {
         elements,
         state: app.state,
+        presentation: options.presentation || null,
         get sessionSearchQuery() {
             return app.sessionSearchQuery;
         },
@@ -190,11 +194,17 @@ export function createSidebarInterface(app) {
 const COMPONENT_APP_KEYS = new Set([
     'accountModal',
     'acquireAndSetAccess',
+    'acknowledgeSessionMutationBusy',
+    'beginSessionMutation',
+    'endSessionMutation',
+    'isSessionDeleted',
+    'stopSessionStreamingAndWait',
     'actions',
     'applySessionConversationSearchText',
     'cancelEditMode',
     'chatHistoryImportModal',
     'confirmEditPrompt',
+    'continueLimitedResponse',
     'copySessionLink',
     'createSession',
     'captureActivePromptScrollAnchor',
@@ -209,12 +219,14 @@ const COMPONENT_APP_KEYS = new Set([
     'exportChatAsMarkdown',
     'exportChatToPdf',
     'fileUndoStack',
+    'features',
     'floatingPanel',
     'forkConversation',
     'formatTime',
     'generateId',
     'getCurrentSession',
     'getCurrentSessionStreamingPhase',
+    'getSessionPendingProgress',
     'getDefaultModelId',
     'getDefaultModelName',
     'getFallbackModelEntry',
@@ -288,6 +300,7 @@ const COMPONENT_APP_KEYS = new Set([
 
 export function createComponentAppFacade(app, allowedKeys = COMPONENT_APP_KEYS, options = {}) {
     const extras = {
+        integration: options.integration || null,
         data: createComponentDataInterface(options),
         services: createComponentServicesInterface(options)
     };
@@ -298,11 +311,11 @@ export function createComponentAppFacade(app, allowedKeys = COMPONENT_APP_KEYS, 
             if (prop === 'hasOwnProperty') {
                 return (key) => allowedKeys.has(key);
             }
-            if (!allowedKeys.has(prop)) {
-                return undefined;
-            }
             if (Object.prototype.hasOwnProperty.call(extras, prop)) {
                 return extras[prop];
+            }
+            if (!allowedKeys.has(prop)) {
+                return undefined;
             }
             const value = app[prop];
             return typeof value === 'function' ? value.bind(app) : value;
@@ -315,13 +328,13 @@ export function createComponentAppFacade(app, allowedKeys = COMPONENT_APP_KEYS, 
             return true;
         },
         has(_target, prop) {
-            return allowedKeys.has(prop);
+            return allowedKeys.has(prop) || Object.prototype.hasOwnProperty.call(extras, prop);
         },
         ownKeys() {
-            return Array.from(allowedKeys);
+            return Array.from(new Set([...allowedKeys, ...Object.keys(extras)]));
         },
         getOwnPropertyDescriptor(_target, prop) {
-            if (!allowedKeys.has(prop)) return undefined;
+            if (!allowedKeys.has(prop) && !Object.prototype.hasOwnProperty.call(extras, prop)) return undefined;
             return {
                 enumerable: true,
                 configurable: true

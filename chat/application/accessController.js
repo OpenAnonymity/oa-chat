@@ -306,7 +306,19 @@ export async function acquireSessionAccess(options = {}) {
 
     let result;
     try {
-        result = await acquireVerifiedAccess(options);
+        // An explicitly composed access implementation owns its acquisition policy.
+        // Standalone/ticket products still use the unchanged fail-closed verifier.
+        const acquireAccess = options.acquireAccess || acquireVerifiedAccess;
+        if (typeof acquireAccess !== 'function') {
+            throw new Error('The configured access acquisition must be a function.');
+        }
+        result = await acquireAccess(options);
+        if (options.signal?.aborted) {
+            const error = new Error('Request aborted');
+            error.name = 'AbortError';
+            error.isCancelled = true;
+            throw error;
+        }
     } catch (error) {
         if (error?.verifierSubmitKeyProof) {
             inferenceService.clearAccessInfo(session);

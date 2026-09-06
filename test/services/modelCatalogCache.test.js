@@ -42,7 +42,7 @@ test('model catalog cache trims display metadata on save and load', () => {
 test('model catalog cache trims stale cached display names on load', () => {
     const store = installLocalStorage();
     store.set('oa-model-catalog-cache-v1', JSON.stringify({
-        version: 1,
+        version: 2,
         catalogs: {
             openrouter: {
                 backendId: 'openrouter',
@@ -61,4 +61,24 @@ test('model catalog cache trims stale cached display names on load', () => {
     }));
 
     assert.equal(loadModelCatalog('openrouter')?.[0]?.name, 'Baidu: ERNIE 4.5 VL 424B A47B');
+});
+
+test('cache preserves provider output limits and pricing for budget-aware runtimes', () => {
+    installLocalStorage();
+    saveModelCatalog('test-runtime', [{
+        id: 'provider/model',
+        pricing: { prompt: '0.000002', completion: '0.00001' },
+        top_provider: { max_completion_tokens: 128000 },
+        context_length: 1000000
+    }]);
+    const [model] = loadModelCatalog('test-runtime');
+    assert.equal(model.top_provider.max_completion_tokens, 128000);
+    assert.equal(model.pricing.completion, '0.00001');
+    assert.equal(model.context_length, 1000000);
+});
+
+test('catalogs cached before provider limits were retained are refreshed', () => {
+    const store = installLocalStorage();
+    store.set('oa-model-catalog-cache-v1', JSON.stringify({ version: 1, catalogs: { openrouter: { models: [{ id: 'old-model' }] } } }));
+    assert.equal(loadModelCatalog('openrouter'), null);
 });

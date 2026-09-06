@@ -111,3 +111,21 @@ test('assistant model IDs use author providers without family-logo guessing', as
         restoreGlobals();
     }
 });
+
+test('only output-limited assistant responses offer an explicit continuation action', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '18:15:12' };
+        const response = { id: 'limited-response', role: 'assistant', model: 'openai/example', content: 'Partial response' };
+        const limited = buildMessageHTML({ ...response, finishReason: 'length' }, helpers, [], response.model);
+        assert.match(limited, /Output limit reached/);
+        assert.match(limited, /continue-message-btn/);
+        assert.match(limited, /aria-label="Continue this response"/);
+        assert.equal((limited.match(/continue-message-btn/g) || []).length, 1);
+        assert.doesNotMatch(buildMessageHTML({ ...response, finishReason: 'stop' }, helpers, [], response.model), /continue-message-btn|Output limit reached/);
+        assert.doesNotMatch(buildMessageHTML({ ...response, role: 'user', finishReason: 'length' }, helpers, [], response.model), /continue-message-btn|Output limit reached/);
+    } finally {
+        restoreGlobals();
+    }
+});

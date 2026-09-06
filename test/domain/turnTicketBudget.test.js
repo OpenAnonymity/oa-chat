@@ -35,11 +35,13 @@ test('a valid memory key does not add a new memory ticket requirement', () => {
 
 test('send preflights the combined budget before adding the user message', () => {
     const source = fs.readFileSync('chat/app.js', 'utf8');
-    const sendSource = source.slice(source.indexOf('async sendMessage()'));
+    const start = source.indexOf('async sendCapturedMessage(');
+    assert.ok(start >= 0, 'the captured send implementation must exist');
+    const sendSource = source.slice(start, source.indexOf('\n    async ', start + 20));
 
-    assert.ok(sendSource.indexOf('preflightTurnTicketBudget(session, content)') >= 0);
+    assert.ok(sendSource.indexOf('preflightTurnTicketBudget(session, content,') >= 0);
     assert.ok(
-        sendSource.indexOf('preflightTurnTicketBudget(session, content)')
+        sendSource.indexOf('preflightTurnTicketBudget(session, content,')
         < sendSource.indexOf("addMessage('user'")
     );
 });

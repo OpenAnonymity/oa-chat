@@ -285,6 +285,7 @@ class ChatDatabase {
             (messages || []).forEach(message => {
                 messagesStore.put(message);
             });
+            transaction.onabort = () => reject(transaction.error || new Error('The chat message was not committed.'));
         });
     }
 
@@ -514,6 +515,25 @@ class ChatDatabase {
                 resolve();
             };
             request.onerror = () => reject(request.error);
+        });
+    }
+
+    async deleteSessionWithMessages(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
+            transaction.oncomplete = () => {
+                this.emitStorageEvent('sessions-updated', { sessionId });
+                this.emitStorageEventDebounced('messages-updated', sessionId, { sessionId }, 500);
+                resolve();
+            };
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('Chat deletion was not committed.'));
+            transaction.objectStore('sessions').delete(sessionId);
+            const cursor = transaction.objectStore('messages').index('sessionId').openCursor(IDBKeyRange.only(sessionId));
+            cursor.onsuccess = () => {
+                const entry = cursor.result;
+                if (entry) { entry.delete(); entry.continue(); }
+            };
         });
     }
 
