@@ -24,6 +24,13 @@ test('account menu items show focus and tint only during keyboard navigation, ho
     assert.match(css, /html\[data-keyboard-nav\] \.account-menu-item:focus-visible\s*\{\s*outline: 2px solid/);
     assert.match(css, /\.account-menu-item:hover,\s*html\[data-keyboard-nav\] \.account-menu-item:focus-visible\s*\{\s*background:/);
     assert.doesNotMatch(css, /(^|,\s*)\.account-menu-item:focus-visible\s*\{/m);
+    // The core Account item is hidden with [hidden] once an extension mounts the
+    // account surface; the class's display:flex must not win over it, or the
+    // menu shows two Account entries.
+    assert.match(css, /\.account-menu-item\[hidden\]\s*\{\s*display:\s*none;\s*\}/);
+    assert.ok(css.indexOf('.account-menu-item[hidden]') < css.indexOf('.account-menu-item {'));
+    // The untitled unlock card is not drawn while the automatic prompt is up.
+    assert.match(css, /\.account-unlock-card-untitled\[data-waiting="true"\]\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none/s);
 });
 
 function createElement(documentImpl, options = {}) {

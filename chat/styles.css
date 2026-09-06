@@ -5818,6 +5818,12 @@ html[data-keyboard-nav] .account-menu-item:focus-visible {
     display: none;
 }
 
+/* The core Account item hides itself when an extension mounts the account
+   surface; the class's display must not override [hidden]. */
+.account-menu-item[hidden] {
+    display: none;
+}
+
 .account-menu-item {
     display: flex;
     align-items: center;
@@ -6079,6 +6085,19 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     line-height: 1.15;
     letter-spacing: -0.02em;
     text-wrap: balance;
+}
+
+/* While the automatic prompt is up, the OS passkey sheet is the interface:
+   the untitled card stays mounted for focus and the status text, but is not
+   drawn. It fades in only if the prompt fails (Try again). */
+.account-unlock-card-untitled[data-waiting="true"] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+
+.account-unlock-card-untitled {
+    transition: opacity 160ms ease;
 }
 
 .account-unlock-card-untitled .account-unlock-copy {

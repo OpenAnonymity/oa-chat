@@ -648,7 +648,7 @@ test('landing handoff goes straight to the passkey for a returning account; new 
                 // opened at once, behind an untitled "Confirm with your passkey" card.
                 assert.deepEqual(calls, [['prepare', 'winter-owl'], ['login']]);
                 const waiting = frames.find(html => html.includes('aria-busy="true"'));
-                assert.match(waiting, /account-unlock-card-untitled/);
+                assert.match(waiting, /account-unlock-card-untitled" data-waiting="true"/);
                 assert.match(waiting, /aria-label="Unlock your encrypted data"/);
                 assert.doesNotMatch(waiting, /<h2/);
                 assert.match(waiting, /Confirm with your passkey to continue\./);
@@ -689,6 +689,7 @@ test('a cancelled username prompt keeps retry on the explanation; lookup errors 
                 // The automatic prompt was cancelled: retry waits for a click.
                 assert.doesNotMatch(frames.at(-1), /Welcome back|<h2/);
                 assert.match(frames.at(-1), /account-unlock-card-untitled/);
+                assert.doesNotMatch(frames.at(-1), /data-waiting/); // failed: the card is drawn
                 assert.match(frames.at(-1), /Try again/);
                 assert.match(frames.at(-1), /Passkey wasn't confirmed\./);
                 assert.equal(modal.isOpen, true);

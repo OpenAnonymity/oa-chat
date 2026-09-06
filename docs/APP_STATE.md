@@ -4,6 +4,16 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: Nothing is drawn behind the automatic passkey prompt
+
+The untitled unlock card carries `data-waiting="true"` while the automatic
+prompt (Google keyring or returning username) is in flight, and CSS hides it
+(`opacity: 0; pointer-events: none`). The OS passkey sheet is the only thing
+the user sees; the card stays mounted for focus and the status sentence and
+fades in only for Try again. `.account-menu-item[hidden]` now actually hides,
+so the core Account fallback item no longer shows beside the extension's
+Account item in the composed app.
+
 ## 2026-09-05: Returning accounts prompt their passkey on arrival
 
 The "Welcome back → Unlock" explanation is gone from the returning-user flow.

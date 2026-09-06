@@ -1710,7 +1710,7 @@ class AccountModal {
         const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
 
         return `
-            <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : 'aria-label="Unlock your encrypted data"'} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}">
+            <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : 'aria-label="Unlock your encrypted data"'} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}"${!title && busy ? ' data-waiting="true"' : ''}>
                 <button id="close-account-modal" class="account-unlock-close" type="button" aria-label="Close"${closeDisabled ? ' disabled' : ''}>
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                         <path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"></path>
