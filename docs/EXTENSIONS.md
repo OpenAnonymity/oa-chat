@@ -32,8 +32,9 @@ Extension API version 2 supports these named slots:
 - `modalLayer`
 
 `account.menuActions` is rendered inside the signed-in account settings menu,
-above the core **Log out** item; the core no longer adds an Account item of its
-own, so an extension mounted here is the account surface. Nodes mounted there
+above the core **Log out** item. When this slot has mounted content, it replaces
+the core **Account** item; without an extension, the core item remains available
+and opens oa-chat's account-security dialog. Nodes mounted in the slot
 should be buttons with `role="menuitem"` and the shared `account-menu-item`
 class. The core menu owns focus movement, Escape handling, outside-click
 dismissal, and the logout action. Extensions own their menu-item label and

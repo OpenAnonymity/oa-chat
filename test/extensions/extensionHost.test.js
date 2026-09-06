@@ -45,10 +45,13 @@ function createFixture() {
 test('slot registry mounts, reattaches, and removes extension nodes', () => {
     const { hosts, registry } = createFixture();
     const node = createElement();
+    assert.equal(registry.hasMounted(SLOT_NAMES.ACCOUNT_COMMERCIAL), false);
     const unmount = registry.mount(SLOT_NAMES.ACCOUNT_COMMERCIAL, node);
+    assert.equal(registry.hasMounted(SLOT_NAMES.ACCOUNT_COMMERCIAL), true);
     assert.equal(hosts.get(SLOT_NAMES.ACCOUNT_COMMERCIAL).hidden, false);
     assert.deepEqual(hosts.get(SLOT_NAMES.ACCOUNT_COMMERCIAL).children, [node]);
     unmount();
+    assert.equal(registry.hasMounted(SLOT_NAMES.ACCOUNT_COMMERCIAL), false);
     assert.equal(hosts.get(SLOT_NAMES.ACCOUNT_COMMERCIAL).hidden, true);
 });
 

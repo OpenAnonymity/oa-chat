@@ -49,6 +49,10 @@ export class ExtensionSlotRegistry {
         };
     }
 
+    hasMounted(name) {
+        return SUPPORTED_SLOTS.has(name) && (this.nodesBySlot.get(name)?.size || 0) > 0;
+    }
+
     refresh(name) {
         if (!SUPPORTED_SLOTS.has(name) || !this.document?.querySelector) return false;
         const host = this.document.querySelector(`[data-oa-extension-slot="${name}"]`);

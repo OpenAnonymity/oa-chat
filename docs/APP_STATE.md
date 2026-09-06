@@ -20,16 +20,18 @@ legacy-passkey account keep their headings. Safari's user-activation rule for
 WebAuthn is the known risk on the Google return path: a refused prompt lands
 on the untitled Try again card rather than an idle one.
 
-## 2026-09-05: The account menu is Account (extension) and Log out
+## 2026-09-05: The account menu prefers the composed Account surface
 
-The core `#account-security-menu-item` and its compact Account dialog entry
-are gone from the sidebar menu; the commercial extension's menu item, now
+When `account.menuActions` has mounted content, the core
+`#account-security-menu-item` is hidden and the commercial extension's item,
 labelled **Account**, opens the unified Account dialog (identity row, Get
-tickets, Payment, Invoices) and is followed by the core **Log out** item.
+tickets, Payment, Invoices), followed by the core **Log out** item. Standalone
+oa-chat keeps the core **Account** item and compact account-security dialog, so
+installing no extension never removes existing account management.
 `context.ui.getAccountIdentityLabel()` gives extensions the signed-in display
 name (username, else Google email) for that identity row; it deliberately
 stays out of `account.getSnapshot()`. `renderCompactAccountUI` is no longer
-reachable from the menu.
+reachable from the menu only in the composed commercial app.
 
 ## 2026-09-04: Compact Log-in hover matches Account controls
 

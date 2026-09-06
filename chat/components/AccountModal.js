@@ -115,6 +115,7 @@ class AccountModal {
             };
         }
         const menu = document.getElementById('account-settings-menu');
+        const accountItem = document.getElementById('account-security-menu-item');
         const logoutItem = document.getElementById('account-logout-menu-item');
         if (menu) {
             menu.onkeydown = event => this.handleAccountMenuKeydown(event);
@@ -122,6 +123,10 @@ class AccountModal {
                 if (event.target.closest?.('[role="menuitem"]')) this.closeAccountMenu();
             };
         }
+        if (accountItem) accountItem.onclick = () => {
+            this.closeAccountMenu();
+            this.open(tabBtn);
+        };
         if (logoutItem) logoutItem.onclick = () => {
             this.closeAccountMenu();
             void this.handleAccountClear();
@@ -131,7 +136,15 @@ class AccountModal {
 
     getAccountMenuItems() {
         const menu = document.getElementById('account-settings-menu');
-        return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')] : [];
+        return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled]):not([hidden])')] : [];
+    }
+
+    syncCoreAccountMenuItem() {
+        const accountItem = document.getElementById('account-security-menu-item');
+        if (!accountItem) return;
+        // The composed commercial Account action replaces this core fallback;
+        // standalone oa-chat must always retain a route to account security.
+        accountItem.hidden = this.app.extensionSlots?.hasMounted?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS) === true;
     }
 
     isAccountMenuAvailable() {
@@ -164,11 +177,12 @@ class AccountModal {
         this.close();
         this.menuOpen = true;
         this.accountMenuTrigger = trigger || tabBtn;
+        this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+        this.syncCoreAccountMenuItem();
         // Focus the first item for Escape/arrow navigation. Focus rings are
         // gated on html[data-keyboard-nav], so a pointer-opened menu stays quiet.
         menu.hidden = false;
         tabBtn?.setAttribute('aria-expanded', 'true');
-        this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
         this.getAccountMenuItems()[0]?.focus();
     }
 

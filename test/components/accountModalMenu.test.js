@@ -45,7 +45,9 @@ function createElement(documentImpl, options = {}) {
         contains(target) { return this === target || this.children.includes(target); },
         querySelector() { return null; },
         querySelectorAll(selector) {
-            return selector.includes('[role="menuitem"]') ? this.children : [];
+            return selector.includes('[role="menuitem"]')
+                ? this.children.filter(child => !selector.includes(':not([hidden])') || !child.hidden)
+                : [];
         }
     };
 }
@@ -66,6 +68,7 @@ function createFocusHarness(state = {}) {
     elements.set('account-tab-btn', tab);
     elements.set('account-modal', overlay);
     elements.set('account-settings-menu', menu);
+    elements.set('account-security-menu-item', accountItem);
     globalThis.document = documentImpl;
     const modal = Object.create(AccountModal.prototype);
     let firstAccountReady = 0;
@@ -130,6 +133,20 @@ test('pointer and keyboard menu opening both focus the first item and set no poi
         }
         h.tab.onclick({ detail: 1 });
         h.menu.onkeydown({ key: 'Tab', target: h.accountItem });
+        assert.equal(h.menu.hidden, true);
+    } finally { h.cleanup(); }
+});
+
+test('standalone account menu retains the core Account route when no extension is mounted', () => {
+    const h = createFocusHarness({ accountId: 'test', sessionVerified: true, status: 'unlocked' });
+    let opened = 0;
+    try {
+        h.modal.open = () => { opened += 1; };
+        h.tab.onclick();
+        assert.equal(h.accountItem.hidden, false);
+        assert.equal(h.documentImpl.activeElement, h.accountItem);
+        h.accountItem.onclick();
+        assert.equal(opened, 1);
         assert.equal(h.menu.hidden, true);
     } finally { h.cleanup(); }
 });
@@ -211,13 +228,12 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
             if (documentListeners.get(type) === listener) documentListeners.delete(type);
         }
     };
-    // The core menu has no Account item of its own any more: the extension slot
-    // (the commercial Account dialog, formerly Membership) leads, then Log out.
+    const accountItem = createElement(documentImpl);
     const membershipItem = createElement(documentImpl);
     const logoutItem = createElement(documentImpl);
     const menu = createElement(documentImpl, {
         hidden: true,
-        children: [membershipItem, logoutItem]
+        children: [accountItem, membershipItem, logoutItem]
     });
     const tab = createElement(documentImpl);
     const label = createElement(documentImpl);
@@ -227,6 +243,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     elements.set('account-nav', nav);
     elements.set('account-tab-btn', tab);
     elements.set('account-settings-menu', menu);
+    elements.set('account-security-menu-item', accountItem);
     elements.set('account-logout-menu-item', logoutItem);
     elements.set('account-identity-label', label);
     elements.set('account-bootstrap-status', bootstrapStatus);
@@ -246,7 +263,10 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
     globalThis.document = documentImpl;
     const modal = new AccountModal({
         services: { account: accountService, sync: syncService },
-        extensionSlots: { refresh: name => refreshedSlots.push(name) },
+        extensionSlots: {
+            refresh: name => refreshedSlots.push(name),
+            hasMounted: name => name === SLOT_NAMES.ACCOUNT_MENU_ACTIONS
+        },
         showToast() {}
     });
 
@@ -258,6 +278,7 @@ test('signed-in account footer exposes an accessible keyboard settings menu', ()
 
         tab.onclick();
         assert.equal(menu.hidden, false);
+        assert.equal(accountItem.hidden, true);
         assert.equal(tab.getAttribute('aria-expanded'), 'true');
         assert.equal(membershipItem.focusCount, 1);
         assert.deepEqual(refreshedSlots, [SLOT_NAMES.ACCOUNT_MENU_ACTIONS]);
