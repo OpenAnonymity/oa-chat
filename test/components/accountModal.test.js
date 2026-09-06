@@ -1492,6 +1492,58 @@ test('opening a locked Google account prompts its passkey at once, once, and onl
     globalThis.document = originalDocument;
 });
 
+test('a cancelled automatic Google prompt restores focus to Try again', async () => {
+    const originalDocument = globalThis.document;
+    const retry = {
+        id: 'oauth-keyring-submit-btn',
+        focus() { globalThis.document.activeElement = this; }
+    };
+    const state = {
+        accountId: 'identity-account', sessionVerified: true, status: 'locked',
+        oauthProvider: 'google', oauthKeyringRequired: true,
+        passkeySupported: true, busy: false, authBootstrapComplete: true
+    };
+    globalThis.document = {
+        activeElement: { id: 'body' },
+        getElementById(id) { return id === retry.id ? retry : null; },
+        addEventListener() {},
+        removeEventListener() {}
+    };
+    const modal = new AccountModal({
+        services: {
+            account: {
+                getState: () => state,
+                subscribe: () => () => {},
+                clearErrors() {},
+                async unlockOAuthKeyring() {
+                    globalThis.document.activeElement = { id: 'body' };
+                    state.error = 'Passkey cancelled';
+                    return false;
+                }
+            },
+            sync: { getStatus: () => ({}), subscribe: () => () => {} }
+        }
+    });
+    modal.overlay = {
+        classList: { add() {}, remove() {} },
+        contains(element) { return element === retry; },
+        querySelectorAll() { return [retry]; },
+        querySelector() { return null; },
+        set innerHTML(_) {}
+    };
+    modal.render = () => {};
+    try {
+        modal.open();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(globalThis.document.activeElement, retry);
+        assert.equal(modal.passkeyAutoPromptAttempted, true);
+        assert.equal(modal.isOpen, true);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 test('Welcome dismissal keeps the account locked and Account-settings logout still works', async () => {
     const originalDocument = globalThis.document;
     const buttons = { 'close-account-modal': {} };

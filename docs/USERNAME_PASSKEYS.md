@@ -6,8 +6,8 @@ unlock. They do not have a recovery code.
 
 ## User flow
 
-The commercial landing page places a username field directly below Google and
-before the access-code divider. Submitting a structurally valid username uses
+The commercial landing page offers Google and username only, with the username
+field directly below Google. Submitting a structurally valid username uses
 the one-use local route `/chat/?auth=username#username=...`. The username is in
 the fragment, so it is not sent in the document request or HTTP referrer. Chat
 waits for its normal account bootstrap, removes the authentication intent and
@@ -144,10 +144,10 @@ frontend username UI. The client deliberately rejects an `/auth/init` response
 that does not echo the normalized username, preventing an older backend from
 silently creating a legacy account during a mixed-version deployment.
 
-The landing handoff deliberately leaves Google and access-code navigation on
-their existing routes. The username field and access-code field share the same
-visual control styles, but their submit handlers and query parameters remain
-separate so username onboarding cannot intercept anonymous ticket redemption.
+The landing handoff leaves Google on its existing route. Access-code entry is no
+longer shown on the commercial landing page, but account-free redemption remains
+available inside Chat's ticket management and standalone oa-chat. Username
+onboarding cannot intercept that anonymous ticket-redemption path.
 
 The frontend persists the username next to the opaque account ID only as a local
 label and login locator. Account-scoped key bundles, sync identifiers, sessions,

@@ -373,7 +373,7 @@ class AccountModal {
             state.oauthSetupRequired || state.oauthLegacyPasskeyRequired) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         this.passkeyAutoPromptAttempted = true;
-        void this.handleOAuthKeyringUnlock();
+        void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
     }
 
     async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
@@ -953,12 +953,15 @@ class AccountModal {
         }
     }
 
-    async handleOAuthKeyringUnlock() {
+    async handleOAuthKeyringUnlock({ restoreRetryFocus = false } = {}) {
         const state = this.accountService.getState();
         const isFirstAccountSetup = state.oauthSetupRequired === true;
+        const viewVersion = this.loginViewVersion;
+        const wasOpen = this.isOpen;
+        let success = false;
         this.authenticationExitPending = true;
         try {
-            const success = state.oauthLegacyPasskeyRequired
+            success = state.oauthLegacyPasskeyRequired
                 ? await this.accountService.unlockWithPasskey(
                     state.accountId,
                     { action: 'oauth_legacy_passkey' }
@@ -973,6 +976,11 @@ class AccountModal {
             }
         } finally {
             this.authenticationExitPending = false;
+            if (restoreRetryFocus && !success && wasOpen && this.isOpen &&
+                viewVersion === this.loginViewVersion) {
+                this.render();
+                this.focusModal('oauth-keyring-submit-btn');
+            }
         }
     }
 
