@@ -1858,9 +1858,6 @@ class RightPanel {
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Keys</span>
                     </div>
-                    <div class="text-[10px] text-muted-foreground mb-2">
-                        Keys persist until expiry, model change, or exhaustion.
-                    </div>
                     <div class="space-y-2">
                         ${rowHtml}
                     </div>
