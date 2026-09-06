@@ -37,7 +37,7 @@ The prompt runs independently of the rest of Chat startup; closing during lookup
 invalidates the pending handoff and cannot start a late passkey prompt.
 
 The login dialog is a compact, rounded card (360px maximum width) with a
-left-aligned **Log in** heading. Google sits above a **Choose a username**
+left-aligned **Log in** heading. Google sits above an **Enter a username**
 input, separated by a subtle lowercase **or** divider, and a full-width filled
 **Continue with username** button follows the field — the same control as the
 landing card: black at all times (near-white in dark mode), lifting on hover,

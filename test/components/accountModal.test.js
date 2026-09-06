@@ -189,7 +189,7 @@ test('account entry offers Google and pseudonymous username passkeys', () => {
         assert.match(html, /Continue with Google/);
         assert.match(html, /Username/);
         assert.match(html, />Log in<\/h2>/);
-        assert.match(html, /placeholder="Choose a username"/);
+        assert.match(html, /placeholder="Enter a username"/);
         assert.match(html, /aria-label="Username"/);
         assert.match(html, /class="account-login-heading"/);
         assert.match(html, /account-login-dialog"\s*>/);

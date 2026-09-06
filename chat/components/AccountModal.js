@@ -1581,7 +1581,7 @@ class AccountModal {
                             autocapitalize="none"
                             spellcheck="false"
                             maxlength="32"
-                            placeholder="Choose a username"
+                            placeholder="Enter a username"
                             class="account-login-input"
                             value="${usernameValue}"
                             ${isBusy ? 'disabled' : ''}
