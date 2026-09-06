@@ -272,6 +272,12 @@ test('account dialogs share one accent focus ring, close control, dark edges and
     assert.match(html, /root\.setAttribute\('data-keyboard-nav', ''\)/);
     assert.match(html, /addEventListener\('pointerdown', clear, true\)/);
     assert.ok(html.indexOf('data-keyboard-nav') < html.indexOf('tailwind.generated.css'), 'modality script runs before any stylesheet or focus');
+    // The authentication hand-off paints its dim + spinner before any stylesheet.
+    assert.match(html, /document\.documentElement\.setAttribute\('data-auth-arriving', ''\)/);
+    assert.match(html, /html\[data-auth-arriving\] #auth-arrival\s*\{[^}]*position: fixed;[^}]*background: rgb\(0 0 0 \/ 0\.6\)/s);
+    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><\/div>\s*<div id="account-modal"/);
+    assert.ok(html.indexOf('data-auth-arriving') < html.indexOf('fonts/fonts.css'), 'arrival layer is painted before any stylesheet');
+    assert.match(String(AccountModal.prototype.open), /removeAttribute\?\.\('data-auth-arriving'\)/);
     assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)/);
     assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within/);
     assert.match(css, /#close-account-modal\s*\{[^}]*width: 2rem;[^}]*height: 2rem;[^}]*border-radius: 0.625rem/);
@@ -654,6 +660,10 @@ test('landing handoff goes straight to the passkey for a returning account; new 
             };
             await modal.openForUsername(' Winter-OWL ', null, { autoContinue: true });
             assert.match(frames[0], /Checking username…/);
+            // The lookup is drawn as the same spinner-only wait as the prompt.
+            assert.match(frames[0], /account-unlock-card-untitled" data-waiting="true"/);
+            assert.match(frames[0], /class="account-unlock-waiting"/);
+            assert.doesNotMatch(frames[0], /Log in|animate-spin/);
             assert.ok(frames.every(html => !html.includes('Username form')));
             assert.ok(frames.every(html => !html.includes('Welcome back')));
             if (next === 'login') {

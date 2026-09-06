@@ -2045,6 +2045,10 @@ class ChatApp {
             });
         } catch (error) {
             console.warn('Initial account route could not be completed:', error);
+        } finally {
+            // Whatever the route decided, the early arrival spinner from
+            // index.html must not outlive it (the dialog clears it itself on open).
+            document.documentElement?.removeAttribute?.('data-auth-arriving');
         }
 
         // Initialize preference-backed layout only after account context exists.

@@ -351,6 +351,9 @@ class AccountModal {
         this.passkeyAutoPromptAttempted = false;
         this.render();
         this.overlay.classList.remove('hidden');
+        // The dialog's own backdrop is now painted; the early arrival layer from
+        // index.html (same dim, same spinner) can go without a visible change.
+        document.documentElement?.removeAttribute?.('data-auth-arriving');
         this.focusModal();
 
         const tabBtn = document.getElementById('account-tab-btn');
@@ -1064,14 +1067,14 @@ class AccountModal {
         } else if (this.usernameUnlockReady) {
             this.overlay.innerHTML = this.renderUsernameUnlockUI();
         } else if (this.usernameHandoffPending) {
+            // The lookup is part of the same wait as the passkey prompt that
+            // follows it: only the spinner is drawn, the status text is for
+            // assistive technology.
             this.overlay.innerHTML = `
-                <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                    ${this.renderHeader('Log in')}
-                    <div class="flex items-center justify-center gap-3 py-6" role="status">
-                        <span class="h-4 w-4 animate-spin rounded-full border-2 border-muted border-t-foreground" aria-hidden="true"></span>
-                        <p class="text-sm text-muted-foreground">Checking username…</p>
-                    </div>
+                <div role="dialog" aria-modal="true" aria-label="Checking username" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
+                    <p class="account-unlock-body" role="status">Checking username…</p>
                 </div>
+                <div class="account-unlock-waiting" aria-hidden="true"><span class="account-unlock-spinner account-unlock-waiting-spinner"></span></div>
             `;
         } else {
             this.overlay.innerHTML = this.renderAccountUI();

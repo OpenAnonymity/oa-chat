@@ -151,6 +151,50 @@
             }
         })();
     </script>
+    <script>
+        // An authentication hand-off (?auth=google / ?auth=username) or a ticket
+        // link arrives from a page whose button was already spinning. Paint the
+        // same dimmed backdrop and spinner before any stylesheet or script
+        // loads, so the wait reads as one continuous state until the account
+        // dialog (or the app itself) takes over and clears data-auth-arriving.
+        (function () {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const intent = params.get('auth');
+                if (intent === 'google' || intent === 'username' || params.has('tickets')) {
+                    document.documentElement.setAttribute('data-auth-arriving', '');
+                }
+            } catch (error) {
+                console.warn('Unable to read the authentication hand-off:', error);
+            }
+        })();
+    </script>
+    <style>
+        /* Matches #account-modal (bg-black/60 + blur) and .account-unlock-waiting-spinner. */
+        #auth-arrival { display: none; }
+        html[data-auth-arriving] #auth-arrival {
+            position: fixed;
+            inset: 0;
+            z-index: 49;
+            display: grid;
+            place-items: center;
+            background: rgb(0 0 0 / 0.6);
+            -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+        }
+        #auth-arrival > span {
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 2px solid rgb(255 255 255 / 0.7);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: auth-arrival-spin 0.7s linear infinite;
+        }
+        @keyframes auth-arrival-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            #auth-arrival > span { animation-duration: 1.4s; }
+        }
+    </style>
     <!-- Preload critical resources for faster loading -->
 
     <link rel="dns-prefetch" href="https://openrouter.ai">
@@ -946,6 +990,7 @@
     <div id="verify-key-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Account Modal -->
+    <div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"></span></div>
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <div data-oa-extension-slot="modalLayer" hidden></div>

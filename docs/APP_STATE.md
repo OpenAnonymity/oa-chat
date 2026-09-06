@@ -4,6 +4,19 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: One continuous wait from the landing button to the passkey sheet
+
+`chat/index.html` paints `#auth-arrival` — the same dim backdrop and spinner
+as the account dialog's waiting state — from an inline script and style that
+run before any stylesheet, whenever the URL carries `?auth=google`,
+`?auth=username` or `?tickets=`. `AccountModal.open()` removes
+`html[data-auth-arriving]` once its own backdrop is up, and `app.js` removes
+it in the `finally` of `routeAuthenticationIntent` so it never outlives the
+route. The username lookup ("Checking username…") is drawn the same way:
+untitled card with `data-waiting`, spinner only, status text for assistive
+technology. Net effect: landing button spinner → page load → lookup → OS
+sheet with no blank frame and no card in between.
+
 ## 2026-09-06: Login dialog matches the landing card; spinner behind the passkey prompt
 
 The **Log in** dialog's username step is a standalone **Choose a username**
