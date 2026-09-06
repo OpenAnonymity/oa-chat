@@ -18,12 +18,14 @@ straight to its passkey prompt (2026-09-05, reversing the 2026-09-03 decision
 to show a **Welcome back** explanation first): the only card behind the OS
 sheet is an untitled "Confirm with your passkey to continue." with a disabled
 **Waiting…** pill, and a cancelled or failed prompt leaves that untitled card
-in its **Try again** state without re-prompting on its own. New accounts still
-see **Encrypt your data → Create passkey**, because registration needs one line
-of context and an explicit click. Google accounts behave the same way: opening
-the dialog for a locked keyring prompts at once (once per open), while the
-first-time setup, legacy recovery-code migration and legacy-passkey cards keep
-their headings. Lookup failures restore the editable form. A remembered verified,
+in its **Try again** state without re-prompting on its own. A free username
+does the same (2026-09-06): the account is reserved and the registration prompt
+opens at once behind the same spinner; a cancelled registration leaves the
+untitled card with **Try again** and **Back** (Back releases the reservation).
+Google accounts behave the same way for both keyring unlock and first-time
+keyring setup: opening the dialog prompts at once (once per open). Only the
+legacy recovery-code migration and legacy-passkey cards keep a heading. Lookup
+failures restore the editable form. A remembered verified,
 unlocked username account continues directly into Chat only when its normalized
 username matches the submitted username. A different remembered username,
 Google account, or legacy account is logged out and its saved local binding is

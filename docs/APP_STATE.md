@@ -4,6 +4,17 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: First-time accounts go straight to the passkey too
+
+`maybeAutoPromptPasskey()` now also fires for `oauthSetupRequired` (first
+Google keyring setup), and `handleAccountContinue()` chains
+`handleUsernamePasskeyContinue()` when the lookup returns `register`
+(reserve + WebAuthn create) as well as `login`. The setup card lost its
+"Encrypt your data" heading; like the returning path it is untitled
+(`aria-label="Create your passkey"`), hidden behind the spinner while busy,
+and only drawn for Try again / Back. Legacy migration and legacy-passkey
+cards are unchanged.
+
 ## 2026-09-06: One continuous wait from the landing button to the passkey sheet
 
 `chat/index.html` paints `#auth-arrival` — the same dim backdrop and spinner

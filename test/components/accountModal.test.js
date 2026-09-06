@@ -501,8 +501,11 @@ test('first username setup never displays the username while awaiting or finishi
     for (const step of ['passkey', 'confirming', 'complete']) {
         modal.creationStep = step;
         const html = modal.renderCreationFlow();
-        assert.match(html, /class="account-unlock-card"/);
-        assert.match(html, />Encrypt your data<\/h2>/);
+        // Registration is untitled like the returning path; while the OS sheet
+        // is up the card is not drawn (data-waiting), only the spinner.
+        assert.match(html, /class="account-unlock-card account-unlock-card-untitled" data-waiting="true"/);
+        assert.match(html, /aria-label="Create your passkey"/);
+        assert.doesNotMatch(html, /<h2|Encrypt your data/);
         assert.match(html, /Confirm with your passkey to finish\./);
         assert.match(html, /id="account-username-unlock-btn"[^>]*disabled aria-busy="true"/);
         assert.doesNotMatch(html, /winter-owl|Your username|Your account number|Create a passkey account|You're all set/);
@@ -647,7 +650,7 @@ function landingContinuationModal(next = 'login') {
     return { modal, calls, frames };
 }
 
-test('landing handoff goes straight to the passkey for a returning account; new accounts get the setup card', async () => {
+test('landing handoff goes straight to the passkey for returning and new accounts alike', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
     try {
@@ -679,12 +682,13 @@ test('landing handoff goes straight to the passkey for a returning account; new 
                 assert.match(waiting, /Confirm with your passkey to continue\./);
                 assert.equal(modal.isOpen, false);
             } else {
-                assert.deepEqual(calls, [['prepare', 'winter-owl']]);
-                assert.match(frames.at(-1), />Encrypt your data<\/h2>/);
-                assert.match(frames.at(-1), /encrypts your tickets and preferences/i);
-                assert.equal(modal.isOpen, true);
-                await modal.handleUsernamePasskeyContinue();
+                // A free name reserves the account and opens the registration
+                // prompt at once, behind the same untitled waiting card.
                 assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
+                const waiting = frames.find(html => html.includes('aria-busy="true"'));
+                assert.match(waiting, /account-unlock-card-untitled" data-waiting="true"/);
+                assert.match(waiting, /Confirm with your passkey to finish\./);
+                assert.ok(frames.every(html => !html.includes('Encrypt your data')));
                 assert.equal(modal.isOpen, false);
             }
             assert.equal(modal.usernameHandoffPending, false);
@@ -812,16 +816,13 @@ test('closing a landing lookup prevents a late prompt and duplicate handoffs are
     }
 });
 
-test('Continue prompts a returning account at once; setup waits for Create passkey', async () => {
+test('Continue prompts the passkey at once for returning and new accounts', async () => {
     for (const next of ['register', 'login']) {
         const { modal, calls } = continuationModal(next);
         await modal.handleAccountContinue();
         assert.equal(modal.usernameContinuePending, false);
-        assert.equal(modal.creationStep, next === 'register' ? 'username_ready' : 'idle');
         if (next === 'register') {
             assert.equal(modal.generatedUsername, 'winter-owl');
-            assert.deepEqual(calls, [['prepare', 'winter-owl']]);
-            await modal.handleUsernamePasskeyContinue();
             assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
         } else {
             assert.equal(modal.usernameUnlockReady, true);
@@ -871,11 +872,14 @@ test('Back from username explanation preserves the identifier and does not sign 
         const { modal, calls } = continuationModal(next);
         modal.animationTimeouts = [];
         await modal.handleAccountContinue();
+        await new Promise(resolve => setImmediate(resolve)); // the automatic prompt settles
         modal.handleUsernamePasskeyBack();
         assert.equal(modal.usernameInputValue, 'winter-owl');
         assert.equal(modal.usernameUnlockReady, false);
         assert.equal(modal.creationStep, 'idle');
-        assert.deepEqual(calls, next === 'register' ? [['prepare', 'winter-owl'], ['cancel']] : [['prepare', 'winter-owl'], ['login']]);
+        assert.deepEqual(calls, next === 'register'
+            ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register'], ['cancel']]
+            : [['prepare', 'winter-owl'], ['login']]);
     }
 });
 
@@ -892,19 +896,19 @@ test('a closed dialog never invokes authentication, not even the automatic promp
     assert.ok(!modal.usernameUnlockReady);
 });
 
-test('delayed new-account setup does not reserve a username or start a challenge until Create', async () => {
+test('a free username reserves the account and registers on Continue; Back releases it', async () => {
     const { modal, calls } = continuationModal('register');
     await modal.handleAccountContinue();
-    assert.equal(modal.generatedAccountId, null);
-    assert.deepEqual(calls, [['prepare', 'winter-owl']]);
-    // The card can remain open arbitrarily long: no registration challenge exists.
+    await new Promise(resolve => setImmediate(resolve)); // the automatic prompt settles
+    assert.equal(calls.filter(([action]) => action === 'init').length, 1);
+    assert.equal(calls.at(-1)[0], 'register');
     modal.animationTimeouts = [];
     modal.handleUsernamePasskeyBack();
-    await modal.handleAccountContinue();
+    assert.equal(calls.at(-1)[0], 'cancel');
     assert.equal(modal.generatedAccountId, null);
-    assert.equal(calls.filter(([action]) => action === 'init').length, 0);
-    await modal.handleUsernamePasskeyContinue();
-    assert.equal(calls.filter(([action]) => action === 'init').length, 1);
+    await modal.handleAccountContinue();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.filter(([action]) => action === 'init').length, 2);
     assert.equal(calls.at(-1)[0], 'register');
 });
 
@@ -1462,7 +1466,7 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
     }
 });
 
-test('opening a locked Google account prompts its passkey at once, once, and only for the plain keyring unlock', async () => {
+test('opening a Google account prompts its passkey at once, once, for keyring unlock and first-time setup', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
         activeElement: null,
@@ -1476,7 +1480,7 @@ test('opening a locked Google account prompts its passkey at once, once, and onl
         [{ oauthKeyringRequired: true, busy: true }, 0],
         [{ oauthKeyringRequired: true, passkeySupported: false }, 0],
         [{ oauthKeyringRequired: true, oauthLegacyPasskeyRequired: true }, 0],
-        [{ oauthSetupRequired: true }, 0],
+        [{ oauthSetupRequired: true }, 100],
         [{ oauthRecoveryRequired: true }, 0]
     ];
     for (const [flags, expectedPrompts] of cases) {

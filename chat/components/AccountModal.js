@@ -374,8 +374,12 @@ class AccountModal {
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
         if (!this.isOpen || this.passkeyAutoPromptAttempted) return;
-        if (!state.oauthKeyringRequired || state.oauthRecoveryRequired ||
-            state.oauthSetupRequired || state.oauthLegacyPasskeyRequired) return;
+        // Returning (keyring unlock) and first-time (keyring setup) Google
+        // accounts both go straight to the passkey; only the legacy recovery
+        // migration and legacy-passkey accounts still explain themselves first.
+        const automatic = (state.oauthKeyringRequired || state.oauthSetupRequired) &&
+            !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired;
+        if (!automatic) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         this.passkeyAutoPromptAttempted = true;
         void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
@@ -806,9 +810,11 @@ class AccountModal {
                 this.render();
                 this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
                     ? 'account-username-unlock-btn' : 'account-username-input');
-                // A returning username account goes straight to its passkey;
-                // registration still waits for Create passkey on the setup card.
-                if (this.usernameUnlockReady) void this.handleUsernamePasskeyContinue();
+                // Returning and new username accounts both go straight to the
+                // passkey: unlock for an existing name, registration for a new one.
+                if (this.usernameUnlockReady || this.creationStep === 'username_ready') {
+                    void this.handleUsernamePasskeyContinue();
+                }
             }
         }
     }
@@ -1686,13 +1692,15 @@ class AccountModal {
         // arrival and this card only covers waiting and retry. Setup and the
         // legacy recovery-code migration keep a title because they explain
         // something new.
+        // No heading for the automatic paths (returning unlock and first-time
+        // setup): the OS sheet opens on arrival and the card only ever shows
+        // the waiting and retry states. Legacy paths keep a heading because
+        // they explain something the user has to act on first.
         const title = isLegacyMigration
             ? 'Upgrade encrypted data'
-            : isSetup
-                ? 'Encrypt your data'
-                : isLegacyPasskey
-                    ? 'Welcome back'
-                    : '';
+            : isLegacyPasskey
+                ? 'Welcome back'
+                : '';
         const body = busy
             ? isLegacyMigration
                 ? 'Confirm with your passkey to finish the upgrade.'
@@ -1717,7 +1725,7 @@ class AccountModal {
         const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
 
         return `
-            <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : 'aria-label="Unlock your encrypted data"'} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}"${!title && busy ? ' data-waiting="true"' : ''}>
+            <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : `aria-label="${isSetup ? 'Create your passkey' : 'Unlock your encrypted data'}"`} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}"${!title && busy ? ' data-waiting="true"' : ''}>
                 <button id="close-account-modal" class="account-unlock-close" type="button" aria-label="Close"${closeDisabled ? ' disabled' : ''}>
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                         <path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"></path>
