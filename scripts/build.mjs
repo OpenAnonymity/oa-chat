@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
+import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
     resolveBuildOrgOrigin,
@@ -156,6 +157,8 @@ const build = async () => {
             );
         }
     }
+
+    await prepareNanomemBrowser(repoRoot);
 
     await fs.rm(outDir, { recursive: true, force: true });
     await fs.mkdir(path.join(repoRoot, 'dist'), { recursive: true });
