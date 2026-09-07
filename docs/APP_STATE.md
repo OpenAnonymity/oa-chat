@@ -4,6 +4,26 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: Composer capabilities follow the owning payment mode
+
+- Products may supply `runtime.supportsFeature(feature, session)` and
+  `getFeatureUnavailableReason(feature, session)`. The ordinary app keeps every
+  existing feature; mixed products can retain the normal controls while limiting
+  Memory, Scrubber, or Parallel per payment method. Global Memory and Parallel
+  preferences and historical Council configuration stay intact when switching.
+- Memory retrieval and background extraction both require a separate confidential
+  Tinfoil key funded with tickets. Gate these flows, one-shot memory overrides,
+  stale approvals, and uncached Scrubber restoration by their captured session.
+  A visible chat in another payment mode must not change background ownership.
+  Cached scrubbed/restored text and existing Parallel transcripts stay readable.
+- `beginFeatureOperation` owns confidential work through its complete promise;
+  its abort signal never releases an unfinished request. Mode changes and Delete
+  drain this work. Empty-draft work captures its default backend and can bind the
+  created session through `bindFeatureOperation`; components finish in `finally`.
+- Backfill writes `memoryProcessedAt` through `updateMemoryProcessedAt`, which
+  merges into the current live session under a metadata reservation. Never save
+  a stale candidate record over a newer payment mode, lease, or deleted chat.
+
 ## 2026-09-06: Routed response usage pricing
 
 - Streaming usage snapshots carry the returned model's catalog price as soon

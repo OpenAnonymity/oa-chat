@@ -195,3 +195,66 @@ test('memory editor save does not write when memory is disabled before storage m
         memoryFileSystem.write = originalWrite;
     }
 });
+
+test('unsupported payment mode blocks Memory editor and backfill without accessing storage or keys', async () => {
+    installMemoryEditorDocumentStub();
+    const [{ default: MemoryEditor }, { default: memoryFileSystem }] = await Promise.all([
+        import('../../chat/components/MemoryEditor.js'),
+        import('../../chat/services/memoryInstances.js')
+    ]);
+    const originalInit = memoryFileSystem.init;
+    let initCalls = 0;
+    let ticketOperations = 0;
+    const toasts = [];
+    memoryFileSystem.init = async () => { initCalls += 1; };
+    try {
+        const editor = new MemoryEditor({
+            memoryFeatureEnabled: true,
+            supportsFeature: () => false,
+            getFeatureUnavailableReason: () => 'Memory needs a separate ticket key.',
+            beginFeatureOperation: () => { ticketOperations += 1; },
+            showToast: message => toasts.push(message)
+        });
+        assert.equal(await editor.open(), false);
+        await editor._startBackfill();
+        assert.equal(initCalls, 0);
+        assert.equal(ticketOperations, 0);
+        assert.ok(toasts.every(message => message === 'Memory needs a separate ticket key.'));
+    } finally {
+        memoryFileSystem.init = originalInit;
+    }
+});
+
+test('backfill reserves its captured owner before scanning and keeps the reservation after closing', async () => {
+    installMemoryEditorDocumentStub();
+    const { default: MemoryEditor } = await import('../../chat/components/MemoryEditor.js');
+    const owner = { id: 'ticket-owner', inferenceBackend: 'openrouter' };
+    let finishCalls = 0;
+    let resolveCandidates;
+    const candidates = new Promise(resolve => { resolveCandidates = resolve; });
+    const controller = new AbortController();
+    const operation = { controller, signal: controller.signal, sessionId: owner.id };
+    const editor = new MemoryEditor({
+        memoryFeatureEnabled: true,
+        getCurrentSession: () => owner,
+        beginFeatureOperation(feature, session) {
+            assert.equal(feature, 'memory');
+            assert.equal(session, owner);
+            return operation;
+        },
+        finishFeatureOperation(actual) { assert.equal(actual, operation); finishCalls += 1; },
+        showToast() {}
+    });
+    editor.isOpen = true;
+    editor._collectBackfillCandidates = () => candidates;
+    const work = editor._startBackfill();
+    assert.equal(editor.backfillState, 'running');
+    editor.close();
+    assert.equal(editor.backfillState, 'running');
+    assert.equal(controller.signal.aborted, false);
+    assert.equal(finishCalls, 0);
+    resolveCandidates([]);
+    await work;
+    assert.equal(finishCalls, 1);
+    assert.equal(editor.backfillState, null);
+});
