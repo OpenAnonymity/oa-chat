@@ -129,3 +129,64 @@ test('only output-limited assistant responses offer an explicit continuation act
         restoreGlobals();
     }
 });
+
+test('resolved response models render with their provider and escape unknown labels', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '18:15:12' };
+        const message = { id: 'routed', role: 'assistant', model: 'Anthropic: Claude Example', content: 'Hello' };
+        const html = buildMessageHTML(message, helpers, [
+            { id: 'anthropic/example', name: message.model, provider: 'Anthropic' }
+        ], 'Auto Router');
+        assert.match(html, /data-assistant-model-name[^>]*>Claude Example<\/span>/);
+        assert.match(html, /img\/claude\.svg/);
+        assert.doesNotMatch(html, /Auto Router/);
+        for (const streamingPending of [true, false]) {
+            const unsafe = buildMessageHTML({ ...message, model: '<img src=x onerror=alert(1)>', streamingPending }, helpers, [], 'Auto Router');
+            assert.match(unsafe, /&lt;img src=x onerror=alert\(1\)&gt;/);
+            assert.doesNotMatch(unsafe, /<img src=x/);
+        }
+    } finally { restoreGlobals(); }
+});
+
+test('Parallel and Council render response attribution without changing requested lane models', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '18:15:12' };
+        const message = {
+            id: 'routed-council', role: 'assistant', model: 'Council', content: '',
+            council: {
+                enabled: true, currentStage: 'complete', outputMode: 'synthesis',
+                stage1: [
+                    { label: 'Response A', laneId: 'primary', model: 'Auto Router', modelId: 'openrouter/auto', responseModel: 'Anthropic: Claude Example', status: 'complete', response: '' },
+                    { label: 'Response B', laneId: 'secondary', model: 'Auto Router', modelId: 'openrouter/auto', status: 'pending' }
+                ],
+                synthesis: { model: 'Auto Router', modelId: 'openrouter/auto', responseModel: 'OpenAI: GPT Example', status: 'complete', response: '' }
+            }
+        };
+        const html = buildMessageHTML(message, helpers, [], 'Auto Router');
+        assert.match(html, /Claude Example/);
+        assert.match(html, /img\/claude\.svg/);
+        assert.match(html, /GPT Example/);
+        assert.match(html, /img\/openai\.svg/);
+        assert.match(html, /Auto Router/);
+        assert.equal(message.council.stage1[0].modelId, 'openrouter/auto');
+        assert.equal(message.council.synthesis.model, 'Auto Router');
+    } finally { restoreGlobals(); }
+});
+
+test('standalone typing indicators expose session and model hooks for pre-output attribution', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildTypingIndicator } = await import('../../chat/components/MessageTemplates.js');
+        const html = buildTypingIndicator('pending-response', 'OpenRouter', 'Auto Router',
+            Date.parse('2026-07-02T08:15:12Z'), 'waiting-response', null, 'session-one');
+        assert.match(html, /class="typing-indicator[^>]*data-pending-session-id="session-one"/);
+        assert.match(html, /data-phase="waiting-response"/);
+        assert.match(html, /data-assistant-model-name[^>]*>Auto Router<\/span>/);
+        assert.match(html, /<div data-assistant-model-icon\b/);
+        assert.match(html, /Waiting for response/);
+    } finally { restoreGlobals(); }
+});

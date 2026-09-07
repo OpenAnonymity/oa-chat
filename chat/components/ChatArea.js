@@ -4,12 +4,13 @@
  * scroll behaviors, and LaTeX rendering.
  */
 
-import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, buildReasoningTrace, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
+import { buildMessageHTML, buildEmptyState, buildSharedIndicator, buildImportedIndicator, buildTypingIndicator, buildReasoningTrace, buildCouncilModelLabel, resolveAssistantModel, extractShortModelName, RAW_CLIPBOARD_ATTRIBUTE_ENABLED } from './MessageTemplates.js';
 import { exportChats } from '../services/globalExport.js';
 import { parseStreamingReasoningContent, parseReasoningContent } from '../services/reasoningParser.js';
 import { buildQuickAskQuestion, normalizeQuickAskSelection } from '../domain/quickAsk.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { renderMathContent } from '../services/mathRendering.js';
+import { getProviderIcon } from '../services/providerIcons.js';
 
 export default class ChatArea {
     /**
@@ -2254,6 +2255,22 @@ export default class ChatArea {
         return `${messageId}-${laneId || 'lane'}`;
     }
 
+    updateCouncilLaneModel(messageId, laneId, responseModel) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const lane = Array.from(messageEl?.querySelectorAll('[data-council-lane-id]') || [])
+            .find(element => element.dataset.councilLaneId === laneId);
+        const label = lane?.querySelector('.council-response-model');
+        if (!label || label.dataset.responseModel === responseModel) return;
+        label.innerHTML = buildCouncilModelLabel(responseModel, {
+            roleLabel: laneId === 'synthesis' ? 'Council' : ''
+        });
+        label.dataset.responseModel = responseModel;
+        const tab = Array.from(messageEl.querySelectorAll('[data-council-tab-label]'))
+            .find(element => element.dataset.councilTabLabel === lane.dataset.councilPanelLabel);
+        const tabLabel = tab?.querySelector('.council-tab-model');
+        if (tabLabel) tabLabel.textContent = extractShortModelName(responseModel);
+    }
+
     getCouncilLaneBody(messageId, laneId) {
         const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
         if (!messageEl) return null;
@@ -3127,6 +3144,26 @@ export default class ChatArea {
     //     }
     // }
 
+    // Patch only the identity so live reasoning, code blocks and focus stay intact.
+    updateMessageModel(message) {
+        const messageEl = document.querySelector(`[data-message-id="${message.id}"]`)
+            || (message.streamingPending && message.sessionId
+                ? document.querySelector(`.typing-indicator[data-pending-session-id="${message.sessionId}"]`)
+                : null);
+        const label = messageEl?.querySelector('[data-assistant-model-name]');
+        const icon = messageEl?.querySelector('[data-assistant-model-icon]');
+        if (!label || !icon) return;
+        const { providerName, modelName } = resolveAssistantModel(message, this.app.state.models);
+        const displayName = extractShortModelName(modelName);
+        if (label.textContent === displayName && icon.dataset.provider === providerName) return;
+        label.textContent = displayName;
+        const iconData = getProviderIcon(providerName, 'w-3.5 h-3.5');
+        icon.innerHTML = iconData.html;
+        icon.classList.toggle('bg-white', iconData.hasIcon);
+        icon.classList.toggle('bg-muted', !iconData.hasIcon);
+        icon.dataset.provider = providerName;
+    }
+
     /**
      * Re-renders a message to its final state after streaming is complete.
      * This ensures reasoning traces are collapsed and tokens are correctly displayed.
@@ -3141,6 +3178,7 @@ export default class ChatArea {
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
         const forceFullRender = options.forceFullRender === true;
+        this.updateMessageModel(message);
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
         const existingReasoningTrace = messageEl.querySelector('.reasoning-trace');

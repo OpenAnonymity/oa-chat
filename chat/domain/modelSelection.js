@@ -146,6 +146,23 @@ export function findModelByNameOrId(models = [], modelNameOrId = '', normalizeMo
         || null;
 }
 
+// Response IDs can differ from the requested router and may be absent from the
+// local catalog. Never use the router's label as a fallback for a concrete ID.
+export function resolveResponseModelName(reportedModel, {
+    models = [], requestedModelId = '', requestedModelName = '',
+    getDisplayName = (_id, fallback) => fallback
+} = {}) {
+    if (typeof reportedModel !== 'string' || !reportedModel.trim()) return null;
+    const modelId = reportedModel.trim();
+    const baseModelId = modelId.split(':')[0];
+    const catalogModel = models.find(model => model.id === modelId)
+        || models.find(model => model.id === baseModelId);
+    const fallback = catalogModel?.name
+        || (baseModelId === requestedModelId.split(':')[0] ? requestedModelName : '')
+        || modelId;
+    return getDisplayName(modelId, fallback) || fallback;
+}
+
 function modelName(model) {
     return String(model?.name || '').trim();
 }

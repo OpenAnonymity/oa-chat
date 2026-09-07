@@ -1359,7 +1359,7 @@ function buildCitationScopeId(messageId, scope = '') {
  * @param {string} fullName - Full model name (e.g., "OpenAI: GPT-5.1 Thinking")
  * @returns {string} Short model name (e.g., "GPT-5.1 Thinking")
  */
-function extractShortModelName(fullName) {
+export function extractShortModelName(fullName) {
     if (!fullName || typeof fullName !== 'string') return fullName;
 
     const standardized = getStandardizedModelDisplayName(fullName);
@@ -1522,9 +1522,9 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
     const status = synthesis.status || 'pending';
     const statusHtml = buildCouncilResponseStatus(status);
     let bodyHtml = '';
-    const synthesisModel = synthesis.model || synthesis.modelId || '';
+    const synthesisModel = synthesis.responseModel || synthesis.model || synthesis.modelId || '';
     const synthesisModelHtml = synthesisModel
-        ? buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.modelId || '' })
+        ? buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.responseModel ? '' : (synthesis.modelId || '') })
         : '';
     const showMeta = !!(synthesisModelHtml || statusHtml);
     const metaHtml = showMeta
@@ -1640,7 +1640,7 @@ function formatCouncilModelDisplayName(modelName, options = {}) {
         : standardized;
 }
 
-function buildCouncilModelLabel(modelName, options = {}) {
+export function buildCouncilModelLabel(modelName, options = {}) {
     const { roleLabel = '', modelId = '' } = options;
     const displayName = formatCouncilModelDisplayName(modelName || '', options);
     const shortName = extractShortModelName(modelName || '');
@@ -1785,7 +1785,7 @@ function buildCouncilAssistantMessage({
                             : entry.status === 'cancelled'
                                 ? 'Cancelled'
                                 : 'Pending';
-                    const shortName = extractShortModelName(entry.model || '');
+                    const shortName = extractShortModelName(entry.responseModel || entry.model || '');
                     return `
                         <button
                             type="button"
@@ -1812,7 +1812,7 @@ function buildCouncilAssistantMessage({
                 data-council-lane-id="${escapeHtmlAttribute(entry.laneId || '')}"
             >
                 <div class="council-response-meta">
-                    <span class="council-response-model">${buildCouncilModelLabel(entry.model || entry.modelId || '', { modelId: entry.modelId || '' })}</span>
+                    <span class="council-response-model">${buildCouncilModelLabel(entry.responseModel || entry.model || entry.modelId || '', { modelId: entry.responseModel ? '' : (entry.modelId || '') })}</span>
                     ${buildCouncilResponseStatus(entry.status || 'pending', {
                         isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
                     })}
@@ -1892,10 +1892,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             <div class="${CLASSES.assistantWrapper}" data-message-id="${message.id}" data-streaming-pending="true" data-pending-session-id="${escapeHtmlAttribute(message.sessionId || '')}"${scrubberRestoredAttribute}${getRawContentAttribute(message.content)}>
                 <div class="${CLASSES.assistantGroup}">
                     <div class="${CLASSES.assistantHeader}">
-                        <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
+                        <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                             ${iconData.html}
                         </div>
-                        <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
+                        <span data-assistant-model-name class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>
                         <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     </div>
                     <div class="px-2 py-1">
@@ -2166,10 +2166,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 </div>
                 ` : `
                 <div class="${CLASSES.assistantHeader}">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
+                    <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass}">
                         ${iconData.html}
                     </div>
-                    <span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${displayModelName}</span>
+                    <span data-assistant-model-name class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>
                     <span class="${assistantTimeClass}" style="font-size: 0.7rem;">${formatTime(message.timestamp)}</span>
                     ${tokenDisplay}
                 </div>
@@ -2209,13 +2209,13 @@ function buildTypingIndicator(id, providerName, modelName, timestamp, phase = 'r
     const bgClass = iconData.hasIcon ? 'bg-white' : 'bg-muted';
     const displayModelName = isCouncil ? '' : extractShortModelName(modelName);
     const modelNameHtml = displayModelName
-        ? `<span class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>`
+        ? `<span data-assistant-model-name class="${CLASSES.assistantModelName}" style="font-size: 0.7rem;">${escapeHtml(displayModelName)}</span>`
         : '';
     return `
         <div id="${id}" class="typing-indicator ${CLASSES.typingWrapper}" data-provider-name="${escapeHtmlAttribute(providerName)}" data-phase="${escapeHtmlAttribute(normalizePendingPhase(phase))}"${sessionId ? ` data-pending-session-id="${escapeHtmlAttribute(sessionId)}"` : ''}>
             <div class="${CLASSES.assistantGroup}">
                 <div class="${CLASSES.assistantHeader}">
-                    <div class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
+                    <div data-assistant-model-icon class="flex items-center justify-center w-6 h-6 flex-shrink-0 rounded-full border border-border/50 shadow ${bgClass} p-0.5">
                         ${iconData.html}
                     </div>
                     ${modelNameHtml}
@@ -2341,6 +2341,40 @@ export function buildImportedIndicator(importedCount) {
     `;
 }
 
+// Resolve the same model name and provider for full renders and live headers.
+export function resolveAssistantModel(message, models, sessionModelName) {
+    // Determine provider name and model name
+    const defaultModelName = window.app && typeof window.app.getDefaultModelName === 'function'
+        ? window.app.getDefaultModelName()
+        : 'OpenAI: GPT-5.3 Instant';
+    // For assistant messages, prefer the model stored on the message itself
+    const storedModel = message.model || sessionModelName || defaultModelName;
+    const isModelId = typeof storedModel === 'string' && storedModel.includes('/');
+    const modelsArray = Array.isArray(models) ? models : [];
+
+    // Resolve model: storedModel can be either a model ID (e.g., "openai/gpt-5.2-chat")
+    // or a display name (e.g., "OpenAI: GPT-5.2 Instant"). Look up by ID first, then by name.
+    // Note: O(n) lookup per message - acceptable for typical chat sizes (<100 messages)
+    const modelOption = isModelId
+        ? modelsArray.find(m => m.id === storedModel)
+        : modelsArray.find(m => m.name === storedModel);
+
+    // Get display name: prefer model lookup, then API display name override, then stored value
+    let modelName;
+    if (modelOption) {
+        modelName = modelOption.name;
+    } else if (isModelId && typeof openRouterAPI !== 'undefined' && openRouterAPI.getDisplayName) {
+        // Try to get display name from API overrides (e.g., "openai/gpt-5.2-chat" -> "OpenAI: GPT-5.2 Instant")
+        modelName = openRouterAPI.getDisplayName(storedModel, storedModel);
+    } else {
+        modelName = storedModel;
+    }
+    const providerName = modelOption?.provider
+        ? resolveProvider(modelOption.provider).displayName
+        : resolveProviderFromModelReference(isModelId ? storedModel : modelName).displayName;
+    return { providerName, modelName };
+}
+
 /**
  * Builds HTML for a single message (user or assistant).
  * @param {Object} message - Message object with role, content, etc.
@@ -2356,35 +2390,7 @@ export function buildMessageHTML(message, helpers, models, sessionModelName, opt
     } else if (message.role === 'user') {
         return buildUserMessage(message, options);
     } else {
-        // Determine provider name and model name
-        const defaultModelName = window.app && typeof window.app.getDefaultModelName === 'function'
-            ? window.app.getDefaultModelName()
-            : 'OpenAI: GPT-5.3 Instant';
-        // For assistant messages, prefer the model stored on the message itself
-        const storedModel = message.model || sessionModelName || defaultModelName;
-        const isModelId = typeof storedModel === 'string' && storedModel.includes('/');
-        const modelsArray = Array.isArray(models) ? models : [];
-
-        // Resolve model: storedModel can be either a model ID (e.g., "openai/gpt-5.2-chat")
-        // or a display name (e.g., "OpenAI: GPT-5.2 Instant"). Look up by ID first, then by name.
-        // Note: O(n) lookup per message - acceptable for typical chat sizes (<100 messages)
-        let modelOption = isModelId
-            ? modelsArray.find(m => m.id === storedModel)
-            : modelsArray.find(m => m.name === storedModel);
-
-        // Get display name: prefer model lookup, then API display name override, then stored value
-        let modelName;
-        if (modelOption) {
-            modelName = modelOption.name;
-        } else if (isModelId && typeof openRouterAPI !== 'undefined' && openRouterAPI.getDisplayName) {
-            // Try to get display name from API overrides (e.g., "openai/gpt-5.2-chat" -> "OpenAI: GPT-5.2 Instant")
-            modelName = openRouterAPI.getDisplayName(storedModel, storedModel);
-        } else {
-            modelName = storedModel;
-        }
-        const providerName = modelOption?.provider
-            ? resolveProvider(modelOption.provider).displayName
-            : resolveProviderFromModelReference(isModelId ? storedModel : modelName).displayName;
+        const { providerName, modelName } = resolveAssistantModel(message, models, sessionModelName);
 
         return buildAssistantMessage(message, helpers, providerName, modelName, options);
     }

@@ -9,6 +9,7 @@ import {
     getConfiguredSecondaryModelNameForModels,
     getDefaultSecondaryModelNameForModels,
     normalizeModelName,
+    resolveResponseModelName,
     resolveDefaultModelPreferenceUpdate,
     resolvePrimaryModelNameForModels,
     resolveSynthesisModelNameForModels,
@@ -66,6 +67,42 @@ test('normalizeModelName resolves ids through display-name provider and standard
         }),
         'Provider Standard Name'
     );
+});
+
+test('response models use their catalog label, including online variants, instead of the router label', () => {
+    const options = {
+        models: [
+            { id: 'openrouter/auto', name: 'Auto Router' },
+            { id: 'anthropic/routed-model', name: 'Anthropic: Routed model' }
+        ],
+        requestedModelId: 'openrouter/auto:online',
+        requestedModelName: 'Auto Router'
+    };
+    assert.equal(resolveResponseModelName('anthropic/routed-model', options), 'Anthropic: Routed model');
+    assert.equal(resolveResponseModelName(' anthropic/routed-model:online ', options), 'Anthropic: Routed model');
+    assert.equal(resolveResponseModelName('openrouter/auto:online', options), 'Auto Router');
+});
+
+test('unknown response models retain their actual id and still permit display-name overrides', () => {
+    const options = { requestedModelId: 'openrouter/auto', requestedModelName: 'Auto Router' };
+    assert.equal(resolveResponseModelName('new-provider/new-model:online', options), 'new-provider/new-model:online');
+    assert.equal(resolveResponseModelName('new-provider/new-model', {
+        ...options,
+        getDisplayName: (id, fallback) => {
+            assert.equal(id, 'new-provider/new-model');
+            assert.equal(fallback, 'new-provider/new-model');
+            return 'New provider: New model';
+        }
+    }), 'New provider: New model');
+    assert.equal(resolveResponseModelName('openrouter/auto:online', options), 'Auto Router');
+});
+
+test('missing or malformed response model metadata does not replace the selected model label', () => {
+    for (const model of [undefined, null, '', '  ', {}, 42]) {
+        assert.equal(resolveResponseModelName(model, {
+            requestedModelId: 'openrouter/auto', requestedModelName: 'Auto Router'
+        }), null);
+    }
 });
 
 test('getComposerModelDisplayName removes provider prefixes without character truncation', () => {

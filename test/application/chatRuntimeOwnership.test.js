@@ -31,6 +31,7 @@ const { default: preferencesStore } = await import('../../chat/services/preferen
 const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
+const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
@@ -613,6 +614,168 @@ describe('production ChatApp runtime ownership', () => {
         app.inferenceService = { streamCompletion: async (...args) => { await args[4](result); return result; } };
         assert.equal(await app.streamCompletionWithRuntime([], 'model', { id: 'one' }, () => {}, () => {},
             [], false, new AbortController(), null, null, true, 'high', 'message'), result);
+    });
+
+    test('response model metadata reaches the controller without creating or resetting token usage', async () => {
+        const app = appHarness();
+        const usageRecords = [];
+        const tokenUpdates = [];
+        const initialUsage = { promptTokens: 20, completionTokens: 7, estimated: true, isStreaming: true };
+        const modelUpdate = { model: 'anthropic/routed-model', modelOnly: true };
+        const cancellation = Object.assign(new Error('Canceled by user'), { isCancelled: true });
+        app.runtime.recordUsage = async options => usageRecords.push(options);
+        app.inferenceService = { streamCompletion: async (...args) => {
+            await args[4](initialUsage);
+            await args[3]('Partial answer');
+            await args[4](modelUpdate);
+            throw cancellation;
+        } };
+
+        await assert.rejects(app.streamCompletionWithRuntime([], 'openrouter/auto', { id: 'one' }, () => {},
+            update => tokenUpdates.push(update), [], false, new AbortController(), null, null,
+            true, 'high', 'routed-request'), error => error === cancellation);
+
+        assert.deepEqual(tokenUpdates, [initialUsage, modelUpdate]);
+        assert.equal(usageRecords.length, 2, 'model metadata must not create another usage record');
+        assert.equal(usageRecords[0].final, false);
+        assert.equal(usageRecords[1].usage.model, 'anthropic/routed-model');
+        assert.equal(usageRecords[1].usage.promptTokens, 20);
+        assert.equal(usageRecords[1].usage.completionTokens, 7);
+        assert.equal(usageRecords[1].usage.modelOnly, undefined);
+    });
+
+    for (const action of ['send', 'regenerate']) {
+        for (const interrupted of [false, true]) {
+            test(`${action} preserves the routed model on ${interrupted ? 'stopped partial output' : 'completed output'}`, async () => {
+                const headerUpdates = [];
+                let requestedModel;
+                let renderedModelDuringStream;
+                const { app, records } = streamHarness(async (...args) => {
+                    requestedModel = args[1];
+                    await args[3]('A routed answer');
+                    await args[4]({ completionTokens: 7, estimated: true, isStreaming: true });
+                    await args[4]({ model: 'anthropic/routed-model:online', modelOnly: true });
+                    renderedModelDuringStream = headerUpdates.at(-1)?.model;
+                    if (interrupted) throw Object.assign(new Error('Canceled by user'), { isCancelled: true });
+                    return {};
+                });
+                app.state.models = [
+                    { id: 'openrouter/auto', name: 'Auto Router' },
+                    { id: 'anthropic/routed-model', name: 'Anthropic: Routed model' }
+                ];
+                const session = app.state.sessionsById.get('one');
+                session.model = 'Auto Router';
+                app.inferenceService.getDisplayName = (_id, fallback) => fallback;
+                app.chatArea = {
+                    appendMessage() {}, updateStreamingMessage() {}, finalizeStreamingMessage() {},
+                    updateMessageModel: message => headerUpdates.push(structuredClone(message))
+                };
+                if (action === 'regenerate') {
+                    records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt',
+                        model: 'Auto Router', memoryMode: false });
+                    await app.regenerateResponse();
+                } else await app.sendMessage();
+
+                const assistant = [...records.values()].find(message => message.role === 'assistant');
+                assert.ok(assistant);
+                assert.equal(assistant.model, 'Anthropic: Routed model');
+                assert.equal(assistant.content, 'A routed answer');
+                assert.equal(renderedModelDuringStream, 'Anthropic: Routed model',
+                    'the active header must update before the stream finishes');
+                assert.equal(session.model, 'Auto Router');
+                assert.equal(requestedModel, 'openrouter/auto');
+                if (interrupted) assert.equal(assistant.isLocalOnly, false);
+                else assert.equal(assistant.tokenCount, 7, 'model-only metadata must retain the streamed token count');
+            });
+        }
+    }
+
+    test('separate Auto Router turns persist their own final response models and keep routing subsequent requests', async () => {
+        const requestedModels = [];
+        const reportedModels = ['anthropic/routed-model', 'new-provider/uncatalogued-model'];
+        const { app, records } = streamHarness(async (...args) => {
+            requestedModels.push(args[1]);
+            await args[3]('Answer');
+            return { model: reportedModels[requestedModels.length - 1], completionTokens: 3 };
+        });
+        app.state.models = [
+            { id: 'openrouter/auto', name: 'Auto Router' },
+            { id: 'anthropic/routed-model', name: 'Anthropic: Routed model' }
+        ];
+        const session = app.state.sessionsById.get('one');
+        session.model = 'Auto Router';
+        app.inferenceService.getDisplayName = (_id, fallback) => fallback;
+
+        await app.sendMessage();
+        app.elements.messageInput.value = 'A follow-up prompt';
+        await app.sendMessage();
+
+        assert.deepEqual(requestedModels, ['openrouter/auto', 'openrouter/auto']);
+        assert.equal(session.model, 'Auto Router');
+        assert.deepEqual([...records.values()].filter(message => message.role === 'assistant').map(message => message.model),
+            ['Anthropic: Routed model', 'new-provider/uncatalogued-model']);
+        assert.deepEqual([...records.values()].filter(message => message.role === 'user').map(message => message.model),
+            ['Auto Router', 'Auto Router']);
+    });
+
+    test('pre-output response metadata patches only its session pending header in place', () => {
+        const makePending = sessionId => {
+            const label = { textContent: 'Auto Router' };
+            const classes = new Set(['bg-muted']);
+            const icon = {
+                innerHTML: '<span>Router icon</span>', dataset: {},
+                classList: { toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); } }
+            };
+            const phase = { textContent: 'Waiting for response' };
+            const content = { textContent: 'Pending progress content' };
+            const placeholder = {
+                dataset: { pendingSessionId: sessionId, phase: 'waiting-response' },
+                children: [label, icon, phase, content],
+                querySelector: selector => ({
+                    '[data-assistant-model-name]': label,
+                    '[data-assistant-model-icon]': icon
+                })[selector] || null,
+                set innerHTML(_value) { assert.fail('Model metadata must preserve pending content nodes'); },
+                replaceWith() { assert.fail('Model metadata must preserve the pending placeholder'); }
+            };
+            return { placeholder, label, icon, phase, content, classes };
+        };
+        const owned = makePending('one');
+        const other = makePending('two');
+        const nodes = new Map([
+            ['.typing-indicator', other.placeholder],
+            ['.typing-indicator[data-pending-session-id="one"]', owned.placeholder],
+            ['.typing-indicator[data-pending-session-id="two"]', other.placeholder]
+        ]);
+        document.querySelector = selector => nodes.get(selector) || null;
+        const area = Object.assign(Object.create(ChatArea.prototype), { app: { state: { models: [
+            { id: 'anthropic/example', name: 'Anthropic: Claude Example', provider: 'Anthropic' }
+        ] } } });
+        const originalChildren = [...owned.placeholder.children];
+
+        area.updateMessageModel({ id: 'not-mounted-yet', sessionId: 'one', role: 'assistant',
+            model: 'Anthropic: Claude Example', streamingPending: true });
+
+        assert.equal(owned.label.textContent, 'Claude Example');
+        assert.match(owned.icon.innerHTML, /img\/claude\.svg/);
+        assert.equal(owned.icon.dataset.provider, 'Anthropic');
+        assert.ok(owned.classes.has('bg-white'));
+        assert.ok(!owned.classes.has('bg-muted'));
+        assert.equal(nodes.get('.typing-indicator[data-pending-session-id="one"]'), owned.placeholder);
+        originalChildren.forEach((node, index) => assert.equal(owned.placeholder.children[index], node));
+        assert.equal(owned.placeholder.dataset.phase, 'waiting-response');
+        assert.equal(owned.phase.textContent, 'Waiting for response');
+        assert.equal(owned.content.textContent, 'Pending progress content');
+        assert.equal(other.label.textContent, 'Auto Router');
+        assert.equal(other.icon.innerHTML, '<span>Router icon</span>');
+
+        area.updateMessageModel({ id: 'old-completed-message', sessionId: 'one', role: 'assistant',
+            model: 'OpenAI: GPT Example', streamingPending: false });
+
+        assert.equal(owned.label.textContent, 'Claude Example',
+            'an unmounted completed message must not overwrite a later pending response');
+        assert.match(owned.icon.innerHTML, /img\/claude\.svg/);
+        assert.equal(other.label.textContent, 'Auto Router');
     });
 
     test('an opaque session binding remains securing until the backend reports real transport access', () => {

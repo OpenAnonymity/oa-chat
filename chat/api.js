@@ -928,6 +928,28 @@ export class OpenRouterAPI {
                 return;
             }
 
+            // A router may identify the selected model in a role-only event.
+            // Publish it before any output/usage from the same event, without
+            // treating metadata as generated output or final provider usage.
+            const reportedModel = typeof parsed.model === 'string' ? parsed.model.trim() : '';
+            if (reportedModel && reportedModel !== modelUsed) {
+                modelUsed = reportedModel;
+                if (onTokenUpdate) {
+                    await onTokenUpdate({
+                        totalTokens,
+                        promptTokens,
+                        completionTokens,
+                        cost: reportedCost,
+                        pricing: modelPricing,
+                        model: modelUsed,
+                        modelOnly: true,
+                        estimated: true,
+                        isStreaming: true
+                    });
+                    throwIfStreamAborted();
+                }
+            }
+
                 // Check for annotations in various possible locations in the response
                 // All formats use addAnnotations() which deduplicates by normalized URL
 
@@ -1163,10 +1185,6 @@ export class OpenRouterAPI {
                     }
                 }
 
-                // Check for model info
-                if (parsed.model) {
-                    modelUsed = parsed.model;
-                }
         };
 
         const finalizeStreamResult = async () => {

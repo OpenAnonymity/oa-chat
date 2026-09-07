@@ -202,12 +202,12 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council synthesis model labels should match lane labels by omitting provider prefixes'
     );
     assert.equal(
-        source.includes("buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.modelId || '' })"),
+        source.includes("buildCouncilModelLabel(synthesisModel, { roleLabel: 'Council', modelId: synthesis.responseModel ? '' : (synthesis.modelId || '') })"),
         true,
         'Council synthesis should identify the selected synthesis model as the Council model and pass provider metadata'
     );
     assert.equal(
-        source.includes("buildCouncilModelLabel(entry.model || entry.modelId || '', { modelId: entry.modelId || '' })"),
+        source.includes("buildCouncilModelLabel(entry.responseModel || entry.model || entry.modelId || '', { modelId: entry.responseModel ? '' : (entry.modelId || '') })"),
         true,
         'Stage 1 lane labels should remain plain model labels and pass provider metadata'
     );
