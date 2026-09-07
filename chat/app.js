@@ -2068,6 +2068,7 @@ class ChatApp {
             // Whatever the route decided, the early arrival spinner from
             // index.html must not outlive it (the dialog clears it itself on open).
             document.documentElement?.removeAttribute?.('data-auth-arriving');
+            document.documentElement?.removeAttribute?.('data-auth-caption');
         }
 
         // Initialize preference-backed layout only after account context exists.

@@ -364,11 +364,21 @@ class AccountModal {
         // Clear any stale errors when opening
         this.accountService.clearErrors();
         this.passkeyAutoPromptAttempted = false;
+        // The arrival layer from index.html has been showing the same caption
+        // since before any script ran: the dialog's copy is already on
+        // screen, so it must not enter again, and the hold before an
+        // automatic passkey sheet counts from navigation, not from now.
+        if (document.documentElement?.hasAttribute?.('data-auth-caption')) {
+            this.waitingCaptionShown = true;
+            this.captionShownAt = 0;
+        }
         this.render();
         this.overlay.classList.remove('hidden');
         // The dialog's own backdrop is now painted; the early arrival layer from
-        // index.html (same dim, same spinner) can go without a visible change.
+        // index.html (same dim, same spinner, same caption) can go without a
+        // visible change.
         document.documentElement?.removeAttribute?.('data-auth-arriving');
+        document.documentElement?.removeAttribute?.('data-auth-caption');
         this.focusModal();
 
         const tabBtn = document.getElementById('account-tab-btn');
@@ -910,7 +920,7 @@ class AccountModal {
                         if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
                         this.usernameIntroPending = false;
                         void this.handleUsernamePasskeyContinue();
-                    }, PASSKEY_INTRO_MS));
+                    }, this.remainingPasskeyIntroMs()));
                     return;
                 }
                 this.render();
@@ -1023,7 +1033,7 @@ class AccountModal {
             if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
             this.usernameIntroPending = false;
             void this.handleUsernamePasskeyContinue();
-        }, PASSKEY_INTRO_MS));
+        }, this.remainingPasskeyIntroMs()));
     }
 
     async handleAccountPasskeyUnlock(preparedChallenge = null) {
@@ -1226,9 +1236,9 @@ class AccountModal {
             // happened on the landing page, so only the spinner is drawn.
             this.overlay.innerHTML = `
                 <div role="dialog" aria-modal="true" aria-label="Signing in" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
-                    <p class="account-unlock-body" role="status">Signing in with ${this.escapeHtml(this.getOAuthProviderLabel(this.oauthProvider))}…</p>
+                    <p class="account-unlock-body">Signing in with ${this.escapeHtml(this.getOAuthProviderLabel(this.oauthProvider))}…</p>
                 </div>
-                <div class="account-unlock-waiting" aria-hidden="true"><span class="account-unlock-spinner account-unlock-waiting-spinner"></span></div>
+                ${this.renderWaitingLayer()}
             `;
         } else if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
@@ -1240,9 +1250,9 @@ class AccountModal {
             // assistive technology.
             this.overlay.innerHTML = `
                 <div role="dialog" aria-modal="true" aria-label="Checking username" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
-                    <p class="account-unlock-body" role="status">Checking username…</p>
+                    <p class="account-unlock-body">Checking username…</p>
                 </div>
-                <div class="account-unlock-waiting" aria-hidden="true"><span class="account-unlock-spinner account-unlock-waiting-spinner"></span></div>
+                ${this.renderWaitingLayer({ username: this.usernameInputValue })}
             `;
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
@@ -1843,6 +1853,38 @@ class AccountModal {
         });
     }
 
+    /**
+     * The dimmed page behind every passkey wait: spinner, one line saying a
+     * passkey comes next (naming the account when it has a name), one on
+     * why. The same layer for a returning unlock, a first-time setup, the
+     * username lookup and the Google hand-off, so the wait reads the same
+     * whichever way someone arrived — and the same as the arrival layer
+     * index.html paints before scripts load. It enters once per dialog; if
+     * the arrival layer already showed it, it does not enter at all.
+     */
+    renderWaitingLayer({ username = '', finishing = false } = {}) {
+        const enters = !this.waitingCaptionShown;
+        if (enters) {
+            this.waitingCaptionShown = true;
+            this.captionShownAt = typeof performance !== 'undefined' ? performance.now() : 0;
+        }
+        const name = String(username || '').trim();
+        const title = finishing
+            ? 'Creating your account'
+            : `Next, you\u2019ll confirm with a passkey${name ? ` for ${this.escapeHtml(name)}` : ''}`;
+        const enterClass = enters ? ' account-unlock-waiting-enter' : '';
+        return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
+                <p class="account-unlock-waiting-title${enterClass}">${title}</p>
+                <p class="account-unlock-waiting-note${enterClass}">It encrypts your tickets and preferences so only you can access them.</p></div>`;
+    }
+
+    /** How much of PASSKEY_INTRO_MS the caption has not yet been on screen for. */
+    remainingPasskeyIntroMs() {
+        if (!this.waitingCaptionShown) return PASSKEY_INTRO_MS;
+        const now = typeof performance !== 'undefined' ? performance.now() : 0;
+        return Math.max(0, PASSKEY_INTRO_MS - (now - (this.captionShownAt || 0)));
+    }
+
     renderPasskeyUnlockCard({
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
         finishing = false, busy = false, error = '', closeDisabled = false,
@@ -1886,22 +1928,12 @@ class AccountModal {
                     : 'Unlock';
         const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
         const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
-        // First-time setup is the only automatic prompt whose purpose the user
-        // has not seen before: the dimmed page says a passkey comes next and
-        // why — held for a moment before the sheet, and still there behind
-        // it. Once the passkey exists the line becomes the account being
-        // made. Returning accounts keep the bare spinner.
-        // Every render replaces the overlay's markup, so the entrance runs
-        // only on the first frame that shows the caption, not on the account
-        // and sync notifications that redraw it during the ceremony.
-        const captionEnters = !this.waitingCaptionShown;
-        const captionTitle = finishing
-            ? 'Creating your account'
-            : `Next, you\u2019ll create a passkey for ${this.escapeHtml(username)}`;
-        const waitingCaption = !title && busy && isSetup && username ? `
-                <p class="account-unlock-waiting-title${captionEnters ? ' account-unlock-waiting-enter' : ''}">${captionTitle}</p>
-                <p class="account-unlock-waiting-note${captionEnters ? ' account-unlock-waiting-enter' : ''}">It encrypts your tickets and preferences so only you can access them.</p>` : '';
-        if (waitingCaption) this.waitingCaptionShown = true;
+        // Every untitled wait shows the same caption behind the sheet; the
+        // account's name when it has one (a Google account has none yet).
+        const waitingName = username || this.usernameInputValue || state.username || '';
+        const waitingLayer = !title && busy
+            ? this.renderWaitingLayer({ username: waitingName, finishing })
+            : '';
 
         return `
             <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : `aria-label="${isSetup ? 'Create your passkey' : 'Unlock your encrypted data'}"`} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}"${!title && busy ? ' data-waiting="true"' : ''}>
@@ -1940,7 +1972,7 @@ class AccountModal {
                     ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
-            ${!title && busy ? `<div class="account-unlock-waiting" role="status"${waitingCaption ? '' : ' aria-label="Confirming your passkey"'}><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>${waitingCaption}</div>` : ''}
+            ${waitingLayer}
         `;
     }
 

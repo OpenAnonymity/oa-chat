@@ -6118,12 +6118,13 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     border-top-color: transparent;
 }
 
-/* First-time setup only: one line saying a passkey comes next, one on why.
-   It is the whole page for a couple of seconds before the OS sheet opens,
-   so it sits in the centre like the spinner; once the sheet is up it has
-   been read, and the sheet itself names the passkey. It enters once, on the
-   frame the lookup resolves to a new account; the untitled card's own copy
-   stays for AT. */
+/* Behind every passkey wait — returning unlock, first-time setup, the
+   username lookup, the Google hand-off: one line saying a passkey comes
+   next, one on why. It is the whole page until the OS sheet opens, so it
+   sits in the centre like the spinner; once the sheet is up it has been
+   read. index.html paints the same two lines before any script runs for a
+   sign-in hand-off, so the caption is on screen from the first frame and
+   the dialog's copy takes over without entering again. */
 .account-unlock-waiting-title,
 .account-unlock-waiting-note {
     margin: 0;

@@ -151,8 +151,8 @@ test('signed-in Account opens beside the nested action row without backdrop dism
         assert.equal(inserted[0].reference, actionRow);
         assert.equal(inserted[0].node.dataset.oaExtensionSlot, SLOT_NAMES.ACCOUNT_COMMERCIAL);
         assert.deepEqual(refreshed, [SLOT_NAMES.ACCOUNT_COMMERCIAL]);
-        // Opening the dialog clears the early arrival dim + spinner painted by index.html.
-        assert.deepEqual(removedRootAttributes, ['data-auth-arriving']);
+        // Opening the dialog clears the early arrival dim + spinner + caption painted by index.html.
+        assert.deepEqual(removedRootAttributes, ['data-auth-arriving', 'data-auth-caption']);
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
@@ -279,7 +279,14 @@ test('account dialogs share one accent focus ring, close control, dark edges and
     // The authentication hand-off paints its dim + spinner before any stylesheet.
     assert.match(html, /document\.documentElement\.setAttribute\('data-auth-arriving', ''\)/);
     assert.match(html, /html\[data-auth-arriving\] #auth-arrival\s*\{[^}]*position: fixed;[^}]*background: rgb\(0 0 0 \/ 0\.6\)/s);
-    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><\/div>\s*<div id="account-modal"/);
+    // A sign-in hand-off also paints the passkey caption from the first frame — the
+    // same two lines the dialog draws behind the sheet, filled in by an inline
+    // script right after the layer, before the module scripts run.
+    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><p id="auth-arrival-title"><\/p><p id="auth-arrival-note">It encrypts your tickets and preferences so only you can access them\.<\/p><\/div>\s*<script>[\s\S]*?'Next, you\\u2019ll confirm with a passkey' \+ \(username \? ' for ' \+ username : ''\)[\s\S]*?<\/script>\s*<div id="account-modal"/);
+    assert.match(html, /document\.documentElement\.setAttribute\('data-auth-caption', username\)/);
+    assert.match(html, /html\[data-auth-caption\] #auth-arrival > p \{ display: block; \}/);
+    assert.match(html, /#auth-arrival-title \{ font-size: 0\.9375rem; font-weight: 500; line-height: 1\.4;/);
+    assert.match(html, /#auth-arrival-note \{ margin-top: -0\.625rem; font-size: 0\.8125rem; line-height: 1\.5; color: rgb\(255 255 255 \/ 0\.6\)/);
     assert.ok(html.indexOf('data-auth-arriving') < html.indexOf('fonts/fonts.css'), 'arrival layer is painted before any stylesheet');
     assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)/);
     assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within/);
@@ -516,7 +523,7 @@ test('first username setup draws only the spinner and a caption saying what the 
         // escaped, and no username/account summary card is drawn.
         assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
         assert.match(html, step === 'passkey'
-            ? /class="account-unlock-waiting-title[^"]*">Next, you’ll create a passkey for winter-&lt;owl&gt;<\/p>/
+            ? /class="account-unlock-waiting-title[^"]*">Next, you’ll confirm with a passkey for winter-&lt;owl&gt;<\/p>/
             : /class="account-unlock-waiting-title[^"]*">Creating your account<\/p>/);
         assert.match(html, /class="account-unlock-waiting-note[^"]*">It encrypts your tickets and preferences so only you can access them\.<\/p>/);
         assert.doesNotMatch(html, /Your username|Your account number|Create a passkey account|You're all set/);
@@ -534,7 +541,7 @@ test('first username setup draws only the spinner and a caption saying what the 
     assert.doesNotMatch(retry, /winter-|Your username|Setting up your account|account-unlock-waiting/);
 });
 
-test('a returning username unlock keeps the bare spinner while the passkey sheet is up', () => {
+test('a returning username unlock shows the same caption as first-time setup while the sheet is up', () => {
     const modal = Object.create(AccountModal.prototype);
     modal.usernameUnlockReady = true;
     modal.usernamePasskeyBusy = true;
@@ -542,8 +549,33 @@ test('a returning username unlock keeps the bare spinner while the passkey sheet
     modal.accountState = { username: 'winter-owl', busy: false };
     modal.escapeHtml = value => String(value ?? '');
     const html = modal.renderUsernameUnlockUI();
-    assert.match(html, /<div class="account-unlock-waiting" role="status" aria-label="Confirming your passkey"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span><\/div>/);
-    assert.doesNotMatch(html, /account-unlock-waiting-title|Setting up a passkey/);
+    assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
+    assert.match(html, /account-unlock-waiting-title account-unlock-waiting-enter">Next, you’ll confirm with a passkey for winter-owl</);
+    assert.match(html, /account-unlock-waiting-note account-unlock-waiting-enter">It encrypts your tickets and preferences so only you can access them\.</);
+    assert.doesNotMatch(html, /Setting up a passkey|create a passkey/);
+    // The same wait, whichever way someone arrived: the hand-off spinners
+    // and the Google unlock draw the identical layer.
+    modal.waitingCaptionShown = false;
+    modal.usernameInputValue = '';
+    modal.oauthProvider = 'google';
+    modal.getOAuthProviderLabel = () => 'Google';
+    modal.accountState = { busy: true, oauthKeyringRequired: true };
+    assert.match(modal.renderOAuthUnlockUI(), /account-unlock-waiting-title account-unlock-waiting-enter">Next, you’ll confirm with a passkey</);
+});
+
+test('a caption the arrival layer already showed does not enter again, and the hold counts from navigation', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.escapeHtml = value => String(value ?? '');
+    modal.waitingCaptionShown = true;
+    modal.captionShownAt = 0;
+    const html = modal.renderWaitingLayer({ username: 'winter-owl' });
+    assert.doesNotMatch(html, /account-unlock-waiting-enter/);
+    assert.match(html, /Next, you’ll confirm with a passkey for winter-owl/);
+    assert.ok(modal.remainingPasskeyIntroMs() <= 2000);
+    modal.captionShownAt = performance.now();
+    assert.ok(modal.remainingPasskeyIntroMs() > 1900);
+    modal.waitingCaptionShown = false;
+    assert.equal(modal.remainingPasskeyIntroMs(), 2000);
 });
 
 test('a registration the server rejected goes back to an empty username field with the reason', async () => {
@@ -624,7 +656,7 @@ test('new username registration keeps progress through account/sync notification
         assert.equal(frames.length, 3); // waiting, confirming, and sync notification
         for (const html of frames) {
             assert.match(html, /Confirm with your passkey to finish\./);
-            assert.match(html, /Next, you’ll create a passkey for winter-owl|Creating your account/);
+            assert.match(html, /Next, you’ll confirm with a passkey for winter-owl|Creating your account/);
             assert.doesNotMatch(html, /Your username|Your account number/);
         }
         // The caption entered on the first frame only; redraws did not replay it.
@@ -743,7 +775,10 @@ test('landing handoff goes straight to the passkey for returning accounts; new o
                 const waiting = frames.find(html => html.includes('aria-busy="true"'));
                 assert.match(waiting, /account-unlock-card-untitled" data-waiting="true"/);
                 // Spinner only on the dimmed page; the card itself is not drawn.
-                assert.match(waiting, /<div class="account-unlock-waiting" role="status" aria-label="Confirming your passkey"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span><\/div>/);
+                // The caption entered with the first (lookup) frame and stays put.
+                assert.match(frames[0], /account-unlock-waiting-title account-unlock-waiting-enter">Next, you’ll confirm with a passkey for winter-owl</);
+                assert.match(waiting, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
+                assert.match(waiting, /account-unlock-waiting-title">Next, you’ll confirm with a passkey for winter-owl</);
                 assert.match(waiting, /aria-label="Unlock your encrypted data"/);
                 assert.doesNotMatch(waiting, /<h2/);
                 assert.match(waiting, /Confirm with your passkey to continue\./);
@@ -758,7 +793,7 @@ test('landing handoff goes straight to the passkey for returning accounts; new o
                 const intro = frames.at(-1);
                 assert.match(intro, /account-unlock-card-untitled" data-waiting="true"/);
                 assert.match(intro, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
-                assert.match(intro, /account-unlock-waiting-title account-unlock-waiting-enter">Next, you’ll create a passkey for winter-owl</);
+                assert.match(intro, /account-unlock-waiting-title">Next, you’ll confirm with a passkey for winter-owl</);
                 assert.match(intro, /It encrypts your tickets and preferences so only you can access them\./);
                 assert.doesNotMatch(intro, /Create passkey|<h2/);
                 assert.ok(frames.every(html => !html.includes('Encrypt your data')));
@@ -908,7 +943,7 @@ test('Continue prompts the passkey at once for returning accounts; new accounts 
                 assert.equal(modal.creationStep, 'username_ready');
                 assert.equal(modal.usernameIntroPending, true);
                 assert.deepEqual(calls, [['prepare', 'winter-owl']]);
-                assert.match(modal.renderUsernameUnlockUI(), /data-waiting="true"[\s\S]*Next, you’ll create a passkey for winter-owl/);
+                assert.match(modal.renderUsernameUnlockUI(), /data-waiting="true"[\s\S]*Next, you’ll confirm with a passkey for winter-owl/);
                 await pass();
                 assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
             } else {
