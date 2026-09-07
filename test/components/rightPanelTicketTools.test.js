@@ -167,3 +167,30 @@ test('commercial ticket launcher keeps a question-mark ticket explanation', () =
     assert.match(source, /queries go directly to the model provider—not OA/);
     assert.match(source, /this\.updateExternalTicketInfoVisibility\(\)/);
 });
+
+
+test('access rows follow payment capabilities while preserving historical and pending Parallel choices', () => {
+    const panel = createPanel();
+    const config = { enabled: true, outputMode: 'parallel' };
+    const session = { inferenceBackend: 'tickets', responseMode: 'council', councilConfig: config };
+    panel.currentSession = session;
+    let defaultBackend = 'tickets';
+    panel.app.supportsFeature = (feature, owner) => {
+        assert.equal(feature, 'council');
+        return (owner?.inferenceBackend || defaultBackend) === 'tickets';
+    };
+    panel.app.getPendingCouncilConfig = () => config;
+    assert.deepEqual(panel.getCouncilAccessRows().map(row => row.id), ['primary', 'secondary']);
+    session.inferenceBackend = 'zkapi';
+    assert.deepEqual(panel.getCouncilAccessRows(), []);
+    assert.equal(session.councilConfig.enabled, true);
+    session.inferenceBackend = 'tickets';
+    assert.equal(panel.getCouncilAccessRows().length, 2);
+    panel.currentSession = null;
+    defaultBackend = 'zkapi';
+    assert.deepEqual(panel.getCouncilAccessRows(), []);
+    defaultBackend = 'tickets';
+    assert.equal(panel.getCouncilAccessRows().length, 2);
+    delete panel.app.supportsFeature;
+    assert.equal(panel.getCouncilAccessRows().length, 2, 'ordinary OA preserves its default Parallel presentation');
+});

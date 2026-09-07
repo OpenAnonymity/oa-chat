@@ -11,6 +11,8 @@ reading code alone.
   existing feature; mixed products can retain the normal controls while limiting
   Memory, Scrubber, or Parallel per payment method. Global Memory and Parallel
   preferences and historical Council configuration stay intact when switching.
+  The System Panel also gates lane-key rows by capability so an unavailable
+  historical or pending Parallel choice still presents the single-key access panel.
 - Memory retrieval and background extraction both require a separate confidential
   Tinfoil key funded with tickets. Gate these flows, one-shot memory overrides,
   stale approvals, and uncached Scrubber restoration by their captured session.
