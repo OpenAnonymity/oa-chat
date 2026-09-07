@@ -1948,7 +1948,13 @@ class AccountModal {
             : isLegacyPasskey
                 ? 'Welcome back'
                 : '';
-        const body = busy
+        // An expired request is the whole story: it replaces the explanation
+        // (already read before the sheet) rather than stacking a red line
+        // under the button — one sentence, one action.
+        const expired = !busy && error === PASSKEY_EXPIRED_MESSAGE;
+        const body = expired
+            ? PASSKEY_EXPIRED_MESSAGE
+            : busy
             ? isLegacyMigration
                 ? 'Confirm with your passkey to finish the upgrade.'
                 : isSetup
@@ -1969,7 +1975,7 @@ class AccountModal {
                     ? 'Use legacy passkey'
                     : 'Unlock';
         const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
-        const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
+        const alertText = expired ? '' : /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
         // Every untitled wait shows the same caption behind the sheet; the
         // account's name when it has one (a Google account has none yet).
         const waitingName = username || this.usernameInputValue || state.username || '';

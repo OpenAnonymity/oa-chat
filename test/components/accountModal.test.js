@@ -630,6 +630,14 @@ test('a registration the server rejected keeps the name on the card, says why, a
         assert.match(card, /Try again/);
         assert.match(card, new RegExp(shown.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
         assert.doesNotMatch(card, /account-unlock-waiting/);
+        if (shown === 'That took a little too long, so the passkey request expired.') {
+            // The expiry is the body, not a red line under the button.
+            assert.match(card, /class="account-unlock-body">That took a little too long, so the passkey request expired\.</);
+            assert.doesNotMatch(card, /role="alert"|Create a passkey\./);
+        } else {
+            assert.match(card, /Create a passkey\. It encrypts/);
+            assert.match(card, /role="alert"/);
+        }
 
         calls.length = 0;
         modal.handlePasskeyRegistration = async () => { calls.push(['register']); };
