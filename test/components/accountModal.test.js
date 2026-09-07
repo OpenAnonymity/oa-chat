@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import fs from 'node:fs';
 
 import AccountModal from '../../chat/components/AccountModal.js';
@@ -515,7 +515,9 @@ test('first username setup draws only the spinner and a caption saying what the 
         // The dimmed page says what the OS sheet is for. The username is
         // escaped, and no username/account summary card is drawn.
         assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
-        assert.match(html, /class="account-unlock-waiting-title[^"]*">Setting up a passkey for winter-&lt;owl&gt;<\/p>/);
+        assert.match(html, step === 'passkey'
+            ? /class="account-unlock-waiting-title[^"]*">Next, you’ll create a passkey for winter-&lt;owl&gt;<\/p>/
+            : /class="account-unlock-waiting-title[^"]*">Creating your account<\/p>/);
         assert.match(html, /class="account-unlock-waiting-note[^"]*">It encrypts your tickets and preferences so only you can access them\.<\/p>/);
         assert.doesNotMatch(html, /Your username|Your account number|Create a passkey account|You're all set/);
         // The caption's entrance runs once: later redraws mount it settled.
@@ -646,7 +648,7 @@ test('new username registration keeps progress through account/sync notification
         assert.equal(frames.length, 3); // waiting, confirming, and sync notification
         for (const html of frames) {
             assert.match(html, /Confirm with your passkey to finish\./);
-            assert.match(html, /Setting up a passkey for winter-owl/);
+            assert.match(html, /Next, you’ll create a passkey for winter-owl|Creating your account/);
             assert.doesNotMatch(html, /Your username|Your account number/);
         }
         // The caption entered on the first frame only; redraws did not replay it.
@@ -673,6 +675,7 @@ function continuationModal(next = 'register') {
         identifierMode: 'username',
         usernameInputValue: 'winter-owl',
         creationStep: 'idle',
+        animationTimeouts: [],
         accountState: { passkeySupported: true },
         render() {},
         focusModal() {},
@@ -694,6 +697,20 @@ function continuationModal(next = 'register') {
         async handleAccountPasskeyUnlock() { calls.push(['login']); return false; }
     });
     return { modal, calls };
+}
+
+// The first-time explanation is held on a timer before the sheet opens.
+// Runs `fn` with setTimeout mocked and hands it a `pass` that elapses it.
+async function withIntroTimer(fn) {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    try {
+        await fn(async () => {
+            mock.timers.tick(2000);
+            await new Promise(resolve => setImmediate(resolve));
+        });
+    } finally {
+        mock.timers.reset();
+    }
 }
 
 function landingContinuationModal(next = 'login') {
@@ -723,10 +740,11 @@ function landingContinuationModal(next = 'login') {
     return { modal, calls, frames };
 }
 
-test('landing handoff goes straight to the passkey for returning accounts and to Create passkey for new ones', async () => {
+test('landing handoff goes straight to the passkey for returning accounts; new ones get a moment of explanation first', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
     try {
+        await withIntroTimer(async pass => {
         for (const next of ['login', 'register']) {
             const { modal, calls, frames } = landingContinuationModal(next);
             modal.handleAccountPasskeyUnlock = modal.handlePasskeyRegistration = async () => {
@@ -755,25 +773,28 @@ test('landing handoff goes straight to the passkey for returning accounts and to
                 assert.match(waiting, /Confirm with your passkey to continue\./);
                 assert.equal(modal.isOpen, false);
             } else {
-                // A free name stops on the Create passkey card: nothing is
-                // reserved and no sheet opens until the user clicks.
+                // A free name fills the silence first: the dimmed page says a
+                // passkey comes next and why, nothing is reserved yet, no
+                // card is drawn, and the sheet opens on its own once the
+                // moment has passed.
                 assert.deepEqual(calls, [['prepare', 'winter-owl']]);
-                assert.equal(modal.creationStep, 'username_ready');
-                const card = frames.at(-1);
-                assert.doesNotMatch(card, /data-waiting|account-unlock-waiting|aria-busy="true"|<h2/);
-                assert.match(card, /Create a passkey\. It encrypts your tickets and preferences so only you can access them\./);
-                assert.match(card, /<span>Create passkey<\/span>/);
+                assert.equal(modal.usernameIntroPending, true);
+                const intro = frames.at(-1);
+                assert.match(intro, /account-unlock-card-untitled" data-waiting="true"/);
+                assert.match(intro, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
+                assert.match(intro, /account-unlock-waiting-title account-unlock-waiting-enter">Next, you’ll create a passkey for winter-owl</);
+                assert.match(intro, /It encrypts your tickets and preferences so only you can access them\./);
+                assert.doesNotMatch(intro, /Create passkey|<h2/);
                 assert.ok(frames.every(html => !html.includes('Encrypt your data')));
                 assert.equal(modal.isOpen, true);
-                await modal.handleUsernamePasskeyContinue();
+                await pass();
+                assert.equal(modal.usernameIntroPending, false);
                 assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
-                const waiting = frames.find(html => html.includes('aria-busy="true"'));
-                assert.match(waiting, /account-unlock-card-untitled" data-waiting="true"/);
-                assert.match(waiting, /Setting up a passkey for winter-owl/);
                 assert.equal(modal.isOpen, false);
             }
             assert.equal(modal.usernameHandoffPending, false);
         }
+        });
     } finally {
         globalThis.document = originalDocument;
     }
@@ -897,30 +918,63 @@ test('closing a landing lookup prevents a late prompt and duplicate handoffs are
     }
 });
 
-test('Continue prompts the passkey at once for returning accounts; new accounts wait on Create passkey', async () => {
-    for (const next of ['register', 'login']) {
-        const { modal, calls } = continuationModal(next);
-        await modal.handleAccountContinue();
-        assert.equal(modal.usernameContinuePending, false);
-        if (next === 'register') {
-            // Nothing is reserved and no sheet opens until the user clicks:
-            // the card says what the passkey is for, and the click is the
-            // user activation the registration ceremony wants.
-            assert.equal(modal.generatedUsername, 'winter-owl');
-            assert.equal(modal.creationStep, 'username_ready');
-            assert.deepEqual(calls, [['prepare', 'winter-owl']]);
-            const card = modal.renderUsernameUnlockUI();
-            assert.doesNotMatch(card, /data-waiting|account-unlock-waiting|<h2/);
-            assert.match(card, /Create a passkey\. It encrypts your tickets and preferences so only you can access them\./);
-            assert.match(card, /id="account-username-unlock-btn"[^>]*>\s*<span>Create passkey<\/span>/);
-            assert.match(card, /id="account-username-back-btn"[^>]*>Back<\/button>/);
-            await modal.handleUsernamePasskeyContinue();
-            assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
-        } else {
-            assert.equal(modal.usernameUnlockReady, true);
-            assert.deepEqual(calls, [['prepare', 'winter-owl'], ['login']]);
+test('Continue prompts the passkey at once for returning accounts; new accounts get a held explanation, then the sheet', async () => {
+    await withIntroTimer(async pass => {
+        for (const next of ['register', 'login']) {
+            const { modal, calls } = continuationModal(next);
+            await modal.handleAccountContinue();
+            assert.equal(modal.usernameContinuePending, false);
+            if (next === 'register') {
+                // Nothing is reserved during the held explanation; the sheet
+                // opens on its own afterwards, inside the Enter press's
+                // activation window.
+                assert.equal(modal.generatedUsername, 'winter-owl');
+                assert.equal(modal.creationStep, 'username_ready');
+                assert.equal(modal.usernameIntroPending, true);
+                assert.deepEqual(calls, [['prepare', 'winter-owl']]);
+                assert.match(modal.renderUsernameUnlockUI(), /data-waiting="true"[\s\S]*Next, you’ll create a passkey for winter-owl/);
+                await pass();
+                assert.deepEqual(calls, [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]);
+            } else {
+                assert.equal(modal.usernameUnlockReady, true);
+                assert.deepEqual(calls, [['prepare', 'winter-owl'], ['login']]);
+            }
         }
-    }
+    });
+});
+
+test('cancelling the first-time sheet returns to the Create passkey card, not a red retry', async () => {
+    const { modal, calls } = continuationModal('register');
+    modal.generatedUsername = 'winter-owl';
+    modal.generatedAccountId = '1234567890123456';
+    modal.creationStep = 'passkey';
+    modal.handlePasskeyRegistration = AccountModal.prototype.handlePasskeyRegistration;
+    modal.accountService.registerPasskeyForPreparedAccount = async () => {
+        modal.accountState.error = 'Passkey creation was cancelled';
+        return false;
+    };
+    modal.accountService.clearErrors = () => { modal.accountState.error = null; calls.push(['clear']); };
+    await modal.handlePasskeyRegistration();
+    assert.equal(modal.creationStep, 'username_ready');
+    assert.equal(modal.creationError, null);
+    assert.deepEqual(calls, [['clear']]);
+    const card = modal.renderUsernameUnlockUI();
+    assert.doesNotMatch(card, /data-waiting|account-unlock-waiting|role="alert"|Try again|wasn't confirmed/);
+    assert.match(card, /Create a passkey\. It encrypts your tickets and preferences so only you can access them\./);
+    assert.match(card, /id="account-username-unlock-btn"[^>]*>\s*<span>Create passkey<\/span>/);
+    assert.match(card, /id="account-username-back-btn"[^>]*>Back<\/button>/);
+
+    // Anything that was not a cancel is still a failure worth a word.
+    modal.creationStep = 'passkey';
+    modal.accountService.registerPasskeyForPreparedAccount = async () => {
+        modal.accountState.error = 'Authenticator returned no PRF output';
+        return false;
+    };
+    await modal.handlePasskeyRegistration();
+    assert.equal(modal.creationStep, 'passkey_retry');
+    const retry = modal.renderUsernameUnlockUI();
+    assert.match(retry, /role="alert"[^>]*>Authenticator returned no PRF output<\/p>/);
+    assert.match(retry, /<span>Try again<\/span>/);
 });
 
 test('username and Google share exactly the same encryption explanation shell and copy', () => {
@@ -964,7 +1018,7 @@ test('Back from username explanation preserves the identifier and does not sign 
         const { modal, calls } = continuationModal(next);
         modal.animationTimeouts = [];
         await modal.handleAccountContinue();
-        if (next === 'register') await modal.handleUsernamePasskeyContinue(); // Create passkey
+        if (next === 'register') { modal.usernameIntroPending = false; await modal.handleUsernamePasskeyContinue(); }
         await new Promise(resolve => setImmediate(resolve)); // the prompt settles
         modal.handleUsernamePasskeyBack();
         assert.equal(modal.usernameInputValue, 'winter-owl');
@@ -989,21 +1043,22 @@ test('a closed dialog never invokes authentication, not even the automatic promp
     assert.ok(!modal.usernameUnlockReady);
 });
 
-test('a free username reserves the account and registers on Create passkey; Back releases it', async () => {
-    const { modal, calls } = continuationModal('register');
-    await modal.handleAccountContinue();
-    assert.equal(calls.filter(([action]) => action === 'init').length, 0); // nothing reserved before the click
-    await modal.handleUsernamePasskeyContinue();
-    assert.equal(calls.filter(([action]) => action === 'init').length, 1);
-    assert.equal(calls.at(-1)[0], 'register');
-    modal.animationTimeouts = [];
-    modal.handleUsernamePasskeyBack();
-    assert.equal(calls.at(-1)[0], 'cancel');
-    assert.equal(modal.generatedAccountId, null);
-    await modal.handleAccountContinue();
-    await modal.handleUsernamePasskeyContinue();
-    assert.equal(calls.filter(([action]) => action === 'init').length, 2);
-    assert.equal(calls.at(-1)[0], 'register');
+test('a free username reserves the account and registers once the explanation has been held; Back releases it', async () => {
+    await withIntroTimer(async pass => {
+        const { modal, calls } = continuationModal('register');
+        await modal.handleAccountContinue();
+        assert.equal(calls.filter(([action]) => action === 'init').length, 0); // nothing reserved during the intro
+        await pass();
+        assert.equal(calls.filter(([action]) => action === 'init').length, 1);
+        assert.equal(calls.at(-1)[0], 'register');
+        modal.handleUsernamePasskeyBack();
+        assert.equal(calls.at(-1)[0], 'cancel');
+        assert.equal(modal.generatedAccountId, null);
+        await modal.handleAccountContinue();
+        await pass();
+        assert.equal(calls.filter(([action]) => action === 'init').length, 2);
+        assert.equal(calls.at(-1)[0], 'register');
+    });
 });
 
 test('late username credential success or failure cannot mutate a reopened dialog', async () => {

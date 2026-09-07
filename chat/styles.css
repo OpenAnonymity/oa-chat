@@ -6118,25 +6118,12 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     border-top-color: transparent;
 }
 
-/* First-time setup only: one line on what the OS sheet is for, and one on
-   why. The sheet covers the middle of the window on desktop Safari and the
-   top on desktop Chrome, and the bottom half on phones — so the caption sits
-   near the bottom on wide screens and near the top on narrow ones, where it
-   stays readable behind either. It enters once, on the frame the lookup
-   resolves to a new account; the untitled card's own copy stays for AT. */
-.account-unlock-waiting:has(.account-unlock-waiting-title) {
-    justify-content: flex-start;
-    padding-top: max(4.5rem, 14vh);
-}
-
-@media (min-width: 48rem) {
-    .account-unlock-waiting:has(.account-unlock-waiting-title) {
-        justify-content: flex-end;
-        padding-top: 1.5rem;
-        padding-bottom: max(3rem, 9vh);
-    }
-}
-
+/* First-time setup only: one line saying a passkey comes next, one on why.
+   It is the whole page for a couple of seconds before the OS sheet opens,
+   so it sits in the centre like the spinner; once the sheet is up it has
+   been read, and the sheet itself names the passkey. It enters once, on the
+   frame the lookup resolves to a new account; the untitled card's own copy
+   stays for AT. */
 .account-unlock-waiting-title,
 .account-unlock-waiting-note {
     margin: 0;

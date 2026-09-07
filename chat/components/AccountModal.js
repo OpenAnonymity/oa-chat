@@ -421,7 +421,9 @@ class AccountModal {
         } finally {
             if (viewVersion === this.loginViewVersion) {
                 this.usernameHandoffPending = false;
-                if (this.isOpen) {
+                // The held first-time explanation is already drawn and
+                // focused; redrawing would cut its entrance short.
+                if (this.isOpen && !this.usernameIntroPending) {
                     this.render();
                     this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
                         ? 'account-username-unlock-btn' : 'account-username-input');
@@ -835,6 +837,9 @@ class AccountModal {
                 this.creationStep = 'username_ready';
                 this.creationError = null;
                 this.isLoadingAccountId = false;
+                // Drawn as the held explanation from this very frame, never
+                // as the Create passkey card first.
+                this.usernameIntroPending = true;
                 this.render();
             }
         } catch (error) {
@@ -851,9 +856,9 @@ class AccountModal {
                 // activation window of the Enter press. If the browser
                 // refuses, or the sheet is cancelled, the Create passkey
                 // card takes over and a click opens the sheet instead.
-                if (this.creationStep === 'username_ready') {
-                    this.usernameIntroPending = true;
-                    this.render();
+                if (this.creationStep === 'username_ready' && this.usernameIntroPending) {
+                    // Already drawn above; redrawing here would cut the
+                    // caption's entrance short.
                     this.focusModal();
                     this.animationTimeouts.push(setTimeout(() => {
                         if (!this.isOpen || viewVersion !== this.loginViewVersion) return;

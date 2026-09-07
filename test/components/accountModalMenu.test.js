@@ -32,10 +32,9 @@ test('account menu items show focus and tint only during keyboard navigation, ho
     // The untitled unlock card is not drawn while the automatic prompt is up.
     assert.match(css, /\.account-unlock-card-untitled\[data-waiting="true"\]\s*\{[^}]*opacity:\s*0;[^}]*pointer-events:\s*none/s);
     assert.match(css, /\.account-unlock-waiting\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0;[^}]*justify-content:\s*center;[^}]*pointer-events:\s*none/s);
-    // First-time setup captions the wait; the caption keeps clear of the OS
-    // sheet (top on phones, bottom on wide screens) and enters only once.
-    assert.match(css, /\.account-unlock-waiting:has\(\.account-unlock-waiting-title\)\s*\{[^}]*justify-content:\s*flex-start/s);
-    assert.match(css, /@media \(min-width: 48rem\)\s*\{\s*\.account-unlock-waiting:has\(\.account-unlock-waiting-title\)\s*\{[^}]*justify-content:\s*flex-end/s);
+    // First-time setup captions the wait, centred with the spinner (it is the
+    // whole page before the sheet opens), and the caption enters only once.
+    assert.doesNotMatch(css, /\.account-unlock-waiting:has\(/);
     assert.match(css, /\.account-unlock-waiting-enter\s*\{\s*animation: account-unlock-caption-in/);
     assert.match(css, /prefers-reduced-motion: reduce\)\s*\{(?:(?!@media).)*\.account-unlock-waiting-enter\s*\{\s*animation: none/s);
 });
