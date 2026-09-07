@@ -604,9 +604,10 @@ test('a caption the arrival layer already showed does not enter again, and the h
     assert.equal(modal.remainingPasskeyIntroMs(), 2000);
 });
 
-test('a registration the server rejected goes back to an empty username field with the reason', async () => {
+test('a registration the server rejected keeps the name on the card, says why, and Try again reserves afresh', async () => {
     for (const [serverError, shown] of [
-        ['Challenge expired or invalid', 'That took a little too long, so the passkey request expired. Try again.'],
+        ['Challenge expired or invalid', 'That took a little too long, so the passkey request expired.'],
+        ['Authentication failed', 'Authentication failed'],
         ['Username is unavailable', 'Username is unavailable']
     ]) {
         const { modal, calls } = continuationModal('register');
@@ -617,14 +618,57 @@ test('a registration the server rejected goes back to an empty username field wi
         modal.accountService.registerPasskeyForPreparedAccount = async () => true;
         modal.accountService.completeAccountRegistration = async () => { throw new Error(serverError); };
         await modal.handlePasskeyRegistration();
-        // Nothing to retry from here: the reservation is dropped, the name is
-        // forgotten, and the form says why in one line.
-        assert.equal(modal.creationStep, 'idle');
-        assert.equal(modal.generatedUsername, null);
-        assert.equal(modal.usernameInputValue, '');
-        assert.equal(modal.heldRegistration, null);
+        // The stale reservation is dropped but the name stays: the untitled
+        // card shows the reason under Try again, which reserves the name
+        // again and opens the sheet.
+        assert.equal(modal.creationStep, 'username_ready');
+        assert.equal(modal.generatedUsername, 'winter-owl');
+        assert.equal(modal.generatedAccountId, null);
+        assert.equal(modal.creationError, shown);
         assert.deepEqual(calls.filter(([action]) => action === 'cancel'), [['cancel']]);
-        assert.deepEqual(calls.at(-1), ['error', shown]);
+        const card = modal.renderUsernameUnlockUI();
+        assert.match(card, /Try again/);
+        assert.match(card, new RegExp(shown.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+        assert.doesNotMatch(card, /account-unlock-waiting/);
+
+        calls.length = 0;
+        modal.handlePasskeyRegistration = async () => { calls.push(['register']); };
+        await modal.handleUsernamePasskeyContinue();
+        assert.deepEqual(calls, [['init', 'winter-owl'], ['register']]);
+    }
+});
+
+test('a login sheet confirmed after its challenge lapsed explains the expiry instead of "Authentication failed"', async () => {
+    const originalNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+        const { modal, calls } = continuationModal('login');
+        modal.usernameUnlockReady = true;
+        modal.handleAccountPasskeyUnlock = async () => {
+            now += 90_000; // the sheet sat open a minute and a half
+            modal.accountState = { ...modal.accountState, error: 'Authentication failed' };
+            calls.push(['login']);
+            return false;
+        };
+        await modal.handleUsernamePasskeyContinue();
+        assert.deepEqual(calls.at(-1), ['error', 'That took a little too long, so the passkey request expired.']);
+        assert.equal(modal.usernameUnlockReady, true, 'still on the card, name kept');
+
+        // A quick failure is reported as-is; a cancel is never rewritten.
+        for (const [elapsed, error] of [[3_000, 'Authentication failed'], [90_000, 'Passkey request was cancelled']]) {
+            calls.length = 0;
+            modal.handleAccountPasskeyUnlock = async () => {
+                now += elapsed;
+                modal.accountState = { ...modal.accountState, error };
+                calls.push(['login']);
+                return false;
+            };
+            await modal.handleUsernamePasskeyContinue();
+            assert.deepEqual(calls.filter(([action]) => action === 'error'), []);
+        }
+    } finally {
+        Date.now = originalNow;
     }
 });
 

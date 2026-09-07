@@ -21,6 +21,18 @@ const HELD_REGISTRATION_MS = 55000;
 // A sheet the user dismissed took them at least this long; one the browser
 // refused to open (no user activation left) comes back at once.
 const SHEET_REFUSED_MS = 600;
+// A server-side passkey challenge is short-lived (about a minute for login).
+// A sheet left open longer than this and then confirmed comes back rejected
+// with a generic message; the time tells us what really happened.
+const CHALLENGE_STALE_MS = 45000;
+const PASSKEY_EXPIRED_MESSAGE = 'That took a little too long, so the passkey request expired.';
+
+function looksLikeExpiredChallenge(error, sheetMs) {
+    const message = String(error?.message || error || '');
+    return error?.code === 'INVALID_CHALLENGE' ||
+        /expired|invalid/i.test(message) ||
+        (sheetMs > CHALLENGE_STALE_MS && !/cancel/i.test(message));
+}
 
 class AccountModal {
     constructor(app) {
@@ -700,13 +712,19 @@ class AccountModal {
                     this.completeFirstAccountRouting();
                 } catch (error) {
                     if (!isCurrent()) return;
-                    // The server would not finish the account (usually the
-                    // challenge outlived the sheet). Start again from the
-                    // name, with one plain line saying why.
-                    const message = String(error.message || '');
-                    this.returnToUsernameForm(/expired|invalid/i.test(message)
-                        ? 'That took a little too long, so the passkey request expired. Try again.'
-                        : message || 'Your account couldn\u2019t be finished. Try again.');
+                    // The server would not finish the account — almost
+                    // always because the sheet sat open past the challenge's
+                    // life. The name stays: one plain line says why, and Try
+                    // again reserves it afresh and opens the sheet.
+                    this.accountService.cancelPendingAccount();
+                    this.generatedAccountId = null;
+                    this.creationStep = 'username_ready';
+                    this.creationError = looksLikeExpiredChallenge(error, Date.now() - startedAt)
+                        ? PASSKEY_EXPIRED_MESSAGE
+                        : String(error.message || '') || 'Your account couldn\u2019t be finished.';
+                    this.waitingCaptionShown = false;
+                    this.render();
+                    this.focusModal('account-username-unlock-btn');
                 }
                 return;
             }
@@ -957,6 +975,7 @@ class AccountModal {
             this.creationError = null;
         }
         this.render();
+        const startedAt = Date.now();
         try {
             if (isSetup) {
                 if (!this.generatedAccountId) {
@@ -965,8 +984,15 @@ class AccountModal {
                     this.generatedAccountId = this.accountService.getPendingAccountId();
                 }
                 await this.handlePasskeyRegistration();
+            } else {
+                await this.handleAccountPasskeyUnlock();
+                // A sheet confirmed after the login challenge lapsed comes
+                // back as a bare "Authentication failed"; say what happened.
+                const error = isCurrent() ? this.accountState?.error : '';
+                if (error && looksLikeExpiredChallenge(error, Date.now() - startedAt)) {
+                    this.accountService.setError(PASSKEY_EXPIRED_MESSAGE);
+                }
             }
-            else await this.handleAccountPasskeyUnlock();
         } catch (error) {
             if (!isCurrent()) return;
             if (isSetup) {
