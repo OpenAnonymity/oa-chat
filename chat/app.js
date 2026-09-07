@@ -72,6 +72,7 @@ import {
     filterDisabledModels as filterDisabledModelsValue,
     getFallbackModelEntry as getFallbackModelEntryValue,
     normalizeModelName as normalizeModelNameValue,
+    resolveResponseModelName,
     resolveDefaultModelPreferenceUpdate as resolveDefaultModelPreferenceUpdateValue,
     upgradeDefaultModelPreference as upgradeDefaultModelPreferenceValue
 } from './domain/modelSelection.js';
@@ -810,6 +811,18 @@ class ChatApp {
             || (!entry.sessionId && entry.generation === this.sessionNavigationGeneration)) || null;
     }
 
+    updateResponseModel(message, reportedModel, requestedModelId, requestedModelName, session) {
+        const modelName = resolveResponseModelName(reportedModel, {
+            models: this.state.models,
+            requestedModelId,
+            requestedModelName,
+            getDisplayName: (id, fallback) => this.inferenceService.getDisplayName(id, fallback, session)
+        });
+        if (!modelName || modelName === message.model) return;
+        message.model = modelName;
+        if (this.isViewingSession(session.id)) this.chatArea?.updateMessageModel?.(message);
+    }
+
     async streamCompletionWithRuntime(messages, modelId, session, onChunk, onTokenUpdate,
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
         reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
@@ -825,6 +838,11 @@ class ChatApp {
                     if (chunk || imageData?.images?.length) receivedOutput = true;
                     await onChunk?.(chunk, imageData);
                 }, async usage => {
+                    if (usage?.modelOnly) {
+                        if (latestUsage) latestUsage = { ...latestUsage, model: usage.model };
+                        await onTokenUpdate?.(usage);
+                        return;
+                    }
                     latestUsage = usage;
                     if (usage?.isStreaming === false || usage?.estimated === false) receivedProviderUsage = true;
                     await onTokenUpdate?.(usage);
@@ -6623,7 +6641,9 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
-                        streamingTokenCount = tokenUpdate.completionTokens || 0;
+                        if (!tokenUpdate.modelOnly) streamingTokenCount = tokenUpdate.completionTokens || 0;
+                        this.updateResponseModel(streamingMessage, tokenUpdate.model,
+                            modelIdForRequest, modelNameToUse, session);
                     },
                     [], // No files for regeneration (files are included in processedMessages)
                     retrySearchEnabled, // Reuse the accepted prompt settings
@@ -6679,11 +6699,8 @@ class ChatApp {
                 streamingMessage.tokenCount = tokenData.totalTokens || tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.finishReason = tokenData.finishReason || null;
                 await this.recordRuntimeUsage(session, streamingMessage, tokenData);
-                const streamReportedModel = tokenData.model || modelIdForRequest;
-                const resolvedFinalModelName = this.normalizeModelName(
-                    this.inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
-                ) || modelNameToUse;
-                streamingMessage.model = resolvedFinalModelName;
+                this.updateResponseModel(streamingMessage, tokenData.model,
+                    modelIdForRequest, modelNameToUse, session);
                 streamingMessage.streamingTokens = null;
                 streamingMessage.streamingReasoning = false;
                 streamingMessage.streamingPending = false;
@@ -7414,7 +7431,9 @@ class ChatApp {
                         }
                     },
                     (tokenUpdate) => {
-                        streamingTokenCount = tokenUpdate.completionTokens || 0;
+                        if (!tokenUpdate.modelOnly) streamingTokenCount = tokenUpdate.completionTokens || 0;
+                        this.updateResponseModel(streamingMessage, tokenUpdate.model,
+                            modelIdForRequest, modelNameToUse, session);
                     },
                     [], // Files are now included in processedMessages, not passed separately
                     searchEnabled,
@@ -7467,11 +7486,8 @@ class ChatApp {
                 streamingMessage.tokenCount = tokenData.completionTokens || streamingTokenCount;
                 streamingMessage.finishReason = tokenData.finishReason || null;
                 await this.recordRuntimeUsage(session, streamingMessage, tokenData);
-                const streamReportedModel = tokenData.model || modelIdForRequest;
-                const resolvedFinalModelName = this.normalizeModelName(
-                    this.inferenceService.getDisplayName(streamReportedModel, modelNameToUse, session)
-                ) || modelNameToUse;
-                streamingMessage.model = resolvedFinalModelName;
+                this.updateResponseModel(streamingMessage, tokenData.model,
+                    modelIdForRequest, modelNameToUse, session);
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;
