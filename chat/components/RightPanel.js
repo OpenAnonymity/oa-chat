@@ -1693,6 +1693,7 @@ class RightPanel {
 
     getCouncilAccessRows() {
         const session = this.currentSession;
+        if (this.app.supportsFeature?.('council', session) === false) return [];
         const access = session?.councilAccess || null;
         const config = session
             ? (session.councilConfig || {})
