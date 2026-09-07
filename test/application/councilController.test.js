@@ -1913,3 +1913,145 @@ test('runMultiModelTurn preserves Stage 1 fallback and records synthesis failure
     assert.equal(finalMessage.council.synthesis.error, 'Council synthesis failed.');
     assert.match(finalMessage.council.statusMessage, /Council synthesis failed\. Continuing from Response A\./);
 });
+
+test('routed lane metadata updates live labels and survives cancellation without changing routing', async () => {
+    for (const laneId of ['primary', 'synthesis']) {
+        const uiCalls = [];
+        const saved = [];
+        const laneState = { model: 'Auto Router', modelId: 'openrouter/auto', status: 'pending', response: '' };
+        const controller = createController({
+            models: [{ id: 'google/gemini', name: 'Gemini' }],
+            inferenceService: {
+                streamCompletion: async (_messages, modelId, _session, onChunk, onTokenUpdate) => {
+                    assert.equal(modelId, 'openrouter/auto');
+                    onTokenUpdate({ model: 'google/gemini', modelOnly: true });
+                    assert.equal(laneState.status, 'pending');
+                    assert.equal(laneState.responseModel, 'Gemini');
+                    onChunk('Partial response');
+                    throw new DOMException('Stopped', 'AbortError');
+                }
+            }
+        });
+        Object.assign(controller.app, {
+            isViewingSession: () => true,
+            chatArea: {
+                updateCouncilLaneModel: (...args) => uiCalls.push(args),
+                updateCouncilLaneContent: () => {}
+            }
+        });
+        await assert.rejects(controller.sendLaneCompletion({
+            session: { id: 'session-1', councilAccess: {} },
+            entry: { laneId, id: 'openrouter/auto', name: 'Auto Router' },
+            sanitizedMessages: [],
+            streamTarget: {
+                assistantMessage: { id: 'assistant-1' },
+                laneState,
+                persistProgress: () => saved.push(structuredClone(laneState))
+            }
+        }), error => error.name === 'AbortError');
+        assert.deepEqual(uiCalls, [['assistant-1', laneId, 'Gemini']]);
+        assert.equal(saved.at(-1).responseModel, 'Gemini');
+        assert.equal(saved.at(-1).response, 'Partial response');
+        assert.equal(laneState.model, 'Auto Router');
+        assert.equal(laneState.modelId, 'openrouter/auto');
+    }
+});
+
+test('routed stream results retain live attribution when final metadata is absent', async () => {
+    const laneState = { model: 'Auto Router', modelId: 'openrouter/auto', status: 'pending', response: '' };
+    const controller = createController({
+        models: [{ id: 'openai/gpt', name: 'GPT' }],
+        inferenceService: {
+            streamCompletion: async (_messages, _modelId, _session, onChunk, onTokenUpdate) => {
+                onTokenUpdate({ model: 'openai/gpt', completionTokens: 7 });
+                onChunk('Response');
+                onTokenUpdate({ model: 'openai/gpt', completionTokens: 999, modelOnly: true });
+                onTokenUpdate({ model: ' ', modelOnly: true });
+                return {};
+            }
+        }
+    });
+    const result = await controller.sendLaneCompletion({
+        session: { id: 'session-1', councilAccess: {} },
+        entry: { laneId: 'primary', id: 'openrouter/auto', name: 'Auto Router' },
+        sanitizedMessages: [],
+        streamTarget: { laneState }
+    });
+    assert.equal(result.model, 'openai/gpt');
+    assert.equal(result.completionTokens, 7);
+    assert.equal(laneState.responseModel, 'GPT');
+});
+
+test('Parallel and Council preserve routed model names through strict completion fallback', async () => {
+    for (const outputMode of ['parallel', 'synthesis']) {
+        const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+            councilConfig: { members: ['Auto Router', 'Claude'], synthesisModel: 'Auto Router', outputMode }
+        });
+        session.model = 'Auto Router';
+        controller.app.state.models.push({ id: 'openrouter/auto', name: 'Auto Router' });
+        const requests = [];
+        controller.inferenceService.streamCompletion = async () => {
+            throw new Error('Backend does not support streaming completions');
+        };
+        controller.inferenceService.getDisplayName = (_id, fallback, targetSession) => {
+            assert.equal(targetSession, session);
+            return fallback;
+        };
+        controller.inferenceService.sendCompletionStrict = async (_messages, modelId, _laneSession, options) => {
+            requests.push(modelId);
+            const synthesis = options.context.startsWith('Council synthesis');
+            return {
+                content: synthesis ? 'Reviewed answer' : `${modelId} answer`,
+                data: { model: synthesis ? 'provider/new-model' : modelId === 'openrouter/auto' ? 'openai/gpt' : modelId }
+            };
+        };
+        await controller.runMultiModelTurn({ session, userMessage, abortController: new AbortController() });
+        const message = savedMessages.at(-1);
+        assert.equal(message.council.stage1[0].responseModel, 'GPT');
+        assert.equal(message.council.stage1[0].model, 'Auto Router');
+        assert.equal(message.council.stage1[0].modelId, 'openrouter/auto');
+        assert.equal(message.council.canonicalModel, 'GPT');
+        assert.equal(message.model, outputMode === 'synthesis' ? 'provider/new-model' : 'GPT');
+        if (outputMode === 'synthesis') {
+            assert.equal(message.council.synthesis.responseModel, 'provider/new-model');
+            assert.equal(message.council.synthesis.model, 'Auto Router');
+            assert.equal(message.council.synthesis.modelId, 'openrouter/auto');
+        }
+        assert.deepEqual(requests, outputMode === 'synthesis'
+            ? ['openrouter/auto', 'anthropic/claude', 'openrouter/auto']
+            : ['openrouter/auto', 'anthropic/claude']);
+        assert.equal(session.model, 'Auto Router');
+    }
+});
+
+test('regenerating a routed lane clears old attribution and requests Auto Router again', async () => {
+    for (const nextModel of [undefined, 'anthropic/claude']) {
+        const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+            councilConfig: { members: ['Auto Router', 'Claude'], outputMode: 'parallel' },
+            sendLaneCompletion: async ({ entry }) => ({ content: 'Original answer', model: entry.laneId === 'primary' ? 'openai/gpt' : entry.id })
+        });
+        session.model = 'Auto Router';
+        controller.app.state.models.push({ id: 'openrouter/auto', name: 'Auto Router' });
+        await controller.runMultiModelTurn({ session, userMessage, abortController: new AbortController() });
+        const original = savedMessages.at(-1);
+        controller.chatDB.getSessionMessages = async () => [userMessage, original];
+        const requestedModels = [];
+        controller.sendLaneCompletion = async ({ entry, streamTarget }) => {
+            requestedModels.push(entry.id);
+            assert.equal(streamTarget.laneState.responseModel, undefined);
+            return { content: 'Regenerated answer', model: nextModel };
+        };
+        await controller.runRegenerateLaneTurn({
+            session,
+            assistantMessageId: original.id,
+            laneId: 'primary',
+            userMessage,
+            abortController: new AbortController()
+        });
+        const updated = savedMessages.at(-1);
+        assert.deepEqual(requestedModels, ['openrouter/auto']);
+        assert.equal(updated.council.stage1[0].responseModel, nextModel ? 'Claude' : undefined);
+        assert.equal(updated.council.stage1[0].modelId, 'openrouter/auto');
+        assert.equal(updated.model, nextModel ? 'Claude' : 'Auto Router');
+    }
+});

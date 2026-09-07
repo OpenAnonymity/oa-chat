@@ -259,4 +259,156 @@ test('shared stream provider failures propagate and release without retrying par
     assert.equal(requests, 1);
     assert.equal(released, 1);
 });
+
+function transportWithSseEvents(events) {
+    return {
+        fetchWithRetry: async () => ({
+            ok: true,
+            status: 200,
+            body: new ReadableStream({ start(controller) {
+                const lines = events.map(event => `data: ${JSON.stringify(event)}\n`).join('');
+                controller.enqueue(new TextEncoder().encode(`${lines}data: [DONE]\n`));
+                controller.close();
+            } })
+        })
+    };
+}
+
+test('router attribution awaits a role-only model event before rendering output', async () => {
+    let releaseModel;
+    const modelGate = new Promise(resolve => { releaseModel = resolve; });
+    let modelStarted;
+    const started = new Promise(resolve => { modelStarted = resolve; });
+    const events = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { model: 'anthropic/claude-sonnet-4.5', choices: [{ delta: { role: 'assistant' } }] },
+        { choices: [{ delta: { content: 'answer' } }] }
+    ]) });
+    const pending = api.streamCompletion([], 'openrouter/auto', 'key', chunk => events.push(chunk),
+        async update => {
+            if (!update.modelOnly) return;
+            modelStarted();
+            await modelGate;
+            events.push(update.model);
+            assert.equal(update.estimated, true);
+            assert.equal(update.isStreaming, true);
+            assert.equal(update.completionTokens, 0);
+        });
+    await started;
+    assert.deepEqual(events, []);
+    releaseModel();
+    const result = await pending;
+    assert.deepEqual(events, ['anthropic/claude-sonnet-4.5', 'answer']);
+    assert.equal(result.model, 'anthropic/claude-sonnet-4.5');
+});
+
+test('late model-only changes are published once and survive the final stream result', async () => {
+    const updates = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { choices: [{ delta: { content: 'answer' } }] },
+        { model: 'google/gemini-3-pro-preview' },
+        { model: 'google/gemini-3-pro-preview', choices: [] }
+    ]) });
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {},
+        update => updates.push(update));
+    const modelUpdates = updates.filter(update => update.modelOnly);
+    assert.equal(modelUpdates.length, 1);
+    assert.equal(modelUpdates[0].model, 'google/gemini-3-pro-preview');
+    assert.equal(modelUpdates[0].completionTokens, 2);
+    assert.equal(result.model, 'google/gemini-3-pro-preview');
+    assert.equal(result.completionTokens, 2);
+});
+
+test('same-event output and final usage receive the actual response model', async () => {
+    const events = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        {
+            model: 'google/gemini-3-pro-preview',
+            choices: [{ delta: { content: 'answer' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 20, completion_tokens: 4, cost: 0.001 }
+        }
+    ]) });
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', chunk => events.push(chunk),
+        update => events.push(update));
+    assert.equal(events[1].modelOnly, true);
+    assert.equal(events[1].model, 'google/gemini-3-pro-preview');
+    assert.equal(events[2], 'answer');
+    assert.equal(events[3].model, 'google/gemini-3-pro-preview');
+    const usage = events.filter(event => event?.isStreaming === false);
+    assert.equal(usage.length, 1);
+    assert.equal(usage[0].model, 'google/gemini-3-pro-preview');
+    assert.equal(usage[0].totalTokens, 24);
+    assert.equal(usage[0].cost, 0.001);
+    assert.equal(result.model, 'google/gemini-3-pro-preview');
+    assert.equal(result.totalTokens, 24);
+});
+
+test('model metadata precedes reasoning and response-text event early returns', async () => {
+    const events = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { model: 'anthropic/claude-sonnet-4.5', type: 'response.reasoning.delta', delta: 'thinking\n' },
+        { model: 'google/gemini-3-pro-preview', type: 'response.output_text.delta', delta: 'answer' }
+    ]) });
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', chunk => events.push(chunk),
+        update => { if (update.modelOnly) events.push(update.model); },
+        [], false, null, null, reasoning => events.push(reasoning));
+    assert.deepEqual(events, ['anthropic/claude-sonnet-4.5', 'thinking\n', 'google/gemini-3-pro-preview', 'answer']);
+    assert.equal(result.model, 'google/gemini-3-pro-preview');
+});
+
+test('missing and invalid response models retain the requested or previously reported model', async () => {
+    for (const reportedModel of [null, ' google/gemini-3-pro-preview ']) {
+        const updates = [];
+        const initialEvents = reportedModel ? [{ model: reportedModel }] : [];
+        const invalidEvents = [null, '', '  ', 123, false, {}, ['openai/gpt-5.3']]
+            .map(model => ({ model, choices: [] }));
+        const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+            ...initialEvents,
+            ...invalidEvents,
+            { choices: [{ delta: { content: 'answer' } }] }
+        ]) });
+        const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {},
+            update => updates.push(update));
+        assert.equal(result.model, reportedModel?.trim() || 'openrouter/auto');
+        assert.equal(updates.filter(update => update.modelOnly).length, reportedModel ? 1 : 0);
+    }
+});
+
+test('partial cancellation keeps model attribution observed before the first content callback', async () => {
+    const controller = new AbortController();
+    const output = [];
+    let displayedModel = 'openrouter/auto';
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { model: 'google/gemini-3-pro-preview', choices: [{ delta: { content: 'partial' } }] },
+        { choices: [{ delta: { content: 'must not appear' } }] }
+    ]) });
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+        await assert.rejects(api.streamCompletion([], 'openrouter/auto', 'key', chunk => {
+            output.push([displayedModel, chunk]);
+            controller.abort();
+        }, update => { displayedModel = update.model; }, [], false, controller),
+        error => error.isCancelled === true);
+    } finally { console.error = originalError; }
+    assert.deepEqual(output, [['google/gemini-3-pro-preview', 'partial']]);
+});
+
+test('model-only metadata does not turn a provider failure into received output or final usage', async () => {
+    const updates = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { model: 'google/gemini-3-pro-preview' },
+        { error: { message: 'provider unavailable' } }
+    ]) });
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+        await assert.rejects(api.streamCompletion([], 'openrouter/auto', 'key', () => {
+            assert.fail('metadata must not emit output');
+        }, update => updates.push(update)),
+        error => error.isStreamError === true && error.hasReceivedTokens === false);
+    } finally { console.error = originalError; }
+    assert.equal(updates.some(update => update.modelOnly), true);
+    assert.equal(updates.some(update => update.isStreaming === false || update.estimated === false), false);
+});
 });

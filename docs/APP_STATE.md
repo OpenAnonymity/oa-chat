@@ -64,6 +64,31 @@ reading code alone.
   ordinary ticket key's signatures and persisted `submit_key` proof; this copy
   change does not create missing key evidence or alter any security checks.
 
+## 2026-09-06: Auto Router response model attribution
+
+- Assistant responses show the model reported by inference, with its provider
+  icon, as soon as that metadata arrives. The selected session/composer model
+  stays Auto Router; subsequent turns and regenerations continue routing.
+- Response IDs resolve through the existing local catalog and display-name
+  overrides, with the returned ID as the fallback for uncatalogued models.
+  Never pass the requested router name as a concrete response ID's fallback.
+  If the provider does not identify a different model, retain the selected name.
+- The shared SSE parser publishes `modelOnly` token callbacks before processing
+  output from that event. These callbacks update attribution but are not output
+  or token/cost estimates. Runtime accounting merges only the model into its
+  latest usage snapshot; partial-response cancellation retains that attribution.
+- Ordinary Chat persists the resolved name/ID in the existing `message.model`.
+  Parallel/Council lanes keep their requested `model`/`modelId` for access and
+  regeneration and store separate `responseModel` attribution. This survives
+  history reload, export, and sharing; regeneration clears the old lane result.
+- Live header updates patch only the model label/icon, including the standalone
+  waiting indicator before the first output chunk, scoped to its owning session.
+  Completed reasoning's
+  optimized final-render path must refresh this header too. All returned model
+  labels are escaped or assigned via `textContent`; attribution adds no requests
+  or account metadata. Old responses saved only as Auto Router cannot be
+  retroactively attributed without their original provider metadata.
+
 ## 2026-09-06: Composer live announcements stay visually hidden
 
 - `Message accepted.` and `Response complete.` are screen-reader announcements,

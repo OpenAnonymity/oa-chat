@@ -12,7 +12,7 @@ import {
     buildCouncilMembersForSession,
     normalizeCouncilConfig
 } from '../domain/councilConfig.js';
-import { findModelByNameOrId, resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
+import { findModelByNameOrId, resolveResponseModelName, resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
 import {
     hasExplicitVerifierApprovalForAccessInfo,
     hasUsableVerifierApprovalForAccessInfo
@@ -179,6 +179,7 @@ export default class CouncilController {
 
         stageEntry.status = 'pending';
         stageEntry.response = '';
+        delete stageEntry.responseModel;
         stageEntry.error = null;
         stageEntry.reasoning = null;
         stageEntry.reasoningDuration = null;
@@ -216,6 +217,7 @@ export default class CouncilController {
                     persistProgress: () => this.persistStreamingMessageSnapshot(assistantMessage)
                 }
             });
+            this.updateLaneResponseModel(stageEntry, result?.model || result?.data?.model, entry, session);
             stageEntry.response = extractResponseContent(result);
             stageEntry.reasoning = extractReasoning(result);
             stageEntry.reasoningDuration = result?.reasoningDuration || null;
@@ -811,6 +813,23 @@ export default class CouncilController {
         });
     }
 
+    updateLaneResponseModel(laneState, reportedModel, entry, session) {
+        if (!laneState) return false;
+        const resolvedModel = resolveResponseModelName(reportedModel, {
+            models: this.app.state?.models || [],
+            requestedModelId: entry.id,
+            requestedModelName: entry.name,
+            getDisplayName: (modelId, fallback) => this.inferenceService.getDisplayName?.(modelId, fallback, session) || fallback
+        });
+        if (!resolvedModel) return false;
+        // Routing and access remain bound to the lane's requested model.
+        const responseModel = resolvedModel !== entry.name ? resolvedModel : null;
+        if ((laneState.responseModel || null) === responseModel) return false;
+        if (responseModel) laneState.responseModel = responseModel;
+        else delete laneState.responseModel;
+        return true;
+    }
+
     buildSynthesisConversationContext(sanitizedMessages = []) {
         const priorMessages = sanitizedMessages.slice(0, -1);
         const transcript = priorMessages
@@ -901,10 +920,10 @@ export default class CouncilController {
         }
 
         message.content = canonical.response;
-        message.model = canonical.model;
+        message.model = canonical.responseModel || canonical.model;
         message.citations = canonical.citations || null;
         message.council.canonicalStage1Label = canonical.label;
-        message.council.canonicalModel = canonical.model;
+        message.council.canonicalModel = canonical.responseModel || canonical.model;
         if (message.scrubber) {
             message.scrubber.redactedResponse = canonical.response;
         }
@@ -923,7 +942,7 @@ export default class CouncilController {
                     return {
                         ...message,
                         content: synthesis.response,
-                        model: 'Council'
+                        model: synthesis.responseModel || 'Council'
                     };
                 }
 
@@ -932,7 +951,7 @@ export default class CouncilController {
                     return {
                         ...message,
                         content: stageEntry.response,
-                        model: stageEntry.model || entry.name
+                        model: stageEntry.responseModel || stageEntry.model || entry.name
                     };
                 }
 
@@ -1058,6 +1077,7 @@ export default class CouncilController {
                             persistProgress: () => this.persistStreamingMessageSnapshot(assistantMessage)
                         }
                     });
+                    this.updateLaneResponseModel(stageEntry, result?.model || result?.data?.model, entry, session);
                     stageEntry.response = extractResponseContent(result);
                     stageEntry.reasoning = extractReasoning(result);
                     stageEntry.reasoningDuration = result?.reasoningDuration || null;
@@ -1068,7 +1088,7 @@ export default class CouncilController {
                     stageEntry.completedAt = Date.now();
                     if (index === 0) {
                         assistantMessage.content = stageEntry.response;
-                        assistantMessage.model = entry.name;
+                        assistantMessage.model = stageEntry.responseModel || entry.name;
                         assistantMessage.citations = stageEntry.citations || null;
                         if (assistantMessage.scrubber) {
                             assistantMessage.scrubber.redactedResponse = stageEntry.response;
@@ -1110,10 +1130,10 @@ export default class CouncilController {
             if (completed.length > 0) {
                 const canonical = completed[0];
                 assistantMessage.content = canonical.response;
-                assistantMessage.model = canonical.model;
+                assistantMessage.model = canonical.responseModel || canonical.model;
                 assistantMessage.citations = canonical.citations || null;
                 assistantMessage.council.canonicalStage1Label = canonical.label;
-                assistantMessage.council.canonicalModel = canonical.model;
+                assistantMessage.council.canonicalModel = canonical.responseModel || canonical.model;
                 if (assistantMessage.scrubber) {
                     assistantMessage.scrubber.redactedResponse = canonical.response;
                 }
@@ -1147,8 +1167,11 @@ export default class CouncilController {
                         const synthesisCitations = extractCitations(synthesisResult);
                         const synthesisStatus = completed.length === entries.length ? 'complete' : 'partial';
                         const synthesisReasoning = extractReasoning(synthesisResult);
+                        this.updateLaneResponseModel(assistantMessage.council.synthesis,
+                            synthesisResult?.model || synthesisResult?.data?.model, synthesisEntry, session);
+                        const synthesisResponseModel = assistantMessage.council.synthesis.responseModel;
                         assistantMessage.content = synthesisResponse;
-                        assistantMessage.model = 'Council';
+                        assistantMessage.model = synthesisResponseModel || 'Council';
                         assistantMessage.reasoning = synthesisReasoning;
                         assistantMessage.reasoningDuration = synthesisResult?.reasoningDuration || null;
                         assistantMessage.tokenCount = extractTokenCount(synthesisResult);
@@ -1156,6 +1179,7 @@ export default class CouncilController {
                         assistantMessage.council.synthesis = {
                             model: synthesisEntry.name,
                             modelId: synthesisEntry.id,
+                            ...(synthesisResponseModel ? { responseModel: synthesisResponseModel } : {}),
                             status: synthesisStatus,
                             response: synthesisResponse,
                             reasoning: synthesisReasoning,
@@ -1184,11 +1208,13 @@ export default class CouncilController {
                                 'Council synthesis failed.'
                             );
                             assistantMessage.content = canonical.response;
-                            assistantMessage.model = canonical.model;
+                            assistantMessage.model = canonical.responseModel || canonical.model;
                             assistantMessage.citations = canonical.citations || null;
                             assistantMessage.council.synthesis = {
                                 model: synthesisEntry.name,
                                 modelId: synthesisEntry.id,
+                                ...(assistantMessage.council.synthesis.responseModel
+                                    ? { responseModel: assistantMessage.council.synthesis.responseModel } : {}),
                                 status: 'error',
                                 response: '',
                                 reasoning: assistantMessage.council.synthesis.reasoning || null,
@@ -1198,7 +1224,7 @@ export default class CouncilController {
                                 error: errorMessage,
                                 fallbackUsed: true,
                                 fallbackLabel: canonical.label,
-                                fallbackModel: canonical.model,
+                                fallbackModel: canonical.responseModel || canonical.model,
                                 completedAt: Date.now()
                             };
                             assistantMessage.council.errors.push({
@@ -1414,6 +1440,7 @@ export default class CouncilController {
         let reasoningEndTime = null;
         let firstContentChunk = true;
         let lastPersistAt = 0;
+        let lastReportedModel = null;
 
         const markRunning = () => {
             if (!laneState) return;
@@ -1475,7 +1502,18 @@ export default class CouncilController {
                     persistSnapshot();
                 },
                 (tokenUpdate) => {
-                    streamingTokenCount = tokenUpdate?.completionTokens || streamingTokenCount || 0;
+                    if (typeof tokenUpdate?.model === 'string' && tokenUpdate.model.trim()) {
+                        lastReportedModel = tokenUpdate.model.trim();
+                    }
+                    if (!tokenUpdate?.modelOnly) {
+                        streamingTokenCount = tokenUpdate?.completionTokens || streamingTokenCount || 0;
+                    }
+                    if (this.updateLaneResponseModel(laneState, tokenUpdate?.model, entry, session)) {
+                        if (assistantMessage?.id && laneId && this.app.chatArea && this.app.isViewingSession(session.id)) {
+                            this.app.chatArea.updateCouncilLaneModel?.(assistantMessage.id, laneId, laneState.responseModel || laneState.model);
+                        }
+                        persistSnapshot(true);
+                    }
                 },
                 [],
                 searchEnabled,
@@ -1515,7 +1553,10 @@ export default class CouncilController {
             throw error;
         }
 
+        const reportedModel = typeof tokenData.model === 'string' && tokenData.model.trim()
+            ? tokenData.model.trim() : lastReportedModel || entry.id;
         if (laneState) {
+            this.updateLaneResponseModel(laneState, reportedModel, entry, session);
             laneState.response = content;
             laneState.reasoning = tokenData.reasoning || reasoning || null;
             laneState.streamingReasoning = false;
@@ -1545,7 +1586,7 @@ export default class CouncilController {
                 prompt_tokens: tokenData.promptTokens,
                 completion_tokens: tokenData.completionTokens || streamingTokenCount || null
             },
-            model: tokenData.model || entry.id,
+            model: reportedModel,
             reasoning: tokenData.reasoning || reasoning || null,
             reasoningDuration: laneState?.reasoningDuration || null,
             citations: tokenData.citations || null,

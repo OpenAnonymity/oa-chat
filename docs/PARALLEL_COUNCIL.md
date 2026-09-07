@@ -38,6 +38,17 @@ sessions without these fields normalize to ordinary Chat.
 `synthesis` when Council review is enabled. The earlier `council` output value
 is accepted only as a legacy import and normalizes to `synthesis`.
 
+## Response model attribution
+
+Auto Router lanes display the actual model returned by inference as soon as it
+is reported. Each lane's `responseModel` stores that display name (or returned ID
+when absent from the catalog), while `model` and `modelId` retain the user's
+request selection. This applies independently to both first-stage lanes and
+Council synthesis, including the non-streaming completion fallback. A lane
+regeneration clears the previous attribution and still sends to its requested
+model. Missing model metadata leaves the requested label visible. These fields
+travel with the existing transcript in local history and shared chats.
+
 ## Access and ticket safety
 
 Every OpenRouter lane obtains access through the same fail-closed verified
