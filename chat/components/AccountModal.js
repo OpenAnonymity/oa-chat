@@ -487,6 +487,7 @@ class AccountModal {
         this.loginViewVersion += 1;
         this.usernameHandoffPending = false;
         this.usernameUnlockReady = false;
+        this.waitingCaptionShown = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         this.clearAnimationTimeouts();
@@ -516,6 +517,7 @@ class AccountModal {
         this.isLoadingAccountId = false;
         this.oauthProvider = null;
         this.revealedDigits = 0;
+        this.waitingCaptionShown = false;
         this.clearAnimationTimeouts();
     }
 
@@ -746,6 +748,21 @@ class AccountModal {
         this.render();
     }
 
+    /**
+     * The server rejected a finished registration (usually an expired
+     * challenge). Drop the stale reservation and run setup again for the same
+     * username: a fresh /auth/init challenge, then the passkey prompt.
+     */
+    handleRegistrationRetry() {
+        if (this.usernamePasskeyBusy || this.usernameContinuePending || this.accountState?.busy) return;
+        this.accountService.cancelPendingAccount();
+        this.accountService.clearErrors();
+        this.generatedAccountId = null;
+        this.creationStep = 'username_ready';
+        this.creationError = null;
+        void this.handleUsernamePasskeyContinue();
+    }
+
     async handleStartOver() {
         if (this.accountState?.oauthSetupRequired) {
             this.accountService.cancelPendingOAuthAccount();
@@ -861,6 +878,10 @@ class AccountModal {
                 // users to the enabled retry action.
                 if (!isSetup && this.usernameUnlockReady) {
                     this.focusModal('account-username-unlock-btn');
+                } else if (isSetup && this.creationStep === 'passkey_retry') {
+                    this.focusModal('account-username-unlock-btn');
+                } else if (isSetup && this.creationStep === 'error') {
+                    this.focusModal('account-registration-retry-btn');
                 }
             }
         }
@@ -1669,24 +1690,29 @@ class AccountModal {
         const failedRegistration = isSetup && this.creationStep === 'error';
         return this.renderPasskeyUnlockCard({
             isSetup,
+            username: this.generatedUsername,
+            failedRegistration,
             closeDisabled: isSetup && this.creationStep === 'confirming',
             busy: Boolean(this.usernamePasskeyBusy || this.accountState?.busy ||
                 (isSetup && ['passkey', 'confirming', 'complete'].includes(this.creationStep))),
             error: String((isSetup ? this.creationError : this.accountState?.error) || ''),
-            actionId: failedRegistration ? 'start-over-btn' : 'account-username-unlock-btn',
-            primaryLabel: failedRegistration ? 'Start over' : '',
+            actionId: failedRegistration ? 'account-registration-retry-btn' : 'account-username-unlock-btn',
             secondaryId: 'account-username-back-btn',
             secondaryLabel: 'Back'
         });
     }
 
     renderPasskeyUnlockCard({
-        isLegacyMigration = false, isSetup = false, isLegacyPasskey = false,
-        busy = false, error = '', closeDisabled = false, actionId = 'oauth-keyring-submit-btn',
-        primaryLabel = '', secondaryId = '', secondaryLabel = ''
+        isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
+        failedRegistration = false, busy = false, error = '', closeDisabled = false,
+        actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = ''
     } = {}) {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
+        // The server rejected the finished passkey. An expired challenge is the
+        // common case (the OS sheet outlived it): say so in plain words instead
+        // of echoing the server, and offer a fresh attempt rather than a reset.
+        const registrationExpired = failedRegistration && /expired|invalid/i.test(error);
 
         // Returning accounts get no heading: the passkey prompt opens on
         // arrival and this card only covers waiting and retry. Setup and the
@@ -1711,9 +1737,13 @@ class AccountModal {
                 ? 'Enter the recovery code from the previous account system once. It will be replaced with an encryption passkey.'
                 : isLegacyPasskey
                     ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it.'
-                    : isSetup
-                        ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
-                        : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
+                    : registrationExpired
+                        ? 'The passkey request expired before setup finished.'
+                        : failedRegistration
+                            ? 'Your account couldn\u2019t be finished.'
+                            : isSetup
+                                ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
+                                : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
         const idleCta = isLegacyMigration
             ? 'Upgrade with passkey'
             : isSetup
@@ -1722,7 +1752,20 @@ class AccountModal {
                     ? 'Use legacy passkey'
                     : 'Unlock';
         const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
-        const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
+        // The expired case is explained by the body; anything else keeps the
+        // server's reason under the button.
+        const alertText = registrationExpired ? '' : /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
+        // First-time setup is the only automatic prompt whose purpose the user
+        // has not seen before: while the OS sheet is up, the dimmed page says
+        // what it is for. Returning accounts keep the bare spinner.
+        // Every render replaces the overlay's markup, so the entrance runs
+        // only on the first frame that shows the caption, not on the account
+        // and sync notifications that redraw it during the ceremony.
+        const captionEnters = !this.waitingCaptionShown;
+        const waitingCaption = !title && busy && isSetup && username ? `
+                <p class="account-unlock-waiting-title${captionEnters ? ' account-unlock-waiting-enter' : ''}">Setting up a passkey for ${this.escapeHtml(username)}</p>
+                <p class="account-unlock-waiting-note${captionEnters ? ' account-unlock-waiting-enter' : ''}">It encrypts your tickets and preferences so only you can access them.</p>` : '';
+        if (waitingCaption) this.waitingCaptionShown = true;
 
         return `
             <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : `aria-label="${isSetup ? 'Create your passkey' : 'Unlock your encrypted data'}"`} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}"${!title && busy ? ' data-waiting="true"' : ''}>
@@ -1757,11 +1800,11 @@ class AccountModal {
                             ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
                         </button>
                     `}
-                    ${error && !busy ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
+                    ${alertText && !busy ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
                     ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
-            ${!title && busy ? '<div class="account-unlock-waiting" role="status" aria-label="Confirming your passkey"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span></div>' : ''}
+            ${!title && busy ? `<div class="account-unlock-waiting" role="status"${waitingCaption ? '' : ' aria-label="Confirming your passkey"'}><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>${waitingCaption}</div>` : ''}
         `;
     }
 
@@ -1871,6 +1914,8 @@ class AccountModal {
 
         const startOverBtn = document.getElementById('start-over-btn');
         if (startOverBtn) startOverBtn.onclick = () => this.handleStartOver();
+        const registrationRetryBtn = document.getElementById('account-registration-retry-btn');
+        if (registrationRetryBtn) registrationRetryBtn.onclick = () => this.handleRegistrationRetry();
 
         const accountInput = document.getElementById('account-id-input');
         if (accountInput) {

@@ -497,10 +497,11 @@ test('first username account completes after one passkey and routes to Membershi
     assert.equal(firstAccountReady, 1);
 });
 
-test('first username setup never displays the username while awaiting or finishing the passkey', () => {
+test('first username setup draws only the spinner and a caption saying what the passkey sheet is for', () => {
     const modal = Object.create(AccountModal.prototype);
-    modal.generatedUsername = 'winter-owl';
+    modal.generatedUsername = 'winter-<owl>';
     modal.escapeHtml = value => String(value ?? '').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    let first = true;
     for (const step of ['passkey', 'confirming', 'complete']) {
         modal.creationStep = step;
         const html = modal.renderCreationFlow();
@@ -511,7 +512,15 @@ test('first username setup never displays the username while awaiting or finishi
         assert.doesNotMatch(html, /<h2|Encrypt your data/);
         assert.match(html, /Confirm with your passkey to finish\./);
         assert.match(html, /id="account-username-unlock-btn"[^>]*disabled aria-busy="true"/);
-        assert.doesNotMatch(html, /winter-owl|Your username|Your account number|Create a passkey account|You're all set/);
+        // The dimmed page says what the OS sheet is for. The username is
+        // escaped, and no username/account summary card is drawn.
+        assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
+        assert.match(html, /class="account-unlock-waiting-title[^"]*">Setting up a passkey for winter-&lt;owl&gt;<\/p>/);
+        assert.match(html, /class="account-unlock-waiting-note[^"]*">It encrypts your tickets and preferences so only you can access them\.<\/p>/);
+        assert.doesNotMatch(html, /Your username|Your account number|Create a passkey account|You're all set/);
+        // The caption's entrance runs once: later redraws mount it settled.
+        assert.equal(/account-unlock-waiting-enter/.test(html), first);
+        first = false;
     }
     modal.creationStep = 'passkey_retry';
     modal.creationError = '<unavailable>';
@@ -520,9 +529,67 @@ test('first username setup never displays the username while awaiting or finishi
     assert.match(retry, /&lt;unavailable&gt;/);
     assert.match(retry, /id="account-username-unlock-btn"/);
     assert.match(retry, /id="account-username-back-btn"/);
-    assert.doesNotMatch(retry, /winter-owl|Your username|Setting up your account/);
+    assert.doesNotMatch(retry, /winter-|Your username|Setting up your account|account-unlock-waiting/);
+});
+
+test('a returning username unlock keeps the bare spinner while the passkey sheet is up', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.usernameUnlockReady = true;
+    modal.usernamePasskeyBusy = true;
+    modal.usernameInputValue = 'winter-owl';
+    modal.accountState = { username: 'winter-owl', busy: false };
+    modal.escapeHtml = value => String(value ?? '');
+    const html = modal.renderUsernameUnlockUI();
+    assert.match(html, /<div class="account-unlock-waiting" role="status" aria-label="Confirming your passkey"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span><\/div>/);
+    assert.doesNotMatch(html, /account-unlock-waiting-title|Setting up a passkey/);
+});
+
+test('a registration the server rejected explains itself and retries with a fresh challenge', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.generatedUsername = 'winter-owl';
+    modal.generatedAccountId = '1234567890123456';
     modal.creationStep = 'error';
-    assert.match(modal.renderCreationFlow(), /id="start-over-btn"/);
+    modal.escapeHtml = value => String(value ?? '');
+    modal.accountState = {};
+
+    // The common case: the OS sheet outlived the challenge. Plain words in
+    // the body, no red echo of the server string, Try again instead of a
+    // reset that would throw the username away.
+    modal.creationError = 'Challenge expired or invalid';
+    let html = modal.renderCreationFlow();
+    assert.match(html, /The passkey request expired before setup finished\./);
+    assert.doesNotMatch(html, /Challenge expired|role="alert"|Start over|start-over-btn|Create a passkey\./);
+    assert.match(html, /id="account-registration-retry-btn"[^>]*>(?:(?!<\/button>).)*<span>Try again<\/span>/s);
+    assert.match(html, /id="account-username-back-btn"[^>]*>Back<\/button>/);
+    assert.doesNotMatch(html, /data-waiting|account-unlock-waiting/);
+
+    // Any other rejection keeps the server's reason under the button.
+    modal.creationError = 'Username is no longer available';
+    html = modal.renderCreationFlow();
+    assert.match(html, /Your account couldn’t be finished\./);
+    assert.match(html, /<p role="alert" class="account-unlock-alert">Username is no longer available<\/p>/);
+    assert.match(html, /id="account-registration-retry-btn"/);
+
+    // Try again drops the stale reservation and reruns setup for the same
+    // username: prepareAccount issues a fresh /auth/init challenge first.
+    const calls = [];
+    modal.isOpen = true;
+    modal.loginViewVersion = 1;
+    modal.render = () => {};
+    modal.focusModal = () => {};
+    modal.accountService = {
+        cancelPendingAccount() { calls.push('cancel'); },
+        clearErrors() {},
+        async prepareAccount(username) { calls.push(['init', username]); },
+        getPendingAccountId: () => '6543210987654321'
+    };
+    modal.handlePasskeyRegistration = async () => { calls.push('register'); };
+    modal.handleRegistrationRetry();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls, ['cancel', ['init', 'winter-owl'], 'register']);
+    assert.equal(modal.generatedUsername, 'winter-owl');
+    assert.equal(modal.generatedAccountId, '6543210987654321');
+    assert.equal(modal.creationError, null);
 });
 
 test('new username registration keeps progress through account/sync notifications until Membership', async () => {
@@ -579,8 +646,11 @@ test('new username registration keeps progress through account/sync notification
         assert.equal(frames.length, 3); // waiting, confirming, and sync notification
         for (const html of frames) {
             assert.match(html, /Confirm with your passkey to finish\./);
-            assert.doesNotMatch(html, /Your username|winter-owl|Your account number/);
+            assert.match(html, /Setting up a passkey for winter-owl/);
+            assert.doesNotMatch(html, /Your username|Your account number/);
         }
+        // The caption entered on the first frame only; redraws did not replay it.
+        assert.deepEqual(frames.map(html => /account-unlock-waiting-enter/.test(html)), [true, false, false]);
         assert.equal(firstAccountReady, 0);
         finishRegistration();
         await registration;

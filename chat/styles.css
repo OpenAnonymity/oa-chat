@@ -6100,9 +6100,14 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
 .account-unlock-waiting {
     position: absolute;
     inset: 0;
-    display: grid;
-    place-items: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 1.5rem;
     pointer-events: none;
+    text-align: center;
 }
 
 .account-unlock-waiting-spinner {
@@ -6111,6 +6116,67 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     border-width: 2px;
     border-color: rgb(255 255 255 / .7);
     border-top-color: transparent;
+}
+
+/* First-time setup only: one line on what the OS sheet is for, and one on
+   why. The sheet covers the middle of the window on desktop Safari and the
+   top on desktop Chrome, and the bottom half on phones — so the caption sits
+   near the bottom on wide screens and near the top on narrow ones, where it
+   stays readable behind either. It enters once, on the frame the lookup
+   resolves to a new account; the untitled card's own copy stays for AT. */
+.account-unlock-waiting:has(.account-unlock-waiting-title) {
+    justify-content: flex-start;
+    padding-top: max(4.5rem, 14vh);
+}
+
+@media (min-width: 48rem) {
+    .account-unlock-waiting:has(.account-unlock-waiting-title) {
+        justify-content: flex-end;
+        padding-top: 1.5rem;
+        padding-bottom: max(3rem, 9vh);
+    }
+}
+
+.account-unlock-waiting-title,
+.account-unlock-waiting-note {
+    margin: 0;
+    max-width: 28rem;
+    color: rgb(255 255 255 / .88);
+}
+
+.account-unlock-waiting-enter {
+    animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.account-unlock-waiting-title {
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.4;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+}
+
+.account-unlock-waiting-note {
+    margin-top: -0.625rem;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: rgb(255 255 255 / .6);
+    text-wrap: pretty;
+}
+
+.account-unlock-waiting-note.account-unlock-waiting-enter {
+    animation-delay: 40ms;
+}
+
+@keyframes account-unlock-caption-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
 }
 
 .account-unlock-card-untitled {
@@ -6251,6 +6317,9 @@ html[data-keyboard-nav] .account-unlock-input:focus-visible {
     }
     .account-unlock-spinner {
         animation-duration: 1.4s;
+    }
+    .account-unlock-waiting-enter {
+        animation: none;
     }
 }
 
