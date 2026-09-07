@@ -50,6 +50,7 @@ export default class ChatInput {
             lastTabAt: 0,
             timer: null,
             isRunning: false,
+            draftRevision: 0,
             ctrlHeld: false,
             ctrlPinned: false
         };
@@ -89,6 +90,39 @@ export default class ChatInput {
         this.applyComposerLayout();
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
+    }
+
+    refreshFeatureAvailability() {
+        this.updateMemoryToggleUI();
+        this.refreshMultiModelSettingsUI();
+        this.refreshMemorySettingsUI();
+        this.app.memoryEditor?.handleFeatureAvailabilityChanged?.();
+    }
+
+    supportsFeature(feature, session = this.app.getCurrentSession?.() || null) {
+        return this.app.features?.[feature] !== false
+            && this.app.supportsFeature?.(feature, session) !== false;
+    }
+
+    getFeatureUnavailableReason(feature) {
+        return this.app.getFeatureUnavailableReason?.(feature)
+            || 'This feature is unavailable in the current payment mode.';
+    }
+
+    requireFeature(feature) {
+        if (this.supportsFeature(feature)) return true;
+        this.app.showToast?.(this.getFeatureUnavailableReason(feature), 'info', 4000);
+        return false;
+    }
+
+    isMemoryAvailable() {
+        return this.supportsFeature('memory') && this.app.memoryFeatureEnabled !== false;
+    }
+
+    getMemoryUnavailableReason() {
+        return this.supportsFeature('memory')
+            ? 'Memory is off in settings.'
+            : this.getFeatureUnavailableReason('memory');
     }
 
     getComposerToolElements() {
@@ -139,6 +173,7 @@ export default class ChatInput {
     setupEventListeners() {
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
+            this.scrubberState.draftRevision += 1;
             const input = this.app.elements.messageInput;
             this.app.resetMessageInputLayout();
             const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
@@ -216,6 +251,7 @@ export default class ChatInput {
             if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
                 return;
             }
+            if (!this.supportsFeature('scrubber')) return;
             e.preventDefault();
             this.handleScrubberTabKeydown();
         });
@@ -310,10 +346,13 @@ export default class ChatInput {
         if (this.app.elements.memoryToggle) {
             this.app.elements.memoryToggle.addEventListener('click', async (e) => {
                 const button = e.target.closest('.chat-mode-toggle-btn');
-                if (!button) return;
+                if (!button || button.disabled) return;
 
                 const mode = button.dataset.modeOption || 'chat';
                 const isParallel = mode === 'parallel';
+                // Chat remains the selected no-op in runtimes without Parallel.
+                if (!this.supportsFeature('council') && !isParallel) return;
+                if (!this.requireFeature('council')) return;
                 const container = this.app.elements.memoryToggle;
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
@@ -476,6 +515,7 @@ export default class ChatInput {
             modeSelect.addEventListener('click', (event) => event.stopPropagation());
             modeSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (!this.requireFeature('council')) return;
                 const session = this.app.getCurrentSession();
                 const members = this.getMultiModelMembersForSelection();
                 const synthesisModel = this.getCouncilSynthesisModelForSelection();
@@ -517,6 +557,7 @@ export default class ChatInput {
             synthesisSelect.addEventListener('click', (event) => event.stopPropagation());
             synthesisSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (!this.requireFeature('council')) return;
                 if (this.councilReviewModelSelect) {
                     this.councilReviewModelSelect.value = event.target.value;
                 }
@@ -690,6 +731,10 @@ export default class ChatInput {
     }
 
     handleScrubberTabKeydown() {
+        if (!this.requireFeature('scrubber')) {
+            this.resetScrubberTabShortcutState();
+            return;
+        }
         if (!this.isMessageInputFocused()) {
             this.resetScrubberTabShortcutState();
             return;
@@ -798,84 +843,81 @@ export default class ChatInput {
     }
 
     async runScrubberShortcut() {
-        if (this.app.features?.scrubber === false) return;
-        const text = this.app.elements.messageInput.value || '';
+        if (!this.requireFeature('scrubber') || this.scrubberState.isRunning) return;
+        const input = this.app.elements.messageInput;
+        const text = input.value || '';
         if (!text.trim()) {
             this.app.showToast('Nothing to scrub', 'error');
             return;
         }
 
+        let session = this.app.getCurrentSession();
+        const navigationGeneration = this.app.sessionNavigationGeneration;
+        const draftRevision = this.scrubberState.draftRevision;
+        const original = this.app.scrubberPending?.original || text;
+        const operation = this.app.beginFeatureOperation('scrubber', session);
+        if (!operation) {
+            this.app.showToast?.('Wait for the current chat action to finish before scrubbing.', 'info');
+            return;
+        }
         const modeLabel = scrubberService.getModeLabel ? scrubberService.getModeLabel() : 'confidential model';
         const stopToast = this.app.showLoadingToast?.(`Scrubbing input query with ${modeLabel}`);
-        if (this.app.elements.inputCard) {
-            this.app.elements.inputCard.classList.add('scrubbing');
-        }
+        this.app.elements.inputCard?.classList.add('scrubbing');
         this.scrubberState.isRunning = true;
+        const ownsDraft = () => this.app.sessionNavigationGeneration === navigationGeneration
+            && this.app.getCurrentSession()?.id === session?.id
+            && this.scrubberState.draftRevision === draftRevision
+            && input.value === text;
         try {
-            let currentSession = this.app.getCurrentSession();
-            if (!currentSession && typeof this.app.createSession === 'function') {
-                await this.app.createSession();
-                currentSession = this.app.getCurrentSession();
+            if (!session) {
+                let bound = false;
+                await this.app.createSession('New Chat', {
+                    onCreated: created => {
+                        session = created;
+                        bound = this.app.bindFeatureOperation(operation, created);
+                    }
+                });
+                if (!session) return;
+                if (!bound) {
+                    this.app.showToast?.(this.getFeatureUnavailableReason('scrubber'), 'info', 4000);
+                    return;
+                }
             }
-            if (!currentSession) {
-                throw new Error('No session available for scrubber key.');
+            if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
+            // The confidential service does not support aborting its transport.
+            // Keep the reservation through its actual completion, and discard
+            // a late result when its captured chat or draft no longer owns it.
+            const result = await scrubberService.redactPrompt(text, session);
+            if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
+            if (!result?.success || !result.text) {
+                this.app.showToast(result?.error || 'Scrubber failed', 'error');
+                return;
             }
-            const result = await scrubberService.redactPrompt(text, currentSession);
-            if (result?.success && result.text) {
-                const hasChanges = text.trim() !== result.text.trim();
 
-                this.app.elements.messageInput.value = result.text;
-                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
-                // Scroll to top and place cursor at the beginning
-                this.app.elements.messageInput.scrollTop = 0;
-                this.app.elements.messageInput.setSelectionRange(0, 0);
-
-                if (hasChanges) {
-                    const existingOriginal = this.app.scrubberPending?.original;
-                    this.app.scrubberPending = {
-                        original: existingOriginal || text,
-                        redacted: result.text,
-                        timestamp: Date.now()
-                    };
-                    this.app.showToast('PII removed', 'success');
-                } else {
-                    this.app.scrubberPending = null;
-                    this.app.showToast('No PII detected', 'success');
-                }
-
-                this.updateScrubberHintVisibility();
-                this.updateScrubberPreviewHintVisibility();
-
-                if (typeof stopToast === 'function') {
-                    stopToast();
-                }
-                if (this.app.elements.inputCard) {
-                    this.app.elements.inputCard.classList.remove('scrubbing');
-                }
-                this.scrubberDiffState.previewRendered = false;
-            } else {
-                if (typeof stopToast === 'function') {
-                    stopToast();
-                }
-                if (this.app.elements.inputCard) {
-                    this.app.elements.inputCard.classList.remove('scrubbing');
-                }
-                const errorMsg = result?.error || 'Scrubber failed';
-                this.app.showToast(errorMsg, 'error');
-            }
+            const hasChanges = text.trim() !== result.text.trim();
+            input.value = result.text;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.scrollTop = 0;
+            input.setSelectionRange(0, 0);
+            this.app.scrubberPending = hasChanges ? {
+                original,
+                redacted: result.text,
+                timestamp: Date.now()
+            } : null;
+            this.app.showToast(hasChanges ? 'PII removed' : 'No PII detected', 'success');
+            this.updateScrubberHintVisibility();
+            this.updateScrubberPreviewHintVisibility();
+            this.scrubberDiffState.previewRendered = false;
         } catch (error) {
-            console.error('Scrubber shortcut failed:', error);
-            if (typeof stopToast === 'function') {
-                stopToast();
+            if (ownsDraft() && !operation.signal.aborted) {
+                console.error('Scrubber shortcut failed:', error);
+                this.app.showToast(error?.message || 'Scrubber failed', 'error');
             }
-            if (this.app.elements.inputCard) {
-                this.app.elements.inputCard.classList.remove('scrubbing');
-            }
-            // Show specific error message if available
-            const errorMsg = error?.message || 'Scrubber failed';
-            this.app.showToast(errorMsg, 'error');
         } finally {
+            stopToast?.();
+            this.app.elements.inputCard?.classList.remove('scrubbing');
             this.scrubberState.isRunning = false;
+            this.app.finishFeatureOperation(operation);
         }
     }
     showScrubberPreview(options = {}) {
@@ -1569,6 +1611,15 @@ export default class ChatInput {
         const input = this.app.elements.messageInput;
         if (!hint || !input) return;
 
+        if (this.scrubberHintHtml === undefined) this.scrubberHintHtml = hint.innerHTML;
+        const supported = this.supportsFeature('scrubber');
+        if (supported && hint.dataset.featureUnavailable === 'true') {
+            hint.innerHTML = this.scrubberHintHtml;
+        } else if (!supported && hint.dataset.featureUnavailable !== 'true') {
+            hint.textContent = 'Scrubber needs Tickets';
+        }
+        hint.dataset.featureUnavailable = String(!supported);
+        hint.title = supported ? '' : this.getFeatureUnavailableReason('scrubber');
         const len = (input.value || '').length;
         // Hide hint completely after scrubbing (when tooltip can show)
         const hasPending = this.app.scrubberPending?.redacted === input.value;
@@ -1713,6 +1764,7 @@ export default class ChatInput {
         if (scrubberSelect) {
             scrubberSelect.addEventListener('click', (event) => event.stopPropagation());
             scrubberSelect.addEventListener('change', async (event) => {
+                if (!this.requireFeature('scrubber')) return;
                 const modelId = event.target.value;
                 if (modelId) {
                     await scrubberService.setSelectedModel(modelId);
@@ -1726,6 +1778,7 @@ export default class ChatInput {
         if (memoryAgentSelect) {
             memoryAgentSelect.addEventListener('click', (event) => event.stopPropagation());
             memoryAgentSelect.addEventListener('change', async (event) => {
+                if (!this.isMemoryAvailable()) return;
                 const modelId = event.target.value;
                 if (modelId) {
                     await this.app.setMemoryAgentModel(modelId);
@@ -1743,6 +1796,7 @@ export default class ChatInput {
 
         toggle.addEventListener('click', async (event) => {
             event.stopPropagation();
+            if (!this.requireFeature('memory')) return;
             const nextValue = this.app.memoryFeatureEnabled === false;
             await this.app.setMemoryFeatureEnabled(nextValue);
             this.refreshMemorySettingsUI();
@@ -1804,7 +1858,7 @@ export default class ChatInput {
 
         toggle.addEventListener('click', async (event) => {
             event.stopPropagation();
-            if (this.app.memoryFeatureEnabled === false) {
+            if (!this.isMemoryAvailable()) {
                 this.refreshMemorySettingsUI();
                 return;
             }
@@ -1824,13 +1878,24 @@ export default class ChatInput {
     }
 
     refreshMemorySettingsUI() {
-        const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
+        const memorySupported = this.supportsFeature('memory');
+        const memoryFeatureEnabled = this.isMemoryAvailable();
+        const memoryUnavailableReason = this.getMemoryUnavailableReason();
+        const featureToggle = document.getElementById('memory-feature-toggle');
         this.updateSwitchToggleUI(
-            document.getElementById('memory-feature-toggle'),
-            memoryFeatureEnabled,
+            featureToggle,
+            this.app.memoryFeatureEnabled !== false,
             'Memory feature is on',
             'Memory feature is off'
         );
+        if (featureToggle) {
+            featureToggle.disabled = !memorySupported;
+            featureToggle.setAttribute('aria-disabled', String(!memorySupported));
+            if (!memorySupported) {
+                featureToggle.title = memoryUnavailableReason;
+                featureToggle.dataset.tooltip = memoryUnavailableReason;
+            }
+        }
 
         const memoryAutoIncludeToggle = document.getElementById('memory-auto-include-toggle');
         const effectiveMemoryAutoInclude = memoryFeatureEnabled && this.app.memoryAutoInclude;
@@ -1838,7 +1903,7 @@ export default class ChatInput {
             memoryAutoIncludeToggle,
             effectiveMemoryAutoInclude,
             'Always attach retrieval is on',
-            memoryFeatureEnabled ? 'Always attach retrieval is off' : 'Memory is off in settings'
+            memoryFeatureEnabled ? 'Always attach retrieval is off' : memoryUnavailableReason
         );
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
@@ -1846,6 +1911,12 @@ export default class ChatInput {
         }
 
         if (this.scrubberModelSelect) {
+            const scrubberSupported = this.supportsFeature('scrubber');
+            this.scrubberModelSelect.disabled = !scrubberSupported;
+            this.scrubberModelSelect.setAttribute('aria-disabled', String(!scrubberSupported));
+            this.scrubberModelSelect.title = scrubberSupported
+                ? 'Privacy scrubber model'
+                : this.getFeatureUnavailableReason('scrubber');
             const selectedScrubberModel = scrubberService.getSelectedModel();
             if (selectedScrubberModel) {
                 this.scrubberModelSelect.value = selectedScrubberModel;
@@ -1859,7 +1930,7 @@ export default class ChatInput {
             this.memoryAgentModelSelect.disabled = !memoryFeatureEnabled;
             this.memoryAgentModelSelect.title = memoryFeatureEnabled
                 ? 'Memory agent model'
-                : 'Memory is off in settings';
+                : memoryUnavailableReason;
         }
 
         document.querySelectorAll('[data-memory-requires-feature]').forEach((element) => {
@@ -1867,8 +1938,9 @@ export default class ChatInput {
             element.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             element.title = memoryFeatureEnabled
                 ? (element.dataset.enabledTitle || '')
-                : 'Memory is off in settings';
+                : memoryUnavailableReason;
         });
+        this.updateScrubberHintVisibility();
     }
 
     /**
@@ -2006,6 +2078,7 @@ export default class ChatInput {
     }
 
     async setMemoryContextEnabled(enabled) {
+        if (!this.requireFeature('memory')) return;
         if (enabled === true && this.app.memoryFeatureEnabled === false) {
             this.app.memoryMode = false;
             this.updateMemoryToggleUI();
@@ -2018,9 +2091,9 @@ export default class ChatInput {
     }
 
     async openMemoryContextPanel() {
-        if (this.app.memoryFeatureEnabled === false) {
+        if (!this.isMemoryAvailable()) {
             this.updateMemoryToggleUI();
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
         await this.setMemoryContextEnabled(true);
@@ -2031,9 +2104,9 @@ export default class ChatInput {
         event.preventDefault();
         event.stopPropagation();
 
-        if (this.app.memoryFeatureEnabled === false) {
+        if (!this.isMemoryAvailable()) {
             this.updateMemoryToggleUI();
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
 
@@ -2053,13 +2126,14 @@ export default class ChatInput {
         const container = this.app.elements.memoryToggle;
         if (!container) return;
 
-        const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
+        const memoryFeatureEnabled = this.isMemoryAvailable();
+        const councilSupported = this.supportsFeature('council');
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
         const isCouncilEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const mode = this.setComposerModeDataset(isCouncilEnabled);
+        const mode = this.setComposerModeDataset(councilSupported && isCouncilEnabled);
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
             const indicator = container.querySelector('.chat-mode-toggle-indicator');
@@ -2075,14 +2149,21 @@ export default class ChatInput {
 
         container.querySelectorAll('.chat-mode-toggle-btn').forEach((button) => {
             button.setAttribute('aria-checked', String(button.dataset.modeOption === mode));
-            button.setAttribute('aria-disabled', 'false');
-            button.tabIndex = 0;
+            const isParallel = button.dataset.modeOption === 'parallel';
+            button.disabled = !councilSupported && isParallel;
+            button.setAttribute('aria-disabled', String(button.disabled));
+            button.dataset.tooltip = button.disabled
+                ? this.getFeatureUnavailableReason('council')
+                : (isParallel ? 'Parallel' : 'Chat');
+            button.title = button.dataset.tooltip;
+            button.tabIndex = button.disabled ? -1 : 0;
         });
 
         const memoryButton = this.app.elements.memoryContextToggle;
         if (memoryButton) {
             const memoryEnabled = memoryFeatureEnabled && this.app.memoryMode === true;
             memoryButton.setAttribute('aria-checked', String(memoryEnabled));
+            memoryButton.disabled = !memoryFeatureEnabled;
             memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             memoryButton.classList.toggle('memory-active', memoryEnabled);
             memoryButton.classList.toggle('memory-disabled', !memoryFeatureEnabled);
@@ -2090,7 +2171,7 @@ export default class ChatInput {
                 ? (memoryEnabled
                     ? 'Auto-attach memory is on. Double-click to open memory.'
                     : 'Auto-attach memory is off. Double-click to open memory.')
-                : 'Memory is off in settings.';
+                : this.getMemoryUnavailableReason();
 
             const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
             const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
@@ -2098,7 +2179,7 @@ export default class ChatInput {
             if (tooltipText) {
                 tooltipText.textContent = memoryFeatureEnabled
                     ? 'Auto-attach relevant context'
-                    : 'Memory is off in settings';
+                    : this.getMemoryUnavailableReason();
             }
             if (tooltipDetail) {
                 tooltipDetail.classList.toggle('hidden', !memoryFeatureEnabled);
@@ -2110,6 +2191,7 @@ export default class ChatInput {
     }
 
     async setCouncilModeFromComposer(enabled, options = {}) {
+        if (!this.requireFeature('council')) return;
         const members = this.getMultiModelMembersForSelection({ preferControlSelection: false });
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled
@@ -2179,6 +2261,7 @@ export default class ChatInput {
     }
 
     async setCouncilReviewEnabledFromSettings(enabled) {
+        if (!this.requireFeature('council')) return;
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
         const currentlyMultiModelEnabled = session
@@ -2223,6 +2306,7 @@ export default class ChatInput {
     }
 
     async persistCouncilSelectionFromControls() {
+        if (!this.requireFeature('council')) return;
         const session = this.app.getCurrentSession();
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
@@ -2484,9 +2568,10 @@ export default class ChatInput {
         const synthesisSelect = document.getElementById('multi-model-synthesis-select');
 
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
-        const isEnabled = session
+        const councilSupported = this.supportsFeature('council');
+        const isEnabled = councilSupported && (session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
-            : pendingCouncilConfig?.enabled === true;
+            : pendingCouncilConfig?.enabled === true);
         this.setComposerModeDataset(isEnabled);
         if (inlineContainer) {
             inlineContainer.classList.toggle('hidden', !isEnabled);
@@ -2672,6 +2757,21 @@ export default class ChatInput {
                 synthesisSelect.innerHTML = renderSynthesisOptions();
             }
         }
+        for (const control of [select, inlineSelect, modeSelect, councilReviewToggle,
+            councilReviewModelSelect, synthesisInlineSelect, synthesisSelect]) {
+            if (!control) continue;
+            if (control === councilReviewToggle || control === modeSelect) control.disabled = false;
+            if (!councilSupported) {
+                if (control.dataset.featureUnavailable !== 'true') control.dataset.availableTitle = control.title || '';
+                control.disabled = true;
+                control.title = this.getFeatureUnavailableReason('council');
+            } else if (control.dataset.featureUnavailable === 'true') {
+                control.title = control.dataset.availableTitle || '';
+                delete control.dataset.availableTitle;
+            }
+            control.dataset.featureUnavailable = String(!councilSupported);
+            control.setAttribute('aria-disabled', String(control.disabled));
+        }
     }
 
     escapeOptionValue(value) {
@@ -2844,8 +2944,8 @@ export default class ChatInput {
     }
 
     async handleExportMemory() {
-        if (this.app.memoryFeatureEnabled === false) {
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+        if (!this.isMemoryAvailable()) {
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
         if (!this.app.memoryEditor?.exportMemories) {
@@ -2856,8 +2956,8 @@ export default class ChatInput {
     }
 
     handleImportMemory() {
-        if (this.app.memoryFeatureEnabled === false) {
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+        if (!this.isMemoryAvailable()) {
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
         const input = document.getElementById('memory-import-input');
@@ -2977,8 +3077,8 @@ export default class ChatInput {
 
     async processMemoryImportFile(file) {
         try {
-            if (this.app.memoryFeatureEnabled === false) {
-                this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            if (!this.isMemoryAvailable()) {
+                this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
                 return;
             }
             if (!this.app.memoryEditor?.importMemoryFile) {

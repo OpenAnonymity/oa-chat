@@ -148,7 +148,7 @@ describe('production ChatApp runtime ownership', () => {
     let databaseMethods;
     beforeEach(() => {
         restore = installBrowser();
-        databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSessionMessages', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
+        databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSession', 'getSessionMessages', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
@@ -1359,4 +1359,147 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(updates.filter(update => update.final !== false).length, 1);
         assert.equal(updates.at(-1).usage.cost, 0.001);
     });
+
+    test('runtime capabilities follow the captured session without changing preferences or Parallel history', async () => {
+        const app = backendHarness();
+        app.features = { memory: true, scrubber: true, council: true };
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        app.runtime.getFeatureUnavailableReason = () => 'Switch to Tickets.';
+        const paid = app.state.sessionsById.get('one');
+        const ticket = app.state.sessionsById.get('two');
+        app.memoryMode = true;
+        paid.responseMode = 'council';
+        paid.councilConfig = { enabled: true, members: ['Model one', 'Model two'] };
+        assert.equal(app.supportsFeature('memory', paid), false);
+        assert.equal(app.supportsFeature('memory', ticket), true);
+        assert.equal(app.getFeatureUnavailableReason('scrubber', paid), 'Switch to Tickets.');
+        assert.equal(app.isCouncilModeActive(paid), false);
+        assert.equal(app.memoryMode, true);
+        assert.equal(paid.councilConfig.enabled, true);
+        assert.equal(app.messageUsesCouncilLayout({ council: { enabled: true } }), true);
+        let read = false;
+        chatDB.getSessionMessages = async () => { read = true; return []; };
+        assert.deepEqual(await app.runPostTurnMemoryExtraction(paid), { status: 'disabled', writeCalls: 0 });
+        assert.equal(read, false, 'a paid response cannot start confidential memory work');
+        app.memoryExtractionInFlight = new Set();
+        app.memoryExtractionAbortControllers = new Map();
+        app.normalizeMessagesForMemory = messages => messages;
+        await app.runPostTurnMemoryExtraction(ticket);
+        assert.equal(read, true, 'a captured ticket owner remains available while viewing a paid chat');
+    });
+
+    test('confidential operations block switches until fully drained and reject paid or changing owners', async () => {
+        const app = backendHarness();
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        const ticket = app.state.sessionsById.get('two');
+        const operation = app.beginFeatureOperation('scrubber', ticket);
+        assert.ok(operation);
+        assert.equal(app.isSessionBusy(ticket.id), true);
+        assert.equal(app.beginFeatureOperation('scrubber', app.getCurrentSession()), null);
+        let drained = false;
+        const wait = app.cancelSessionWork(ticket.id).then(() => { drained = true; });
+        await Promise.resolve();
+        assert.equal(operation.signal.aborted, true);
+        assert.equal(drained, false, 'aborting cannot release an uncancelable provider request');
+        app.finishFeatureOperation(operation);
+        await wait;
+        assert.equal(drained, true);
+        const reservation = app.beginSessionMutation(ticket.id, { exclusive: true });
+        assert.equal(app.beginFeatureOperation('memory', ticket), null, 'new confidential work cannot enter an exclusive timeline mutation');
+        reservation.backendChange = true;
+        assert.equal(app.beginFeatureOperation('memory', ticket), null);
+        app.endSessionMutation(ticket.id, reservation);
+    });
+
+    test('an empty-draft feature operation captures its backend and binds the created session', async () => {
+        const app = backendHarness();
+        app.state.currentSessionId = null;
+        app.inferenceService.setDefaultBackendId('ticket');
+        app.runtime.supportsFeature = (feature, session) => (session?.inferenceBackend || app.inferenceService.getDefaultBackendId()) === 'ticket';
+        const operation = app.beginFeatureOperation('memory', null);
+        assert.equal(operation.session.inferenceBackend, 'ticket');
+        await assert.rejects(app.changeSessionBackend('paid'), /finish sending/);
+        assert.equal(operation.setSession(app.state.sessionsById.get('one')), false);
+        assert.equal(operation.setSession(app.state.sessionsById.get('two')), true);
+        assert.equal(operation.sessionId, 'two');
+        operation.release();
+        assert.equal(app.featureOperations.size, 0);
+    });
+
+    test('Memory overrides remain owner-scoped and cannot enter a paid request after a mode change', () => {
+        const app = backendHarness();
+        app.memoryWorkGeneration = 1;
+        app.memoryApiOverrides = new Map();
+        app.clearMemoryApiOverrideContent = ChatApp.prototype.clearMemoryApiOverrideContent;
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        assert.equal(app.setMemoryApiOverrideContent('private', 1, 'one'), false);
+        assert.equal(app.setMemoryApiOverrideContent('approved ticket context', 1, 'two'), true);
+        assert.equal(app.getMemoryApiOverrideContent('two'), 'approved ticket context');
+        app.state.sessionsById.get('two').inferenceBackend = 'paid';
+        assert.equal(app.getMemoryApiOverrideContent('two'), null);
+    });
+
+    test('backfill markers merge the live session and cannot recreate deleted or switching chats', async () => {
+        const app = backendHarness();
+        const live = app.state.sessionsById.get('one');
+        live.zkapiSessionId = 'current-lease';
+        const writes = [];
+        chatDB.saveSession = async session => writes.push(structuredClone(session));
+        assert.equal(await app.updateMemoryProcessedAt('one', 123), true);
+        assert.equal(writes[0].zkapiSessionId, 'current-lease');
+        assert.equal(writes[0].inferenceBackend, 'paid');
+        const reservation = app.beginSessionMutation('one', { exclusive: true });
+        assert.equal(await app.updateMemoryProcessedAt('one', 456), false);
+        app.endSessionMutation('one', reservation);
+        app.deletedSessionIds.add('one');
+        assert.equal(await app.updateMemoryProcessedAt('one', 789), false);
+        assert.equal(writes.length, 1);
+    });
+
+    test('uncached scrubber restoration is unavailable on paid history while cached restoration stays local', async () => {
+        const app = backendHarness();
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        const message = { id: 'answer', sessionId: 'one', role: 'assistant', content: 'redacted',
+            scrubber: { canRestore: true, redactedResponse: 'redacted' } };
+        chatDB.getSessionMessages = async () => [message];
+        let saved = 0;
+        chatDB.saveMessage = async () => { saved += 1; };
+        app.scrubberService = { restoreResponse: () => { throw new Error('Must not request confidential inference'); } };
+        await app.toggleScrubberRestore('answer');
+        await app.preCacheScrubberRestore(message);
+        assert.equal(saved, 0);
+        message.scrubber.restoredResponse = 'cached original';
+        await app.toggleScrubberRestore('answer');
+        assert.equal(message.content, 'cached original');
+        assert.equal(saved, 1);
+    });
+
+
+    test('backfill markers update uncached history from its latest record without loading the sidebar', async () => {
+        const app = backendHarness();
+        const read = deferred();
+        chatDB.getSession = async id => { assert.equal(id, 'older'); return read.promise; };
+        let persisted;
+        chatDB.saveSession = async record => { persisted = structuredClone(record); };
+        const writing = app.updateMemoryProcessedAt('older', 4321);
+        assert.equal(app.beginSessionMutation('older', { exclusive: true }), null);
+        read.resolve({ id: 'older', inferenceBackend: 'paid', zkapiSessionId: 'latest-lease' });
+        assert.equal(await writing, true);
+        assert.deepEqual(persisted, { id: 'older', inferenceBackend: 'paid', zkapiSessionId: 'latest-lease', memoryProcessedAt: 4321 });
+        assert.equal(app.state.sessionsById.has('older'), false);
+    });
+
+
+    test('historical Parallel lane regeneration cannot request access or mutate paid history', async () => {
+        const app = backendHarness();
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        let touched = false;
+        app.reserveAccessAcquisitionHandoff = () => { touched = true; };
+        app.councilController = { runRegenerateLaneTurn: () => { touched = true; } };
+        chatDB.getSessionMessages = async () => { touched = true; return []; };
+        chatDB.deleteMessage = async () => { touched = true; };
+        await app.regenerateCouncilLane('old-parallel-answer', 'primary');
+        assert.equal(touched, false);
+    });
+
 });

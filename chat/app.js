@@ -309,6 +309,7 @@ class ChatApp {
         this.scrubberPending = null;
         this.memoryApprovalRequests = new Map();
         this.memoryExtractionInFlight = new Set();
+        this.featureOperations = new Set();
         this.memoryExtractionAbortControllers = new Map();
         this.memoryAugmentAbortControllers = new Set();
         this.memoryWorkGeneration = 0;
@@ -708,9 +709,71 @@ class ChatApp {
             : this.features.tickets;
     }
 
+    supportsFeature(feature, session = this.getCurrentSession()) {
+        if (this.features?.[feature] === false) return false;
+        return typeof this.runtime?.supportsFeature !== 'function'
+            || this.runtime.supportsFeature(feature, session) !== false;
+    }
+
+    getFeatureUnavailableReason(feature, session = this.getCurrentSession()) {
+        if (this.supportsFeature(feature, session)) return '';
+        return this.runtime?.getFeatureUnavailableReason?.(feature, session)
+            || 'This feature is unavailable for this chat.';
+    }
+
+    beginFeatureOperation(feature, session = this.getCurrentSession(), { allowResponseMutation = false } = {}) {
+        if (!this.supportsFeature(feature, session) || this.historyDeletionInProgress || this.isDeletingAllChats
+            || this.sessionSwitchInFlight || (session?.id && (this.isSessionDeleted(session.id)
+                || this.isSessionBackendChanging(session.id)
+                || (!allowResponseMutation && this.exclusiveSessionMutationOwners.has(session.id))))) return null;
+        const controller = new AbortController();
+        const operation = { feature, session: session || { inferenceBackend: this.inferenceService?.getDefaultBackendId?.() },
+            sessionId: session?.id || null, controller, signal: controller.signal };
+        operation.setSession = value => this.bindFeatureOperation(operation, value);
+        operation.release = () => this.finishFeatureOperation(operation);
+        this.featureOperations ||= new Set();
+        this.featureOperations.add(operation);
+        this.updateInputState();
+        return operation;
+    }
+
+    bindFeatureOperation(operation, session) {
+        if (!this.featureOperations?.has(operation) || operation.signal.aborted || !session?.id
+            || !this.supportsFeature(operation.feature, session) || this.isSessionDeleted(session.id)
+            || this.exclusiveSessionMutationOwners.has(session.id)) return false;
+        operation.sessionId = session.id;
+        operation.session = session;
+        this.updateInputState();
+        return true;
+    }
+
+    finishFeatureOperation(operation) {
+        this.featureOperations?.delete(operation);
+        this.updateInputState();
+    }
+
+    async updateMemoryProcessedAt(sessionId, timestamp = Date.now()) {
+        if (!sessionId || this.isSessionDeleted(sessionId)) return false;
+        const reservation = this.beginSessionMutation(sessionId);
+        if (!reservation) return false;
+        try {
+            // History is paged: backfill can complete a chat outside the sidebar cache.
+            // Read its latest record while the reservation excludes backend changes.
+            const storedSession = this.state.sessionsById.get(sessionId) || await chatDB.getSession(sessionId);
+            const session = this.state.sessionsById.get(sessionId) || storedSession;
+            if (!session || this.isSessionDeleted(sessionId)) return false;
+            session.memoryProcessedAt = timestamp;
+            await chatDB.saveSession(session);
+            return true;
+        } finally {
+            this.endSessionMutation(sessionId, reservation);
+        }
+    }
+
     isSessionBusy(sessionId = this.state.currentSessionId) {
         return Boolean(this.sessionSwitchInFlight || this.historyDeletionInProgress
             || this.isDeletingAllChats || this.isSessionDeleted(sessionId)
+            || [...(this.featureOperations || [])].some(operation => operation.sessionId === sessionId || !operation.sessionId)
             || this.getPendingSend(sessionId)
             || this.exclusiveSessionMutationOwners.has(sessionId)
             || this.sessionMutationReservations.get(sessionId)?.size
@@ -731,7 +794,7 @@ class ChatApp {
             throw new Error('Wait for the current chat action to finish before changing payment mode.');
         }
         if (!sessionId) {
-            if (this.getPendingSend(null)) throw new Error('Wait for the message to finish sending before changing payment mode.');
+            if (this.getPendingSend(null) || this.featureOperations?.size) throw new Error('Wait for the message to finish sending before changing payment mode.');
             this.inferenceService.setDefaultBackendId(backendId);
             await this.refreshBackendPresentation(null);
             return { sessionId: null, backendId };
@@ -765,6 +828,7 @@ class ChatApp {
                 if (!Object.hasOwn(stagedSession, key)) delete session[key];
             }
             Object.assign(session, stagedSession);
+            this.clearMemoryApiOverrideContent(sessionId);
             await this.refreshBackendPresentation(session);
             return { sessionId, backendId };
         } finally {
@@ -826,6 +890,9 @@ class ChatApp {
 
     async cancelSessionWork(sessionId, { timeoutMs = 15000, waitForMutations = false } = {}) {
         const abortOwnedWork = () => {
+            for (const operation of this.featureOperations || []) {
+                if (!sessionId || !operation.sessionId || operation.sessionId === sessionId) operation.controller.abort();
+            }
             for (const entry of this.sendSubmissionsInFlight.values()) {
                 if (!sessionId || entry.sessionId === sessionId) entry.controller.abort();
             }
@@ -856,7 +923,8 @@ class ChatApp {
                 || [...this.accessAcquisitionInFlight.values()].some(entry => !sessionId || entry.sessionId === sessionId)
                 || (waitForMutations && [...this.sessionMutationReservations].some(([id, entries]) => entries.size && (!sessionId || id === sessionId)))
                 || [...(this.messageFilePreparationSessions || new Map()).values()].some(id => !sessionId || id === sessionId);
-            if (!active) return;
+            const featureWork = [...(this.featureOperations || [])].some(operation => !sessionId || !operation.sessionId || operation.sessionId === sessionId);
+            if (!active && !featureWork) return;
             if (Date.now() - started > timeoutMs) throw new Error('The previous response is still stopping. Try again shortly.');
             await new Promise(resolve => setTimeout(resolve, 25));
         } while (true);
@@ -4421,7 +4489,7 @@ class ChatApp {
     }
 
     isCouncilModeActive(session = this.getCurrentSession()) {
-        if (!this.features.council) return false;
+        if (!this.supportsFeature('council', session)) return false;
         if (!COUNCIL_MODE_FEATURE_FLAG || !session) {
             return false;
         }
@@ -4527,7 +4595,7 @@ class ChatApp {
 
     async setCouncilModeForCurrentSession(options = {}) {
         const session = this.getCurrentSession();
-        if (!session) return null;
+        if (!session || !this.supportsFeature('council', session)) return null;
 
         const fallbackModelName = this.normalizeModelName(session.model)
             || session.model
@@ -5389,7 +5457,7 @@ class ChatApp {
     }
 
     triggerPostTurnMemoryExtraction(session) {
-        if (!this.memoryFeatureEnabled) return;
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session)) return;
         if (!session?.id) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
@@ -5397,7 +5465,7 @@ class ChatApp {
     }
 
     async runPostTurnMemoryExtraction(session) {
-        if (!this.memoryFeatureEnabled) {
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session)) {
             return { status: 'disabled', writeCalls: 0 };
         }
         const memoryRunGeneration = this.memoryWorkGeneration;
@@ -5408,8 +5476,10 @@ class ChatApp {
             return { status: 'skipped', writeCalls: 0 };
         }
 
+        const featureOperation = this.beginFeatureOperation('memory', session, { allowResponseMutation: true });
+        if (!featureOperation) return { status: 'disabled', writeCalls: 0 };
         this.memoryExtractionInFlight.add(session.id);
-        const abortController = new AbortController();
+        const abortController = featureOperation.controller;
         this.memoryExtractionAbortControllers.set(session.id, abortController);
         try {
             const messages = await chatDB.getSessionMessages(session.id);
@@ -5417,7 +5487,7 @@ class ChatApp {
             if (normalizedMessages.length < 2) {
                 return { status: 'skipped', writeCalls: 0 };
             }
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return { status: 'disabled', writeCalls: 0 };
             }
 
@@ -5425,7 +5495,7 @@ class ChatApp {
             const memoryKey = await ensureMemoryKey(session, ticketClient, {
                 signal: abortController.signal
             });
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 invalidateMemoryKey(session);
                 try {
                     await chatDB.saveSession(session);
@@ -5449,7 +5519,7 @@ class ChatApp {
                     signal: abortController.signal
                 }
             });
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return { status: 'disabled', writeCalls: 0 };
             }
 
@@ -5460,7 +5530,7 @@ class ChatApp {
 
             return result || { status: 'processed', writeCalls: 0 };
         } catch (error) {
-            if (this.isCancelledError(error, abortController.signal) && !this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (this.isCancelledError(error, abortController.signal) && !this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return { status: 'disabled', writeCalls: 0 };
             }
             if (isMemoryAuthError(error)) {
@@ -5473,6 +5543,7 @@ class ChatApp {
             }
             throw error;
         } finally {
+            this.finishFeatureOperation(featureOperation);
             this.memoryExtractionInFlight.delete(session.id);
             if (this.memoryExtractionAbortControllers.get(session.id) === abortController) {
                 this.memoryExtractionAbortControllers.delete(session.id);
@@ -5480,7 +5551,7 @@ class ChatApp {
         }
     }
 
-    waitForMemoryApproval(messageId, signal = null) {
+    waitForMemoryApproval(messageId, signal = null, sessionId = this.state.currentSessionId) {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
                 if (signal && abortHandler) {
@@ -5504,6 +5575,7 @@ class ChatApp {
             }
 
             this.memoryApprovalRequests.set(messageId, {
+                sessionId,
                 resolve: (decision) => {
                     cleanup();
                     resolve(decision);
@@ -5521,8 +5593,9 @@ class ChatApp {
         await chatDB.saveSetting('memoryAutoInclude', this.memoryAutoInclude);
     }
 
-    isMemoryFeatureActive(generation = this.memoryWorkGeneration) {
-        return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration;
+    isMemoryFeatureActive(generation = this.memoryWorkGeneration, session = this.getCurrentSession()) {
+        return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration
+            && this.supportsFeature('memory', session);
     }
 
     clearMemoryApiOverrideContent(sessionId = this.state?.currentSessionId) {
@@ -5531,7 +5604,7 @@ class ChatApp {
 
     setMemoryApiOverrideContent(content, generation = this.memoryWorkGeneration, sessionId = this.state?.currentSessionId) {
         if (!sessionId) return false;
-        if (!this.isMemoryFeatureActive(generation)) {
+        if (!this.isMemoryFeatureActive(generation, this.state?.sessionsById?.get(sessionId) || null)) {
             this.clearMemoryApiOverrideContent(sessionId);
             return false;
         }
@@ -5549,7 +5622,7 @@ class ChatApp {
     getMemoryApiOverrideEntry(sessionId = this.state?.currentSessionId) {
         const entry = sessionId ? this.memoryApiOverrides?.get(sessionId) : null;
         if (!entry) return null;
-        if (!this.isMemoryFeatureActive(entry.generation)) {
+        if (!this.isMemoryFeatureActive(entry.generation, this.state?.sessionsById?.get(sessionId) || null)) {
             this.clearMemoryApiOverrideContent(sessionId);
             return null;
         }
@@ -5652,13 +5725,12 @@ class ChatApp {
     }
 
     async handleMemoryApprovalDecision(messageId, decision) {
-        if (!this.memoryFeatureEnabled) {
-            const request = this.memoryApprovalRequests.get(messageId);
-            if (request?.resolve) {
-                request.resolve({ approved: false, alwaysInclude: false });
-            } else {
-                await this.resolveStaleMemoryApproval(messageId, false, false);
-            }
+        const pendingRequest = this.memoryApprovalRequests.get(messageId);
+        const owner = pendingRequest?.sessionId
+            ? this.state.sessionsById.get(pendingRequest.sessionId) : this.getCurrentSession();
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', owner)) {
+            if (pendingRequest?.resolve) pendingRequest.resolve({ approved: false, alwaysInclude: false });
+            this.showToast?.(this.getFeatureUnavailableReason('memory', owner) || 'Memory is off in settings.', 'info');
             return;
         }
 
@@ -5678,14 +5750,15 @@ class ChatApp {
         }
 
         // Stale flow: page reloaded while approval was pending — resolve directly
-        await this.resolveStaleMemoryApproval(messageId, approved, alwaysInclude);
+        await this.resolveStaleMemoryApproval(messageId, approved, alwaysInclude, owner);
     }
 
-    async resolveStaleMemoryApproval(messageId, approved, alwaysInclude) {
+    async resolveStaleMemoryApproval(messageId, approved, alwaysInclude, session = this.getCurrentSession()) {
         const memoryRunGeneration = this.memoryWorkGeneration;
-        const session = this.getCurrentSession();
-        if (!session) return;
-
+        if (!session || !this.supportsFeature('memory', session)) return;
+        const operation = this.beginFeatureOperation('memory', session);
+        if (!operation) return;
+        try {
         const messages = await chatDB.getSessionMessages(session.id);
         const msg = messages.find(m => m.id === messageId);
         if (!msg?.ciPromptDraft) return;
@@ -5697,7 +5770,7 @@ class ChatApp {
             const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
                 ? draft.editedFullPrompt : draft.fullPrompt;
             const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session) || !recordedContext) {
                 this.clearMemoryApiOverrideContent(session.id);
                 msg.content = 'Memory is off in settings. Sending without personal context.';
                 msg.memoryApprovalPrompt = null;
@@ -5729,7 +5802,10 @@ class ChatApp {
         }
 
         await this.persistLocalAssistantStatus(msg);
-        await this.regenerateResponse({ skipMemoryAugment: true, sessionId: session.id });
+        if (!operation.signal.aborted) await this.regenerateResponse({ skipMemoryAugment: true, sessionId: session.id });
+        } finally {
+            this.finishFeatureOperation(operation);
+        }
     }
 
     async removeLocalOnlyMessagesAfter(sessionId, messageId) {
@@ -5852,8 +5928,8 @@ class ChatApp {
     }
 
     async recordApprovedMemoryContext(session, draft, generation = null) {
-        if (!session || !draft) return false;
-        if (generation !== null && !this.isMemoryFeatureActive(generation)) return false;
+        if (!session || !draft || !this.supportsFeature('memory', session)) return false;
+        if (generation !== null && !this.isMemoryFeatureActive(generation, session)) return false;
         const sourceEntry = draft.memoryContextEntry || null;
         if (!sourceEntry) return true;
 
@@ -5880,7 +5956,7 @@ class ChatApp {
             entries: nextEntries
         };
         await chatDB.saveSession(session);
-        if (generation !== null && !this.isMemoryFeatureActive(generation)) {
+        if (generation !== null && !this.isMemoryFeatureActive(generation, session)) {
             session.memoryRetrievedContext = {
                 version: 1,
                 entries: existingEntries
@@ -5926,7 +6002,7 @@ class ChatApp {
     async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
         // Captured per-turn mode cannot be changed by later composer edits.
         // Globally disabling Memory still stops in-flight work for privacy.
-        if (!this.memoryFeatureEnabled || !(options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session) || !(options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
             || !(options.memoryMode ?? this.memoryMode) || !userMessage || !session) return null;
         if (!query || !query.trim()) return null;
 
@@ -6070,14 +6146,14 @@ class ChatApp {
         };
 
         try {
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
             const previousMemoryKey = session.memoryKey || null;
             const memoryKey = await ensureMemoryKey(session, ticketClient, {
                 signal: memorySignal
             });
-            if (memorySignal.aborted || !this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (memorySignal.aborted || !this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
                     invalidateMemoryKey(session);
                 }
@@ -6131,7 +6207,7 @@ class ChatApp {
 
             await flushTraceRefresh();
             this.throwIfAborted(memorySignal);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
 
@@ -6169,7 +6245,7 @@ class ChatApp {
                     ? this.buildReusedMemoryApiPrompt(query, previouslyRetrievedContext)
                     : '';
                 if (reusedPrompt) {
-                    if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                         return await markMemoryDisabled();
                     }
                     this.setMemoryApiOverrideContent(stripMemoryPromptUserData(reusedPrompt), memoryRunGeneration, session.id);
@@ -6180,7 +6256,7 @@ class ChatApp {
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
                 await this.persistLocalAssistantStatus(retrievalMessage);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                     return await markMemoryDisabled();
                 }
                 return null;
@@ -6212,7 +6288,7 @@ class ChatApp {
             };
             await this.persistLocalAssistantStatus(retrievalMessage);
 
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
 
@@ -6221,7 +6297,7 @@ class ChatApp {
                 draft.status = 'approved';
                 draft.model = this.normalizeModelName(session.model) || session.model || draft.model;
                 const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session) || !recordedContext) {
                     return await markMemoryDisabled();
                 }
                 this.setMemoryApiOverrideContent(stripMemoryPromptUserData(draft.fullPrompt), memoryRunGeneration, session.id);
@@ -6238,15 +6314,15 @@ class ChatApp {
                     autoIncluded: true
                 };
                 await this.persistLocalAssistantStatus(retrievalMessage);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                     return await markMemoryDisabled();
                 }
                 return draft;
             }
 
-            const approval = await this.waitForMemoryApproval(retrievalMessage.id, memorySignal);
+            const approval = await this.waitForMemoryApproval(retrievalMessage.id, memorySignal, session.id);
             this.throwIfAborted(memorySignal);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
 
@@ -6266,7 +6342,7 @@ class ChatApp {
                     ? draft.editedFullPrompt
                     : draft.fullPrompt;
                 const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session) || !recordedContext) {
                     return await markMemoryDisabled();
                 }
                 this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration, session.id);
@@ -6290,7 +6366,7 @@ class ChatApp {
             }
 
             await this.persistLocalAssistantStatus(retrievalMessage);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
             return draft;
@@ -6306,7 +6382,7 @@ class ChatApp {
             }
 
             if (isExplicitMemoryRetrievalCancellation(error, memorySignal)) {
-                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                     return await markMemoryDisabled();
                 }
                 retrievalMessage.content = 'Memory retrieval cancelled.';
@@ -7009,8 +7085,17 @@ class ChatApp {
     }
 
     async regenerateCouncilLane(messageId, laneId, options = {}) {
-        let session = this.getCurrentSession();
+        const session = this.getCurrentSession();
         if (!session || !messageId || !laneId) return;
+        if (!this.supportsFeature('council', session)) {
+            this.showToast?.(this.getFeatureUnavailableReason('council', session), 'info');
+            return;
+        }
+        const operation = this.beginFeatureOperation('council', session);
+        if (!operation) return;
+        const mutation = this.beginSessionMutation(session.id, { exclusive: true });
+        if (!mutation) { this.finishFeatureOperation(operation); return; }
+        try {
         if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
 
         if (session.importedFrom) {
@@ -7024,6 +7109,7 @@ class ChatApp {
         this.chatArea?.closeQuickAskWindow?.();
 
         const messages = await chatDB.getSessionMessages(session.id);
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
         const messageIndex = messages.findIndex(m => m.id === messageId);
         if (messageIndex === -1) return;
 
@@ -7043,8 +7129,9 @@ class ChatApp {
             ? ''
             : this.getMessageTextContent(userMessage.content).trim();
         if (!await this.preflightTurnTicketBudget(session, regenerationContent, {
-            councilStageEntry: stageEntry
+            councilStageEntry: stageEntry, signal: operation.signal
         })) return;
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
 
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {
@@ -7056,7 +7143,7 @@ class ChatApp {
             await this.chatArea.render();
         }
 
-        const abortController = new AbortController();
+        const abortController = operation.controller;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
         this.isAutoScrollPaused = true;
@@ -7122,8 +7209,12 @@ class ChatApp {
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
             });
+        }
+        } finally {
+            this.endSessionMutation(session.id, mutation);
+            this.finishFeatureOperation(operation);
         }
     }
 
@@ -7155,7 +7246,8 @@ class ChatApp {
             reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
             reasoningEffort: options.reasoningEffort ?? this.reasoningEffort,
             memoryMode: options.memoryMode ?? this.memoryMode,
-            memoryFeatureEnabled: options.memoryFeatureEnabled ?? this.memoryFeatureEnabled,
+            memoryFeatureEnabled: this.supportsFeature('memory', this.state.sessionsById.get(sessionId) || null)
+                && (options.memoryFeatureEnabled ?? this.memoryFeatureEnabled),
             scrubberPending: this.scrubberPending,
             model: options.modelName || this.state.sessionsById.get(sessionId)?.model || this.state.pendingModelName,
             consumeComposer: options.consumeComposer !== false,
@@ -8335,7 +8427,7 @@ class ChatApp {
             editParallelEnabled,
             editPrimaryModelName,
             editSecondaryModelName,
-            memoryFeatureEnabled: this.memoryFeatureEnabled !== false
+            memoryFeatureEnabled: this.memoryFeatureEnabled !== false && this.supportsFeature('memory', session)
         };
     }
 
@@ -9603,6 +9695,7 @@ class ChatApp {
         this.chatInput?.refreshMultiModelSettingsUI?.();
         this.chatArea?.updateEditModelPickerButton?.();
         this.chatInput?.updateMemoryToggleUI?.();
+        this.chatInput?.refreshFeatureAvailability?.();
         this.updateCouncilLayoutMode();
     }
 
@@ -9611,7 +9704,7 @@ class ChatApp {
         const isCouncilLayoutMode = this.sessionUsesCouncilLayout(session, messages);
         const isCouncilModeEnabled = session
             ? this.isCouncilModeActive(session)
-            : this.pendingCouncilConfig?.enabled === true;
+            : this.supportsFeature('council', null) && this.pendingCouncilConfig?.enabled === true;
         const storedOutputMode = session?.councilConfig?.outputMode
             || this.pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;
@@ -10162,7 +10255,7 @@ class ChatApp {
             // Cmd/Ctrl + J for the second Parallel model picker
             if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
                 const session = this.getCurrentSession();
-                const pendingCouncilEnabled = this.pendingCouncilConfig?.enabled === true;
+                const pendingCouncilEnabled = this.supportsFeature('council', session) && this.pendingCouncilConfig?.enabled === true;
                 if (this.modelPicker && (this.isCouncilModeActive(session) || pendingCouncilEnabled)) {
                     e.preventDefault();
                     this.modelPicker.toggle({ selectionMode: 'council-secondary' });
@@ -10177,7 +10270,7 @@ class ChatApp {
                     : this.pendingCouncilConfig?.enabled === true && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
                 const isSettingsOpen = this.elements.settingsMenu
                     && !this.elements.settingsMenu.classList.contains('hidden');
-                if (this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {
+                if (this.supportsFeature('council', session) && this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {
                     e.preventDefault();
                     if (isSettingsOpen) {
                         this.elements.settingsMenu.classList.add('hidden');
@@ -10196,8 +10289,8 @@ class ChatApp {
             // Cmd/Ctrl + Shift + M for memory editor
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
                 e.preventDefault();
-                if (this.memoryFeatureEnabled === false) {
-                    this.showToast?.('Memory is off in settings.', 'info', 3000);
+                if (this.memoryFeatureEnabled === false || !this.supportsFeature('memory')) {
+                    this.showToast?.(this.getFeatureUnavailableReason('memory') || 'Memory is off in settings.', 'info', 3000);
                     return;
                 }
                 if (this.memoryEditor) {
@@ -11244,7 +11337,12 @@ Your API key has been cleared. A new key from a different station will be obtain
             return;
         }
 
-        // No cached version - need to call API
+        // No cached version - confidential inference needs this session's capability.
+        const featureOperation = this.beginFeatureOperation('scrubber', session);
+        if (!featureOperation) {
+            this.showToast(this.getFeatureUnavailableReason('scrubber', session) || 'Wait for the current chat action to finish.', 'info');
+            return;
+        }
         const stopLoading = this.showLoadingToast('Restoring PII...');
         try {
             const responseText = message.content || message.scrubber.redactedResponse || '';
@@ -11292,6 +11390,7 @@ Your API key has been cleared. A new key from a different station will be obtain
             console.warn('Scrubber restore failed:', error);
             this.showToast('Restore failed', 'error');
         } finally {
+            this.finishFeatureOperation(featureOperation);
             if (typeof stopLoading === 'function') {
                 stopLoading();
             }
@@ -11311,9 +11410,11 @@ Your API key has been cleared. A new key from a different station will be obtain
         // Skip if no response content
         if (!message.content) return;
 
+        const session = this.state.sessionsById.get(message.sessionId);
+        if (!session || !this.supportsFeature('scrubber', session)) return;
+        const featureOperation = this.beginFeatureOperation('scrubber', session, { allowResponseMutation: true });
+        if (!featureOperation) return;
         try {
-            const session = this.getCurrentSession();
-            if (!session) return;
 
             const messages = await chatDB.getSessionMessages(session.id);
             const messageIndex = messages.findIndex(msg => msg.id === message.id);
@@ -11354,6 +11455,8 @@ Your API key has been cleared. A new key from a different station will be obtain
         } catch (error) {
             // Silently fail - this is just a background optimization
             console.warn('[Scrubber] Pre-cache failed:', error);
+        } finally {
+            this.finishFeatureOperation(featureOperation);
         }
     }
 }
