@@ -14,5 +14,6 @@ export {
     normalizeOpenRouterModelProviders, getProviderAsset
 } from './services/providerRegistry.js';
 export { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
+export * as modelConfiguration from './services/modelConfig.js';
 export { standardizeModelDisplayName, resolveModelDisplayName } from './services/modelNames.js';
 export { REASONING_EFFORTS, DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';

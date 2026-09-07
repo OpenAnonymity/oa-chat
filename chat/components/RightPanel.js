@@ -955,75 +955,64 @@ class RightPanel {
 
     async handleRequestApiKey() {
         if (!this.currentTicket || this.isRequestingKey) return;
-
-        // Create session if none exists (e.g., at app startup)
-        if (!this.currentSession) {
-            await this.app.createSession();
-            this.currentSession = this.app.getCurrentSession();
-        }
-
-        if (!this.currentSession) return; // Safety check
-
-        this.app.services.inference.ensureSessionBackend(this.currentSession);
-
+        let session = this.currentSession;
+        const backendId = session
+            ? this.app.services.inference.ensureSessionBackend(session)
+            : this.app.services.inference.getDefaultBackendId();
+        let reservation = session ? this.app.beginSessionMutation(session.id, { exclusive: true }) : null;
+        if (session && !reservation) return;
+        this.isRequestingKey = true;
+        const ownsView = () => session && this.currentSession?.id === session.id;
         try {
-            // Set current session for network logging
-            if (this.currentSession && this.app.services.networkLogger) {
-                this.app.services.networkLogger.setCurrentSession(this.currentSession.id);
+            // Capture the created session directly: a delayed creation must not
+            // redeem against whichever historical chat was selected meanwhile.
+            if (!session) {
+                session = await this.app.createSession('New Chat', {
+                    inferenceBackend: backendId,
+                    onCreated: created => {
+                        session = created;
+                        reservation = this.app.beginSessionMutation(created.id, { exclusive: true });
+                    }
+                });
+                if (!session || !reservation) return;
             }
-
-            // Start the animation
-            this.isTransitioning = true;
-            this.renderTopSectionOnly();
-
-            // Wait a bit for the animation to start
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            // Show the finalized version
-            this.showFinalized = true;
-            this.renderTopSectionOnly();
-
-            // Wait for the transformation animation
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // Actually request the API key (uses unified flow with verification)
-            this.isRequestingKey = true;
-            this.renderTopSectionOnly();
-
-            await this.app.acquireAndSetAccess(this.currentSession);
-
-            // Update local state from session
-            const accessInfo = this.app.services.inference.getAccessInfo(this.currentSession);
-            this.apiKey = accessInfo?.token || null;
-            this.apiKeyInfo = accessInfo?.info || null;
-            this.expiresAt = accessInfo?.expiresAt || null;
-
-            // Success - reset for next ticket
-            setTimeout(() => {
-                this.loadNextTicket();
+            if (session.inferenceBackend !== backendId || this.app.isSessionDeleted(session.id)) return;
+            this.app.services.networkLogger?.setCurrentSession(session.id);
+            if (ownsView()) {
+                this.isTransitioning = true;
                 this.renderTopSectionOnly();
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (ownsView()) {
+                this.showFinalized = true;
+                this.renderTopSectionOnly();
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            if (this.app.isSessionDeleted(session.id)) return;
+            await this.app.acquireAndSetAccess(session);
+            if (ownsView()) {
+                const accessInfo = this.app.services.inference.getAccessInfo(session);
+                this.apiKey = accessInfo?.token || null;
+                this.apiKeyInfo = accessInfo?.info || null;
+                this.expiresAt = accessInfo?.expiresAt || null;
                 this.startExpirationTimer();
                 this.updateStatusIndicator();
-
-                // Update floating panel with new status
-                if (this.app.floatingPanel) {
-                    this.app.floatingPanel.render();
-                }
-            }, 500);
+                this.app.floatingPanel?.render();
+            }
         } catch (error) {
-            console.error('Error requesting API key:', error);
-            const accessLabel = this.app.services.inference.getAccessLabel(this.currentSession);
-            alert(`Failed to request ${accessLabel}: ${error.message}`);
-
-            // Reset state even on error
-            setTimeout(() => {
-                this.loadNextTicket();
-                this.renderTopSectionOnly();
-            }, 500);
+            if (!error?.isCancelled && error?.name !== 'AbortError') {
+                const accessLabel = this.app.services.inference.getAccessLabel(session);
+                this.app.showToast?.(`Failed to request ${accessLabel}: ${error.message}`, 'error');
+            }
         } finally {
             this.isRequestingKey = false;
             this.isTransitioning = false;
             this.showFinalized = false;
+            if (reservation) this.app.endSessionMutation(session.id, reservation);
+            if (ownsView()) {
+                this.loadNextTicket();
+                this.renderTopSectionOnly();
+            }
         }
     }
 
@@ -1038,23 +1027,26 @@ class RightPanel {
     }
 
     async handleClearApiKey() {
-        if (!this.currentSession) return;
-
-        this.app.services.inference.clearAccessInfo(this.currentSession);
-
-        await this.app.data.saveSession(this.currentSession);
-
-        this.apiKey = null;
-        this.apiKeyInfo = null;
-        this.expiresAt = null;
-
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
+        const session = this.currentSession;
+        if (!session) return;
+        const reservation = this.app.beginSessionMutation(session.id, { exclusive: true });
+        if (!reservation) return;
+        try {
+            this.app.services.inference.clearAccessInfo(session);
+            await this.app.data.saveSession(session);
+            if (this.currentSession?.id !== session.id) return;
+            this.apiKey = null;
+            this.apiKeyInfo = null;
+            this.expiresAt = null;
+            if (this.timerInterval) {
+                clearInterval(this.timerInterval);
+                this.timerInterval = null;
+            }
+            this.renderTopSectionOnly();
+            this.updateStatusIndicator();
+        } finally {
+            this.app.endSessionMutation(session.id, reservation);
         }
-
-        this.renderTopSectionOnly();
-        this.updateStatusIndicator(); // Ensure dot updates
     }
 
     async handleRenewApiKey() {

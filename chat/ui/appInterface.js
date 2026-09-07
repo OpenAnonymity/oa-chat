@@ -128,20 +128,29 @@ export function createModelPickerInterface(app, options = {}) {
             async selectModel(modelName) {
                 const normalizedModelName = app.normalizeModelName(modelName);
                 const session = app.getCurrentSession();
-
-                await db.saveSetting('selectedModel', normalizedModelName);
-
-                if (!session) {
-                    app.state.pendingModelName = normalizedModelName;
-                    app.applyPersistedParallelPendingConfig?.(normalizedModelName);
-                    app.renderCurrentModel();
-                    return { session: null, modelName: normalizedModelName };
+                const reservation = session ? app.beginSessionMutation?.(session.id) : null;
+                if (session && app.beginSessionMutation && !reservation) {
+                    await app.acknowledgeSessionMutationBusy?.(session.id);
+                    return { session, modelName: session.model, busy: true };
                 }
+                try {
 
-                session.model = normalizedModelName;
-                await db.saveSession(session);
-                app.renderCurrentModel();
-                return { session, modelName: normalizedModelName };
+                    await db.saveSetting('selectedModel', normalizedModelName);
+
+                    if (!session) {
+                        app.state.pendingModelName = normalizedModelName;
+                        app.applyPersistedParallelPendingConfig?.(normalizedModelName);
+                        app.renderCurrentModel();
+                        return { session: null, modelName: normalizedModelName };
+                    }
+
+                    session.model = normalizedModelName;
+                    await db.saveSession(session);
+                    app.renderCurrentModel();
+                    return { session, modelName: normalizedModelName };
+                } finally {
+                    if (reservation) app.endSessionMutation(session.id, reservation);
+                }
             },
             async selectCouncilSecondaryModel(modelName) {
                 const normalizedModelName = app.normalizeModelName(modelName);
