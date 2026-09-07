@@ -6002,7 +6002,6 @@ html[data-keyboard-nav] .account-compact-copy-id:focus-visible {
 /* Passkey unlock card (OAuth keyring unlock / setup / legacy paths).
    Concentric radii: 24px card = 20px content radius + 4px, pill is 999px. */
 .account-unlock-card {
-    --account-unlock-alert: hsl(6 76% 40%);          /* #b42318 */
     box-sizing: border-box;
     position: relative;
     width: min(calc(100% - 2rem), 26.25rem);
@@ -6022,7 +6021,6 @@ html[data-keyboard-nav] .account-compact-copy-id:focus-visible {
 }
 
 .dark .account-unlock-card {
-    --account-unlock-alert: hsl(6 80% 71%);          /* #f0857a */
     box-shadow:
         0 0 0 1px hsl(0 0% 100% / 0.08),
         0 24px 48px -16px hsl(0 0% 0% / 0.6);
@@ -6253,12 +6251,15 @@ html[data-keyboard-nav] .account-unlock-btn:focus-visible {
     animation: spin 0.7s linear infinite;
 }
 
+/* A failure on a titled card reads in the card's own voice — same size and
+   colour as the body — not as a red warning. */
 .account-unlock-alert {
     margin: 0;
-    font-size: 0.8125rem;
-    line-height: 1.4;
-    color: var(--account-unlock-alert);
-    text-wrap: pretty;
+    max-width: 21.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: hsl(var(--color-muted-foreground));
+    text-wrap: balance;
 }
 
 .account-unlock-input {

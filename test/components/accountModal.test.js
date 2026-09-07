@@ -630,14 +630,10 @@ test('a registration the server rejected keeps the name on the card, says why, a
         assert.match(card, /Try again/);
         assert.match(card, new RegExp(shown.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
         assert.doesNotMatch(card, /account-unlock-waiting/);
-        if (shown === 'That took a little too long, so the passkey request expired.') {
-            // The expiry is the body, not a red line under the button.
-            assert.match(card, /class="account-unlock-body">That took a little too long, so the passkey request expired\.</);
-            assert.doesNotMatch(card, /role="alert"|Create a passkey\./);
-        } else {
-            assert.match(card, /Create a passkey\. It encrypts/);
-            assert.match(card, /role="alert"/);
-        }
+        // The reason is the card's one line, in the body's own voice (the
+        // explanation was read before the sheet); nothing red underneath.
+        assert.match(card, new RegExp(`class="account-unlock-body" role="alert">${shown.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<`));
+        assert.doesNotMatch(card, /account-unlock-alert|Create a passkey\./);
 
         calls.length = 0;
         modal.handlePasskeyRegistration = async () => { calls.push(['register']); };
@@ -912,7 +908,7 @@ test('a cancelled username prompt keeps retry on the explanation; lookup errors 
                 assert.doesNotMatch(frames.at(-1), /data-waiting/); // failed: the card is drawn
                 assert.doesNotMatch(frames.at(-1), /account-unlock-waiting/);
                 assert.match(frames.at(-1), /Try again/);
-                assert.match(frames.at(-1), /Passkey wasn't confirmed\./);
+                assert.match(frames.at(-1), /Passkey wasn’t confirmed\./);
                 assert.equal(modal.isOpen, true);
             } else {
                 assert.equal(frames.at(-1), '<form>Username form</form>');
@@ -1818,10 +1814,12 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
         assert.match(html, /aria-label="Unlock your encrypted data"/);
         assert.doesNotMatch(html, /aria-labelledby/);
         assert.doesNotMatch(html, /account-login-dialog|account-login-heading|account-login-divider|account-login-arrow/);
-        assert.match(html, /encrypts your tickets and preferences so only you can access them/);
+        // Untitled card: the failure replaces the explanation, same voice.
+        assert.doesNotMatch(html, /encrypts your tickets and preferences so only you can access them/);
         assert.match(html, /id="oauth-keyring-submit-btn"/);
         assert.match(html, />\s*Try again\s*</);
-        assert.match(html, /role="alert"[^>]*>No passkey found for this account on this device</);
+        assert.match(html, /class="account-unlock-body" role="alert">No passkey found for this account on this device</);
+        assert.doesNotMatch(html, /account-unlock-alert/);
         assert.doesNotMatch(html, /Signed in with Google/);
         assert.doesNotMatch(html, /account-clear-btn|Log out/);
         assert.match(html, /id="close-account-modal"[^>]*aria-label="Close"/);

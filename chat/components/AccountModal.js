@@ -1948,12 +1948,15 @@ class AccountModal {
             : isLegacyPasskey
                 ? 'Welcome back'
                 : '';
-        // An expired request is the whole story: it replaces the explanation
-        // (already read before the sheet) rather than stacking a red line
-        // under the button — one sentence, one action.
-        const expired = !busy && error === PASSKEY_EXPIRED_MESSAGE;
-        const body = expired
-            ? PASSKEY_EXPIRED_MESSAGE
+        const alertText = /cancel/i.test(error) ? 'Passkey wasn\u2019t confirmed.' : error;
+        // On the untitled card the explanation was already read before the
+        // sheet, so a failure is the whole story: it replaces the body in the
+        // same voice — one sentence, one action — rather than stacking a
+        // second line under the button. Titled cards keep their explanation
+        // and add the line below.
+        const bodyIsAlert = !busy && !title && Boolean(alertText);
+        const body = bodyIsAlert
+            ? alertText
             : busy
             ? isLegacyMigration
                 ? 'Confirm with your passkey to finish the upgrade.'
@@ -1975,7 +1978,6 @@ class AccountModal {
                     ? 'Use legacy passkey'
                     : 'Unlock';
         const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
-        const alertText = expired ? '' : /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
         // Every untitled wait shows the same caption behind the sheet; the
         // account's name when it has one (a Google account has none yet).
         const waitingName = username || this.usernameInputValue || state.username || '';
@@ -1993,7 +1995,7 @@ class AccountModal {
                 </button>
                 <div class="account-unlock-copy">
                     ${title ? `<h2 id="account-modal-title" class="account-unlock-title">${title}</h2>` : ''}
-                    <p class="account-unlock-body">${body}</p>
+                    <p class="account-unlock-body"${bodyIsAlert ? ' role="alert"' : ''}>${this.escapeHtml(body)}</p>
                     ${isLegacyPasskey ? `
                         <p class="account-unlock-account-id account-number-text">${this.escapeHtml(this.formatAccountId(state.accountId))}</p>
                     ` : ''}
@@ -2017,7 +2019,7 @@ class AccountModal {
                             ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
                         </button>
                     `}
-                    ${alertText && !busy ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
+                    ${alertText && !busy && !bodyIsAlert ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
                     ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
