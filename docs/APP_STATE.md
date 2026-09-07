@@ -57,6 +57,12 @@ reading code alone.
   `publicInferenceApi.js` exports the normal `openRouterBackend`; and
   `publicRuntimeApi.js` exports the shared `modelConfiguration` namespace for
   compositions that offer ticketing alongside another funding method.
+- The shared attestation modal describes the selected payment method rather
+  than assuming ticket redemption. Its issuance overview describes the
+  available checks without claiming a current key has verified issuance proof.
+  ZK runtime attestation and station broadcast evidence are distinct from the
+  ordinary ticket key's signatures and persisted `submit_key` proof; this copy
+  change does not create missing key evidence or alter any security checks.
 
 ## 2026-09-06: Composer live announcements stay visually hidden
 
