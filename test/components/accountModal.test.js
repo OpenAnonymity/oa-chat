@@ -978,7 +978,11 @@ test('cancelling the first-time sheet goes back to an empty username field; a re
         assert.equal(modal.creationStep, 'idle');
         assert.equal(modal.generatedUsername, null);
         assert.equal(modal.usernameInputValue, '');
-        assert.deepEqual(calls, [['cancel'], ['clear']]);
+        // The server still honours the reservation, so it is held: the same
+        // name typed again within its minute continues with it rather than
+        // asking for a name the server would refuse as unavailable.
+        assert.deepEqual(calls, [['clear']]);
+        assert.deepEqual(modal.heldRegistration, { username: 'winter-owl', accountId: '1234567890123456', at: Date.now() });
 
         // The browser refused to open the sheet at all (no activation left):
         // the same "cancelled" error, but instantly. Keep the name and offer
@@ -997,6 +1001,7 @@ test('cancelling the first-time sheet goes back to an empty username field; a re
         assert.equal(modal.creationStep, 'idle');
         assert.equal(modal.usernameInputValue, '');
         assert.deepEqual(calls.at(-1), ['error', 'Authenticator returned no PRF output']);
+        assert.equal(modal.heldRegistration?.username, 'winter-owl');
     } finally {
         mock.timers.reset();
     }

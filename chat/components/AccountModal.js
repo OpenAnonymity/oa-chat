@@ -728,7 +728,10 @@ class AccountModal {
                 // Cancel is "not now": back to the start, name forgotten,
                 // nothing created or reserved. Any other failure goes back
                 // the same way with the reason under the form.
-                this.returnToUsernameForm(cancelled ? '' : this.accountState?.error || 'Passkey registration failed.');
+                this.returnToUsernameForm(
+                    cancelled ? '' : this.accountState?.error || 'Passkey registration failed.',
+                    { hold: true }
+                );
                 return;
             }
         } else {
@@ -738,11 +741,20 @@ class AccountModal {
         this.render();
     }
 
-    /** First-time setup is over: back to an empty username field. */
-    returnToUsernameForm(message = '') {
-        this.accountService.cancelPendingAccount();
+    /**
+     * First-time setup is over: back to an empty username field. A
+     * reservation the server still honours (the sheet was cancelled or the
+     * authenticator failed) is held, so typing the same name again within
+     * its minute continues with it instead of being refused as unavailable;
+     * one the server rejected is dropped.
+     */
+    returnToUsernameForm(message = '', { hold = false } = {}) {
+        const held = hold && this.generatedUsername && this.generatedAccountId
+            ? { username: this.generatedUsername, accountId: this.generatedAccountId, at: Date.now() }
+            : null;
+        if (!held) this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
-        this.heldRegistration = null;
+        this.heldRegistration = held;
         this.usernameInputValue = '';
         this.accountService.clearErrors();
         if (message) this.accountService.setError(message);
