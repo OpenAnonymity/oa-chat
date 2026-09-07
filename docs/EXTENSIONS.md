@@ -52,15 +52,16 @@ with the captured element as its focus-return target. The close request honors
 Account's protected recovery and authorization steps.
 
 The context also provides narrow account, entitlement-ticket, ticket-tool, and UI
-capabilities. `account.getSnapshot()` exposes only `isReady`, `accountId`,
-`sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and `status`; it
+capabilities. `account.getSnapshot()` exposes only `isReady`,
+`authBootstrapComplete`, `accountId`, `sessionVerified`, `accountScopeReady`,
+`ticketSyncReady`, and `status`; it
 never exposes credentials or recovery material. Calling
 `tickets.prepareEntitlementBatch()` without a `ticketCount`
 only resumes an already-saved preparation for that scope.
 
 - `account.getSnapshot()` and `account.subscribe()` return `isReady`,
-  `accountId`, `sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and
-  `status`; no credential, recovery, email, or encryption material crosses the
+  `authBootstrapComplete`, `accountId`, `sessionVerified`, `accountScopeReady`,
+  `ticketSyncReady`, and `status`; no credential, recovery, email, or encryption material crosses the
   boundary.
 - `account.resolveAuthContext()` returns an opaque account scope only after the
   SuperTokens session is verified.
@@ -128,6 +129,11 @@ so code redemption remains available in public builds with no extension.
 a newly created Google-plus-passkey account. Core Account UI closes before it
 notifies the extension. The commercial client opens Membership; returning
 accounts do not emit this notification.
+
+`context.ui.registerLoggedOut(handler)` fires after the person chooses Log out
+in Account and the account has been removed from this device. It does not fire
+for a lock, an expired session, or the sign-in hand-off replacing a mismatched
+account. The commercial client uses it to leave for its landing page.
 
 Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does

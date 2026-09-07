@@ -8,6 +8,12 @@ import { SLOT_NAMES } from '../extensions/extensionHost.js';
 const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border/80 bg-background shadow-xl p-5 mx-4 flex flex-col';
 const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
+// How long the first-time explanation is held before the passkey sheet opens.
+// Deliberate: the sheet is unexpected without a word first, and reading one
+// line takes about this long. Kept well inside the browser's user-activation
+// window (~5 s from the Enter press) so the ceremony can still open on its own.
+const PASSKEY_INTRO_MS = 2000;
+
 class AccountModal {
     constructor(app) {
         this.app = app;
@@ -491,6 +497,7 @@ class AccountModal {
         this.usernameHandoffPending = false;
         this.usernameUnlockReady = false;
         this.waitingCaptionShown = false;
+        this.usernameIntroPending = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         this.clearAnimationTimeouts();
@@ -521,6 +528,7 @@ class AccountModal {
         this.oauthProvider = null;
         this.revealedDigits = 0;
         this.waitingCaptionShown = false;
+        this.usernameIntroPending = false;
         this.clearAnimationTimeouts();
     }
 
@@ -666,6 +674,15 @@ class AccountModal {
             this.creationStep = 'recovery';
             this.recoveryCodeCopied = false;
             this.creationError = null;
+        } else if (this.generatedUsername && /cancel/i.test(this.accountState?.error || '')) {
+            // Cancel is "not now", not a failure: back to the Create passkey
+            // card as it was, with nothing created and nothing to explain.
+            // (A browser that refused to open the sheet without a fresh
+            // click lands here too, and the card's button is that click.)
+            this.accountService.clearErrors?.();
+            this.creationStep = 'username_ready';
+            this.creationError = null;
+            this.waitingCaptionShown = false;
         } else {
             this.creationStep = 'passkey_retry';
             this.creationError = this.accountState?.error || 'Passkey registration failed.';
@@ -827,13 +844,26 @@ class AccountModal {
         } finally {
             this.usernameContinuePending = false;
             if (this.isOpen && viewVersion === this.loginViewVersion) {
-                this.render();
-                this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
-                    ? 'account-username-unlock-btn' : 'account-username-input');
                 // A returning username account goes straight to its passkey.
-                // A new one waits on the Create passkey card (focused above):
-                // the sheet is unexpected without a word first, and the click
-                // is the user activation the registration ceremony wants.
+                // A new one first fills the silence: the dimmed page says a
+                // passkey comes next and why, is held for PASSKEY_INTRO_MS,
+                // and then the sheet opens on its own — still inside the
+                // activation window of the Enter press. If the browser
+                // refuses, or the sheet is cancelled, the Create passkey
+                // card takes over and a click opens the sheet instead.
+                if (this.creationStep === 'username_ready') {
+                    this.usernameIntroPending = true;
+                    this.render();
+                    this.focusModal();
+                    this.animationTimeouts.push(setTimeout(() => {
+                        if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
+                        this.usernameIntroPending = false;
+                        void this.handleUsernamePasskeyContinue();
+                    }, PASSKEY_INTRO_MS));
+                    return;
+                }
+                this.render();
+                this.focusModal(this.usernameUnlockReady ? 'account-username-unlock-btn' : 'account-username-input');
                 if (this.usernameUnlockReady) void this.handleUsernamePasskeyContinue();
             }
         }
@@ -1045,6 +1075,8 @@ class AccountModal {
         this.resetCreationFlow();
         this.render();
         this.app?.showToast?.('Logged out', 'success');
+        // A commercial host may route away (to its landing page) from here.
+        this.app?.notifyLoggedOut?.();
     }
 
     togglePasskeyDetails() {
@@ -1695,8 +1727,9 @@ class AccountModal {
             isSetup,
             username: this.generatedUsername,
             failedRegistration,
+            finishing: isSetup && ['confirming', 'complete'].includes(this.creationStep),
             closeDisabled: isSetup && this.creationStep === 'confirming',
-            busy: Boolean(this.usernamePasskeyBusy || this.accountState?.busy ||
+            busy: Boolean(this.usernamePasskeyBusy || this.accountState?.busy || this.usernameIntroPending ||
                 (isSetup && ['passkey', 'confirming', 'complete'].includes(this.creationStep))),
             error: String((isSetup ? this.creationError : this.accountState?.error) || ''),
             actionId: failedRegistration ? 'account-registration-retry-btn' : 'account-username-unlock-btn',
@@ -1707,7 +1740,7 @@ class AccountModal {
 
     renderPasskeyUnlockCard({
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
-        failedRegistration = false, busy = false, error = '', closeDisabled = false,
+        failedRegistration = false, finishing = false, busy = false, error = '', closeDisabled = false,
         actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = ''
     } = {}) {
         const state = this.accountState || {};
@@ -1759,14 +1792,19 @@ class AccountModal {
         // server's reason under the button.
         const alertText = registrationExpired ? '' : /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
         // First-time setup is the only automatic prompt whose purpose the user
-        // has not seen before: while the OS sheet is up, the dimmed page says
-        // what it is for. Returning accounts keep the bare spinner.
+        // has not seen before: the dimmed page says a passkey comes next and
+        // why — held for a moment before the sheet, and still there behind
+        // it. Once the passkey exists the line becomes the account being
+        // made. Returning accounts keep the bare spinner.
         // Every render replaces the overlay's markup, so the entrance runs
         // only on the first frame that shows the caption, not on the account
         // and sync notifications that redraw it during the ceremony.
         const captionEnters = !this.waitingCaptionShown;
+        const captionTitle = finishing
+            ? 'Creating your account'
+            : `Next, you\u2019ll create a passkey for ${this.escapeHtml(username)}`;
         const waitingCaption = !title && busy && isSetup && username ? `
-                <p class="account-unlock-waiting-title${captionEnters ? ' account-unlock-waiting-enter' : ''}">Setting up a passkey for ${this.escapeHtml(username)}</p>
+                <p class="account-unlock-waiting-title${captionEnters ? ' account-unlock-waiting-enter' : ''}">${captionTitle}</p>
                 <p class="account-unlock-waiting-note${captionEnters ? ' account-unlock-waiting-enter' : ''}">It encrypts your tickets and preferences so only you can access them.</p>` : '';
         if (waitingCaption) this.waitingCaptionShown = true;
 

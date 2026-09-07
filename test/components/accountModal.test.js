@@ -1287,6 +1287,28 @@ test('forgetting a signed-out saved account clears only after explicit action', 
     assert.equal(toast, 'Saved account removed from this device');
 });
 
+test('Log out tells the host after the account is gone, Forget does not', async () => {
+    const events = [];
+    const modal = Object.create(AccountModal.prototype);
+    modal.accountService = {
+        async clearLocalAccount() { events.push('clear'); }
+    };
+    modal.resetCreationFlow = () => {};
+    modal.render = () => {};
+    modal.closeAccountMenu = () => {};
+    modal.app = {
+        showToast(message) { events.push(`toast:${message}`); },
+        notifyLoggedOut() { events.push('logged-out'); }
+    };
+
+    await modal.handleAccountClear();
+    assert.deepEqual(events, ['clear', 'toast:Logged out', 'logged-out']);
+
+    events.length = 0;
+    await modal.handleForgetSavedAccount();
+    assert.deepEqual(events, ['clear', 'toast:Saved account removed from this device']);
+});
+
 test('account service turns upstream failures into actionable Google copy', () => {
     assert.equal(
         toFriendlyOAuthError(Object.assign(new Error('Bad Gateway'), { status: 502 })),

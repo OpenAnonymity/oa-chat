@@ -327,6 +327,7 @@ class ChatApp {
         this.ticketManagementAction = null;
         this.ticketShortageHandler = null;
         this.firstAccountReadyHandlers = new Set();
+        this.loggedOutHandlers = new Set();
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -482,6 +483,23 @@ class ChatApp {
         }
     }
 
+    registerLoggedOutHandler(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.loggedOutHandlers.add(handler);
+        return () => this.loggedOutHandlers.delete(handler);
+    }
+
+    /** The person chose Log out and the account is gone from this device. */
+    notifyLoggedOut() {
+        for (const handler of [...this.loggedOutHandlers]) {
+            try {
+                handler();
+            } catch (error) {
+                console.warn('Logged-out routing handler failed:', error);
+            }
+        }
+    }
+
     createExtensionContext() {
         const getAccountSnapshot = () => toExtensionAccountSnapshot(accountService.getState());
         return Object.freeze({
@@ -573,6 +591,7 @@ class ChatApp {
                 getAccountIdentityLabel: () => this.accountModal?.getAccountIdentityLabel?.() || '',
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
+                registerLoggedOut: handler => this.registerLoggedOutHandler(handler),
                 showToast: (...args) => this.showToast(...args)
             })
         });
