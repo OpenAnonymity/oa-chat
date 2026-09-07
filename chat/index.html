@@ -1026,7 +1026,7 @@
             if (!root.hasAttribute('data-auth-caption')) return;
             const username = root.getAttribute('data-auth-caption');
             document.getElementById('auth-arrival-title').textContent =
-                'Next, you\u2019ll confirm with a passkey' + (username ? ' for ' + username : '');
+                'Continue with your passkey' + (username ? ' for ' + username : '') + '.';
         })();
     </script>
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>

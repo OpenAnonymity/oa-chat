@@ -1914,7 +1914,7 @@ class AccountModal {
             ? 'Creating your account'
             : unlocking
                 ? 'Unlocking\u2026'
-                : `Next, you\u2019ll confirm with a passkey${name ? ` for ${this.escapeHtml(name)}` : ''}`;
+                : `Continue with your passkey${name ? ` for ${this.escapeHtml(name)}` : ''}.`;
         const enterClass = enters ? ' account-unlock-waiting-enter' : '';
         return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
                 <p class="account-unlock-waiting-title${enterClass}">${title}</p></div>`;
