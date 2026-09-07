@@ -18,6 +18,9 @@ const PASSKEY_INTRO_MS = 2000;
 // same name continues with it instead of asking for a new one the server
 // would refuse as "unavailable".
 const HELD_REGISTRATION_MS = 55000;
+// A sheet the user dismissed took them at least this long; one the browser
+// refused to open (no user activation left) comes back at once.
+const SHEET_REFUSED_MS = 600;
 
 class AccountModal {
     constructor(app) {
@@ -657,8 +660,10 @@ class AccountModal {
     async handlePasskeyRegistration() {
         const viewVersion = this.loginViewVersion;
         const isCurrent = () => this.isOpen && viewVersion === this.loginViewVersion;
+        const startedAt = Date.now();
         const success = await this.accountService.registerPasskeyForPreparedAccount();
         if (!isCurrent()) return;
+        const sheetMs = Date.now() - startedAt;
 
         if (success) {
             if (this.generatedUsername) {
@@ -673,9 +678,13 @@ class AccountModal {
                     this.completeFirstAccountRouting();
                 } catch (error) {
                     if (!isCurrent()) return;
-                    this.creationStep = 'error';
-                    this.creationError = error.message || 'Registration failed.';
-                    this.render();
+                    // The server would not finish the account (usually the
+                    // challenge outlived the sheet). Start again from the
+                    // name, with one plain line saying why.
+                    const message = String(error.message || '');
+                    this.returnToUsernameForm(/expired|invalid/i.test(message)
+                        ? 'That took a little too long, so the passkey request expired. Try again.'
+                        : message || 'Your account couldn\u2019t be finished. Try again.');
                 }
                 return;
             }
@@ -683,20 +692,40 @@ class AccountModal {
             this.creationStep = 'recovery';
             this.recoveryCodeCopied = false;
             this.creationError = null;
-        } else if (this.generatedUsername && /cancel/i.test(this.accountState?.error || '')) {
-            // Cancel is "not now", not a failure: back to the Create passkey
-            // card as it was, with nothing created and nothing to explain.
-            // (A browser that refused to open the sheet without a fresh
-            // click lands here too, and the card's button is that click.)
-            this.accountService.clearErrors?.();
-            this.creationStep = 'username_ready';
-            this.creationError = null;
-            this.waitingCaptionShown = false;
+        } else if (this.generatedUsername) {
+            const cancelled = /cancel/i.test(this.accountState?.error || '');
+            if (cancelled && sheetMs < SHEET_REFUSED_MS) {
+                // The browser refused to open the sheet without a fresh
+                // click (the activation from Enter had lapsed): keep the
+                // name and offer the click.
+                this.accountService.clearErrors?.();
+                this.creationStep = 'username_ready';
+                this.creationError = null;
+                this.waitingCaptionShown = false;
+            } else {
+                // Cancel is "not now": back to the start, name forgotten,
+                // nothing created or reserved. Any other failure goes back
+                // the same way with the reason under the form.
+                this.returnToUsernameForm(cancelled ? '' : this.accountState?.error || 'Passkey registration failed.');
+                return;
+            }
         } else {
             this.creationStep = 'passkey_retry';
             this.creationError = this.accountState?.error || 'Passkey registration failed.';
         }
         this.render();
+    }
+
+    /** First-time setup is over: back to an empty username field. */
+    returnToUsernameForm(message = '') {
+        this.accountService.cancelPendingAccount();
+        this.resetCreationFlow();
+        this.heldRegistration = null;
+        this.usernameInputValue = '';
+        this.accountService.clearErrors();
+        if (message) this.accountService.setError(message);
+        this.render();
+        this.focusModal('account-username-input');
     }
 
     handleRetryPasskey() {
@@ -775,25 +804,6 @@ class AccountModal {
         this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
         this.render();
-    }
-
-    /**
-     * The server rejected a finished registration (usually an expired
-     * challenge). Drop the stale reservation and run setup again for the same
-     * username: a fresh /auth/init challenge, then the passkey prompt.
-     */
-    handleRegistrationRetry() {
-        if (this.usernamePasskeyBusy || this.usernameContinuePending || this.accountState?.busy) return;
-        this.accountService.cancelPendingAccount();
-        this.accountService.clearErrors();
-        this.generatedAccountId = null;
-        this.creationStep = 'username_ready';
-        this.creationError = null;
-        this.waitingCaptionShown = false;
-        // The same held moment as the first attempt; it also outlasts the
-        // server's short grace on the dead reservation, so the fresh
-        // /auth/init that follows gets the name back.
-        this.startPasskeyIntro(this.loginViewVersion);
     }
 
     async handleStartOver() {
@@ -926,8 +936,9 @@ class AccountModal {
         } catch (error) {
             if (!isCurrent()) return;
             if (isSetup) {
-                this.creationStep = this.generatedAccountId ? 'passkey_retry' : 'error';
-                this.creationError = error.message || 'Unable to create your passkey. Please try again.';
+                // The name could not be reserved (taken meanwhile, offline):
+                // back to the start with the reason under the form.
+                this.returnToUsernameForm(error.message || 'Unable to create your passkey. Please try again.');
             } else {
                 this.accountService.setError(error.message || 'Unable to unlock. Please try again.');
             }
@@ -940,10 +951,11 @@ class AccountModal {
                 // users to the enabled retry action.
                 if (!isSetup && this.usernameUnlockReady) {
                     this.focusModal('account-username-unlock-btn');
-                } else if (isSetup && this.creationStep === 'passkey_retry') {
+                } else if (isSetup && this.creationStep === 'username_ready') {
+                    // The browser refused the automatic sheet: the click is here.
                     this.focusModal('account-username-unlock-btn');
-                } else if (isSetup && this.creationStep === 'error') {
-                    this.focusModal('account-registration-retry-btn');
+                } else if (isSetup && this.creationStep === 'idle') {
+                    this.focusModal('account-username-input');
                 }
             }
         }
@@ -1795,17 +1807,15 @@ class AccountModal {
 
     renderUsernameUnlockUI() {
         const isSetup = Boolean(this.generatedUsername);
-        const failedRegistration = isSetup && this.creationStep === 'error';
         return this.renderPasskeyUnlockCard({
             isSetup,
             username: this.generatedUsername,
-            failedRegistration,
             finishing: isSetup && ['confirming', 'complete'].includes(this.creationStep),
             closeDisabled: isSetup && this.creationStep === 'confirming',
             busy: Boolean(this.usernamePasskeyBusy || this.accountState?.busy || this.usernameIntroPending ||
                 (isSetup && ['passkey', 'confirming', 'complete'].includes(this.creationStep))),
             error: String((isSetup ? this.creationError : this.accountState?.error) || ''),
-            actionId: failedRegistration ? 'account-registration-retry-btn' : 'account-username-unlock-btn',
+            actionId: 'account-username-unlock-btn',
             secondaryId: 'account-username-back-btn',
             secondaryLabel: 'Back'
         });
@@ -1813,15 +1823,11 @@ class AccountModal {
 
     renderPasskeyUnlockCard({
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
-        failedRegistration = false, finishing = false, busy = false, error = '', closeDisabled = false,
+        finishing = false, busy = false, error = '', closeDisabled = false,
         actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = ''
     } = {}) {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
-        // The server rejected the finished passkey. An expired challenge is the
-        // common case (the OS sheet outlived it): say so in plain words instead
-        // of echoing the server, and offer a fresh attempt rather than a reset.
-        const registrationExpired = failedRegistration && /expired|invalid/i.test(error);
 
         // Returning accounts get no heading: the passkey prompt opens on
         // arrival and this card only covers waiting and retry. Setup and the
@@ -1846,13 +1852,9 @@ class AccountModal {
                 ? 'Enter the recovery code from the previous account system once. It will be replaced with an encryption passkey.'
                 : isLegacyPasskey
                     ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it.'
-                    : registrationExpired
-                        ? 'The passkey request expired before setup finished.'
-                        : failedRegistration
-                            ? 'Your account couldn\u2019t be finished.'
-                            : isSetup
-                                ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
-                                : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
+                    : isSetup
+                        ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
+                        : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
         const idleCta = isLegacyMigration
             ? 'Upgrade with passkey'
             : isSetup
@@ -1861,9 +1863,7 @@ class AccountModal {
                     ? 'Use legacy passkey'
                     : 'Unlock';
         const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
-        // The expired case is explained by the body; anything else keeps the
-        // server's reason under the button.
-        const alertText = registrationExpired ? '' : /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
+        const alertText = /cancel/i.test(error) ? "Passkey wasn't confirmed." : error;
         // First-time setup is the only automatic prompt whose purpose the user
         // has not seen before: the dimmed page says a passkey comes next and
         // why — held for a moment before the sheet, and still there behind
@@ -2028,8 +2028,6 @@ class AccountModal {
 
         const startOverBtn = document.getElementById('start-over-btn');
         if (startOverBtn) startOverBtn.onclick = () => this.handleStartOver();
-        const registrationRetryBtn = document.getElementById('account-registration-retry-btn');
-        if (registrationRetryBtn) registrationRetryBtn.onclick = () => this.handleRegistrationRetry();
 
         const accountInput = document.getElementById('account-id-input');
         if (accountInput) {

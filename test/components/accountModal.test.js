@@ -546,59 +546,28 @@ test('a returning username unlock keeps the bare spinner while the passkey sheet
     assert.doesNotMatch(html, /account-unlock-waiting-title|Setting up a passkey/);
 });
 
-test('a registration the server rejected explains itself and retries with a fresh challenge', async () => {
-    const modal = Object.create(AccountModal.prototype);
-    modal.generatedUsername = 'winter-owl';
-    modal.generatedAccountId = '1234567890123456';
-    modal.creationStep = 'error';
-    modal.escapeHtml = value => String(value ?? '');
-    modal.accountState = {};
-
-    // The common case: the OS sheet outlived the challenge. Plain words in
-    // the body, no red echo of the server string, Try again instead of a
-    // reset that would throw the username away.
-    modal.creationError = 'Challenge expired or invalid';
-    let html = modal.renderCreationFlow();
-    assert.match(html, /The passkey request expired before setup finished\./);
-    assert.doesNotMatch(html, /Challenge expired|role="alert"|Start over|start-over-btn|Create a passkey\./);
-    assert.match(html, /id="account-registration-retry-btn"[^>]*>(?:(?!<\/button>).)*<span>Try again<\/span>/s);
-    assert.match(html, /id="account-username-back-btn"[^>]*>Back<\/button>/);
-    assert.doesNotMatch(html, /data-waiting|account-unlock-waiting/);
-
-    // Any other rejection keeps the server's reason under the button.
-    modal.creationError = 'Username is no longer available';
-    html = modal.renderCreationFlow();
-    assert.match(html, /Your account couldn’t be finished\./);
-    assert.match(html, /<p role="alert" class="account-unlock-alert">Username is no longer available<\/p>/);
-    assert.match(html, /id="account-registration-retry-btn"/);
-
-    // Try again drops the dead reservation, holds the explanation again
-    // (long enough for the server's grace on that reservation to lapse),
-    // then reruns setup for the same username with a fresh /auth/init.
-    const calls = [];
-    modal.isOpen = true;
-    modal.loginViewVersion = 1;
-    modal.animationTimeouts = [];
-    modal.render = () => {};
-    modal.focusModal = () => {};
-    modal.accountService = {
-        cancelPendingAccount() { calls.push('cancel'); },
-        clearErrors() {},
-        async prepareAccount(username) { calls.push(['init', username]); },
-        getPendingAccountId: () => '6543210987654321'
-    };
-    modal.handlePasskeyRegistration = async () => { calls.push('register'); };
-    await withIntroTimer(async pass => {
-        modal.handleRegistrationRetry();
-        assert.equal(modal.usernameIntroPending, true);
-        assert.match(modal.renderUsernameUnlockUI(), /data-waiting="true"[\s\S]*Next, you’ll create a passkey for winter-owl/);
-        assert.deepEqual(calls, ['cancel']);
-        await pass();
-    });
-    assert.deepEqual(calls, ['cancel', ['init', 'winter-owl'], 'register']);
-    assert.equal(modal.generatedUsername, 'winter-owl');
-    assert.equal(modal.generatedAccountId, '6543210987654321');
-    assert.equal(modal.creationError, null);
+test('a registration the server rejected goes back to an empty username field with the reason', async () => {
+    for (const [serverError, shown] of [
+        ['Challenge expired or invalid', 'That took a little too long, so the passkey request expired. Try again.'],
+        ['Username is unavailable', 'Username is unavailable']
+    ]) {
+        const { modal, calls } = continuationModal('register');
+        modal.generatedUsername = 'winter-owl';
+        modal.generatedAccountId = '1234567890123456';
+        modal.creationStep = 'passkey';
+        modal.handlePasskeyRegistration = AccountModal.prototype.handlePasskeyRegistration;
+        modal.accountService.registerPasskeyForPreparedAccount = async () => true;
+        modal.accountService.completeAccountRegistration = async () => { throw new Error(serverError); };
+        await modal.handlePasskeyRegistration();
+        // Nothing to retry from here: the reservation is dropped, the name is
+        // forgotten, and the form says why in one line.
+        assert.equal(modal.creationStep, 'idle');
+        assert.equal(modal.generatedUsername, null);
+        assert.equal(modal.usernameInputValue, '');
+        assert.equal(modal.heldRegistration, null);
+        assert.deepEqual(calls.filter(([action]) => action === 'cancel'), [['cancel']]);
+        assert.deepEqual(calls.at(-1), ['error', shown]);
+    }
 });
 
 test('new username registration keeps progress through account/sync notifications until Membership', async () => {
@@ -950,38 +919,52 @@ test('Continue prompts the passkey at once for returning accounts; new accounts 
     });
 });
 
-test('cancelling the first-time sheet returns to the Create passkey card, not a red retry', async () => {
-    const { modal, calls } = continuationModal('register');
-    modal.generatedUsername = 'winter-owl';
-    modal.generatedAccountId = '1234567890123456';
-    modal.creationStep = 'passkey';
-    modal.handlePasskeyRegistration = AccountModal.prototype.handlePasskeyRegistration;
-    modal.accountService.registerPasskeyForPreparedAccount = async () => {
-        modal.accountState.error = 'Passkey creation was cancelled';
-        return false;
+test('cancelling the first-time sheet goes back to an empty username field; a refused sheet keeps the name and offers the click', async () => {
+    const run = async ({ error, sheetMs }) => {
+        const { modal, calls } = continuationModal('register');
+        modal.generatedUsername = 'winter-owl';
+        modal.generatedAccountId = '1234567890123456';
+        modal.creationStep = 'passkey';
+        modal.handlePasskeyRegistration = AccountModal.prototype.handlePasskeyRegistration;
+        modal.accountService.registerPasskeyForPreparedAccount = async () => {
+            mock.timers.tick(sheetMs);
+            modal.accountState.error = error;
+            return false;
+        };
+        modal.accountService.clearErrors = () => { modal.accountState.error = null; calls.push(['clear']); };
+        await modal.handlePasskeyRegistration();
+        return { modal, calls };
     };
-    modal.accountService.clearErrors = () => { modal.accountState.error = null; calls.push(['clear']); };
-    await modal.handlePasskeyRegistration();
-    assert.equal(modal.creationStep, 'username_ready');
-    assert.equal(modal.creationError, null);
-    assert.deepEqual(calls, [['clear']]);
-    const card = modal.renderUsernameUnlockUI();
-    assert.doesNotMatch(card, /data-waiting|account-unlock-waiting|role="alert"|Try again|wasn't confirmed/);
-    assert.match(card, /Create a passkey\. It encrypts your tickets and preferences so only you can access them\./);
-    assert.match(card, /id="account-username-unlock-btn"[^>]*>\s*<span>Create passkey<\/span>/);
-    assert.match(card, /id="account-username-back-btn"[^>]*>Back<\/button>/);
+    mock.timers.enable({ apis: ['Date'] });
+    try {
+        // The user dismissed the sheet: "not now". Back to the start, name
+        // forgotten, nothing reserved, nothing said.
+        let { modal, calls } = await run({ error: 'Passkey creation was cancelled', sheetMs: 1500 });
+        assert.equal(modal.creationStep, 'idle');
+        assert.equal(modal.generatedUsername, null);
+        assert.equal(modal.usernameInputValue, '');
+        assert.deepEqual(calls, [['cancel'], ['clear']]);
 
-    // Anything that was not a cancel is still a failure worth a word.
-    modal.creationStep = 'passkey';
-    modal.accountService.registerPasskeyForPreparedAccount = async () => {
-        modal.accountState.error = 'Authenticator returned no PRF output';
-        return false;
-    };
-    await modal.handlePasskeyRegistration();
-    assert.equal(modal.creationStep, 'passkey_retry');
-    const retry = modal.renderUsernameUnlockUI();
-    assert.match(retry, /role="alert"[^>]*>Authenticator returned no PRF output<\/p>/);
-    assert.match(retry, /<span>Try again<\/span>/);
+        // The browser refused to open the sheet at all (no activation left):
+        // the same "cancelled" error, but instantly. Keep the name and offer
+        // Create passkey, whose click is the activation.
+        ({ modal, calls } = await run({ error: 'Passkey creation was cancelled', sheetMs: 50 }));
+        assert.equal(modal.creationStep, 'username_ready');
+        assert.equal(modal.generatedUsername, 'winter-owl');
+        assert.deepEqual(calls, [['clear']]);
+        const card = modal.renderUsernameUnlockUI();
+        assert.doesNotMatch(card, /data-waiting|account-unlock-waiting|role="alert"|Try again/);
+        assert.match(card, /Create a passkey\. It encrypts your tickets and preferences so only you can access them\./);
+        assert.match(card, /id="account-username-unlock-btn"[^>]*>\s*<span>Create passkey<\/span>/);
+
+        // Any other failure is back to the start too, with the reason.
+        ({ modal, calls } = await run({ error: 'Authenticator returned no PRF output', sheetMs: 1500 }));
+        assert.equal(modal.creationStep, 'idle');
+        assert.equal(modal.usernameInputValue, '');
+        assert.deepEqual(calls.at(-1), ['error', 'Authenticator returned no PRF output']);
+    } finally {
+        mock.timers.reset();
+    }
 });
 
 test('username and Google share exactly the same encryption explanation shell and copy', () => {
