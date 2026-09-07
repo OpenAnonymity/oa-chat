@@ -1797,7 +1797,7 @@ class AccountModal {
                             id="account-username-input"
                             aria-label="Username"
                             type="text"
-                            autocomplete="username webauthn"
+                            autocomplete="off"
                             autocapitalize="none"
                             spellcheck="false"
                             maxlength="32"

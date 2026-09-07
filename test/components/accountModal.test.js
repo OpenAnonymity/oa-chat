@@ -567,6 +567,18 @@ test('once the passkey is confirmed the wait says Unlocking, then the dialog clo
     assert.match(modal.renderUsernameUnlockUI(), /account-unlock-waiting-title[^>]*>Creating your account</);
 });
 
+test('the username field is not a credential field for the browser', () => {
+    // autocomplete="username" (or "username webauthn") tells the browser this
+    // is the username half of a password login, so Chrome/Brave attach the
+    // password-manager dropdown and offer saved passwords for the site. OA has
+    // no passwords, and no conditional-UI passkey request to serve, so the
+    // field opts out entirely.
+    const source = String(AccountModal.prototype.renderAccountUI);
+    const input = source.slice(source.indexOf('id="account-username-input"'), source.indexOf('class="account-login-input"'));
+    assert.match(input, /autocomplete="off"/);
+    assert.doesNotMatch(source, /autocomplete="username/);
+});
+
 test('a returning username unlock shows the same caption as first-time setup while the sheet is up', () => {
     const modal = Object.create(AccountModal.prototype);
     modal.usernameUnlockReady = true;
