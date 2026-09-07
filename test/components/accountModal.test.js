@@ -572,11 +572,13 @@ test('a registration the server rejected explains itself and retries with a fres
     assert.match(html, /<p role="alert" class="account-unlock-alert">Username is no longer available<\/p>/);
     assert.match(html, /id="account-registration-retry-btn"/);
 
-    // Try again drops the stale reservation and reruns setup for the same
-    // username: prepareAccount issues a fresh /auth/init challenge first.
+    // Try again drops the dead reservation, holds the explanation again
+    // (long enough for the server's grace on that reservation to lapse),
+    // then reruns setup for the same username with a fresh /auth/init.
     const calls = [];
     modal.isOpen = true;
     modal.loginViewVersion = 1;
+    modal.animationTimeouts = [];
     modal.render = () => {};
     modal.focusModal = () => {};
     modal.accountService = {
@@ -586,8 +588,13 @@ test('a registration the server rejected explains itself and retries with a fres
         getPendingAccountId: () => '6543210987654321'
     };
     modal.handlePasskeyRegistration = async () => { calls.push('register'); };
-    modal.handleRegistrationRetry();
-    await new Promise(resolve => setImmediate(resolve));
+    await withIntroTimer(async pass => {
+        modal.handleRegistrationRetry();
+        assert.equal(modal.usernameIntroPending, true);
+        assert.match(modal.renderUsernameUnlockUI(), /data-waiting="true"[\s\S]*Next, you’ll create a passkey for winter-owl/);
+        assert.deepEqual(calls, ['cancel']);
+        await pass();
+    });
     assert.deepEqual(calls, ['cancel', ['init', 'winter-owl'], 'register']);
     assert.equal(modal.generatedUsername, 'winter-owl');
     assert.equal(modal.generatedAccountId, '6543210987654321');
@@ -1016,7 +1023,6 @@ test('username Unlock fetches a fresh challenge and stays single-flight', async 
 test('Back from username explanation preserves the identifier and does not sign out an account', async () => {
     for (const next of ['login', 'register']) {
         const { modal, calls } = continuationModal(next);
-        modal.animationTimeouts = [];
         await modal.handleAccountContinue();
         if (next === 'register') { modal.usernameIntroPending = false; await modal.handleUsernamePasskeyContinue(); }
         await new Promise(resolve => setImmediate(resolve)); // the prompt settles
@@ -1024,10 +1030,23 @@ test('Back from username explanation preserves the identifier and does not sign 
         assert.equal(modal.usernameInputValue, 'winter-owl');
         assert.equal(modal.usernameUnlockReady, false);
         assert.equal(modal.creationStep, 'idle');
+        // A live reservation is held for the name, not cancelled: the server
+        // would refuse a new one for it for as long as the old one lives.
         assert.deepEqual(calls, next === 'register'
-            ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register'], ['cancel']]
+            ? [['prepare', 'winter-owl'], ['init', 'winter-owl'], ['register']]
             : [['prepare', 'winter-owl'], ['login']]);
+        assert.equal(Boolean(modal.heldRegistration), next === 'register');
     }
+});
+
+test('a reservation the server already rejected is not held on Back', () => {
+    const { modal, calls } = continuationModal('register');
+    modal.generatedUsername = 'winter-owl';
+    modal.generatedAccountId = '1234567890123456';
+    modal.creationStep = 'error';
+    modal.handleUsernamePasskeyBack();
+    assert.deepEqual(calls, [['cancel']]);
+    assert.equal(modal.heldRegistration, null);
 });
 
 test('a closed dialog never invokes authentication, not even the automatic prompt', async () => {
@@ -1043,21 +1062,45 @@ test('a closed dialog never invokes authentication, not even the automatic promp
     assert.ok(!modal.usernameUnlockReady);
 });
 
-test('a free username reserves the account and registers once the explanation has been held; Back releases it', async () => {
+test('a free username reserves the account once the explanation has been held; Back keeps the reservation for the same name and drops it for another', async () => {
     await withIntroTimer(async pass => {
         const { modal, calls } = continuationModal('register');
+        modal.accountService.hasPendingAccount = () => true;
         await modal.handleAccountContinue();
         assert.equal(calls.filter(([action]) => action === 'init').length, 0); // nothing reserved during the intro
         await pass();
         assert.equal(calls.filter(([action]) => action === 'init').length, 1);
         assert.equal(calls.at(-1)[0], 'register');
+
+        // Back, then the same name again: no lookup, no second /auth/init —
+        // the held reservation and its challenge carry on after the intro.
         modal.handleUsernamePasskeyBack();
-        assert.equal(calls.at(-1)[0], 'cancel');
+        assert.notEqual(calls.at(-1)[0], 'cancel');
         assert.equal(modal.generatedAccountId, null);
         await modal.handleAccountContinue();
+        assert.equal(modal.usernameIntroPending, true);
+        assert.equal(modal.generatedAccountId, '1234567890123456');
         await pass();
-        assert.equal(calls.filter(([action]) => action === 'init').length, 2);
+        assert.equal(calls.filter(([action]) => action === 'prepare').length, 1);
+        assert.equal(calls.filter(([action]) => action === 'init').length, 1);
         assert.equal(calls.at(-1)[0], 'register');
+
+        // Back, then a different name: the old reservation is released and
+        // the new name goes through the lookup and its own /auth/init.
+        modal.handleUsernamePasskeyBack();
+        modal.usernameInputValue = 'summer-fox';
+        modal.accountService.prepareUsernameContinuation = async username => { calls.push(['prepare', username]); return { kind: 'register' }; };
+        await modal.handleAccountContinue();
+        assert.deepEqual(calls.slice(-2), [['cancel'], ['prepare', 'summer-fox']]);
+        await pass();
+        assert.deepEqual(calls.slice(-2), [['init', 'summer-fox'], ['register']]);
+
+        // A held reservation older than the server keeps it is not reused.
+        modal.handleUsernamePasskeyBack();
+        modal.heldRegistration.at -= 60000;
+        modal.usernameInputValue = 'summer-fox';
+        await modal.handleAccountContinue();
+        assert.deepEqual(calls.slice(-2), [['cancel'], ['prepare', 'summer-fox']]);
     });
 });
 

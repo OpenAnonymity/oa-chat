@@ -349,10 +349,7 @@ function buildCreationOptions(data, accountId, prfInput, username = null) {
         ...publicKey.authenticatorSelection
     };
     publicKey.attestation = publicKey.attestation || 'none';
-    // Registration: the WebAuthn recommendation is 5–10 minutes. Reading the
-    // OS sheet, picking where to save, or a keychain prompt regularly takes
-    // more than a minute, and the server keeps its challenge for as long.
-    publicKey.timeout = publicKey.timeout || 300000;
+    publicKey.timeout = publicKey.timeout || 60000;
 
     if (publicKey.excludeCredentials) {
         publicKey.excludeCredentials = mapCredentials(publicKey.excludeCredentials);

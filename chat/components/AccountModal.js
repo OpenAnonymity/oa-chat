@@ -13,6 +13,11 @@ const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([dis
 // line takes about this long. Kept well inside the browser's user-activation
 // window (~5 s from the Enter press) so the ceremony can still open on its own.
 const PASSKEY_INTRO_MS = 2000;
+// A username reservation (and its registration challenge) lives about a
+// minute on the server. Back keeps ours for that long so re-entering the
+// same name continues with it instead of asking for a new one the server
+// would refuse as "unavailable".
+const HELD_REGISTRATION_MS = 55000;
 
 class AccountModal {
     constructor(app) {
@@ -41,6 +46,7 @@ class AccountModal {
 
         // Creation flow state
         this.creationStep = 'idle';
+        this.heldRegistration = null;
         this.generatedAccountId = null;
         this.generatedUsername = null;
         this.generatedRecoveryCode = null;
@@ -500,6 +506,7 @@ class AccountModal {
         this.usernameUnlockReady = false;
         this.waitingCaptionShown = false;
         this.usernameIntroPending = false;
+        this.dropHeldRegistration();
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         this.clearAnimationTimeouts();
@@ -782,7 +789,11 @@ class AccountModal {
         this.generatedAccountId = null;
         this.creationStep = 'username_ready';
         this.creationError = null;
-        void this.handleUsernamePasskeyContinue();
+        this.waitingCaptionShown = false;
+        // The same held moment as the first attempt; it also outlasts the
+        // server's short grace on the dead reservation, so the fresh
+        // /auth/init that follows gets the name back.
+        this.startPasskeyIntro(this.loginViewVersion);
     }
 
     async handleStartOver() {
@@ -817,6 +828,19 @@ class AccountModal {
         }
         const username = this.usernameInputValue || this.accountState?.username || '';
         const viewVersion = this.loginViewVersion;
+        const held = this.takeHeldRegistration(String(username).normalize('NFKC').trim().toLowerCase());
+        if (held) {
+            // Same name as the setup they backed out of a moment ago: its
+            // reservation and challenge are still good, so continue with
+            // them rather than asking the server for a name it holds for us.
+            this.accountService.clearErrors();
+            this.generatedUsername = held.username;
+            this.generatedAccountId = held.accountId;
+            this.creationStep = 'username_ready';
+            this.creationError = null;
+            this.startPasskeyIntro(viewVersion);
+            return;
+        }
         this.usernameContinuePending = true;
         this.accountService.clearErrors();
         this.render();
@@ -857,8 +881,8 @@ class AccountModal {
                 // refuses, or the sheet is cancelled, the Create passkey
                 // card takes over and a click opens the sheet instead.
                 if (this.creationStep === 'username_ready' && this.usernameIntroPending) {
-                    // Already drawn above; redrawing here would cut the
-                    // caption's entrance short.
+                    // Already drawn on the frame the lookup resolved;
+                    // redrawing here would cut the caption's entrance short.
                     this.focusModal();
                     this.animationTimeouts.push(setTimeout(() => {
                         if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
@@ -927,11 +951,55 @@ class AccountModal {
 
     handleUsernamePasskeyBack() {
         if (this.usernamePasskeyBusy || this.accountState?.busy) return;
-        if (this.generatedUsername) this.accountService.cancelPendingAccount();
+        // A live reservation is kept for the same name; one the server has
+        // already rejected is useless and goes.
+        const hold = this.generatedUsername && this.generatedAccountId && this.creationStep !== 'error'
+            ? { username: this.generatedUsername, accountId: this.generatedAccountId, at: Date.now() }
+            : null;
+        if (this.generatedUsername && !hold) this.accountService.cancelPendingAccount();
         this.resetCreationFlow();
+        this.heldRegistration = hold;
         this.accountService.clearErrors();
         this.render();
         this.focusModal('account-username-input');
+    }
+
+    dropHeldRegistration() {
+        if (!this.heldRegistration) return;
+        this.heldRegistration = null;
+        this.accountService.cancelPendingAccount();
+    }
+
+    /** The held reservation for this username, if it is still usable. */
+    takeHeldRegistration(username) {
+        const held = this.heldRegistration;
+        if (!held) return null;
+        const usable = held.username === username &&
+            Date.now() - held.at < HELD_REGISTRATION_MS &&
+            this.accountService.hasPendingAccount?.() !== false;
+        if (!usable) {
+            this.dropHeldRegistration();
+            return null;
+        }
+        this.heldRegistration = null;
+        return held;
+    }
+
+    /**
+     * Fill the silence before the first-time passkey sheet: the dimmed page
+     * says a passkey comes next and why, held for PASSKEY_INTRO_MS, then the
+     * sheet opens on its own inside the activation window of the user's
+     * Enter press or click.
+     */
+    startPasskeyIntro(viewVersion) {
+        this.usernameIntroPending = true;
+        this.render();
+        this.focusModal();
+        this.animationTimeouts.push(setTimeout(() => {
+            if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
+            this.usernameIntroPending = false;
+            void this.handleUsernamePasskeyContinue();
+        }, PASSKEY_INTRO_MS));
     }
 
     async handleAccountPasskeyUnlock(preparedChallenge = null) {
