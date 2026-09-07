@@ -4,6 +4,24 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: Routed response usage pricing
+
+- Streaming usage snapshots carry the returned model's catalog price as soon
+  as its ID arrives, before output or usage in the same SSE event. Exact model
+  variants take precedence over their base ID. An unknown response model has
+  no local price; it must not inherit Auto Router's rate.
+- Runtime accounting accepts the backend's price snapshot (including an
+  explicit `null`) and only falls back to the owning session's catalog when
+  pricing is absent. It never overrides returned-model pricing with the
+  requested model's rate or a different visible chat's catalog.
+- A late `modelOnly` event reprices the existing usage preview while retaining
+  its token counts and provider cost. Metadata alone still creates no durable
+  charge. Cancellation with partial output retains the repriced snapshot.
+  Completed usage and the later message metadata write use the same pricing.
+- Products persist these response-time snapshots with usage; historical totals
+  are not recalculated against today's model catalog. This changes estimates
+  only, not the requested model, access budget, or settlement amount.
+
 ## 2026-09-06: Runtime payment modes share the same conversation
 
 - Trusted runtimes can choose ticket access per session with
@@ -75,8 +93,8 @@ reading code alone.
   If the provider does not identify a different model, retain the selected name.
 - The shared SSE parser publishes `modelOnly` token callbacks before processing
   output from that event. These callbacks update attribution but are not output
-  or token/cost estimates. Runtime accounting merges only the model into its
-  latest usage snapshot; partial-response cancellation retains that attribution.
+  or new token/cost measurements. Runtime accounting merges the model and its
+  price into its latest usage snapshot; cancellation retains that attribution.
 - Ordinary Chat persists the resolved name/ID in the existing `message.model`.
   Parallel/Council lanes keep their requested `model`/`modelId` for access and
   regeneration and store separate `responseModel` attribution. This survives

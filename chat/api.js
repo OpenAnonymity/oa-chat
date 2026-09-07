@@ -152,7 +152,9 @@ export class OpenRouterAPI {
 
     getModelBudgetMetadata(modelId) {
         const baseId = String(modelId || '').split(':')[0];
-        return this.getCachedModels().find(model => model.id === baseId) || null;
+        const models = this.getCachedModels();
+        return models.find(model => model.id === modelId)
+            || models.find(model => model.id === baseId) || null;
     }
 
     sendCompletionStrict(messages, modelId, token, options = {}) {
@@ -699,7 +701,7 @@ export class OpenRouterAPI {
         let completionTokens = 0;
         let reportedCost = null;
         let modelUsed = effectiveModelId;
-        const modelPricing = this.getModelBudgetMetadata(effectiveModelId)?.pricing
+        let modelPricing = this.getModelBudgetMetadata(effectiveModelId)?.pricing
             || null;
         let accumulatedContent = '';
         let accumulatedReasoning = '';
@@ -934,6 +936,9 @@ export class OpenRouterAPI {
             const reportedModel = typeof parsed.model === 'string' ? parsed.model.trim() : '';
             if (reportedModel && reportedModel !== modelUsed) {
                 modelUsed = reportedModel;
+                // Router prices describe the request selector, not the model
+                // that answered. Unknown response models have no local rate.
+                modelPricing = this.getModelBudgetMetadata(modelUsed)?.pricing || null;
                 if (onTokenUpdate) {
                     await onTokenUpdate({
                         totalTokens,

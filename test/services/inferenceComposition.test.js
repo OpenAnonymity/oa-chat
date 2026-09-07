@@ -343,6 +343,80 @@ test('same-event output and final usage receive the actual response model', asyn
     assert.equal(result.totalTokens, 24);
 });
 
+test('routed usage uses exact response-model pricing before same-event output and final usage', async () => {
+    const routerPricing = { prompt: '0.001', completion: '0.002' };
+    const basePricing = { prompt: '0.000002', completion: '0.000006' };
+    const batchPricing = { prompt: '0.000001', completion: '0.000003' };
+    for (const [model, expectedPricing] of [
+        ['provider/routed:batch', batchPricing],
+        ['provider/routed:online', basePricing]
+    ]) {
+        for (const cost of [undefined, 0, 0.017]) {
+            const updates = [];
+            const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([{
+                model,
+                choices: [{ delta: { content: 'answer' }, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 20, completion_tokens: 4, cost }
+            }]) });
+            api.getCachedModels = () => [
+                { id: 'openrouter/auto', pricing: routerPricing },
+                { id: 'provider/routed', pricing: basePricing },
+                { id: 'provider/routed:batch', pricing: batchPricing }
+            ];
+            const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {
+                assert.deepEqual(updates.at(-1).pricing, expectedPricing,
+                    'response pricing must be available before rendering the same event');
+            }, update => updates.push(update));
+            assert.deepEqual(updates[0].pricing, routerPricing);
+            assert.deepEqual(updates.find(update => update.modelOnly).pricing, expectedPricing);
+            assert.deepEqual(updates.find(update => update.isStreaming === false).pricing, expectedPricing);
+            assert.deepEqual(result.pricing, expectedPricing);
+            assert.equal(result.model, model);
+            assert.equal(result.promptTokens, 20);
+            assert.equal(result.completionTokens, 4);
+            assert.equal(result.cost, cost ?? null, 'reported costs, including zero, remain authoritative');
+        }
+    }
+});
+
+test('late routed model metadata refreshes pricing without resetting reported tokens or cost', async () => {
+    const updates = [];
+    const routedPricing = { prompt: '0.000003', completion: '0.000015' };
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { choices: [{ delta: { content: 'answer' } }], usage: { prompt_tokens: 20, completion_tokens: 4, cost: 0 } },
+        { model: 'provider/routed' }
+    ]) });
+    api.getCachedModels = () => [
+        { id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } },
+        { id: 'provider/routed', pricing: routedPricing }
+    ];
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {},
+        update => updates.push(update));
+    const lateUpdate = updates.find(update => update.modelOnly);
+    assert.equal(lateUpdate.promptTokens, 20);
+    assert.equal(lateUpdate.completionTokens, 4);
+    assert.equal(lateUpdate.cost, 0);
+    assert.deepEqual(lateUpdate.pricing, routedPricing);
+    assert.deepEqual(result.pricing, routedPricing);
+    assert.equal(result.cost, 0);
+});
+
+test('an unknown routed model clears requested pricing instead of estimating with the router rate', async () => {
+    const updates = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { model: 'new-provider/unknown', choices: [{ delta: { content: 'answer' } }],
+            usage: { prompt_tokens: 20, completion_tokens: 4 } }
+    ]) });
+    api.getCachedModels = () => [{ id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } }];
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {},
+        update => updates.push(update));
+    assert.equal(updates.find(update => update.modelOnly).pricing, null);
+    assert.equal(updates.find(update => update.isStreaming === false).pricing, null);
+    assert.equal(result.pricing, null);
+    assert.equal(result.cost, null);
+    assert.equal(result.model, 'new-provider/unknown');
+});
+
 test('model metadata precedes reasoning and response-text event early returns', async () => {
     const events = [];
     const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([

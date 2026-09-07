@@ -903,7 +903,7 @@ class ChatApp {
 
     updateResponseModel(message, reportedModel, requestedModelId, requestedModelName, session) {
         const modelName = resolveResponseModelName(reportedModel, {
-            models: this.state.models,
+            models: this.getModelsForSession(session),
             requestedModelId,
             requestedModelName,
             getDisplayName: (id, fallback) => this.inferenceService.getDisplayName(id, fallback, session)
@@ -917,8 +917,26 @@ class ChatApp {
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
         reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
         const id = requestId || this.generateId();
-        const pricing = this.getModelsForSession(session).find(model => model.id === modelId)?.pricing || null;
+        const models = this.getModelsForSession(session);
         let latestUsage = null;
+        let responseModel = modelId;
+        let responsePricing;
+        const withUsagePricing = usage => {
+            const modelIdForUsage = usage?.model || responseModel;
+            const catalogModel = models.find(model => model.id === modelIdForUsage)
+                || models.find(model => model.id === modelIdForUsage.split(':')[0]);
+            const previousPricing = responseModel === modelIdForUsage ? responsePricing : undefined;
+            responseModel = modelIdForUsage;
+            // Keep metadata even before the first counted usage snapshot.
+            // Explicit null means the backend has no price for this model.
+            responsePricing = usage?.pricing !== undefined ? usage.pricing
+                : previousPricing !== undefined ? previousPricing : catalogModel?.pricing || null;
+            return {
+                ...usage,
+                model: responseModel,
+                pricing: responsePricing
+            };
+        };
         let completed = false;
         let receivedOutput = false;
         let receivedProviderUsage = false;
@@ -929,15 +947,22 @@ class ChatApp {
                     await onChunk?.(chunk, imageData);
                 }, async usage => {
                     if (usage?.modelOnly) {
-                        if (latestUsage) latestUsage = { ...latestUsage, model: usage.model };
+                        const metadata = withUsagePricing(usage);
+                        if (latestUsage) latestUsage = {
+                            ...latestUsage, model: metadata.model, pricing: metadata.pricing
+                        };
                         await onTokenUpdate?.(usage);
+                        // Reprice the same preview without treating metadata as
+                        // output or replacing the last token counts/provider cost.
+                        if (latestUsage) await this.tryRecordRuntimeUsage({ sessionId: session.id,
+                            requestId: id, usage: latestUsage, kind, final: false });
                         return;
                     }
-                    latestUsage = usage;
+                    latestUsage = withUsagePricing(usage);
                     if (usage?.isStreaming === false || usage?.estimated === false) receivedProviderUsage = true;
                     await onTokenUpdate?.(usage);
                     await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
-                        usage: { ...usage, model: usage?.model || modelId }, pricing, kind, final: false });
+                        usage: latestUsage, kind, final: false });
                 }, files, searchEnabled, controller, onStreamOpen, async chunk => {
                     if (chunk) receivedOutput = true;
                     await onReasoningChunk?.(chunk);
@@ -945,15 +970,16 @@ class ChatApp {
                 reasoningEnabled, reasoningEffort,
                 progress => this.setSessionPendingProgress(session.id, progress));
             completed = true;
-            latestUsage = result || latestUsage;
-            return result;
+            latestUsage = result ? withUsagePricing(result) : latestUsage;
+            // The later message-accounting write must keep this same snapshot.
+            return result ? latestUsage : result;
         } finally {
             // A prompt-only estimate is published before connecting. A rejected
             // HTTP request (or canceled queued request) must not turn it into a
             // durable charge. Partial output and provider usage still count.
             if (latestUsage && (completed || receivedOutput || receivedProviderUsage)) {
                 await this.tryRecordRuntimeUsage({ sessionId: session.id,
-                    requestId: id, usage: { ...latestUsage, model: latestUsage.model || modelId }, pricing, kind });
+                    requestId: id, usage: latestUsage, kind });
             } else {
                 try { await this.runtime.discardUsagePreview?.({ sessionId: session.id, requestId: id }); }
                 catch (error) { console.warn('Could not clear the local usage preview:', error?.message || 'Storage unavailable'); }
