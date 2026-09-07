@@ -903,16 +903,23 @@ describe('production ChatApp runtime ownership', () => {
         const result = { completionTokens: 5, promptTokens: 10 };
         app.runtime.recordUsage = async options => { if (options.final !== false) throw new Error('Storage temporarily unavailable'); };
         app.inferenceService = { streamCompletion: async (...args) => { await args[4](result); return result; } };
-        assert.equal(await app.streamCompletionWithRuntime([], 'model', { id: 'one' }, () => {}, () => {},
-            [], false, new AbortController(), null, null, true, 'high', 'message'), result);
+        assert.deepEqual(await app.streamCompletionWithRuntime([], 'model', { id: 'one' }, () => {}, () => {},
+            [], false, new AbortController(), null, null, true, 'high', 'message'),
+        { ...result, model: 'model', pricing: null });
     });
 
-    test('response model metadata reaches the controller without creating or resetting token usage', async () => {
+    test('late response model metadata reprices the same request without resetting tokens or provider cost', async () => {
         const app = appHarness();
         const usageRecords = [];
         const tokenUpdates = [];
-        const initialUsage = { promptTokens: 20, completionTokens: 7, estimated: true, isStreaming: true };
-        const modelUpdate = { model: 'anthropic/routed-model', modelOnly: true };
+        const routerPricing = { prompt: '0.001', completion: '0.002' };
+        const routedPricing = { prompt: '0.000003', completion: '0.000015' };
+        const initialUsage = { promptTokens: 20, completionTokens: 7, cost: 0, pricing: routerPricing,
+            model: 'openrouter/auto', estimated: false, isStreaming: false };
+        // Metadata is not a new usage sample. Its empty counters/cost must not
+        // erase the provider's preceding sample when cancellation follows it.
+        const modelUpdate = { model: 'anthropic/routed-model', pricing: routedPricing,
+            promptTokens: 0, completionTokens: 0, cost: null, modelOnly: true, estimated: true, isStreaming: true };
         const cancellation = Object.assign(new Error('Canceled by user'), { isCancelled: true });
         app.runtime.recordUsage = async options => usageRecords.push(options);
         app.inferenceService = { streamCompletion: async (...args) => {
@@ -926,13 +933,137 @@ describe('production ChatApp runtime ownership', () => {
             update => tokenUpdates.push(update), [], false, new AbortController(), null, null,
             true, 'high', 'routed-request'), error => error === cancellation);
 
-        assert.deepEqual(tokenUpdates, [initialUsage, modelUpdate]);
-        assert.equal(usageRecords.length, 2, 'model metadata must not create another usage record');
-        assert.equal(usageRecords[0].final, false);
-        assert.equal(usageRecords[1].usage.model, 'anthropic/routed-model');
-        assert.equal(usageRecords[1].usage.promptTokens, 20);
-        assert.equal(usageRecords[1].usage.completionTokens, 7);
-        assert.equal(usageRecords[1].usage.modelOnly, undefined);
+        assert.equal(tokenUpdates.length, 2);
+        assert.equal(tokenUpdates[1].model, modelUpdate.model);
+        assert.equal(tokenUpdates[1].modelOnly, true);
+        assert.equal(usageRecords.length, 3, 'model metadata replaces the live preview before final persistence');
+        assert.deepEqual(usageRecords.map(record => record.requestId), Array(3).fill('routed-request'));
+        assert.deepEqual(usageRecords.map(record => record.final === false), [true, true, false]);
+        for (const record of usageRecords.slice(1)) {
+            assert.equal(record.usage.model, 'anthropic/routed-model');
+            assert.equal(record.usage.promptTokens, 20);
+            assert.equal(record.usage.completionTokens, 7);
+            assert.equal(record.usage.cost, 0);
+            assert.equal(record.usage.modelOnly, undefined);
+            assert.deepEqual(record.usage.pricing, routedPricing);
+            assert.notDeepEqual(record.pricing, routerPricing, 'the requested model must not override response pricing');
+        }
+    });
+
+    test('router model metadata alone never creates a usage preview or durable charge', async () => {
+        const app = appHarness();
+        const records = [];
+        const discarded = [];
+        const failure = new Error('Provider unavailable');
+        app.runtime.recordUsage = async record => records.push(record);
+        app.runtime.discardUsagePreview = record => discarded.push(record);
+        app.inferenceService = { streamCompletion: async (...args) => {
+            await args[4]({ model: 'provider/routed', modelOnly: true,
+                pricing: { prompt: '0.000003', completion: '0.000015' } });
+            throw failure;
+        } };
+        await assert.rejects(app.streamCompletionWithRuntime([], 'openrouter/auto', { id: 'one' }, null, null,
+            [], false, new AbortController(), null, null, true, 'high', 'metadata-only'), error => error === failure);
+        assert.deepEqual(records, []);
+        assert.deepEqual(discarded, [{ sessionId: 'one', requestId: 'metadata-only' }]);
+    });
+
+    test('final usage without model metadata retains the observed routed model and pricing', async () => {
+        const app = appHarness();
+        const records = [];
+        const routedPricing = { prompt: '0.000003', completion: '0.000015' };
+        app.state.models = [
+            { id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } },
+            { id: 'provider/routed', pricing: { prompt: '0.000002', completion: '0.000006' } }
+        ];
+        app.runtime.recordUsage = async record => records.push(record);
+        app.inferenceService = { streamCompletion: async (...args) => {
+            await args[4]({ model: 'provider/routed', pricing: routedPricing, modelOnly: true });
+            assert.equal(records.length, 0, 'attribution alone does not create an estimate');
+            await args[3]('Answer');
+            return { promptTokens: 20, completionTokens: 7 };
+        } };
+        const result = await app.streamCompletionWithRuntime([], 'openrouter/auto', { id: 'one' }, null, null,
+            [], false, new AbortController(), null, null, true, 'high', 'metadata-then-result');
+        assert.equal(result.model, 'provider/routed');
+        assert.deepEqual(result.pricing, routedPricing);
+        assert.equal(records.length, 1);
+        assert.deepEqual(records[0].usage.pricing, routedPricing);
+    });
+
+    test('routed accounting uses the owning catalog after navigation and preserves the exact variant', async () => {
+        for (const [reportedModel, expectedPricing] of [
+            ['provider/routed:batch', { prompt: '0.000001', completion: '0.000003' }],
+            ['provider/routed:online', { prompt: '0.000002', completion: '0.000006' }]
+        ]) {
+            const app = appHarness();
+            const records = [];
+            const session = { id: 'one', inferenceBackend: 'paid', model: 'Auto Router' };
+            const ownCatalog = [
+                { id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } },
+                { id: 'provider/routed', pricing: { prompt: '0.000002', completion: '0.000006' } },
+                { id: 'provider/routed:batch', pricing: { prompt: '0.000001', completion: '0.000003' } }
+            ];
+            app.state.models = ownCatalog;
+            app.state.modelsBackendId = 'paid';
+            app.modelCatalogsByBackend = new Map([['paid', ownCatalog]]);
+            app.runtime.recordUsage = async record => records.push(record);
+            app.inferenceService = { streamCompletion: async (...args) => {
+                app.state.currentSessionId = 'two';
+                app.state.modelsBackendId = 'other';
+                app.state.models = [{ id: reportedModel, pricing: { prompt: '9', completion: '9' } }];
+                const usage = { model: reportedModel, promptTokens: 20, completionTokens: 7, isStreaming: false };
+                await args[4](usage);
+                return usage;
+            } };
+            const result = await app.streamCompletionWithRuntime([], 'openrouter/auto', session, null, null,
+                [], false, new AbortController(), null, null, true, 'high', 'routed-owner');
+            await app.recordRuntimeUsage(session, { id: 'routed-owner', model: 'Routed model' }, result);
+            assert.equal(records.length, 3, 'preview, final ledger, and saved message accounting all run');
+            for (const record of records) {
+                assert.equal(record.sessionId, 'one');
+                assert.equal(record.usage.model, reportedModel);
+                assert.deepEqual(record.usage.pricing, expectedPricing);
+            }
+            assert.equal(session.model, 'Auto Router');
+        }
+    });
+
+    test('explicit response pricing and unavailable pricing survive both final accounting writes', async () => {
+        const catalogPricing = { prompt: '0.001', completion: '0.002' };
+        const responsePricing = { prompt: '0.000003', completion: '0.000015' };
+        for (const [model, pricing] of [
+            ['provider/routed', responsePricing],
+            ['provider/routed', null],
+            ['provider/unknown', undefined]
+        ]) {
+            for (const cost of [0, 0.017]) {
+                const app = appHarness();
+                const session = { id: 'one' };
+                const records = [];
+                app.state.models = [
+                    { id: 'openrouter/auto', pricing: catalogPricing },
+                    { id: 'provider/routed', pricing: catalogPricing }
+                ];
+                app.runtime.recordUsage = async record => records.push(record);
+                const usage = { model, promptTokens: 20, completionTokens: 7, cost, isStreaming: false };
+                if (pricing !== undefined) usage.pricing = pricing;
+                app.inferenceService = { streamCompletion: async (...args) => {
+                    await args[4](usage);
+                    return usage;
+                } };
+                const result = await app.streamCompletionWithRuntime([], 'openrouter/auto', session, null, null,
+                    [], false, new AbortController(), null, null, true, 'high', 'routed-final');
+                await app.recordRuntimeUsage(session, { id: 'routed-final', model: 'Routed model' }, result);
+                for (const record of records) {
+                    assert.deepEqual(record.usage.pricing, pricing ?? null);
+                    assert.equal(record.usage.cost, cost);
+                    assert.equal(record.usage.promptTokens, 20);
+                    assert.equal(record.usage.completionTokens, 7);
+                    assert.notDeepEqual(record.pricing, catalogPricing);
+                }
+            }
+        }
     });
 
     for (const action of ['send', 'regenerate']) {
