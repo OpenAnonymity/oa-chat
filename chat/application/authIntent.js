@@ -22,6 +22,20 @@ export function getUsernameAuthenticationValue(locationImpl = globalThis.locatio
     return normalizeUsername(fragment.get('username'));
 }
 
+// The landing page runs the provider popup itself (it has the click) and
+// hands the one-time completion token over in the fragment, which never
+// reaches a server. Present only for `?auth=google` arrivals that began there.
+const OAUTH_COMPLETION_FRAGMENT_KEY = 'oauth';
+const OAUTH_COMPLETION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+export function getOAuthCompletionToken(locationImpl = globalThis.location) {
+    const params = new URLSearchParams(locationImpl?.search || '');
+    if (params.get('auth') !== GOOGLE_AUTH_INTENT) return null;
+    const fragment = new URLSearchParams((locationImpl?.hash || '').replace(/^#/, ''));
+    const token = fragment.get(OAUTH_COMPLETION_FRAGMENT_KEY) || '';
+    return OAUTH_COMPLETION_TOKEN_PATTERN.test(token) ? token : null;
+}
+
 export function accountMatchesAuthenticationIntent(account, intent, username = null) {
     if (!account?.accountId) return false;
     if (intent === GOOGLE_AUTH_INTENT) {
@@ -43,10 +57,15 @@ export function clearAuthenticationIntent(
     const intent = params.get('auth');
     params.delete('auth');
     let hash = locationImpl?.hash || '';
-    if (intent === USERNAME_AUTH_INTENT) {
+    const fragmentKey = intent === USERNAME_AUTH_INTENT
+        ? 'username'
+        : intent === GOOGLE_AUTH_INTENT
+            ? OAUTH_COMPLETION_FRAGMENT_KEY
+            : null;
+    if (fragmentKey) {
         const fragment = new URLSearchParams(hash.replace(/^#/, ''));
-        if (fragment.has('username')) {
-            fragment.delete('username');
+        if (fragment.has(fragmentKey)) {
+            fragment.delete(fragmentKey);
             hash = fragment.toString() ? `#${fragment.toString()}` : '';
         }
     }
@@ -66,6 +85,9 @@ export async function routeAuthenticationIntent({
     if (!intent) return Object.freeze({ handled: false, action: 'none' });
     const username = intent === USERNAME_AUTH_INTENT
         ? getUsernameAuthenticationValue(locationImpl)
+        : null;
+    const completionToken = intent === GOOGLE_AUTH_INTENT
+        ? getOAuthCompletionToken(locationImpl)
         : null;
 
     await accountService.waitForAuthBootstrap();
@@ -91,6 +113,11 @@ export async function routeAuthenticationIntent({
     if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {
         // Do not hold the rest of Chat initialization behind a native prompt.
         accountModal.openForUsername(username, null, { autoContinue: true });
+    } else if (completionToken && accountModal?.openForOAuthCompletion) {
+        // Google already happened on the landing page: finish the session
+        // behind a spinner instead of asking for the same click again.
+        accountModal.openForOAuthCompletion(intent, completionToken);
+        return Object.freeze({ handled: true, action: 'complete' });
     } else {
         accountModal?.open?.();
     }

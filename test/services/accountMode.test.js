@@ -714,3 +714,61 @@ test('account bootstrap waiters resolve only after initial authentication settle
         Object.assign(accountService.state, originalState);
     }
 });
+
+test('a landing-page completion token finishes Google sign-in without a second popup', async () => {
+    const originals = {
+        window: globalThis.window,
+        fetch: sessionService.fetch,
+        verifySession: sessionService.verifySession,
+        getSetting: chatDB.getSetting,
+        persistSettings: accountService.persistSettings,
+        clearPersistedMasterKey: accountService.clearPersistedMasterKey,
+        fetchOAuthKeyring: accountService.fetchOAuthKeyring,
+        state: { ...accountService.state },
+        cryptoKey: accountService.cryptoKey
+    };
+    const opened = [];
+    const requests = [];
+    globalThis.window = {
+        location: { origin: 'https://staging.example' },
+        open: (...args) => { opened.push(args); return null; }
+    };
+    sessionService.fetch = async (url, options = {}) => {
+        requests.push([String(url), options.method || 'GET', options.body ? JSON.parse(options.body) : null]);
+        const body = /\/auth\/google\/session$/.test(String(url))
+            ? { accountId: '1234567890123456', email: 'member@example.test', encryptionMode: 'PRF' }
+            : { success: true };
+        return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    sessionService.verifySession = async () => true;
+    chatDB.getSetting = async () => null;
+    accountService.persistSettings = async () => {};
+    accountService.clearPersistedMasterKey = async () => {};
+    accountService.fetchOAuthKeyring = async () => ({ encryptionMode: 'PRF', wrappers: [] });
+    Object.assign(accountService.state, { busy: false, accountId: null, sessionVerified: false, googleLinked: false });
+    accountService.cryptoKey = null;
+    const token = 'c'.repeat(43);
+
+    try {
+        const result = await accountService.authenticateWithOAuth('google', { completionToken: token });
+        assert.deepEqual(result, { status: 'keyring_unlock', accountId: '1234567890123456' });
+        assert.deepEqual(opened, [], 'no popup: the landing page already ran it');
+        assert.deepEqual(requests.map(([url, method]) => [url.replace(/^.*\/auth\//, '/auth/'), method]), [
+            ['/auth/google/complete', 'POST'],
+            ['/auth/google/session', 'GET']
+        ]);
+        assert.deepEqual(requests[0][2], { completionToken: token });
+        assert.equal(accountService.state.sessionVerified, true);
+        assert.equal(accountService.state.oauthKeyringRequired, true);
+    } finally {
+        globalThis.window = originals.window;
+        sessionService.fetch = originals.fetch;
+        sessionService.verifySession = originals.verifySession;
+        chatDB.getSetting = originals.getSetting;
+        accountService.persistSettings = originals.persistSettings;
+        accountService.clearPersistedMasterKey = originals.clearPersistedMasterKey;
+        accountService.fetchOAuthKeyring = originals.fetchOAuthKeyring;
+        Object.assign(accountService.state, originals.state);
+        accountService.cryptoKey = originals.cryptoKey;
+    }
+});

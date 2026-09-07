@@ -582,13 +582,25 @@ class AccountModal {
         return 'Google';
     }
 
-    async handleOAuthAuthentication(provider) {
+    /**
+     * The landing page ran the Google popup and handed over its completion
+     * token; only the spinner is drawn while the session is finished here.
+     */
+    async openForOAuthCompletion(provider, completionToken, returnFocusEl = null) {
+        if (this.isOpen || !this.overlay) return;
+        this.open(returnFocusEl);
+        await this.handleOAuthAuthentication(provider, { completionToken });
+    }
+
+    async handleOAuthAuthentication(provider, { completionToken = null } = {}) {
         this.oauthProvider = provider;
         this.creationStep = 'oauth_authorizing';
         this.creationError = null;
+        this.oauthHandoffPending = Boolean(completionToken);
         this.render();
 
-        const result = await this.accountService.authenticateWithOAuth(provider);
+        const result = await this.accountService.authenticateWithOAuth(provider, { completionToken });
+        this.oauthHandoffPending = false;
         if (!result) {
             this.creationStep = 'idle';
             this.oauthProvider = null;
@@ -1209,7 +1221,16 @@ class AccountModal {
         // Sync may publish the new account ID before registration returns.
         const isCreationFlow = this.creationStep !== 'idle' &&
             (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
-        if (isCreationFlow) {
+        if (this.oauthHandoffPending) {
+            // Same wait as a returning username: the sign-in already
+            // happened on the landing page, so only the spinner is drawn.
+            this.overlay.innerHTML = `
+                <div role="dialog" aria-modal="true" aria-label="Signing in" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
+                    <p class="account-unlock-body" role="status">Signing in with ${this.escapeHtml(this.getOAuthProviderLabel(this.oauthProvider))}…</p>
+                </div>
+                <div class="account-unlock-waiting" aria-hidden="true"><span class="account-unlock-spinner account-unlock-waiting-spinner"></span></div>
+            `;
+        } else if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
         } else if (this.usernameUnlockReady) {
             this.overlay.innerHTML = this.renderUsernameUnlockUI();
@@ -1233,6 +1254,7 @@ class AccountModal {
             !isCreationFlow &&
             !this.usernameUnlockReady &&
             !this.usernameHandoffPending &&
+            !this.oauthHandoffPending &&
             this.recoveryStep === 'idle' &&
             state.authBootstrapComplete !== false
         ) {

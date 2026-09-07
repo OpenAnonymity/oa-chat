@@ -1780,9 +1780,18 @@ class AccountService {
     // Google OAuth Authentication
     // =========================================================================
 
-    async authenticateWithOAuth(provider, { link = false } = {}) {
+    /**
+     * `completionToken`: the landing page already ran the provider popup
+     * (it had the click, so popup blockers allowed it) and handed the
+     * one-time completion token over in the URL fragment; finish the
+     * session from it here without opening a second popup.
+     */
+    async authenticateWithOAuth(provider, { link = false, completionToken = null } = {}) {
         const providerConfig = getOAuthProvider(provider);
         const isDesktopOAuth = window.electronAPI?.isElectron === true;
+        const handoffToken = !isDesktopOAuth && !link && completionToken
+            ? String(completionToken)
+            : null;
         if (this.state.busy) return null;
         if (link) {
             this.setError(
@@ -1800,7 +1809,7 @@ class AccountService {
         // Open synchronously from the click handler so popup blockers allow it,
         // before the optional asynchronous passkey step-up.
         let popup = null;
-        if (!isDesktopOAuth) {
+        if (!isDesktopOAuth && !handoffToken) {
             popup = window.open(
                 '',
                 `oa-${provider}-auth`,
@@ -1816,7 +1825,7 @@ class AccountService {
 
         if (link) {
             if (this.state.status !== 'unlocked') {
-                popup.close();
+                popup?.close();
                 this.setError('Unlock your encrypted data before connecting another sign-in method');
                 return null;
             }
@@ -1855,6 +1864,8 @@ class AccountService {
                     provider,
                     previousAccountId
                 );
+            } else if (handoffToken) {
+                session = await bootstrapOAuthSession(provider, handoffToken);
             } else {
                 popup.document.title = `Connecting to ${providerConfig.label}...`;
                 popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;

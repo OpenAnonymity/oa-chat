@@ -1397,6 +1397,56 @@ test('account service turns upstream failures into actionable Google copy', () =
     );
 });
 
+test('a landing-page Google hand-off draws only the spinner while the session is finished', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    const seen = [];
+    const calls = [];
+    modal.overlay = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [], classList: { remove() {}, add() {} }, contains: () => false };
+    modal.isOpen = false;
+    modal.accountState = { authBootstrapComplete: true, status: 'none' };
+    modal.accountService = {
+        clearErrors() {},
+        authenticateWithOAuth: async (provider, options) => {
+            calls.push([provider, options]);
+            seen.push([modal.oauthHandoffPending, modal.overlay.innerHTML]);
+            return { status: 'unlocked' };
+        }
+    };
+    modal.closeAccountMenu = () => {};
+    modal.dismissOverlaySidebar = () => {};
+    modal.resetCreationFlow = () => { modal.creationStep = 'idle'; };
+    modal.focusModal = () => {};
+    modal.maybeAutoPromptPasskey = () => {};
+    modal.escapeHtml = value => String(value ?? '');
+    let closed = null;
+    modal.close = options => { closed = options; modal.isOpen = false; };
+    modal.app = { showToast() {} };
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+        activeElement: null,
+        getElementById: () => null,
+        addEventListener() {},
+        removeEventListener() {},
+        documentElement: { removeAttribute() {} }
+    };
+    const token = 'd'.repeat(43);
+    try {
+        await modal.openForOAuthCompletion('google', token);
+    } finally {
+        globalThis.document = originalDocument;
+    }
+
+    assert.deepEqual(calls, [['google', { completionToken: token }]]);
+    assert.equal(seen[0][0], true);
+    assert.match(seen[0][1], /class="account-unlock-card account-unlock-card-untitled" data-waiting="true"/);
+    assert.match(seen[0][1], /aria-label="Signing in"/);
+    assert.match(seen[0][1], /Signing in with Google…/);
+    assert.match(seen[0][1], /account-unlock-waiting-spinner/);
+    assert.doesNotMatch(seen[0][1], /Waiting for Google|Complete sign in in the popup|Continue with Google/);
+    assert.equal(modal.oauthHandoffPending, false);
+    assert.deepEqual(closed, { afterAuthentication: true });
+});
+
 test('an already-unlocked Google account completes without commercial coupling', async () => {
     const modal = Object.create(AccountModal.prototype);
     let toast = '';

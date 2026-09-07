@@ -5,6 +5,7 @@ import {
     accountMatchesAuthenticationIntent,
     clearAuthenticationIntent,
     getAuthenticationIntent,
+    getOAuthCompletionToken,
     getUsernameAuthenticationValue,
     routeAuthenticationIntent
 } from '../../chat/application/authIntent.js';
@@ -18,6 +19,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
     let clears = 0;
     const usernameOpens = [];
     const usernameOptions = [];
+    const completions = [];
     const accountService = {
         getState: () => ({ ...currentState }),
         waitForAuthBootstrap: () => bootstrap,
@@ -50,6 +52,10 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
                 usernameOpens.push(username);
                 usernameOptions.push(options);
                 return new Promise(() => {}); // A native prompt must not block Chat startup.
+            },
+            openForOAuthCompletion(provider, token) {
+                completions.push([provider, token]);
+                return new Promise(() => {});
             }
         },
         locationImpl,
@@ -58,6 +64,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
         replacements,
         usernameOpens,
         usernameOptions,
+        completions,
         get opens() { return opens; },
         get clears() { return clears; }
     };
@@ -282,4 +289,54 @@ test('ordinary chat loads do not wait for auth or open a dialog', async () => {
     });
     assert.equal(harness.opens, 0);
     assert.equal(harness.replacements.length, 0);
+});
+
+const COMPLETION_TOKEN = 'b'.repeat(43);
+
+test('a landing-page Google completion token rides in the fragment and is stripped from the route', () => {
+    const locationImpl = {
+        pathname: '/',
+        search: '?auth=google',
+        hash: `#oauth=${COMPLETION_TOKEN}&section=latest`
+    };
+    assert.equal(getOAuthCompletionToken(locationImpl), COMPLETION_TOKEN);
+    assert.equal(getOAuthCompletionToken({ search: '?auth=username', hash: locationImpl.hash }), null);
+    assert.equal(getOAuthCompletionToken({ search: '?auth=google', hash: '#oauth=short' }), null);
+    assert.equal(getOAuthCompletionToken({ search: '?auth=google', hash: '' }), null);
+    const calls = [];
+    const historyImpl = { state: null, replaceState(...args) { calls.push(args); } };
+    assert.equal(clearAuthenticationIntent(locationImpl, historyImpl), true);
+    assert.deepEqual(calls, [[null, '', '/#section=latest']]);
+});
+
+test('signed-out Google intent with a completion token finishes the session instead of asking again', async () => {
+    const harness = createHarness({
+        accountId: null,
+        sessionVerified: false,
+        status: 'none'
+    }, '?auth=google', `#oauth=${COMPLETION_TOKEN}`);
+    const routing = routeAuthenticationIntent(harness);
+    harness.releaseBootstrap();
+
+    assert.deepEqual(await routing, { handled: true, action: 'complete' });
+    assert.equal(harness.opens, 0);
+    assert.deepEqual(harness.completions, [['google', COMPLETION_TOKEN]]);
+    assert.match(harness.replacements[0][2], /^\/chat\/$/);
+});
+
+test('a completion token still signs out a remembered username account first', async () => {
+    const harness = createHarness({
+        accountId: 'username-account',
+        username: 'winter-owl',
+        googleLinked: false,
+        sessionVerified: true,
+        status: 'unlocked'
+    }, '?auth=google', `#oauth=${COMPLETION_TOKEN}`);
+    const routing = routeAuthenticationIntent(harness);
+    harness.releaseBootstrap();
+
+    assert.deepEqual(await routing, { handled: true, action: 'complete' });
+    assert.equal(harness.clears, 1);
+    assert.equal(harness.opens, 0);
+    assert.deepEqual(harness.completions, [['google', COMPLETION_TOKEN]]);
 });
