@@ -374,10 +374,13 @@ class AccountModal {
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
         if (!this.isOpen || this.passkeyAutoPromptAttempted) return;
-        // Returning (keyring unlock) and first-time (keyring setup) Google
-        // accounts both go straight to the passkey; only the legacy recovery
-        // migration and legacy-passkey accounts still explain themselves first.
-        const automatic = (state.oauthKeyringRequired || state.oauthSetupRequired) &&
+        // Only a returning keyring unlock prompts on open. First-time setup
+        // waits for Create passkey on a one-line card, like every other site
+        // that creates a passkey: the OS sheet is unexpected without it, and
+        // the click gives WebAuthn the user activation Safari wants. The
+        // legacy recovery migration and legacy-passkey accounts explain
+        // themselves first too.
+        const automatic = state.oauthKeyringRequired && !state.oauthSetupRequired &&
             !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired;
         if (!automatic) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
@@ -827,11 +830,11 @@ class AccountModal {
                 this.render();
                 this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
                     ? 'account-username-unlock-btn' : 'account-username-input');
-                // Returning and new username accounts both go straight to the
-                // passkey: unlock for an existing name, registration for a new one.
-                if (this.usernameUnlockReady || this.creationStep === 'username_ready') {
-                    void this.handleUsernamePasskeyContinue();
-                }
+                // A returning username account goes straight to its passkey.
+                // A new one waits on the Create passkey card (focused above):
+                // the sheet is unexpected without a word first, and the click
+                // is the user activation the registration ceremony wants.
+                if (this.usernameUnlockReady) void this.handleUsernamePasskeyContinue();
             }
         }
     }
