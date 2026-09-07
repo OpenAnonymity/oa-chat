@@ -209,7 +209,6 @@
         #auth-arrival > p { display: none; margin: 0; max-width: 28rem; color: rgb(255 255 255 / 0.88); }
         html[data-auth-caption] #auth-arrival > p { display: block; }
         #auth-arrival-title { font-size: 0.9375rem; font-weight: 500; line-height: 1.4; text-wrap: balance; overflow-wrap: anywhere; }
-        #auth-arrival-note { margin-top: -0.625rem; font-size: 0.8125rem; line-height: 1.5; color: rgb(255 255 255 / 0.6); text-wrap: pretty; }
         #auth-arrival > span {
             width: 1.25rem;
             height: 1.25rem;
@@ -1018,9 +1017,9 @@
     <div id="verify-key-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Account Modal -->
-    <div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"></span><p id="auth-arrival-title"></p><p id="auth-arrival-note">It encrypts your tickets and preferences so only you can access them.</p></div>
+    <div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"></span><p id="auth-arrival-title"></p></div>
     <script>
-        // Same line AccountModal.renderWaitingLayer draws; set here, before
+        // The line AccountModal.renderWaitingLayer draws; set here, before
         // the module scripts run, so it is on screen with the first paint.
         (function () {
             const root = document.documentElement;

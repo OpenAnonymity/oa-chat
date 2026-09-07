@@ -280,13 +280,13 @@ test('account dialogs share one accent focus ring, close control, dark edges and
     assert.match(html, /document\.documentElement\.setAttribute\('data-auth-arriving', ''\)/);
     assert.match(html, /html\[data-auth-arriving\] #auth-arrival\s*\{[^}]*position: fixed;[^}]*background: rgb\(0 0 0 \/ 0\.6\)/s);
     // A sign-in hand-off also paints the passkey caption from the first frame — the
-    // same two lines the dialog draws behind the sheet, filled in by an inline
+    // same line the dialog draws behind the sheet, filled in by an inline
     // script right after the layer, before the module scripts run.
-    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><p id="auth-arrival-title"><\/p><p id="auth-arrival-note">It encrypts your tickets and preferences so only you can access them\.<\/p><\/div>\s*<script>[\s\S]*?'Next, you\\u2019ll confirm with a passkey' \+ \(username \? ' for ' \+ username : ''\)[\s\S]*?<\/script>\s*<div id="account-modal"/);
+    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><p id="auth-arrival-title"><\/p><\/div>\s*<script>[\s\S]*?'Next, you\\u2019ll confirm with a passkey' \+ \(username \? ' for ' \+ username : ''\)[\s\S]*?<\/script>\s*<div id="account-modal"/);
     assert.match(html, /document\.documentElement\.setAttribute\('data-auth-caption', username\)/);
     assert.match(html, /html\[data-auth-caption\] #auth-arrival > p \{ display: block; \}/);
     assert.match(html, /#auth-arrival-title \{ font-size: 0\.9375rem; font-weight: 500; line-height: 1\.4;/);
-    assert.match(html, /#auth-arrival-note \{ margin-top: -0\.625rem; font-size: 0\.8125rem; line-height: 1\.5; color: rgb\(255 255 255 \/ 0\.6\)/);
+    assert.doesNotMatch(html, /auth-arrival-note|encrypts your tickets/); // one line only in the sign-in wait
     assert.ok(html.indexOf('data-auth-arriving') < html.indexOf('fonts/fonts.css'), 'arrival layer is painted before any stylesheet');
     assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)/);
     assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within/);
@@ -525,7 +525,7 @@ test('first username setup draws only the spinner and a caption saying what the 
         assert.match(html, step === 'passkey'
             ? /class="account-unlock-waiting-title[^"]*">Next, you’ll confirm with a passkey for winter-&lt;owl&gt;<\/p>/
             : /class="account-unlock-waiting-title[^"]*">Creating your account<\/p>/);
-        assert.match(html, /class="account-unlock-waiting-note[^"]*">It encrypts your tickets and preferences so only you can access them\.<\/p>/);
+        assert.doesNotMatch(html, /account-unlock-waiting-note|encrypts your tickets/);
         assert.doesNotMatch(html, /Your username|Your account number|Create a passkey account|You're all set/);
         // The caption's entrance runs once: later redraws mount it settled.
         assert.equal(/account-unlock-waiting-enter/.test(html), first);
@@ -551,7 +551,7 @@ test('a returning username unlock shows the same caption as first-time setup whi
     const html = modal.renderUsernameUnlockUI();
     assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
     assert.match(html, /account-unlock-waiting-title account-unlock-waiting-enter">Next, you’ll confirm with a passkey for winter-owl</);
-    assert.match(html, /account-unlock-waiting-note account-unlock-waiting-enter">It encrypts your tickets and preferences so only you can access them\.</);
+    assert.doesNotMatch(html, /account-unlock-waiting-note|encrypts your tickets/);
     assert.doesNotMatch(html, /Setting up a passkey|create a passkey/);
     // The same wait, whichever way someone arrived: the hand-off spinners
     // and the Google unlock draw the identical layer.
@@ -794,7 +794,7 @@ test('landing handoff goes straight to the passkey for returning accounts; new o
                 assert.match(intro, /account-unlock-card-untitled" data-waiting="true"/);
                 assert.match(intro, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
                 assert.match(intro, /account-unlock-waiting-title">Next, you’ll confirm with a passkey for winter-owl</);
-                assert.match(intro, /It encrypts your tickets and preferences so only you can access them\./);
+                assert.doesNotMatch(intro, /encrypts your tickets/);
                 assert.doesNotMatch(intro, /Create passkey|<h2/);
                 assert.ok(frames.every(html => !html.includes('Encrypt your data')));
                 assert.equal(modal.isOpen, true);

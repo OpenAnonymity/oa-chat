@@ -1866,9 +1866,10 @@ class AccountModal {
     }
 
     /**
-     * The dimmed page behind every passkey wait: spinner, one line saying a
-     * passkey comes next (naming the account when it has a name), one on
-     * why. The same layer for a returning unlock, a first-time setup, the
+     * The dimmed page behind every passkey wait: spinner and one line saying
+     * a passkey comes next (naming the account when it has a name). No
+     * second line: the reason lives on the Create passkey card, not in the
+     * sign-in wait. The same layer for a returning unlock, a first-time setup, the
      * username lookup and the Google hand-off, so the wait reads the same
      * whichever way someone arrived — and the same as the arrival layer
      * index.html paints before scripts load. It enters once per dialog; if
@@ -1886,8 +1887,7 @@ class AccountModal {
             : `Next, you\u2019ll confirm with a passkey${name ? ` for ${this.escapeHtml(name)}` : ''}`;
         const enterClass = enters ? ' account-unlock-waiting-enter' : '';
         return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
-                <p class="account-unlock-waiting-title${enterClass}">${title}</p>
-                <p class="account-unlock-waiting-note${enterClass}">It encrypts your tickets and preferences so only you can access them.</p></div>`;
+                <p class="account-unlock-waiting-title${enterClass}">${title}</p></div>`;
     }
 
     /** How much of PASSKEY_INTRO_MS the caption has not yet been on screen for. */

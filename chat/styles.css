@@ -6126,11 +6126,6 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
    sign-in hand-off, so the caption is on screen from the first frame and
    the dialog's copy takes over without entering again. */
 .account-unlock-waiting-title,
-.account-unlock-waiting-note {
-    margin: 0;
-    max-width: 28rem;
-    color: rgb(255 255 255 / .88);
-}
 
 .account-unlock-waiting-enter {
     animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
@@ -6144,17 +6139,7 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     overflow-wrap: anywhere;
 }
 
-.account-unlock-waiting-note {
-    margin-top: -0.625rem;
-    font-size: 0.8125rem;
-    line-height: 1.5;
-    color: rgb(255 255 255 / .6);
-    text-wrap: pretty;
-}
 
-.account-unlock-waiting-note.account-unlock-waiting-enter {
-    animation-delay: 40ms;
-}
 
 @keyframes account-unlock-caption-in {
     from {
