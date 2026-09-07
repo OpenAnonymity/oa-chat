@@ -4,6 +4,60 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-06: Runtime payment modes share the same conversation
+
+- Trusted runtimes can choose ticket access per session with
+  `usesTicketAccess(session)`. A false result requires explicit `checkCanSend`
+  authorization and skips ticket-tier loading during key acquisition. The
+  normal ticket and verifier path remains unchanged for ticket sessions.
+- `context.changeSessionBackend(backendId, {sessionId?})` captures the chosen
+  conversation, reserves its exclusive mutation, drains outstanding title,
+  access and Quick Ask work, and awaits `beforeBackendChange`. Its hook receives
+  a staged clone so lease settlement metadata and the backend are persisted in
+  one session write. Failed settlement or storage keeps the live backend and
+  recovery metadata. New Send, Quick Ask, title and access work cannot enter
+  during the transition; Delete waits for its reservation before removing data.
+- Switching clears active access, old verifier failure presentation, shared-key
+  marking and Council lane access, while retaining message history, historical
+  ephemeral mappings, title, draft and attachments. It never navigates or
+  rebuilds the conversation. Model refreshes reject stale results after
+  navigation or another backend selection. All configured verifier caches
+  initialize before persisted access is restored, even when the default mode
+  uses an alternate payment backend.
+- `context.isSessionBusy()` lets a mode selector disable itself during any
+  owned work. `presentation.renderComposer` is notified as Send, title, Quick
+  Ask, access and exclusive mutations start/end, as well as navigation.
+- Mixed runtimes can set `shouldCancelOnNewChat({session})` so ticket chats
+  continue streaming in the background while paid chats retire their lease.
+  `onNewChat` still runs synchronously to establish any retirement barrier.
+- Empty-composer mode changes only change the inference service default. Send
+  captures that default before its first await, and new session creation retains
+  the captured backend. Products own durable preference storage and may call
+  `setDefaultBackendId()` after switching an existing conversation to choose
+  the next chat's default. Unknown explicit backends fail closed rather than
+  routing a request through another payment mode.
+- Legacy sessions and imported keys without a backend use the registry's
+  stable `legacyBackendId` and optional `resolveLegacyBackendId(session)`,
+  independently of the preferred new-chat mode. A dual product must identify
+  historical ticket sessions as `openrouter`; provider API keys must never be
+  interpreted as alternate-backend session bindings.
+- Historical/new-chat navigation replaces the prior backend's model catalog
+  synchronously with the destination's cached catalog before refreshing it.
+  Ticket key request/renewal reserves its captured session before animations;
+  navigation cannot redirect redemption or apply its key to another panel.
+- Background ticket requests keep their backend's catalog for ticket pricing,
+  key acquisition, response model resolution, Quick Ask and usage estimates.
+  `getModelsForSession(session)` and `context.getModels(sessionId?)` must replace
+  reads of the visible `state.models` in inference work that can outlive
+  navigation. Model configuration callbacks receive the captured session.
+- Rename, star/unstar and model selection reserve session metadata persistence.
+  A mode switch cannot snapshot over an in-flight metadata write, and those
+  controls acknowledge busy while settlement holds an exclusive reservation.
+- `publicApi.js` additionally exports the ordinary Account and Welcome UI;
+  `publicInferenceApi.js` exports the normal `openRouterBackend`; and
+  `publicRuntimeApi.js` exports the shared `modelConfiguration` namespace for
+  compositions that offer ticketing alongside another funding method.
+
 ## 2026-09-06: Composer live announcements stay visually hidden
 
 - `Message accepted.` and `Response complete.` are screen-reader announcements,

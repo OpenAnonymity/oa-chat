@@ -32,6 +32,9 @@ const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
 const { chatDB } = await import('../../chat/db.js');
+const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
+const { default: RightPanel } = await import('../../chat/components/RightPanel.js');
+const { createModelPickerInterface } = await import('../../chat/ui/appInterface.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
 
@@ -122,6 +125,23 @@ function streamHarness(stream) {
     return { app, records };
 }
 
+function backendHarness() {
+    const app = appHarness();
+    app.features = { tickets: true };
+    app.uiOptions = {};
+    app.inferenceService = createInferenceService({ backends: ['ticket', 'paid'].map(id => ({
+        id,
+        getAccessToken: session => session.apiKey,
+        setAccessInfo: (session, info) => { session.apiKey = info.token; },
+        clearAccessInfo: session => { session.apiKey = null; session.apiKeyInfo = null; session.expiresAt = null; }
+    })) });
+    app.state.sessionsById.get('one').inferenceBackend = 'paid';
+    app.state.sessionsById.get('two').inferenceBackend = 'ticket';
+    app.refreshBackendPresentation = async () => {};
+    app.normalizeModelName = value => value;
+    return app;
+}
+
 describe('production ChatApp runtime ownership', () => {
     let restore;
     let databaseMethods;
@@ -130,6 +150,277 @@ describe('production ChatApp runtime ownership', () => {
         databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSessionMessages', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
+
+    test('switching stages settlement metadata and preserves transcript, draft and navigation', async () => {
+        const app = backendHarness();
+        const session = app.getCurrentSession();
+        Object.assign(session, { zkapiSessionId: 'lease', apiKey: 'old', councilAccess: { primary: { apiKey: 'old' } },
+            shareInfo: { apiKeyShared: true } });
+        const settlement = deferred();
+        let staged;
+        let persisted;
+        app.runtime.beforeBackendChange = async args => {
+            staged = args.session;
+            assert.equal(args.previousBackendId, 'paid');
+            assert.equal(args.backendId, 'ticket');
+            delete staged.zkapiSessionId;
+            await settlement.promise;
+        };
+        chatDB.saveSession = async record => { persisted = structuredClone(record); };
+        const switching = app.changeSessionBackend('ticket');
+        await Promise.resolve();
+        assert.notEqual(staged, session);
+        assert.equal(session.zkapiSessionId, 'lease');
+        assert.equal(app.isSessionBusy('one'), true);
+        let sent = false;
+        app.sendCapturedMessage = async () => { sent = true; };
+        await app.sendMessage();
+        assert.equal(sent, false);
+        await assert.rejects(app.inlineQuickAsk('selection'), /current chat action/);
+        await assert.rejects(app.acquireAndSetAccess(session), /cancelled/);
+        await app.generateSessionTitleIfNeeded('one', 'prompt');
+        assert.equal(app.titleGenerationJobs.size, 0);
+        await assert.rejects(app.changeSessionBackend('ticket'), /current chat action/);
+        app.state.currentSessionId = 'two';
+        app.elements.messageInput.value = 'Draft in chat two';
+        settlement.resolve();
+        await switching;
+        assert.equal(session.inferenceBackend, 'ticket');
+        assert.equal(persisted.zkapiSessionId, undefined);
+        assert.equal(session.zkapiSessionId, undefined);
+        assert.equal(session.councilAccess, undefined);
+        assert.equal(session.shareInfo.apiKeyShared, false);
+        assert.equal(session.apiKey, null);
+        assert.equal(app.state.currentSessionId, 'two');
+        assert.equal(app.elements.messageInput.value, 'Draft in chat two');
+        assert.equal(app.isSessionBusy('one'), false);
+    });
+
+    test('failed settlement or storage retains the original backend and its recovery metadata', async () => {
+        for (const failure of ['hook', 'storage']) {
+            const app = backendHarness();
+            const session = app.getCurrentSession();
+            Object.assign(session, { zkapiSessionId: 'recoverable', apiKey: 'old' });
+            const snapshot = structuredClone(session);
+            app.runtime.beforeBackendChange = async ({ session: staged }) => {
+                delete staged.zkapiSessionId;
+                if (failure === 'hook') throw new Error('settlement failed');
+            };
+            chatDB.saveSession = async () => { throw new Error('storage failed'); };
+            await assert.rejects(app.changeSessionBackend('ticket'), /failed/);
+            assert.deepEqual(session, snapshot);
+            assert.equal(app.isSessionBusy('one'), false);
+        }
+    });
+
+    test('switch drains a captured Quick Ask before settlement and Delete waits for its reservation', async () => {
+        const app = backendHarness();
+        const controller = new AbortController();
+        app.quickAskJobs.set('one', new Set([{ controller }]));
+        controller.signal.addEventListener('abort', () => app.quickAskJobs.delete('one'));
+        const settlement = deferred();
+        let entered = false;
+        app.runtime.beforeBackendChange = async () => { entered = true; await settlement.promise; };
+        let saves = 0;
+        chatDB.saveSession = async () => { saves++; };
+        const switching = app.changeSessionBackend('ticket');
+        await Promise.resolve();
+        assert.equal(controller.signal.aborted, true);
+        assert.equal(entered, true);
+        let deleted = false;
+        app.deleteIdleSession = async () => { deleted = true; };
+        const deleting = app.deleteSession('one');
+        assert.equal(deleted, false);
+        settlement.resolve();
+        await assert.rejects(switching, /unavailable/);
+        assert.equal(await deleting, true);
+        assert.equal(deleted, true);
+        assert.equal(saves, 0);
+    });
+
+    test('empty composer default is captured by Send before database or preference delays', async () => {
+        const app = backendHarness();
+        app.state.currentSessionId = null;
+        await app.changeSessionBackend('paid');
+        assert.equal(app.state.sessionsById.get('two').inferenceBackend, 'ticket');
+        const gate = deferred();
+        let captured;
+        app.sendCapturedMessage = async submission => { captured = submission; await gate.promise; };
+        const sending = app.sendMessage();
+        await assert.rejects(app.changeSessionBackend('ticket'), /finish sending/);
+        app.inferenceService.setDefaultBackendId('ticket');
+        assert.equal(captured.inferenceBackend, 'paid');
+        gate.resolve();
+        await sending;
+    });
+
+    test('per-session ticket policy keeps paid access off the ticket pricing and redemption path', async () => {
+        const app = backendHarness();
+        app.runtime.usesTicketAccess = session => session.inferenceBackend === 'ticket';
+        const paid = app.getCurrentSession();
+        assert.equal(app.usesTicketAccess(paid), false);
+        assert.equal(app.usesTicketAccess(app.state.sessionsById.get('two')), true);
+        let checked;
+        app.runtime.checkCanSend = async args => { checked = args.session; return true; };
+        assert.equal(await app.preflightTurnTicketBudget(paid, 'prompt'), true);
+        assert.equal(checked, paid);
+        app.runtime.acquireAccess = async () => ({ token: 'paid-key' });
+        chatDB.saveSession = async () => {};
+        assert.equal(await app.acquireAndSetAccess(paid), 'paid-key');
+        assert.equal(paid.inferenceBackend, 'paid');
+        delete app.runtime.checkCanSend;
+        await assert.rejects(app.preflightTurnTicketBudget(paid, 'prompt'), /not configured/);
+    });
+
+    test('model refresh cannot replace the catalog after navigation to another backend', async () => {
+        const app = backendHarness();
+        const gate = deferred();
+        app.inferenceService.fetchModels = () => gate.promise;
+        app.filterDisabledModels = models => models;
+        app.state.models = [{ id: 'current' }];
+        const refresh = app.loadModels();
+        app.state.currentSessionId = 'two';
+        gate.resolve([{ id: 'stale-paid-model' }]);
+        await refresh;
+        assert.deepEqual(app.state.models, [{ id: 'current' }]);
+        assert.equal(app.state.modelsLoading, false);
+    });
+
+    test('all configured verifier caches initialize even when paid is the new-chat default', async () => {
+        const app = backendHarness();
+        const calls = [];
+        const verifier = { supports: true, init: async () => { calls.push('init'); },
+            setBannedWarningCallback() {}, startBroadcastCheck() { calls.push('broadcast'); } };
+        app.inferenceService.getBackend('ticket').verification = verifier;
+        app.inferenceService.setDefaultBackendId('paid');
+        await app.initVerifier();
+        await app.initVerifier({ inferenceBackend: 'ticket' });
+        assert.deepEqual(calls, ['init', 'broadcast']);
+    });
+
+    test('ticket key request reserves its captured session across animations and navigation', async t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const app = backendHarness();
+        const session = app.getCurrentSession();
+        session.inferenceBackend = 'ticket';
+        const panel = Object.assign(Object.create(RightPanel.prototype), {
+            app, currentSession: session, currentTicket: {},
+            renderTopSectionOnly() {}, loadNextTicket() {}, startExpirationTimer() {}, updateStatusIndicator() {}
+        });
+        app.services = { inference: app.inferenceService };
+        let acquired;
+        app.acquireAndSetAccess = async target => { acquired = target; target.apiKey = 'new-ticket-key'; };
+        const requesting = panel.handleRequestApiKey();
+        assert.equal(app.isSessionBusy('one'), true);
+        await assert.rejects(app.changeSessionBackend('paid'), /current chat action/);
+        app.state.currentSessionId = 'two';
+        panel.currentSession = app.getCurrentSession();
+        panel.apiKey = 'chat-two-key';
+        t.mock.timers.tick(500);
+        await Promise.resolve();
+        t.mock.timers.tick(1000);
+        await requesting;
+        assert.equal(acquired, session);
+        assert.equal(session.apiKey, 'new-ticket-key');
+        assert.equal(panel.apiKey, 'chat-two-key');
+        assert.equal(app.isSessionBusy('one'), false);
+    });
+
+    test('backend navigation immediately replaces the prior model catalog while fetching current data', async () => {
+        const app = backendHarness();
+        app.state.modelsBackendId = 'paid';
+        app.state.models = [{ id: 'paid-model' }];
+        app.state.currentSessionId = 'two';
+        const fresh = deferred();
+        app.inferenceService.getBackend('ticket').getCachedModels = () => [{ id: 'ticket-cached' }];
+        app.inferenceService.getBackend('ticket').fetchModels = () => fresh.promise;
+        app.filterDisabledModels = models => models;
+        app.renderCurrentModel = () => {};
+        const refreshing = app.refreshModelsForSessionBackend();
+        assert.deepEqual(app.state.models, [{ id: 'ticket-cached' }]);
+        assert.equal(app.state.modelsBackendId, 'ticket');
+        fresh.resolve([{ id: 'ticket-fresh' }]);
+        await refreshing;
+        assert.deepEqual(app.state.models, [{ id: 'ticket-fresh' }]);
+    });
+
+    test('backend settlement serializes rename, star and model changes without overwriting metadata', async () => {
+        const app = backendHarness();
+        const session = app.getCurrentSession();
+        Object.assign(session, { title: 'Original title', starred: true });
+        app.state.sessions = [session];
+        app.acknowledgeSessionMutationBusy = async () => {};
+        const settlement = deferred();
+        app.runtime.beforeBackendChange = () => settlement.promise;
+        chatDB.saveSession = async () => {};
+        const switching = app.changeSessionBackend('ticket');
+        await Promise.resolve();
+        assert.equal(await app.updateSessionTitle('one', 'Concurrent title'), false);
+        assert.equal(await app.toggleSessionStar('one'), false);
+        const picker = createModelPickerInterface(app, { chatDBImpl: {
+            saveSetting: () => assert.fail('A blocked model change must not persist preferences'),
+            saveSession: () => assert.fail('A blocked model change must not overwrite the session')
+        } });
+        assert.equal((await picker.actions.selectModel('Concurrent model')).busy, true);
+        settlement.resolve();
+        await switching;
+        assert.equal(session.title, 'Original title');
+        assert.equal(session.starred, true);
+        assert.equal(session.model, 'Model one');
+    });
+
+    test('a deferred key acquisition and response retain their backend model after navigation', async () => {
+        let streamed;
+        const { app } = streamHarness(async (...args) => { streamed = args; return { totalTokens: 1 }; });
+        const session = app.getCurrentSession();
+        session.inferenceBackend = 'ticket';
+        app.features = { tickets: false };
+        app.state.modelsBackendId = 'ticket';
+        app.modelCatalogsByBackend = new Map([['ticket', app.state.models]]);
+        app.state.sessionsById.get('two').inferenceBackend = 'paid';
+        app.inferenceService.getDefaultBackendId = () => 'ticket';
+        app.inferenceService.getAccessToken = target => target.apiKey || null;
+        app.inferenceService.setAccessInfo = (target, info) => { target.apiKey = info.token; };
+        app.inferenceService.getCachedModels = () => [];
+        const entered = deferred();
+        const acquisition = deferred();
+        let accessModels;
+        app.runtime.acquireAccess = async ({ models }) => {
+            accessModels = models;
+            entered.resolve();
+            await acquisition.promise;
+            return { token: 'ticket-key' };
+        };
+        const sending = app.sendMessage();
+        await entered.promise;
+        app.state.currentSessionId = 'two';
+        app.state.modelsBackendId = 'paid';
+        app.state.models = [{ id: 'paid-model', name: 'Paid model' }];
+        acquisition.resolve();
+        await sending;
+        assert.equal(accessModels[0].id, 'accepted-model');
+        assert.equal(streamed[1], 'accepted-model');
+        assert.equal(streamed[2], session);
+        assert.equal(session.model, 'Accepted model');
+    });
+
+    test('a dual runtime can preserve ticket streaming on New Chat while retiring paid work', async () => {
+        const app = backendHarness();
+        const canceled = [];
+        const notified = [];
+        app.runtime.onNewChat = ({ sessionId }) => notified.push(sessionId);
+        app.runtime.shouldCancelOnNewChat = ({ session }) => session?.inferenceBackend === 'paid';
+        app.cancelSessionWork = async id => canceled.push(id);
+        app.clearCurrentSession = async () => {};
+        app.isMobileView = () => false;
+        app.state.currentSessionId = 'two';
+        await app.handleNewChatRequest();
+        assert.deepEqual(canceled, []);
+        app.state.currentSessionId = 'one';
+        await app.handleNewChatRequest();
+        assert.deepEqual(canceled, ['one']);
+        assert.deepEqual(notified, ['two', 'one']);
+    });
 
     test('composer announcements reuse one screen-reader-only status node', () => {
         const nodes = [];

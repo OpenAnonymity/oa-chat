@@ -630,8 +630,8 @@ class ChatApp {
         this.sessionMutationReservations.set(sessionId, reservations);
         if (exclusive) {
             this.exclusiveSessionMutationOwners.set(sessionId, token);
-            this.updateInputState();
         }
+        this.updateInputState();
         return token;
     }
 
@@ -641,9 +641,9 @@ class ChatApp {
         reservations.delete(token);
         if (this.exclusiveSessionMutationOwners.get(sessionId) === token) {
             this.exclusiveSessionMutationOwners.delete(sessionId);
-            this.updateInputState();
         }
         if (reservations.size === 0) this.sessionMutationReservations.delete(sessionId);
+        this.updateInputState();
     }
 
     async acknowledgeSessionMutationBusy(sessionId) {
@@ -677,8 +677,10 @@ class ChatApp {
             getSession: id => this.state.sessionsById.get(id) || null,
             getMessages: id => chatDB.getSessionMessages(id),
             saveSession: session => chatDB.saveSession(session),
-            getModels: () => this.state.models,
+            getModels: (sessionId = this.state.currentSessionId) => this.getModelsForSession(this.state.sessionsById.get(sessionId)),
             getStreamingState: id => this.getSessionStreamingState(id),
+            isSessionBusy: (id = this.state.currentSessionId) => this.isSessionBusy(id),
+            changeSessionBackend: (backendId, options) => this.changeSessionBackend(backendId, options),
             setProgress: (id, progress) => this.setSessionPendingProgress(id, progress),
             openFunding: () => this.accountModal?.openFunding?.(),
             showToast: (...args) => this.showToast(...args),
@@ -691,11 +693,99 @@ class ChatApp {
                 if (!usageOnly) {
                     this.renderSessions();
                     this.rightPanel?.onRuntimePresentationChange?.();
+                    this.updateInputState();
                 }
                 this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
             },
             cancelSessionWork: id => this.cancelSessionWork(id)
         });
+    }
+
+    usesTicketAccess(session) {
+        return typeof this.runtime.usesTicketAccess === 'function'
+            ? this.runtime.usesTicketAccess(session) === true
+            : this.features.tickets;
+    }
+
+    isSessionBusy(sessionId = this.state.currentSessionId) {
+        return Boolean(this.sessionSwitchInFlight || this.historyDeletionInProgress
+            || this.isDeletingAllChats || this.isSessionDeleted(sessionId)
+            || this.getPendingSend(sessionId)
+            || this.exclusiveSessionMutationOwners.has(sessionId)
+            || this.sessionMutationReservations.get(sessionId)?.size
+            || this.getSessionStreamingState(sessionId).isStreaming
+            || this.titleGenerationJobs.has(sessionId) || this.quickAskJobs.has(sessionId)
+            || this.regenerationJobs.has(sessionId)
+            || [...this.accessAcquisitionInFlight.values()].some(entry => entry.sessionId === sessionId)
+            || [...(this.messageFilePreparationSessions || new Map()).values()].includes(sessionId));
+    }
+
+    isSessionBackendChanging(sessionId) {
+        return this.exclusiveSessionMutationOwners.get(sessionId)?.backendChange === true;
+    }
+
+    async changeSessionBackend(backendId, { sessionId = this.state.currentSessionId } = {}) {
+        if (!this.inferenceService.hasBackend(backendId)) throw new Error('This payment mode is unavailable.');
+        if (this.sessionSwitchInFlight || this.historyDeletionInProgress || this.isDeletingAllChats) {
+            throw new Error('Wait for the current chat action to finish before changing payment mode.');
+        }
+        if (!sessionId) {
+            if (this.getPendingSend(null)) throw new Error('Wait for the message to finish sending before changing payment mode.');
+            this.inferenceService.setDefaultBackendId(backendId);
+            await this.refreshBackendPresentation(null);
+            return { sessionId: null, backendId };
+        }
+        const session = this.state.sessionsById.get(sessionId);
+        if (!session || this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+        const previousBackendId = this.inferenceService.ensureSessionBackend(session);
+        if (previousBackendId === backendId) return { sessionId, backendId };
+        const reservation = this.beginSessionMutation(sessionId, { exclusive: true });
+        if (!reservation) throw new Error('Wait for the current chat action to finish before changing payment mode.');
+        reservation.backendChange = true;
+        try {
+            // The exclusive owner stops new Send, Quick Ask, title and access
+            // jobs while previously captured auxiliary work drains. Delete
+            // waits for this reservation before removing the transcript.
+            await this.cancelSessionWork(sessionId);
+            if (this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+            const stagedSession = structuredClone(session);
+            await this.runtime.beforeBackendChange?.({ session: stagedSession, previousBackendId, backendId });
+            if (this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+            this.inferenceService.clearAccessInfo(stagedSession);
+            delete stagedSession.lastVerifierSubmitKeyProof;
+            stagedSession.currentEphemeralKeyId = null;
+            delete stagedSession.councilAccess;
+            if (stagedSession.shareInfo?.apiKeyShared) stagedSession.shareInfo.apiKeyShared = false;
+            stagedSession.inferenceBackend = backendId;
+            // Nothing in the live session changes until its durable write
+            // succeeds, including metadata edited by the settlement hook.
+            await chatDB.saveSession(stagedSession);
+            for (const key of Object.keys(session)) {
+                if (!Object.hasOwn(stagedSession, key)) delete session[key];
+            }
+            Object.assign(session, stagedSession);
+            await this.refreshBackendPresentation(session);
+            return { sessionId, backendId };
+        } finally {
+            this.endSessionMutation(sessionId, reservation);
+        }
+    }
+
+    async refreshBackendPresentation(session) {
+        if (this.state.currentSessionId !== (session?.id || null)) return;
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
+        this.renderCurrentModel();
+        this.updateShareButtonUI();
+        this.rightPanel?.onSessionChange?.(session);
+        this.uiOptions.presentation?.renderComposer?.(session);
+        try { await this.initVerifier(session); }
+        catch (error) { console.warn('Could not initialize the selected access verifier:', error); }
+        await this.refreshModelsForSessionBackend({ force: true });
+        if (this.state.currentSessionId !== (session?.id || null)) return;
+        this.renderCurrentModel();
+        this.modelPicker?.renderModels?.();
+        this.rightPanel?.onRuntimePresentationChange?.();
+        this.uiOptions.presentation?.renderComposer?.(session);
     }
 
     getSessionPendingProgress(sessionId) {
@@ -814,7 +904,7 @@ class ChatApp {
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
         reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
         const id = requestId || this.generateId();
-        const pricing = this.state.models.find(model => model.id === modelId)?.pricing || null;
+        const pricing = this.getModelsForSession(session).find(model => model.id === modelId)?.pricing || null;
         let latestUsage = null;
         let completed = false;
         let receivedOutput = false;
@@ -879,21 +969,28 @@ class ChatApp {
         return fallbackModel?.name || this.inferenceService.getDefaultModelName(session);
     }
 
-    getDisabledModelSet() {
-        return new Set(this.modelConfiguration.getDisabledModels());
+    getDisabledModelSet(session = this.getCurrentSession()) {
+        return new Set(this.modelConfiguration.getDisabledModels(session));
     }
 
-    filterDisabledModels(models) {
-        return filterDisabledModelsValue(models, this.getDisabledModelSet());
+    filterDisabledModels(models, session = this.getCurrentSession()) {
+        return filterDisabledModelsValue(models, this.getDisabledModelSet(session));
+    }
+
+    getModelsForSession(session) {
+        const backendId = session?.inferenceBackend || this.inferenceService?.getDefaultBackendId?.();
+        if (!this.state.modelsBackendId || this.state.modelsBackendId === backendId) return this.state.models;
+        return this.modelCatalogsByBackend?.get(backendId)
+            || this.inferenceService.getCachedModels?.(session) || [];
     }
 
     getFallbackModelEntry(session) {
         const usePinnedDefaults = !session?.inferenceBackend ||
             session.inferenceBackend === this.inferenceService.getDefaultBackendId();
         return getFallbackModelEntryValue(
-            this.state.models,
+            this.getModelsForSession(session),
             this.inferenceService.getDefaultModelId(session),
-            usePinnedDefaults ? this.modelConfiguration.getPinnedModels() : []
+            usePinnedDefaults ? this.modelConfiguration.getPinnedModels(session) : []
         );
     }
 
@@ -909,6 +1006,7 @@ class ChatApp {
         }
 
         this.state.models = filteredModels;
+        if (this.state.modelsBackendId) this.modelCatalogsByBackend?.set(this.state.modelsBackendId, filteredModels);
         this.state.modelsVersion += 1;
 
         if (this.modelPicker) {
@@ -2521,6 +2619,7 @@ class ChatApp {
         // This cache is display-only: request-time selection continues to use
         // state.models after the active backend's live catalog has loaded.
         this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(this.getCurrentSession());
+        void this.refreshModelsForSessionBackend();
 
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
@@ -2971,7 +3070,7 @@ class ChatApp {
         if (payload.sharedAccess?.token) {
             const backendId = payload.sharedAccess.backendId ||
                 payload.session?.inferenceBackend ||
-                this.inferenceService.getDefaultBackendId();
+                this.inferenceService.getLegacyBackendId(payload.session);
             return { ...payload.sharedAccess, backendId };
         }
         if (payload.sharedApiKey?.key) {
@@ -2992,7 +3091,7 @@ class ChatApp {
         // No access data to verify
         if (!sharedAccess?.token) return null;
 
-        const backendId = sharedAccess.backendId || this.inferenceService.getDefaultBackendId();
+        const backendId = sharedAccess.backendId || this.inferenceService.getLegacyBackendId();
         const backend = this.inferenceService.getBackend(backendId);
         const verifier = backend?.verification;
 
@@ -3121,7 +3220,7 @@ class ChatApp {
             existingSession.title = payload.session.title || existingSession.title;
             existingSession.model = payload.session.model;
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
-            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || this.inferenceService.getDefaultBackendId();
+            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || this.inferenceService.getLegacyBackendId(payload.session);
             existingSession.responseMode = normalizeResponseMode(payload.session.responseMode);
             existingSession.councilConfig = normalizeCouncilConfig(payload.session.councilConfig, existingSession.model);
             existingSession.updatedAt = Date.now();
@@ -3133,7 +3232,7 @@ class ChatApp {
             // Apply the already-resolved shared access if present.
             if (sharedAccess?.token) {
                 if (verifiedAccess) {
-                    const backendId = verifiedAccess.backendId || this.inferenceService.getDefaultBackendId();
+                    const backendId = verifiedAccess.backendId || this.inferenceService.getLegacyBackendId();
                     const sessionAccess = this.inferenceService.sharedAccessToSessionAccess(backendId, verifiedAccess);
                     existingSession.inferenceBackend = backendId;
                     if (sessionAccess) {
@@ -3795,14 +3894,25 @@ class ChatApp {
     /**
      * Initialize the verifier service for station verification
      */
-    async initVerifier() {
-        const verifier = this.inferenceService.getVerificationAdapter();
+    async initVerifier(session) {
+        if (session === undefined && this.inferenceService.getBackends) {
+            // A paid new-chat default must not skip cached verifier trust for
+            // ticket sessions restored later during this same startup.
+            for (const backend of this.inferenceService.getBackends()) {
+                await this.initVerifier({ inferenceBackend: backend.id });
+            }
+            return;
+        }
+        const verifier = this.inferenceService.getVerificationAdapter(session);
         if (!verifier?.supports) {
             return;
         }
+        this.initializedVerifiers ||= new Set();
+        if (this.initializedVerifiers.has(verifier)) return;
 
         // Initialize verifier (loads cached broadcast data)
         await verifier.init();
+        this.initializedVerifiers.add(verifier);
 
         // Set up banned warning callback - show warning and clear API key when station gets banned
         verifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
@@ -3846,6 +3956,11 @@ class ChatApp {
     }
 
     async loadModels() {
+        const session = this.getCurrentSession();
+        const sessionId = this.state.currentSessionId;
+        const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
+        const request = {};
+        this.modelsLoadRequest = request;
         this.state.modelsLoading = true;
 
         // Tag model fetches with current session if available
@@ -3854,14 +3969,45 @@ class ChatApp {
         }
 
         try {
-            const fetchedModels = await this.inferenceService.fetchModels(this.getCurrentSession());
-            this.state.models = this.filterDisabledModels(fetchedModels);
+            const fetchedModels = await this.inferenceService.fetchModels(session);
+            const models = this.filterDisabledModels(fetchedModels, session);
+            this.modelCatalogsByBackend ||= new Map();
+            this.modelCatalogsByBackend.set(backendId, models);
+            const selectedSession = this.getCurrentSession();
+            if (this.modelsLoadRequest !== request || this.state.currentSessionId !== sessionId
+                || (selectedSession?.inferenceBackend || this.inferenceService.getDefaultBackendId()) !== backendId) return;
+            this.state.models = models;
+            this.state.modelsBackendId = backendId;
         } catch (error) {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
+        } finally {
+            if (this.modelsLoadRequest === request) {
+                this.state.modelsVersion += 1;
+                this.state.modelsLoading = false;
+            }
         }
+    }
+
+    async refreshModelsForSessionBackend({ force = false } = {}) {
+        if (!this.inferenceService?.fetchModels || !this.inferenceService?.getDefaultBackendId) return;
+        const session = this.getCurrentSession();
+        const sessionId = session?.id || null;
+        const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
+        if (!force && this.state.modelsBackendId === backendId) return;
+        // Replace the previous backend's available models synchronously, before
+        // opening the composer or picker for the newly selected session.
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
+        this.modelCatalogsByBackend ||= new Map();
+        if (this.state.modelsBackendId) this.modelCatalogsByBackend.set(this.state.modelsBackendId, this.state.models);
+        this.state.models = this.modelCatalogsByBackend.get(backendId)
+            || this.filterDisabledModels(this.cachedModelDisplayMetadata || [], session);
+        this.state.modelsBackendId = backendId;
         this.state.modelsVersion += 1;
-        this.state.modelsLoading = false;
+        await this.loadModels();
+        if (this.state.currentSessionId !== sessionId || this.state.modelsBackendId !== backendId) return;
+        this.renderCurrentModel();
+        this.modelPicker?.renderModels?.();
     }
 
     /**
@@ -3888,7 +4034,7 @@ class ChatApp {
             }
 
             if (!session.inferenceBackend) {
-                session.inferenceBackend = this.inferenceService.getDefaultBackendId();
+                this.inferenceService.ensureSessionBackend(session);
                 needsSave = true;
             }
 
@@ -3962,10 +4108,10 @@ class ChatApp {
      * @param {string|null} modelIdOrName
      * @returns {string|null}
      */
-    normalizeModelName(modelIdOrName) {
+    normalizeModelName(modelIdOrName, session = this.getCurrentSession()) {
         return normalizeModelNameValue(modelIdOrName, {
             getStandardizedModelDisplayName,
-            getDisplayName: (modelId, fallback) => this.inferenceService.getDisplayName(modelId, fallback, this.getCurrentSession())
+            getDisplayName: (modelId, fallback) => this.inferenceService.getDisplayName(modelId, fallback, session)
         });
     }
 
@@ -4011,6 +4157,7 @@ class ChatApp {
      */
     async createSession(title = 'New Chat', options = {}) {
         const navigationGeneration = this.sessionNavigationGeneration;
+        const backendId = options.inferenceBackend || this.inferenceService.getDefaultBackendId();
         if (!await this.ensureDatabaseReady()) {
             return null;
         }
@@ -4045,7 +4192,7 @@ class ChatApp {
             model: modelNameForNewSession,
             responseMode: usePendingCouncilMode ? RESPONSE_MODE_COUNCIL : RESPONSE_MODE_SINGLE,
             councilConfig: pendingCouncilConfig || buildDefaultCouncilConfig(modelNameForNewSession),
-            inferenceBackend: this.inferenceService.getDefaultBackendId(),
+            inferenceBackend: backendId,
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
@@ -4140,6 +4287,7 @@ class ChatApp {
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
+        void this.refreshModelsForSessionBackend();
         if (session) {
             this.chatInput.updateSearchToggleUI();
         }
@@ -4510,12 +4658,16 @@ class ChatApp {
     async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
         modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
-
+        let models = this.getModelsForSession(session);
         await ensureModelTiersReady({ signal });
 
-        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
+        if (models.length === 0) {
             try {
-                await this.loadModels();
+                const fetchedModels = await this.inferenceService.fetchModels(session);
+                this.modelCatalogsByBackend ||= new Map();
+                models = this.filterDisabledModels(fetchedModels, session);
+                this.modelCatalogsByBackend.set(session.inferenceBackend, models);
+                if (!this.state.modelsBackendId || this.state.modelsBackendId === session.inferenceBackend) this.state.models = models;
             } catch (error) {
                 console.warn('Unable to load models for ticket preflight:', error);
                 return { tickets: 0, label: 'the selected model' };
@@ -4556,11 +4708,11 @@ class ChatApp {
             return { tickets: 0, label: session.model || 'the selected model' };
         }
 
-        const modelName = this.normalizeModelName(requestedModelName || session.model)
+        const modelName = this.normalizeModelName(requestedModelName || session.model, session)
             || requestedModelName || session.model
             || this.inferenceService.getDefaultModelName(session);
-        const modelEntry = this.state.models.find(model => model.name === modelName)
-            || this.state.models.find(model => model.id === modelName)
+        const modelEntry = models.find(model => model.name === modelName)
+            || models.find(model => model.id === modelName)
             || this.getFallbackModelEntry(session);
 
         return {
@@ -4570,13 +4722,13 @@ class ChatApp {
     }
 
     async preflightTurnTicketBudget(session, content, options = {}) {
-        if (!this.features.tickets) {
+        if (!this.usesTicketAccess(session)) {
             // An alternate access runtime must authorize its own path. Never
             // fabricate ticket balances or silently fall back to ticket access.
             if (typeof this.runtime.checkCanSend !== 'function') {
                 throw new Error('This chat access integration is not configured.');
             }
-            return this.runtime.checkCanSend({ sessionId: session?.id, signal: options.signal });
+            return this.runtime.checkCanSend({ sessionId: session?.id, session, signal: options.signal });
         }
         const memoryTickets = (options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
             && (options.memoryMode ?? this.memoryMode)
@@ -4773,10 +4925,13 @@ class ChatApp {
     async handleNewChatRequest(options = {}) {
         this.sessionNavigationGeneration += 1;
         const previousSession = this.getCurrentSession();
+        const shouldCancel = typeof this.runtime.shouldCancelOnNewChat === 'function'
+            ? this.runtime.shouldCancelOnNewChat({ session: previousSession }) === true
+            : Boolean(this.runtime.onNewChat);
         // Notify synchronously so the integration establishes its access
         // barrier before the next Send. Background work never delays typing.
         this.runtime.onNewChat?.({ sessionId: previousSession?.id || null });
-        if (this.runtime.onNewChat) {
+        if (shouldCancel) {
             this.sendSubmissionsInFlight.get('__new_chat__')?.controller.abort();
             if (previousSession?.id) void this.cancelSessionWork(previousSession.id).catch(error => {
                 this.showToast(error.message, 'error');
@@ -4841,6 +4996,7 @@ class ChatApp {
         }
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        void this.refreshModelsForSessionBackend();
         this.updateUrlWithSession(null);
         // Reset before the first asynchronous boundary. Later settings reads
         // must not erase a draft typed into the immediately available composer.
@@ -4913,15 +5069,21 @@ class ChatApp {
         const { titleSource = 'manual', titleGenerationPending = false, titleSearchText = null } = options;
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
-            session.title = title;
-            session.titleSource = titleSource;
-            session.titleGenerationPending = Boolean(titleGenerationPending);
-            if (typeof titleSearchText === 'string') {
-                session.titleSearchText = titleSearchText;
+            const reservation = this.beginSessionMutation(sessionId);
+            if (!reservation) { await this.acknowledgeSessionMutationBusy(sessionId); return false; }
+            try {
+                session.title = title;
+                session.titleSource = titleSource;
+                session.titleGenerationPending = Boolean(titleGenerationPending);
+                if (typeof titleSearchText === 'string') {
+                    session.titleSearchText = titleSearchText;
+                }
+                session.updatedAt = Date.now();
+                await chatDB.saveSession(session);
+                this.renderSessions();
+            } finally {
+                this.endSessionMutation(sessionId, reservation);
             }
-            session.updatedAt = Date.now();
-            await chatDB.saveSession(session);
-            this.renderSessions();
         }
     }
 
@@ -5000,15 +5162,17 @@ class ChatApp {
     }
 
     async generateSessionTitleIfNeeded(sessionId, userMessageId, options = {}) {
-        if (this.deletingSessionIds.has(sessionId)) return;
+        if (this.isSessionDeleted(sessionId) || this.isSessionBackendChanging(sessionId)) return;
         const previous = this.titleGenerationJobs.get(sessionId);
         if (previous) return previous.promise;
         const job = { controller: new AbortController(), promise: null };
         this.titleGenerationJobs.set(sessionId, job);
+        this.updateInputState();
         job.promise = this.generateSessionTitleForJob(sessionId, userMessageId, {
             ...options, signal: job.controller.signal
         }).finally(() => {
             if (this.titleGenerationJobs.get(sessionId) === job) this.titleGenerationJobs.delete(sessionId);
+            this.updateInputState();
         });
         return job.promise;
     }
@@ -6468,7 +6632,7 @@ class ChatApp {
             let modelNameToUse = retryModelName;
 
             let selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
+                ? this.getModelsForSession(session).find(m => m.name === modelNameToUse)
                 : null;
 
             if (!selectedModelEntry) {
@@ -6938,6 +7102,8 @@ class ChatApp {
         if (!rawContent.trim() && !files.length) return;
         const submission = {
             sessionId,
+            inferenceBackend: this.state.sessionsById.get(sessionId)?.inferenceBackend
+                || this.inferenceService?.getDefaultBackendId?.(),
             generation: this.sessionNavigationGeneration,
             controller: new AbortController(),
             rawContent,
@@ -6986,6 +7152,7 @@ class ChatApp {
             if (submission.generation !== this.sessionNavigationGeneration) return;
             const created = await this.createSession('New Chat', {
                 model: submission.model,
+                inferenceBackend: submission.inferenceBackend,
                 signal: submission.controller.signal,
                 onCreated: session => { submission.sessionId = session.id; }
             });
@@ -7207,14 +7374,14 @@ class ChatApp {
                 window.networkLogger.setCurrentSession(session.id);
             }
 
-            let modelNameToUse = this.normalizeModelName(submission.model || session.model);
+            let modelNameToUse = this.normalizeModelName(submission.model || session.model, session);
             if (!submission.model && modelNameToUse !== session.model) {
                 session.model = modelNameToUse;
                 await chatDB.saveSession(session);
             }
 
             let selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
+                ? this.getModelsForSession(session).find(m => m.name === modelNameToUse)
                 : null;
 
             if (!selectedModelEntry) {
@@ -7680,10 +7847,10 @@ class ChatApp {
         return isGpt && isInstant;
     }
 
-    getQuickAskPinnedInstantModel(defaults = {}) {
+    getQuickAskPinnedInstantModel(defaults = {}, session = this.getCurrentSession()) {
         const pinnedModelIds = Array.isArray(defaults.pinnedModels) ? defaults.pinnedModels : [];
         for (const modelId of pinnedModelIds) {
-            const model = this.state.models.find(entry => entry.id === modelId);
+            const model = this.getModelsForSession(session).find(entry => entry.id === modelId);
             if (!model) continue;
             const modelName = this.normalizeModelName(model.name || model.id) || model.name || model.id;
             const modelNameFromId = this.normalizeModelName(modelId) || modelName;
@@ -7699,9 +7866,9 @@ class ChatApp {
     }
 
     async resolveModelForQuickAsk(session) {
-        const defaults = this.modelConfiguration.getDefaultModelConfig();
+        const defaults = this.modelConfiguration.getDefaultModelConfig(session);
         const defaultModelId = defaults.defaultModelId || this.inferenceService.getDefaultModelId(session);
-        const instantModel = this.getQuickAskPinnedInstantModel(defaults);
+        const instantModel = this.getQuickAskPinnedInstantModel(defaults, session);
         let modelNameToUse = instantModel?.modelName ||
             this.normalizeModelName(defaults.defaultModelName || defaultModelId) ||
             defaults.defaultModelName ||
@@ -7709,12 +7876,12 @@ class ChatApp {
 
         let selectedModelEntry = instantModel?.model ||
             (defaultModelId
-                ? this.state.models.find(m => m.id === defaultModelId)
+                ? this.getModelsForSession(session).find(m => m.id === defaultModelId)
                 : null);
 
         if (!selectedModelEntry) {
             selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
+                ? this.getModelsForSession(session).find(m => m.name === modelNameToUse)
                 : null;
         }
 
@@ -7884,17 +8051,20 @@ class ChatApp {
 
     async inlineQuickAsk(selectionText, options = {}) {
         const sessionId = this.state.currentSessionId;
-        if (!sessionId || this.deletingSessionIds.has(sessionId)) throw new Error('This chat is unavailable.');
+        if (!sessionId || this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+        if (this.exclusiveSessionMutationOwners.has(sessionId)) throw new Error('Wait for the current chat action to finish before using Quick Ask.');
         const job = { controller: options.abortController || new AbortController() };
         let jobs = this.quickAskJobs.get(sessionId);
         if (!jobs) this.quickAskJobs.set(sessionId, jobs = new Set());
         jobs.add(job);
+        this.updateInputState();
         try {
             return await this.performInlineQuickAsk(selectionText, { ...options,
                 abortController: job.controller, sessionId });
         } finally {
             jobs.delete(job);
             if (!jobs.size) this.quickAskJobs.delete(sessionId);
+            this.updateInputState();
         }
     }
 
@@ -9094,23 +9264,29 @@ class ChatApp {
 
     async toggleSessionStar(sessionId) {
         if (!sessionId) return;
-        await this.ensureSessionLoaded(sessionId);
-        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
-        if (!session) return;
+        const reservation = this.beginSessionMutation(sessionId);
+        if (!reservation) { await this.acknowledgeSessionMutationBusy(sessionId); return false; }
+        try {
+            await this.ensureSessionLoaded(sessionId);
+            const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+            if (!session) return;
 
-        const nextStarred = !session.starred;
-        session.starred = nextStarred;
-        if (nextStarred) {
-            session.starredAt = Date.now();
-        } else {
-            delete session.starredAt;
-        }
+            const nextStarred = !session.starred;
+            session.starred = nextStarred;
+            if (nextStarred) {
+                session.starredAt = Date.now();
+            } else {
+                delete session.starredAt;
+            }
 
-        await chatDB.saveSession(session);
-        this.resetSessionSearchResults();
-        this.renderSessions();
-        if (this.hasActiveSessionListCriteria()) {
-            void this.updateSessionSearchResults();
+            await chatDB.saveSession(session);
+            this.resetSessionSearchResults();
+            this.renderSessions();
+            if (this.hasActiveSessionListCriteria()) {
+                void this.updateSessionSearchResults();
+            }
+        } finally {
+            this.endSessionMutation(sessionId, reservation);
         }
     }
 
@@ -10481,6 +10657,7 @@ class ChatApp {
                 this.elements.messageInput.placeholder = "Ask anything";
             }
         }
+        this.uiOptions?.presentation?.renderComposer?.(this.getCurrentSession());
     }
 
     async handleFileUpload(files) {
@@ -10756,7 +10933,7 @@ Your API key has been cleared. A new key from a different station will be obtain
     getAccessAcquisitionKey(session, modelNameOverride = null, modelIdOverride = null) {
         const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
         const modelKey = modelIdOverride ||
-            this.normalizeModelName(modelNameOverride || session?.model) ||
+            this.normalizeModelName(modelNameOverride || session?.model, session) ||
             modelNameOverride ||
             session?.model ||
             this.inferenceService.getDefaultModelName(session) ||
@@ -10835,8 +11012,8 @@ Your API key has been cleared. A new key from a different station will be obtain
 
     async acquireAndSetAccess(session, options = {}) {
         this.throwIfAborted(options.signal || null);
-        if (this.features.tickets) await ensureModelTiersReady({ signal: options.signal || null });
-        this.throwIfAborted(options.signal || null);
+        if (this.isSessionDeleted(session.id) || this.isSessionBackendChanging(session.id)) throw this.createCancelledError();
+        const models = this.getModelsForSession(session);
         const key = this.getAccessAcquisitionKey(session, options.modelNameOverride, options.modelIdOverride);
         let entry = this.accessAcquisitionInFlight.get(key);
 
@@ -10851,41 +11028,45 @@ Your API key has been cleared. A new key from a different station will be obtain
                 abortTimer: null,
                 promise: null
             };
-            entry.promise = acquireSessionAccess({
-                acquireAccess: this.runtime.acquireAccess,
-                session,
-                models: this.state.models,
-                reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
-                inferenceService: this.inferenceService,
-                ticketClient,
-                chatDB,
-                getTicketCost,
-                getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
-                modelIdOverride: options.modelIdOverride,
-                modelNameOverride: options.modelNameOverride,
-                signal: controller.signal,
-                ticketsRequiredOverride: options.ticketsRequiredOverride,
-                ticketRequirementLabel: options.ticketRequirementLabel,
-                onTicketUsed: () => {
-                    this.showToast('Ticket already used, trying next available');
-                },
-                onNetworkSession: (sessionId) => {
-                    if (window.networkLogger) {
-                        window.networkLogger.setCurrentSession(sessionId);
+            entry.promise = (async () => {
+                if (this.usesTicketAccess(session)) await ensureModelTiersReady({ signal: controller.signal });
+                this.throwIfAborted(controller.signal);
+                return acquireSessionAccess({
+                    acquireAccess: this.runtime.acquireAccess,
+                    session,
+                    models,
+                    reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
+                    inferenceService: this.inferenceService,
+                    ticketClient,
+                    chatDB,
+                    getTicketCost,
+                    getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
+                    modelIdOverride: options.modelIdOverride,
+                    modelNameOverride: options.modelNameOverride,
+                    signal: controller.signal,
+                    ticketsRequiredOverride: options.ticketsRequiredOverride,
+                    ticketRequirementLabel: options.ticketRequirementLabel,
+                    onTicketUsed: () => {
+                        this.showToast('Ticket already used, trying next available');
+                    },
+                    onNetworkSession: (sessionId) => {
+                        if (window.networkLogger) {
+                            window.networkLogger.setCurrentSession(sessionId);
+                        }
+                    },
+                    onAccessRequestError: (error) => {
+                        console.error('Failed to automatically acquire API access:', error);
+                    },
+                    onVerificationWarning: (...args) => {
+                        console.warn(...args);
+                    },
+                    onSessionChanged: (changedSession) => {
+                        if (this.rightPanel && this.isViewingSession(changedSession.id)) {
+                            this.rightPanel.onSessionChange(changedSession);
+                        }
                     }
-                },
-                onAccessRequestError: (error) => {
-                    console.error('Failed to automatically acquire API access:', error);
-                },
-                onVerificationWarning: (...args) => {
-                    console.warn(...args);
-                },
-                onSessionChanged: (changedSession) => {
-                    if (this.rightPanel && this.isViewingSession(changedSession.id)) {
-                        this.rightPanel.onSessionChange(changedSession);
-                    }
-                }
-            }).finally(() => {
+                });
+            })().finally(() => {
                 if (entry.abortTimer) {
                     clearTimeout(entry.abortTimer);
                     entry.abortTimer = null;
@@ -10893,8 +11074,10 @@ Your API key has been cleared. A new key from a different station will be obtain
                 if (this.accessAcquisitionInFlight.get(key) === entry) {
                     this.accessAcquisitionInFlight.delete(key);
                 }
+                this.updateInputState();
             });
             this.accessAcquisitionInFlight.set(key, entry);
+            this.updateInputState();
         }
 
         return this.waitForAccessAcquisition(entry, options);

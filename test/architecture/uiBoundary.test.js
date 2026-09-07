@@ -1145,7 +1145,7 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'quick ask should resolve the pinned instant model before key acquisition and use it for ticket cost'
     );
     assert.ok(
-        quickAskModelResolverMatch[0].includes('getDefaultModelConfig()') &&
+        quickAskModelResolverMatch[0].includes('getDefaultModelConfig(session)') &&
         appSource.includes('getQuickAskPinnedInstantModel') &&
         appSource.includes('isQuickAskPinnedInstantModel') &&
         appSource.includes("name.includes('instant')") &&

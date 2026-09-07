@@ -75,6 +75,39 @@ test('ordinary OpenRouter requests retain direct provider URL and bearer key', a
     assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, undefined);
 });
 
+test('changing the default never retargets existing sessions or unknown paid backends', async () => {
+    const calls = [];
+    const backends = ['ticket', 'paid'].map(id => ({ id, requestAccess: async () => { calls.push(id); } }));
+    const service = createInferenceService({ backends });
+    const historical = {};
+    service.ensureSessionBackend(historical);
+    service.setDefaultBackendId('paid');
+    const next = { inferenceBackend: service.getDefaultBackendId() };
+    service.ensureSessionBackend(next);
+    assert.equal(historical.inferenceBackend, 'ticket');
+    assert.equal(next.inferenceBackend, 'paid');
+    await service.requestAccess(historical);
+    await service.requestAccess(next);
+    assert.deepEqual(calls, ['ticket', 'paid']);
+    assert.throws(() => service.setDefaultBackendId('unavailable'), /Unknown inference backend/);
+    await assert.rejects(service.requestAccess({ inferenceBackend: 'unavailable' }), /Unknown inference backend/);
+    assert.equal(service.getDefaultBackendId(), 'paid');
+    assert.deepEqual(calls, ['ticket', 'paid']);
+});
+
+test('legacy access ownership is independent of the preferred new-chat backend', () => {
+    const backends = ['ticket', 'paid'].map(id => ({ id, getAccessToken: session => session.apiKey }));
+    const service = createInferenceService({ backends, defaultBackendId: 'paid', legacyBackendId: 'ticket',
+        resolveLegacyBackendId: session => session.paidLease ? 'paid' : null });
+    const legacy = { apiKey: 'old-provider-key' };
+    assert.equal(service.getBackendForSession(legacy).id, 'ticket');
+    assert.equal(legacy.inferenceBackend, 'ticket');
+    service.setDefaultBackendId('ticket');
+    assert.equal(service.getBackendForSession({ paidLease: 'bound' }).id, 'paid');
+    assert.equal(service.getBackendForSession({ inferenceBackend: 'paid' }).id, 'paid');
+    assert.equal(service.getBackendForSession(null).id, 'ticket');
+});
+
 test('title usage computes totals when the provider only reports input and output tokens', async () => {
     const updates = [];
     const api = new OpenRouterAPI({ networkTransport: {
