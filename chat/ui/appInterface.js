@@ -244,6 +244,11 @@ const COMPONENT_APP_KEYS = new Set([
     'refreshExtensionSlot',
     'hasExtensionSlotNode',
     'subscribeExtensionSlot',
+    // Account routing seams: anything AccountModal calls on `this.app` has to
+    // be listed here or the call is silently dropped by the facade.
+    'notifyFirstAccountReady',
+    'notifyLoggedOut',
+    'showSidebar',
     'reasoningEffort',
     'reasoningEnabled',
     'regenerateCouncilLane',
