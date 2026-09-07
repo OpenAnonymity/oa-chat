@@ -6125,13 +6125,10 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
    read. index.html paints the same two lines before any script runs for a
    sign-in hand-off, so the caption is on screen from the first frame and
    the dialog's copy takes over without entering again. */
-.account-unlock-waiting-title,
-
-.account-unlock-waiting-enter {
-    animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
 .account-unlock-waiting-title {
+    margin: 0;
+    max-width: 28rem;
+    color: rgb(255 255 255 / .88);
     font-size: 0.9375rem;
     font-weight: 500;
     line-height: 1.4;
@@ -6139,6 +6136,9 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     overflow-wrap: anywhere;
 }
 
+.account-unlock-waiting-enter {
+    animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
 
 
 @keyframes account-unlock-caption-in {

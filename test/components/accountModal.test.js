@@ -541,6 +541,32 @@ test('first username setup draws only the spinner and a caption saying what the 
     assert.doesNotMatch(retry, /winter-|Your username|Setting up your account|account-unlock-waiting/);
 });
 
+test('once the passkey is confirmed the wait says Unlocking, then the dialog closes into chat', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.escapeHtml = value => String(value ?? '');
+    modal.usernameUnlockReady = true;
+    modal.usernamePasskeyBusy = true;
+    modal.usernameInputValue = 'winter-owl';
+    // While the sheet is up: what comes next.
+    modal.accountState = { username: 'winter-owl', busy: true, action: 'unlock' };
+    assert.match(modal.renderUsernameUnlockUI(), /account-unlock-waiting-title[^>]*>Next, you’ll confirm with a passkey for winter-owl</);
+    // After the assertion, during login + decrypt: what we are doing.
+    modal.accountState = { username: 'winter-owl', busy: true, action: 'unlocking' };
+    const html = modal.renderUsernameUnlockUI();
+    assert.match(html, /account-unlock-waiting-title[^>]*>Unlocking…</);
+    assert.doesNotMatch(html, /Next, you|encrypts your tickets/);
+    // Google keyring: the service marks the same moment as <provider>_key_restoring.
+    modal.usernameUnlockReady = false;
+    modal.usernamePasskeyBusy = false;
+    modal.accountState = { oauthKeyringRequired: true, busy: true, action: 'google_key_restoring', oauthProvider: 'google' };
+    assert.match(modal.renderOAuthUnlockUI(), /account-unlock-waiting-title[^>]*>Unlocking…</);
+    // First-time setup keeps its own line for the registration call.
+    modal.accountState = {};
+    modal.generatedUsername = 'winter-owl';
+    modal.creationStep = 'confirming';
+    assert.match(modal.renderUsernameUnlockUI(), /account-unlock-waiting-title[^>]*>Creating your account</);
+});
+
 test('a returning username unlock shows the same caption as first-time setup while the sheet is up', () => {
     const modal = Object.create(AccountModal.prototype);
     modal.usernameUnlockReady = true;

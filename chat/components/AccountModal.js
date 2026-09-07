@@ -1875,16 +1875,20 @@ class AccountModal {
      * index.html paints before scripts load. It enters once per dialog; if
      * the arrival layer already showed it, it does not enter at all.
      */
-    renderWaitingLayer({ username = '', finishing = false } = {}) {
+    renderWaitingLayer({ username = '', finishing = false, unlocking = false } = {}) {
         const enters = !this.waitingCaptionShown;
         if (enters) {
             this.waitingCaptionShown = true;
             this.captionShownAt = typeof performance !== 'undefined' ? performance.now() : 0;
         }
         const name = String(username || '').trim();
+        // Once the sheet has been confirmed the next line is what we are
+        // doing, not what they are about to do.
         const title = finishing
             ? 'Creating your account'
-            : `Next, you\u2019ll confirm with a passkey${name ? ` for ${this.escapeHtml(name)}` : ''}`;
+            : unlocking
+                ? 'Unlocking\u2026'
+                : `Next, you\u2019ll confirm with a passkey${name ? ` for ${this.escapeHtml(name)}` : ''}`;
         const enterClass = enters ? ' account-unlock-waiting-enter' : '';
         return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
                 <p class="account-unlock-waiting-title${enterClass}">${title}</p></div>`;
@@ -1943,8 +1947,9 @@ class AccountModal {
         // Every untitled wait shows the same caption behind the sheet; the
         // account's name when it has one (a Google account has none yet).
         const waitingName = username || this.usernameInputValue || state.username || '';
+        const unlocking = !isSetup && (state.action === 'unlocking' || /_key_restoring$/.test(String(state.action || '')));
         const waitingLayer = !title && busy
-            ? this.renderWaitingLayer({ username: waitingName, finishing })
+            ? this.renderWaitingLayer({ username: waitingName, finishing, unlocking })
             : '';
 
         return `

@@ -2522,6 +2522,8 @@ class AccountService {
             if (!assertion) {
                 throw new Error('Passkey request was cancelled');
             }
+            // The sheet is done; what remains is ours (login, decrypt).
+            this.setState({ action: 'unlocking' });
 
             const prfBytes = getPrfOutput(assertion);
             if (!prfBytes) {
