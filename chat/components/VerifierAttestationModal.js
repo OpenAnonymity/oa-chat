@@ -851,7 +851,7 @@ export class VerifierAttestationModal {
                     An Ephemeral Access Key is a disposable credential for one chat session, like a prepaid SIM card. It is short-lived and credit-capped, so it cannot be reused broadly.
                 </p>
                 <p class="text-[11px] text-muted-foreground leading-relaxed">
-                    Your device redeems tickets to get this key, then uses it over HTTPS for inference. OA treats both short-lived provider tokens and equivalent short-lived enclave sessions as Ephemeral Access Keys, and each session-specific key limits blast radius if one leaks.
+                    Your device obtains this key through the selected payment method, then uses it over HTTPS for inference. OA treats both short-lived provider tokens and equivalent short-lived enclave sessions as Ephemeral Access Keys, and each session-specific key limits blast radius if one leaks.
                 </p>
             </div>
 
@@ -861,7 +861,7 @@ export class VerifierAttestationModal {
                     After an Ephemeral Access Key is issued, the app runs these checks automatically:
                 </p>
                 <ul class="list-disc list-inside space-y-0.5 text-[11px] text-muted-foreground">
-                    <li><span class="text-foreground font-medium">Key Issuance Proof Chain:</span> shows signatures and expiry proving the key came from OA's ticket flow.</li>
+                    <li><span class="text-foreground font-medium">Key Issuance Proof Chain:</span> shows available signatures and expiry information used to check the key's issuing station.</li>
                     <li><span class="text-foreground font-medium">Code Auditability:</span> links the verifier image/code so you can inspect what it should run.</li>
                     <li><span class="text-foreground font-medium">Hardware Attestation:</span> proves the verifier runtime identity from confidential hardware.</li>
                     <li><span class="text-foreground font-medium">JWT + Policy Verification:</span> validates the attestation signature and measured runtime hash.</li>
@@ -1168,8 +1168,8 @@ export class VerifierAttestationModal {
             : {
                 localLoopbackBypass: false,
                 summaryTone: 'success',
-                summaryTitle: 'Key issuance chain verified',
-                summaryBody: 'This flow attests the verifier runtime, checks ownership lineage, and binds issued ephemeral keys to signed station identity.',
+                summaryTitle: 'Key issuance verification',
+                summaryBody: 'These checks use runtime attestation, ownership records, and signatures to examine an ephemeral key’s issuing station. The available evidence is shown above.',
                 sectionIntro: 'Expand each item to inspect live evidence (attestation fields, broadcast snapshot, signed payload details, and local verification inputs).'
             };
     }
@@ -1345,7 +1345,7 @@ export class VerifierAttestationModal {
                 number: 2,
                 title: 'Verifier checks key ownership',
                 description: "The verifier validates the submitted key against the station's provider account.",
-                proves: 'The issued key is confirmed as station-owned, which blocks shadow-account key issuance.',
+                proves: 'A successful ownership check confirms that the issued key belongs to the station, helping detect shadow-account issuance.',
                 tone: 'success',
                 evidence: ownershipEvidence,
                 showLiveEvidence: hasOwnershipLiveEvidence,
@@ -1367,9 +1367,9 @@ export class VerifierAttestationModal {
             },
             {
                 number: 3,
-                title: 'Issued key response is double-signed',
-                description: 'The key payload carries both station and org Ed25519 signatures.',
-                proves: 'Tampering is detectable because signatures bind key, station identity, and expiry together.',
+                title: 'Key response signature checks',
+                description: 'Checks whether the key payload carries both station and org Ed25519 signatures.',
+                proves: 'Valid signatures bind the key, station identity, and expiry together so tampering can be detected.',
                 tone: 'success',
                 evidence: signatureEvidence,
                 showLiveEvidence: hasSignatureLiveEvidence,
