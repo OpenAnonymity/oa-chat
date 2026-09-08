@@ -942,6 +942,9 @@ class OpenRouterAPI {
                 if (content) {
                     hasReceivedFirstToken = true;
                     accumulatedContent += content;
+                    // Reasoning precedes content: hand over any buffered tail
+                    // first so no thinking lands after the answer has begun.
+                    flushReasoningBuffer();
                     onChunk(content);
 
                     // Add reasoning tokens to content tokens for cumulative display

@@ -19,6 +19,9 @@ export default class ChatArea {
         this.app = app;
         // Buffer for debounced reasoning updates during streaming
         this.reasoningBuffer = { content: '', timeout: null, messageId: null };
+        // Reasoning ids whose trace was settled when the answer began: late
+        // reasoning flushes for them are ignored so the panel stays settled.
+        this.settledReasoningIds = new Set();
         this.councilReasoningStreams = new Map();
         // Typewriter state for gradual content reveal
         this.typewriter = {
@@ -2298,6 +2301,7 @@ export default class ChatArea {
 
     updateCouncilLaneReasoning(messageId, laneId, reasoning) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        if (this.settledReasoningIds.has(reasoningId)) return;
         this.ensureCouncilLaneReasoningTrace(messageId, laneId);
         const state = this.getCouncilReasoningStreamState(reasoningId);
         state.content = reasoning || '';
@@ -2436,6 +2440,12 @@ export default class ChatArea {
         this.updateReasoningSubtitleToDuration(reasoningId, reasoningDuration);
     }
 
+    /** Same as settleReasoningDisplay, for one council lane. */
+    settleCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
+        this.settledReasoningIds.add(this.getCouncilLaneReasoningId(messageId, laneId));
+        this.finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration);
+    }
+
     finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
         const state = this.councilReasoningStreams.get(reasoningId);
@@ -2492,6 +2502,7 @@ export default class ChatArea {
      * @param {string} reasoning - The reasoning content
      */
     updateStreamingReasoning(messageId, reasoning) {
+        if (this.settledReasoningIds.has(messageId)) return;
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -2810,6 +2821,20 @@ export default class ChatArea {
     }
 
     /**
+     * The first content chunk proves the model is done thinking. Settle the
+     * trace right then: show all of it, drop the "Thinking..." indicator and
+     * put the duration in the header. Reasoning chunks that trickle in after
+     * this (debounce tails) are ignored for the message.
+     * @param {string} messageId - The message ID
+     * @param {string} reasoning - The full reasoning content
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleReasoningDisplay(messageId, reasoning, reasoningDuration) {
+        this.settledReasoningIds.add(messageId);
+        this.finalizeReasoningDisplay(messageId, reasoning, reasoningDuration);
+    }
+
+    /**
      * Updates the reasoning subtitle to show duration when thinking completes.
      * Called when output starts streaming after reasoning finishes.
      * @param {string} messageId - The message ID
@@ -3085,6 +3110,11 @@ export default class ChatArea {
      * @param {boolean} options.forceFullRender - Rebuild all message chrome even if reasoning is finalized
      */
     async finalizeStreamingMessage(message, options = {}) {
+        if (message?.id) {
+            for (const id of this.settledReasoningIds) {
+                if (id === message.id || id.startsWith(`${message.id}-`)) this.settledReasoningIds.delete(id);
+            }
+        }
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
 

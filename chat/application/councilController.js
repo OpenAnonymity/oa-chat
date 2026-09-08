@@ -1444,7 +1444,7 @@ export default class CouncilController {
         const updateReasoningDuration = (duration) => {
             if (!assistantMessage?.id || !laneId) return;
             if (this.app.chatArea && this.app.isViewingSession(session.id)) {
-                this.app.chatArea.updateCouncilLaneReasoningSubtitleToDuration(assistantMessage.id, laneId, duration);
+                this.app.chatArea.settleCouncilLaneReasoning(assistantMessage.id, laneId, reasoning, duration);
             }
         };
 

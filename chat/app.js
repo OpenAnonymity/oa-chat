@@ -6190,6 +6190,7 @@ class ChatApp {
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
                 let reasoningStartTime = null;
+                let reasoningEndTime = null;
 
                 // Stream the response with token tracking
                 const tokenData = await inferenceService.streamCompletion(
@@ -6229,7 +6230,20 @@ class ChatApp {
                         }
 
                         // Handle subsequent chunks
-                        if (chunk) streamedContent += chunk;
+                        if (chunk) {
+                            streamedContent += chunk;
+                            // First content after reasoning: the thinking is over, settle its trace.
+                            if (!reasoningEndTime && reasoningStartTime && streamedReasoning.length > 0) {
+                                reasoningEndTime = Date.now();
+                                if (this.chatArea && this.isViewingSession(session.id)) {
+                                    this.chatArea.settleReasoningDisplay(
+                                        streamingMessageId,
+                                        streamedReasoning,
+                                        reasoningEndTime - reasoningStartTime
+                                    );
+                                }
+                            }
+                        }
 
                         // Handle image data
                         if (imageData && imageData.images) {
@@ -6320,8 +6334,7 @@ class ChatApp {
 
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
-                    const reasoningEndTime = Date.now();
-                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                    streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
                 }
 
                 await chatDB.saveMessage(streamingMessage);
@@ -6905,10 +6918,11 @@ class ChatApp {
                                     reasoningEndTime = Date.now();
                                     const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
-                                    // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                    // Settle the trace now: the answer has begun, so the thinking is over.
                                     if (this.chatArea && this.isViewingSession(session.id)) {
-                                        this.chatArea.updateReasoningSubtitleToDuration(
+                                        this.chatArea.settleReasoningDisplay(
                                             streamingMessageId,
+                                            streamedReasoning,
                                             reasoningDuration
                                         );
                                     }
@@ -6942,10 +6956,11 @@ class ChatApp {
                                 reasoningEndTime = Date.now();
                                 const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
-                                // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                // Settle the trace now: the answer has begun, so the thinking is over.
                                 if (this.chatArea && this.isViewingSession(session.id)) {
-                                    this.chatArea.updateReasoningSubtitleToDuration(
+                                    this.chatArea.settleReasoningDisplay(
                                         streamingMessageId,
+                                        streamedReasoning,
                                         reasoningDuration
                                     );
                                 }
