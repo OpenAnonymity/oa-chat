@@ -18,6 +18,7 @@ import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
+import { paragraphBreakBefore } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
 const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
@@ -601,6 +602,12 @@ class OpenRouterAPI {
         let accumulatedContent = '';
         let accumulatedReasoning = '';
         let hasReceivedFirstToken = false;
+        // Which stream the last delta belonged to. When a model interleaves
+        // (think, answer a line, call a tool, think again, answer), each
+        // resumed segment starts on a new paragraph, so a heading that
+        // follows a sentence is still a heading and two thoughts do not run
+        // together as one.
+        let lastDeltaKind = null;
         let citations = []; // Track citations for web search results
         const annotationsMap = new Map(); // Track annotations with deduplication by URL
         let estimatedReasoningTokens = 0; // Track reasoning tokens for cumulative display
@@ -862,12 +869,16 @@ class OpenRouterAPI {
                     parsed.reasoning_delta ||
                     (parsed.choices?.[0]?.delta?.reasoning)) {
 
-                    const reasoningContent = parsed.delta ||
+                    let reasoningContent = parsed.delta ||
                                            parsed.reasoning_delta ||
                                            parsed.choices?.[0]?.delta?.reasoning || '';
 
                     if (reasoningContent && onReasoningChunk) {
                         hasReceivedFirstToken = true;
+                        if (lastDeltaKind === 'content') {
+                            reasoningContent = paragraphBreakBefore(reasoningContent, accumulatedReasoning);
+                        }
+                        lastDeltaKind = 'reasoning';
                         accumulatedReasoning += reasoningContent;
 
                         // Buffer reasoning chunks to reduce UI updates
@@ -937,10 +948,14 @@ class OpenRouterAPI {
                 }
 
                 const delta = parsed.choices?.[0]?.delta;
-                const content = delta?.content;
+                let content = delta?.content;
 
                 if (content) {
                     hasReceivedFirstToken = true;
+                    if (lastDeltaKind === 'reasoning') {
+                        content = paragraphBreakBefore(content, accumulatedContent);
+                    }
+                    lastDeltaKind = 'content';
                     accumulatedContent += content;
                     // Reasoning precedes content: hand over any buffered tail
                     // first so no thinking lands after the answer has begun.
