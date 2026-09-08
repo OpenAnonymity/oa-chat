@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// The build copies the test tree to a temp directory before running it, so
+// resolve from the working directory (the repo root), like the other
+// source-reading tests, never from this file's own location.
+const root = process.cwd();
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 function settingsPanel(html) {
