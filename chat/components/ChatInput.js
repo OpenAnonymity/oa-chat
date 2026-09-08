@@ -1616,14 +1616,14 @@ export default class ChatInput {
         if (supported && hint.dataset.featureUnavailable === 'true') {
             hint.innerHTML = this.scrubberHintHtml;
         } else if (!supported && hint.dataset.featureUnavailable !== 'true') {
-            hint.textContent = 'Scrubber needs Tickets';
+            hint.textContent = '';
         }
         hint.dataset.featureUnavailable = String(!supported);
-        hint.title = supported ? '' : this.getFeatureUnavailableReason('scrubber');
+        hint.title = '';
         const len = (input.value || '').length;
         // Hide hint completely after scrubbing (when tooltip can show)
         const hasPending = this.app.scrubberPending?.redacted === input.value;
-        if (hasPending) {
+        if (!supported || hasPending) {
             hint.classList.add('hint-hidden');
             hint.classList.remove('faded');
             input.classList.remove('hint-visible');
