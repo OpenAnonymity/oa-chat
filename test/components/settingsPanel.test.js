@@ -90,7 +90,9 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
     assert.match(dialog, /<h2 id="settings-dialog-title" class="account-dialog-title">Account<\/h2>/);
     assert.match(dialog, /<button id="close-settings-dialog"[^>]*aria-label="Close account"/);
     const titles = [...dialog.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
-    assert.deepEqual(titles, ['Data controls', 'Appearance', 'Account']);
+    // The last section carries no title: the dialog is already called Account.
+    assert.deepEqual(titles, ['Data controls', 'Appearance']);
+    assert.match(dialog, /<section class="settings-section" aria-label="Log out or delete">/);
     const labels = [...dialog.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
         'Chat history', 'ChatGPT',

@@ -8298,28 +8298,48 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .composer-settings-actions:not(:has(> :not([hidden]))) { display: none; }
 .settings-panel .settings-section:has(+ .composer-settings-actions:not(:has(> :not([hidden])))) { border-bottom: 0; }
 
-/* The Settings dialog: the panel's rows and controls in a centred card,
-   the same frame as the Log in dialog. */
+/* The Account dialog: the gear's row grammar, set at the Billing dialog's
+   scale (it sits one menu row away): 35rem card, 15px rows and section
+   titles, 36px controls. The gear keeps its compact sizes. */
 .settings-dialog {
+    --settings-row-h: 2.5rem;
+    --settings-control-h: 2.25rem;
     width: 100%;
-    max-width: 26rem;
+    max-width: 35rem;
     background: hsl(var(--color-card));
     border-radius: 1.5rem;
-    padding: 0.5rem 0 0.25rem;
+    padding: 0.5rem 0 0.375rem;
     max-height: calc(100dvh - 2rem);
     overflow-y: auto;
+    font-size: 0.9375rem;
 }
 .settings-dialog-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 1rem 1.125rem 0.5rem;
+    padding: 1.125rem 1.5rem 0.625rem;
 }
 .settings-dialog-head > h2 { margin: 0; }
 .settings-dialog-head > button { display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; }
-.settings-dialog .settings-section { padding: 0.75rem 1.5rem 0.875rem; }
-.settings-dialog .settings-row { min-height: 2.25rem; }
+.settings-dialog .settings-section { padding: 1rem 1.75rem 1.125rem; }
+.settings-dialog .settings-section-title {
+    margin: 0 0 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: hsl(var(--color-foreground));
+}
+.settings-dialog .settings-row { min-height: var(--settings-row-h); gap: 1rem; }
+.settings-dialog .settings-row-label { font-size: 0.9375rem; }
+.settings-dialog .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+.settings-dialog .settings-segmented { border-radius: 0.625rem; }
+.settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.875rem; padding: 0 0.875rem; }
+.settings-dialog .settings-segmented .settings-segment-icon { width: 2.5rem; }
+.settings-dialog .settings-segmented .settings-segment-icon svg { width: 1.125rem; height: 1.125rem; }
+.settings-dialog .settings-segmented .settings-segment-icon span { font-size: 0.9375rem; }
+.settings-dialog .settings-link-icon { width: 1.125rem; height: 1.125rem; }
 /* The Delete account confirmation sits over the Settings card, same backdrop. */
 .settings-confirm-layer {
     position: absolute;
