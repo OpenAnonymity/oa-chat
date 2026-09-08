@@ -2654,7 +2654,9 @@ export default class ChatInput {
         }
 
         if (councilReviewModelRow) {
-            councilReviewModelRow.classList.toggle('hidden', !isCouncilReviewEnabled);
+            // The row is always there, dimmed while review is off: turning the
+            // switch on must not grow the panel under the pointer.
+            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled);
         }
 
         if (councilReviewModelSelect) {

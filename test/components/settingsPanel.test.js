@@ -58,6 +58,11 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
         assert.match(panel, new RegExp(`id="${id}"`), id);
     }
     assert.equal((panel.match(/class="switch-toggle settings-switch switch-(?:active|inactive)"/g) || []).length, 4);
+    // The Council model row is always in the panel, dimmed while review is off,
+    // so flipping the switch never grows the panel under the pointer.
+    assert.match(panel, /<div id="council-review-model-row" class="settings-row is-disabled">/);
+    assert.match(read('chat/components/ChatInput.js'), /councilReviewModelRow\.classList\.toggle\('is-disabled', !isCouncilReviewEnabled\)/);
+    assert.doesNotMatch(read('chat/components/ChatInput.js'), /councilReviewModelRow\.classList\.toggle\('hidden'/);
     for (const effort of ['low', 'medium', 'high', 'xhigh']) {
         assert.match(panel, new RegExp(`class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="${effort}"`), effort);
     }
@@ -66,13 +71,13 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
     assert.match(panel, /<section id="composer-settings-actions" class="settings-section settings-section-foot composer-settings-actions"><\/section>\s*<\/div>\s*<\/div>\s*$/);
 });
 
-test('the Settings dialog holds what is set once: data, appearance, feedback, account actions', () => {
+test('the Account dialog holds what is set once: data, appearance, feedback, account actions', () => {
     const html = read('chat/index.html');
     const dialog = settingsDialog(html);
     assert.match(dialog, /<div id="settings-dialog" class="hidden fixed inset-0 z-50 bg-black\/60 backdrop-blur-sm flex items-center justify-center p-4">/);
     assert.match(dialog, /<div role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" tabindex="-1" class="settings-dialog settings-panel">/);
-    assert.match(dialog, /<h2 id="settings-dialog-title" class="account-dialog-title">Settings<\/h2>/);
-    assert.match(dialog, /<button id="close-settings-dialog"[^>]*aria-label="Close settings"/);
+    assert.match(dialog, /<h2 id="settings-dialog-title" class="account-dialog-title">Account<\/h2>/);
+    assert.match(dialog, /<button id="close-settings-dialog"[^>]*aria-label="Close account"/);
     const titles = [...dialog.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(titles, ['Data controls', 'Appearance', 'Account']);
     const labels = [...dialog.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
@@ -102,7 +107,9 @@ test('the Settings dialog holds what is set once: data, appearance, feedback, ac
     // Reached from the account menu, above Account.
     const menu = html.slice(html.indexOf('id="account-settings-menu"'), html.indexOf('id="account-logout-menu-item"'));
     assert.ok(menu.indexOf('id="account-preferences-menu-item"') < menu.indexOf('id="account-security-menu-item"'));
-    assert.match(menu, /id="account-preferences-menu-item"[^>]*role="menuitem"[\s\S]*?<span>Settings<\/span>/);
+    assert.match(menu, /id="account-preferences-menu-item"[^>]*role="menuitem"[\s\S]*?<span>Account<\/span>/);
+    // One gear on the page: the composer's. The menu row wears the person glyph.
+    assert.doesNotMatch(menu.slice(0, menu.indexOf('id="account-security-menu-item"')), /M9\.594 3\.94/);
     // Wired: the vanilla UI mounts it and components reach it through the facade.
     assert.match(read('chat/ui/vanilla/VanillaChatUi.js'), /settingsDialog: new SettingsDialog\(componentApp\)/);
     assert.match(read('chat/ui/appInterface.js'), /'settingsDialog',/);

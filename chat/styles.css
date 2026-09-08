@@ -8273,6 +8273,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
 .settings-panel .settings-segmented .settings-segment-icon span { font-size: 0.8125rem; font-weight: 500; }
 .settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
+.settings-panel .settings-row.is-disabled { opacity: 0.55; }
+.settings-panel .settings-row.is-disabled select { cursor: default; }
 
 /* Share feedback: a row that is a link. */
 .settings-link {
