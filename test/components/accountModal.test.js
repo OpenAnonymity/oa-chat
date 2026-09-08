@@ -265,7 +265,21 @@ test('account dialogs share one accent focus ring, close control, dark edges and
     // Rings are keyboard-only: programmatic focus (dialog open, restore after
     // close, model search) must never draw one, whatever :focus-visible says.
     assert.match(css, /:where\(html\[data-keyboard-nav\] :is\(a\[href\], button, input, select, textarea, summary, \[role="button"\], \[tabindex\]:not\(\[tabindex="-1"\]\)\)\):focus-visible\s*\{[^}]*outline: 2px solid hsl\(var\(--color-focus-ring\)\);[^}]*outline-offset: 2px/);
-    assert.match(css, /:where\(html:not\(\[data-keyboard-nav\]\) :is\([^)]*\)\):focus-visible\s*\{[^}]*outline: none/);
+    // The quiet rule is not wrapped in :where: it must beat any component's
+    // own `.x:focus-visible { outline }` so no single control lights up on
+    // programmatic focus when the rest stay quiet.
+    assert.match(css, /\nhtml:not\(\[data-keyboard-nav\]\) :is\([^)]*\):focus-visible\s*\{[^}]*outline: none/);
+    assert.doesNotMatch(css, /:where\(html:not\(\[data-keyboard-nav\]\)/);
+    // Tailwind's box-shadow rings follow the same gate.
+    assert.match(css, /html:not\(\[data-keyboard-nav\]\) \[class\*="focus-visible:ring"\]:focus-visible\s*\{[^}]*--tw-ring-shadow: 0 0 #0000/);
+    // No box-shadow ring anywhere is drawn outside keyboard navigation.
+    for (const line of css.split('\n')) {
+        if (/^[^\s@/][^{]*:focus-visible[^{]*\{/.test(line) && !line.includes('data-keyboard-nav')) {
+            const block = css.slice(css.indexOf(line), css.indexOf('}', css.indexOf(line)));
+            assert.doesNotMatch(block, /box-shadow:\s*0 0 0/, `ungated ring: ${line.trim()}`);
+            assert.doesNotMatch(block, /outline:\s*2px/, `ungated ring: ${line.trim()}`);
+        }
+    }
     assert.doesNotMatch(css, /^:where\(a\[href\]/m);
     for (const selector of ['.account-unlock-close', '.account-unlock-btn', '.account-unlock-input', '.account-login-submit', '.account-menu-item', '.account-compact-row']) {
         const escaped = selector.replace(/[.\-]/g, '\\$&');

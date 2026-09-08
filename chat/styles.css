@@ -128,8 +128,16 @@
     outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 2px;
 }
-:where(html:not([data-keyboard-nav]) :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex])):focus-visible {
+/* The quiet half is deliberately specific: a component's own
+   `.x:focus-visible { outline: ... }` must not light a ring on programmatic
+   focus (re-render focus restore after a click) when nothing else would. */
+html:not([data-keyboard-nav]) :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
     outline: none;
+}
+/* Tailwind ring utilities draw with box-shadow; same keyboard-only rule. */
+html:not([data-keyboard-nav]) [class*="focus-visible:ring"]:focus-visible {
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
 }
 
 /* Global font application */
@@ -236,7 +244,7 @@ code, pre, kbd, .font-mono {
     outline: none;
 }
 
-.in-page-find__button:focus-visible {
+html[data-keyboard-nav] .in-page-find__button:focus-visible {
     box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.3);
 }
 
@@ -6729,7 +6737,7 @@ html[data-keyboard-nav] .account-unlock-input:focus-visible {
     background-color: hsl(var(--color-hover));
 }
 
-.update-toast button:focus-visible {
+html[data-keyboard-nav] .update-toast button:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.5);
 }
@@ -7154,7 +7162,7 @@ html[data-keyboard-nav] .account-login-submit:focus-visible {
     background: hsl(var(--color-hover));
 }
 
-.split-result-icon-btn:focus-visible {
+html[data-keyboard-nav] .split-result-icon-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
@@ -7184,7 +7192,7 @@ html[data-keyboard-nav] .account-login-submit:focus-visible {
     background: hsl(var(--color-accent) / 0.7);
 }
 
-.split-result-share-link:focus-visible {
+html[data-keyboard-nav] .split-result-share-link:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
@@ -7211,7 +7219,7 @@ html[data-keyboard-nav] .account-login-submit:focus-visible {
     background: hsl(var(--color-primary) / 0.12);
 }
 
-.split-result-share-copy-btn:focus-visible {
+html[data-keyboard-nav] .split-result-share-copy-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
