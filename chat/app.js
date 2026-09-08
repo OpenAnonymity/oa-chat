@@ -276,6 +276,7 @@ class ChatApp {
         this.chatInput = null;
         this.modelPicker = null;
         this.memoryEditor = null;
+        this.settingsDialog = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
         this.accessAcquisitionInFlight = new Map(); // backend/session/model -> shared access acquisition
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory

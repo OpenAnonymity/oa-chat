@@ -605,7 +605,9 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(settingsIndex > moreMenuIndex, true);
     assert.equal(settingsIndex > settingsControlIndex, true);
     assert.equal(settingsActionsIndex > settingsIndex, true);
-    assert.equal(settingsActionsIndex > themeToggleIndex, true);
+    // Appearance (theme) lives in the Settings dialog, after the composer.
+    assert.equal(themeToggleIndex > settingsActionsIndex, true);
+    assert.equal(themeToggleIndex > html.indexOf('id="settings-dialog"'), true);
     assert.equal(searchIndex > moreMenuIndex, true);
     assert.equal(searchIndex < modeToggleIndex, true);
     assert.equal(memoryToggleIndex > -1, true);

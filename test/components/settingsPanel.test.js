@@ -25,51 +25,88 @@ test('the composer gear button is unchanged by the settings panel redesign', () 
     assert.ok(html.indexOf('id="settings-btn"') < html.indexOf('id="settings-menu"'));
 });
 
-test('settings panel: five sections, one row grammar, every control the app drives', () => {
+function settingsDialog(html) {
+    const start = html.indexOf('<div id="settings-dialog"');
+    const end = html.indexOf('<template id="settings-delete-account-template">');
+    assert.ok(start > -1 && end > start);
+    return html.slice(start, end);
+}
+
+test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () => {
     const panel = settingsPanel(read('chat/index.html'));
     assert.match(panel, /class="hidden z-\[100\] settings-panel settings-menu-glass" role="group" aria-label="Settings"/);
     const titles = [...panel.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
-    assert.deepEqual(titles, ['Data controls', 'Privacy', 'Memory', 'Tools', 'Appearance']);
+    assert.deepEqual(titles, ['Privacy', 'Memory', 'Tools']);
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
-        'All', 'Chat history', 'ChatGPT',
         'Scrubber model',
-        'Memory', 'Always attach retrieval', 'Model', 'Data',
-        'Web search', 'Council review', 'Council model', 'Effort',
-        'Layout', 'Font', 'Theme',
-        'Share feedback'
+        'Memory', 'Always attach retrieval', 'Model', 'Memories',
+        'Web search', 'Council review', 'Council model', 'Effort'
     ]);
-    // Data actions the ChatInput click handler dispatches on.
-    for (const action of ['export-all-data', 'import-data', 'export-chats', 'import-history', 'export-memory', 'import-memory']) {
-        assert.match(panel, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-button"`), action);
-    }
-    assert.doesNotMatch(panel, /import-tickets|Import from ChatGPT/, 'tickets import lives in Account now');
+    // Memory export/import stay with the Memory section (the ChatInput click handler dispatches on them).
     assert.match(panel, /data-action="export-memory" data-memory-requires-feature/);
     assert.match(panel, /data-action="import-memory" data-memory-requires-feature/);
-    // Hidden file inputs the handlers click.
-    for (const id of ['global-import-input', 'tickets-import-input', 'memory-import-input']) {
+    for (const id of ['tickets-import-input', 'memory-import-input']) {
         assert.match(panel, new RegExp(`<input type="file" id="${id}"`), id);
     }
-    // Ids the JS looks up.
+    // Nothing once-and-done is left here: no data rows, no appearance, no feedback, no "All".
+    assert.doesNotMatch(panel, /export-all-data|import-data|export-chats|import-history|global-import-input|Data controls|Appearance|Share feedback|>All</);
+    assert.doesNotMatch(panel, /import-tickets|Import from ChatGPT/, 'tickets import lives in Billing');
     for (const id of ['scrubber-model-select', 'memory-feature-toggle', 'memory-auto-include-toggle', 'memory-agent-model-select',
         'search-setting-toggle', 'council-review-toggle', 'council-review-model-row', 'council-review-model-select', 'multi-model-synthesis-select',
-        'reasoning-effort-toggle', 'flat-mode-toggle', 'font-mode-toggle', 'theme-toggle', 'theme-effective-label', 'composer-settings-actions']) {
+        'reasoning-effort-toggle', 'composer-settings-actions']) {
         assert.match(panel, new RegExp(`id="${id}"`), id);
     }
-    // Switches are the blue iOS-style toggle; segmented controls keep their
-    // data attributes and drop the sliding indicator.
     assert.equal((panel.match(/class="switch-toggle settings-switch switch-(?:active|inactive)"/g) || []).length, 4);
     for (const effort of ['low', 'medium', 'high', 'xhigh']) {
         assert.match(panel, new RegExp(`class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="${effort}"`), effort);
     }
     assert.match(panel, /data-reasoning-effort="xhigh"[^>]*>Max</);
-    assert.match(panel, /data-mode="flat"[^>]*>Document</);
-    assert.match(panel, /data-mode="bubble"[^>]*>Bubbles</);
-    for (const option of ['system', 'light', 'dark']) {
-        assert.match(panel, new RegExp(`data-theme-option="${option}"`), option);
+    // The composer actions slot is the last section; with nothing visible in it the CSS removes it and the divider above.
+    assert.match(panel, /<section id="composer-settings-actions" class="settings-section settings-section-foot composer-settings-actions"><\/section>\s*<\/div>\s*<\/div>\s*$/);
+});
+
+test('the Settings dialog holds what is set once: data, appearance, feedback, account actions', () => {
+    const html = read('chat/index.html');
+    const dialog = settingsDialog(html);
+    assert.match(dialog, /<div id="settings-dialog" class="hidden fixed inset-0 z-50 bg-black\/60 backdrop-blur-sm flex items-center justify-center p-4">/);
+    assert.match(dialog, /<div role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" tabindex="-1" class="settings-dialog settings-panel">/);
+    assert.match(dialog, /<h2 id="settings-dialog-title" class="account-dialog-title">Settings<\/h2>/);
+    assert.match(dialog, /<button id="close-settings-dialog"[^>]*aria-label="Close settings"/);
+    const titles = [...dialog.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
+    assert.deepEqual(titles, ['Data controls', 'Appearance', 'Account']);
+    const labels = [...dialog.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
+    assert.deepEqual(labels, [
+        'Chat history', 'ChatGPT',
+        'Layout', 'Font', 'Theme',
+        'Share feedback',
+        'Log out of this device', 'Delete your account'
+    ]);
+    for (const action of ['export-chats', 'import-history', 'log-out', 'delete-account']) {
+        assert.match(dialog, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-button`), action);
     }
-    assert.match(panel, /<a href="https:\/\/forms\.gle\/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="settings-row settings-link">/);
-    assert.ok(panel.indexOf('Share feedback') > panel.indexOf('id="theme-toggle"'), 'feedback is the last row');
+    assert.match(dialog, /data-action="delete-account" class="settings-button settings-button-danger">Delete</);
+    // The Appearance controls keep their ids, so ChatInput binds them unchanged.
+    for (const id of ['flat-mode-toggle', 'font-mode-toggle', 'theme-toggle', 'theme-effective-label']) {
+        assert.match(dialog, new RegExp(`id="${id}"`), id);
+        assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1, `${id} exists once`);
+    }
+    assert.match(dialog, /data-mode="flat"[^>]*>Document</);
+    assert.match(dialog, /data-mode="bubble"[^>]*>Bubbles</);
+    for (const option of ['system', 'light', 'dark']) {
+        assert.match(dialog, new RegExp(`data-theme-option="${option}"`), option);
+    }
+    assert.match(dialog, /<a href="https:\/\/forms\.gle\/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="settings-row settings-link">/);
+    // The confirmation card: one sentence on what goes, cancel first.
+    assert.match(html, /<template id="settings-delete-account-template">[\s\S]*Delete your account\?[\s\S]*data-delete-account="cancel"[\s\S]*data-delete-account="confirm"[^>]*>Delete account</);
+    // Reached from the account menu, above Account.
+    const menu = html.slice(html.indexOf('id="account-settings-menu"'), html.indexOf('id="account-logout-menu-item"'));
+    assert.ok(menu.indexOf('id="account-preferences-menu-item"') < menu.indexOf('id="account-security-menu-item"'));
+    assert.match(menu, /id="account-preferences-menu-item"[^>]*role="menuitem"[\s\S]*?<span>Settings<\/span>/);
+    // Wired: the vanilla UI mounts it and components reach it through the facade.
+    assert.match(read('chat/ui/vanilla/VanillaChatUi.js'), /settingsDialog: new SettingsDialog\(componentApp\)/);
+    assert.match(read('chat/ui/appInterface.js'), /'settingsDialog',/);
+    assert.match(read('chat/ui/appInterface.js'), /'deleteAllChats',/);
 });
 
 test('the Tools → Web search switch flips the same state as the composer control', () => {

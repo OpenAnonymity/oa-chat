@@ -8291,11 +8291,43 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-note { margin: 0; font-size: 0.6875rem; color: hsl(var(--color-muted-foreground)); }
 .settings-note[hidden] { display: none; }
 
-.settings-panel .composer-settings-actions {
-    margin-top: 0.25rem;
-    padding-top: 0.25rem;
-    border-top-color: var(--settings-line);
-}
-/* The slot holds the hidden Web search row; with nothing visible in it,
-   no divider and no gap either. */
+/* The slot holds the hidden Web search row; with nothing visible in it
+   the section is gone: no divider, no gap. */
 .settings-panel .composer-settings-actions:not(:has(> :not([hidden]))) { display: none; }
+.settings-panel .settings-section:has(+ .composer-settings-actions:not(:has(> :not([hidden])))) { border-bottom: 0; }
+
+/* The Settings dialog: the panel's rows and controls in a centred card,
+   the same frame as the Log in dialog. */
+.settings-dialog {
+    width: 100%;
+    max-width: 26rem;
+    border-radius: 1.5rem;
+    padding: 0.5rem 0 0.25rem;
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+}
+.settings-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.125rem 0.5rem;
+}
+.settings-dialog-head > h2 { margin: 0; }
+.settings-dialog-head > button { display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; }
+.settings-dialog .settings-section { padding: 0.75rem 1.5rem 0.875rem; }
+.settings-dialog .settings-row { min-height: 2.25rem; }
+/* The Delete account confirmation sits over the Settings card, same backdrop. */
+.settings-confirm-layer {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgb(0 0 0 / 0.35);
+}
+.settings-button-danger { color: hsl(var(--color-destructive)); border-color: hsl(var(--color-destructive) / 0.35); }
+.settings-button-danger:hover:not(:disabled) { background: hsl(var(--color-destructive) / 0.08); border-color: hsl(var(--color-destructive) / 0.6); }
+.dark .settings-button-danger { color: hsl(0 72% 68%); border-color: hsl(0 72% 68% / 0.35); }
+.dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 72% 68% / 0.1); border-color: hsl(0 72% 68% / 0.6); }
