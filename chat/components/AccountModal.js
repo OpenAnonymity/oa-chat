@@ -12,9 +12,8 @@ const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([dis
 // Deliberate: the sheet is unexpected without a word first, and reading one
 // line takes about this long. Kept well inside the browser's user-activation
 // window (~5 s from the Enter press) so the ceremony can still open on its own.
-// 2.5 s while the one-line explanation is being read for pace (2 s read
-// as too quick in testing); revisit once the copy settles.
-const PASSKEY_INTRO_MS = 2500;
+// 1.5 s: long enough to read the one line, short enough not to feel held.
+const PASSKEY_INTRO_MS = 1500;
 // A username reservation (and its registration challenge) lives about a
 // minute on the server. Back keeps ours for that long so re-entering the
 // same name continues with it instead of asking for a new one the server

@@ -706,7 +706,6 @@
                                                  data-actions as before; only the layout and skin changed. -->
                                             <div id="settings-menu" class="hidden z-[100] settings-panel settings-menu-glass" role="group" aria-label="Settings">
                                                 <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
-                                                <input type="file" id="memory-import-input" accept=".json,application/json" class="hidden" />
 
                                                 <!-- Privacy -->
                                                 <section id="scrubber-settings-section" class="settings-section" aria-labelledby="settings-privacy-title">
@@ -742,13 +741,6 @@
                                                             <select id="memory-agent-model-select">
                                                                 <option value="" disabled selected>Loading…</option>
                                                             </select>
-                                                        </div>
-                                                    </div>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label">Memories</span>
-                                                        <div class="settings-row-control settings-button-pair">
-                                                            <button type="button" data-action="export-memory" class="settings-button">Export</button>
-                                                            <button type="button" data-action="import-memory" class="settings-button">Import</button>
                                                         </div>
                                                     </div>
                                                 </section>
@@ -935,6 +927,13 @@
             <section id="data-management-section" class="settings-section" aria-labelledby="settings-data-title">
                 <h3 id="settings-data-title" class="settings-section-title">Data controls</h3>
                 <div class="settings-row">
+                    <span class="settings-row-label">All</span>
+                    <div class="settings-row-control settings-button-pair">
+                        <button type="button" data-action="export-all-data" class="settings-button">Export</button>
+                        <button type="button" data-action="import-data" class="settings-button">Import</button>
+                    </div>
+                </div>
+                <div class="settings-row">
                     <span class="settings-row-label">Chat history</span>
                     <div class="settings-row-control settings-button-pair">
                         <button type="button" data-action="export-chats" class="settings-button">Export</button>
@@ -947,6 +946,16 @@
                         <button type="button" data-action="import-history" class="settings-button">Import</button>
                     </div>
                 </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Memories</span>
+                    <div class="settings-row-control settings-button-pair">
+                        <button type="button" data-action="export-memory" class="settings-button">Export</button>
+                        <button type="button" data-action="import-memory" class="settings-button">Import</button>
+                    </div>
+                </div>
+                <!-- Hidden file inputs; ChatInput binds their change handlers by id. -->
+                <input type="file" id="global-import-input" accept="application/json,.json" class="hidden" />
+                <input type="file" id="memory-import-input" accept=".json,application/json" class="hidden" />
             </section>
             <section class="settings-section" aria-labelledby="settings-appearance-title">
                     <h3 id="settings-appearance-title" class="settings-section-title">Appearance</h3>

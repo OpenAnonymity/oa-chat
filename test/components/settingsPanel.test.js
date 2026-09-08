@@ -40,15 +40,12 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
         'Scrubber model',
-        'Memory', 'Always attach retrieval', 'Model', 'Memories',
+        'Memory', 'Always attach retrieval', 'Model',
         'Web search', 'Council review', 'Council model', 'Effort'
     ]);
-    // Memory export/import stay with the Memory section (the ChatInput click
-    // handler dispatches on them) and work whether Memory is on or off: the
-    // memories are the person's data either way.
-    assert.match(panel, /<button type="button" data-action="export-memory" class="settings-button">Export</);
-    assert.match(panel, /<button type="button" data-action="import-memory" class="settings-button">Import</);
-    assert.doesNotMatch(panel, /data-memory-requires-feature/);
+    // Memory export/import live in the Account dialog now and work whether
+    // Memory is on or off: the memories are the person's data either way.
+    assert.doesNotMatch(panel, /export-memory|import-memory|data-memory-requires-feature|memory-import-input/);
     const editor = read('chat/components/MemoryEditor.js');
     assert.match(editor, /async _handleExport\(\) \{[\s\S]*?_beginMemoryOperation\(\{ allowWhileOff: true \}\)/);
     assert.match(editor, /async importMemoryFile\(file\) \{[\s\S]*?this\.open\(\{ allowWhileOff: true \}\)[\s\S]*?_beginMemoryOperation\(\{ allowWhileOff: true \}\)/);
@@ -57,10 +54,8 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
         const body = input.slice(input.indexOf(`${fn}(`), input.indexOf('\n    }\n', input.indexOf(`${fn}(`)));
         assert.doesNotMatch(body, /memoryFeatureEnabled === false/, `${fn} does not gate on the toggle`);
     }
-    for (const id of ['tickets-import-input', 'memory-import-input']) {
-        assert.match(panel, new RegExp(`<input type="file" id="${id}"`), id);
-    }
-    // Nothing once-and-done is left here: no data rows, no appearance, no feedback, no "All".
+    assert.match(panel, /<input type="file" id="tickets-import-input"/);
+    // Nothing once-and-done is left here: no data rows, no appearance, no feedback.
     assert.doesNotMatch(panel, /export-all-data|import-data|export-chats|import-history|global-import-input|Data controls|Appearance|Share feedback|>All</);
     assert.doesNotMatch(panel, /import-tickets|Import from ChatGPT/, 'tickets import lives in Billing');
     for (const id of ['scrubber-model-select', 'memory-feature-toggle', 'memory-auto-include-toggle', 'memory-agent-model-select',
@@ -95,13 +90,22 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
     assert.match(dialog, /<section class="settings-section" aria-label="Log out or delete">/);
     const labels = [...dialog.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
-        'Chat history', 'ChatGPT',
+        'All', 'Chat history', 'ChatGPT', 'Memories',
         'Layout', 'Font', 'Theme',
         'Share feedback',
         'Log out of this device', 'Delete your account'
     ]);
-    for (const action of ['export-chats', 'import-history', 'log-out', 'delete-account']) {
+    for (const action of ['export-all-data', 'import-data', 'export-chats', 'import-history', 'export-memory', 'import-memory', 'log-out', 'delete-account']) {
         assert.match(dialog, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-button`), action);
+    }
+    // The file inputs the pickers click; ChatInput binds their change handlers by id.
+    for (const id of ['global-import-input', 'memory-import-input']) {
+        assert.match(dialog, new RegExp(`<input type="file" id="${id}"`), id);
+        assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1, `${id} exists once`);
+    }
+    const dialogSource = read('chat/components/SettingsDialog.js');
+    for (const action of ['export-all-data', 'import-data', 'export-memory', 'import-memory']) {
+        assert.match(dialogSource, new RegExp(`case '${action}':`), `${action} handled by the dialog`);
     }
     assert.match(dialog, /data-action="delete-account" class="settings-button settings-button-danger">Delete</);
     // The Appearance controls keep their ids, so ChatInput binds them unchanged.

@@ -624,11 +624,11 @@ test('a caption the arrival layer already showed does not enter again, and the h
     const html = modal.renderWaitingLayer({ username: 'winter-owl' });
     assert.doesNotMatch(html, /account-unlock-waiting-enter/);
     assert.match(html, /The Open Anonymity Project uses a passkey to secure your account./);
-    assert.ok(modal.remainingPasskeyIntroMs() <= 2500);
+    assert.ok(modal.remainingPasskeyIntroMs() <= 1500);
     modal.captionShownAt = performance.now();
-    assert.ok(modal.remainingPasskeyIntroMs() > 2400);
+    assert.ok(modal.remainingPasskeyIntroMs() > 1400);
     modal.waitingCaptionShown = false;
-    assert.equal(modal.remainingPasskeyIntroMs(), 2500);
+    assert.equal(modal.remainingPasskeyIntroMs(), 1500);
 });
 
 test('a registration the server rejected keeps the name on the card, says why, and Try again reserves afresh', async () => {
@@ -814,7 +814,7 @@ async function withIntroTimer(fn) {
     mock.timers.enable({ apis: ['setTimeout'] });
     try {
         await fn(async () => {
-            mock.timers.tick(2500);
+            mock.timers.tick(1500);
             await new Promise(resolve => setImmediate(resolve));
         });
     } finally {

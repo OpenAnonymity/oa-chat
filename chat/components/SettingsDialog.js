@@ -7,7 +7,7 @@
  * controls keep their ids, so ChatInput binds them as before. This class
  * only opens, closes, and routes the data-action buttons.
  */
-import { exportChats } from '../services/globalExport.js';
+import { exportChats, exportAllData } from '../services/globalExport.js';
 
 /** Must match DELETE_ACCOUNT_CONFIRMATION in accountService.js and the org. */
 const DELETE_ACCOUNT_CONFIRMATION = 'DELETE';
@@ -109,6 +109,19 @@ class SettingsDialog {
             case 'export-chats':
                 await this.exportChats();
                 break;
+            case 'export-all-data':
+                await this.exportAll();
+                break;
+            case 'import-data':
+                // The file picker takes over; ChatInput handles the chosen file.
+                document.getElementById('global-import-input')?.click?.();
+                break;
+            case 'export-memory':
+                await this.exportMemories();
+                break;
+            case 'import-memory':
+                document.getElementById('memory-import-input')?.click?.();
+                break;
             case 'import-history':
                 // The import dialog takes the page over; this one steps aside.
                 this.close();
@@ -134,6 +147,26 @@ class SettingsDialog {
             console.error('Chat export failed:', error);
             this.app.showToast?.('Failed to export chats', 'error');
         }
+    }
+
+    /** Chats plus display settings, one file: for moving to another device. */
+    async exportAll() {
+        try {
+            const ok = await exportAllData();
+            this.app.showToast?.(ok ? 'Data exported successfully' : 'Failed to export data', ok ? 'success' : 'error');
+        } catch (error) {
+            console.error('Export failed:', error);
+            this.app.showToast?.('Failed to export data', 'error');
+        }
+    }
+
+    /** Memories work whether or not Memory is on: they are the person's data either way. */
+    async exportMemories() {
+        if (!this.app.memoryEditor?.exportMemories) {
+            this.app.showToast?.('Memory export unavailable', 'error');
+            return;
+        }
+        await this.app.memoryEditor.exportMemories();
     }
 
     /**
