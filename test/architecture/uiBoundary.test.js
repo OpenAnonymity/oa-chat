@@ -871,8 +871,8 @@ test('council review setting drives synthesis output mode in ChatInput', () => {
     );
     assert.match(
         source,
-        /const nextMultiModelEnabled = enabled \|\| currentlyMultiModelEnabled;/,
-        'Turning Council review on should also turn Parallel mode on'
+        /const nextMultiModelEnabled = enabled \|\| \(currentlyMultiModelEnabled && !leaveParallelToo\);/,
+        'Turning Council review on turns Parallel on; turning it off leaves Parallel only if review had entered it'
     );
     assert.match(
         source,

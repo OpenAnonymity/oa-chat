@@ -8298,20 +8298,21 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .composer-settings-actions:not(:has(> :not([hidden]))) { display: none; }
 .settings-panel .settings-section:has(+ .composer-settings-actions:not(:has(> :not([hidden])))) { border-bottom: 0; }
 
-/* The Account dialog: the gear's row grammar, set at the Billing dialog's
-   scale (it sits one menu row away): 35rem card, 15px rows and section
-   titles, 36px controls. The gear keeps its compact sizes. */
+/* The Account dialog: the gear's row grammar, one step up from the gear's
+   compact sizes and one step down from where Billing used to be, so the
+   two dialogs (a menu row apart) share one scale: 14px rows, 32px controls,
+   14px sentence-case section titles. The gear keeps its compact sizes. */
 .settings-dialog {
-    --settings-row-h: 2.5rem;
-    --settings-control-h: 2.25rem;
+    --settings-row-h: 2.25rem;
+    --settings-control-h: 2rem;
     width: 100%;
-    max-width: 35rem;
+    max-width: 32rem;
     background: hsl(var(--color-card));
     border-radius: 1.5rem;
     padding: 0.5rem 0 0.375rem;
     max-height: calc(100dvh - 2rem);
     overflow-y: auto;
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
 }
 .settings-dialog-head {
     display: flex;
@@ -8324,24 +8325,28 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-dialog-head > button { display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; }
 .settings-dialog .settings-section { padding: 1rem 1.75rem 1.125rem; }
 .settings-dialog .settings-section-title {
-    margin: 0 0 0.5rem;
-    font-size: 0.9375rem;
+    margin: 0 0 0.375rem;
+    font-size: 0.875rem;
     font-weight: 600;
     letter-spacing: 0;
     text-transform: none;
     color: hsl(var(--color-foreground));
 }
 .settings-dialog .settings-row { min-height: var(--settings-row-h); gap: 1rem; }
-.settings-dialog .settings-row-label { font-size: 0.9375rem; }
-.settings-dialog .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+.settings-dialog .settings-row-label { font-size: 0.875rem; }
+.settings-dialog .settings-button { padding: 0 0.875rem; border-radius: 0.625rem; font-size: 0.875rem; }
 .settings-dialog .settings-segmented { border-radius: 0.625rem; }
-.settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.875rem; padding: 0 0.875rem; }
-.settings-dialog .settings-segmented .settings-segment-icon { width: 2.5rem; }
-.settings-dialog .settings-segmented .settings-segment-icon svg { width: 1.125rem; height: 1.125rem; }
-.settings-dialog .settings-segmented .settings-segment-icon span { font-size: 0.9375rem; }
-.settings-dialog .settings-link-icon { width: 1.125rem; height: 1.125rem; }
+.settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
+.settings-dialog .settings-segmented .settings-segment-icon { width: 2.25rem; }
+.settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
+.settings-dialog .settings-segmented .settings-segment-icon span { font-size: 0.875rem; }
+.settings-dialog .settings-link-icon { width: 1rem; height: 1rem; }
 /* The Delete account confirmation sits over the Settings card, same backdrop. */
 .settings-confirm-layer {
+    /* Outside the .settings-dialog card, so it carries the same control tokens. */
+    --settings-control-h: 2.25rem;
+    --settings-control-border: hsl(var(--color-foreground) / 0.14);
+    --settings-control-border-hover: hsl(var(--color-foreground) / 0.26);
     position: absolute;
     inset: 0;
     display: flex;
@@ -8350,6 +8355,44 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     padding: 1rem;
     background: rgb(0 0 0 / 0.35);
 }
+.settings-confirm-layer .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+.settings-button:disabled { opacity: 0.45; cursor: default; }
+/* The typed confirmation: the label reads as a sentence, the word is set apart. */
+.settings-confirm-label {
+    display: block;
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
+    color: hsl(var(--color-foreground));
+    text-wrap: pretty;
+}
+.settings-confirm-word {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem;
+    letter-spacing: 0.04em;
+}
+.settings-confirm-input {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    height: var(--settings-control-h);
+    margin-top: 0.5rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.625rem;
+    background: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    letter-spacing: 0.04em;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.settings-confirm-input:hover:not(:disabled) { border-color: var(--settings-control-border-hover); }
+.settings-confirm-input:focus {
+    outline: none;
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
+}
+.settings-confirm-input:disabled { opacity: 0.6; }
 .settings-button-danger { color: hsl(var(--color-destructive)); border-color: hsl(var(--color-destructive) / 0.35); }
 .settings-button-danger:hover:not(:disabled) { background: hsl(var(--color-destructive) / 0.08); border-color: hsl(var(--color-destructive) / 0.6); }
 .dark .settings-button-danger { color: hsl(0 72% 68%); border-color: hsl(0 72% 68% / 0.35); }

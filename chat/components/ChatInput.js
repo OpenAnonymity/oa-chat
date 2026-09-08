@@ -331,6 +331,8 @@ export default class ChatInput {
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
 
+                // An explicit mode choice: review no longer owns the mode.
+                this.parallelEnteredByReview?.delete(this.app.getCurrentSession()?.id || 'pending');
                 if (isParallel) {
                     await this.setCouncilModeFromComposer(true);
                 } else {
@@ -2203,13 +2205,25 @@ export default class ChatInput {
         await Promise.all(settingsWrites);
     }
 
+    /**
+     * Council review needs Parallel, so turning it on from Chat switches the
+     * conversation into Parallel. That switch is remembered per conversation:
+     * turning review off again returns to Chat, while a conversation that was
+     * already in Parallel stays there. Choosing a mode on the composer's own
+     * toggle clears the memory, since that is the person's explicit choice.
+     */
     async setCouncilReviewEnabledFromSettings(enabled) {
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
         const currentlyMultiModelEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const nextMultiModelEnabled = enabled || currentlyMultiModelEnabled;
+        const scope = session?.id || 'pending';
+        this.parallelEnteredByReview ||= new Set();
+        if (enabled && !currentlyMultiModelEnabled) this.parallelEnteredByReview.add(scope);
+        const leaveParallelToo = !enabled && this.parallelEnteredByReview.has(scope);
+        if (!enabled) this.parallelEnteredByReview.delete(scope);
+        const nextMultiModelEnabled = enabled || (currentlyMultiModelEnabled && !leaveParallelToo);
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
@@ -2219,9 +2233,10 @@ export default class ChatInput {
             synthesisModel,
             outputMode,
             // Enabling Council review from Chat is also an explicit switch
-            // into multi-model mode. Changes within Parallel do not rewrite a
-            // newer Chat/Parallel preference chosen in another tab.
-            persistMode: enabled && !currentlyMultiModelEnabled
+            // into multi-model mode, and turning it off again is the switch
+            // back. Changes within Parallel do not rewrite a newer
+            // Chat/Parallel preference chosen in another tab.
+            persistMode: (enabled && !currentlyMultiModelEnabled) || leaveParallelToo
         });
 
         if (!session) {
