@@ -4342,6 +4342,13 @@ class ChatApp {
     }
 
     async preflightTurnTicketBudget(session, content, options = {}) {
+        // Signed out on a host that requires sign-in: the answer is the Log
+        // in dialog, not a ticket shortage (which would open the Welcome
+        // offers over a page that cannot buy anything).
+        if (this.signInPolicy.required && !accountService.getState()?.accountId) {
+            this.accountModal?.open?.();
+            return false;
+        }
         const memoryTickets = this.memoryFeatureEnabled
             && this.memoryMode
             && Boolean(content)
@@ -6554,6 +6561,9 @@ class ChatApp {
      * Handles API key acquisition, model selection, and streaming updates.
      */
     async sendMessage() {
+        // A dialog owns the page (Log in, Account, Billing): nothing sends
+        // from behind it, whatever still has focus.
+        if (hasOpenModalDialog()) return;
         if (!await this.ensureDatabaseReady()) {
             return;
         }
