@@ -496,6 +496,20 @@ class ChatApp {
         return this.signInPolicy;
     }
 
+    /**
+     * On a host that requires sign-in, a page that loads without an unlocked
+     * account (a refresh after Log out, a new tab, a mode that needs an
+     * account) gets the Log in or sign up dialog at once, rather than a
+     * landing page: that page is for a first visit only.
+     */
+    async openSignInIfRequired() {
+        if (!this.signInPolicy.required || !this.accountModal) return false;
+        const state = await accountService.waitForAuthBootstrap();
+        if (state?.accountId && state.status === 'unlocked') return false;
+        this.accountModal.open?.();
+        return true;
+    }
+
     registerLoggedOutHandler(handler) {
         if (typeof handler !== 'function') return () => {};
         this.loggedOutHandlers.add(handler);
@@ -2075,12 +2089,13 @@ class ChatApp {
         }
 
         try {
-            await routeAuthenticationIntent({
+            const route = await routeAuthenticationIntent({
                 accountService,
                 accountModal: this.accountModal,
                 locationImpl: window.location,
                 historyImpl: window.history
             });
+            if (!route?.handled) await this.openSignInIfRequired();
         } catch (error) {
             console.warn('Initial account route could not be completed:', error);
         } finally {
