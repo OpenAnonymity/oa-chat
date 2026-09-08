@@ -2812,6 +2812,14 @@ class AccountService {
      */
     async logout() {
         this.syncInitializationGeneration += 1;
+        // The wallet is about to be emptied on this device. Say so first:
+        // extensions read readyForAutomaticBilling from these flags, and an
+        // empty wallet that still looked verified opened the welcome dialog
+        // over the Logging out cover for a frame.
+        this.state.sessionVerified = false;
+        this.state.accountScopeReady = false;
+        this.state.ticketSyncReady = false;
+        this.notify();
         // Revoke the server session while its refresh token is still available.
         try {
             await sessionService.signOut();
