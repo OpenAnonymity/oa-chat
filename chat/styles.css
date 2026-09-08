@@ -8360,6 +8360,14 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     background: rgb(0 0 0 / 0.35);
 }
 .settings-confirm-layer .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+/* Spacing lives here, not in utility classes: the generated Tailwind file is
+   a build artifact and did not carry the ones this card used. */
+.settings-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    margin-top: 1.5rem;
+}
 .settings-button:disabled { opacity: 0.45; cursor: default; }
 /* The typed confirmation: the label reads as a sentence, the word is set apart. */
 .settings-confirm-label {
@@ -8379,7 +8387,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     display: block;
     width: 100%;
     height: var(--settings-control-h);
-    margin-top: 0.5rem;
+    margin-top: 0.625rem;
     padding: 0 0.75rem;
     border: 1px solid var(--settings-control-border);
     border-radius: 0.625rem;
