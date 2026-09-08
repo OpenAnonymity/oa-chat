@@ -116,6 +116,7 @@ import {
     areCouncilConfigsEqual
 } from './domain/councilConfig.js';
 import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
+import { hasOpenModalDialog } from './ui/modalLayer.js';
 
 const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
@@ -9460,7 +9461,9 @@ class ChatApp {
                 activeElement.isContentEditable
             );
 
-            // Send message on Enter if no input is focused and there's unsent text
+            // Send message on Enter if no input is focused and there's unsent text.
+            // Never from behind a dialog (Log in, Account, Welcome): the page
+            // the message would go to is not the one the person is looking at.
             if (e.key === 'Enter' &&
                 !isInputFocused &&
                 !e.shiftKey &&
@@ -9468,7 +9471,8 @@ class ChatApp {
                 !e.ctrlKey &&
                 !e.altKey &&
                 !this.elements.sendBtn.disabled &&
-                this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.elements.modelPickerModal.classList.contains('hidden') &&
+                !hasOpenModalDialog()) {
                 e.preventDefault();
                 if (this.isCurrentSessionStreaming()) {
                     this.stopCurrentSessionStreaming();
@@ -9485,13 +9489,15 @@ class ChatApp {
             // - Key is a printable character
             // - Model picker is closed
             // - No share modal is open
+            // - No dialog is up (typing belongs to the dialog, not the page behind it)
             if (!isInputFocused &&
                 !e.metaKey &&
                 !e.ctrlKey &&
                 !e.altKey &&
                 e.key.length === 1 &&
                 this.elements.modelPickerModal.classList.contains('hidden') &&
-                !this.ui.shareModals.currentModal) {
+                !this.ui.shareModals.currentModal &&
+                !hasOpenModalDialog()) {
                 this.elements.messageInput.focus();
             }
         });
