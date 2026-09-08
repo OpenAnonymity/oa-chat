@@ -507,6 +507,8 @@ class AccountModal {
     }
 
     handleCloseAttempt() {
+        // Log out owns the page until the account is cleared.
+        if (this.loggingOut) return;
         // Don't allow closing during recovery step - user must save their codes
         // Username finalization is also non-cancellable once its key is being
         // registered; cancelling would zero the key during that commit.
@@ -1271,6 +1273,7 @@ class AccountModal {
     render() {
         if (!this.overlay) return;
 
+        if (!this.loggingOut) this.overlay.removeAttribute?.('data-logging-out');
         const activeElement = document.activeElement;
         const hadModalFocus = this.isOpen && this.overlay.contains(activeElement);
         const activeElementId = hadModalFocus ? activeElement?.id || '' : '';
@@ -1284,8 +1287,11 @@ class AccountModal {
         const isCreationFlow = this.creationStep !== 'idle' &&
             (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
         if (this.loggingOut) {
-            // Nothing but the dimmed page and a spinner while the account is
+            // Nothing but a blank page and a spinner while the account is
             // cleared and (on the commercial host) the landing page loads.
+            // The cover is opaque: clearing the account empties the chat
+            // behind it, and that empty screen is not what Log out shows.
+            this.overlay.setAttribute?.('data-logging-out', 'true');
             this.overlay.innerHTML = `
                 <div role="dialog" aria-modal="true" aria-label="Logging out" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
                     <p class="account-unlock-body">Logging out…</p>

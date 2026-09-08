@@ -6095,6 +6095,24 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     transition: opacity 120ms ease;
 }
 
+/* Log out: the account is cleared underneath, which empties the chat to its
+   welcome screen. Cover the page fully until the host has replaced it (or,
+   standalone, until the Log in form returns). */
+#account-modal[data-logging-out] {
+    background: hsl(var(--color-background));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#account-modal[data-logging-out] .account-unlock-waiting-spinner {
+    border-color: hsl(var(--color-foreground) / .45);
+    border-top-color: transparent;
+}
+
+#account-modal[data-logging-out] .account-unlock-waiting-title {
+    color: hsl(var(--color-muted-foreground));
+}
+
 .account-unlock-waiting {
     position: absolute;
     inset: 0;
