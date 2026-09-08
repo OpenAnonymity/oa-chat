@@ -35,7 +35,7 @@ test('settings panel: five sections, one row grammar, every control the app driv
         'All', 'Chat history', 'ChatGPT',
         'Scrubber model',
         'Memory', 'Always attach retrieval', 'Model', 'Data',
-        'Web search', 'Council review', 'Council model', 'Thinking effort',
+        'Web search', 'Council review', 'Council model', 'Effort',
         'Layout', 'Font', 'Theme',
         'Share feedback'
     ]);
