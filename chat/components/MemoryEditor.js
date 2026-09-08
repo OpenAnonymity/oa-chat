@@ -61,14 +61,19 @@ class MemoryEditor {
         await this._selectFile(path);
     }
 
-    async open() {
-        if (!this._isMemoryFeatureEnabled()) {
+    /**
+     * Opens the editor. With Memory off the editor stays shut, except for
+     * moving memories in or out (`allowWhileOff`): the store is still the
+     * person's data whether or not the agent is using it.
+     */
+    async open({ allowWhileOff = false } = {}) {
+        if (!allowWhileOff && !this._isMemoryFeatureEnabled()) {
             this._showMemoryOffToast();
             return false;
         }
         if (this.isOpen) return true;
         if (!this.overlay) return false;
-        const operation = this._beginMemoryOperation();
+        const operation = this._beginMemoryOperation({ allowWhileOff });
         if (!operation) return false;
         this.isOpen = true;
         this.returnFocusEl = document.activeElement;
@@ -177,8 +182,8 @@ class MemoryEditor {
         return error;
     }
 
-    _beginMemoryOperation() {
-        if (!this._isMemoryFeatureEnabled()) {
+    _beginMemoryOperation({ allowWhileOff = false } = {}) {
+        if (!allowWhileOff && !this._isMemoryFeatureEnabled()) {
             this._showMemoryOffToast();
             return null;
         }
@@ -187,7 +192,8 @@ class MemoryEditor {
         return {
             controller,
             generation: this.memoryOperationGeneration,
-            signal: controller.signal
+            signal: controller.signal,
+            allowWhileOff
         };
     }
 
@@ -201,7 +207,7 @@ class MemoryEditor {
         return !!operation
             && operation.generation === this.memoryOperationGeneration
             && !operation.signal?.aborted
-            && this._isMemoryFeatureEnabled();
+            && (operation.allowWhileOff || this._isMemoryFeatureEnabled());
     }
 
     _assertMemoryOperationActive(operation) {
@@ -986,7 +992,8 @@ class MemoryEditor {
     }
 
     async _handleExport() {
-        const operation = this._beginMemoryOperation();
+        // Export works with Memory off: the memories are still the person's to take.
+        const operation = this._beginMemoryOperation({ allowWhileOff: true });
         if (!operation) return;
         try {
             this._assertMemoryOperationActive(operation);
@@ -1067,11 +1074,12 @@ class MemoryEditor {
     async importMemoryFile(file) {
         if (!file) return;
         if (!this.isOpen) {
-            const opened = await this.open();
+            // Import works with Memory off too; the preview needs the editor.
+            const opened = await this.open({ allowWhileOff: true });
             if (!opened) return;
         }
 
-        const operation = this._beginMemoryOperation();
+        const operation = this._beginMemoryOperation({ allowWhileOff: true });
         if (!operation) return;
 
         try {

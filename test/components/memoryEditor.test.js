@@ -195,3 +195,25 @@ test('memory editor save does not write when memory is disabled before storage m
         memoryFileSystem.write = originalWrite;
     }
 });
+
+test('export and import work with Memory off; everything else in the editor still refuses', async () => {
+    installDocumentStub();
+    const [{ default: MemoryEditor }] = await Promise.all([import('../../chat/components/MemoryEditor.js')]);
+    const toasts = [];
+    const app = { memoryFeatureEnabled: false, showToast(message) { toasts.push(message); } };
+    const editor = new MemoryEditor(app);
+
+    // A plain operation refuses and says why.
+    assert.equal(editor._beginMemoryOperation(), null);
+    assert.deepEqual(toasts, ['Memory is off in settings.']);
+    assert.equal(await editor.open(), false);
+
+    // Moving memories in or out is allowed: the store is the person's data.
+    const operation = editor._beginMemoryOperation({ allowWhileOff: true });
+    assert.ok(operation);
+    assert.equal(editor._isMemoryOperationActive(operation), true);
+    assert.doesNotThrow(() => editor._assertMemoryOperationActive(operation));
+    // Turning the feature off mid-way (a new generation) still aborts it.
+    editor.handleMemoryFeatureDisabled();
+    assert.equal(editor._isMemoryOperationActive(operation), false);
+});

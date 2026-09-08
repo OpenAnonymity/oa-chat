@@ -2871,10 +2871,6 @@ export default class ChatInput {
     }
 
     async handleExportMemory() {
-        if (this.app.memoryFeatureEnabled === false) {
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
-            return;
-        }
         if (!this.app.memoryEditor?.exportMemories) {
             this.app.showToast?.('Memory export unavailable', 'error');
             return;
@@ -2883,10 +2879,6 @@ export default class ChatInput {
     }
 
     handleImportMemory() {
-        if (this.app.memoryFeatureEnabled === false) {
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
-            return;
-        }
         const input = document.getElementById('memory-import-input');
         if (input) {
             input.click();
@@ -3004,10 +2996,6 @@ export default class ChatInput {
 
     async processMemoryImportFile(file) {
         try {
-            if (this.app.memoryFeatureEnabled === false) {
-                this.app.showToast?.('Memory is off in settings.', 'info', 3000);
-                return;
-            }
             if (!this.app.memoryEditor?.importMemoryFile) {
                 throw new Error('Memory editor is not available.');
             }

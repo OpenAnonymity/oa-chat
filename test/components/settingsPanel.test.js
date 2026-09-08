@@ -43,9 +43,20 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
         'Memory', 'Always attach retrieval', 'Model', 'Memories',
         'Web search', 'Council review', 'Council model', 'Effort'
     ]);
-    // Memory export/import stay with the Memory section (the ChatInput click handler dispatches on them).
-    assert.match(panel, /data-action="export-memory" data-memory-requires-feature/);
-    assert.match(panel, /data-action="import-memory" data-memory-requires-feature/);
+    // Memory export/import stay with the Memory section (the ChatInput click
+    // handler dispatches on them) and work whether Memory is on or off: the
+    // memories are the person's data either way.
+    assert.match(panel, /<button type="button" data-action="export-memory" class="settings-button">Export</);
+    assert.match(panel, /<button type="button" data-action="import-memory" class="settings-button">Import</);
+    assert.doesNotMatch(panel, /data-memory-requires-feature/);
+    const editor = read('chat/components/MemoryEditor.js');
+    assert.match(editor, /async _handleExport\(\) \{[\s\S]*?_beginMemoryOperation\(\{ allowWhileOff: true \}\)/);
+    assert.match(editor, /async importMemoryFile\(file\) \{[\s\S]*?this\.open\(\{ allowWhileOff: true \}\)[\s\S]*?_beginMemoryOperation\(\{ allowWhileOff: true \}\)/);
+    const input = read('chat/components/ChatInput.js');
+    for (const fn of ['handleExportMemory', 'handleImportMemory', 'processMemoryImportFile']) {
+        const body = input.slice(input.indexOf(`${fn}(`), input.indexOf('\n    }\n', input.indexOf(`${fn}(`)));
+        assert.doesNotMatch(body, /memoryFeatureEnabled === false/, `${fn} does not gate on the toggle`);
+    }
     for (const id of ['tickets-import-input', 'memory-import-input']) {
         assert.match(panel, new RegExp(`<input type="file" id="${id}"`), id);
     }
@@ -103,7 +114,7 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
     }
     assert.match(dialog, /<a href="https:\/\/forms\.gle\/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="settings-row settings-link">/);
     // The confirmation card: one sentence on what goes, cancel first.
-    assert.match(html, /<template id="settings-delete-account-template">[\s\S]*Delete your account\?[\s\S]*data-delete-account="cancel"[\s\S]*data-delete-account="confirm"[^>]*>Delete account</);
+    assert.match(html, /<template id="settings-delete-account-template">[\s\S]*Are you sure you want to delete your account\?[\s\S]*After deleting, all of your information will be lost[\s\S]*data-delete-account="cancel"[\s\S]*data-delete-account="confirm"[^>]*>Delete account</);
     // Reached from the account menu, above Account.
     const menu = html.slice(html.indexOf('id="account-settings-menu"'), html.indexOf('id="account-logout-menu-item"'));
     assert.ok(menu.indexOf('id="account-preferences-menu-item"') < menu.indexOf('id="account-security-menu-item"'));
