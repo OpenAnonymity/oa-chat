@@ -38,7 +38,7 @@ import {
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
-const SETTINGS_MENU_WIDTH_PX = 260;
+const SETTINGS_MENU_WIDTH_PX = 380;
 
 export default class ChatInput {
     /**
@@ -298,14 +298,23 @@ export default class ChatInput {
             this.hideScrubberPreview();
         });
 
-        // Search toggle functionality
-        this.app.elements.searchToggle.addEventListener('click', async () => {
+        // Search toggle functionality — the composer's own control and the
+        // Tools switch in the settings panel flip the same state.
+        const toggleSearch = async () => {
             this.app.searchEnabled = !this.app.searchEnabled;
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
             await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
-        });
+        };
+        this.app.elements.searchToggle.addEventListener('click', toggleSearch);
+        const searchSettingToggle = document.getElementById('search-setting-toggle');
+        if (searchSettingToggle) {
+            searchSettingToggle.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await toggleSearch();
+            });
+        }
 
         if (this.app.elements.memoryToggle) {
             this.app.elements.memoryToggle.addEventListener('click', async (e) => {
@@ -1998,6 +2007,12 @@ export default class ChatInput {
         const stateLabel = toggle.querySelector('.composer-menu-state');
         if (stateLabel) {
             stateLabel.textContent = this.app.searchEnabled ? 'On' : 'Off';
+        }
+        const settingToggle = document.getElementById('search-setting-toggle');
+        if (settingToggle) {
+            settingToggle.setAttribute('aria-checked', this.app.searchEnabled ? 'true' : 'false');
+            settingToggle.classList.toggle('switch-active', this.app.searchEnabled);
+            settingToggle.classList.toggle('switch-inactive', !this.app.searchEnabled);
         }
     }
 
