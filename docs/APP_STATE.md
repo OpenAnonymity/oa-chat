@@ -13,6 +13,9 @@ reading code alone.
   preferences and historical Council configuration stay intact when switching.
   The System Panel also gates lane-key rows by capability so an unavailable
   historical or pending Parallel choice still presents the single-key access panel.
+- The composer leaves its scrubber shortcut area empty when the payment method
+  does not support Scrubber. Switching back restores the normal shortcut hint;
+  unavailable mode reserves no hint space and shows no replacement message.
 - Memory retrieval and background extraction both require a separate confidential
   Tinfoil key funded with tickets. Gate these flows, one-shot memory overrides,
   stale approvals, and uncached Scrubber restoration by their captured session.
