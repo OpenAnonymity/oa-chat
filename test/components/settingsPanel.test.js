@@ -30,7 +30,7 @@ test('settings panel: five sections, one row grammar, every control the app driv
     assert.deepEqual(titles, ['Data controls', 'Privacy', 'Memory', 'Tools', 'Appearance']);
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
-        'Everything', 'Chat history', 'ChatGPT',
+        'All', 'Chat history', 'ChatGPT',
         'Scrubber model',
         'Memory', 'Always attach retrieval', 'Model', 'Data',
         'Web search', 'Council review', 'Council model', 'Thinking effort',
