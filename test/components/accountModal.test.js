@@ -296,7 +296,8 @@ test('account dialogs share one accent focus ring, close control, dark edges and
     // A sign-in hand-off also paints the passkey caption from the first frame — the
     // same line the dialog draws behind the sheet, filled in by an inline
     // script right after the layer, before the module scripts run.
-    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><p id="auth-arrival-intro"><\/p><p id="auth-arrival-title"><\/p><\/div>\s*<script>[\s\S]*?'The Open Anonymity Project uses a passkey to secure your account\.'[\s\S]*?'Continuing with your passkey' \+ \(username \? ' for ' \+ username : ''\) \+ '\.'[\s\S]*?<\/script>\s*<div id="account-modal"/);
+    assert.match(html, /<div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"><\/span><p id="auth-arrival-title"><\/p><\/div>\s*<script>[\s\S]*?'The Open Anonymity Project uses a passkey to secure your account\.'[\s\S]*?<\/script>\s*<div id="account-modal"/);
+    assert.doesNotMatch(html, /Continuing with your passkey/);
     assert.match(html, /document\.documentElement\.setAttribute\('data-auth-caption', username\)/);
     assert.match(html, /html\[data-auth-caption\] #auth-arrival > p \{ display: block; \}/);
     assert.match(html, /#auth-arrival-title \{ font-size: 0\.9375rem; font-weight: 500; line-height: 1\.4;/);
@@ -537,7 +538,7 @@ test('first username setup draws only the spinner and a caption saying what the 
         // escaped, and no username/account summary card is drawn.
         assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
         assert.match(html, step === 'passkey'
-            ? /class="account-unlock-waiting-title[^"]*">Continuing with your passkey for winter-&lt;owl&gt;.<\/p>/
+            ? /class="account-unlock-waiting-title[^"]*">The Open Anonymity Project uses a passkey to secure your account.<\/p><span class="account-unlock-waiting-name">Continuing with your passkey for winter-&lt;owl&gt;.<\/span>/
             : /class="account-unlock-waiting-title[^"]*">Creating your account<\/p>/);
         assert.doesNotMatch(html, /account-unlock-waiting-note|encrypts your tickets/);
         assert.doesNotMatch(html, /Your username|Your account number|Create a passkey account|You're all set/);
@@ -563,7 +564,7 @@ test('once the passkey is confirmed the wait says Unlocking, then the dialog clo
     modal.usernameInputValue = 'winter-owl';
     // While the sheet is up: what comes next.
     modal.accountState = { username: 'winter-owl', busy: true, action: 'unlock' };
-    assert.match(modal.renderUsernameUnlockUI(), /account-unlock-waiting-title[^>]*>Continuing with your passkey for winter-owl.</);
+    assert.match(modal.renderUsernameUnlockUI(), /account-unlock-waiting-title[^>]*>The Open Anonymity Project uses a passkey to secure your account.</);
     // After the assertion, during login + decrypt: what we are doing.
     modal.accountState = { username: 'winter-owl', busy: true, action: 'unlocking' };
     const html = modal.renderUsernameUnlockUI();
@@ -602,7 +603,7 @@ test('a returning username unlock shows the same caption as first-time setup whi
     modal.escapeHtml = value => String(value ?? '');
     const html = modal.renderUsernameUnlockUI();
     assert.match(html, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
-    assert.match(html, /account-unlock-waiting-title account-unlock-waiting-enter">Continuing with your passkey for winter-owl.</);
+    assert.match(html, /account-unlock-waiting-title account-unlock-waiting-enter">The Open Anonymity Project uses a passkey to secure your account.</);
     assert.doesNotMatch(html, /account-unlock-waiting-note|encrypts your tickets/);
     assert.doesNotMatch(html, /Setting up a passkey|create a passkey/);
     // The same wait, whichever way someone arrived: the hand-off spinners
@@ -612,7 +613,7 @@ test('a returning username unlock shows the same caption as first-time setup whi
     modal.oauthProvider = 'google';
     modal.getOAuthProviderLabel = () => 'Google';
     modal.accountState = { busy: true, oauthKeyringRequired: true };
-    assert.match(modal.renderOAuthUnlockUI(), /account-unlock-waiting-title account-unlock-waiting-enter">Continuing with your passkey.</);
+    assert.match(modal.renderOAuthUnlockUI(), /account-unlock-waiting-title account-unlock-waiting-enter">The Open Anonymity Project uses a passkey to secure your account.</);
 });
 
 test('a caption the arrival layer already showed does not enter again, and the hold counts from navigation', () => {
@@ -622,12 +623,12 @@ test('a caption the arrival layer already showed does not enter again, and the h
     modal.captionShownAt = 0;
     const html = modal.renderWaitingLayer({ username: 'winter-owl' });
     assert.doesNotMatch(html, /account-unlock-waiting-enter/);
-    assert.match(html, /Continuing with your passkey for winter-owl./);
-    assert.ok(modal.remainingPasskeyIntroMs() <= 2000);
+    assert.match(html, /The Open Anonymity Project uses a passkey to secure your account./);
+    assert.ok(modal.remainingPasskeyIntroMs() <= 2500);
     modal.captionShownAt = performance.now();
-    assert.ok(modal.remainingPasskeyIntroMs() > 1900);
+    assert.ok(modal.remainingPasskeyIntroMs() > 2400);
     modal.waitingCaptionShown = false;
-    assert.equal(modal.remainingPasskeyIntroMs(), 2000);
+    assert.equal(modal.remainingPasskeyIntroMs(), 2500);
 });
 
 test('a registration the server rejected keeps the name on the card, says why, and Try again reserves afresh', async () => {
@@ -756,7 +757,7 @@ test('new username registration keeps progress through account/sync notification
         assert.equal(frames.length, 3); // waiting, confirming, and sync notification
         for (const html of frames) {
             assert.match(html, /Confirm with your passkey to finish\./);
-            assert.match(html, /Continuing with your passkey for winter-owl.|Creating your account/);
+            assert.match(html, /The Open Anonymity Project uses a passkey to secure your account.|Creating your account/);
             assert.doesNotMatch(html, /Your username|Your account number/);
         }
         // The caption entered on the first frame only; redraws did not replay it.
@@ -813,7 +814,7 @@ async function withIntroTimer(fn) {
     mock.timers.enable({ apis: ['setTimeout'] });
     try {
         await fn(async () => {
-            mock.timers.tick(2000);
+            mock.timers.tick(2500);
             await new Promise(resolve => setImmediate(resolve));
         });
     } finally {
@@ -876,9 +877,9 @@ test('landing handoff goes straight to the passkey for returning accounts; new o
                 assert.match(waiting, /account-unlock-card-untitled" data-waiting="true"/);
                 // Spinner only on the dimmed page; the card itself is not drawn.
                 // The caption entered with the first (lookup) frame and stays put.
-                assert.match(frames[0], /account-unlock-waiting-title account-unlock-waiting-enter">Continuing with your passkey for winter-owl.</);
+                assert.match(frames[0], /account-unlock-waiting-title account-unlock-waiting-enter">The Open Anonymity Project uses a passkey to secure your account.</);
                 assert.match(waiting, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
-                assert.match(waiting, /account-unlock-waiting-title">Continuing with your passkey for winter-owl.</);
+                assert.match(waiting, /account-unlock-waiting-title">The Open Anonymity Project uses a passkey to secure your account.</);
                 assert.match(waiting, /aria-label="Unlock your encrypted data"/);
                 assert.doesNotMatch(waiting, /<h2/);
                 assert.match(waiting, /Confirm with your passkey to continue\./);
@@ -893,7 +894,7 @@ test('landing handoff goes straight to the passkey for returning accounts; new o
                 const intro = frames.at(-1);
                 assert.match(intro, /account-unlock-card-untitled" data-waiting="true"/);
                 assert.match(intro, /<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"><\/span>/);
-                assert.match(intro, /account-unlock-waiting-title">Continuing with your passkey for winter-owl.</);
+                assert.match(intro, /account-unlock-waiting-title">The Open Anonymity Project uses a passkey to secure your account.</);
                 assert.doesNotMatch(intro, /encrypts your tickets/);
                 assert.doesNotMatch(intro, /Create passkey|<h2/);
                 assert.ok(frames.every(html => !html.includes('Encrypt your data')));

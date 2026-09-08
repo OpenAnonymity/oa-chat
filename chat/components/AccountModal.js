@@ -12,7 +12,9 @@ const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([dis
 // Deliberate: the sheet is unexpected without a word first, and reading one
 // line takes about this long. Kept well inside the browser's user-activation
 // window (~5 s from the Enter press) so the ceremony can still open on its own.
-const PASSKEY_INTRO_MS = 2000;
+// 2.5 s while the one-line explanation is being read for pace (2 s read
+// as too quick in testing); revisit once the copy settles.
+const PASSKEY_INTRO_MS = 2500;
 // A username reservation (and its registration challenge) lives about a
 // minute on the server. Back keeps ours for that long so re-entering the
 // same name continues with it instead of asking for a new one the server
@@ -1973,20 +1975,21 @@ class AccountModal {
         const name = String(username || '').trim();
         // Once the sheet has been confirmed the next line is what we are
         // doing, not what they are about to do.
-        const waiting = !finishing && !unlocking;
+        // Before the OS sheet: one line, why a passkey. Once the sheet has
+        // been confirmed the line is what we are doing instead. The username
+        // is read out for assistive technology only; sighted people have
+        // just typed it.
         const title = finishing
             ? 'Creating your account'
             : unlocking
                 ? 'Unlocking\u2026'
-                : `Continuing with your passkey${name ? ` for ${this.escapeHtml(name)}` : ''}.`;
+                : PASSKEY_INTRO_LINE;
         const enterClass = enters ? ' account-unlock-waiting-enter' : '';
-        // Before the OS sheet, one line on why a passkey and none else is
-        // coming; once it has been confirmed only the action line remains.
-        const intro = waiting
-            ? `<p class="account-unlock-waiting-intro${enterClass}">${PASSKEY_INTRO_LINE}</p>`
+        const forName = !finishing && !unlocking && name
+            ? `<span class="account-unlock-waiting-name">Continuing with your passkey for ${this.escapeHtml(name)}.</span>`
             : '';
-        return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>${intro}
-                <p class="account-unlock-waiting-title${enterClass}">${title}</p></div>`;
+        return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
+                <p class="account-unlock-waiting-title${enterClass}">${title}</p>${forName}</div>`;
     }
 
     /** How much of PASSKEY_INTRO_MS the caption has not yet been on screen for. */

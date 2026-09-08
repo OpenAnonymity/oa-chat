@@ -6160,17 +6160,14 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     overflow-wrap: anywhere;
 }
 
-/* The why-a-passkey line sits directly above the action line: same face,
-   tighter than the layer's gap so the two read as one caption. */
-.account-unlock-waiting-intro {
-    margin: 0 0 -0.5rem;
-    max-width: 28rem;
-    color: rgb(255 255 255 / .88);
-    font-size: 0.9375rem;
-    font-weight: 500;
-    line-height: 1.4;
-    text-wrap: balance;
-    overflow-wrap: anywhere;
+/* The username, for assistive technology only: the person has just typed it. */
+.account-unlock-waiting-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 }
 
 .account-unlock-waiting-enter {
