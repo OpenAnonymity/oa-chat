@@ -9,6 +9,17 @@
  */
 import { exportChats } from '../services/globalExport.js';
 
+/** Must match DELETE_ACCOUNT_CONFIRMATION in accountService.js and the org. */
+const DELETE_ACCOUNT_CONFIRMATION = 'DELETE';
+
+/** One line the person can act on; the org's own message is already plain. */
+function deletionErrorMessage(error) {
+    if (error?.status === 401) return 'Your session has expired. Log in again, then delete the account.';
+    if (error?.code === 'BILLING_UNAVAILABLE') return 'Your membership could not be cancelled, so nothing was deleted. Please try again.';
+    if (error?.name === 'AbortError' || error?.status === 0) return 'Could not reach OA. Check your connection and try again.';
+    return 'Could not delete the account. Please try again.';
+}
+
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 class SettingsDialog {
@@ -125,7 +136,11 @@ class SettingsDialog {
         }
     }
 
-    /** A second, smaller card over the dialog: one sentence on what goes, one action. */
+    /**
+     * A second, smaller card over the dialog: what goes, then the word to
+     * type. The Delete button stays disabled until the word matches, so the
+     * only way to delete is to have read the sentence above it.
+     */
     showDeleteConfirm() {
         if (this.deleteConfirm || !this.overlay) return;
         const template = document.getElementById('settings-delete-account-template');
@@ -136,7 +151,25 @@ class SettingsDialog {
         layer.append(card);
         this.overlay.append(layer);
         this.deleteConfirm = layer;
-        card.querySelector('[data-delete-account="cancel"]')?.focus?.();
+        const input = card.querySelector('[data-delete-account="input"]');
+        const confirm = card.querySelector('[data-delete-account="confirm"]');
+        if (input && confirm) {
+            confirm.disabled = true;
+            input.addEventListener('input', () => {
+                confirm.disabled = !this.confirmationMatches(input.value);
+            });
+            input.addEventListener('keydown', event => {
+                if (event.key === 'Enter' && !confirm.disabled) {
+                    event.preventDefault();
+                    confirm.click();
+                }
+            });
+        }
+        (input || card.querySelector('[data-delete-account="cancel"]'))?.focus?.();
+    }
+
+    confirmationMatches(value) {
+        return String(value ?? '').trim() === DELETE_ACCOUNT_CONFIRMATION;
     }
 
     dismissDeleteConfirm() {
@@ -147,29 +180,51 @@ class SettingsDialog {
     }
 
     /**
-     * Everything about the account leaves this device: chats, then the
-     * account itself (which also revokes the server session). The org keeps
-     * nothing readable, so this is the whole deletion from the person's side.
+     * The org goes first: it cancels the membership, revokes every session
+     * and drops the account row. Only after its 204 does this device wipe
+     * chats and the local account, so a failed request (Stripe unreachable,
+     * session already gone) leaves everything exactly as it was.
      */
     async deleteAccount(button) {
         if (this.deleting) return;
+        const input = this.deleteConfirm?.querySelector?.('[data-delete-account="input"]');
+        if (input && !this.confirmationMatches(input.value)) return;
         this.deleting = true;
         const label = button.textContent;
         button.disabled = true;
         button.textContent = 'Deleting…';
+        if (input) input.disabled = true;
         try {
-            await this.app.deleteAllChats?.();
-            this.close();
-            await this.app.accountModal?.handleAccountClear?.();
-            this.app.showToast?.('Account deleted from this device', 'success');
+            const service = this.app.services?.account || this.app.accountModal?.accountService;
+            if (!service?.deleteAccount) throw new Error('Account service unavailable');
+            await service.deleteAccount();
         } catch (error) {
             console.error('Account deletion failed:', error);
-            this.app.showToast?.('Could not delete the account. Please try again.', 'error');
+            this.app.showToast?.(deletionErrorMessage(error), 'error');
             button.disabled = false;
             button.textContent = label;
-        } finally {
+            if (input) {
+                input.disabled = false;
+                input.focus?.();
+            }
             this.deleting = false;
+            return;
         }
+        // The account is gone at the org; whatever happens below is local
+        // tidying and must not read as a failed deletion.
+        try {
+            await this.app.deleteAllChats?.();
+        } catch (error) {
+            console.warn('Local chat wipe after account deletion failed:', error);
+        }
+        this.close();
+        try {
+            await this.app.accountModal?.handleAccountClear?.();
+        } catch (error) {
+            console.warn('Local account clear after account deletion failed:', error);
+        }
+        this.app.showToast?.('Account deleted', 'success');
+        this.deleting = false;
     }
 
     destroy() {

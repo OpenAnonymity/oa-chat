@@ -1018,10 +1018,12 @@
         <div role="dialog" aria-modal="true" aria-labelledby="delete-account-title" tabindex="-1" class="w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl">
             <div class="p-6">
                 <p id="delete-account-title" class="text-base font-semibold text-foreground">Are you sure you want to delete your account?</p>
-                <p class="text-sm text-muted-foreground mt-1">After deleting, all of your information will be lost: your account, chat history, memories and any tickets on this device. This cannot be undone.</p>
+                <p id="delete-account-description" class="text-sm text-muted-foreground mt-1">After deleting, all of your information will be lost: your account, username, passkeys and synced data, your membership, and the chat history, memories and any tickets on this device. This cannot be undone.</p>
+                <label for="delete-account-input" class="settings-confirm-label">Type <span class="settings-confirm-word">DELETE</span> to confirm</label>
+                <input id="delete-account-input" type="text" data-delete-account="input" class="settings-confirm-input" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-describedby="delete-account-description">
                 <div class="mt-5 flex justify-end gap-2">
                     <button type="button" data-delete-account="cancel" class="settings-button">Cancel</button>
-                    <button type="button" data-delete-account="confirm" class="settings-button settings-button-danger">Delete account</button>
+                    <button type="button" data-delete-account="confirm" class="settings-button settings-button-danger" disabled>Delete account</button>
                 </div>
             </div>
         </div>

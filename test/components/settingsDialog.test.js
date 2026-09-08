@@ -20,7 +20,7 @@ function element(extra = {}) {
     };
 }
 
-function harness({ deleteAllChats } = {}) {
+function harness({ deleteAllChats, deleteAccount } = {}) {
     const dialog = element();
     const overlay = element({ querySelector: () => dialog });
     const menuItem = element();
@@ -36,7 +36,11 @@ function harness({ deleteAllChats } = {}) {
     };
     const events = [];
     const app = {
-        accountModal: { closeAccountMenu() { events.push('menu-closed'); }, async handleAccountClear() { events.push('log-out'); } },
+        accountModal: {
+            closeAccountMenu() { events.push('menu-closed'); },
+            async handleAccountClear() { events.push('log-out'); },
+            accountService: { deleteAccount: deleteAccount || (async () => { events.push('org-deleted'); }) }
+        },
         chatHistoryImportModal: { open() { events.push('import-open'); } },
         showToast(message, kind) { events.push(`toast:${kind}:${message}`); },
         deleteAllChats: deleteAllChats || (async () => { events.push('chats-deleted'); })
@@ -91,23 +95,78 @@ test('the account actions: Log out leaves through the Account dialog; Delete ask
 
         const confirmButton = { dataset: { deleteAccount: 'confirm' }, textContent: 'Delete account', disabled: false };
         await click(h, confirmButton);
-        assert.deepEqual(h.events, ['chats-deleted', 'log-out', 'toast:success:Account deleted from this device']);
+        assert.deepEqual(h.events, ['org-deleted', 'chats-deleted', 'log-out', 'toast:success:Account deleted'],
+            'the org deletes first; the device is wiped only after its answer');
         assert.equal(h.settings.isOpen, false);
     } finally {
         h.restore();
     }
 });
 
-test('a failed deletion keeps the dialog and says so', async () => {
+test('a refused deletion keeps the dialog, keeps the device intact and says why', async () => {
+    const stripeDown = Object.assign(new Error('Billing could not be closed'), { status: 503, code: 'BILLING_UNAVAILABLE' });
+    const h = harness({ deleteAccount: async () => { throw stripeDown; } });
+    try {
+        h.settings.open();
+        const confirmButton = { dataset: { deleteAccount: 'confirm' }, textContent: 'Delete account', disabled: false };
+        await click(h, confirmButton);
+        assert.deepEqual(h.events, ['toast:error:Your membership could not be cancelled, so nothing was deleted. Please try again.']);
+        assert.equal(h.settings.isOpen, true);
+        assert.equal(confirmButton.disabled, false);
+        assert.equal(confirmButton.textContent, 'Delete account');
+    } finally {
+        h.restore();
+    }
+});
+
+test('a local wipe failure after the org deleted the account still signs out and reports success', async () => {
     const h = harness({ deleteAllChats: async () => { throw new Error('locked'); } });
     try {
         h.settings.open();
         const confirmButton = { dataset: { deleteAccount: 'confirm' }, textContent: 'Delete account', disabled: false };
         await click(h, confirmButton);
-        assert.deepEqual(h.events, ['toast:error:Could not delete the account. Please try again.']);
-        assert.equal(h.settings.isOpen, true);
-        assert.equal(confirmButton.disabled, false);
-        assert.equal(confirmButton.textContent, 'Delete account');
+        assert.deepEqual(h.events, ['org-deleted', 'log-out', 'toast:success:Account deleted']);
+        assert.equal(h.settings.isOpen, false);
+    } finally {
+        h.restore();
+    }
+});
+
+test('the typed word gates the Delete button and Enter submits only once it matches', () => {
+    const h = harness();
+    try {
+        const listeners = new Map();
+        const input = { value: '', addEventListener(type, fn) { listeners.set(type, fn); }, focus() { this.focused = true; } };
+        const confirm = { disabled: false, clicked: 0, click() { this.clicked += 1; } };
+        const card = {
+            cloneNode() { return card; },
+            querySelector(selector) {
+                if (selector.includes('"input"')) return input;
+                if (selector.includes('"confirm"')) return confirm;
+                return null;
+            }
+        };
+        globalThis.document.getElementById = id => (
+            id === 'settings-dialog' ? h.overlay
+            : id === 'settings-delete-account-template' ? { content: { firstElementChild: card } }
+            : null
+        );
+        h.settings.open();
+        h.settings.showDeleteConfirm();
+        assert.equal(confirm.disabled, true, 'disabled until the word is typed');
+        assert.equal(input.focused, true, 'focus lands in the field');
+
+        input.value = 'delete';
+        listeners.get('input')();
+        assert.equal(confirm.disabled, true, 'case matters: the word is DELETE');
+        listeners.get('keydown')({ key: 'Enter', preventDefault() {} });
+        assert.equal(confirm.clicked, 0);
+
+        input.value = ' DELETE ';
+        listeners.get('input')();
+        assert.equal(confirm.disabled, false, 'stray whitespace is forgiven');
+        listeners.get('keydown')({ key: 'Enter', preventDefault() {} });
+        assert.equal(confirm.clicked, 1);
     } finally {
         h.restore();
     }

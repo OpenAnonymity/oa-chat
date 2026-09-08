@@ -553,6 +553,9 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
     });
 }
 
+/** The word the person types to delete their account; the org checks the same literal. */
+export const DELETE_ACCOUNT_CONFIRMATION = 'DELETE';
+
 export function toFriendlyAccountError(error) {
     if (!error) return 'Unexpected error';
     if (error.name === 'AbortError') return 'Request timed out, please try again';
@@ -2854,6 +2857,20 @@ class AccountService {
         
         this.updateStatus();
         this.notify();
+    }
+
+    /**
+     * Delete the account at the org. Nothing local is touched here: the
+     * caller wipes this device only after the org has answered 204, so a
+     * failed request (Stripe down, session gone) leaves everything in place.
+     * The org revokes every session and cancels the membership itself.
+     */
+    async deleteAccount() {
+        await fetchJson(
+            '/auth/account',
+            { confirm: DELETE_ACCOUNT_CONFIRMATION },
+            { method: 'DELETE' }
+        );
     }
 
     async clearLocalAccount() {
