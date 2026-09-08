@@ -1211,17 +1211,31 @@ class AccountModal {
 
     async handleAccountClear() {
         this.closeAccountMenu();
-        await this.accountService.clearLocalAccount();
+        // Clearing the account notifies every subscriber, and this dialog
+        // would redraw itself as the signed-out Log in form for the frame
+        // before a host navigates away. Hold the dimmed page instead until
+        // we know whether anyone is taking over.
+        this.loggingOut = true;
+        if (!this.isOpen) this.open();
+        this.render();
+        try {
+            await this.accountService.clearLocalAccount();
+        } catch (error) {
+            this.loggingOut = false;
+            throw error;
+        }
         this.accountInputValue = '';
         this.usernameInputValue = '';
         this.identifierMode = null;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
         this.resetCreationFlow();
+        // A commercial host may route away (to its landing page) from here;
+        // if it does, the dimmed page stays until the new page paints.
+        if (this.app?.notifyLoggedOut?.() === true) return;
+        this.loggingOut = false;
         this.render();
         this.app?.showToast?.('Logged out', 'success');
-        // A commercial host may route away (to its landing page) from here.
-        this.app?.notifyLoggedOut?.();
     }
 
     togglePasskeyDetails() {
@@ -1269,6 +1283,18 @@ class AccountModal {
         // Sync may publish the new account ID before registration returns.
         const isCreationFlow = this.creationStep !== 'idle' &&
             (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
+        if (this.loggingOut) {
+            // Nothing but the dimmed page and a spinner while the account is
+            // cleared and (on the commercial host) the landing page loads.
+            this.overlay.innerHTML = `
+                <div role="dialog" aria-modal="true" aria-label="Logging out" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
+                    <p class="account-unlock-body">Logging out…</p>
+                </div>
+                <div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
+                <p class="account-unlock-waiting-title">Logging out…</p></div>
+            `;
+            return;
+        }
         if (this.oauthHandoffPending) {
             // Same wait as a returning username: the sign-in already
             // happened on the landing page, so only the spinner is drawn.

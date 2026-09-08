@@ -489,15 +489,21 @@ class ChatApp {
         return () => this.loggedOutHandlers.delete(handler);
     }
 
-    /** The person chose Log out and the account is gone from this device. */
+    /**
+     * The person chose Log out and the account is gone from this device.
+     * Returns true when a handler is taking the page away (so the caller
+     * can hold its current frame rather than redraw a signed-out one).
+     */
     notifyLoggedOut() {
+        let leaving = false;
         for (const handler of [...this.loggedOutHandlers]) {
             try {
-                handler();
+                if (handler() === true) leaving = true;
             } catch (error) {
                 console.warn('Logged-out routing handler failed:', error);
             }
         }
+        return leaving;
     }
 
     createExtensionContext() {

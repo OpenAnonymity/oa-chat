@@ -1494,24 +1494,59 @@ test('forgetting a signed-out saved account clears only after explicit action', 
     assert.equal(toast, 'Saved account removed from this device');
 });
 
-test('Log out tells the host after the account is gone, Forget does not', async () => {
+test('Log out holds a dimmed "Logging out…" frame; a host that takes the page keeps it, otherwise the form returns', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { activeElement: null, getElementById: () => null, addEventListener() {}, removeEventListener() {}, documentElement: { removeAttribute() {} } };
+    try {
+    for (const hostLeaves of [true, false]) {
+        const events = [];
+        const frames = [];
+        const modal = Object.create(AccountModal.prototype);
+        modal.isOpen = true;
+        modal.overlay = { innerHTML: '', querySelector: () => null, querySelectorAll: () => [], classList: { remove() {}, add() {} }, contains: () => false };
+        modal.accountState = { authBootstrapComplete: true, status: 'unlocked', accountId: 'a' };
+        modal.creationStep = 'idle';
+        modal.accountService = {
+            async clearLocalAccount() {
+                // Clearing notifies subscribers, which redraw the dialog mid-way.
+                modal.render();
+                frames.push(modal.overlay.innerHTML);
+                events.push('clear');
+            }
+        };
+        modal.resetCreationFlow = () => {};
+        modal.closeAccountMenu = () => {};
+        modal.escapeHtml = value => String(value ?? '');
+        modal.renderAccountUI = () => '<form>Log in</form>';
+        modal.app = {
+            showToast(message) { events.push(`toast:${message}`); },
+            notifyLoggedOut() { events.push('logged-out'); return hostLeaves; }
+        };
+
+        await modal.handleAccountClear();
+        assert.match(frames[0], /aria-label="Logging out"[\s\S]*data-waiting="true"[\s\S]*account-unlock-waiting-title">Logging out…</, 'no Log in form during the clear');
+        assert.doesNotMatch(frames[0], /<form>Log in<\/form>/);
+        if (hostLeaves) {
+            assert.deepEqual(events, ['clear', 'logged-out'], 'no toast, no redraw: the landing page is next');
+            assert.equal(modal.loggingOut, true);
+            assert.match(modal.overlay.innerHTML, /Logging out…/);
+        } else {
+            assert.deepEqual(events, ['clear', 'logged-out', 'toast:Logged out']);
+            assert.equal(modal.loggingOut, false);
+            assert.match(modal.overlay.innerHTML, /<form>Log in<\/form>/);
+        }
+    }
+    } finally {
+        globalThis.document = originalDocument;
+    }
+
+    // Forget never tells the host and never holds the frame.
     const events = [];
     const modal = Object.create(AccountModal.prototype);
-    modal.accountService = {
-        async clearLocalAccount() { events.push('clear'); }
-    };
+    modal.accountService = { async clearLocalAccount() { events.push('clear'); } };
     modal.resetCreationFlow = () => {};
     modal.render = () => {};
-    modal.closeAccountMenu = () => {};
-    modal.app = {
-        showToast(message) { events.push(`toast:${message}`); },
-        notifyLoggedOut() { events.push('logged-out'); }
-    };
-
-    await modal.handleAccountClear();
-    assert.deepEqual(events, ['clear', 'toast:Logged out', 'logged-out']);
-
-    events.length = 0;
+    modal.app = { showToast(message) { events.push(`toast:${message}`); }, notifyLoggedOut() { events.push('logged-out'); } };
     await modal.handleForgetSavedAccount();
     assert.deepEqual(events, ['clear', 'toast:Saved account removed from this device']);
 });
