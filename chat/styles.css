@@ -8305,6 +8305,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-dialog {
     --settings-row-h: 2.25rem;
     --settings-control-h: 2rem;
+    position: relative;
+    isolation: isolate;
     width: 100%;
     max-width: 32rem;
     background: hsl(var(--color-card));
@@ -8349,6 +8351,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     --settings-control-border-hover: hsl(var(--color-foreground) / 0.26);
     position: absolute;
     inset: 0;
+    /* Above the card: the segmented controls inside it sit at z-index 1. */
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;

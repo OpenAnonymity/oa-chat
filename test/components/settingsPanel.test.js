@@ -148,3 +148,12 @@ test('settings panel styles: compact rows, blue switches, raised selected segmen
     assert.match(css, /\.settings-panel \.settings-segmented \.settings-segment\[aria-checked="true"\]\s*\{[^}]*background: var\(--settings-segment-on\)/s);
     assert.match(css, /\.settings-select::after\s*\{[^}]*rotate\(45deg\)/s);
 });
+
+test('the Delete confirmation paints above the Account card', () => {
+    const css = read('chat/styles.css');
+    // The card's segmented controls sit at z-index 1; the confirm layer must
+    // be above them, and the card isolates its own stacking context.
+    assert.match(css, /\.settings-confirm-layer \{[^}]*position: absolute;[^}]*z-index: 2;/s);
+    assert.match(css, /\.settings-dialog \{[^}]*position: relative;\s*isolation: isolate;/s);
+});
+
