@@ -4736,7 +4736,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 }
 
 .switch-toggle.switch-active {
-    background-color: #3b82f6; /* bg-blue-500 */
+    background-color: #0a84ff; /* the same blue as the settings panel and Account switches */
 }
 
 .switch-toggle.switch-toggle-sm {
