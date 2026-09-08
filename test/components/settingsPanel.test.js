@@ -40,7 +40,7 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
         'Scrubber model',
-        'Memory', 'Always attach retrieval', 'Model',
+        'Memory', 'Always attach retrieval', 'Memory model',
         'Web search', 'Council review', 'Council model', 'Effort'
     ]);
     // Memory export/import live in the Account dialog now and work whether
