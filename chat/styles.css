@@ -8397,7 +8397,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
 }
 .settings-confirm-input:disabled { opacity: 0.6; }
-.settings-button-danger { color: hsl(var(--color-destructive)); border-color: hsl(var(--color-destructive) / 0.35); }
-.settings-button-danger:hover:not(:disabled) { background: hsl(var(--color-destructive) / 0.08); border-color: hsl(var(--color-destructive) / 0.6); }
-.dark .settings-button-danger { color: hsl(0 72% 68%); border-color: hsl(0 72% 68% / 0.35); }
-.dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 72% 68% / 0.1); border-color: hsl(0 72% 68% / 0.6); }
+.settings-button-danger { color: #fff; background: hsl(0 72% 51%); border-color: hsl(0 72% 51%); }
+.settings-button-danger:hover:not(:disabled) { background: hsl(0 72% 45%); border-color: hsl(0 72% 45%); }
+.settings-button-danger:disabled { opacity: 0.45; }
+.dark .settings-button-danger { background: hsl(0 66% 50%); border-color: hsl(0 66% 50%); }
+.dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 66% 44%); border-color: hsl(0 66% 44%); }
