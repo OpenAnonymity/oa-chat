@@ -323,6 +323,14 @@ class ChatApp {
         });
         this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
         this.welcomePanelEnabled = options.welcomePanel !== false;
+        // A host may make sign-in a condition of using the page (the Log in
+        // dialog cannot be closed while signed out) and name the legal pages
+        // the dialog links to.
+        this.signInPolicy = Object.freeze({
+            required: options.signIn?.required === true,
+            termsUrl: typeof options.signIn?.termsUrl === 'string' ? options.signIn.termsUrl : '',
+            privacyUrl: typeof options.signIn?.privacyUrl === 'string' ? options.signIn.privacyUrl : ''
+        });
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
@@ -482,6 +490,10 @@ class ChatApp {
                 console.warn('First-account routing handler failed:', error);
             }
         }
+    }
+
+    getSignInPolicy() {
+        return this.signInPolicy;
     }
 
     registerLoggedOutHandler(handler) {

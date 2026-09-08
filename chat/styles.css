@@ -6160,6 +6160,19 @@ html[data-keyboard-nav] .account-unlock-signout:focus-visible {
     overflow-wrap: anywhere;
 }
 
+/* The why-a-passkey line sits directly above the action line: same face,
+   tighter than the layer's gap so the two read as one caption. */
+.account-unlock-waiting-intro {
+    margin: 0 0 -0.5rem;
+    max-width: 28rem;
+    color: rgb(255 255 255 / .88);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.4;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+}
+
 .account-unlock-waiting-enter {
     animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
 }
@@ -6806,6 +6819,27 @@ html[data-keyboard-nav] .update-toast button:focus-visible {
     padding: 2rem;
     border-radius: 1.5rem;
     -webkit-font-smoothing: antialiased;
+}
+
+/* "By continuing, you agree to our Terms and Privacy Policy" under the form. */
+.account-login-legal {
+    margin: 1.25rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    text-align: center;
+    text-wrap: balance;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.account-login-legal > a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: hsl(var(--color-muted-foreground) / .5);
+}
+
+.account-login-legal > a:hover {
+    color: hsl(var(--color-foreground));
 }
 
 .account-login-heading {

@@ -223,6 +223,7 @@ const COMPONENT_APP_KEYS = new Set([
     'getPromptSlideUpMessageIdForSession',
     'getPendingCouncilConfig',
     'getSessionListEmptyText',
+    'getSignInPolicy',
     'handleMemoryApprovalDecision',
     'handleEditFileUpload',
     'hasActiveSessionListCriteria',

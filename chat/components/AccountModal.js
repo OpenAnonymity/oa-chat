@@ -24,6 +24,8 @@ const SHEET_REFUSED_MS = 600;
 // A server-side passkey challenge is short-lived (about a minute for login).
 // A sheet left open longer than this and then confirmed comes back rejected
 // with a generic message; the time tells us what really happened.
+// The one line every passkey wait carries before the OS sheet opens.
+export const PASSKEY_INTRO_LINE = 'The Open Anonymity Project uses a passkey to secure your account.';
 const CHALLENGE_STALE_MS = 45000;
 const PASSKEY_EXPIRED_MESSAGE = 'That took a little too long, so the passkey request expired.';
 
@@ -506,9 +508,30 @@ class AccountModal {
         }
     }
 
+    /**
+     * On a host that requires sign-in, the dialog is the page until an
+     * account is unlocked: no close control, Escape does nothing.
+     */
+    mustStaySignedIn() {
+        if (this.app?.getSignInPolicy?.()?.required !== true) return false;
+        const state = this.accountState || {};
+        return !(state.accountId && state.status === 'unlocked');
+    }
+
     handleCloseAttempt() {
         // Log out owns the page until the account is cleared.
         if (this.loggingOut) return;
+        if (this.mustStaySignedIn()) {
+            // Cancelling a half-done sign-up is still allowed; it returns to
+            // the form rather than to the page behind.
+            if (this.creationStep !== 'idle' && this.creationStep !== 'complete' &&
+                this.creationStep !== 'recovery' && this.creationStep !== 'oauth_authorizing' &&
+                !(this.generatedUsername && this.creationStep === 'confirming')) {
+                this.handleCancelCreation();
+                this.render();
+            }
+            return;
+        }
         // Don't allow closing during recovery step - user must save their codes
         // Username finalization is also non-cancellable once its key is being
         // registered; cancelling would zero the key during that commit.
@@ -1785,12 +1808,12 @@ class AccountModal {
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}${usesAccountId ? '' : ' account-login-dialog'}"${usesAccountId ? ' style="padding:24px 24px 18px"' : ''}>
                 <div class="${usesAccountId ? 'flex items-center justify-between mb-4' : 'account-login-heading'}">
-                    <h2 id="account-modal-title" class="account-dialog-title">Log in</h2>
-                    <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                    <h2 id="account-modal-title" class="account-dialog-title">Log in or sign up</h2>
+                    ${this.mustStaySignedIn() ? '' : `<button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
-                    </button>
+                    </button>`}
                 </div>
 
                 ${!passkeySupported ? `
@@ -1878,6 +1901,7 @@ class AccountModal {
                 ` : ''}
 
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center" role="alert">${this.escapeHtml(state.error)}</p>` : ''}
+                ${this.renderLegalLine()}
 
                 ${hasSignedOutSavedAccount ? `
                     <div class="mt-4 pt-4 border-t border-border text-center">
@@ -1933,6 +1957,13 @@ class AccountModal {
      * index.html paints before scripts load. It enters once per dialog; if
      * the arrival layer already showed it, it does not enter at all.
      */
+    /** "By continuing, you agree to our Terms and Privacy Policy" — only when the host names the pages. */
+    renderLegalLine() {
+        const policy = this.app?.getSignInPolicy?.() || {};
+        if (!policy.termsUrl || !policy.privacyUrl) return '';
+        return `<p class="account-login-legal">By continuing, you agree to our <a href="${this.escapeHtml(policy.termsUrl)}">Terms</a> and <a href="${this.escapeHtml(policy.privacyUrl)}">Privacy Policy</a>.</p>`;
+    }
+
     renderWaitingLayer({ username = '', finishing = false, unlocking = false } = {}) {
         const enters = !this.waitingCaptionShown;
         if (enters) {
@@ -1942,13 +1973,19 @@ class AccountModal {
         const name = String(username || '').trim();
         // Once the sheet has been confirmed the next line is what we are
         // doing, not what they are about to do.
+        const waiting = !finishing && !unlocking;
         const title = finishing
             ? 'Creating your account'
             : unlocking
                 ? 'Unlocking\u2026'
-                : `Continue with your passkey${name ? ` for ${this.escapeHtml(name)}` : ''}.`;
+                : `Continuing with your passkey${name ? ` for ${this.escapeHtml(name)}` : ''}.`;
         const enterClass = enters ? ' account-unlock-waiting-enter' : '';
-        return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
+        // Before the OS sheet, one line on why a passkey and none else is
+        // coming; once it has been confirmed only the action line remains.
+        const intro = waiting
+            ? `<p class="account-unlock-waiting-intro${enterClass}">${PASSKEY_INTRO_LINE}</p>`
+            : '';
+        return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>${intro}
                 <p class="account-unlock-waiting-title${enterClass}">${title}</p></div>`;
     }
 
