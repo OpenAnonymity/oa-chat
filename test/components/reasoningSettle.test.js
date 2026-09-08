@@ -16,13 +16,18 @@ test('the first content chunk settles the reasoning trace on every streaming pat
     assert.doesNotMatch(app, /updateReasoningSubtitleToDuration\(/, 'subtitle-only updates leave the typewriter and indicator running');
     const council = read('chat/application/councilController.js');
     assert.match(council, /settleCouncilLaneReasoning\(assistantMessage\.id, laneId, reasoning, duration\)/);
+    // Thinking that arrives after an answer segment (tool use) re-arms the
+    // settle, so the next content chunk closes the trace again.
+    assert.match(app, /streamedReasoning \+= reasoningChunk;\n(?:\s*\/\/[^\n]*\n)*\s*reasoningEndTime = null;/);
+    assert.match(app, /streamedReasoning \+= reasoningChunk;\n(?:\s*\/\/[^\n]*\n)*\s*firstContentChunk = true;/);
+    assert.match(council, /reasoning \+= reasoningChunk;\n(?:\s*\/\/[^\n]*\n)*\s*firstContentChunk = true;/);
 });
 
 test('reasoning that arrives after settling is ignored, and the API flushes it before content', () => {
     const chatArea = read('chat/components/ChatArea.js');
-    assert.match(chatArea, /updateStreamingReasoning\(messageId, reasoning\) \{\n\s*if \(this\.settledReasoningIds\.has\(messageId\)\) return;/);
-    assert.match(chatArea, /updateCouncilLaneReasoning\(messageId, laneId, reasoning\) \{\n\s*const reasoningId = [^\n]+\n\s*if \(this\.settledReasoningIds\.has\(reasoningId\)\) return;/);
-    assert.match(chatArea, /settleReasoningDisplay\(messageId, reasoning, reasoningDuration\) \{\n\s*this\.settledReasoningIds\.add\(messageId\);\n\s*this\.finalizeReasoningDisplay\(messageId, reasoning, reasoningDuration\);/);
+    assert.match(chatArea, /updateStreamingReasoning\(messageId, reasoning\) \{\n\s*if \(this\.settledReasoningIds\.has\(messageId\)\) \{\n\s*const settledLength = this\.settledReasoningIds\.get\(messageId\);\n\s*if \(\(reasoning\?\.length \|\| 0\) <= settledLength\) return;/, 'a tail no longer than the settled text is ignored; longer reopens the trace');
+    assert.match(chatArea, /updateCouncilLaneReasoning\(messageId, laneId, reasoning\) \{\n\s*const reasoningId = [^\n]+\n\s*if \(this\.settledReasoningIds\.has\(reasoningId\)\) \{\n\s*const settledLength = this\.settledReasoningIds\.get\(reasoningId\);\n\s*if \(\(reasoning\?\.length \|\| 0\) <= settledLength\) return;/);
+    assert.match(chatArea, /settleReasoningDisplay\(messageId, reasoning, reasoningDuration\) \{\n\s*this\.settledReasoningIds\.set\(messageId, reasoning\?\.length \|\| 0\);\n\s*this\.finalizeReasoningDisplay\(messageId, reasoning, reasoningDuration\);/);
     const api = read('chat/api.js');
     assert.match(api, /accumulatedContent \+= content;\n(?:\s*\/\/[^\n]*\n)*\s*flushReasoningBuffer\(\);\n\s*onChunk\(content\);/);
 });

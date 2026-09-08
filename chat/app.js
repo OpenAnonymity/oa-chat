@@ -6299,6 +6299,8 @@ class ChatApp {
                             }
                         } else {
                             streamedReasoning += reasoningChunk;
+                            // Thinking after an answer segment (tools): the trace settles again at the next content.
+                            reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
                             // Save reasoning frequently so session switch can restore state
                             await chatDB.saveMessage(streamingMessage);
@@ -7020,6 +7022,8 @@ class ChatApp {
                             }
                         } else {
                             streamedReasoning += reasoningChunk;
+                            // Thinking after an answer segment (tools): the trace settles again at the next content.
+                            firstContentChunk = true;
                             streamingMessage.reasoning = streamedReasoning;
                         }
 

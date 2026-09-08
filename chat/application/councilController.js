@@ -1491,6 +1491,8 @@ export default class CouncilController {
                         reasoningStartTime = Date.now();
                     }
                     reasoning += reasoningChunk;
+                    // Thinking after an answer segment (tools): settle again at the next content.
+                    firstContentChunk = true;
                     if (laneState) {
                         laneState.reasoning = reasoning;
                         laneState.streamingReasoning = true;

@@ -19,9 +19,11 @@ export default class ChatArea {
         this.app = app;
         // Buffer for debounced reasoning updates during streaming
         this.reasoningBuffer = { content: '', timeout: null, messageId: null };
-        // Reasoning ids whose trace was settled when the answer began: late
-        // reasoning flushes for them are ignored so the panel stays settled.
-        this.settledReasoningIds = new Set();
+        // Reasoning ids whose trace was settled when the answer began, with
+        // the settled length: a debounce tail (same length) is ignored so the
+        // panel stays settled; genuinely new thinking (longer, after a tool
+        // call) reopens it and continues from where the settled text ended.
+        this.settledReasoningIds = new Map();
         this.councilReasoningStreams = new Map();
         // Typewriter state for gradual content reveal
         this.typewriter = {
@@ -2301,7 +2303,12 @@ export default class ChatArea {
 
     updateCouncilLaneReasoning(messageId, laneId, reasoning) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
-        if (this.settledReasoningIds.has(reasoningId)) return;
+        if (this.settledReasoningIds.has(reasoningId)) {
+            const settledLength = this.settledReasoningIds.get(reasoningId);
+            if ((reasoning?.length || 0) <= settledLength) return;
+            this.settledReasoningIds.delete(reasoningId);
+            this.getCouncilReasoningStreamState(reasoningId).displayedLength = settledLength;
+        }
         this.ensureCouncilLaneReasoningTrace(messageId, laneId);
         const state = this.getCouncilReasoningStreamState(reasoningId);
         state.content = reasoning || '';
@@ -2442,7 +2449,7 @@ export default class ChatArea {
 
     /** Same as settleReasoningDisplay, for one council lane. */
     settleCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
-        this.settledReasoningIds.add(this.getCouncilLaneReasoningId(messageId, laneId));
+        this.settledReasoningIds.set(this.getCouncilLaneReasoningId(messageId, laneId), reasoning?.length || 0);
         this.finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration);
     }
 
@@ -2502,7 +2509,14 @@ export default class ChatArea {
      * @param {string} reasoning - The reasoning content
      */
     updateStreamingReasoning(messageId, reasoning) {
-        if (this.settledReasoningIds.has(messageId)) return;
+        if (this.settledReasoningIds.has(messageId)) {
+            const settledLength = this.settledReasoningIds.get(messageId);
+            if ((reasoning?.length || 0) <= settledLength) return;
+            this.settledReasoningIds.delete(messageId);
+            this.typewriter.messageId = messageId;
+            this.typewriter.displayedLength = settledLength;
+            document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
+        }
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -2830,7 +2844,7 @@ export default class ChatArea {
      * @param {number} reasoningDuration - Duration in milliseconds
      */
     settleReasoningDisplay(messageId, reasoning, reasoningDuration) {
-        this.settledReasoningIds.add(messageId);
+        this.settledReasoningIds.set(messageId, reasoning?.length || 0);
         this.finalizeReasoningDisplay(messageId, reasoning, reasoningDuration);
     }
 
@@ -3111,7 +3125,7 @@ export default class ChatArea {
      */
     async finalizeStreamingMessage(message, options = {}) {
         if (message?.id) {
-            for (const id of this.settledReasoningIds) {
+            for (const id of [...this.settledReasoningIds.keys()]) {
                 if (id === message.id || id.startsWith(`${message.id}-`)) this.settledReasoningIds.delete(id);
             }
         }
