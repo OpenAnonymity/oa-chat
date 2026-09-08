@@ -2039,7 +2039,7 @@ class RightPanel {
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
                         <p class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
-                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider—not OA.
+                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider, not OA.
                         </p>
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>

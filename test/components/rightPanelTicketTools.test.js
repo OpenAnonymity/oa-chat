@@ -165,7 +165,7 @@ test('commercial ticket launcher keeps a question-mark ticket explanation', () =
     assert.match(source, /aria-controls="external-ticket-info-panel"/);
     assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
     assert.match(source, /Inference tickets provide unlinkable access to frontier AI models/);
-    assert.match(source, /queries go directly to the model provider—not OA/);
+    assert.match(source, /queries go directly to the model provider, not OA/);
     assert.match(source, /this\.updateExternalTicketInfoVisibility\(\)/);
 });
 
