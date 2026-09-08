@@ -113,7 +113,11 @@ export default class ChatInput {
         if (!toolsContainer || !fileAction || !settingsControl || !settingsActions || !searchToggle) return;
 
         toolsContainer.append(fileAction, settingsControl);
+        // Web search is a switch in the panel's Tools section now; the old
+        // On/Off row is kept in the DOM (its state logic lives on it) but
+        // no longer shown at the foot of the panel.
         settingsActions.append(searchToggle);
+        searchToggle.hidden = true;
     }
 
     applyComposerLayout() {
@@ -379,12 +383,14 @@ export default class ChatInput {
                 menu.classList.remove('hidden');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
-                // Position relative to the settings button, clamped so the menu
-                // never leaves the viewport (it used to hang off the right edge
-                // below ~900px) and scrolls instead of growing past the top.
+                // Centre the panel on the composer card (it hangs off a button
+                // at the card's right edge), clamped so it never leaves the
+                // viewport, and scroll instead of growing past the top.
                 const viewportMargin = 12;
                 const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
-                const left = Math.max(viewportMargin, Math.min(btnRect.left, window.innerWidth - width - viewportMargin));
+                const cardRect = this.app.elements.inputCard?.getBoundingClientRect?.() || btnRect;
+                const centred = cardRect.left + (cardRect.width - width) / 2;
+                const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
                 const bottom = window.innerHeight - btnRect.top + 8;
                 menu.style.left = `${left}px`;
                 menu.style.bottom = `${bottom}px`;

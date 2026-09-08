@@ -8023,7 +8023,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
         0 0 0 1px hsl(var(--color-foreground) / 0.04),
         0 16px 48px -16px rgb(0 0 0 / 0.35);
     color: hsl(var(--color-popover-foreground));
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     line-height: 1.3;
     text-align: left;
     -webkit-font-smoothing: antialiased;
@@ -8045,7 +8045,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
 
 .settings-section-title {
     margin: 0 0 0.25rem;
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -8062,7 +8062,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
 .settings-row.hidden { display: none; }
 
 .settings-row-label {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     color: hsl(var(--color-foreground) / 0.9);
     white-space: nowrap;
     overflow: hidden;
@@ -8086,7 +8086,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
     background: transparent;
     color: hsl(var(--color-foreground));
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     line-height: 1;
     cursor: pointer;
     transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.1s ease-out;
@@ -8112,7 +8112,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
     background: transparent;
     color: hsl(var(--color-foreground));
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     line-height: 1;
     white-space: nowrap;
     overflow: hidden;
@@ -8196,7 +8196,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     box-shadow: none;
     color: hsl(var(--color-muted-foreground));
     font: inherit;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     line-height: 1;
     cursor: pointer;
     transition: background-color 0.12s ease, color 0.12s ease;
@@ -8209,7 +8209,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .settings-panel .settings-segmented .settings-segment-icon { width: 2rem; padding: 0; }
 .settings-panel .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
-.settings-panel .settings-segmented .settings-segment-icon span { font-size: 0.875rem; font-weight: 500; }
+.settings-panel .settings-segmented .settings-segment-icon span { font-size: 0.8125rem; font-weight: 500; }
 .settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
 
 /* Share feedback: a row that is a link. */
@@ -8234,3 +8234,6 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     padding-top: 0.25rem;
     border-top-color: var(--settings-line);
 }
+/* The slot holds the hidden Web search row; with nothing visible in it,
+   no divider and no gap either. */
+.settings-panel .composer-settings-actions:not(:has(> :not([hidden]))) { display: none; }

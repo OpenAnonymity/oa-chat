@@ -673,6 +673,7 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(source.includes('toolsContainer.append(fileAction, settingsControl, searchToggle);'), false);
     assert.equal(source.includes('toolsContainer.append(fileAction, settingsControl);'), true);
     assert.equal(source.includes('settingsActions.append(searchToggle);'), true);
+    assert.equal(source.includes('searchToggle.hidden = true;'), true, 'Web search is a Tools switch now; the old row stays out of sight');
     assert.equal(source.includes("e.target.closest('#file-upload-btn, #search-toggle')"), true);
     assert.equal(source.includes('inlineButton.disabled = !isEnabled || availableModels.length === 0;'), true);
     assert.equal(source.includes('toggleComposerMoreMenu()'), false);
