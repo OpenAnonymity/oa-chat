@@ -8026,6 +8026,7 @@ div:has(> #input-card.scrubber-preview-expanded) {
     font-size: 0.75rem;
     line-height: 1.3;
     text-align: left;
+    overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
 }
@@ -8147,7 +8148,11 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .dark .settings-select select option { background: hsl(var(--color-popover)); }
 
-/* Switches: the blue iOS-style toggle from the design, at panel scale. */
+/* Switches: the blue iOS-style toggle from the design, at panel scale. The
+   row label already says what each one is, so no hover tooltip here — inside
+   a scrolling panel it was clipped and forced a horizontal scrollbar. */
+.settings-panel [data-tooltip]:hover::after,
+.settings-panel [data-tooltip]:hover::before { display: none; }
 .settings-panel .settings-switch {
     width: 2.25rem;
     height: 1.25rem;

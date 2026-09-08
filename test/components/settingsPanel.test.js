@@ -77,7 +77,8 @@ test('the Tools → Web search switch flips the same state as the composer contr
     assert.match(source, /const searchSettingToggle = document\.getElementById\('search-setting-toggle'\);/);
     assert.match(source, /searchSettingToggle\.addEventListener\('click', async \(event\) => \{\s*event\.stopPropagation\(\);\s*await toggleSearch\(\);/);
     assert.match(source, /settingToggle\.classList\.toggle\('switch-active', this\.app\.searchEnabled\)/);
-    assert.match(source, /const SETTINGS_MENU_WIDTH_PX = 380;/);
+    assert.match(source, /const SETTINGS_MENU_WIDTH_PX = 340;/);
+    assert.match(source, /const centred = btnRect\.left \+ btnRect\.width \/ 2 - width \/ 2;/);
 });
 
 test('settings panel styles: compact rows, blue switches, raised selected segment, full-width dividers', () => {

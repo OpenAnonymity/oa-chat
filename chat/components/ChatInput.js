@@ -38,7 +38,7 @@ import {
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
-const SETTINGS_MENU_WIDTH_PX = 380;
+const SETTINGS_MENU_WIDTH_PX = 340;
 
 export default class ChatInput {
     /**
@@ -383,13 +383,11 @@ export default class ChatInput {
                 menu.classList.remove('hidden');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
-                // Centre the panel on the composer card (it hangs off a button
-                // at the card's right edge), clamped so it never leaves the
-                // viewport, and scroll instead of growing past the top.
+                // Centre the panel over the gear button, clamped so it never
+                // leaves the viewport, and scroll instead of growing past the top.
                 const viewportMargin = 12;
                 const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
-                const cardRect = this.app.elements.inputCard?.getBoundingClientRect?.() || btnRect;
-                const centred = cardRect.left + (cardRect.width - width) / 2;
+                const centred = btnRect.left + btnRect.width / 2 - width / 2;
                 const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
                 const bottom = window.innerHeight - btnRect.top + 8;
                 menu.style.left = `${left}px`;
@@ -1838,7 +1836,9 @@ export default class ChatInput {
         toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
         toggle.classList.toggle('switch-active', enabled);
         toggle.classList.toggle('switch-inactive', !enabled);
-        toggle.title = enabled ? enabledTitle : disabledTitle;
+        // The row label names the switch and aria-checked carries its state;
+        // a native title on top of that showed two tooltips at once.
+        toggle.removeAttribute('title');
         toggle.dataset.tooltip = enabled ? enabledTitle : disabledTitle;
     }
 
