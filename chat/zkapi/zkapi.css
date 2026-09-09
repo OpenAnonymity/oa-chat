@@ -118,7 +118,7 @@ html.theme-purple .zkapi-dialog {
     text-wrap: pretty;
 }
 .zkapi-dialog-head + .zkapi-dialog-scroll > .zkapi-lede { margin-top: 0; }
-.zkapi-stack { display: flex; flex-direction: column; gap: 2.25rem; }
+.zkapi-stack { display: flex; flex-direction: column; gap: 2rem; }
 .zkapi-stack > .zkapi-lede { margin-bottom: -1.25rem; }
 .zkapi-section { display: flex; flex-direction: column; gap: 0.875rem; }
 .zkapi-section-title { margin: 0; font-size: 0.875rem; font-weight: 600; line-height: 1.2; }
@@ -336,6 +336,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 
 /* ---------- Funded balance ---------- */
 .zkapi-balance-card { display: flex; flex-direction: column; gap: 0.875rem; }
+.zkapi-balance-card > .zkapi-note { margin-top: 0.25rem; max-width: 30rem; }
 .zkapi-balance-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
 .zkapi-balance-caption { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; font-weight: 500; }
 .zkapi-balance-amount {
@@ -406,7 +407,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 }
 
 /* Withdrawal method: rows with a radio, separated by space — no boxes. */
-.zkapi-choices { margin: 0; padding: 0; border: 0; min-width: 0; gap: 0.25rem; }
+.zkapi-choices { margin: 0; padding: 0; border: 0; min-width: 0; gap: 0.125rem; }
 .zkapi-choices > legend { padding: 0; margin-bottom: 0.625rem; }
 .zkapi-choice {
     display: flex;
@@ -428,7 +429,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 .zkapi-choice.selected strong, .zkapi-choice:hover strong { color: hsl(var(--color-foreground)); }
 .zkapi-choice small { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; line-height: 1.5; text-wrap: pretty; }
 .zkapi-choices:disabled .zkapi-choice { cursor: default; opacity: 0.6; }
-.zkapi-check { display: flex; align-items: flex-start; gap: 0.75rem; margin-top: -0.75rem; color: hsl(var(--color-muted-foreground)); font-size: 0.875rem; line-height: 1.5; cursor: pointer; }
+.zkapi-check { display: flex; align-items: flex-start; gap: 0.75rem; margin-top: -0.5rem; color: hsl(var(--color-muted-foreground)); font-size: 0.875rem; line-height: 1.5; cursor: pointer; }
 .zkapi-check input { flex: 0 0 auto; width: 1rem; height: 1rem; margin: 0.1875rem 0 0; accent-color: hsl(var(--color-accent-primary)); }
 .zkapi-note { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; line-height: 1.5; text-wrap: pretty; }
 .zkapi-note--attention { color: hsl(35 80% 32%); }
@@ -1486,7 +1487,8 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 }
 .payment-mode-control button {
     padding: 0 11px;
-    height: 1.625rem;
+    height: 1.625rem !important;
+    min-height: 0 !important;
     border-radius: 0.5rem;
     font-size: 12px;
     line-height: 1;

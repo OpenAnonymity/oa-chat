@@ -87,7 +87,7 @@ test('the gear holds Privacy, Memory, Tools, Appearance, Data controls and feedb
     }
 });
 
-test('what stays account-bound: Delete account from the account menu, into its confirmation', () => {
+test('what stays account-bound: Delete account, reached from Billing, into its confirmation', () => {
     const html = read('chat/index.html');
     const dialog = settingsDialog(html);
     assert.match(dialog, /<div id="settings-dialog" class="hidden fixed inset-0 z-50 bg-black\/60 backdrop-blur-sm flex items-center justify-center p-4">/);
@@ -103,17 +103,16 @@ test('what stays account-bound: Delete account from the account menu, into its c
     // The confirmation card: one sentence on what goes, cancel first.
     assert.match(html, /<template id="settings-delete-account-template">[\s\S]*Are you sure you want to delete your account\?[\s\S]*After deleting, all of your information will be lost[\s\S]*data-delete-account="cancel"[\s\S]*data-delete-account="confirm"[^>]*>Delete account</);
     // The account menu: the preferences item that opened this dialog is gone
-    // (the core security item, also labelled Account, is a different route);
-    // Delete account sits after Log out.
+    // (the core security item, also labelled Account, is a different route).
+    // Deletion is a row in the commercial Billing dialog, reached through the
+    // extension context.
     const menu = html.slice(html.indexOf('id="account-settings-menu"'), html.indexOf('data-oa-extension-slot="sidebar.accountActions"'));
-    assert.doesNotMatch(menu, /account-preferences-menu-item/);
-    assert.ok(menu.indexOf('id="account-logout-menu-item"') < menu.indexOf('id="account-delete-menu-item"'));
-    assert.match(menu, /id="account-delete-menu-item" class="account-menu-item account-menu-item-danger"[^>]*role="menuitem"[\s\S]*?<span>Delete account<\/span>/);
+    assert.doesNotMatch(menu, /account-preferences-menu-item|account-delete-menu-item/);
     // One gear on the page: the composer's.
     assert.doesNotMatch(menu, /M9\.594 3\.94/);
     const dialogSource = read('chat/components/SettingsDialog.js');
-    assert.match(dialogSource, /getElementById\('account-delete-menu-item'\)/);
     assert.match(dialogSource, /openDeleteAccount\(/);
+    assert.match(read('chat/app.js'), /openDeleteAccount: \(\) => this\.settingsDialog\?\.openDeleteAccount\?\.\(\)/);
     // Wired: the vanilla UI mounts it and components reach it through the facade.
     assert.match(read('chat/ui/vanilla/VanillaChatUi.js'), /settingsDialog: new SettingsDialog\(componentApp\)/);
     assert.match(read('chat/ui/appInterface.js'), /'settingsDialog',/);

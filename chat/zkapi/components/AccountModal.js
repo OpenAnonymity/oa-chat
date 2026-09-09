@@ -724,7 +724,7 @@ export default class AccountModal {
                 <div class="zkapi-balance-card">
                     <div class="zkapi-balance-top">
                         <div>
-                            <p class="zkapi-balance-caption">Amount returned</p>
+                            <p class="zkapi-balance-caption">Returned to MetaMask</p>
                             <p data-withdraw-amount class="zkapi-balance-amount">${zkapiClient.formatMoney(note?.current_balance)}</p>
                         </div>
                     </div>
@@ -764,7 +764,7 @@ export default class AccountModal {
         const fundingSetup = captureFundingSetupView(this.overlay);
         const showsBalance = !['withdraw', 'withdrawals'].includes(this.view);
         const title = this.view === 'withdraw'
-            ? 'Withdraw private balance'
+            ? 'Withdraw'
             : this.view === 'withdrawals'
                 ? 'Payment history'
                 : 'Private balance';
@@ -783,7 +783,7 @@ export default class AccountModal {
                     </button>
                 </div>
                 <div data-funding-scroll class="zkapi-dialog-scroll">
-                    ${showsBalance ? '' : `<p class="zkapi-lede">${subtitle}</p>`}
+                    ${this.view === 'withdrawals' ? `<p class="zkapi-lede">${subtitle}</p>` : ''}
                     ${showsBalance ? privateBalanceHelpContent('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}
                     ${this.view === 'withdraw' ? this.renderWithdrawal() : this.view === 'withdrawals' ? this.renderWithdrawalRecords() : this.renderBalance(fundingSetup)}
                 </div>

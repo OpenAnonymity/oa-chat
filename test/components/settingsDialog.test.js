@@ -29,7 +29,7 @@ function harness({ deleteAllChats, deleteAccount } = {}) {
     const docListeners = new Map();
     globalThis.document = {
         activeElement: null,
-        getElementById: id => (id === 'settings-dialog' ? overlay : id === 'account-delete-menu-item' ? menuItem : null),
+        getElementById: id => (id === 'settings-dialog' ? overlay : null),
         addEventListener(type, fn) { docListeners.set(type, fn); },
         removeEventListener(type) { docListeners.delete(type); },
         contains: () => true,
@@ -52,11 +52,10 @@ function harness({ deleteAllChats, deleteAccount } = {}) {
 
 const click = (h, button) => h.overlay.listeners.get('click')({ target: { closest: () => button } });
 
-test('Delete account opens from the account menu straight into its confirmation; the dialog closes on Escape, the close button and the backdrop', () => {
+test('Delete account (from Billing) opens straight into its confirmation; the dialog closes on Escape, the close button and the backdrop', () => {
     const h = harness();
     try {
-        h.menuItem.listeners.get('click')();
-        assert.deepEqual(h.events, ['menu-closed']);
+        h.settings.openDeleteAccount();
         assert.equal(h.settings.isOpen, true);
         assert.equal(h.overlay.classList.contains('hidden'), false);
         assert.equal(h.settings.standaloneConfirm, true, 'only the confirmation shows; the card behind is hidden');

@@ -2,8 +2,8 @@
  * Data controls, Appearance and Share feedback live in the composer gear for
  * every mode, so a zkAPI user without an account finds them too; this class
  * runs the gear's data actions (export, import). What remains account-bound
- * — Delete account — is reached from the account menu and opens straight
- * into its confirmation over the #settings-dialog overlay.
+ * — Delete account — is a row in the commercial Billing dialog, which opens
+ * it straight into its confirmation over the #settings-dialog overlay.
  */
 import { exportChats, exportAllData } from '../services/globalExport.js';
 
@@ -53,10 +53,6 @@ class SettingsDialog {
             this.overlay.addEventListener('pointerdown', this.onOverlayPointerDown);
             this.overlay.addEventListener('click', this.onClick);
         }
-        document.getElementById('account-delete-menu-item')?.addEventListener('click', () => {
-            this.app.accountModal?.closeAccountMenu?.();
-            this.openDeleteAccount();
-        });
         // The gear's Data controls: exports run at once (the gear is a menu,
         // not a place for a second card), imports open their pickers.
         this.dataSection = document.getElementById('data-management-section');
@@ -64,7 +60,7 @@ class SettingsDialog {
         this.dataSection?.addEventListener('click', this.onDataClick);
     }
 
-    /** From the account menu: only the confirmation, over the backdrop. */
+    /** From Billing's account row: only the confirmation, over the backdrop. */
     openDeleteAccount(returnFocusEl = null) {
         if (!this.overlay) return;
         this.open(returnFocusEl);

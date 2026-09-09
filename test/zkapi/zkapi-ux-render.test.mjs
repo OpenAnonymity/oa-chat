@@ -1068,7 +1068,7 @@ test('an idle Withdraw dialog redirects to a claimed balance while live wallet r
         assert.equal(modal.view, 'withdraw');
         assert.match(modal.overlay.innerHTML, /id="zkapi-sync-withdrawal-btn"/);
         assert.doesNotMatch(modal.overlay.innerHTML,
-            /Amount returned|id="zkapi-retry-dropped-withdrawal-btn"|id="zkapi-retry-withdrawal-btn"|id="zkapi-finalize-btn"|id="zkapi-withdraw-btn"/);
+            /Returned to MetaMask|id="zkapi-retry-dropped-withdrawal-btn"|id="zkapi-retry-withdrawal-btn"|id="zkapi-finalize-btn"|id="zkapi-withdraw-btn"/);
         delete zkapiClient.config.prepared_withdrawal;
         modal.render();
         assert.equal(modal.view, 'balance');

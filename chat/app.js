@@ -680,6 +680,7 @@ class ChatApp {
             ui: Object.freeze({
                 persistNavigationForReturn: () => { saveNavigationSelection(this.state.currentSessionId); },
                 openAccount: () => this.accountModal?.open?.(),
+                openDeleteAccount: () => this.settingsDialog?.openDeleteAccount?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
                 ensureTicketStatusVisible: () => this.rightPanel?.show?.(),
