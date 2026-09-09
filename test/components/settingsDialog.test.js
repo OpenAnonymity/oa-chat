@@ -16,6 +16,7 @@ function element(extra = {}) {
         querySelectorAll() { return []; },
         contains() { return true; },
         focus() { this.focused = true; },
+        remove() { this.removed = true; },
         ...extra
     };
 }
@@ -179,6 +180,31 @@ test('Import history hands over to the import dialog', async () => {
         await click(h, { dataset: { action: 'import-history' } });
         assert.deepEqual(h.events, ['import-open']);
         assert.equal(h.settings.isOpen, false);
+    } finally {
+        h.restore();
+    }
+});
+
+test('Export asks first: the download only starts from the confirmation card', async () => {
+    const h = harness();
+    try {
+        h.settings.exportChats = async () => { h.events.push('export-chats'); };
+        h.settings.open();
+        await click(h, { dataset: { action: 'export-chats' } });
+        assert.deepEqual(h.events, [], 'no download on the first click');
+        assert.ok(h.settings.deleteConfirm, 'a confirmation card is up');
+        assert.match(h.settings.deleteConfirm.innerHTML, /Export your chats\?/);
+        assert.match(h.settings.deleteConfirm.innerHTML, /This downloads a file with your chats to this device\./);
+        assert.match(h.settings.deleteConfirm.innerHTML, /data-export-confirm="export-chats" class="settings-button settings-button-primary">Export</);
+
+        await click(h, { dataset: { exportConfirm: 'cancel' } });
+        assert.deepEqual(h.events, [], 'Cancel downloads nothing');
+        assert.equal(h.settings.deleteConfirm, null);
+
+        await click(h, { dataset: { action: 'export-chats' } });
+        await click(h, { dataset: { exportConfirm: 'export-chats' } });
+        assert.deepEqual(h.events, ['export-chats']);
+        assert.equal(h.settings.deleteConfirm, null, 'the card closes with the download');
     } finally {
         h.restore();
     }

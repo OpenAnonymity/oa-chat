@@ -20,6 +20,21 @@ function deletionErrorMessage(error) {
     return 'Could not delete the account. Please try again.';
 }
 
+const EXPORT_CONFIRMATIONS = {
+    'export-all-data': {
+        title: 'Export your chats and settings?',
+        body: 'This downloads one file with your chats and settings to this device.'
+    },
+    'export-chats': {
+        title: 'Export your chats?',
+        body: 'This downloads a file with your chats to this device.'
+    },
+    'export-memory': {
+        title: 'Export your memories?',
+        body: 'This downloads a portable file with what oa-chat remembers about you.'
+    }
+};
+
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 class SettingsDialog {
@@ -105,19 +120,26 @@ class SettingsDialog {
             await this.deleteAccount(button);
             return;
         }
+        const exportRole = button.dataset.exportConfirm;
+        if (exportRole === 'cancel') {
+            this.dismissDeleteConfirm();
+            return;
+        }
+        if (exportRole) {
+            this.dismissDeleteConfirm();
+            await this.runExport(exportRole);
+            return;
+        }
         switch (button.dataset.action) {
             case 'export-chats':
-                await this.exportChats();
-                break;
             case 'export-all-data':
-                await this.exportAll();
+            case 'export-memory':
+                // A download should not be a surprise: say what the file is first.
+                this.showExportConfirm(button.dataset.action);
                 break;
             case 'import-data':
                 // The file picker takes over; ChatInput handles the chosen file.
                 document.getElementById('global-import-input')?.click?.();
-                break;
-            case 'export-memory':
-                await this.exportMemories();
                 break;
             case 'import-memory':
                 document.getElementById('memory-import-input')?.click?.();
@@ -174,6 +196,39 @@ class SettingsDialog {
      * type. The Delete button stays disabled until the word matches, so the
      * only way to delete is to have read the sentence above it.
      */
+    /**
+     * The export confirmations share the delete card's layer and layout:
+     * one question, one sentence on what the file holds, Cancel / Export.
+     */
+    showExportConfirm(action) {
+        if (this.deleteConfirm || !this.overlay) return;
+        const copy = EXPORT_CONFIRMATIONS[action];
+        if (!copy) return;
+        const layer = document.createElement('div');
+        layer.className = 'settings-confirm-layer';
+        layer.innerHTML = `
+            <div role="dialog" aria-modal="true" aria-labelledby="export-confirm-title" tabindex="-1" class="w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl">
+                <div class="p-6">
+                    <p id="export-confirm-title" class="text-base font-semibold text-foreground">${copy.title}</p>
+                    <p class="text-sm text-muted-foreground mt-1">${copy.body}</p>
+                    <div class="settings-confirm-actions">
+                        <button type="button" data-export-confirm="cancel" class="settings-button">Cancel</button>
+                        <button type="button" data-export-confirm="${action}" class="settings-button settings-button-primary">Export</button>
+                    </div>
+                </div>
+            </div>`;
+        this.overlay.append(layer);
+        this.deleteConfirm = layer;
+        this.confirmReturnFocus = this.dialog?.querySelector?.(`[data-action="${action}"]`) || null;
+        layer.querySelector(`[data-export-confirm="${action}"]`)?.focus?.();
+    }
+
+    async runExport(action) {
+        if (action === 'export-chats') await this.exportChats();
+        else if (action === 'export-all-data') await this.exportAll();
+        else if (action === 'export-memory') await this.exportMemories();
+    }
+
     showDeleteConfirm() {
         if (this.deleteConfirm || !this.overlay) return;
         const template = document.getElementById('settings-delete-account-template');
@@ -184,6 +239,7 @@ class SettingsDialog {
         layer.append(card);
         this.overlay.append(layer);
         this.deleteConfirm = layer;
+        this.confirmReturnFocus = this.dialog?.querySelector?.('[data-action="delete-account"]') || null;
         const input = card.querySelector('[data-delete-account="input"]');
         const confirm = card.querySelector('[data-delete-account="confirm"]');
         if (input && confirm) {
@@ -209,7 +265,9 @@ class SettingsDialog {
         if (!this.deleteConfirm) return;
         this.deleteConfirm.remove();
         this.deleteConfirm = null;
-        this.dialog?.querySelector?.('[data-action="delete-account"]')?.focus?.();
+        const target = this.confirmReturnFocus;
+        this.confirmReturnFocus = null;
+        target?.focus?.();
     }
 
     /**

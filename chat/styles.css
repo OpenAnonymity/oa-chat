@@ -8364,26 +8364,38 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    download, imports say which file they take. The buttons sit at the card's
    right edge, so the tooltip hangs from its right corner and grows leftward
    instead of running into the scroll edge. */
+/* Same tooltip as Billing's Share / Import: a small card above the action,
+   right-aligned to it, wrapping text, no arrow. */
 .settings-panel .settings-text-action[data-tooltip]:hover::after {
     display: block;
+    top: auto;
+    bottom: calc(100% + 0.625rem);
     left: auto;
     right: 0;
-    transform: translateY(8px);
-    animation-name: tooltipBodyFadeInEnd;
+    width: max-content;
+    max-width: 15rem;
+    padding: 0.625rem 0.875rem;
+    border: 0;
+    border-radius: 0.75rem;
+    background: hsl(var(--color-popover));
+    color: hsl(var(--color-foreground));
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .06),
+        0 4px 16px -4px rgb(0 0 0 / .18);
+    transform: translateY(0);
+    animation: settingsTipIn 140ms ease;
 }
-.settings-panel .settings-text-action[data-tooltip]:hover::before {
-    display: block;
-    left: auto;
-    right: 0.875rem;
-    transform: translateY(4px) rotate(45deg);
-    animation-name: tooltipArrowFadeInEnd;
+.settings-panel .settings-text-action[data-tooltip]:hover::before { display: none; }
+@keyframes settingsTipIn {
+    from { opacity: 0; transform: translateY(0.25rem); }
+    to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes tooltipBodyFadeInEnd {
-    from { opacity: 0; transform: translateY(4px); }
-    to   { opacity: 1; transform: translateY(8px); }
-}
-@keyframes tooltipArrowFadeInEnd {
-    from { opacity: 0; transform: translateY(0) rotate(45deg); }
     to   { opacity: 1; transform: translateY(4px) rotate(45deg); }
 }
 .settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
@@ -8438,7 +8450,6 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 @keyframes import-spin { to { transform: rotate(360deg); } }
 .settings-button-primary { color: hsl(var(--color-background)); background: hsl(var(--color-foreground)); border-color: hsl(var(--color-foreground)); }
 .settings-button-primary:hover:not(:disabled) { background: hsl(var(--color-foreground) / 0.88); border-color: transparent; }
-.settings-panel .settings-text-action[data-tooltip]:hover::after { white-space: nowrap; }
 /* The Delete account confirmation sits over the Settings card, same backdrop. */
 .settings-confirm-layer {
     /* Outside the .settings-dialog card, so it carries the same control tokens. */
