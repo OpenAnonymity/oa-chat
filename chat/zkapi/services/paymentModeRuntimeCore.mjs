@@ -23,7 +23,7 @@ export function createPaymentModeRuntimeCore({ zkRuntime, inferenceService, acqu
             || modeFor(session) === 'tickets',
         getFeatureUnavailableReason(feature, session) {
             if (runtime.supportsFeature(feature, session)) return '';
-            if (feature === 'council') return 'Parallel needs separate model keys. Switch to Tickets to use it.';
+            if (feature === 'council') return 'Council needs separate model keys. Switch to Tickets to use it.';
             const label = feature === 'scrubber' ? 'Privacy Scrubber' : 'Memory';
             return `${label} needs a key paid with tickets. Switch to Tickets to use it.`;
         },

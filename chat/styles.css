@@ -8582,9 +8582,9 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .settings-row.is-disabled { opacity: 0.55; }
 .settings-panel .settings-row.is-disabled select { cursor: default; }
 /* A switch that is out in this payment mode still takes the pointer, so
-   its bubble says why — the same as the Parallel icon in the composer.
+   its bubble says why, the same as the Parallel icon in the composer.
    The row already dims; the switch does not dim again on top. */
-.settings-panel .settings-row.is-disabled .settings-switch[data-feature-unavailable="true"]:disabled {
+.settings-panel .settings-row.is-disabled .settings-switch:disabled {
     opacity: 1;
     pointer-events: auto;
     cursor: default;
@@ -8689,7 +8689,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    right-aligned to it, wrapping text, no arrow. A switch that is out in
    this payment mode gets the same bubble, saying why. */
 .settings-panel .settings-text-action[data-tooltip]:hover::after,
-.settings-panel .settings-switch[data-feature-unavailable="true"][data-tooltip]:hover::after {
+.settings-panel .settings-switch[data-tooltip]:hover::after {
     display: block;
     top: auto;
     bottom: calc(100% + 0.625rem);
@@ -8715,7 +8715,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     animation: settingsTipIn 140ms ease;
 }
 .settings-panel .settings-text-action[data-tooltip]:hover::before,
-.settings-panel .settings-switch[data-feature-unavailable="true"][data-tooltip]:hover::before { display: none; }
+.settings-panel .settings-switch[data-tooltip]:hover::before { display: none; }
 @keyframes settingsTipIn {
     from { opacity: 0; transform: translateY(0.25rem); }
     to   { opacity: 1; transform: translateY(0); }

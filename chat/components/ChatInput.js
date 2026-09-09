@@ -1897,9 +1897,21 @@ export default class ChatInput {
         toggle.classList.toggle('switch-active', enabled);
         toggle.classList.toggle('switch-inactive', !enabled);
         // The row label names the switch and aria-checked carries its state;
-        // a native title on top of that showed two tooltips at once.
+        // a native title on top of that showed two tooltips at once. The
+        // bubble says what the switch does (the markup's description, kept
+        // on first sight), not its state, which the switch already shows.
         toggle.removeAttribute('title');
-        toggle.dataset.tooltip = enabled ? enabledTitle : disabledTitle;
+        if (!toggle.dataset.description && toggle.dataset.tooltip) toggle.dataset.description = toggle.dataset.tooltip;
+        toggle.dataset.tooltip = toggle.dataset.description || (enabled ? enabledTitle : disabledTitle);
+    }
+
+    /** Dims a gear row and puts the reason in its switch's bubble while the
+     *  feature is out in this payment mode; restores the description after. */
+    markSwitchAvailability(toggle, available, reason) {
+        if (!toggle) return;
+        toggle.closest?.('.settings-row')?.classList?.toggle?.('is-disabled', !available);
+        toggle.dataset.featureUnavailable = String(!available);
+        if (!available) toggle.dataset.tooltip = reason;
     }
 
     refreshMemorySettingsUI() {
@@ -1916,10 +1928,7 @@ export default class ChatInput {
         if (featureToggle) {
             featureToggle.disabled = !memorySupported;
             featureToggle.setAttribute('aria-disabled', String(!memorySupported));
-            if (!memorySupported) {
-                featureToggle.dataset.tooltip = memoryUnavailableReason;
-                featureToggle.removeAttribute('title');
-            }
+            this.markSwitchAvailability(featureToggle, memorySupported, memoryUnavailableReason);
         }
 
         const memoryAutoIncludeToggle = document.getElementById('memory-auto-include-toggle');
@@ -1933,6 +1942,7 @@ export default class ChatInput {
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
             memoryAutoIncludeToggle.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+            this.markSwitchAvailability(memoryAutoIncludeToggle, memoryFeatureEnabled, memoryUnavailableReason);
         }
 
         if (this.scrubberModelSelect) {
@@ -1956,6 +1966,7 @@ export default class ChatInput {
             this.memoryAgentModelSelect.title = memoryFeatureEnabled
                 ? 'Memory agent model'
                 : memoryUnavailableReason;
+            this.memoryAgentModelSelect.closest?.('.settings-row')?.classList?.toggle?.('is-disabled', !memoryFeatureEnabled);
         }
 
         document.querySelectorAll('[data-memory-requires-feature]').forEach((element) => {
@@ -2750,9 +2761,8 @@ export default class ChatInput {
             councilReviewToggle.setAttribute('aria-checked', String(isCouncilReviewEnabled));
             councilReviewToggle.classList.toggle('switch-active', isCouncilReviewEnabled);
             councilReviewToggle.classList.toggle('switch-inactive', !isCouncilReviewEnabled);
-            councilReviewToggle.title = isCouncilReviewEnabled
-                ? 'Council review is on'
-                : 'Council review is off';
+            // The bubble describes the switch; aria-checked carries its state.
+            councilReviewToggle.removeAttribute('title');
         }
 
         if (councilReviewModelRow) {

@@ -10,6 +10,7 @@ test('indexer lag is recognised by code or by the SDK wording, and told plainly'
     assert.equal(zkapiErrorMessage(byText), INDEXER_LAG_MESSAGE);
     assert.match(INDEXER_LAG_MESSAGE, /Nothing was lost/);
     assert.match(INDEXER_LAG_MESSAGE, /within a minute/);
+    assert.doesNotMatch(INDEXER_LAG_MESSAGE, /—/);
 
     explainZkapiError(byText);
     assert.equal(byText.message, INDEXER_LAG_MESSAGE);

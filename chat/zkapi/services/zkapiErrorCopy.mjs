@@ -5,7 +5,7 @@
 /** The indexer (which reads the vault from Ethereum) has not yet seen the
  *  block a proof must be built against. It catches up on its own; the SDK
  *  has already waited about ten seconds before giving up. */
-export const INDEXER_LAG_MESSAGE = 'zkAPI is still reading your latest transaction from Ethereum, so your balance can’t be proven against it yet. Nothing was lost. This usually clears within a minute of the transaction confirming — wait, then try again.';
+export const INDEXER_LAG_MESSAGE = 'zkAPI is still reading your latest transaction from Ethereum, so your balance can’t be proven against it yet. Nothing was lost. This usually clears within a minute of the transaction confirming. Wait, then try again.';
 
 export function isIndexerLag(error) {
     return error?.code === 'indexer_root_lag'
