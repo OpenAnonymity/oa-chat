@@ -15,15 +15,14 @@ export function fundingSetupGuide({ mainnet, demoMintEnabled, open = false }) {
         ${installStep}
         <li><strong class="text-foreground">Get free Sepolia ETH.</strong> Choose a faucet from <a data-funding-setup-focus="faucets" class="${LINK_CLASSES}" href="https://ethereum.org/en/developers/docs/networks/#sepolia" target="_blank" rel="noopener noreferrer">Ethereum’s Sepolia faucet list</a>. Copy your public MetaMask account address into the faucet and request test ETH.</li>
         <li><strong class="text-foreground">Return here to fund.</strong> Choose <strong>Continue with MetaMask</strong>, select Sepolia if prompted, and confirm the test-token and deposit steps. The app creates demo billing tokens if your wallet needs them.</li>` : installStep;
-    return `<section data-funding-setup class="rounded-lg border border-border p-4 text-xs leading-relaxed text-muted-foreground">
-        <p class="font-medium text-foreground">Before you fund</p>
-        <p class="mt-1">${prerequisites}</p>
-        <details data-funding-setup-details class="mt-3" ${open ? 'open' : ''}>
-            <summary data-funding-setup-focus="summary" class="cursor-pointer rounded-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">${mainnet ? 'New to crypto? Set up your wallet' : 'Set up MetaMask for this app'}</summary>
-            <ol class="mt-3 list-decimal space-y-3 pl-4">${steps}</ol>
-            ${mainnet ? `<p class="mt-3"><a data-funding-setup-focus="buy-help" class="${LINK_CLASSES}" href="https://support.metamask.io/manage-crypto/move-crypto/buy/how-to-buy-crypto-in-metamask" target="_blank" rel="noopener noreferrer">MetaMask’s step-by-step buying guide ↗</a></p>` : ''}
-        </details>
-    </section>`;
+    return `<details data-funding-setup data-funding-setup-details class="zkapi-guide zkapi-guide-details" ${open ? 'open' : ''}>
+        <summary data-funding-setup-focus="summary" class="zkapi-guide-trigger">${mainnet ? 'New to crypto? Set up your wallet' : 'Set up MetaMask for this app'}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <div class="zkapi-guide-body">
+            <p class="zkapi-guide-lead">${prerequisites}</p>
+            <ol class="zkapi-guide-steps">${steps}</ol>
+            ${mainnet ? `<p class="zkapi-guide-more"><a data-funding-setup-focus="buy-help" class="${LINK_CLASSES}" href="https://support.metamask.io/manage-crypto/move-crypto/buy/how-to-buy-crypto-in-metamask" target="_blank" rel="noopener noreferrer">MetaMask’s step-by-step buying guide ↗</a></p>` : ''}
+        </div>
+    </details>`;
 }
 
 // Background wallet refreshes rebuild the modal. Keep an open guide readable

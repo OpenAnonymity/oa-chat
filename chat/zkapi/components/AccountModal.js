@@ -8,7 +8,9 @@ import {
     restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState
 } from './PrivateBalanceHelp.js';
 
-const MODAL_CLASSES = 'w-full max-w-md rounded-xl border border-border bg-background shadow-2xl mx-4 flex flex-col overflow-hidden';
+// The OA dialog frame (Account, Welcome): 560px, 24px radius, 40px inset, no
+// header hairline. Sizing and colour live in zkapi.css (.zkapi-dialog).
+const MODAL_CLASSES = 'zkapi-dialog';
 
 export default class AccountModal {
     constructor(app, { triggerId = 'account-tab-btn', overlayId = 'account-modal' } = {}) {
@@ -22,6 +24,7 @@ export default class AccountModal {
         this.status = '';
         this.statusError = false;
         this.depositAmount = null;
+        this.historyOpen = false;
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.unsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
@@ -274,11 +277,15 @@ export default class AccountModal {
         const lateAttempts = zkapiClient.unresolvedLateWithdrawals;
         const open = records.filter(record => !['closed', 'closed_unconfirmed'].includes(record.phase));
         const toCheck = open.length + lateAttempts.length;
+        const expanded = Boolean(this.historyOpen);
         return `
-            <button id="zkapi-withdrawal-status-btn" class="zkapi-secondary-button flex w-full items-center justify-between gap-2" type="button" ${this.busy ? 'disabled' : ''}>
-                <span>Payment history</span>
-                ${toCheck ? `<span class="text-[11px] text-muted-foreground">${toCheck} withdrawal${toCheck === 1 ? '' : 's'} to check</span>` : ''}
-            </button>`;
+            <div class="zkapi-guide" data-state="${expanded ? 'open' : 'closed'}">
+                <button id="zkapi-withdrawal-status-btn" class="zkapi-guide-trigger" type="button" aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="zkapi-payment-history" ${this.busy ? 'disabled' : ''}>
+                    <span>Payment history</span>${toCheck ? `<span class="zkapi-guide-note">${toCheck} withdrawal${toCheck === 1 ? '' : 's'} to check</span>` : ''}
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <div id="zkapi-payment-history" class="zkapi-guide-body" ${expanded ? '' : 'hidden'}>${expanded ? this.renderWithdrawalRecords({ inline: true }) : ''}</div>
+            </div>`;
     }
 
     withdrawalRecordLabel(record) {
@@ -432,14 +439,14 @@ export default class AccountModal {
         return hashes.size > 0 && identities.size === 1;
     }
 
-    renderWithdrawalRecords() {
+    renderWithdrawalRecords({ inline = false } = {}) {
         const deposits = zkapiClient.deposits || [];
         const expiries = zkapiClient.expiryHistory;
         const records = zkapiClient.withdrawals.filter(record => !this.hasVerifiedExpiryClaim(record, expiries));
         this.renderedExpiryHistorySignature = this.expiryHistorySignature();
         const lateAttempts = zkapiClient.unresolvedLateWithdrawals;
         if (!records.length && !lateAttempts.length && !deposits.length) {
-            return '<div class="p-5 space-y-4"><p class="text-sm text-muted-foreground">Your deposits and withdrawals will appear here.</p><button id="zkapi-back-balance-btn" class="zkapi-secondary-button w-full" type="button">Back to balance</button></div>';
+            return `<div class="zkapi-stack"><p class="text-sm text-muted-foreground">Your deposits and withdrawals will appear here.</p>${inline ? '' : '<button id="zkapi-back-balance-btn" class="zkapi-secondary-button w-full" type="button">Back to balance</button>'}</div>`;
         }
         const payments = [...deposits.map(record => ({ type: 'deposit', record })),
             ...expiries.map(record => ({ type: 'expiry', record })),
@@ -530,7 +537,7 @@ export default class AccountModal {
                 </div>
                 ${hasPendingReturn ? `<button id="zkapi-sync-all-withdrawals-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Check on-chain status</button>` : ''}
                 ${!hasSelectedNote ? `<button id="zkapi-add-new-balance-btn" class="zkapi-secondary-button w-full" type="button">${hasPendingDeposit ? 'View current deposit' : 'Add a new private balance'}</button>` : ''}
-                <button id="zkapi-back-balance-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Back to balance</button>
+                ${inline ? '' : `<button id="zkapi-back-balance-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Back to balance</button>`}
             </div>`;
     }
 
@@ -547,7 +554,7 @@ export default class AccountModal {
                         ? 'Waiting for MetaMask'
                         : 'Deposit status unknown';
                 return `
-                    <div class="p-5 space-y-4">
+                    <div class="zkapi-stack">
                         <div class="rounded-lg border border-blue-300/60 bg-blue-50/60 p-4 dark:border-blue-500/30 dark:bg-blue-500/10">
                             <div class="flex items-center justify-between gap-3">
                                 <p class="text-sm font-medium text-foreground">${title}</p>
@@ -564,33 +571,39 @@ export default class AccountModal {
             }
             const resumingDeposit = pendingDeposit
                 && ['prepared', 'retry_exact'].includes(pendingDeposit.phase);
-            // A prepared deposit that never reached the chain (MetaMask closed
-            // or rejected) can be dropped so the amount is editable again;
-            // retry_exact stays fixed because a transaction may already exist.
-            const canDiscardDeposit = pendingDeposit?.phase === 'prepared' && Boolean(this.pendingDepositDiscarder());
             const depositAmount = resumingDeposit
                 ? zkapiClient.formatBillingAmount(pendingDeposit.amount)
                 : this.depositAmount
                     ?? zkapiClient.suggestedDeposit.toFixed(zkapiClient.suggestedDeposit < 0.01 ? 6 : 2);
+            const mainnet = zkapiClient.isMainnetFunding;
+            const demoMintEnabled = zkapiClient.config?.funding?.demo_mint_enabled;
+            const helper = mainnet
+                ? 'USDC on Ethereum · ETH in the same account covers the fee'
+                : demoMintEnabled
+                    ? 'Sepolia testnet · demo billing tokens are provided when needed'
+                    : 'Install MetaMask to get started';
             return `
-                <div class="p-5 space-y-4">
-                    <div class="rounded-lg border border-border bg-muted/20 p-4">
-                        <p class="text-sm font-medium text-foreground">${resumingDeposit ? 'Private deposit ready to resume' : 'Fund once, chat privately'}</p>
-                        <p class="mt-1 text-xs leading-relaxed text-muted-foreground">${resumingDeposit ? 'No funds moved when the earlier MetaMask prompt closed. The same saved private note will be reused.' : 'MetaMask deposits billing tokens into a private prepaid note. The note secret and chat history remain on this machine.'}</p>
-                    </div>
-                    ${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, open: fundingSetup?.open })}
-                    <label class="block">
-                        <span class="text-xs font-medium text-foreground">${resumingDeposit ? 'Saved deposit amount' : 'Deposit amount'}</span>
-                        <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
-                            <span class="text-sm text-muted-foreground">$</span>
-                            <input id="zkapi-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} />
+                <div class="zkapi-stack">
+                    <p class="zkapi-lede">${resumingDeposit
+                        ? 'Private deposit ready to resume. No funds moved when the earlier MetaMask prompt closed; the same saved private note will be reused.'
+                        : 'Fund once, chat privately. Your balance and chat history stay on this machine.'}</p>
+                    <section class="zkapi-section" aria-labelledby="zkapi-add-funds-title">
+                        <h3 id="zkapi-add-funds-title" class="zkapi-section-title">Add funds</h3>
+                        <div class="zkapi-row">
+                            <label class="zkapi-row-label" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
+                            <div class="zkapi-row-end">
+                                <span class="zkapi-amount"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></span>
+                                <button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>
+                                    ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
+                                </button>
+                            </div>
                         </div>
-                    </label>
-                    ${this.renderWithdrawalStatusLink()}
-                    <button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>
-                        ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
-                    </button>
-                    ${canDiscardDeposit ? `<button id="zkapi-discard-deposit-btn" class="zkapi-text-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Use a different amount</button>` : ''}
+                        <p class="zkapi-helper">${helper}</p>
+                    </section>
+                    <div class="zkapi-guides">
+                        ${fundingSetupGuide({ mainnet, demoMintEnabled, open: fundingSetup?.open })}
+                        ${this.renderWithdrawalStatusLink()}
+                    </div>
                 </div>`;
         }
 
@@ -599,28 +612,28 @@ export default class AccountModal {
         const spent = Math.max(0, Number(note.deposit_amount) - Number(note.current_balance));
         const percent = claimed ? 0 : this.progressPercent(note);
         return `
-            <div class="p-5 space-y-4">
+            <div class="zkapi-stack">
                 <div class="zkapi-balance-card">
-                    <div class="flex items-start justify-between gap-3">
+                    <div class="zkapi-balance-top">
                         <div>
-                            <p class="text-xs text-muted-foreground">Available</p>
-                            <p class="mt-1 text-2xl font-semibold tracking-tight text-foreground">${zkapiClient.formatMoney(claimed ? 0 : note.current_balance)}</p>
+                            <p class="zkapi-balance-caption">Available</p>
+                            <p class="zkapi-balance-amount">${zkapiClient.formatMoney(claimed ? 0 : note.current_balance)}</p>
                         </div>
-                        <span ${!claimed && !zkapiClient.withdrawalBlocksChat ? 'data-private-balance-readiness' : ''} class="${claimed ? 'bg-muted text-muted-foreground' : zkapiClient.withdrawalBlocksChat || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : 'badge-status-success'} rounded-full px-2 py-1 text-[10px] font-medium">${claimed ? 'claimed' : zkapiClient.withdrawalBlocksChat ? (['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Submitted' : 'Needs attention') : expired ? 'expired' : 'ready'}</span>
+                        <span ${!claimed && !zkapiClient.withdrawalBlocksChat ? 'data-private-balance-readiness' : ''} class="zkapi-pill ${claimed ? 'bg-muted text-muted-foreground' : zkapiClient.withdrawalBlocksChat || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : 'badge-status-success'}">${claimed ? 'claimed' : zkapiClient.withdrawalBlocksChat ? (['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Submitted' : 'Needs attention') : expired ? 'expired' : 'ready'}</span>
                     </div>
-                    <div class="mt-4 h-1.5 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-blue-600" style="width:${percent}%"></div></div>
-                    <div class="mt-2 flex justify-between text-[11px] text-muted-foreground"><span>${claimed ? 'Claimed after expiry' : `${zkapiClient.formatMoney(spent)} used`}</span><span class="inline-flex items-center gap-1"><span data-zkapi-balance-expiry>${privateBalanceExpiryLabel(zkapiClient, note.expiry_ts)}</span>${privateBalanceHelpButton('modal', 'expiry', this.privateBalanceHelpOpen?.expiry)}</span></div>
+                    <div class="zkapi-bar"><div class="zkapi-bar-fill" style="width:${percent}%"></div></div>
+                    <div class="zkapi-balance-foot"><span>${claimed ? 'Claimed after expiry' : `${zkapiClient.formatMoney(spent)} used of ${zkapiClient.formatMoney(note.deposit_amount)}`}</span><span class="inline-flex items-center gap-1"><span data-zkapi-balance-expiry>${privateBalanceExpiryLabel(zkapiClient, note.expiry_ts)}</span>${privateBalanceHelpButton('modal', 'expiry', this.privateBalanceHelpOpen?.expiry)}</span></div>
                     ${privateBalanceHelpContent('modal', 'expiry', this.privateBalanceHelpOpen?.expiry)}
                 </div>
-                ${claimed ? '<p class="rounded-lg border border-border bg-muted/5 p-3 text-xs leading-relaxed text-muted-foreground">After expiry, the original deposit was paid to the service treasury. No refund was made.</p>' : `<div data-private-balance-expired-notice ${expired ? '' : 'hidden'}><p class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">This private balance has expired. You can still try withdrawing while it remains unclaimed.</p></div>`}
+                ${claimed ? '<p class="zkapi-helper">After expiry, the original deposit was paid to the service treasury. No refund was made.</p>' : `<div data-private-balance-expired-notice ${expired ? '' : 'hidden'}><p class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">This private balance has expired. You can still try withdrawing while it remains unclaimed.</p></div>`}
                 ${!claimed && zkapiClient.withdrawalBlocksChat ? `<div class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">${['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Your withdrawal transaction was submitted. Check its status before using this balance.' : zkapiClient.activeWithdrawal?.phase === 'dropped_or_pending' ? 'The saved transaction has no receipt yet. Open Withdraw to check or safely resubmit it with the same nonce.' : zkapiClient.activeWithdrawal?.phase === 'awaiting_wallet' ? 'MetaMask may still be open. Open Withdraw to check or recover the prompt.' : zkapiClient.activeWithdrawal?.phase === 'ambiguous' ? 'MetaMask did not return a transaction ID. Open Withdraw to check the vault or retry.' : 'No transaction is moving. This balance is ready to finish withdrawing.'}</div>` : ''}
-                <div class="grid ${claimed ? 'grid-cols-1' : 'grid-cols-2'} gap-2">
-                    <button id="zkapi-refresh-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Refresh</button>
+                <div class="zkapi-actions">
                     ${claimed ? '' : `<button id="zkapi-withdraw-view-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Withdraw</button>`}
+                    <button id="zkapi-refresh-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Refresh</button>
+                    ${claimed ? `<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>Start a new balance</button>` : ''}
+                    ${zkapiClient.config?.funding?.demo_mint_enabled ? `<button id="zkapi-mint-token-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Get 10 test ZKAPI</button>` : ''}
                 </div>
-                ${claimed ? `<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Start a new balance</button>` : ''}
-                ${zkapiClient.config?.funding?.demo_mint_enabled ? `<button id="zkapi-mint-token-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Get 10 test ZKAPI</button>` : ''}
-                ${this.renderWithdrawalStatusLink()}
+                <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
             </div>`;
     }
 
@@ -635,7 +648,7 @@ export default class AccountModal {
         if (this.shouldShowClaimedBalance()) return this.renderBalance();
         if (zkapiClient.noteExpiryClaim) {
             const awaitingWallet = zkapiClient.config?.prepared_withdrawal?.phase === 'awaiting_wallet';
-            return `<div class="p-5 space-y-4">
+            return `<div class="zkapi-stack">
                 <p class="rounded-lg border border-border bg-muted/5 p-3 text-xs leading-relaxed text-muted-foreground">This balance was claimed after expiry. No refund was made. You can still check the earlier withdrawal request.</p>
                 <button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Check transaction</button>
                 ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
@@ -656,7 +669,7 @@ export default class AccountModal {
             const needsAttention = Boolean(lateWithdrawal.error)
                 || lateWithdrawal.status === 'receipt_mismatch';
             return `
-                <div class="p-5 space-y-4">
+                <div class="zkapi-stack">
                     <div class="rounded-lg border ${needsAttention ? 'border-amber-300/60 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/10' : 'border-blue-300/60 bg-blue-50/60 dark:border-blue-500/30 dark:bg-blue-500/10'} p-4">
                         <div class="flex items-center justify-between gap-3">
                             <p class="text-sm font-medium text-foreground">${needsAttention ? 'Withdrawal needs attention' : 'Checking submitted withdrawal'}</p>
@@ -675,7 +688,7 @@ export default class AccountModal {
             const deadline = Number(withdrawal.challengeDeadline || 0);
             const ready = deadline > 0 && Date.now() >= deadline * 1000;
             return `
-                <div class="p-5 space-y-4">
+                <div class="zkapi-stack">
                     <div class="rounded-lg border border-blue-300/60 bg-blue-50/60 p-4 dark:border-blue-500/30 dark:bg-blue-500/10">
                         <div class="flex items-center justify-between gap-3">
                             <p class="text-sm font-medium text-foreground">Escape hatch pending</p>
@@ -703,7 +716,7 @@ export default class AccountModal {
         const clearanceReserved = prepared?.clearance_reserved === true || preparedMode === 'mutual';
         if (preparedMode === 'escape') this.withdrawMode = 'escape';
         return `
-            <div class="p-5 space-y-4">
+            <div class="zkapi-stack">
                 <div class="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-4 py-3">
                     <div><p class="text-xs text-muted-foreground">Amount returned</p><p data-withdraw-amount class="mt-0.5 text-lg font-semibold text-foreground">${zkapiClient.formatMoney(note?.current_balance)}</p></div>
                     <span class="text-xs text-muted-foreground">Private balance</span>
@@ -752,14 +765,19 @@ export default class AccountModal {
                 : 'OA Chat · private prepaid access';
         this.overlay.innerHTML = `
             <div role="dialog" aria-modal="true" aria-labelledby="zkapi-payment-title" class="${MODAL_CLASSES}">
-                <div class="flex items-start justify-between border-b border-border px-5 py-4">
-                    <div><div class="flex items-center gap-1.5"><h2 id="zkapi-payment-title" class="text-base font-semibold text-foreground">${title}</h2>${showsBalance ? privateBalanceHelpButton('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}</div><p class="mt-0.5 text-xs text-muted-foreground">${subtitle}</p></div>
-                    <button id="zkapi-payment-close" class="btn-ghost-hover inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" type="button" aria-label="Close">
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+                <div class="zkapi-dialog-head">
+                    <h2 id="zkapi-payment-title" class="zkapi-dialog-title">${title}</h2>
+                    ${showsBalance ? privateBalanceHelpButton('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}
+                    <button id="zkapi-payment-close" class="zkapi-dialog-close" type="button" aria-label="Close">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
                     </button>
                 </div>
-                <div data-funding-scroll class="max-h-[75vh] overflow-y-auto">${showsBalance ? `<div class="px-5">${privateBalanceHelpContent('modal', 'billing', this.privateBalanceHelpOpen?.billing)}</div>` : ''}${this.view === 'withdraw' ? this.renderWithdrawal() : this.view === 'withdrawals' ? this.renderWithdrawalRecords() : this.renderBalance(fundingSetup)}</div>
-                <p data-payment-status class="${this.status ? '' : 'hidden'} border-t border-border px-5 py-3 text-xs ${this.statusError ? 'text-destructive' : 'text-muted-foreground'}">${this.escapeHtml(this.status)}</p>
+                <div data-funding-scroll class="zkapi-dialog-scroll">
+                    ${showsBalance ? '' : `<p class="zkapi-lede">${subtitle}</p>`}
+                    ${showsBalance ? privateBalanceHelpContent('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}
+                    ${this.view === 'withdraw' ? this.renderWithdrawal() : this.view === 'withdrawals' ? this.renderWithdrawalRecords() : this.renderBalance(fundingSetup)}
+                </div>
+                <p data-payment-status class="zkapi-dialog-status ${this.status ? '' : 'hidden'} ${this.statusError ? 'text-destructive' : 'text-muted-foreground'}">${this.escapeHtml(this.status)}</p>
             </div>`;
 
         attachPrivateBalanceHelp(this.overlay, this);
@@ -842,8 +860,10 @@ export default class AccountModal {
             this.render();
         });
         this.overlay.querySelector('#zkapi-withdrawal-status-btn')?.addEventListener('click', () => {
-            this.view = 'withdrawals';
+            // Opens in place, like Invoices in the Account dialog.
+            this.historyOpen = !this.historyOpen;
             this.render();
+            this.overlay.querySelector('#zkapi-withdrawal-status-btn')?.focus?.({ preventScroll: true });
         });
         this.overlay.querySelector('#zkapi-back-balance-btn')?.addEventListener('click', () => {
             this.view = 'balance';
