@@ -64,19 +64,91 @@ creation was performed.
   origin has independent local storage; these trials do not import old notes
   or browser data automatically.
 
-## Remaining live checks
+## Funded Sepolia browser verification
 
-MetaMask was locked at its password screen. The Sepolia funding attempt is
-waiting for the user to unlock it; no deposit, new private key, or live
-settlement/withdrawal was completed on these new origins. Those workflows have
-SDK/runtime regression coverage, but the new deployment's complete funded
-browser flow is not yet verified. Keep the Sepolia tab for continuation.
+After the user unlocked MetaMask and completed the wallet deposit prompts, the
+new Sepolia origin confirmed a $5 deposit. Browser checks then verified:
+
+- A zkAPI response in an existing Tickets conversation retained the shared
+  transcript and its earlier marker. Auto Router resolved to DeepSeek V4 Flash
+  0731 after the response; the private estimate showed $0.007184, 1,539 input
+  tokens, and 119 output tokens. Settlement confirmed the same $0.007184 usage.
+  The estimator prefers a valid provider-reported cost over catalog token
+  rates. The raw final SSE cost field was not separately inspected.
+- Switching from zkAPI to Tickets settled the private key in the background.
+  The ticket response completed at 22:31:26, before private settlement completed
+  at 22:31:41 (browser-observed local times). The conversation continued from
+  the same history. Returning to zkAPI retained the same private estimate;
+  the intervening ticket response did not enter the private usage ledger.
+- With $4.99 displayed as the remaining balance, selecting a model requiring
+  `≥ $6` prevented key issuance and sending while preserving the draft.
+- A new Luna zkAPI conversation acquired a key with a $1 cap and completed a
+  response. Reload preserved the transcript and estimate, settled the prior
+  key, and allowed another response with a fresh private key.
+- Withdrawal automatically settled the current key before wallet confirmation,
+  bringing total used balance to $0.00746. After the user confirmed MetaMask,
+  the UI reported `$4.99 returned to MetaMask`. Payment history showed
+  `Withdrawal · Mutual close` as `Returned` and the original `Deposit +$5.00`
+  as `Added`.
+- After withdrawal, reload showed `$0.00` and `not funded`, preserved both
+  payment-history entries, and retained the two Luna responses and their
+  $0.000274 chat estimate. Switching back to Tickets continued the same
+  conversation and correctly recalled its marker. After the relay was
+  explicitly re-enabled, that ticket response completed with `Connected`
+  status and TLS-over-WSS transport; no new OA errors appeared.
+- With the balance fully withdrawn, switching from Tickets to zkAPI
+  automatically opened `Fund once, chat privately` with the deposit amount
+  and `Continue with MetaMask` controls. The zkAPI switch was selected
+  (`aria-pressed="true"`). No further deposit was started. The popup was
+  closed and the app returned to Tickets; both trial tabs were preserved.
+
+The public Sepolia RPC from the deployment manifest,
+`https://ethereum-sepolia-rpc.publicnode.com`, confirmed both transaction
+receipts with status `0x1`:
+
+- Deposit: `0x009ffd6f2535789e2c699e54910b5183e8eabb0aa81981ac7982c769c58c6d1c`,
+  block 11,665,917; 5,000,000 token base units transferred from the depositor to
+  the pinned vault.
+- Withdrawal: `0xbed167a542ddebf83e846e232c7e6d67f2066824c6e51fd6803ea76ddd494457`,
+  block 11,665,989; 4,992,540 token base units returned to the same depositor,
+  and 7,460 transferred to the server.
+
+At six decimal places, the receipts reconcile the deposit exactly:
+`$5.000000 = $4.992540 returned + $0.007460 usage`, excluding network gas.
+The funded Sepolia flow is verified through deposit, private inference,
+payment-mode switching, reload recovery, automatic settlement, mutual
+withdrawal, and durable payment history, subject to the relay limitation below.
+
+## Relay limitation and remaining live checks
+
+During funded Sepolia testing, a relay connection to the OA verifier's
+`/submit_key` endpoint failed with libcurl error 7. The existing OA transport
+retried directly, and the System Panel's error listener automatically saved the
+relay as disabled. Subsequent chat succeeded while the panel showed
+`Proxy Unavailable — try again or use your own VPN` and `Enable relay`. No
+fallback-consent prompt is required by this code path, so that state does not
+establish that the user disabled the relay.
+
+This behavior predates the SDK extraction: OA and the SDK share one
+`networkProxy` instance, whose default `fallbackToDirect` is true. In
+`chat/services/networkProxy.js`, a failed proxied request can immediately retry
+directly; `chat/components/RightPanel.js` then disables the relay on a new error.
+The disabled setting persists across reloads. The SDK's verifier submission
+attempts this transport, whereas Tickets verification explicitly bypasses the
+proxy. These browser checks establish functional recovery, not uninterrupted
+relay protection. A follow-up should keep relay selection enabled after a
+failure and require explicit consent before using direct transport.
 
 Live Tinfoil testing remains skipped as requested. The initial mainnet ticket
 response triggered the default background Memory attempt and encountered the
 known staging `Confidential key service not available` condition. The primary
-chat succeeded; Memory was disabled for subsequent Sepolia testing, whose
-browser error scan was empty. No Tinfoil credential was added.
+chat succeeded; Memory was disabled for subsequent Sepolia testing. Its initial
+browser error scan was empty, before the funded flow exposed the relay failure
+above. No Tinfoil credential was added. No mainnet wallet connection or
+transaction was initiated.
+
+Balance expiry and the escape-hatch withdrawal path were not exercised live;
+the successful withdrawal above used mutual close before expiry.
 
 Desktop layout was inspected. A requested temporary browser viewport override
 did not change the extension's actual viewport, and was reset; this run does
