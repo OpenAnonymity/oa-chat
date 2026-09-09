@@ -953,7 +953,9 @@ test('a returned withdrawal is a success while network finality runs without use
         assert.match(html, /Funds are in your wallet/);
         assert.match(html, /no action is needed/);
         assert.match(html, new RegExp(`href="https://etherscan.io/tx/${hash}"`));
-        assert.match(html, /Add a new private balance/);
+        // Funding happens in the balance view, which is where an empty modal
+        // opens; the history offers no "Add a new private balance" of its own.
+        assert.doesNotMatch(html, /Add a new private balance/);
         assert.doesNotMatch(html, /returning to|finalizing|Check status|Check on-chain status|data-finalize-withdrawal|Replace transaction/);
         assert.doesNotMatch(modal.renderWithdrawalStatusLink(), /withdrawals? to check/);
 
