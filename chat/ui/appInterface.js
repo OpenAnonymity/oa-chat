@@ -254,6 +254,7 @@ const COMPONENT_APP_KEYS = new Set([
     'getSessionListEmptyText',
     'getSignInPolicy',
     'getPaymentMode',
+    'signInRequiredNow',
     'hasPaymentModes',
     'changePaymentMode',
     'handleMemoryApprovalDecision',

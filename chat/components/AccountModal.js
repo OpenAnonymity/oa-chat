@@ -92,10 +92,28 @@ class AccountModal {
             const nav = document.getElementById('account-nav');
             if (this.menuOpen && !nav?.contains(event.target)) this.closeAccountMenu();
         };
+        // A press on the dimmed page outside the card is a close, the same
+        // as the X or Escape (and refused in the same cases).
+        this.onOverlayPointerDown = event => {
+            if (this.isOpen && event.target === this.overlay) this.handleCloseAttempt();
+        };
+        this.overlay?.addEventListener?.('pointerdown', this.onOverlayPointerDown);
 
         this.accountUnsubscribe = this.accountService.subscribe(state => {
+            const previous = this.accountState || {};
             this.accountState = state;
             this.updateTabIndicator();
+            // The session ended under this tab (Log out or deletion in
+            // another tab, an expired session). On the Tickets side that is
+            // a signed-out page: show Log in rather than leave a dead chat.
+            if (
+                previous.sessionVerified === true && state?.sessionVerified !== true &&
+                !this.isOpen && !this.loggingOut &&
+                this.app?.signInRequiredNow?.() === true
+            ) {
+                this.open();
+                return;
+            }
             if (
                 this.isOpen &&
                 !this.shouldSuppressAuthenticationExitRender(state) &&
@@ -524,39 +542,9 @@ class AccountModal {
         return !(state.accountId && state.status === 'unlocked');
     }
 
-    /**
-     * Closing the dialog while Tickets would need an account (the person
-     * switched to Tickets signed out, or logged out of Tickets) returns the
-     * chat to zkAPI, the mode that needs none.
-     */
-    closeLeavesTicketsForZkapi() {
-        if (this.app?.getSignInPolicy?.()?.required !== true) return false;
-        if (this.app?.hasPaymentModes?.() !== true) return false;
-        if (this.app?.getPaymentMode?.() === 'zkapi') return false;
-        const state = this.accountState || {};
-        return !(state.accountId && state.status === 'unlocked');
-    }
-
-    async closeToZkapi() {
-        if (this.zkapiSwitchPending) return;
-        this.zkapiSwitchPending = true;
-        try {
-            await this.app.changePaymentMode('zkapi');
-            this.close();
-        } catch (error) {
-            this.app?.showToast?.(error?.message || 'zkAPI could not be selected.', 'error');
-        } finally {
-            this.zkapiSwitchPending = false;
-        }
-    }
-
     handleCloseAttempt() {
         // Log out owns the page until the account is cleared.
         if (this.loggingOut) return;
-        if (this.closeLeavesTicketsForZkapi()) {
-            void this.closeToZkapi();
-            return;
-        }
         if (this.mustStaySignedIn()) {
             // Cancelling a half-done sign-up is still allowed; it returns to
             // the form rather than to the page behind.
@@ -2344,6 +2332,7 @@ class AccountModal {
         this.clearAnimationTimeouts();
         this.closeAccountMenu();
         document.removeEventListener?.('pointerdown', this.onDocumentPointerDown);
+        this.overlay?.removeEventListener?.('pointerdown', this.onOverlayPointerDown);
         if (this.accountUnsubscribe) {
             this.accountUnsubscribe();
             this.accountUnsubscribe = null;
