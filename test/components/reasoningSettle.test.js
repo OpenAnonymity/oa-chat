@@ -31,3 +31,12 @@ test('reasoning that arrives after settling is ignored, and the API flushes it b
     const api = read('chat/api.js');
     assert.match(api, /accumulatedContent \+= content;\n(?:\s*\/\/[^\n]*\n)*\s*flushReasoningBuffer\(\);\n\s*onChunk\(content\);/);
 });
+
+test('a finished message that streamed after thinking gets its action row (Copy, Regenerate) back', () => {
+    // The message is appended while thinking, with a placeholder where the
+    // actions go. Once the trace is settled, finalize takes the targeted path
+    // that leaves the trace alone, so the row must be swapped in there.
+    const chatArea = read('chat/components/ChatArea.js');
+    assert.match(chatArea, /if \(isReasoningFinalized && !forceFullRender\) \{[\s\S]*?this\.replaceAssistantActionsRow\(messageEl, message\);/);
+    assert.match(chatArea, /replaceAssistantActionsRow\(messageEl, message\) \{[\s\S]*?assistant-actions-placeholder[\s\S]*?row\.replaceWith\(fresh\)/);
+});

@@ -3154,6 +3154,11 @@ export default class ChatArea {
                 renderMathContent(contentEl);
             }
 
+            // The message was appended while it was still thinking, so its
+            // action row is the empty placeholder. Swap in the real row
+            // (Copy, Regenerate, …) from a fresh render of the finished message.
+            this.replaceAssistantActionsRow(messageEl, message);
+
             // Setup citation carousel if citations were added
             if (message.citations && message.citations.length > 0) {
                 this.setupCitationCarouselScroll();
@@ -3190,6 +3195,28 @@ export default class ChatArea {
             this.app.messageNavigation.update();
         }
         this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
+    }
+
+    /**
+     * Replaces the message's action row with the one a fresh render of the
+     * finished message would have. Only the row changes; the reasoning trace
+     * and content stay untouched.
+     */
+    replaceAssistantActionsRow(messageEl, message) {
+        const currentRows = [...messageEl.querySelectorAll('.assistant-actions-anchor')];
+        if (!currentRows.some(row => row.classList.contains('assistant-actions-placeholder'))) return;
+        const session = this.app.getCurrentSession();
+        const helpers = {
+            processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+            formatTime: this.app.formatTime.bind(this.app)
+        };
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
+        const freshRows = [...tempDiv.querySelectorAll('.assistant-actions-anchor')];
+        currentRows.forEach((row, index) => {
+            const fresh = freshRows[index];
+            if (row.classList.contains('assistant-actions-placeholder') && fresh) row.replaceWith(fresh);
+        });
     }
 
     /**
