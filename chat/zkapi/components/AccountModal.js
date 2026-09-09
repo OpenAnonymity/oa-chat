@@ -1,5 +1,6 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
+import { explainZkapiError, isIndexerLag } from '../services/zkapiErrorCopy.mjs';
 import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 import {
@@ -216,9 +217,12 @@ export default class AccountModal {
                 || error?.error?.code === 4001
                 || error?.code === 'ACTION_REJECTED'
                 || /(?:user|wallet).*(?:reject|denied|cancel)|request rejected/i.test(error?.message || '');
+            // An indexer that has not caught up is a wait, not a fault.
+            const indexerLag = isIndexerLag(error);
+            explainZkapiError(error);
             this.setStatus(rejected
                 ? error.shortMessage || 'MetaMask canceled the transaction. No funds moved; you can safely try again.'
-                : walletErrorMessage(error), !rejected && !confirmationPending);
+                : walletErrorMessage(error), !rejected && !confirmationPending && !indexerLag);
             if (activityId) {
                 if (confirmationPending) zkapiClient.completeActivity(activityId, {
                     title: 'Withdrawal transaction mined',
@@ -231,7 +235,7 @@ export default class AccountModal {
             // Closing a wallet prompt is an ordinary user decision. The
             // durable recovery path above has already put the operation into a
             // safe retry/canceled state, so do not present it as an app error.
-            this.app.showToast?.(this.status, confirmationPending ? 'info' : rejected ? 'success' : 'error', 6000);
+            this.app.showToast?.(this.status, confirmationPending || indexerLag ? 'info' : rejected ? 'success' : 'error', indexerLag ? 9000 : 6000);
         } finally {
             this.busy = false;
             this.backgroundProgress = null;
@@ -584,7 +588,7 @@ export default class AccountModal {
                     : 'Install MetaMask to get started';
             return `
                 <div class="zkapi-stack">
-                    ${resumingDeposit ? '<p class="zkapi-lede">Private deposit ready to resume. No funds moved when the earlier MetaMask prompt closed; the same saved private note will be reused.</p>' : ''}
+                    ${resumingDeposit ? '<p class="zkapi-lede">Your last deposit didn’t finish: the MetaMask prompt closed before anything was sent, so no funds moved. The amount is saved below; resume when you’re ready and MetaMask will ask again.</p>' : ''}
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
                         <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
                         <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>

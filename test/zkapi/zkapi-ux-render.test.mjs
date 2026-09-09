@@ -788,7 +788,7 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
 
     try {
         const html = modal.renderBalance();
-        assert.match(html, /Private deposit ready to resume/);
+        assert.match(html, /Your last deposit didn’t finish/);
         assert.match(html, /value="5" readonly/);
         assert.doesNotMatch(html, /value="99"/);
         assert.match(html, /Resume deposit with MetaMask/);

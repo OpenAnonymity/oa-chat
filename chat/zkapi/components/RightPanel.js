@@ -1,4 +1,5 @@
 import SharedRightPanel from '../../components/RightPanel.js';
+import { isIndexerLag, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { getZkapiExperience, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
 import { formatModelBudgetUsd, getModelBudget } from '../services/zkapiModelBudget.mjs';
@@ -334,7 +335,7 @@ export default class RightPanel extends SharedRightPanel {
             await this.app.acquireAndSetAccess(session);
             this.loadSessionData();
         } catch (error) {
-            this.app.showToast?.(error.message || 'Could not refresh the private key.', 'error');
+            this.app.showToast?.(zkapiErrorMessage(error, 'Could not refresh the private key.'), isIndexerLag(error) ? 'info' : 'error', isIndexerLag(error) ? 9000 : undefined);
         } finally {
             this.isRenewingKey = false;
             this.app.endSessionMutation(session.id, reservation);

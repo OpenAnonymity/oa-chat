@@ -1,3 +1,5 @@
+import { zkapiErrorMessage } from './zkapiErrorCopy.mjs';
+
 export const ZKAPI_UX_PROPOSALS = Object.freeze([
     'quiet',
     'guided',
@@ -373,7 +375,7 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
             phase: 'error',
             tone: 'error',
             title: 'Private balance unavailable',
-            detail: snapshot.lastError.shortMessage || snapshot.lastError.message || String(snapshot.lastError),
+            detail: zkapiErrorMessage(snapshot.lastError, String(snapshot.lastError)),
             compact: 'Private balance unavailable',
             busy: false,
             blocksSend: true
