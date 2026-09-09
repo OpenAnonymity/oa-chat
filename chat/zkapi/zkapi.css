@@ -1573,6 +1573,12 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
     outline-offset: 2px;
 }
 .payment-mode-control button:disabled { cursor: wait; opacity: .6; }
+/* Both names appear in the same place, just left of the control, so the
+   zkAPI tooltip never sits over the tickets mark. Its offset skips that
+   mark (2rem) and the gaps around it. */
+.payment-mode-control #payment-mode-zkapi[data-tooltip-position="start"]:hover::after {
+    right: calc(100% + 2rem + 4px + 0.5rem);
+}
 @media (max-width: 640px) {
     .payment-mode-control button { width: 1.75rem; }
     .payment-mode-toolbar #share-btn-text, .payment-mode-toolbar #wide-mode-btn { display: none; }

@@ -8935,4 +8935,20 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 [data-tooltip]:hover::before,
 .chat-mode-html-tooltip::before { display: none !important; }
+/* Position: to the left of the element, centred on it. For controls at
+   the edge of a clipping container (the toolbar's payment method marks):
+   a tooltip below would be cut off, one beside never leaves the row. */
+[data-tooltip-position="start"]:hover::after {
+    top: 50%;
+    left: auto;
+    right: calc(100% + 0.5rem);
+    bottom: auto;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    animation: tooltipBodyFadeInStart 0.15s ease-out;
+}
+@keyframes tooltipBodyFadeInStart {
+    from { opacity: 0; transform: translateY(-50%) translateX(0.25rem); }
+    to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
 .chat-mode-html-tooltip { gap: 0.25rem; }

@@ -24,10 +24,6 @@ export function createPaymentModeUi(runtime) {
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));
             button.disabled = busy;
-            // No app tooltip: the toolbar clips overflow, so one drawn below
-            // the control showed as a stray hairline on hover. The native
-            // title names the icon; the busy case is explained by the composer.
-            delete button.dataset.tooltip;
         }
     }
 
@@ -59,9 +55,10 @@ export function createPaymentModeUi(runtime) {
             modeControl.setAttribute('role', 'group');
             modeControl.setAttribute('aria-label', 'Chat payment method');
             // Icons, not words: OA's square for tickets, the Ethereum diamond
-            // for zkAPI. The name lives in aria-label and a native title (the
-            // toolbar clips the app tooltip; a title is never clipped).
-            modeControl.innerHTML = `<button type="button" id="payment-mode-tickets" data-payment-mode="tickets" aria-pressed="false" aria-label="OA tickets" title="OA tickets">${OA_MARK}</button><button type="button" id="payment-mode-zkapi" data-payment-mode="zkapi" aria-pressed="false" aria-label="zkAPI" title="zkAPI">${ETHEREUM_MARK}</button>`;
+            // for zkAPI. The name is the aria-label and the hover tooltip.
+            // The tooltip sits beside the mark, not below it: the toolbar
+            // clips overflow, and one drawn below showed as a stray hairline.
+            modeControl.innerHTML = `<button type="button" id="payment-mode-tickets" data-payment-mode="tickets" aria-pressed="false" aria-label="OA tickets" data-tooltip="OA tickets" data-tooltip-position="start">${OA_MARK}</button><button type="button" id="payment-mode-zkapi" data-payment-mode="zkapi" aria-pressed="false" aria-label="zkAPI" data-tooltip="zkAPI" data-tooltip-position="start">${ETHEREUM_MARK}</button>`;
             modeControl.addEventListener('click', async event => {
                 const button = event.target.closest('[data-payment-mode]');
                 if (!button || button.disabled) return;
