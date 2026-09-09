@@ -22,7 +22,7 @@ export function createZkapiUi(runtime) {
     return {
         integration,
         mountShell() {
-            const balance = mountZkapiShell();
+            const balance = mountZkapiShell(document, () => componentApp);
             if (balance && componentApp) updateZkapiBalanceControl(balance, componentApp);
         },
         components: {
