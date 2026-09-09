@@ -135,7 +135,7 @@ test('ticket features follow the owning chat and preserve preferences across mod
         assert.equal(h.runtime.supportsFeature(feature, ticketSession), true);
         assert.equal(h.runtime.supportsFeature(feature, h.sessions.get('zk-chat')), false);
         assert.equal(h.runtime.supportsFeature(feature, null), false, 'empty composer follows the default mode');
-        assert.match(h.runtime.getFeatureUnavailableReason(feature, h.sessions.get('zk-chat')), /Switch to Tickets/);
+        assert.match(h.runtime.getFeatureUnavailableReason(feature, h.sessions.get('zk-chat')), /Switch to OA tickets/);
         assert.equal(h.runtime.getFeatureUnavailableReason(feature, ticketSession), '');
     }
     assert.equal(h.runtime.supportsFeature('accounts', h.sessions.get('zk-chat')), true);

@@ -80,8 +80,10 @@ export default class AccountModal {
         this.render();
         this.overlay.classList.remove('hidden');
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'true');
-        this.overlay.onclick = event => { if (event.target === this.overlay) this.close(); };
-        this.escapeHandler = event => { if (event.key === 'Escape') this.close(); };
+        // Wallet work is not interruptible from here: while it runs the
+        // dialog stays, and the close affordances go quiet.
+        this.overlay.onclick = event => { if (event.target === this.overlay && !this.busy) this.close(); };
+        this.escapeHandler = event => { if (event.key === 'Escape' && !this.busy) this.close(); };
         document.addEventListener('keydown', this.escapeHandler);
         void zkapiClient.refresh({ quiet: true });
     }
@@ -95,7 +97,7 @@ export default class AccountModal {
     }
 
     close() {
-        if (!this.isOpen) return;
+        if (!this.isOpen || this.busy) return;
         this.isOpen = false;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
@@ -125,9 +127,27 @@ export default class AccountModal {
         if (!zkapiClient.activeLease) {
             this.overlay?.querySelector('[data-active-lease-notice]')?.remove();
         }
-        // Progress lives in the toast, not in a line inside the card. While a
-        // wallet step runs the toast holds; run() replaces it with the result.
-        if (message && this.busy && !isError) this.app?.showToast?.(message, 'info', PROGRESS_TOAST_MS);
+        // Progress lives in the dialog while it is open: the action row
+        // becomes a status row and each step's words settle into it. With
+        // the dialog closed (work continued in the background) the toast
+        // over the chat bar carries the same words.
+        if (!message || !this.busy || isError) return;
+        const progress = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-progress-text]') : null;
+        if (progress) this.swapProgressText(progress, message);
+        else this.app?.showToast?.(message, 'info', PROGRESS_TOAST_MS);
+    }
+
+    /** New words fade in over the old ones; the row itself never moves. */
+    swapProgressText(element, message) {
+        if (element.textContent === message) return;
+        element.classList.remove('is-entering');
+        void element.offsetWidth;
+        element.textContent = message;
+        element.classList.add('is-entering');
+    }
+
+    renderProgress(message) {
+        return `<div class="zkapi-progress" role="status" aria-live="polite"><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-progress-text class="zkapi-progress-text is-entering">${this.escapeHtml(message)}</span></div>`;
     }
 
     handleZkapiClock(now = Date.now()) {
@@ -183,6 +203,8 @@ export default class AccountModal {
     async run(action, activityDetails = null) {
         if (this.busy) return;
         this.busy = true;
+        this.status = activityDetails?.message || 'Waiting for MetaMask…';
+        this.statusError = false;
         this.backgroundProgress = activityDetails?.withdrawalRecordId
             ? { recordId: activityDetails.withdrawalRecordId, phase: 'preparing' } : null;
         this.render();
@@ -594,9 +616,9 @@ export default class AccountModal {
                         <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
                         <p class="zkapi-helper">${helper}</p>
                         <div class="zkapi-actions">
-                            <button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>
-                                ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
-                            </button>
+                            ${this.busy
+                                ? this.renderProgress(this.status || 'Waiting for MetaMask…')
+                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}</button>`}
                         </div>
                     </section>
                     <div class="zkapi-guides">
@@ -627,10 +649,11 @@ export default class AccountModal {
                 ${claimed ? '<p class="zkapi-helper">After expiry, the original deposit was paid to the service treasury. No refund was made.</p>' : `<div data-private-balance-expired-notice ${expired ? '' : 'hidden'}><p class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">This private balance has expired. You can still try withdrawing while it remains unclaimed.</p></div>`}
                 ${!claimed && zkapiClient.withdrawalBlocksChat ? `<div class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">${['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Your withdrawal transaction was submitted. Check its status before using this balance.' : zkapiClient.activeWithdrawal?.phase === 'dropped_or_pending' ? 'The saved transaction has no receipt yet. Open Withdraw to check or safely resubmit it with the same nonce.' : zkapiClient.activeWithdrawal?.phase === 'awaiting_wallet' ? 'MetaMask may still be open. Open Withdraw to check or recover the prompt.' : zkapiClient.activeWithdrawal?.phase === 'ambiguous' ? 'MetaMask did not return a transaction ID. Open Withdraw to check the vault or retry.' : 'No transaction is moving. This balance is ready to finish withdrawing.'}</div>` : ''}
                 <div class="zkapi-actions">
-                    ${claimed ? '' : `<button id="zkapi-withdraw-view-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Withdraw</button>`}
-                    <button id="zkapi-refresh-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Refresh</button>
-                    ${claimed ? `<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>Start a new balance</button>` : ''}
-                    ${zkapiClient.config?.funding?.demo_mint_enabled ? `<button id="zkapi-mint-token-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Get 10 test ZKAPI</button>` : ''}
+                    ${this.busy ? this.renderProgress(this.status || 'Working…') : `
+                    ${claimed ? '' : '<button id="zkapi-withdraw-view-btn" class="zkapi-secondary-button" type="button">Withdraw</button>'}
+                    <button id="zkapi-refresh-btn" class="zkapi-secondary-button" type="button">Refresh</button>
+                    ${claimed ? '<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button">Start a new balance</button>' : ''}
+                    ${zkapiClient.config?.funding?.demo_mint_enabled ? '<button id="zkapi-mint-token-btn" class="zkapi-secondary-button" type="button">Get 10 test ZKAPI</button>' : ''}`}
                 </div>
                 <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
             </div>`;
@@ -748,9 +771,11 @@ export default class AccountModal {
                 ${submissionActive ? '' : '<label class="zkapi-check"><input id="zkapi-withdraw-confirm" type="checkbox" /><span>I understand that withdrawing closes this private balance.</span></label>'}
                 ${activeLease ? '<p data-active-lease-notice class="zkapi-note">The active chat key will settle automatically before withdrawal.</p>' : ''}
                 <div class="zkapi-actions">
-                    ${submissionActive
-                        ? `<button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>${this.busy ? 'Checking…' : 'Check transaction'}</button>`
-                        : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled>${primaryLabel}</button>`}
+                    ${this.busy
+                        ? this.renderProgress(this.status || primaryLabel)
+                        : submissionActive
+                            ? '<button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button" type="button">Check transaction</button>'
+                            : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled>${primaryLabel}</button>`}
                     ${droppedOrPending && prepared?.replacement_available ? `<button id="zkapi-retry-dropped-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Resubmit with original nonce</button>` : ''}
                     ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
                     ${ambiguous ? `<button id="zkapi-retry-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Retry transaction</button>` : ''}
@@ -782,7 +807,7 @@ export default class AccountModal {
                 <div class="zkapi-dialog-head">
                     <h2 id="zkapi-payment-title" class="zkapi-dialog-title">${title}</h2>
                     ${showsBalance ? privateBalanceHelpButton('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}
-                    <button id="zkapi-payment-close" class="zkapi-dialog-close" type="button" aria-label="Close">
+                    <button id="zkapi-payment-close" class="zkapi-dialog-close" type="button" aria-label="Close" ${this.busy ? 'hidden' : ''}>
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
                     </button>
                 </div>

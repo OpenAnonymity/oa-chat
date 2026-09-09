@@ -204,7 +204,11 @@ function mirrorPhaseToast(app, ...candidates) {
     // Whichever surface is busy speaks: the composer's private-access step,
     // or wallet work (a deposit, a withdrawal) that only the balance knows.
     const primary = candidates.find(entry => entry?.busy === true && entry?.tone !== 'error') || null;
-    const text = primary ? String(primary.compact || '').trim() : '';
+    // With the balance dialog open its own status row narrates; the toast
+    // would say the same thing twice.
+    const dialog = typeof document !== 'undefined' ? document.getElementById?.('payment-balance-modal') : null;
+    const dialogOpen = Boolean(dialog && !dialog.classList?.contains?.('hidden'));
+    const text = primary && !dialogOpen ? String(primary.compact || '').trim() : '';
     if (text) {
         if (text === phaseToastText) return;
         phaseToastText = text;

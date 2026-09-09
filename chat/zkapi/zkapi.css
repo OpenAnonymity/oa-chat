@@ -292,6 +292,28 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 }
 @keyframes zkapiPillSpin { to { transform: rotate(360deg); } }
 
+/* Wallet work in progress: the action row's height, a spinner, and the
+   step's words. Words change in place with a short fade; nothing shifts. */
+.zkapi-progress {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 1.875rem;
+    padding: 0 0.125rem;
+    color: hsl(var(--color-foreground));
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1.3;
+    text-wrap: pretty;
+}
+.zkapi-progress .zkapi-pill-spinner { flex-shrink: 0; opacity: 0.7; }
+.zkapi-progress-text.is-entering { animation: zkapiProgressIn 220ms var(--zkapi-ease); }
+@keyframes zkapiProgressIn {
+    from { opacity: 0; transform: translateY(0.125rem); }
+    to { opacity: 1; transform: none; }
+}
+.zkapi-dialog-close[hidden] { display: none; }
+
 /* ---------- Disclosures: the Invoices / inference-ticket idiom ---------- */
 .zkapi-guides { display: flex; flex-direction: column; gap: 0; margin-top: -0.625rem; }
 .zkapi-guide { display: flex; flex-direction: column; }
@@ -405,6 +427,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
     .zkapi-guide-trigger svg, .zkapi-bar-fill, .zkapi-primary-button, .zkapi-secondary-button { transition: none; }
+    .zkapi-progress-text.is-entering { animation: none; }
 }
 @media (max-width: 640px) {
     .zkapi-dialog { --zkapi-pad-x: 1.5rem; }
@@ -1523,28 +1546,35 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
     flex-shrink: 0;
 }
 .payment-mode-control button {
-    padding: 0 11px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    padding: 0;
     height: 1.625rem !important;
     min-height: 0 !important;
     border-radius: 0.5rem;
-    font-size: 12px;
     line-height: 1;
     color: hsl(var(--color-muted-foreground));
-    transition: color 160ms cubic-bezier(.2, 0, 0, 1), background-color 160ms cubic-bezier(.2, 0, 0, 1);
+    transition: opacity 160ms cubic-bezier(.2, 0, 0, 1), background-color 160ms cubic-bezier(.2, 0, 0, 1);
 }
+/* The marks keep their own colours; the unselected one sits back. */
+.payment-mode-control .payment-mode-mark { display: block; opacity: .45; transition: opacity 160ms cubic-bezier(.2, 0, 0, 1); }
+.payment-mode-control .payment-mode-mark-oa { width: 0.875rem; height: 0.875rem; }
+.payment-mode-control .payment-mode-mark-eth { width: auto; height: 0.9375rem; }
 .payment-mode-control button[aria-pressed="true"] {
-    color: hsl(var(--color-foreground));
     background: hsl(var(--color-card));
     box-shadow: 0 1px 2px rgb(0 0 0 / .06);
 }
-.payment-mode-control button:hover:not(:disabled) { color: hsl(var(--color-foreground)); }
+.payment-mode-control button[aria-pressed="true"] .payment-mode-mark,
+.payment-mode-control button:hover:not(:disabled) .payment-mode-mark { opacity: 1; }
 .payment-mode-control button:focus-visible {
     outline: 2px solid hsl(var(--color-accent-primary));
     outline-offset: 2px;
 }
 .payment-mode-control button:disabled { cursor: wait; opacity: .6; }
 @media (max-width: 640px) {
-    .payment-mode-control button { padding: 5px 8px; }
+    .payment-mode-control button { width: 1.75rem; }
     .payment-mode-toolbar #share-btn-text, .payment-mode-toolbar #wide-mode-btn { display: none; }
     .payment-mode-toolbar #share-btn { padding-inline: 6px; }
 }

@@ -764,6 +764,50 @@ test('closing the balance dialog restores a remounted trigger and retains connec
     } finally { globalThis.document = originalDocument; }
 });
 
+test('wallet work narrates inside the dialog: the action row becomes a status row, close goes quiet, no toast', () => {
+    const originalWallet = zkapiClient.wallet;
+    const originalConfig = zkapiClient.config;
+    zkapiClient.wallet = { has_note: false, note: null };
+    zkapiClient.config = { funding: { demo_mint_enabled: false, billing_token_symbol: 'USDC' } };
+    const modal = Object.create(AccountModal.prototype);
+    const toasts = [];
+    modal.app = { showToast: (message, kind) => toasts.push(`${kind}:${message}`) };
+    modal.isOpen = true;
+    modal.busy = true;
+    modal.status = 'Checking your wallet…';
+    modal.depositAmount = '5';
+    modal.renderWithdrawalStatusLink = () => '';
+    let progressText = null;
+    const progressElement = {
+        textContent: 'Checking your wallet…',
+        classList: { remove() {}, add(name) { progressText = `${this.owner.textContent}|${name}`; } },
+        offsetWidth: 0
+    };
+    progressElement.classList.owner = progressElement;
+    modal.overlay = { querySelector: selector => (selector === '[data-zkapi-progress-text]' ? progressElement : null) };
+
+    try {
+        const html = modal.renderBalance();
+        assert.match(html, /class="zkapi-progress" role="status" aria-live="polite"/);
+        assert.match(html, /data-zkapi-progress-text[^>]*>Checking your wallet…</);
+        assert.doesNotMatch(html, /id="zkapi-deposit-btn"/, 'the button gives way to the status row');
+
+        modal.setStatus('Waiting for MetaMask…');
+        assert.equal(progressText, 'Waiting for MetaMask…|is-entering', 'new words settle into the same row');
+        assert.deepEqual(toasts, [], 'the open dialog narrates; no toast');
+
+        modal.close();
+        assert.equal(modal.isOpen, true, 'the dialog cannot be left mid-work');
+
+        modal.isOpen = false;
+        modal.setStatus('Confirming the deposit…');
+        assert.deepEqual(toasts, ['info:Confirming the deposit…'], 'closed, the toast carries the words');
+    } finally {
+        zkapiClient.wallet = originalWallet;
+        zkapiClient.config = originalConfig;
+    }
+});
+
 test('a canceled custom deposit resumes from its durable amount after modal state changes', () => {
     const originalWallet = zkapiClient.wallet;
     const originalConfig = zkapiClient.config;

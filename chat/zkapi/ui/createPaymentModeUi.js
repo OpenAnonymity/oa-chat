@@ -1,4 +1,5 @@
 import AccountModal from '../../components/AccountModal.js';
+import { ETHEREUM_MARK, OA_MARK } from './paymentModeMarks.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
 import ZkapiAccountModal from '../components/AccountModal.js';
 import PaymentModeRightPanel from '../components/PaymentModeRightPanel.js';
@@ -23,11 +24,10 @@ export function createPaymentModeUi(runtime) {
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));
             button.disabled = busy;
-            // No tooltip: the toolbar clips overflow, so one drawn below the
-            // control showed as a stray hairline on hover. The control says
-            // what it is; the busy case is explained by the composer.
+            // No app tooltip: the toolbar clips overflow, so one drawn below
+            // the control showed as a stray hairline on hover. The native
+            // title names the icon; the busy case is explained by the composer.
             delete button.dataset.tooltip;
-            button.removeAttribute('title');
         }
     }
 
@@ -58,7 +58,10 @@ export function createPaymentModeUi(runtime) {
             modeControl.className = 'payment-mode-control';
             modeControl.setAttribute('role', 'group');
             modeControl.setAttribute('aria-label', 'Chat payment method');
-            modeControl.innerHTML = '<button type="button" id="payment-mode-tickets" data-payment-mode="tickets" aria-pressed="false">Tickets</button><button type="button" id="payment-mode-zkapi" data-payment-mode="zkapi" aria-pressed="false">zkAPI</button>';
+            // Icons, not words: OA's square for tickets, the Ethereum diamond
+            // for zkAPI. The name lives in aria-label and a native title (the
+            // toolbar clips the app tooltip; a title is never clipped).
+            modeControl.innerHTML = `<button type="button" id="payment-mode-tickets" data-payment-mode="tickets" aria-pressed="false" aria-label="OA tickets" title="OA tickets">${OA_MARK}</button><button type="button" id="payment-mode-zkapi" data-payment-mode="zkapi" aria-pressed="false" aria-label="zkAPI" title="zkAPI">${ETHEREUM_MARK}</button>`;
             modeControl.addEventListener('click', async event => {
                 const button = event.target.closest('[data-payment-mode]');
                 if (!button || button.disabled) return;
