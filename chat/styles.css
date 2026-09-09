@@ -8366,7 +8366,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     display: flex;
     justify-content: flex-end;
     gap: 0.625rem;
-    margin-top: 1.5rem;
+    margin-top: 1rem;
 }
 .settings-button:disabled { opacity: 0.45; cursor: default; }
 /* The typed confirmation: the label reads as a sentence, the word is set apart. */

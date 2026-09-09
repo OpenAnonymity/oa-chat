@@ -93,7 +93,7 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
         'All', 'Chat history', 'ChatGPT', 'Memories',
         'Layout', 'Font', 'Theme',
         'Share feedback',
-        'Log out of this device', 'Delete your account'
+        'Log out', 'Delete your account'
     ]);
     for (const action of ['export-all-data', 'import-data', 'export-chats', 'import-history', 'export-memory', 'import-memory', 'log-out', 'delete-account']) {
         assert.match(dialog, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-button`), action);
