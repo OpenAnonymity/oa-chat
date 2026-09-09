@@ -84,6 +84,24 @@ This source reorganization changes neither contract expiry nor withdrawal
 behavior. Private balance expiry does not automatically refund unused funds;
 the balance help/history continue to explain the deployed contract behavior.
 
+## Funding setup
+
+Funding onboarding shows MetaMask, USDC, and ETH prerequisites on mainnet,
+with an expandable beginner guide to installation and MetaMask's Buy flow.
+Both tokens must be on Ethereum Mainnet in the same account. The guide links
+to official MetaMask help, explains provider/region-dependent purchase options,
+and distinguishes chat funding from gas. Sepolia instead explains free test
+ETH and automatic demo-token minting. The former mainnet warning banner has
+been removed from the funding and welcome dialogs. The shared guide preserves
+its expansion, focus, and scroll position across wallet refreshes; the funding
+amount remains editable without refresh stealing focus in the `fund` view.
+
+Sources for the onboarding copy:
+
+- [Install MetaMask](https://support.metamask.io/start/getting-started-with-metamask)
+- [Buy crypto in MetaMask](https://support.metamask.io/manage-crypto/move-crypto/buy/how-to-buy-crypto-in-metamask)
+- [Sepolia faucets](https://ethereum.org/en/developers/docs/networks/#sepolia)
+
 ## Verification
 
 Run `npm test` for the existing OA suite and the native payment adapter tests.

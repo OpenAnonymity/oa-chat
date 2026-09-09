@@ -1,3 +1,16 @@
+## 2026-09-09: Funding setup for first-time wallet users
+
+- Removed the mainnet risk banner from both native funding entry points.
+  Mainnet now shows prerequisites and an optional guide to installing MetaMask,
+  buying ETH for gas and USDC for chats, selecting Ethereum for both, and
+  returning to confirm the deposit. Sepolia has its own free-test-token guide.
+- `FundingSetupGuide.js` shares copy and restores the guide's expanded state,
+  keyboard focus and scroll position when wallet refreshes rebuild a dialog.
+  The deposit-focus guard now covers `fund` as well as `balance`. Welcome
+  preserves the entered deposit amount after a canceled wallet attempt.
+- See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for the official copy sources.
+  No SDK, transaction, or transport behavior changed.
+
 ## 2026-09-09: OA owns optional zkAPI payments
 
 - The dependency is now OA Chat → `@openanonymity/zkapi-browser-sdk`. The

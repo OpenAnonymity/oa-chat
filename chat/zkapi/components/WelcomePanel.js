@@ -1,4 +1,5 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 
 const DISMISSED_KEY = 'zkapi-oa-welcome-dismissed';
 const MODAL_CLASSES = 'rounded-2xl border border-border shadow-lg flex flex-col zkapi-welcome-dialog';
@@ -12,6 +13,7 @@ export default class WelcomePanel {
         this.busy = false;
         this.status = '';
         this.error = '';
+        this.depositAmount = null;
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.unsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
@@ -70,7 +72,7 @@ export default class WelcomePanel {
     escapeHtml(value) {
         const div = document.createElement('div');
         div.textContent = value == null ? '' : String(value);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     setStatus(message) {
@@ -82,6 +84,7 @@ export default class WelcomePanel {
     async fund() {
         if (this.busy) return;
         const amount = this.overlay.querySelector('#welcome-deposit-amount')?.value;
+        this.depositAmount = amount;
         this.busy = true;
         this.step = 'redeeming';
         this.status = 'Connecting to MetaMask…';
@@ -103,14 +106,11 @@ export default class WelcomePanel {
         }
     }
 
-    renderWelcome() {
+    renderWelcome(fundingSetup = null) {
         const suggested = zkapiClient.suggestedDeposit;
         const daemonError = zkapiClient.lastError?.message;
-        const mainnetWarning = zkapiClient.isMainnetFunding
-            ? '<div class="mt-3 rounded-lg border border-amber-300/70 bg-amber-50/70 p-3 text-[11px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"><strong>Ethereum Mainnet:</strong> this deposits real USDC into experimental, unaudited zkAPI contracts and uses real ETH for gas. Private Merkle-tree updates are unusually gas-heavy on L1; zkAPI does not set the gas limit or fee rate, so review MetaMask’s maximum before confirming. Only use funds you can afford to lose.</div>'
-            : '';
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="welcome-title" class="${MODAL_CLASSES}" style="width:464px;max-width:94vw;padding:28px">
+            <div data-funding-scroll role="dialog" aria-modal="true" aria-labelledby="welcome-title" class="${MODAL_CLASSES}" style="width:464px;max-width:94vw;padding:28px">
                 <div class="text-center">
                     <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background shadow-sm">
                         <svg class="h-5 w-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 0h10.5A2.25 2.25 0 0 1 19.5 12.75v6A2.25 2.25 0 0 1 17.25 21H6.75a2.25 2.25 0 0 1-2.25-2.25v-6a2.25 2.25 0 0 1 2.25-2.25Z"/></svg>
@@ -122,15 +122,14 @@ export default class WelcomePanel {
                     <p class="text-sm font-medium text-foreground">Private access, funded with MetaMask</p>
                     <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">OA Chat uses a private prepaid balance for access. Deposit once, then chat normally. Each chat reuses one bounded ephemeral key for its title, response, and follow-ups.</p>
                 </div>
+                <div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, open: fundingSetup?.open })}</div>
                 <label class="mt-4 block">
                     <span class="text-xs font-medium text-foreground">Starting balance</span>
                     <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
                         <span class="text-sm text-muted-foreground">$</span>
-                        <input id="welcome-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${suggested.toFixed(suggested < 0.01 ? 6 : 2)}" />
+                        <input id="welcome-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(this.depositAmount ?? suggested.toFixed(suggested < 0.01 ? 6 : 2))}" />
                     </div>
                 </label>
-                ${mainnetWarning}
-                ${zkapiClient.config?.funding?.demo_mint_enabled ? '<p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">On Sepolia, demo billing tokens are minted automatically if needed. MetaMask only needs test ETH for gas.</p>' : ''}
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
                 ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(this.error)}</p>` : ''}
                 <button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue with MetaMask</button>
@@ -165,11 +164,13 @@ export default class WelcomePanel {
 
     render() {
         if (!this.overlay) return;
+        const fundingSetup = captureFundingSetupView(this.overlay);
         this.overlay.innerHTML = this.step === 'redeeming'
             ? this.renderProgress()
             : this.step === 'success'
                 ? this.renderSuccess()
-                : this.renderWelcome();
+                : this.renderWelcome(fundingSetup);
+        restoreFundingSetupView(this.overlay, fundingSetup);
         this.overlay.querySelector('#welcome-fund-btn')?.addEventListener('click', () => this.fund());
         this.overlay.querySelector('#welcome-skip-btn')?.addEventListener('click', () => this.close());
         this.overlay.querySelector('#welcome-start-btn')?.addEventListener('click', () => {

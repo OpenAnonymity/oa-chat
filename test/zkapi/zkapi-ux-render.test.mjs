@@ -1188,6 +1188,42 @@ test('a missing withdrawal receipt exposes safe same-nonce replacement', () => {
     }
 });
 
+test('funding rerenders keep pasted quote characters inside the amount value', () => {
+    const originalDocument = globalThis.document;
+    const originalWallet = zkapiClient.wallet;
+    const originalConfig = zkapiClient.config;
+    globalThis.document = {
+        ...originalDocument,
+        createElement() {
+            return {
+                textContent: '',
+                // Browser text-node serialization does not escape quotes.
+                get innerHTML() { return this.textContent.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
+            };
+        }
+    };
+    zkapiClient.wallet = { has_note: false, note: null };
+    zkapiClient.config = { funding: {} };
+    try {
+        const amount = '5" autofocus onfocus="alert(1)';
+        const welcome = Object.create(WelcomePanel.prototype);
+        welcome.depositAmount = amount;
+        const account = Object.create(AccountModal.prototype);
+        account.depositAmount = amount;
+        account.renderWithdrawalStatusLink = () => '';
+        for (const html of [welcome.renderWelcome(), account.renderBalance()]) {
+            const input = html.match(/<input\b[^>]*>/)?.[0];
+            assert.ok(input);
+            assert.equal(input.match(/\bvalue="([^"]*)"/)?.[1], '5&quot; autofocus onfocus=&quot;alert(1)');
+            assert.doesNotMatch(input, /"\s+autofocus/);
+        }
+    } finally {
+        globalThis.document = originalDocument;
+        zkapiClient.wallet = originalWallet;
+        zkapiClient.config = originalConfig;
+    }
+});
+
 test('welcome success is edge-triggered and retains focus across later state events', () => {
     const originalDocument = globalThis.document;
     const originalWallet = zkapiClient.wallet;
