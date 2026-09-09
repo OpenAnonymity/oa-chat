@@ -187,6 +187,26 @@ test('Import history hands over to the import dialog', async () => {
     }
 });
 
+test('Export from the gear asks first too: the menu closes and only the confirmation shows', async () => {
+    const h = harness();
+    try {
+        h.settings.app.chatInput = { closeSettingsMenu() { h.events.push('gear-closed'); } };
+        h.settings.exportChats = async () => { h.events.push('export-chats'); };
+        h.settings.openExportConfirm('export-chats');
+        assert.equal(h.settings.isOpen, true);
+        assert.equal(h.settings.standaloneConfirm, true, 'the settings card stays hidden behind the confirmation');
+        assert.ok(h.settings.deleteConfirm, 'a confirmation card is up');
+        assert.match(h.settings.deleteConfirm.innerHTML, /Export your chats\?/);
+        assert.deepEqual(h.events, [], 'no download yet');
+
+        await click(h, { dataset: { exportConfirm: 'export-chats' } });
+        assert.deepEqual(h.events, ['export-chats']);
+        assert.equal(h.settings.isOpen, false, 'nothing is left behind the card');
+    } finally {
+        h.restore();
+    }
+});
+
 test('Export asks first: the download only starts from the confirmation card', async () => {
     const h = harness();
     try {

@@ -53,8 +53,8 @@ class SettingsDialog {
             this.overlay.addEventListener('pointerdown', this.onOverlayPointerDown);
             this.overlay.addEventListener('click', this.onClick);
         }
-        // The gear's Data controls: exports run at once (the gear is a menu,
-        // not a place for a second card), imports open their pickers.
+        // The gear's Data controls: exports ask first (a download should not
+        // be a surprise), on the dialog's backdrop; imports open their pickers.
         this.dataSection = document.getElementById('data-management-section');
         this.onDataClick = event => this.handleDataClick(event);
         this.dataSection?.addEventListener('click', this.onDataClick);
@@ -69,6 +69,15 @@ class SettingsDialog {
         this.showDeleteConfirm();
     }
 
+    /** From the gear: only the export confirmation, over the backdrop. */
+    openExportConfirm(action, returnFocusEl = null) {
+        if (!this.overlay) return;
+        this.open(returnFocusEl);
+        this.dialog?.setAttribute?.('hidden', '');
+        this.standaloneConfirm = true;
+        this.showExportConfirm(action);
+    }
+
     async handleDataClick(event) {
         const button = event.target.closest?.('button[data-action]');
         if (!button || !this.dataSection?.contains(button)) return;
@@ -77,9 +86,8 @@ class SettingsDialog {
             case 'export-chats':
             case 'export-all-data':
             case 'export-memory':
-                button.disabled = true;
-                try { await this.runExport(button.dataset.action); }
-                finally { button.disabled = false; }
+                this.app.chatInput?.closeSettingsMenu?.();
+                this.openExportConfirm(button.dataset.action, button);
                 break;
             case 'import-data':
                 document.getElementById('global-import-input')?.click?.();
