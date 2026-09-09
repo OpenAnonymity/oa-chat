@@ -9,15 +9,18 @@ or entering the unlinkable-inference path. See
 
 - **Commercial landing handoff:** `/chat/?auth=google` is a one-use UI intent,
   not proof of authentication and not a Membership request. The chat waits for
-  initial account restoration before routing it. Signed-out visitors see the
-  Google sign-in surface, verified but locked accounts see the encryption-
-  passkey surface, and verified unlocked accounts enter chat directly. The
-  client then removes `auth` with `history.replaceState`, preserving unrelated
-  query parameters and the hash. It never opens the signed-in Account summary
-  automatically.
-- **Registration picker:** Google SSO is the only option currently displayed.
-  Direct passkey registration, account-number passkey login, and recovery-code
-  controls are hidden from this entry surface.
+  initial account restoration before routing it. A restored Google account may
+  continue directly when verified and unlocked, or show its encryption-passkey
+  surface when locked. If the restored identity is a username or legacy account,
+  the handoff logs it out, clears the saved local binding, and then shows the
+  Google sign-in surface without a switch confirmation. The client removes
+  `auth` with `history.replaceState`, preserving unrelated query parameters and
+  the hash. It never opens the signed-in Account summary automatically. The
+  neighboring username field uses its own
+  `/chat/?auth=username#username=...` handoff and never enters Google OAuth.
+- **Registration picker:** Account entry offers Google or a pseudonymous
+  username. Legacy account-number passkey login remains available through its
+  explicit alternate mode; recovery controls appear only in that legacy mode.
 - **New SSO account:** Continue with Google, authorize the app, then create an
   encryption passkey. No OA account number or recovery code is shown.
 - **Returning browser:** Google authenticates first. A logged-out or new browser
@@ -116,11 +119,12 @@ callback remains on canonical `localhost:8005`.
 
 ## Regression checks
 
-1. From the commercial landing page, verify a signed-out visit opens exactly
-   one Google sign-in surface, a remembered unlocked session opens no dialog,
-   and a remembered locked session opens only its passkey surface. No signed-
-   out or Account-summary dialog may flash while authentication is unresolved,
-   and `auth=google` must be removed without dropping unrelated URL state.
+1. From the commercial landing page, verify Google opens exactly one Google
+   sign-in surface. A matching remembered Google session opens no dialog when
+   unlocked and only its passkey surface when locked. A remembered username or
+   legacy account is cleared and opens Google sign-in instead. No signed-out or
+   Account-summary dialog may flash while authentication is unresolved, and
+   `auth=google` must be removed without dropping unrelated URL state.
 2. Create a Google-first account; verify the only post-OAuth secret step is
    creating a PRF passkey and encrypted sync succeeds. Account closes without
    an intermediate success screen; commercial builds open Membership through

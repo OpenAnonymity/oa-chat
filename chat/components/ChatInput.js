@@ -38,7 +38,7 @@ import {
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
-const SETTINGS_MENU_WIDTH_PX = 260;
+const SETTINGS_MENU_WIDTH_PX = 340;
 
 export default class ChatInput {
     /**
@@ -147,7 +147,11 @@ export default class ChatInput {
         if (!toolsContainer || !fileAction || !settingsControl || !settingsActions || !searchToggle) return;
 
         toolsContainer.append(fileAction, settingsControl);
+        // Web search is a switch in the panel's Tools section now; the old
+        // On/Off row is kept in the DOM (its state logic lives on it) but
+        // no longer shown at the foot of the panel.
         settingsActions.append(searchToggle);
+        searchToggle.hidden = true;
     }
 
     applyComposerLayout() {
@@ -334,14 +338,23 @@ export default class ChatInput {
             this.hideScrubberPreview();
         });
 
-        // Search toggle functionality
-        this.app.elements.searchToggle.addEventListener('click', async () => {
+        // Search toggle functionality — the composer's own control and the
+        // Tools switch in the settings panel flip the same state.
+        const toggleSearch = async () => {
             this.app.searchEnabled = !this.app.searchEnabled;
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
             await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
-        });
+        };
+        this.app.elements.searchToggle.addEventListener('click', toggleSearch);
+        const searchSettingToggle = document.getElementById('search-setting-toggle');
+        if (searchSettingToggle) {
+            searchSettingToggle.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await toggleSearch();
+            });
+        }
 
         if (this.app.elements.memoryToggle) {
             this.app.elements.memoryToggle.addEventListener('click', async (e) => {
@@ -357,6 +370,8 @@ export default class ChatInput {
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
 
+                // An explicit mode choice: review no longer owns the mode.
+                this.parallelEnteredByReview?.delete(this.app.getCurrentSession()?.id || 'pending');
                 if (isParallel) {
                     await this.setCouncilModeFromComposer(true);
                 } else {
@@ -409,12 +424,20 @@ export default class ChatInput {
                 menu.classList.remove('hidden');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
-                // Position relative to settings button
-                menu.style.left = `${btnRect.left}px`;
-                menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
-                menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
-                menu.style.minWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
-                menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
+                // Centre the panel over the gear button, clamped so it never
+                // leaves the viewport, and scroll instead of growing past the top.
+                const viewportMargin = 12;
+                const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
+                const centred = btnRect.left + btnRect.width / 2 - width / 2;
+                const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
+                const bottom = window.innerHeight - btnRect.top + 8;
+                menu.style.left = `${left}px`;
+                menu.style.bottom = `${bottom}px`;
+                menu.style.width = `${width}px`;
+                menu.style.minWidth = `${width}px`;
+                menu.style.maxWidth = `${width}px`;
+                menu.style.maxHeight = `${Math.max(160, btnRect.top - 8 - viewportMargin)}px`;
+                menu.style.overflowY = 'auto';
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
@@ -1873,7 +1896,9 @@ export default class ChatInput {
         toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
         toggle.classList.toggle('switch-active', enabled);
         toggle.classList.toggle('switch-inactive', !enabled);
-        toggle.title = enabled ? enabledTitle : disabledTitle;
+        // The row label names the switch and aria-checked carries its state;
+        // a native title on top of that showed two tooltips at once.
+        toggle.removeAttribute('title');
         toggle.dataset.tooltip = enabled ? enabledTitle : disabledTitle;
     }
 
@@ -2066,6 +2091,12 @@ export default class ChatInput {
         const stateLabel = toggle.querySelector('.composer-menu-state');
         if (stateLabel) {
             stateLabel.textContent = this.app.searchEnabled ? 'On' : 'Off';
+        }
+        const settingToggle = document.getElementById('search-setting-toggle');
+        if (settingToggle) {
+            settingToggle.setAttribute('aria-checked', this.app.searchEnabled ? 'true' : 'false');
+            settingToggle.classList.toggle('switch-active', this.app.searchEnabled);
+            settingToggle.classList.toggle('switch-inactive', !this.app.searchEnabled);
         }
     }
 
@@ -2260,6 +2291,13 @@ export default class ChatInput {
         await Promise.all(settingsWrites);
     }
 
+    /**
+     * Council review needs Parallel, so turning it on from Chat switches the
+     * conversation into Parallel. That switch is remembered per conversation:
+     * turning review off again returns to Chat, while a conversation that was
+     * already in Parallel stays there. Choosing a mode on the composer's own
+     * toggle clears the memory, since that is the person's explicit choice.
+     */
     async setCouncilReviewEnabledFromSettings(enabled) {
         if (!this.requireFeature('council')) return;
         const session = this.app.getCurrentSession();
@@ -2267,7 +2305,12 @@ export default class ChatInput {
         const currentlyMultiModelEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const nextMultiModelEnabled = enabled || currentlyMultiModelEnabled;
+        const scope = session?.id || 'pending';
+        this.parallelEnteredByReview ||= new Set();
+        if (enabled && !currentlyMultiModelEnabled) this.parallelEnteredByReview.add(scope);
+        const leaveParallelToo = !enabled && this.parallelEnteredByReview.has(scope);
+        if (!enabled) this.parallelEnteredByReview.delete(scope);
+        const nextMultiModelEnabled = enabled || (currentlyMultiModelEnabled && !leaveParallelToo);
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
@@ -2277,9 +2320,10 @@ export default class ChatInput {
             synthesisModel,
             outputMode,
             // Enabling Council review from Chat is also an explicit switch
-            // into multi-model mode. Changes within Parallel do not rewrite a
-            // newer Chat/Parallel preference chosen in another tab.
-            persistMode: enabled && !currentlyMultiModelEnabled
+            // into multi-model mode, and turning it off again is the switch
+            // back. Changes within Parallel do not rewrite a newer
+            // Chat/Parallel preference chosen in another tab.
+            persistMode: (enabled && !currentlyMultiModelEnabled) || leaveParallelToo
         });
 
         if (!session) {
@@ -2714,7 +2758,9 @@ export default class ChatInput {
         }
 
         if (councilReviewModelRow) {
-            councilReviewModelRow.classList.toggle('hidden', !isCouncilReviewEnabled);
+            // The row is always there, dimmed while review is off: turning the
+            // switch on must not grow the panel under the pointer.
+            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled);
         }
 
         if (councilReviewModelSelect) {
@@ -2944,7 +2990,7 @@ export default class ChatInput {
     }
 
     async handleExportMemory() {
-        if (!this.isMemoryAvailable()) {
+        if (!this.supportsFeature('memory')) {
             this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
@@ -2956,7 +3002,7 @@ export default class ChatInput {
     }
 
     handleImportMemory() {
-        if (!this.isMemoryAvailable()) {
+        if (!this.supportsFeature('memory')) {
             this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
@@ -3077,7 +3123,7 @@ export default class ChatInput {
 
     async processMemoryImportFile(file) {
         try {
-            if (!this.isMemoryAvailable()) {
+            if (!this.supportsFeature('memory')) {
                 this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
                 return;
             }

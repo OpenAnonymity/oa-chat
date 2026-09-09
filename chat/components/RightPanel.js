@@ -1851,9 +1851,6 @@ class RightPanel {
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Keys</span>
                     </div>
-                    <div class="text-[10px] text-muted-foreground mb-2">
-                        Keys persist until expiry, model change, or exhaustion.
-                    </div>
                     <div class="space-y-2">
                         ${rowHtml}
                     </div>
@@ -2024,7 +2021,7 @@ class RightPanel {
 
         return `
                 ${hasExternalTicketManager ? `
-                <div class="oa-right-panel-access-stack grid gap-4 p-3">
+                <div class="oa-right-panel-access-stack grid gap-6 p-3">
                     <div class="oa-right-panel-ticket-summary min-w-0">
                     <div class="flex items-center gap-1.5">
                         <button
@@ -2054,10 +2051,11 @@ class RightPanel {
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
                         <p class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
-                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider—not OA.
+                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider, not OA.
                         </p>
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
+                    <div class="system-panel-divider" aria-hidden="true"></div>
                     </div>
                     ${this.generateAccessKeyPanelHTML(hasApiKey, { embedded: true })}
                 </div>

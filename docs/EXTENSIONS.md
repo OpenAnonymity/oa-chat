@@ -31,11 +31,16 @@ Extension API version 2 supports these named slots:
 - `rightPanel.ticketStatus`
 - `modalLayer`
 
-`account.menuActions` is rendered inside the signed-in account settings menu.
-Nodes mounted there should be buttons with `role="menuitem"` and the shared
-`account-menu-item` class. The core menu owns focus movement, Escape handling,
-outside-click dismissal, and Account/logout actions. Extensions own their
-menu-item label and destination. A dialog opened from this slot should use
+`account.menuActions` is rendered inside the signed-in account settings menu,
+above the core **Log out** item. When this slot has mounted content, it replaces
+the core **Account** item; without an extension, the core item remains available
+and opens oa-chat's account-security dialog. Nodes mounted in the slot
+should be buttons with `role="menuitem"` and the shared `account-menu-item`
+class. The core menu owns focus movement, Escape handling, outside-click
+dismissal, and the logout action. Extensions own their menu-item label and
+destination. `context.ui.getAccountIdentityLabel()` returns the signed-in
+display name (username, else Google email) for an extension-owned account
+dialog to show; it is a UI helper, not part of `account.getSnapshot()`. A dialog opened from this slot should use
 `context.ui.getAccountMenuReturnTarget()` as its focus-return target because
 the menu itself closes after selection. The legacy `sidebar.accountActions` and
 `account.commercial` slots remain supported for compatibility.
@@ -47,15 +52,16 @@ with the captured element as its focus-return target. The close request honors
 Account's protected recovery and authorization steps.
 
 The context also provides narrow account, entitlement-ticket, ticket-tool, and UI
-capabilities. `account.getSnapshot()` exposes only `isReady`, `accountId`,
-`sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and `status`; it
+capabilities. `account.getSnapshot()` exposes only `isReady`,
+`authBootstrapComplete`, `accountId`, `sessionVerified`, `accountScopeReady`,
+`ticketSyncReady`, and `status`; it
 never exposes credentials or recovery material. Calling
 `tickets.prepareEntitlementBatch()` without a `ticketCount`
 only resumes an already-saved preparation for that scope.
 
 - `account.getSnapshot()` and `account.subscribe()` return `isReady`,
-  `accountId`, `sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and
-  `status`; no credential, recovery, email, or encryption material crosses the
+  `authBootstrapComplete`, `accountId`, `sessionVerified`, `accountScopeReady`,
+  `ticketSyncReady`, and `status`; no credential, recovery, email, or encryption material crosses the
   boundary.
 - `account.resolveAuthContext()` returns an opaque account scope only after the
   SuperTokens session is verified.
@@ -66,11 +72,26 @@ only resumes an already-saved preparation for that scope.
   with credentials omitted.
 - `tickets.getIssuerPublicKey()` fetches without caching and verifies the
   advertised key ID against the RFC 9578 public key bytes.
+- `tickets.refreshSnapshot({ signal })` refreshes the browser-local wallet
+  for the current account and returns the same redacted count/readiness shape
+  as `subscribe`. It does not synchronize from the server or return tickets.
+  Its queued wallet/account locks are cancelable and bounded to 30 seconds;
+  acquired ownership is retained until the scoped read finishes.
 - `tickets.prepareEntitlementBatch()` owns browser-side blinding, strict claim
   response validation, unblinding, durable wallet import, and crash recovery.
   Final tickets contain only ordinary ticket fields.
 - `ui` provides the supported Account, Welcome, ticket-management, and toast
   actions.
+- `ui.persistNavigationForReturn()` saves the currently displayed conversation
+  or explicit New Chat selection in tab-local session storage. Call it just
+  before leaving for an external billing page. It returns no conversation data;
+  do not put a conversation identifier in a billing request or return URL.
+
+Preparation progress may include `phase: 'waiting'` with a reason (`storage`,
+`lock`, `issuer`, or `publication`). Numeric generation/finalization progress
+describes completed work, not time waiting. Account scope is not part of the
+progress payload. Downstream orchestrators may attach ephemeral operation IDs
+to distinguish observers without logging identity or ticket data.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
 `getToolsSnapshot`, `subscribe`, `importTickets`, `shareTickets`,
@@ -109,10 +130,16 @@ a newly created Google-plus-passkey account. Core Account UI closes before it
 notifies the extension. The commercial client opens Membership; returning
 accounts do not emit this notification.
 
+`context.ui.registerLoggedOut(handler)` fires after the person chooses Log out
+in Account and the account has been removed from this device. It does not fire
+for a lock, an expired session, or the sign-in hand-off replacing a mismatched
+account. The commercial client uses it to leave for its landing page.
+
 Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does
 not prevent standalone chat startup. Slot, capability, or lifecycle changes
-require a new extension API version.
+that break existing consumers require a new extension API version. The optional
+navigation persistence and wallet-refresh capabilities above are additive to v2.
 
 ## Product UI composition
 

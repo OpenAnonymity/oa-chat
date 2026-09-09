@@ -20,6 +20,11 @@ export default class ChatArea {
         this.app = app;
         // Buffer for debounced reasoning updates during streaming
         this.reasoningBuffer = { content: '', timeout: null, messageId: null };
+        // Reasoning ids whose trace was settled when the answer began, with
+        // the settled length: a debounce tail (same length) is ignored so the
+        // panel stays settled; genuinely new thinking (longer, after a tool
+        // call) reopens it and continues from where the settled text ended.
+        this.settledReasoningIds = new Map();
         this.councilReasoningStreams = new Map();
         // Typewriter state for gradual content reveal
         this.typewriter = {
@@ -2366,6 +2371,12 @@ export default class ChatArea {
 
     updateCouncilLaneReasoning(messageId, laneId, reasoning) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        if (this.settledReasoningIds.has(reasoningId)) {
+            const settledLength = this.settledReasoningIds.get(reasoningId);
+            if ((reasoning?.length || 0) <= settledLength) return;
+            this.settledReasoningIds.delete(reasoningId);
+            this.getCouncilReasoningStreamState(reasoningId).displayedLength = settledLength;
+        }
         this.ensureCouncilLaneReasoningTrace(messageId, laneId);
         const state = this.getCouncilReasoningStreamState(reasoningId);
         state.content = reasoning || '';
@@ -2504,6 +2515,12 @@ export default class ChatArea {
         this.updateReasoningSubtitleToDuration(reasoningId, reasoningDuration);
     }
 
+    /** Same as settleReasoningDisplay, for one council lane. */
+    settleCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
+        this.settledReasoningIds.set(this.getCouncilLaneReasoningId(messageId, laneId), reasoning?.length || 0);
+        this.finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration);
+    }
+
     finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
         const state = this.councilReasoningStreams.get(reasoningId);
@@ -2560,6 +2577,14 @@ export default class ChatArea {
      * @param {string} reasoning - The reasoning content
      */
     updateStreamingReasoning(messageId, reasoning) {
+        if (this.settledReasoningIds.has(messageId)) {
+            const settledLength = this.settledReasoningIds.get(messageId);
+            if ((reasoning?.length || 0) <= settledLength) return;
+            this.settledReasoningIds.delete(messageId);
+            this.typewriter.messageId = messageId;
+            this.typewriter.displayedLength = settledLength;
+            document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
+        }
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -2878,6 +2903,20 @@ export default class ChatArea {
     }
 
     /**
+     * The first content chunk proves the model is done thinking. Settle the
+     * trace right then: show all of it, drop the "Thinking..." indicator and
+     * put the duration in the header. Reasoning chunks that trickle in after
+     * this (debounce tails) are ignored for the message.
+     * @param {string} messageId - The message ID
+     * @param {string} reasoning - The full reasoning content
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleReasoningDisplay(messageId, reasoning, reasoningDuration) {
+        this.settledReasoningIds.set(messageId, reasoning?.length || 0);
+        this.finalizeReasoningDisplay(messageId, reasoning, reasoningDuration);
+    }
+
+    /**
      * Updates the reasoning subtitle to show duration when thinking completes.
      * Called when output starts streaming after reasoning finishes.
      * @param {string} messageId - The message ID
@@ -3173,6 +3212,11 @@ export default class ChatArea {
      * @param {boolean} options.forceFullRender - Rebuild all message chrome even if reasoning is finalized
      */
     async finalizeStreamingMessage(message, options = {}) {
+        if (message?.id) {
+            for (const id of [...this.settledReasoningIds.keys()]) {
+                if (id === message.id || id.startsWith(`${message.id}-`)) this.settledReasoningIds.delete(id);
+            }
+        }
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
 
@@ -3199,17 +3243,28 @@ export default class ChatArea {
                 renderMathContent(contentEl);
             }
 
-            // Setup citation carousel if citations were added
-            if (message.citations && message.citations.length > 0) {
-                this.setupCitationCarouselScroll();
-            }
+            // The message was appended while it was still thinking, so its
+            // action row is the empty placeholder. Swap in the real row
+            // (Copy, Regenerate, …) from a fresh render of the finished message.
+            const actionsSettled = this.replaceAssistantActionsRow(messageEl, message);
 
-            // Update message navigation to reflect final content (fixes preview + indicator height)
-            if (this.app.messageNavigation) {
-                this.app.messageNavigation.update();
+            if (actionsSettled) {
+                // Setup citation carousel if citations were added
+                if (message.citations && message.citations.length > 0) {
+                    this.setupCitationCarouselScroll();
+                }
+
+                // Update message navigation to reflect final content (fixes preview + indicator height)
+                if (this.app.messageNavigation) {
+                    this.app.messageNavigation.update();
+                }
+                this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
+                return;
             }
-            this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
-            return;
+            // The targeted swap could not produce the action row (the live
+            // element's anchors no longer line up with a fresh render). A
+            // finished answer without Copy is worse than a re-render: fall
+            // through to the full replacement.
         }
 
         // Full replacement for messages without finalized reasoning
@@ -3235,6 +3290,37 @@ export default class ChatArea {
             this.app.messageNavigation.update();
         }
         this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
+    }
+
+    /**
+     * Replaces the message's action row with the one a fresh render of the
+     * finished message would have. Only the row changes; the reasoning trace
+     * and content stay untouched.
+     */
+    /**
+     * @returns {boolean} true when the live element ends up with the action
+     * row a fresh render of the finished message would have (or the fresh
+     * render has none either); false when the swap could not be made.
+     */
+    replaceAssistantActionsRow(messageEl, message) {
+        const currentRows = [...messageEl.querySelectorAll('.assistant-actions-anchor')];
+        const session = this.app.getCurrentSession();
+        const helpers = {
+            processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+            formatTime: this.app.formatTime.bind(this.app)
+        };
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
+        const freshRows = [...tempDiv.querySelectorAll('.assistant-actions-anchor')];
+        const freshHasRow = freshRows.some(row => row.classList.contains('assistant-actions-row'));
+        if (currentRows.some(row => row.classList.contains('assistant-actions-placeholder'))) {
+            currentRows.forEach((row, index) => {
+                const fresh = freshRows[index];
+                if (row.classList.contains('assistant-actions-placeholder') && fresh) row.replaceWith(fresh);
+            });
+        }
+        const liveHasRow = Boolean(messageEl.querySelector('.assistant-actions-row'));
+        return liveHasRow || !freshHasRow;
     }
 
     /**

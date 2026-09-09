@@ -5,6 +5,7 @@ import { toExtensionAccountSnapshot } from '../../chat/extensions/extensionAccou
 test('extension account snapshots expose only documented non-secret fields', () => {
     const snapshot = toExtensionAccountSnapshot({
         isReady: true,
+        authBootstrapComplete: true,
         accountId: 'account-123',
         sessionVerified: true,
         accountScopeReady: true,
@@ -18,6 +19,7 @@ test('extension account snapshots expose only documented non-secret fields', () 
 
     assert.deepEqual(snapshot, {
         isReady: true,
+        authBootstrapComplete: true,
         accountId: 'account-123',
         sessionVerified: true,
         accountScopeReady: true,
@@ -29,4 +31,10 @@ test('extension account snapshots expose only documented non-secret fields', () 
     assert.equal('recoveryCode' in snapshot, false);
     assert.equal('oauthEmail' in snapshot, false);
     assert.equal('error' in snapshot, false);
+});
+
+test('authBootstrapComplete is false until the restore attempt settles', () => {
+    assert.equal(toExtensionAccountSnapshot({ isReady: true }).authBootstrapComplete, false);
+    assert.equal(toExtensionAccountSnapshot({ authBootstrapComplete: 'yes' }).authBootstrapComplete, false);
+    assert.equal(toExtensionAccountSnapshot({ authBootstrapComplete: true }).authBootstrapComplete, true);
 });

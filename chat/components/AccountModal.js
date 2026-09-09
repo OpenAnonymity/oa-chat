@@ -8,6 +8,35 @@ import { SLOT_NAMES } from '../extensions/extensionHost.js';
 const MODAL_CLASSES = 'w-full max-w-md rounded-2xl border border-border/80 bg-background shadow-xl p-5 mx-4 flex flex-col';
 const MODAL_FOCUSABLE_SELECTOR = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
+// How long the first-time explanation is held before the passkey sheet opens.
+// Deliberate: the sheet is unexpected without a word first, and reading one
+// line takes about this long. Kept well inside the browser's user-activation
+// window (~5 s from the Enter press) so the ceremony can still open on its own.
+// 1.5 s: long enough to read the one line, short enough not to feel held.
+const PASSKEY_INTRO_MS = 1500;
+// A username reservation (and its registration challenge) lives about a
+// minute on the server. Back keeps ours for that long so re-entering the
+// same name continues with it instead of asking for a new one the server
+// would refuse as "unavailable".
+const HELD_REGISTRATION_MS = 55000;
+// A sheet the user dismissed took them at least this long; one the browser
+// refused to open (no user activation left) comes back at once.
+const SHEET_REFUSED_MS = 600;
+// A server-side passkey challenge is short-lived (about a minute for login).
+// A sheet left open longer than this and then confirmed comes back rejected
+// with a generic message; the time tells us what really happened.
+// The one line every passkey wait carries before the OS sheet opens.
+export const PASSKEY_INTRO_LINE = 'The Open Anonymity Project uses a passkey to secure your account.';
+const CHALLENGE_STALE_MS = 45000;
+const PASSKEY_EXPIRED_MESSAGE = 'That took a little too long, so the passkey request expired.';
+
+function looksLikeExpiredChallenge(error, sheetMs) {
+    const message = String(error?.message || error || '');
+    return error?.code === 'INVALID_CHALLENGE' ||
+        /expired|invalid/i.test(message) ||
+        (sheetMs > CHALLENGE_STALE_MS && !/cancel/i.test(message));
+}
+
 class AccountModal {
     constructor(app) {
         this.app = app;
@@ -19,6 +48,14 @@ class AccountModal {
 
         // Login flow state
         this.accountInputValue = '';
+        this.usernameInputValue = '';
+        this.identifierMode = null;
+        this.usernameContinuePending = false;
+        this.usernameHandoffPending = false;
+        this.usernameUnlockReady = false;
+        this.usernamePasskeyBusy = false;
+        this.passkeyAutoPromptAttempted = false;
+        this.loginViewVersion = 0;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
 
@@ -27,7 +64,9 @@ class AccountModal {
 
         // Creation flow state
         this.creationStep = 'idle';
+        this.heldRegistration = null;
         this.generatedAccountId = null;
+        this.generatedUsername = null;
         this.generatedRecoveryCode = null;
         this.accountIdCopied = false;
         this.recoveryCodeCopied = false;
@@ -77,7 +116,15 @@ class AccountModal {
             }
         });
 
+        // Components reach extension slots only through the app facade
+        // (appInterface.js), which does not expose the slot registry itself.
+        this.accountMenuSlotUnsubscribe = this.app.subscribeExtensionSlot?.(
+            SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
+            () => this.syncCoreAccountMenuItem()
+        ) || null;
+
         this.attachAccountNavListeners();
+        this.syncCoreAccountMenuItem();
         this.updateTabIndicator();
     }
 
@@ -90,7 +137,7 @@ class AccountModal {
     attachAccountNavListeners() {
         const tabBtn = document.getElementById('account-tab-btn');
         if (tabBtn) {
-            tabBtn.onclick = () => {
+            tabBtn.onclick = event => {
                 if (this.isAccountMenuAvailable()) {
                     this.menuOpen ? this.closeAccountMenu(true) : this.openAccountMenu(tabBtn);
                     return;
@@ -127,7 +174,18 @@ class AccountModal {
 
     getAccountMenuItems() {
         const menu = document.getElementById('account-settings-menu');
-        return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled])')] : [];
+        return menu ? [...menu.querySelectorAll('[role="menuitem"]:not([disabled]):not([hidden])')] : [];
+    }
+
+    syncCoreAccountMenuItem() {
+        const accountItem = document.getElementById('account-security-menu-item');
+        if (!accountItem) return;
+        // The composed commercial Account action replaces this core fallback;
+        // standalone oa-chat must always retain a route to account security.
+        accountItem.hidden = this.app.hasExtensionSlotNode?.(
+            SLOT_NAMES.ACCOUNT_MENU_ACTIONS,
+            '[role="menuitem"]:not([disabled]):not([hidden])'
+        ) === true;
     }
 
     isAccountMenuAvailable() {
@@ -137,6 +195,15 @@ class AccountModal {
             this.accountState?.sessionVerified &&
             this.accountState?.status === 'unlocked'
         );
+    }
+
+    /** Display name for the signed-in account: username, else the Google email. */
+    getAccountIdentityLabel() {
+        if (!this.isAccountMenuAvailable()) return '';
+        const label = this.accountState?.username ||
+            this.accountState?.oauthEmail ||
+            this.accountState?.email;
+        return typeof label === 'string' ? label.trim() : '';
     }
 
     getAccountMenuReturnTarget() {
@@ -152,9 +219,12 @@ class AccountModal {
         this.close();
         this.menuOpen = true;
         this.accountMenuTrigger = trigger || tabBtn;
+        this.app.refreshExtensionSlot?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
+        this.syncCoreAccountMenuItem();
+        // Focus the first item for Escape/arrow navigation. Focus rings are
+        // gated on html[data-keyboard-nav], so a pointer-opened menu stays quiet.
         menu.hidden = false;
         tabBtn?.setAttribute('aria-expanded', 'true');
-        this.app.extensionSlots?.refresh?.(SLOT_NAMES.ACCOUNT_MENU_ACTIONS);
         this.getAccountMenuItems()[0]?.focus();
     }
 
@@ -238,14 +308,16 @@ class AccountModal {
                 : needsEncryptionUnlock
                     ? 'Google is signed in; encrypted data is locked'
                     : 'Account';
-        const accountEmail = this.accountState?.oauthEmail || this.accountState?.email;
-        const email = typeof accountEmail === 'string'
-            ? accountEmail.trim()
+        const accountLabel = this.accountState?.username ||
+            this.accountState?.oauthEmail ||
+            this.accountState?.email;
+        const identity = typeof accountLabel === 'string'
+            ? accountLabel.trim()
             : '';
         const identityText = isAuthResolving
             ? ''
-            : isLoggedIn && email
-            ? email
+            : isLoggedIn && identity
+                ? identity
             : needsEncryptionSetup
                 ? 'Finish account setup'
                 : needsEncryptionUnlock
@@ -259,8 +331,8 @@ class AccountModal {
             'aria-label',
             isAuthResolving
                 ? 'Restoring account'
-                : isLoggedIn && email
-                ? `Account for ${email}`
+                : isLoggedIn && identity
+                    ? `Account for ${identity}`
                 : needsEncryptionSetup
                     ? 'Finish account setup'
                     : needsEncryptionUnlock
@@ -273,9 +345,31 @@ class AccountModal {
         if (!isLoggedIn || isAuthResolving) this.closeAccountMenu();
     }
 
+    // At narrow widths the sidebar is an overlay with its own scrim. Opening a
+    // dialog on top of it would stack two scrims, so close it first; the
+    // preference is not persisted because the user did not choose to hide it.
+    dismissOverlaySidebar() {
+        const sidebar = this.app?.elements?.sidebar;
+        if (!sidebar?.classList?.contains('mobile-visible')) return;
+        this.app?.hideSidebar?.({ persist: false });
+        this.restoreOverlaySidebar = true;
+    }
+
+    // Bring the overlay sidebar back when the dialog it made way for closes,
+    // so focus returns to a visible Account button and the user lands where
+    // they started. After a completed sign-in the app routes elsewhere, so
+    // the sidebar stays closed.
+    reopenOverlaySidebar({ afterAuthentication = false } = {}) {
+        if (!this.restoreOverlaySidebar) return;
+        this.restoreOverlaySidebar = false;
+        if (afterAuthentication) return;
+        this.app?.showSidebar?.({ persist: false });
+    }
+
     open(returnFocusEl = null) {
         if (this.isOpen || !this.overlay) return;
         this.closeAccountMenu();
+        this.dismissOverlaySidebar();
         this.isOpen = true;
         this.passkeyDetailsOpen = false;
         this.returnFocusEl = returnFocusEl || document.activeElement;
@@ -284,8 +378,22 @@ class AccountModal {
         this.recoveryStep = 'idle';
         // Clear any stale errors when opening
         this.accountService.clearErrors();
+        this.passkeyAutoPromptAttempted = false;
+        // The arrival layer from index.html has been showing the same caption
+        // since before any script ran: the dialog's copy is already on
+        // screen, so it must not enter again, and the hold before an
+        // automatic passkey sheet counts from navigation, not from now.
+        if (document.documentElement?.hasAttribute?.('data-auth-caption')) {
+            this.waitingCaptionShown = true;
+            this.captionShownAt = 0;
+        }
         this.render();
         this.overlay.classList.remove('hidden');
+        // The dialog's own backdrop is now painted; the early arrival layer from
+        // index.html (same dim, same spinner, same caption) can go without a
+        // visible change.
+        document.documentElement?.removeAttribute?.('data-auth-arriving');
+        document.documentElement?.removeAttribute?.('data-auth-caption');
         this.focusModal();
 
         const tabBtn = document.getElementById('account-tab-btn');
@@ -293,6 +401,69 @@ class AccountModal {
 
         this.escapeHandler = (e) => this.handleModalKeydown(e);
         document.addEventListener('keydown', this.escapeHandler);
+        this.maybeAutoPromptPasskey();
+    }
+
+    /**
+     * A returning account goes straight to the passkey: no explanation card
+     * to click through. Only the plain Google keyring unlock qualifies — setup,
+     * legacy migration and legacy-passkey accounts still need their one line
+     * of context first. Runs once per open; a cancelled or failed prompt
+     * leaves the card in its untitled Try again state, never re-prompts.
+     */
+    maybeAutoPromptPasskey() {
+        const state = this.accountState || {};
+        if (!this.isOpen || this.passkeyAutoPromptAttempted) return;
+        // Only a returning keyring unlock prompts on open. First-time setup
+        // waits for Create passkey on a one-line card, like every other site
+        // that creates a passkey: the OS sheet is unexpected without it, and
+        // the click gives WebAuthn the user activation Safari wants. The
+        // legacy recovery migration and legacy-passkey accounts explain
+        // themselves first too.
+        const automatic = state.oauthKeyringRequired && !state.oauthSetupRequired &&
+            !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired;
+        if (!automatic) return;
+        if (state.busy || state.error || state.passkeySupported === false) return;
+        this.passkeyAutoPromptAttempted = true;
+        void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
+    }
+
+    async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
+        if (this.isOpen || !this.overlay) return;
+        this.dismissOverlaySidebar();
+        this.identifierMode = 'username';
+        this.usernameInputValue = String(username || '')
+            .normalize('NFKC')
+            .trim()
+            .toLowerCase();
+        const state = this.accountState || {};
+        // Only a submitted landing username skips the form. Preserve saved
+        // legacy/Google recovery and unlock surfaces, and unsupported browsers.
+        this.usernameHandoffPending = autoContinue && Boolean(this.usernameInputValue) &&
+            this.getIdentifierMode() === 'username' && !state.busy &&
+            state.passkeySupported !== false &&
+            !state.oauthRecoveryRequired && !state.oauthKeyringRequired &&
+            !state.oauthSetupRequired && !state.oauthLegacyPasskeyRequired;
+        this.open(returnFocusEl);
+        if (!this.usernameHandoffPending) {
+            this.focusModal('account-username-input');
+            return;
+        }
+        const viewVersion = this.loginViewVersion;
+        try {
+            await this.handleAccountContinue();
+        } finally {
+            if (viewVersion === this.loginViewVersion) {
+                this.usernameHandoffPending = false;
+                // The held first-time explanation is already drawn and
+                // focused; redrawing would cut its entrance short.
+                if (this.isOpen && !this.usernameIntroPending) {
+                    this.render();
+                    this.focusModal(this.usernameUnlockReady || this.creationStep === 'username_ready'
+                        ? 'account-username-unlock-btn' : 'account-username-input');
+                }
+            }
+        }
     }
 
     getModalFocusable() {
@@ -338,11 +509,37 @@ class AccountModal {
         }
     }
 
+    /**
+     * On a host that requires sign-in, the dialog is the page until an
+     * account is unlocked: no close control, Escape does nothing.
+     */
+    mustStaySignedIn() {
+        if (this.app?.getSignInPolicy?.()?.required !== true) return false;
+        const state = this.accountState || {};
+        return !(state.accountId && state.status === 'unlocked');
+    }
+
     handleCloseAttempt() {
+        // Log out owns the page until the account is cleared.
+        if (this.loggingOut) return;
+        if (this.mustStaySignedIn()) {
+            // Cancelling a half-done sign-up is still allowed; it returns to
+            // the form rather than to the page behind.
+            if (this.creationStep !== 'idle' && this.creationStep !== 'complete' &&
+                this.creationStep !== 'recovery' && this.creationStep !== 'oauth_authorizing' &&
+                !(this.generatedUsername && this.creationStep === 'confirming')) {
+                this.handleCancelCreation();
+                this.render();
+            }
+            return;
+        }
         // Don't allow closing during recovery step - user must save their codes
+        // Username finalization is also non-cancellable once its key is being
+        // registered; cancelling would zero the key during that commit.
         if (
             this.creationStep === 'recovery' ||
-            this.creationStep === 'oauth_authorizing'
+            this.creationStep === 'oauth_authorizing' ||
+            (this.generatedUsername && this.creationStep === 'confirming')
         ) {
             return;
         }
@@ -352,9 +549,15 @@ class AccountModal {
         this.close();
     }
 
-    close() {
+    close({ afterAuthentication = false } = {}) {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
+        this.loginViewVersion += 1;
+        this.usernameHandoffPending = false;
+        this.usernameUnlockReady = false;
+        this.waitingCaptionShown = false;
+        this.usernameIntroPending = false;
+        this.dropHeldRegistration();
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         this.clearAnimationTimeouts();
@@ -365,13 +568,18 @@ class AccountModal {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;
         }
+        this.reopenOverlaySidebar({ afterAuthentication });
+        // Restoring focus is programmatic; rings are gated on
+        // html[data-keyboard-nav], so nothing lights up after login/unlock.
         if (this.returnFocusEl?.focus) this.returnFocusEl.focus();
         this.returnFocusEl = null;
     }
 
     resetCreationFlow() {
+        this.usernameUnlockReady = false;
         this.creationStep = 'idle';
         this.generatedAccountId = null;
+        this.generatedUsername = null;
         this.generatedRecoveryCode = null;
         this.accountIdCopied = false;
         this.recoveryCodeCopied = false;
@@ -379,6 +587,8 @@ class AccountModal {
         this.isLoadingAccountId = false;
         this.oauthProvider = null;
         this.revealedDigits = 0;
+        this.waitingCaptionShown = false;
+        this.usernameIntroPending = false;
         this.clearAnimationTimeouts();
     }
 
@@ -416,38 +626,29 @@ class AccountModal {
     // Creation Flow Handlers
     // =========================================================================
 
-    async handleGenerateAccountNumber() {
-        this.creationStep = 'passkey';
-        this.creationError = null;
-        this.generatedAccountId = null;
-        this.isLoadingAccountId = true;
-        this.revealedDigits = 0;
-        this.render();
-
-        try {
-            this.generatedAccountId = await this.accountService.prepareAccount();
-            this.isLoadingAccountId = false;
-            this.render();
-            this.startDigitRevealAnimation();
-        } catch (error) {
-            this.creationStep = 'error';
-            this.creationError = error.message || 'Failed to create account. Please try again.';
-            this.isLoadingAccountId = false;
-            this.render();
-        }
-    }
-
     getOAuthProviderLabel() {
         return 'Google';
     }
 
-    async handleOAuthAuthentication(provider) {
+    /**
+     * The landing page ran the Google popup and handed over its completion
+     * token; only the spinner is drawn while the session is finished here.
+     */
+    async openForOAuthCompletion(provider, completionToken, returnFocusEl = null) {
+        if (this.isOpen || !this.overlay) return;
+        this.open(returnFocusEl);
+        await this.handleOAuthAuthentication(provider, { completionToken });
+    }
+
+    async handleOAuthAuthentication(provider, { completionToken = null } = {}) {
         this.oauthProvider = provider;
         this.creationStep = 'oauth_authorizing';
         this.creationError = null;
+        this.oauthHandoffPending = Boolean(completionToken);
         this.render();
 
-        const result = await this.accountService.authenticateWithOAuth(provider);
+        const result = await this.accountService.authenticateWithOAuth(provider, { completionToken });
+        this.oauthHandoffPending = false;
         if (!result) {
             this.creationStep = 'idle';
             this.oauthProvider = null;
@@ -462,15 +663,19 @@ class AccountModal {
             if (result.newAccount === true) {
                 this.completeFirstAccountRouting();
             } else {
-                this.close();
+                this.close({ afterAuthentication: true });
             }
             return;
         }
         this.render();
+        // OAuth completes inside an already-open dialog. If it resolved to a
+        // returning keyring, open its passkey prompt now rather than waiting
+        // for a close/reopen that may never happen.
+        this.maybeAutoPromptPasskey();
     }
 
     completeFirstAccountRouting() {
-        this.close();
+        this.close({ afterAuthentication: true });
         this.app?.notifyFirstAccountReady?.();
     }
 
@@ -513,18 +718,92 @@ class AccountModal {
     }
 
     async handlePasskeyRegistration() {
+        const viewVersion = this.loginViewVersion;
+        const isCurrent = () => this.isOpen && viewVersion === this.loginViewVersion;
+        const startedAt = Date.now();
         const success = await this.accountService.registerPasskeyForPreparedAccount();
+        if (!isCurrent()) return;
+        const sheetMs = Date.now() - startedAt;
 
         if (success) {
+            if (this.generatedUsername) {
+                this.creationStep = 'confirming';
+                this.creationError = null;
+                this.render();
+                try {
+                    await this.accountService.completeAccountRegistration();
+                    if (!isCurrent()) return;
+                    this.creationStep = 'complete';
+                    this.app?.showToast?.('Account created successfully', 'success');
+                    this.completeFirstAccountRouting();
+                } catch (error) {
+                    if (!isCurrent()) return;
+                    // The server would not finish the account — almost
+                    // always because the sheet sat open past the challenge's
+                    // life. The name stays: one plain line says why, and Try
+                    // again reserves it afresh and opens the sheet.
+                    this.accountService.cancelPendingAccount();
+                    this.generatedAccountId = null;
+                    this.creationStep = 'username_ready';
+                    this.creationError = looksLikeExpiredChallenge(error, Date.now() - startedAt)
+                        ? PASSKEY_EXPIRED_MESSAGE
+                        : String(error.message || '') || 'Your account couldn\u2019t be finished.';
+                    this.waitingCaptionShown = false;
+                    this.render();
+                    this.focusModal('account-username-unlock-btn');
+                }
+                return;
+            }
             this.generatedRecoveryCode = this.accountService.generateRecoveryForPreparedAccount();
             this.creationStep = 'recovery';
             this.recoveryCodeCopied = false;
             this.creationError = null;
+        } else if (this.generatedUsername) {
+            const cancelled = /cancel/i.test(this.accountState?.error || '');
+            if (cancelled && sheetMs < SHEET_REFUSED_MS) {
+                // The browser refused to open the sheet without a fresh
+                // click (the activation from Enter had lapsed): keep the
+                // name and offer the click.
+                this.accountService.clearErrors?.();
+                this.creationStep = 'username_ready';
+                this.creationError = null;
+                this.waitingCaptionShown = false;
+            } else {
+                // Cancel is "not now": back to the start, name forgotten,
+                // nothing created or reserved. Any other failure goes back
+                // the same way with the reason under the form.
+                this.returnToUsernameForm(
+                    cancelled ? '' : this.accountState?.error || 'Passkey registration failed.',
+                    { hold: true }
+                );
+                return;
+            }
         } else {
             this.creationStep = 'passkey_retry';
             this.creationError = this.accountState?.error || 'Passkey registration failed.';
         }
         this.render();
+    }
+
+    /**
+     * First-time setup is over: back to an empty username field. A
+     * reservation the server still honours (the sheet was cancelled or the
+     * authenticator failed) is held, so typing the same name again within
+     * its minute continues with it instead of being refused as unavailable;
+     * one the server rejected is dropped.
+     */
+    returnToUsernameForm(message = '', { hold = false } = {}) {
+        const held = hold && this.generatedUsername && this.generatedAccountId
+            ? { username: this.generatedUsername, accountId: this.generatedAccountId, at: Date.now() }
+            : null;
+        if (!held) this.accountService.cancelPendingAccount();
+        this.resetCreationFlow();
+        this.heldRegistration = held;
+        this.usernameInputValue = '';
+        this.accountService.clearErrors();
+        if (message) this.accountService.setError(message);
+        this.render();
+        this.focusModal('account-username-input');
     }
 
     handleRetryPasskey() {
@@ -587,7 +866,7 @@ class AccountModal {
             await this.accountService.completeAccountRegistration();
             this.creationStep = 'complete';
             this.app?.showToast?.('Account created successfully', 'success');
-            this.render();
+            this.completeFirstAccountRouting();
         } catch (error) {
             this.creationStep = 'error';
             this.creationError = error.message || 'Registration failed.';
@@ -619,14 +898,229 @@ class AccountModal {
     // Existing Account Handlers
     // =========================================================================
 
-    async handleAccountPasskeyUnlock() {
-        const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
+    getIdentifierMode() {
+        const state = this.accountState || {};
+        // Preserve a remembered legacy account's unlock/recovery path for
+        // callers that have not already cleared a mismatched account binding.
+        if (state.accountId && !state.username &&
+            (!state.googleLinked || state.encryptionMode === 'LEGACY_PASSKEY')) return 'accountId';
+        return this.identifierMode || 'username';
+    }
+
+    async handleAccountContinue() {
+        if (this.usernameContinuePending || this.usernamePasskeyBusy || this.usernameUnlockReady ||
+            this.creationStep !== 'idle' || this.accountState?.busy ||
+            this.accountState?.passkeySupported === false) return;
+        if (this.getIdentifierMode() === 'accountId') {
+            return this.handleAccountPasskeyUnlock();
+        }
+        const username = this.usernameInputValue || this.accountState?.username || '';
+        const viewVersion = this.loginViewVersion;
+        const held = this.takeHeldRegistration(String(username).normalize('NFKC').trim().toLowerCase());
+        if (held) {
+            // Same name as the setup they backed out of a moment ago: its
+            // reservation and challenge are still good, so continue with
+            // them rather than asking the server for a name it holds for us.
+            this.accountService.clearErrors();
+            this.generatedUsername = held.username;
+            this.generatedAccountId = held.accountId;
+            this.creationStep = 'username_ready';
+            this.creationError = null;
+            this.startPasskeyIntro(viewVersion);
+            return;
+        }
+        this.usernameContinuePending = true;
+        this.accountService.clearErrors();
+        this.render();
+        try {
+            const next = await this.accountService.prepareUsernameContinuation(username, { lookupOnly: true });
+            if (!this.isOpen || viewVersion !== this.loginViewVersion) {
+                return;
+            }
+            if (next.kind === 'login') {
+                // The explanation can stay open longer than a login challenge's TTL.
+                // Unlock requests a fresh challenge, never reserves a new username.
+                this.usernameUnlockReady = true;
+            } else {
+                // No /auth/init reservation or expiring registration challenge
+                // exists until the user clicks Create passkey on the explanation.
+                this.generatedAccountId = null;
+                this.generatedUsername = String(username).normalize('NFKC').trim().toLowerCase();
+                this.creationStep = 'username_ready';
+                this.creationError = null;
+                this.isLoadingAccountId = false;
+                // Drawn as the held explanation from this very frame, never
+                // as the Create passkey card first.
+                this.usernameIntroPending = true;
+                this.render();
+            }
+        } catch (error) {
+            if (this.isOpen && viewVersion === this.loginViewVersion) {
+                this.accountService.setError(error.message || 'Unable to continue. Please try again.');
+            }
+        } finally {
+            this.usernameContinuePending = false;
+            if (this.isOpen && viewVersion === this.loginViewVersion) {
+                // A returning username account goes straight to its passkey.
+                // A new one first fills the silence: the dimmed page says a
+                // passkey comes next and why, is held for PASSKEY_INTRO_MS,
+                // and then the sheet opens on its own — still inside the
+                // activation window of the Enter press. If the browser
+                // refuses, or the sheet is cancelled, the Create passkey
+                // card takes over and a click opens the sheet instead.
+                if (this.creationStep === 'username_ready' && this.usernameIntroPending) {
+                    // Already drawn on the frame the lookup resolved;
+                    // redrawing here would cut the caption's entrance short.
+                    this.focusModal();
+                    this.animationTimeouts.push(setTimeout(() => {
+                        if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
+                        this.usernameIntroPending = false;
+                        void this.handleUsernamePasskeyContinue();
+                    }, this.remainingPasskeyIntroMs()));
+                    return;
+                }
+                this.render();
+                this.focusModal(this.usernameUnlockReady ? 'account-username-unlock-btn' : 'account-username-input');
+                if (this.usernameUnlockReady) void this.handleUsernamePasskeyContinue();
+            }
+        }
+    }
+
+    async handleUsernamePasskeyContinue() {
+        if (!this.isOpen || this.usernamePasskeyBusy || this.usernameContinuePending ||
+            this.accountState?.busy || this.accountState?.passkeySupported === false) return;
+        const isSetup = Boolean(this.generatedUsername) &&
+            ['username_ready', 'passkey_retry'].includes(this.creationStep);
+        if (!isSetup && !this.usernameUnlockReady) return;
+        const viewVersion = this.loginViewVersion;
+        const isCurrent = () => this.isOpen && viewVersion === this.loginViewVersion;
+        this.usernamePasskeyBusy = true;
+        this.accountService.clearErrors();
+        if (isSetup) {
+            this.creationStep = 'passkey';
+            this.creationError = null;
+        }
+        this.render();
+        const startedAt = Date.now();
+        try {
+            if (isSetup) {
+                if (!this.generatedAccountId) {
+                    await this.accountService.prepareAccount(this.generatedUsername);
+                    if (!isCurrent()) return;
+                    this.generatedAccountId = this.accountService.getPendingAccountId();
+                }
+                await this.handlePasskeyRegistration();
+            } else {
+                await this.handleAccountPasskeyUnlock();
+                // A sheet confirmed after the login challenge lapsed comes
+                // back as a bare "Authentication failed"; say what happened.
+                const error = isCurrent() ? this.accountState?.error : '';
+                if (error && looksLikeExpiredChallenge(error, Date.now() - startedAt)) {
+                    this.accountService.setError(PASSKEY_EXPIRED_MESSAGE);
+                }
+            }
+        } catch (error) {
+            if (!isCurrent()) return;
+            if (isSetup) {
+                // The name could not be reserved (taken meanwhile, offline):
+                // back to the start with the reason under the form.
+                this.returnToUsernameForm(error.message || 'Unable to create your passkey. Please try again.');
+            } else {
+                this.accountService.setError(error.message || 'Unable to unlock. Please try again.');
+            }
+        } finally {
+            this.usernamePasskeyBusy = false;
+            if (isCurrent()) {
+                this.render();
+                // Script-triggered WebAuthn can move focus outside the dialog.
+                // A cancelled/failed automatic prompt must return keyboard
+                // users to the enabled retry action.
+                if (!isSetup && this.usernameUnlockReady) {
+                    this.focusModal('account-username-unlock-btn');
+                } else if (isSetup && this.creationStep === 'username_ready') {
+                    // The browser refused the automatic sheet: the click is here.
+                    this.focusModal('account-username-unlock-btn');
+                } else if (isSetup && this.creationStep === 'idle') {
+                    this.focusModal('account-username-input');
+                }
+            }
+        }
+    }
+
+    handleUsernamePasskeyBack() {
+        if (this.usernamePasskeyBusy || this.accountState?.busy) return;
+        // A live reservation is kept for the same name; one the server has
+        // already rejected is useless and goes.
+        const hold = this.generatedUsername && this.generatedAccountId && this.creationStep !== 'error'
+            ? { username: this.generatedUsername, accountId: this.generatedAccountId, at: Date.now() }
+            : null;
+        if (this.generatedUsername && !hold) this.accountService.cancelPendingAccount();
+        this.resetCreationFlow();
+        this.heldRegistration = hold;
+        this.accountService.clearErrors();
+        this.render();
+        this.focusModal('account-username-input');
+    }
+
+    dropHeldRegistration() {
+        if (!this.heldRegistration) return;
+        this.heldRegistration = null;
+        this.accountService.cancelPendingAccount();
+    }
+
+    /** The held reservation for this username, if it is still usable. */
+    takeHeldRegistration(username) {
+        const held = this.heldRegistration;
+        if (!held) return null;
+        const usable = held.username === username &&
+            Date.now() - held.at < HELD_REGISTRATION_MS &&
+            this.accountService.hasPendingAccount?.() !== false;
+        if (!usable) {
+            this.dropHeldRegistration();
+            return null;
+        }
+        this.heldRegistration = null;
+        return held;
+    }
+
+    /**
+     * Fill the silence before the first-time passkey sheet: the dimmed page
+     * says a passkey comes next and why, held for PASSKEY_INTRO_MS, then the
+     * sheet opens on its own inside the activation window of the user's
+     * Enter press or click.
+     */
+    startPasskeyIntro(viewVersion) {
+        this.usernameIntroPending = true;
+        this.render();
+        this.focusModal();
+        this.animationTimeouts.push(setTimeout(() => {
+            if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
+            this.usernameIntroPending = false;
+            void this.handleUsernamePasskeyContinue();
+        }, this.remainingPasskeyIntroMs()));
+    }
+
+    async handleAccountPasskeyUnlock(preparedChallenge = null) {
+        const usesAccountId = this.getIdentifierMode() === 'accountId';
+        const viewVersion = this.loginViewVersion;
+        const wasOpen = this.isOpen;
         this.authenticationExitPending = true;
         try {
-            const success = await this.accountService.unlockWithPasskey(accountId);
+            const success = usesAccountId
+                ? await this.accountService.unlockWithPasskey(
+                    this.accountState?.accountId || this.accountInputValue?.trim()
+                )
+                : await this.accountService.unlockWithUsername(
+                    this.usernameInputValue || this.accountState?.username,
+                    { action: 'username_login', ...(preparedChallenge ? { preparedChallenge } : {}) }
+                );
+            if (viewVersion !== this.loginViewVersion || (wasOpen && !this.isOpen)) return;
             if (success) {
-                this.close();
+                this.close({ afterAuthentication: true });
                 this.app?.showToast?.('Account unlocked', 'success');
+            } else if (usesAccountId && this.accountService.getState().recoveryRequired) {
+                this.showRecoveryInput = true;
+                this.render();
             }
         } finally {
             this.authenticationExitPending = false;
@@ -634,7 +1128,7 @@ class AccountModal {
     }
 
     async handleAccountRecoveryUnlock() {
-        const accountId = this.accountState?.accountId || this.accountInputValue?.trim();
+        const usesAccountId = this.getIdentifierMode() === 'accountId';
         const recoveryCode = this.recoveryInputValue;
 
         // Clear any previous errors before starting
@@ -650,13 +1144,19 @@ class AccountModal {
         this.authenticationExitPending = true;
         try {
             // Step 3: Call recovery (this triggers the passkey prompt)
-            const success = await this.accountService.unlockWithRecoveryCode(accountId, recoveryCode);
+            if (!usesAccountId) {
+                throw new Error('Username accounts do not support recovery codes');
+            }
+            const success = await this.accountService.unlockWithRecoveryCode(
+                this.accountState?.accountId || this.accountInputValue?.trim(),
+                recoveryCode
+            );
 
             if (success) {
                 this.recoveryStep = 'idle';
                 this.showRecoveryInput = false;
                 this.recoveryInputValue = '';
-                this.close();
+                this.close({ afterAuthentication: true });
                 this.app?.showToast?.('Account recovered successfully', 'success');
             } else {
                 this.recoveryStep = 'idle';
@@ -681,7 +1181,7 @@ class AccountModal {
             );
             if (success) {
                 this.recoveryInputValue = '';
-                this.close();
+                this.close({ afterAuthentication: true });
                 this.app?.showToast?.(`Signed in with ${providerLabel}`, 'success');
             }
         } finally {
@@ -689,12 +1189,15 @@ class AccountModal {
         }
     }
 
-    async handleOAuthKeyringUnlock() {
+    async handleOAuthKeyringUnlock({ restoreRetryFocus = false } = {}) {
         const state = this.accountService.getState();
         const isFirstAccountSetup = state.oauthSetupRequired === true;
+        const viewVersion = this.loginViewVersion;
+        const wasOpen = this.isOpen;
+        let success = false;
         this.authenticationExitPending = true;
         try {
-            const success = state.oauthLegacyPasskeyRequired
+            success = state.oauthLegacyPasskeyRequired
                 ? await this.accountService.unlockWithPasskey(
                     state.accountId,
                     { action: 'oauth_legacy_passkey' }
@@ -705,10 +1208,15 @@ class AccountModal {
             if (success) {
                 this.app?.showToast?.('Encrypted data unlocked', 'success');
                 if (isFirstAccountSetup) this.completeFirstAccountRouting();
-                else this.close();
+                else this.close({ afterAuthentication: true });
             }
         } finally {
             this.authenticationExitPending = false;
+            if (restoreRetryFocus && !success && wasOpen && this.isOpen &&
+                viewVersion === this.loginViewVersion) {
+                this.render();
+                this.focusModal('oauth-keyring-submit-btn');
+            }
         }
     }
 
@@ -729,23 +1237,52 @@ class AccountModal {
 
     async handleAccountClear() {
         this.closeAccountMenu();
-        await this.accountService.clearLocalAccount();
+        // Clearing the account notifies every subscriber, and this dialog
+        // would redraw itself as the signed-out Log in form for the frame
+        // before a host navigates away. Hold the dimmed page instead until
+        // we know whether anyone is taking over.
+        this.loggingOut = true;
+        if (!this.isOpen) this.open();
+        this.render();
+        try {
+            await this.accountService.clearLocalAccount();
+        } catch (error) {
+            this.loggingOut = false;
+            throw error;
+        }
         this.accountInputValue = '';
+        this.usernameInputValue = '';
+        this.identifierMode = null;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
         this.resetCreationFlow();
+        // A commercial host may route away (to its landing page) from here;
+        // if it does, the dimmed page stays until the new page paints.
+        if (this.app?.notifyLoggedOut?.() === true) return;
+        this.loggingOut = false;
         this.render();
         this.app?.showToast?.('Logged out', 'success');
     }
 
     togglePasskeyDetails() {
         this.passkeyDetailsOpen = !this.passkeyDetailsOpen;
-        this.render();
+        const button = this.overlay?.querySelector?.('#account-passkey-details-btn');
+        const detail = this.overlay?.querySelector?.('#account-passkey-details');
+        if (!button || !detail) {
+            this.render();
+            return;
+        }
+        button.setAttribute('aria-expanded', String(this.passkeyDetailsOpen));
+        detail.setAttribute('data-open', String(this.passkeyDetailsOpen));
+        detail.setAttribute('aria-hidden', String(!this.passkeyDetailsOpen));
+        detail.toggleAttribute('inert', !this.passkeyDetailsOpen);
     }
 
     async handleForgetSavedAccount() {
         await this.accountService.clearLocalAccount();
         this.accountInputValue = '';
+        this.usernameInputValue = '';
+        this.identifierMode = null;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
         this.resetCreationFlow();
@@ -760,6 +1297,7 @@ class AccountModal {
     render() {
         if (!this.overlay) return;
 
+        if (!this.loggingOut) this.overlay.removeAttribute?.('data-logging-out');
         const activeElement = document.activeElement;
         const hadModalFocus = this.isOpen && this.overlay.contains(activeElement);
         const activeElementId = hadModalFocus ? activeElement?.id || '' : '';
@@ -768,18 +1306,59 @@ class AccountModal {
         const accountId = state.accountId;
 
         const oauthCreationInProgress = this.creationStep.startsWith('oauth_');
-        if (this.creationStep !== 'idle' && (oauthCreationInProgress || !accountId)) {
+        // Registration owns this surface until it closes into Membership.
+        // Sync may publish the new account ID before registration returns.
+        const isCreationFlow = this.creationStep !== 'idle' &&
+            (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
+        if (this.loggingOut) {
+            // Nothing but a blank page and a spinner while the account is
+            // cleared and (on the commercial host) the landing page loads.
+            // The cover is opaque: clearing the account empties the chat
+            // behind it, and that empty screen is not what Log out shows.
+            this.overlay.setAttribute?.('data-logging-out', 'true');
+            this.overlay.innerHTML = `
+                <div role="dialog" aria-modal="true" aria-label="Logging out" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
+                    <p class="account-unlock-body">Logging out…</p>
+                </div>
+                <div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
+                <p class="account-unlock-waiting-title">Logging out…</p></div>
+            `;
+            return;
+        }
+        if (this.oauthHandoffPending) {
+            // Same wait as a returning username: the sign-in already
+            // happened on the landing page, so only the spinner is drawn.
+            this.overlay.innerHTML = `
+                <div role="dialog" aria-modal="true" aria-label="Signing in" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
+                    <p class="account-unlock-body">Signing in with ${this.escapeHtml(this.getOAuthProviderLabel(this.oauthProvider))}…</p>
+                </div>
+                ${this.renderWaitingLayer()}
+            `;
+        } else if (isCreationFlow) {
             this.overlay.innerHTML = this.renderCreationFlow();
+        } else if (this.usernameUnlockReady) {
+            this.overlay.innerHTML = this.renderUsernameUnlockUI();
+        } else if (this.usernameHandoffPending) {
+            // The lookup is part of the same wait as the passkey prompt that
+            // follows it: only the spinner is drawn, the status text is for
+            // assistive technology.
+            this.overlay.innerHTML = `
+                <div role="dialog" aria-modal="true" aria-label="Checking username" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">
+                    <p class="account-unlock-body">Checking username…</p>
+                </div>
+                ${this.renderWaitingLayer({ username: this.usernameInputValue })}
+            `;
         } else {
             this.overlay.innerHTML = this.renderAccountUI();
         }
 
         const dialog = this.overlay.querySelector('[role="dialog"]');
-        const isCreationFlow = this.creationStep !== 'idle' &&
-            (this.creationStep.startsWith('oauth_') || !accountId);
         if (
             dialog &&
             !isCreationFlow &&
+            !this.usernameUnlockReady &&
+            !this.usernameHandoffPending &&
+            !this.oauthHandoffPending &&
             this.recoveryStep === 'idle' &&
             state.authBootstrapComplete !== false
         ) {
@@ -800,7 +1379,7 @@ class AccountModal {
     renderHeader(title, showClose = true, className = '') {
         return `
             <div class="flex items-center justify-between mb-4 ${className}">
-                <h3 id="account-modal-title" class="text-base font-medium text-foreground">${title}</h3>
+                <h2 id="account-modal-title" class="account-dialog-title">${title}</h2>
                 ${showClose ? `
                     <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
@@ -814,11 +1393,18 @@ class AccountModal {
 
     renderCreationFlow() {
         const step = this.creationStep;
+        if (this.generatedUsername) return this.renderUsernameUnlockUI();
         const providerLabel = this.getOAuthProviderLabel();
+        const title = this.generatedUsername && step !== 'error'
+            ? 'Log in'
+            : step === 'complete' ? 'Account Created'
+                : step === 'error' ? 'Error'
+                    : step.startsWith('oauth_') ? `Continue with ${providerLabel}`
+                        : 'Create a passkey account';
 
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                ${this.renderHeader(step === 'complete' ? 'Account Created' : step === 'error' ? 'Error' : step.startsWith('oauth_') ? `Continue with ${providerLabel}` : 'Create Account')}
+                ${this.renderHeader(title)}
                 <div class="flex-1 flex items-center justify-center">
                     ${this.renderCreationBody(step)}
                 </div>
@@ -831,6 +1417,17 @@ class AccountModal {
 
     renderCreationBody(step) {
         const providerLabel = this.getOAuthProviderLabel();
+        if (this.generatedUsername && ['passkey', 'passkey_retry', 'confirming', 'complete'].includes(step)) {
+            const retry = step === 'passkey_retry';
+            return `
+                <div class="w-full text-center py-6" role="${retry ? 'alert' : 'status'}">
+                    ${retry ? '' : '<div class="w-10 h-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" aria-hidden="true"></div>'}
+                    <p class="text-sm ${retry ? 'text-destructive' : 'text-muted-foreground'}">${retry
+                        ? this.escapeHtml(this.creationError || 'Passkey cancelled. Try again.')
+                        : 'Setting up your account…'}</p>
+                </div>
+            `;
+        }
         switch (step) {
             case 'oauth_authorizing':
                 {
@@ -849,8 +1446,7 @@ class AccountModal {
             case 'passkey':
             case 'passkey_retry': {
                 const isWaiting = this.isLoadingAccountId || this.revealedDigits < 16;
-                // Build display text manually to avoid formatAccountId stripping figure spaces
-                const displayText = (() => {
+                const accountIdDisplay = (() => {
                     if (!this.generatedAccountId || this.revealedDigits === 0) {
                         return '\u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007 \u2007\u2007\u2007\u2007';
                     }
@@ -873,8 +1469,8 @@ class AccountModal {
                     <div class="w-full text-center">
                         ${errorMsg}
                         <p class="text-xs text-muted-foreground mb-3">Your account number</p>
-                        <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap ${isWaiting ? 'animate-pulse' : ''}">
-                            ${displayText}
+                        <div class="account-number-text tracking-widest whitespace-nowrap font-mono text-xl text-foreground mb-4 ${isWaiting ? 'animate-pulse' : ''}">
+                            ${accountIdDisplay}
                         </div>
                         <p class="text-sm text-muted-foreground">
                             ${isWaiting ? 'Generating...' : 'Complete passkey registration...'}
@@ -893,7 +1489,7 @@ class AccountModal {
                             </button>
                         </div>
                         <div class="account-number-text font-mono text-xl tracking-widest text-foreground mb-4 whitespace-nowrap text-center">
-                            ${this.formatAccountId(this.generatedAccountId)}
+                            ${this.escapeHtml(this.formatAccountId(this.generatedAccountId))}
                         </div>
                         <div class="flex items-center justify-between mb-2">
                             <span class="text-xs text-muted-foreground">Recovery code</span>
@@ -907,6 +1503,7 @@ class AccountModal {
                         <p class="text-[11px] text-muted-foreground mt-4 text-center">
                             <button id="copy-both-btn" class="text-blue-600 dark:text-blue-400 hover:underline" type="button">${this.accountIdCopied && this.recoveryCodeCopied ? 'Both copied' : 'Copy both'}</button> to continue
                         </p>
+                        <p class="text-[11px] leading-relaxed text-muted-foreground mt-3 text-center">Keep the recovery code private. It can replace a lost passkey.</p>
                     </div>
                 `;
 
@@ -927,7 +1524,7 @@ class AccountModal {
                             </svg>
                         </div>
                         <p class="text-base font-medium text-foreground mb-1">You're all set!</p>
-                        <p class="account-number-text font-mono text-sm text-muted-foreground whitespace-nowrap">${this.formatAccountId(this.generatedAccountId)}</p>
+                        <p class="font-mono text-sm text-muted-foreground">${this.escapeHtml(this.generatedUsername || '')}</p>
                     </div>
                 `;
 
@@ -1051,7 +1648,7 @@ class AccountModal {
         const accountId = state.accountId;
         const formattedAccountId = accountId ? this.formatAccountId(accountId) : '';
         const passkeySupported = state.passkeySupported;
-        const isBusy = state.busy;
+        const isBusy = state.busy || this.usernameContinuePending;
         const action = state.action;
         const hasSignedOutSavedAccount = Boolean(
             !state.sessionVerified &&
@@ -1066,6 +1663,7 @@ class AccountModal {
         const usesIdentityLogin =
             state.googleLinked &&
             state.encryptionMode !== 'LEGACY_PASSKEY';
+        const usesNamedLogin = usesIdentityLogin || Boolean(state.username);
 
         if (state.authBootstrapComplete === false) {
             const accountEmail = state.oauthEmail || state.email;
@@ -1151,7 +1749,7 @@ class AccountModal {
                 if (isStale) return 'is-attention';
                 return 'is-success';
             })();
-            const accountIdentity = state.oauthEmail || state.email || formattedAccountId;
+            const accountIdentity = state.username || state.oauthEmail || state.email || formattedAccountId;
             const accountInitial = String(accountIdentity || 'A').trim().charAt(0).toUpperCase() || 'A';
             const syncActionText = isSyncing
                 ? 'Syncing…'
@@ -1183,13 +1781,15 @@ class AccountModal {
                         </button>
                         <button id="account-passkey-details-btn" class="account-compact-row" type="button" aria-expanded="${this.passkeyDetailsOpen}" aria-controls="account-passkey-details">
                             <span class="account-compact-row-label">Passkey &amp; encryption</span>
-                            <svg class="account-compact-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m7 4 6 6-6 6" /></svg>
+                            <svg class="account-compact-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
                         </button>
-                        <div id="account-passkey-details" class="account-compact-detail" ${this.passkeyDetailsOpen ? '' : 'hidden'}>
-                            <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesIdentityLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
-                            <p>Tickets and preferences sync encrypted with your passkey.</p>
-                            ${state.googleLinked ? `<p class="account-compact-provider">${this.renderOAuthProviderIcon('google', 'w-3.5 h-3.5')} Google connected</p>` : ''}
-                            ${!usesIdentityLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
+                        <div id="account-passkey-details" class="account-compact-detail" data-open="${this.passkeyDetailsOpen}" aria-hidden="${!this.passkeyDetailsOpen}"${this.passkeyDetailsOpen ? '' : ' inert'}>
+                            <div class="account-compact-detail-clip"><div class="account-compact-detail-content">
+                                <p class="account-compact-detail-status"><span class="account-compact-dot is-success"></span>${usesNamedLogin ? 'End-to-end encrypted' : 'Passkey unlocked'}</p>
+                                <p>Tickets and preferences sync encrypted with your passkey.</p>
+                                ${state.googleLinked ? `<p class="account-compact-provider">${this.renderOAuthProviderIcon('google', 'w-3.5 h-3.5')} Google connected</p>` : ''}
+                                ${!usesNamedLogin ? `<button id="account-copy-id-btn" class="account-compact-copy-id account-number-text" type="button" title="Copy account ID">Copy account ID · ${this.escapeHtml(formattedAccountId)}</button>` : ''}
+                            </div></div>
                         </div>
                         <div data-account-actions>
                             <button id="account-clear-btn" class="account-compact-row" type="button" ${isBusy ? 'disabled' : ''}>Log out</button>
@@ -1199,20 +1799,23 @@ class AccountModal {
             `;
         }
 
-        // Registration is Google-only for now. The post-SSO encryption passkey
-        // remains mandatory because it, not Google, protects synced data.
+        const identifierMode = this.getIdentifierMode();
+        const usesAccountId = identifierMode === 'accountId';
+        const usernameValue = this.escapeHtml(this.usernameInputValue || state.username || '');
+        const accountIdValue = this.escapeHtml(
+            this.accountInputValue || formattedAccountId
+        );
+        const recoveryVisible = this.showRecoveryInput;
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}" style="padding:24px 24px 18px">
-                <div class="flex items-center justify-between mb-1">
-                    <h3 id="account-modal-title" class="text-base font-medium text-foreground">Continue with Google</h3>
-                    <button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}${usesAccountId ? '' : ' account-login-dialog'}"${usesAccountId ? ' style="padding:24px 24px 18px"' : ''}>
+                <div class="${usesAccountId ? 'flex items-center justify-between mb-4' : 'account-login-heading'}">
+                    <h2 id="account-modal-title" class="account-dialog-title">Log in or sign up</h2>
+                    ${this.mustStaySignedIn() ? '' : `<button id="close-account-modal" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
-                    </button>
+                    </button>`}
                 </div>
-
-                <p class="text-xs text-muted-foreground" style="margin-bottom:20px">Google authenticates your account. A separate encryption passkey protects synced data so the org cannot read it.</p>
 
                 ${!passkeySupported ? `
                     <div class="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive mb-4">
@@ -1220,17 +1823,91 @@ class AccountModal {
                     </div>
                 ` : ''}
 
-                <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                <button id="account-google-btn" class="w-full h-10 rounded-lg text-sm font-medium border border-border bg-background text-foreground${usesAccountId ? ' hover:bg-accent' : ''} transition-colors disabled:opacity-50 flex items-center justify-center gap-2" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
                     ${this.renderOAuthProviderIcon('google')}
                     Continue with Google
                 </button>
 
-                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center">${this.escapeHtml(state.error)}</p>` : ''}
+                ${usesAccountId ? `<div class="flex items-center gap-3 my-4" aria-hidden="true">
+                    <span class="h-px flex-1 bg-border"></span>
+                    <span class="text-[11px] uppercase tracking-wider text-muted-foreground">or</span>
+                    <span class="h-px flex-1 bg-border"></span>
+                </div>` : '<div class="account-login-divider" aria-hidden="true">or</div>'}
+
+                <div class="${usesAccountId ? 'account-input-wrap flex items-center w-full h-10 rounded-lg border border-border bg-muted/25' : 'account-login-control'}">
+                    ${usesAccountId ? `
+                        <input
+                            id="account-id-input"
+                            aria-label="Account number"
+                            type="text"
+                            inputmode="numeric"
+                            autocomplete="off"
+                            maxlength="19"
+                            placeholder="1234 5678 9012 3456"
+                            class="account-number-text flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            value="${accountIdValue}"
+                            ${isBusy ? 'disabled' : ''}
+                        />
+                    ` : `
+                        <input
+                            id="account-username-input"
+                            aria-label="Username"
+                            type="text"
+                            autocomplete="off"
+                            autocapitalize="none"
+                            spellcheck="false"
+                            maxlength="32"
+                            placeholder="Enter a username"
+                            class="account-login-input"
+                            value="${usernameValue}"
+                            ${isBusy ? 'disabled' : ''}
+                        />
+                    `}
+                </div>
+                ${usesAccountId ? '' : `
+                <button id="account-passkey-btn" class="account-login-submit" type="button" aria-busy="${Boolean(isBusy)}" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                    <span aria-hidden="true"></span>
+                    <span class="account-login-submit-label">Continue with username</span>
+                    <span class="account-login-submit-indicator" aria-hidden="true">${isBusy ? '<span class="account-login-spinner"></span>' : `
+                        <svg class="account-login-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 8h12M9 3l5 5-5 5"></path>
+                        </svg>`}</span>
+                </button>`}
+                ${usesAccountId ? `<button id="account-passkey-btn" class="mt-3 w-full h-10 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                    ${isBusy ? 'Continuing…' : 'Continue'}
+                </button>` : ''}
+
+                ${usesAccountId ? `
+                    <button id="account-recovery-toggle-btn" class="mt-2 w-full text-xs text-muted-foreground hover:text-foreground" type="button" ${isBusy ? 'disabled' : ''}>
+                        ${recoveryVisible ? 'Hide recovery' : 'Lost your passkey?'}
+                    </button>
+
+                    ${recoveryVisible ? `
+                        <div class="mt-3 border-t border-border pt-3">
+                            <label for="account-recovery-code-input" class="block text-xs font-medium text-foreground mb-1.5">Five-word recovery code</label>
+                            <input
+                                id="account-recovery-code-input"
+                                type="text"
+                                autocomplete="off"
+                                placeholder="word word word word word"
+                                class="w-full h-10 rounded-lg border border-border bg-muted/25 px-3 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                                value="${this.escapeHtml(this.recoveryInputValue || '')}"
+                                ${isBusy ? 'disabled' : ''}
+                            />
+                            <button id="account-recovery-submit-btn" class="mt-2 w-full h-9 rounded-lg text-sm font-medium border border-border bg-background text-foreground hover:bg-accent transition-colors disabled:opacity-50" type="button" ${isBusy || !passkeySupported ? 'disabled' : ''}>
+                                Replace passkey
+                            </button>
+                        </div>
+                    ` : ''}
+                ` : ''}
+
+                ${state.error ? `<p class="text-xs text-destructive mt-3 text-center" role="alert">${this.escapeHtml(state.error)}</p>` : ''}
+                ${this.renderLegalLine()}
 
                 ${hasSignedOutSavedAccount ? `
                     <div class="mt-4 pt-4 border-t border-border text-center">
                         <p class="text-xs text-muted-foreground mb-2">
-                            This device remembers a signed-out OA account. Continue with the same Google account, or forget it before switching accounts.
+                            This device remembers a signed-out OA account. Sign in to that account, or forget it before switching accounts.
                         </p>
                         <button id="account-forget-saved-btn" class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             Forget saved account
@@ -1243,79 +1920,181 @@ class AccountModal {
 
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
-        const providerLabel = this.getOAuthProviderLabel(state.oauthProvider);
+        const showLogout = Boolean(state.oauthRecoveryRequired || state.oauthSetupRequired);
+        return this.renderPasskeyUnlockCard({
+            isLegacyMigration: state.oauthRecoveryRequired,
+            isSetup: state.oauthSetupRequired,
+            isLegacyPasskey: state.oauthLegacyPasskeyRequired,
+            busy: Boolean(state.busy),
+            error: state.error ? String(state.error) : '',
+            secondaryId: showLogout ? 'account-clear-btn' : '',
+            secondaryLabel: showLogout ? 'Log out' : ''
+        });
+    }
+
+    renderUsernameUnlockUI() {
+        const isSetup = Boolean(this.generatedUsername);
+        return this.renderPasskeyUnlockCard({
+            isSetup,
+            username: this.generatedUsername,
+            finishing: isSetup && ['confirming', 'complete'].includes(this.creationStep),
+            closeDisabled: isSetup && this.creationStep === 'confirming',
+            busy: Boolean(this.usernamePasskeyBusy || this.accountState?.busy || this.usernameIntroPending ||
+                (isSetup && ['passkey', 'confirming', 'complete'].includes(this.creationStep))),
+            error: String((isSetup ? this.creationError : this.accountState?.error) || ''),
+            actionId: 'account-username-unlock-btn',
+            secondaryId: 'account-username-back-btn',
+            secondaryLabel: 'Back'
+        });
+    }
+
+    /**
+     * The dimmed page behind every passkey wait: spinner and one line saying
+     * a passkey comes next (naming the account when it has a name). No
+     * second line: the reason lives on the Create passkey card, not in the
+     * sign-in wait. The same layer for a returning unlock, a first-time setup, the
+     * username lookup and the Google hand-off, so the wait reads the same
+     * whichever way someone arrived — and the same as the arrival layer
+     * index.html paints before scripts load. It enters once per dialog; if
+     * the arrival layer already showed it, it does not enter at all.
+     */
+    /** "By continuing, you agree to our Terms and Privacy Policy" — only when the host names the pages. */
+    renderLegalLine() {
+        const policy = this.app?.getSignInPolicy?.() || {};
+        if (!policy.termsUrl || !policy.privacyUrl) return '';
+        return `<p class="account-login-legal">By continuing, you agree to our <a href="${this.escapeHtml(policy.termsUrl)}">Terms</a> and <a href="${this.escapeHtml(policy.privacyUrl)}">Privacy Policy</a>.</p>`;
+    }
+
+    renderWaitingLayer({ username = '', finishing = false, unlocking = false } = {}) {
+        const enters = !this.waitingCaptionShown;
+        if (enters) {
+            this.waitingCaptionShown = true;
+            this.captionShownAt = typeof performance !== 'undefined' ? performance.now() : 0;
+        }
+        const name = String(username || '').trim();
+        // Once the sheet has been confirmed the next line is what we are
+        // doing, not what they are about to do.
+        // Before the OS sheet: one line, why a passkey. Once the sheet has
+        // been confirmed the line is what we are doing instead. The username
+        // is read out for assistive technology only; sighted people have
+        // just typed it.
+        const title = finishing
+            ? 'Creating your account'
+            : unlocking
+                ? 'Unlocking\u2026'
+                : PASSKEY_INTRO_LINE;
+        const enterClass = enters ? ' account-unlock-waiting-enter' : '';
+        const forName = !finishing && !unlocking && name
+            ? `<span class="account-unlock-waiting-name">Continuing with your passkey for ${this.escapeHtml(name)}.</span>`
+            : '';
+        return `<div class="account-unlock-waiting" role="status"><span class="account-unlock-spinner account-unlock-waiting-spinner" aria-hidden="true"></span>
+                <p class="account-unlock-waiting-title${enterClass}">${title}</p>${forName}</div>`;
+    }
+
+    /** How much of PASSKEY_INTRO_MS the caption has not yet been on screen for. */
+    remainingPasskeyIntroMs() {
+        if (!this.waitingCaptionShown) return PASSKEY_INTRO_MS;
+        const now = typeof performance !== 'undefined' ? performance.now() : 0;
+        return Math.max(0, PASSKEY_INTRO_MS - (now - (this.captionShownAt || 0)));
+    }
+
+    renderPasskeyUnlockCard({
+        isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
+        finishing = false, busy = false, error = '', closeDisabled = false,
+        actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = ''
+    } = {}) {
+        const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
-        const isLegacyMigration = state.oauthRecoveryRequired;
-        const isSetup = state.oauthSetupRequired;
-        const isLegacyPasskey = state.oauthLegacyPasskeyRequired;
+
+        // Returning accounts get no heading: the passkey prompt opens on
+        // arrival and this card only covers waiting and retry. Setup and the
+        // legacy recovery-code migration keep a title because they explain
+        // something new.
+        // No heading for the automatic paths (returning unlock and first-time
+        // setup): the OS sheet opens on arrival and the card only ever shows
+        // the waiting and retry states. Legacy paths keep a heading because
+        // they explain something the user has to act on first.
+        const title = isLegacyMigration
+            ? 'Upgrade encrypted data'
+            : isLegacyPasskey
+                ? 'Welcome back'
+                : '';
+        const alertText = /cancel/i.test(error) ? 'Passkey wasn\u2019t confirmed.' : error;
+        // On the untitled card the explanation was already read before the
+        // sheet, so a failure is the whole story: it replaces the body in the
+        // same voice — one sentence, one action — rather than stacking a
+        // second line under the button. Titled cards keep their explanation
+        // and add the line below.
+        const bodyIsAlert = !busy && !title && Boolean(alertText);
+        const body = bodyIsAlert
+            ? alertText
+            : busy
+            ? isLegacyMigration
+                ? 'Confirm with your passkey to finish the upgrade.'
+                : isSetup
+                    ? 'Confirm with your passkey to finish.'
+                    : 'Confirm with your passkey to continue.'
+            : isLegacyMigration
+                ? 'Enter the recovery code from the previous account system once. It will be replaced with an encryption passkey.'
+                : isLegacyPasskey
+                    ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it.'
+                    : isSetup
+                        ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
+                        : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
+        const idleCta = isLegacyMigration
+            ? 'Upgrade with passkey'
+            : isSetup
+                ? 'Create passkey'
+                : isLegacyPasskey
+                    ? 'Use legacy passkey'
+                    : 'Unlock';
+        const cta = busy ? 'Waiting…' : primaryLabel || (error ? 'Try again' : idleCta);
+        // Every untitled wait shows the same caption behind the sheet; the
+        // account's name when it has one (a Google account has none yet).
+        const waitingName = username || this.usernameInputValue || state.username || '';
+        const unlocking = !isSetup && (state.action === 'unlocking' || /_key_restoring$/.test(String(state.action || '')));
+        const waitingLayer = !title && busy
+            ? this.renderWaitingLayer({ username: waitingName, finishing, unlocking })
+            : '';
 
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="account-modal-title" tabindex="-1" class="${MODAL_CLASSES}">
-                ${this.renderHeader(
-                    isLegacyMigration
-                        ? 'Upgrade encrypted data'
-                        : isLegacyPasskey
-                            ? 'Unlock legacy encrypted data'
-                        : isSetup
-                            ? 'Encrypt your data'
-                            : 'Unlock encrypted data'
-                )}
-                <div class="flex items-center justify-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mb-2">
-                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    Signed in with ${providerLabel}
+            <div role="dialog" aria-modal="true" ${title ? 'aria-labelledby="account-modal-title"' : `aria-label="${isSetup ? 'Create your passkey' : 'Unlock your encrypted data'}"`} tabindex="-1" class="account-unlock-card${title ? '' : ' account-unlock-card-untitled'}"${!title && busy ? ' data-waiting="true"' : ''}>
+                <button id="close-account-modal" class="account-unlock-close" type="button" aria-label="Close"${closeDisabled ? ' disabled' : ''}>
+                    <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+                <div class="account-unlock-copy">
+                    ${title ? `<h2 id="account-modal-title" class="account-unlock-title">${title}</h2>` : ''}
+                    <p class="account-unlock-body"${bodyIsAlert ? ' role="alert"' : ''}>${this.escapeHtml(body)}</p>
+                    ${isLegacyPasskey ? `
+                        <p class="account-unlock-account-id account-number-text">${this.escapeHtml(this.formatAccountId(state.accountId))}</p>
+                    ` : ''}
                 </div>
-                ${!isSetup ? '<p class="mb-3 text-center text-sm font-medium text-foreground">Encrypted data is still locked.</p>' : ''}
-                ${isLegacyPasskey ? `
-                    <p class="account-number-text font-mono text-base tracking-widest text-foreground text-center whitespace-nowrap mb-3">
-                        ${this.escapeHtml(this.formatAccountId(state.accountId))}
-                    </p>
-                ` : ''}
-                <p class="text-xs text-muted-foreground text-center mb-4">
-                    ${isLegacyMigration
-                        ? 'Enter the recovery code from the previous account system once. OA will replace it with a PRF encryption passkey.'
-                        : isLegacyPasskey
-                            ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it; its account number and recovery path remain available.'
-                        : isSetup
-                            ? 'Create an encryption passkey. Its PRF output wraps your data key locally and never reaches the org.'
-                            : 'Use the encryption passkey created for this OA account. It unlocks your data locally; Google sign-in alone cannot decrypt it.'
-                    }
-                </p>
-                ${isLegacyMigration ? `
-                    <div class="account-input-wrap flex items-center w-full h-10 rounded-lg mb-3 border border-border bg-muted/25">
+                <div class="account-unlock-actions">
+                    ${isLegacyMigration ? `
                         <input
                             id="oauth-recovery-code-input"
                             type="text"
+                            class="account-unlock-input"
                             placeholder="Legacy 5-word recovery code"
-                            class="flex-1 h-full px-3 text-sm bg-transparent text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
+                            autocomplete="off"
                             value="${recoveryValue}"
-                            ${state.busy ? 'disabled' : ''}
+                            ${busy ? 'disabled' : ''}
                         />
-                    </div>
-                    <button id="oauth-recovery-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
-                        ${state.busy ? 'Upgrading...' : 'Upgrade with passkey'}
-                    </button>
-                ` : `
-                    <button id="oauth-keyring-submit-btn" class="w-full h-9 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50" type="button" ${state.busy ? 'disabled' : ''}>
-                        ${state.busy
-                            ? isSetup ? 'Creating passkey...' : 'Unlocking...'
-                            : isSetup
-                                ? 'Create encryption passkey'
-                                : isLegacyPasskey
-                                    ? 'Use legacy passkey'
-                                    : 'Unlock with passkey'
-                        }
-                    </button>
-                `}
-                <button id="account-clear-btn" class="w-full text-xs text-muted-foreground hover:text-foreground mt-3" type="button">
-                    Log out
-                </button>
-                ${state.error ? `
-                    <div class="mt-3 text-center">
-                        <p class="text-xs text-destructive">${this.escapeHtml(state.error)}</p>
-                        ${state.oauthKeyringRequired ? '<p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Try the browser profile or password manager where you created this encryption passkey. Closing this dialog keeps Google signed in, but your tickets and preferences stay locked.</p>' : ''}
-                    </div>
-                ` : ''}
+                        <button id="oauth-recovery-submit-btn" class="account-unlock-btn" type="button" ${busy ? 'disabled' : ''} aria-busy="${busy}">
+                            ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
+                        </button>
+                    ` : `
+                        <button id="${actionId}" class="account-unlock-btn" type="button" ${busy ? 'disabled' : ''} aria-busy="${busy}">
+                            ${busy ? '<span class="account-unlock-spinner" aria-hidden="true"></span>' : ''}<span>${cta}</span>
+                        </button>
+                    `}
+                    ${alertText && !busy && !bodyIsAlert ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
+                    ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
+                </div>
             </div>
+            ${waitingLayer}
         `;
     }
 
@@ -1390,9 +2169,6 @@ class AccountModal {
         const closeCompleteBtn = document.getElementById('close-complete-btn');
         if (closeCompleteBtn) closeCompleteBtn.onclick = () => this.close();
 
-        const generateBtn = document.getElementById('generate-account-btn');
-        if (generateBtn) generateBtn.onclick = () => this.handleGenerateAccountNumber();
-
         const googleBtn = document.getElementById('account-google-btn');
         if (googleBtn) {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
@@ -1437,7 +2213,20 @@ class AccountModal {
                 e.target.value = formatted;
                 this.accountInputValue = formatted;
             };
-            accountInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); this.handleAccountPasskeyUnlock(); } };
+            accountInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); this.handleAccountContinue(); } };
+        }
+
+        const usernameInput = document.getElementById('account-username-input');
+        if (usernameInput) {
+            usernameInput.oninput = (event) => {
+                this.usernameInputValue = event.target.value;
+            };
+            usernameInput.onkeydown = (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    this.handleAccountContinue();
+                }
+            };
         }
 
         const recoveryInput = document.getElementById('account-recovery-code-input');
@@ -1447,7 +2236,13 @@ class AccountModal {
         }
 
         const passkeyBtn = document.getElementById('account-passkey-btn');
-        if (passkeyBtn) passkeyBtn.onclick = () => this.handleAccountPasskeyUnlock();
+        if (passkeyBtn) passkeyBtn.onclick = () => this.handleAccountContinue();
+
+        const usernameUnlockBtn = document.getElementById('account-username-unlock-btn');
+        if (usernameUnlockBtn) usernameUnlockBtn.onclick = () => this.handleUsernamePasskeyContinue();
+
+        const usernameBackBtn = document.getElementById('account-username-back-btn');
+        if (usernameBackBtn) usernameBackBtn.onclick = () => this.handleUsernamePasskeyBack();
 
         const recoveryToggleBtn = document.getElementById('account-recovery-toggle-btn');
         if (recoveryToggleBtn) recoveryToggleBtn.onclick = () => this.handleAccountToggleRecovery();
@@ -1515,6 +2310,10 @@ class AccountModal {
         if (this.syncUnsubscribe) {
             this.syncUnsubscribe();
             this.syncUnsubscribe = null;
+        }
+        if (this.accountMenuSlotUnsubscribe) {
+            this.accountMenuSlotUnsubscribe();
+            this.accountMenuSlotUnsubscribe = null;
         }
     }
 }

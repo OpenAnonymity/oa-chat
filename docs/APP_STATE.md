@@ -4,6 +4,24 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-08: Payment runtime reconciled with current account and UI baseline
+
+- `codex/zkapi-browser-sdk` combines the payment runtime changes with the current
+  account/settings baseline (`1380827`). Captured-session send, settlement,
+  metadata and deletion reservations remain authoritative during navigation.
+- The shared navigation helper now persists every owned selection, including
+  forks and clearing the current chat, while retaining the payment branch's
+  stale-navigation guards. Its versioned tab record preserves an explicit new
+  chat across return navigation.
+- Host-required sign-in and the visible-modal send guard apply before either
+  payment path. Accountless compositions still skip authentication bootstrap
+  and auth-intent handling. The optional account component factory coexists
+  with the newer settings dialog.
+- Memory import/export retain the newer ability to run with the global Memory
+  preference off; payment capability guards still prevent unavailable composer
+  actions. Streaming awaits buffered reasoning before content and preserves
+  returned-model pricing alongside interleaved reasoning segment formatting.
+
 ## 2026-09-08: Shared model tiers and private-key budgets
 
 - Trusted compositions can import the lightweight `chat/publicModelTierApi.js`
@@ -234,9 +252,320 @@ reading code alone.
   authentication-intent routing, including `?auth=google`; their extension auth
   capability fails explicitly. Standalone/commercial account behavior remains
   enabled by default, with the existing verified-ticket path unchanged.
+## 2026-09-06: First-time accounts go straight to the passkey too
+
+`maybeAutoPromptPasskey()` now also fires for `oauthSetupRequired` (first
+Google keyring setup), and `handleAccountContinue()` chains
+`handleUsernamePasskeyContinue()` when the lookup returns `register`
+(reserve + WebAuthn create) as well as `login`. The setup card lost its
+"Encrypt your data" heading; like the returning path it is untitled
+(`aria-label="Create your passkey"`), hidden behind the spinner while busy,
+and only drawn for Try again / Back. Legacy migration and legacy-passkey
+cards are unchanged.
+
+## 2026-09-06: One continuous wait from the landing button to the passkey sheet
+
+`chat/index.html` paints `#auth-arrival` — the same dim backdrop and spinner
+as the account dialog's waiting state — from an inline script and style that
+run before any stylesheet, whenever the URL carries `?auth=google`,
+`?auth=username` or `?tickets=`. `AccountModal.open()` removes
+`html[data-auth-arriving]` once its own backdrop is up, and `app.js` removes
+it in the `finally` of `routeAuthenticationIntent` so it never outlives the
+route. The username lookup ("Checking username…") is drawn the same way:
+untitled card with `data-waiting`, spinner only, status text for assistive
+technology. Net effect: landing button spinner → page load → lookup → OS
+sheet with no blank frame and no card in between.
+
+## 2026-09-06: Login dialog matches the landing card; spinner behind the passkey prompt
+
+The **Log in** dialog's username step is a standalone **Choose a username**
+field followed by a full-width filled **Continue with username** button
+(`.account-login-submit`, #000 / near-white in dark, hover lift), the same
+control as the landing card; the attached arrow cell is gone. While the
+automatic passkey prompt is in flight the dimmed page shows only a small
+spinner (`.account-unlock-waiting`, role=status) — no card, no text — and
+the untitled card fades in only for Try again.
+
+## 2026-09-06: The core Account item hides through the app facade
+
+`AccountModal` reaches extension slots only via the component facade
+(`appInterface.js`): `refreshExtensionSlot`, and the new
+`hasExtensionSlotNode(name, selector)` and `subscribeExtensionSlot(name,
+listener)`. The earlier `this.app.extensionSlots?.…` calls were `undefined` in
+the real app (the facade never exposed the registry), so the core Account
+fallback was never hidden and the menu showed two Account entries on staging.
+`accountModal.test.js` now asserts the component never touches
+`app.extensionSlots`.
+
+## 2026-09-06: Nothing is drawn behind the automatic passkey prompt
+
+The untitled unlock card carries `data-waiting="true"` while the automatic
+prompt (Google keyring or returning username) is in flight, and CSS hides it
+(`opacity: 0; pointer-events: none`). The OS passkey sheet is the only thing
+the user sees; the card stays mounted for focus and the status sentence and
+fades in only for Try again. `.account-menu-item[hidden]` now actually hides,
+so the core Account fallback item no longer shows beside the extension's
+Account item in the composed app.
+
+## 2026-09-05: Returning accounts prompt their passkey on arrival
+
+The "Welcome back → Unlock" explanation is gone from the returning-user flow.
+`AccountModal.open()` calls `maybeAutoPromptPasskey()`, which runs
+`handleOAuthKeyringUnlock()` once per open for a locked Google keyring (never
+for setup, legacy migration, legacy passkey, busy, error or unsupported
+states), and `handleAccountContinue()` calls `handleUsernamePasskeyContinue()`
+as soon as a username lookup resolves to an existing account. The shared
+`renderPasskeyUnlockCard` renders no `<h2>` for that returning case — the
+dialog carries `aria-label="Unlock your encrypted data"` and the
+`account-unlock-card-untitled` class — so the card only ever shows the waiting
+and Try again states. Setup ("Encrypt your data"), legacy migration and the
+legacy-passkey account keep their headings. Safari's user-activation rule for
+WebAuthn is the known risk on the Google return path: a refused prompt lands
+on the untitled Try again card rather than an idle one.
+
+## 2026-09-05: The account menu prefers the composed Account surface
+
+When `account.menuActions` has mounted content, the core
+`#account-security-menu-item` is hidden and the commercial extension's item,
+labelled **Account**, opens the unified Account dialog (identity row, Get
+tickets, Payment, Invoices), followed by the core **Log out** item. Standalone
+oa-chat keeps the core **Account** item and compact account-security dialog, so
+installing no extension never removes existing account management.
+`context.ui.getAccountIdentityLabel()` gives extensions the signed-in display
+name (username, else Google email) for that identity row; it deliberately
+stays out of `account.getSnapshot()`. `renderCompactAccountUI` is no longer
+reachable from the menu only in the composed commercial app.
+
+## 2026-09-04: Compact Log-in hover matches Account controls
+
+- On hover-capable pointers, the Google button and the complete username
+  input/arrow shell use the same restrained background and border change as the
+  Account `Unlock` button.
+- Keep hover separate from OA-blue keyboard focus, suppress it for disabled
+  controls, and do not add movement, shadow, or sticky touch hover.
+
+## 2026-09-04: Reliable external returns and ticket recovery
+
+- `navigationState.js` owns sessionStorage-only `oa-chat-navigation-v1`:
+  either a conversation selection or explicit New Chat. It synchronizes the
+  legacy `oa-current-session` key and removes that key for New Chat. Generic
+  return loads restore this record before hydration; explicit `?s=` links keep
+  precedence. Deleted conversations become New Chat; unavailable or malformed
+  storage cannot block startup. The commercial host calls the opaque
+  `ui.persistNavigationForReturn()` before Stripe navigation.
+- Preparation reports waiting for storage, issuer, or locks separately from
+  actual blinding/finalization. Existing staged recovery schemas, ticket fields,
+  publication ownership, and account guards remain unchanged. Queued preparation
+  and publication locks time out after 30 seconds without stealing ownership or
+  timing out a running durable commit.
+- `tickets.refreshSnapshot({ signal })` explicitly refreshes only browser-local
+  account-scoped wallet state and exposes redacted counts/readiness. Both its
+  wallet and nested account-data lock queues accept cancellation/deadlines;
+  scope is rechecked after reading. Existing broadcasts remain authoritative
+  notifications to refresh, never evidence that an unrelated purchase completed.
+- Regression coverage: `navigationState.test.js`, `ticketRefresh.test.js`, and
+  the existing entitlement recovery/account-isolation tests. Public interface
+  details are in [EXTENSIONS.md](EXTENSIONS.md).
+
+## 2026-09-04: Focus indicators do not use black UI boxes
+
+- All app-owned focus treatments share a dedicated OA-blue focus token rather
+  than the near-black light-theme foreground token. This covers the fallback
+  `:focus-visible` outline, Tailwind ring utilities, and component-specific
+  focus styles without changing non-focus borders. Controls with their own
+  component treatment continue to override the low-specificity fallback, and
+  pointer focus on non-text controls remains quiet.
+- The model picker still focuses search immediately so users can type without
+  a second click. Its full rectangular outline is replaced by a two-pixel blue
+  underline on the existing search row, avoiding a black box while preserving
+  a visible focus state. The underline clears when focus moves to the close
+  button. Forced-colors mode retains a system `Highlight` outline.
+- Model filtering, keyboard navigation, selection, modal focus movement, and
+  light/dark theme tokens are otherwise unchanged.
+
+## 2026-09-04: Account footer uses a unified disclosure chevron
+
+- The bottom-left account identity row remains one full-width button. Its
+  trailing affordance is now a downward chevron rather than a settings gear;
+  the existing `aria-expanded` state rotates it upward while the account menu
+  or Account dialog is open.
+- The rotation uses the established 240ms ease-out disclosure motion and is
+  disabled for reduced-motion users. The row is not rebuilt, so rapid reversal,
+  focus restoration, pointer/keyboard menu behavior, and full-row hover/press
+  feedback remain intact.
+- This is presentation only. Account restoration, authentication, menu actions,
+  Membership extension mounting, and logout behavior are unchanged.
+
+## 2026-09-04: Account disclosure opens with invoice-style motion
+
+- **Passkey & encryption** stays mounted and expands with the same 240ms
+  grid-row easing used by Membership's **Invoices** disclosure. Content opacity
+  settles during the height transition instead of appearing all at once.
+- The collapsed panel is `aria-hidden` and `inert`; reduced-motion users receive
+  the same state change without animation. The toggle still updates mounted
+  nodes without rebuilding the Account modal, and no authentication, passkey,
+  encryption, sync, or account-state behavior changes.
+
+## 2026-09-04: Landing authentication handoffs require an identity match
+
+- A restored account now satisfies `/chat/?auth=google` only when it is a Google
+  account. A username or legacy account is logged out and its saved local binding
+  is cleared before the Google sign-in surface opens.
+- A restored username account satisfies
+  `/chat/?auth=username#username=...` only when its NFKC-normalized, trimmed,
+  lowercase username matches the requested username. A different username,
+  Google account, or legacy account is logged out and cleared before the requested
+  username lookup begins.
+- Matching verified/unlocked identities still continue directly, while matching
+  locked identities keep their normal unlock flow. Switching is automatic and
+  does not add a confirmation prompt. A username handoff with no submitted
+  username keeps the saved binding and shows the normal form.
+- OAuth profile refreshes capture the account and lifecycle generation before
+  requesting provider state. A response that finishes after logout, lock, or an
+  account switch cannot repopulate provider metadata onto the cleared identity.
+
+## 2026-09-04: Invoice-style Account disclosure chevron
+
+- The signed-in Account dialog's **Passkey & encryption** disclosure uses the
+  same 18px downward chevron and 240ms easing as Membership's **Invoices**
+  disclosure. It rotates upward when expanded and disables the transition under
+  reduced motion.
+- Toggling updates the mounted `aria-expanded`, `aria-hidden`, and `inert` state in place
+  instead of rebuilding the modal, preserving button focus and allowing the
+  transition to complete. Authentication, passkey, encryption, and account
+  state behavior are unchanged. Commercial compositions must pin the public
+  Chat revision containing this change.
+
+## 2026-09-04: Current-base modal title alignment
+
+- Port the intent of old commit `9f660e0` onto public Chat `b37e246`; do not
+  deploy or pin its obsolete `ca47d9d` parent. This preserves the later compact
+  login, unified username/Google encryption, Memory fallback, Welcome-back
+  no-logout behavior,
+  Account focus, Membership, and invoice behavior in the commercial composition.
+- `renderHeader()` and the compact login use semantic `h2.account-dialog-title`
+  at 22px/600/-0.01em, matching Billing & Plan's title scale. The current
+  left-aligned compact-login layout, 48px controls, 32px desktop/24px narrow
+  card padding, radii, close target, body copy, and handlers remain unchanged.
+  Its Google label alone moves from 16px to 15px.
+- The shared Welcome/Encrypt title keeps its existing 26px size, line height,
+  tracking, and card layout while moving from the newer 500 weight to the
+  explicitly requested 600. The account-number and recovery headers use the same
+  shared Account title rule.
+- The sans stack puts `system-ui` and `-apple-system` before the named SF Pro Text
+  font, allowing platform optical sizing for larger text. This is a global
+  family-order change, so browser verification covers body copy as well as the
+  compact Account, login, and Welcome surfaces in both themes and narrow widths.
+
+## 2026-09-04: Focus rings are keyboard-only
+
+- An inline script at the top of `chat/index.html` sets `html[data-keyboard-nav]`
+  on Tab/arrow/Home/End keydown and clears it on pointerdown/mousedown/touchstart.
+  It runs before any stylesheet or focus call.
+- `chat/styles.css` draws the app-wide ring only under `html[data-keyboard-nav]`
+  and forces `outline: none` on `:focus-visible` otherwise. Component rings
+  (account footer avatar, menu items, compact rows, unlock/login controls,
+  dialog close) are scoped the same way and retain the dedicated OA-blue focus
+  token. Model search and the username-login shell are quiet when opened by the
+  app and show their blue treatment only during keyboard navigation. Tailwind
+  ring utilities are unaffected.
+- Why: the app focuses elements itself — dialog open (`focusModal`), focus
+  restore in `close()`, the model search input in `ModelPicker.open()` — and
+  browsers report script focus as `:focus-visible` until the next pointer
+  interaction. That lit rings on first load, unlock, the Account dialog's X,
+  the footer avatar after closing, and under the model search. Prod
+  (`origin/main`) has no global ring and is the reference behaviour.
+- The earlier `data-auth-restored-focus` (footer) and `data-pointer-focus`
+  (menu) markers were per-component workarounds for the same heuristic and are
+  removed; `openAccountMenu` no longer takes `fromPointer`.
+
+## 2026-09-04: Quiet pointer focus in the Account menu
+
+- The menu still focuses its first item on opening for Escape/arrow navigation.
+  Mouse/touch opening now sets a menu-local `data-pointer-focus` marker **before**
+  moving focus. This suppresses the inherited focus-only outline and tint left
+  by the login input, including on the Account row, without blurring the item.
+- Any menu keydown removes that marker immediately. Keyboard/assistive activation
+  (zero-detail click), ArrowDown/Enter/Space opening, and later arrow/Home/End
+  navigation retain visible focus. Pointer interaction within the menu switches
+  back to quiet focus; closing clears the marker. Normal hover feedback remains.
+- This is menu presentation/input-modality state only: footer authentication
+  restoration, menu actions, Membership, logout, and login routing are unchanged.
+- `test/fixtures/account-menu-focus.html` uses the shipped footer markup with
+  fake services to check post-auth focus, pointer reopening, keyboard navigation,
+  and both themes without real authentication or billing.
+
+## 2026-09-03: Lighter login typography
+
+- The compact login card uses the supplied **Login Modal / 1a** proportions:
+  16px Google text, an 18px outlined inline arrow, 48px controls, and a 22px
+  medium heading with tighter line-height/tracking. Google text is regular (400)
+  to address the requested lighter appearance, while retaining OA's system font
+  and theme tokens. The smaller close glyph retains a 32px button target.
+- The shared **Welcome back / Encrypt your data** title now uses weight 500,
+  matching the **Account** title. Its size and layout are unchanged. These are
+  presentation-only changes; auth handlers, Membership, and landing are untouched.
+
+## 2026-09-03: Preserve the restored compact Memory fallback
+
+- Restore the exact presentation fix from `40d9fad5bde7d7e0667666d91d73626b2cdd1ed7`
+  (08:46 PDT, **Restore compact memory fallback**). That branch's fix was missing
+  from the later combined login/Membership staging composition; do not revert the
+  whole client or the membership work to recover it.
+- Failed retrieval again says **No added memory. Sending original prompt.**
+  with no extra bordered **Note:** card, including when older saved messages
+  carry failure metadata. Allowlisted diagnostics, key invalidation, retrieval,
+  extraction, and ticket-budget behavior remain unchanged. This restores the
+  requested presentation; it does not claim to repair the underlying provider failure.
+
+## 2026-09-03: Google and username share the encryption explanation
+
+- Google and returning username unlock use the same centered **Welcome back** card,
+  an outlined **Unlock** action, a disabled **Waiting…** spinner during the
+  passkey prompt, and **Try again** with an alert on failure. Setup and legacy
+  migration share the card with their own copy and existing action handlers.
+- `renderPasskeyUnlockCard()` owns the shared copy, actions, and busy/error shell.
+  Username Continue now looks up the account and pauses at **Welcome back → Unlock**
+  or **Encrypt your data → Create passkey**. This explicitly supersedes the earlier
+  direct-to-passkey request. The same step is used by landing and modal entry;
+  landing still does not repeat the username form. Username uses **Back** because
+  authentication has not occurred yet. **Welcome back** has no **Log out** action,
+  including waiting/retry and legacy-passkey variants. Logout remains in unlocked
+  Account settings; setup and legacy-migration cards retain their existing exit.
+- No WebAuthn operation begins until that explicit action. Returning username
+  Unlock obtains a fresh challenge, since the initial lookup challenge can expire
+  while the explanation is open. New-account lookup is read-only: `/auth/init`,
+  username reservation, and the registration challenge wait until **Create passkey**.
+  Back before that click therefore leaves no ten-minute name reservation, and
+  reading the explanation cannot expire a sixty-second registration challenge.
+  Cancellation stays on **Try again**, never starts
+  registration, and does not retry automatically. Back abandons an uncompleted
+  registration without forgetting an existing saved account.
+- Pending-account generation/object guards discard late initializer or native
+  credential results after cancellation. Modal callbacks also belong to one
+  open-view version. Username finalization briefly disables dismissal while its
+  wrapper is committed, avoiding cancellation that zeroes the master key during
+  registration. A separately cancelled finalization cannot install that key or
+  overwrite a replacement account.
+- The first-account Membership signal, returning-account Chat route, saved legacy
+  recovery, encrypted sync, and post-login footer focus restoration remain intact.
+- Escape and the compact close button dismiss the unlock card without
+  decrypting data or signing Google out. Per the revised UI request, a returning
+  locked Google account must unlock before reaching Account-settings logout;
+  dismissal itself is not a signout/account switch. Successful unlock closes
+  the card through the existing account lifecycle.
 
 ## 2026-09-02: Authentication intent waits for account restoration
 
+- Successful authentication closes with `afterAuthentication: true`. If focus
+  returns to the account footer, its temporary `data-auth-restored-focus` marker
+  suppresses the automatic focus indicator: no black box, avatar ring, or
+  focus-only tint remains after login/unlock. Focus still returns to the same
+  button. Its next keydown or blur removes the marker, so later keyboard
+  navigation shows the avatar's theme-colored ring (system `Highlight` in
+  forced-colors mode). Ordinary dismissal, other return targets, menu focus,
+  full-width hover/pressed feedback, and first-account Membership routing are
+  unchanged. Do not replace this with unconditional outline removal or blur.
 - The commercial landing page now hands Google entry to `/chat/?auth=google`;
   this is distinct from `membership=1`, which remains an explicit billing UI
   request. Core chat owns the one-use auth intent and removes it with
@@ -246,7 +575,7 @@ reading code alone.
   proceeds directly into chat; a verified locked account opens the encryption-
   passkey UI; and a genuinely signed-out account opens the Google UI. The
   signed-in Account summary is never opened by this route.
-- The footer keeps its stable 52px geometry but renders no visible provisional
+- The footer keeps stable compact geometry but renders no visible provisional
   identity until verification settles. A visually hidden live region announces
   account restoration to assistive technology. Opening the footer during that
   interval still shows the neutral restoration dialog; verified actions and
@@ -260,11 +589,105 @@ reading code alone.
   be saved. Once the durable key is stored, a later synchronization failure
   keeps the account unlocked and schedules restoration again; it must never be
   relabeled as a missing passkey.
-- Preserve the existing footer geometry: the full-width trigger is 3.25rem
-  tall, the settings menu is anchored to the footer row with `left/right:
-  -0.5rem`, and its rows remain 2.625rem tall. The settings gear, flat open
+- The footer restores its previous 49px total height at the user's request:
+  a 3rem full-width trigger plus its 1px top border, for mouse and touch alike.
+  The 1.75rem avatar and zero outer padding remain. The square-cornered trigger
+  paints hover/pressed feedback edge-to-edge; horizontal spacing lives
+  inside it, and pressing does not scale it into an inset highlight. The
+  sidebar reserves 3.5rem below its content so the restored footer still clears
+  the last chat. The settings menu stays
+  anchored to the footer row with 0.5rem side insets and 2.625rem rows.
+  The settings gear, flat open
   trigger, menu typography, hover states, focus restoration, and keyboard
   navigation remain part of the contract.
+- The build versions copied `styles.css` from its own SHA-256 content digest,
+  independently of the JavaScript bundle hash. CSS-only footer updates must
+  produce a new stylesheet URL even when executable bundles are unchanged;
+  deployed stylesheets may otherwise remain browser-cached for hours.
+
+## 2026-09-03: Pseudonymous username accounts use one authentication passkey
+
+- First-time username setup shows the shared **Encrypt your data** card before
+  the prompt and its **Waiting…** state through creation/finalization, never a
+  username reminder. A generated username keeps
+  creation rendering active until close, even after sync publishes the new
+  account ID; otherwise sync notifications could briefly show Account before
+  the Membership handoff. Retry/error actions and returning login are unchanged.
+- Username login uses the compact reference card: 360px maximum width, rounded
+  24px corners, a left-aligned **Log in** heading, and the close button at the
+  upper right. Google and the joined **Username →** control are 48px high,
+  separated by a subtle lowercase **or** divider. The arrow is a stroked SVG,
+  not the landing's filled arrow. Padding drops from 32px to 24px on narrow
+  screens. This is modal-only; the landing still has no divider between Google
+  and Username. The arrow retains the accessible **Continue** name and existing
+  click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
+  Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
+  account-number login keeps its existing layout. Returning Google and username
+  accounts open the passkey prompt immediately; setup and legacy migration retain
+  their explanatory step. A cancelled automatic prompt stays on the untitled
+  encryption card with **Try again** focused, and never prompts again by itself.
+  Username is an input placeholder with an accessible name, not a
+  visible label or example handle. Introductory/helper copy and the separate
+  signup/account-number rows are removed. Continue checks for a username
+  challenge before reserving a new account, then waits for the explicit passkey
+  action. Only typed lookup/registration errors select another flow, never
+  passkey cancellation, network failure, or rate limiting. The button is
+  single-flight and a close/reopen invalidates its pending lookup.
+- The commercial landing page renders Username directly below Google and above
+  the OR/access-code row. Both text rows share the same visual control rules,
+  while independent handlers preserve the existing Google and anonymous
+  access-code routes. The username route is a one-use local UI intent; Chat
+  removes the username from its URL after the normal authentication bootstrap
+  settles, then checks the username before showing the shared encryption step.
+  **Checking username…** covers only lookup, without a redundant username form.
+  Lookup errors restore the form; cancelled passkeys keep an explicit retry on
+  the encryption card. Missing usernames (including no-JS entry), unsupported/busy states,
+  and remembered legacy/Google unlock or recovery still use their normal UI.
+  The native prompt does not block the rest of Chat initialization. Startup composer autofocus also respects
+  an open Account dialog, including its forced first attempt, so focus stays
+  on the authentication surface rather than moving behind it.
+- Account entry now offers Google or a normalized, unique pseudonymous
+  username. Username registration and returning login use one WebAuthn prompt:
+  the assertion authenticates the opaque OA account while PRF unwraps its
+  random master key locally.
+- The server-generated 16-digit account ID remains the WebAuthn user handle and
+  all account/sync cryptographic scoping remains ID-bound. The username is only
+  the human-readable passkey label and login locator; it is stored in local
+  account settings so restored UI can display it immediately.
+- Username accounts do not generate, display, or upload recovery material. The
+  first passkey prompt completes registration immediately and emits
+  `registerFirstAccountReady`, matching the first-time Google-to-Membership
+  handoff. Losing every synced copy of the passkey is intentionally permanent;
+  remembering the public username alone cannot prove ownership or decrypt data.
+- Existing account-number clients and users remain supported. `/auth/init`
+  still accepts no body, old request/response fields and recovery derivation
+  remain unchanged, and a saved legacy account automatically receives the
+  account-number login UI. Manual account-number entry on a fresh device is
+  intentionally removed per the product decision; saved legacy login/recovery
+  remains available and the backend protocol is unchanged.
+- Username challenge and login responses must resolve to the account already
+  saved on the device. Creating or switching to a different username requires
+  the existing explicit **Forget saved account** action, preserving the same
+  account-scope boundary as Google sign-in.
+- Each username login carries an opaque, single-use challenge transaction ID,
+  so concurrent public lookups cannot replace an in-progress passkey prompt.
+  OA limits every attempt by the trusted client IP and adds a hashed-username
+  bucket only after a failed lookup or proof; a third party therefore cannot
+  exhaust a public-name quota and lock out a valid owner.
+- The Continue action passes an explicit username into account preparation. Blank
+  or invalid input fails validation and cannot fall through to the retained
+  no-body legacy account-number initializer.
+- Conditional auto-unlock also uses the username route for a saved username
+  account. Falling back to the legacy opaque-ID route would authenticate but
+  clear the local username label when settings are persisted.
+- Usernames are visible stable pseudonyms; the compact login no longer displays
+  pseudonym guidance. They never accompany ticket
+  redemption or inference. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for
+  the protocol, compatibility, and privacy boundaries.
+- Username accounts mark encrypted sync as identity-backed, like SSO accounts,
+  so consuming a ticket does not trigger an immediate authenticated sync.
+  The consumed/archive state propagates during the next initial or periodic
+  sync; deletion tombstones remain reserved for cash-style transfers.
 
 ## 2026-09-01: Commercial onboarding and ticket surfaces use core UI seams
 
@@ -273,7 +696,7 @@ reading code alone.
   focuses its heading. Returning accounts close the authentication dialog and
   remain in Chat; they do not emit this signal. The signed-in Account summary
   is opened only by an explicit Account action.
-- Avatar, account label, and settings affordance are one accessible sidebar
+- Avatar, account label, and disclosure affordance are one accessible sidebar
   button. There is no separate gear. Long labels truncate within the shared hit
   target. The new account identity and menu actions match the existing sidebar
   type scale at 14px regular; only an open/selected state uses medium weight.
@@ -283,8 +706,17 @@ reading code alone.
   Membership and standalone ticket management retain Import, Share, and Redeem.
   Account-data/chat/memory export remains independent and never includes
   inference tickets.
-- The right panel groups the inference-ticket row and ephemeral-key section
-  with a deliberate 16px whitespace gap and no divider. Commercial ticket
+- The System Panel uses its original compact styling: a 14px semibold title,
+  12px medium ticket/key headings, and the original icons and help buttons.
+  The larger September 3 heading redesign was reverted at the user's
+  request; only the full-width theme-aware divider remains. It is positioned
+  midway through the commercial stack's 24px gap, increased from 16px in a
+  follow-up request for 4px more space on each side of the line. The divider
+  itself adds no layout height. Its anchor follows expanded ticket help and preparation
+  status, so the line stays below that content. Live counts, zero-balance,
+  pending/live keys, expiry/renewal, and per-key Council attestation remain
+  unchanged. The compact bottom-left footer and stylesheet cache versioning
+  are separate changes and are not reverted. Commercial ticket
   preparation mounts directly below the ticket row; component rerenders must
   reattach that extension slot through `refreshExtensionSlot(...)`, never an
   internal registry. Paid preparation uses the same compact text and progress
@@ -315,9 +747,18 @@ reading code alone.
   and overlaps the account/thread divider slightly. **Log out** uses the same
   neutral hover surface as the other account actions; destructive color is not
   used for hover emphasis.
+- Commercial can replace the standalone **Account** menu item only with an
+  enabled, visible extension menu action. Slot mount/unmount notifications keep
+  that fallback correct even while the menu is open; an empty, malformed, hidden,
+  or disabled extension node never removes the only route to account security.
+- The public account identity label is empty until bootstrap has completed and
+  the session is both server-verified and unlocked. Cached usernames or emails
+  must not leak into commercial UI while an account is restoring, locked, or
+  signed out.
 - Its trigger remains a flat, full-width footer row while open, with the
-  account identity on the left and a settings glyph on the right. It does not
-  turn into an inset selected pill or use a disclosure chevron.
+  account identity on the left and a disclosure chevron on the right. The
+  chevron points down while closed and rotates up while expanded; the row does
+  not turn into an inset selected pill.
 - A restored signed-in account reuses its account-bound cached identity label
   immediately after session validation. Profile refresh and encrypted sync
   continue in the background, so the footer does not briefly fall back to the
@@ -335,7 +776,7 @@ reading code alone.
   session that still needs its encryption passkey is labeled **Unlock encrypted
   data** in the sidebar instead of looking fully logged in. Closing the unlock
   dialog keeps Google authentication but never marks encrypted data or tickets
-  unlocked; the dialog explains this distinction and offers an explicit Log out.
+  unlocked; the Welcome back card explains that a passkey protects the data.
 - The viewport permits browser zoom. Do not restore `maximum-scale` or
   `user-scalable=no`; authentication, Membership, and ticket recovery must remain
   usable under magnification.
@@ -487,7 +928,9 @@ reading code alone.
   so a pending preparation survives the extraction. The record format is
   generic entitlement state and final wallet tickets contain no account,
   payment, subscription, or claim metadata.
-- Account registration remains Google-only in the public Account surface.
+- At the time of the public/private extraction, account registration was
+  Google-only. The 2026-09-03 username-passkey entry above supersedes that
+  sign-in limitation without changing the extension boundary.
   A commercial extension observes only the sanitized account snapshot and can
   resume an upgrade after the verified session becomes ready; Account itself
   has no Checkout-specific callback.
@@ -516,9 +959,10 @@ reading code alone.
   retaining the production-org endpoint. Handoff must inspect the emitted app
   bundle for both absence of that endpoint and presence of the demo relay.
 - The commercial composition now uses a three-panel, self-hosted-Newsreader
-  landing page from `oa-commercial/feature/pre-chat-landing`, reconciled with
-  the reviewed Google-only account handoff. Apple, passkey, recovery, and
-  access-code alternatives remain absent. Its Premium modal keeps server-owned
+  landing page from `oa-commercial/feature/pre-chat-landing`, originally
+  reconciled with the reviewed Google-only account handoff. The Account modal
+  now adds a recovery-free username passkey path; Apple and access-code
+  authentication alternatives remain absent. Its Premium modal keeps server-owned
   subscription/top-up prices and eligibility, exposes Customer Portal and
   ticket-pack actions when status authorizes them, and adds a collapsed ticket
   explanation without hard-coding model costs.
@@ -980,11 +1424,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The compact ticket launcher's icon and label share the same left edge as
     the Ephemeral Access Key heading below it; avoid adding nested horizontal
     padding to the launcher.
-  - The commercial launcher deliberately preserves the production ticket
-    header treatment: `Inference Tickets: N` uses the same `text-xs font-medium`
-    typography as the public client, and its small question-mark control sits
+  - The commercial launcher uses its original `text-xs font-medium` heading
+    treatment, with its original compact question-mark control
     immediately after the count. Do not replace it with a full-width navigation
-    row or move the help control to the far edge of the panel.
+    row or move the help control to the far edge of the panel. Standalone
+    public ticket controls retain their existing compact typography.
 
 
 - 2026-08-07: Google is the only supported SSO provider.
@@ -1183,10 +1627,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     scary diagnostic wording such as raw HTTP statuses or provider exception
     strings. Do not render raw provider error bodies, prompts, memory file
     contents, URLs with secrets, or API keys in the chat.
-  - `MessageTemplates` renders the note as a compact sub-row under the Memory
-    Agent status, but only shows the short title by default to keep the chat
-    low-noise. The main fallback copy stays one line:
-    `Memory context was not added this time. Sending without it.`
+  - The visible Memory Agent fallback deliberately matches the normal empty
+    retrieval state: `No added memory. Sending original prompt.` Structured
+    failure metadata remains available for safe diagnostics and shared-payload
+    compatibility, but the chat does not add a second bordered `Note:` card.
   - `buildSharePayload(...)` now routes through `chat/services/sharePayload.js`
     so shared Memory Agent messages preserve this safe reason metadata without
     pulling share-service network side effects into payload tests.
@@ -1949,7 +2393,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Confidential retrieval keys are cached per session on `memoryKey` / `memoryKeyInfo` and must be invalidated on `401` / `403` auth failures.
   - Root `oa-chat` currently does not use that attested SDK path for memory mode. `chat/services/memoryBridge.js` intentionally forces the confidential memory client onto the plain OpenAI-compatible HTTPS path against `https://inference.tinfoil.sh/v1` (`provider: 'openai'`, not `provider: 'tinfoil'`).
   - `nanomem` still supports the SDK-backed, attested Tinfoil transport, but the root app is not opting into it right now.
-  - The generic root-app fallback text `Memory context was not added this time. Sending without it.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
+  - The generic root-app fallback text `No added memory. Sending original prompt.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
   - Root `oa-chat` now also has the memory filesystem modal shell from `memory-chat`, opened by `Cmd/Ctrl+Shift+M`. Storage editing and local-chat backfill are ported there, but the old `memory-chat` extractor/cancel UI is still not.
   - The settings menu `Data Controls` section now has a dedicated `Memory` row. `Export` uses the same OMF exporter as the memory panel header. `Import` uses a hidden settings-menu file input, then opens the memory panel and hands the selected file into the same OMF preview/merge flow as the panel header import button.
   - The root memory panel now also uses `memory-chat`'s OMF import/export UX, but the actual OMF logic has been moved into `nanomem`. `Export` now goes through `memoryBank.exportOmf()`, and import preview/merge go through `memoryBank.previewOmfImport()` / `memoryBank.importOmf()` instead of app-local format logic.

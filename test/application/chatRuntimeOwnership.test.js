@@ -48,6 +48,7 @@ function deferred() {
 function appHarness() {
     return Object.assign(Object.create(ChatApp.prototype), {
         runtime: {},
+        signInPolicy: { required: false },
         state: { currentSessionId: 'one', pendingModelName: 'Model one', models: [], sessions: [],
             sessionsById: new Map([['one', { id: 'one', model: 'Model one' }], ['two', { id: 'two' }]]) },
         elements: { messageInput: { value: 'Original prompt', focus() {} } },

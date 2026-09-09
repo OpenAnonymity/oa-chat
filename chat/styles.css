@@ -23,7 +23,9 @@
     --font-librecaslon: "Libre Caslon Text", 'New York', Georgia, serif;
     --font-ptserif: 'PT Serif', 'New York', Georgia, serif;
 
-    --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    /* Keep the platform UI family first so larger headings can use its
+       display-optimized face instead of pinning every size to SF Pro Text. */
+    --font-sans: system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
     --font-serif: var(--font-sourceserif);
     --font-mono: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 
@@ -43,6 +45,7 @@
     /* Accent color (active toggles, primary highlights) */
     --color-accent-primary: var(--blue-500);
     --color-accent-primary-foreground: 0 0% 100%;
+    --color-focus-ring: var(--blue-500);
 
     /* Frosted glass effect - adjust opacity (0-1) and blur (px) */
     --glass-opacity: 0.82;
@@ -127,7 +130,30 @@
 :root,
 .dark {
     --tw-ring-offset-color: hsl(var(--color-background));
-    --tw-ring-color: hsl(var(--color-ring));
+    --tw-ring-color: hsl(var(--color-focus-ring));
+}
+
+/* Focus rings are keyboard-only. The app moves focus itself (dialog open,
+   restore after close, model search) and browsers report that as
+   :focus-visible until the next pointer interaction, which lit rings on
+   load, unlock and picker open. An inline script in index.html sets
+   html[data-keyboard-nav] after Tab/arrow keys and clears it on pointer
+   input; every ring keys off that. Low specificity (:where) so Tailwind
+   ring utilities and component rules still win. */
+:where(html[data-keyboard-nav] :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"]))):focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+/* The quiet half is deliberately specific: a component's own
+   `.x:focus-visible { outline: ... }` must not light a ring on programmatic
+   focus (re-render focus restore after a click) when nothing else would. */
+html:not([data-keyboard-nav]) :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+    outline: none;
+}
+/* Tailwind ring utilities draw with box-shadow; same keyboard-only rule. */
+html:not([data-keyboard-nav]) [class*="focus-visible:ring"]:focus-visible {
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
 }
 
 /* Global font application */
@@ -174,8 +200,8 @@ code, pre, kbd, .font-mono {
 }
 
 .in-page-find:focus-within {
-    border-color: hsl(var(--color-ring) / 0.55);
-    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-ring) / 0.12);
+    border-color: hsl(var(--color-focus-ring) / 0.55);
+    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-focus-ring) / 0.12);
 }
 
 .in-page-find__search-icon {
@@ -234,8 +260,8 @@ code, pre, kbd, .font-mono {
     outline: none;
 }
 
-.in-page-find__button:focus-visible {
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.3);
+html[data-keyboard-nav] .in-page-find__button:focus-visible {
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.3);
 }
 
 .in-page-find__button:disabled {
@@ -3250,6 +3276,29 @@ textarea:focus {
     align-items: center;
 }
 
+/* The picker intentionally focuses search as it opens. A full input outline
+   therefore reads as a selected black box even after pointer activation.
+   Keep the active field clear with a quiet accent underline instead. */
+.model-picker-search:has(> #model-search:focus) {
+    box-shadow: none;
+}
+
+html[data-keyboard-nav] .model-picker-search:has(> #model-search:focus-visible) {
+    box-shadow: inset 0 -2px 0 hsl(var(--color-focus-ring));
+}
+
+#model-search:focus,
+#model-search:focus-visible {
+    outline: none;
+}
+
+@media (forced-colors: active) {
+    html[data-keyboard-nav] #model-search:focus-visible {
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
+}
+
 /* Chat area styling */
 .chat-container {
     background: linear-gradient(to bottom, transparent, hsl(var(--color-background)) 10%);
@@ -4276,6 +4325,22 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
     transition-timing-function: var(--system-panel-open-ease), var(--system-panel-open-ease), var(--system-panel-open-ease);
 }
 
+/* Keep compact typography with 12px breathing room on either side of the
+   divider, including when ticket help or preparation is expanded. */
+.oa-right-panel-ticket-summary {
+    position: relative;
+}
+
+.system-panel-divider {
+    position: absolute;
+    right: -12px;
+    bottom: -12px;
+    left: -12px;
+    height: 1px;
+    background: hsl(var(--color-border));
+    pointer-events: none;
+}
+
 #right-panel-content {
     width: var(--system-panel-width);
     min-width: var(--system-panel-width);
@@ -4906,7 +4971,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 }
 
 .switch-toggle.switch-active {
-    background-color: #3b82f6; /* bg-blue-500 */
+    background-color: #0a84ff; /* the same blue as the settings panel and Account switches */
 }
 
 .switch-toggle.switch-toggle-sm {
@@ -5782,8 +5847,8 @@ html {
 
 /* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */
 .input-focus-clean:focus {
-    border-color: hsl(var(--color-ring) / 0.6);
-    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
     outline: none;
 }
 
@@ -5805,8 +5870,8 @@ html {
 
 /* Right panel invitation code: highlight the full input+button shell */
 .invitation-code-input-shell:focus-within {
-    border-color: hsl(var(--color-ring) / 0.6);
-    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
 }
 
 /* Shared subtle hover effect for secondary buttons */
@@ -5827,7 +5892,7 @@ html {
 }
 
 .sidebar-main-content {
-    padding-bottom: 4.25rem !important;
+    padding-bottom: 3.5rem !important;
 }
 
 .account-nav {
@@ -5836,7 +5901,7 @@ html {
     bottom: 0;
     left: 0;
     z-index: 30;
-    padding: 0.375rem 0.75rem;
+    padding: 0;
     border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background) / 0.96);
     backdrop-filter: blur(12px);
@@ -5856,14 +5921,15 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
+    /* Restore the previous 49px footer: 48px trigger plus its top divider. */
     min-height: 3rem;
-    padding: 0.25rem;
-    border: 1px solid transparent;
-    border-radius: 0.5rem;
+    padding: 0.25rem 1rem;
+    border: 0;
+    border-radius: 0;
     background: transparent;
     color: hsl(var(--color-foreground));
     text-align: left;
-    transition: background-color 0.14s ease-out, border-color 0.14s ease-out, transform 0.1s ease-out;
+    transition: background-color 0.14s ease-out;
 }
 
 .account-bootstrap-status {
@@ -5884,13 +5950,30 @@ html {
 }
 
 .account-tab-btn:active:not(:disabled) {
-    transform: scale(0.985);
+    /* A pressed row must stay edge-to-edge, just like its hover surface. */
+    background-color: hsl(var(--color-foreground) / 0.14);
 }
 
-.account-tab-btn:focus-visible,
-.account-menu-item:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+.account-tab-btn:focus-visible {
+    /* Never frame the full row; keyboard focus outlines the avatar below.
+       Focus restored after login/unlock is programmatic and stays quiet. */
+    outline: none;
+}
+
+html[data-keyboard-nav] .account-tab-btn:focus-visible .account-tab-avatar {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+html[data-keyboard-nav] .account-menu-item:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
+}
+
+@media (forced-colors: active) {
+    html[data-keyboard-nav] .account-tab-btn:focus-visible .account-tab-avatar {
+        outline: 2px solid Highlight;
+    }
 }
 
 .account-tab-avatar {
@@ -5899,8 +5982,8 @@ html {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 1.75rem;
+    height: 1.75rem;
     border: 1px solid hsl(var(--color-border));
     border-radius: 9999px;
     background: hsl(var(--color-muted) / 0.7);
@@ -5908,8 +5991,8 @@ html {
 }
 
 .account-tab-avatar > svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: 1rem;
+    height: 1rem;
 }
 
 .account-identity-label {
@@ -5927,11 +6010,21 @@ html {
     height: 1.25rem;
     flex: 0 0 auto;
     color: hsl(var(--color-muted-foreground));
-    transition: color 0.15s ease, transform 0.15s ease;
+    transform-origin: center;
+    transition:
+        color 150ms cubic-bezier(.2, 0, 0, 1),
+        transform 240ms cubic-bezier(.2, 0, 0, 1);
 }
 
 .account-tab-btn[aria-expanded="true"] .account-control-icon {
     color: hsl(var(--color-foreground));
+    transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-control-icon {
+        transition: none;
+    }
 }
 
 .account-tab-btn[aria-expanded="true"] {
@@ -5978,6 +6071,12 @@ html {
     display: none;
 }
 
+/* The core Account item hides itself when an extension mounts the account
+   surface; the class's display must not override [hidden]. */
+.account-menu-item[hidden] {
+    display: none;
+}
+
 .account-menu-item {
     display: flex;
     align-items: center;
@@ -6001,7 +6100,7 @@ html {
 }
 
 .account-menu-item:hover,
-.account-menu-item:focus-visible {
+html[data-keyboard-nav] .account-menu-item:focus-visible {
     background: hsl(var(--color-foreground) / 0.1);
 }
 
@@ -6135,9 +6234,9 @@ html {
     transform: scale(0.985);
 }
 
-.account-compact-row:focus-visible,
-.account-compact-copy-id:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+html[data-keyboard-nav] .account-compact-row:focus-visible,
+html[data-keyboard-nav] .account-compact-copy-id:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
 
@@ -6153,8 +6252,333 @@ html {
     gap: 0.5rem;
 }
 
-.account-compact-row-label > svg,
-.account-compact-chevron {
+/* Passkey unlock card (OAuth keyring unlock / setup / legacy paths).
+   Concentric radii: 24px card = 20px content radius + 4px, pill is 999px. */
+.account-unlock-card {
+    box-sizing: border-box;
+    position: relative;
+    width: min(calc(100% - 2rem), 26.25rem);
+    margin: 0 1rem;
+    padding: 2.5rem 2.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    border-radius: 1.5rem;
+    background: hsl(var(--color-card));
+    color: hsl(var(--color-foreground));
+    text-align: center;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / 0.05),
+        0 24px 48px -16px hsl(var(--color-foreground) / 0.3);
+}
+
+.dark .account-unlock-card {
+    box-shadow:
+        0 0 0 1px hsl(0 0% 100% / 0.08),
+        0 24px 48px -16px hsl(0 0% 0% / 0.6);
+}
+
+.account-unlock-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+}
+
+.account-unlock-close,
+.account-unlock-signout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border: 0;
+    border-radius: 0.75rem;
+    background: transparent;
+    color: hsl(var(--color-muted-foreground));
+    cursor: pointer;
+}
+
+.account-unlock-close {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+}
+
+.account-unlock-signout {
+    padding: 0 0.75rem;
+    font: inherit;
+    font-size: 0.8125rem;
+}
+
+.account-unlock-close:hover,
+.account-unlock-signout:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / 0.04);
+    color: hsl(var(--color-foreground));
+}
+
+html[data-keyboard-nav] .account-unlock-close:focus-visible,
+html[data-keyboard-nav] .account-unlock-signout:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+.account-unlock-signout:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.account-unlock-title {
+    margin: 0;
+    font-size: 1.625rem;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+}
+
+/* While the automatic prompt is up, the OS passkey sheet is the interface:
+   the untitled card stays mounted for focus and the status text, but is not
+   drawn — only a small spinner on the dimmed page says something is
+   happening. The card fades in only if the prompt fails (Try again). */
+.account-unlock-card-untitled[data-waiting="true"] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+
+/* Log out: the account is cleared underneath, which empties the chat to its
+   welcome screen. Cover the page fully until the host has replaced it (or,
+   standalone, until the Log in form returns). */
+#account-modal[data-logging-out] {
+    background: hsl(var(--color-background));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+#account-modal[data-logging-out] .account-unlock-waiting-spinner {
+    border-color: hsl(var(--color-foreground) / .45);
+    border-top-color: transparent;
+}
+
+#account-modal[data-logging-out] .account-unlock-waiting-title {
+    color: hsl(var(--color-muted-foreground));
+}
+
+.account-unlock-waiting {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    pointer-events: none;
+    text-align: center;
+}
+
+.account-unlock-waiting-spinner {
+    width: 1.25rem;
+    height: 1.25rem;
+    border-width: 2px;
+    border-color: rgb(255 255 255 / .7);
+    border-top-color: transparent;
+}
+
+/* Behind every passkey wait — returning unlock, first-time setup, the
+   username lookup, the Google hand-off: one line saying a passkey comes
+   next, one on why. It is the whole page until the OS sheet opens, so it
+   sits in the centre like the spinner; once the sheet is up it has been
+   read. index.html paints the same two lines before any script runs for a
+   sign-in hand-off, so the caption is on screen from the first frame and
+   the dialog's copy takes over without entering again. */
+.account-unlock-waiting-title {
+    margin: 0;
+    max-width: 28rem;
+    color: rgb(255 255 255 / .88);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.4;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+}
+
+/* The username, for assistive technology only: the person has just typed it. */
+.account-unlock-waiting-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.account-unlock-waiting-enter {
+    animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+
+@keyframes account-unlock-caption-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.account-unlock-card-untitled {
+    transition: opacity 160ms ease;
+}
+
+.account-unlock-card-untitled .account-unlock-copy {
+    /* No heading: the body carries the card. Give it a touch more presence
+       and room so the close button never crowds the first line. */
+    padding-top: .25rem;
+}
+
+.account-unlock-card-untitled .account-unlock-body {
+    font-size: 1rem;
+    color: hsl(var(--color-foreground) / .82);
+}
+
+.account-unlock-body {
+    margin: 0;
+    max-width: 21.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: hsl(var(--color-muted-foreground));
+    text-wrap: balance;
+}
+
+.account-unlock-account-id {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+}
+
+.account-unlock-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.account-unlock-btn {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2.75rem;
+    min-width: 7.5rem;
+    padding: 0 1.75rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 999px;
+    background: hsl(var(--color-card));
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.1s ease-out;
+}
+
+.account-unlock-btn:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / 0.03);
+    border-color: hsl(var(--color-muted-foreground) / 0.5);
+}
+
+.account-unlock-btn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+html[data-keyboard-nav] .account-unlock-btn:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+.account-unlock-btn:disabled {
+    color: hsl(var(--color-muted-foreground));
+    cursor: default;
+}
+
+.dark .account-unlock-btn {
+    border-color: hsl(0 0% 100% / 0.18);
+    background: transparent;
+}
+
+.dark .account-unlock-btn:hover:not(:disabled) {
+    background: hsl(0 0% 100% / 0.06);
+    border-color: hsl(0 0% 100% / 0.3);
+}
+
+.account-unlock-spinner {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex: 0 0 auto;
+    border: 2px solid hsl(var(--color-muted-foreground) / 0.45);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+/* A failure on a titled card reads in the card's own voice — same size and
+   colour as the body — not as a red warning. */
+.account-unlock-alert {
+    margin: 0;
+    max-width: 21.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: hsl(var(--color-muted-foreground));
+    text-wrap: balance;
+}
+
+.account-unlock-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 2.75rem;
+    padding: 0 1rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    text-align: center;
+}
+
+.account-unlock-input::placeholder {
+    color: hsl(var(--color-muted-foreground) / 0.6);
+}
+
+html[data-keyboard-nav] .account-unlock-input:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-unlock-btn {
+        transition-duration: 0s;
+    }
+    .account-unlock-spinner {
+        animation-duration: 1.4s;
+    }
+    .account-unlock-waiting-enter {
+        animation: none;
+    }
+}
+
+.account-compact-row-label > svg {
     width: 1rem;
     height: 1rem;
     flex: 0 0 auto;
@@ -6162,11 +6586,15 @@ html {
 }
 
 .account-compact-chevron {
-    transition: transform 0.15s ease-out;
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 auto;
+    color: hsl(var(--color-muted-foreground));
+    transition: transform 240ms cubic-bezier(.2, 0, 0, 1);
 }
 
 .account-compact-row[aria-expanded="true"] .account-compact-chevron {
-    transform: rotate(90deg);
+    transform: rotate(180deg);
 }
 
 .account-compact-dot {
@@ -6191,15 +6619,34 @@ html {
 
 .account-compact-detail {
     display: grid;
-    gap: 0.35rem;
-    padding: 0.125rem 0.5rem 0.75rem;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    visibility: hidden;
     color: hsl(var(--color-muted-foreground));
     font-size: 0.75rem;
     line-height: 1.5;
+    transition:
+        grid-template-rows 240ms cubic-bezier(.2, 0, 0, 1),
+        opacity 160ms cubic-bezier(.2, 0, 0, 1),
+        visibility 0s 240ms;
 }
 
-.account-compact-detail[hidden] {
-    display: none;
+.account-compact-detail[data-open="true"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+.account-compact-detail-clip {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.account-compact-detail-content {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.125rem 0.5rem 0.75rem;
 }
 
 .account-compact-detail p {
@@ -6245,7 +6692,8 @@ html {
 
 @media (prefers-reduced-motion: reduce) {
     .account-compact-row,
-    .account-compact-chevron {
+    .account-compact-chevron,
+    .account-compact-detail {
         transition: none;
     }
 }
@@ -6544,9 +6992,9 @@ html {
     background-color: hsl(var(--color-hover));
 }
 
-.update-toast button:focus-visible {
+html[data-keyboard-nav] .update-toast button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.5);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.5);
 }
 
 .update-toast--stacked {
@@ -6590,6 +7038,325 @@ html {
     }
 
     .update-toast {
+        animation: none;
+    }
+}
+
+/* Shared title scale for Account, Log in, and recovery dialogs. */
+.account-dialog-title {
+    margin: 0;
+    font-size: 1.375rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    color: hsl(var(--color-foreground));
+    text-wrap: balance;
+}
+
+/* Compact username login card. Keep this separate from Google encryption
+   unlock, saved legacy login, the landing page, and shared modal headers. */
+.account-login-dialog {
+    width: calc(100% - 2rem);
+    max-width: 22.5rem;
+    padding: 2rem;
+    border-radius: 1.5rem;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* "By continuing, you agree to our Terms and Privacy Policy" under the form. */
+.account-login-legal {
+    margin: 1.25rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    text-align: center;
+    text-wrap: balance;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.account-login-legal > a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: hsl(var(--color-muted-foreground) / .5);
+}
+
+.account-login-legal > a:hover {
+    color: hsl(var(--color-foreground));
+}
+
+.account-login-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.account-login-heading > h2 {
+    text-align: left;
+}
+
+.account-login-heading > button {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+}
+
+.account-login-heading > button > svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.account-login-dialog #account-google-btn {
+    height: 3rem;
+    border-radius: 0.75rem;
+    gap: 0.625rem;
+    font-size: 0.9375rem;
+    font-weight: 400;
+    line-height: 1.25;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.account-login-dialog #account-google-btn > svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
+}
+
+.account-login-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.8125rem;
+    line-height: 1rem;
+}
+
+.account-login-divider::before,
+.account-login-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: hsl(var(--color-border));
+}
+
+.account-login-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    height: 3rem;
+    overflow: hidden;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    background: hsl(var(--color-background));
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.account-login-input {
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+}
+
+.account-login-input {
+    padding: 0 1rem;
+    font-size: 1rem; /* Prevent mobile Safari's input-focus zoom. */
+    outline: 0;
+}
+
+.account-login-input::placeholder {
+    color: hsl(var(--color-muted-foreground));
+    opacity: 1;
+}
+
+.account-login-input:is(:autofill, :-webkit-autofill) {
+    -webkit-text-fill-color: hsl(var(--color-foreground));
+    caret-color: hsl(var(--color-foreground));
+    box-shadow: inset 0 0 0 1000px hsl(var(--color-background));
+}
+
+.account-login-control:focus-within {
+    border-color: hsl(var(--color-border));
+    box-shadow: none;
+}
+
+html[data-keyboard-nav] .account-login-control:focus-within {
+    border-color: hsl(var(--color-focus-ring) / 0.7);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.45);
+}
+
+/* Same control as the landing card: the username step's button is the one
+   filled control in the dialog — ink at all times, lifting on hover — with
+   the label optically centred between an empty cell and the arrow. */
+.account-login-submit {
+    display: grid;
+    grid-template-columns: 1.125rem minmax(0, 1fr) 1.125rem;
+    align-items: center;
+    width: 100%;
+    height: 3rem;
+    margin-top: 0.625rem;
+    padding: 0 1rem;
+    border: 1px solid #000;
+    border-radius: 0.75rem;
+    background: #000;
+    color: #fff;
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.25;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.account-login-submit-label {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.account-login-submit-indicator {
+    display: grid;
+    place-items: center;
+}
+
+html[data-keyboard-nav] .account-login-submit:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+.account-login-submit:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.account-login-submit[aria-busy="true"] {
+    opacity: 0.7;
+    cursor: progress;
+}
+
+.dark .account-login-submit {
+    border-color: hsl(0 0% 100% / 0.92);
+    background: hsl(0 0% 100% / 0.92);
+    color: hsl(222.2 84% 4.9%);
+}
+
+.account-login-arrow {
+    width: 1.125rem;
+    height: 1.125rem;
+}
+
+.account-login-spinner {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* Match the Account Unlock button's restrained white-button hover. The
+   username input and arrow are one control, so their shell responds as one. */
+@media (hover: hover) and (pointer: fine) {
+    .account-login-dialog #account-google-btn:hover:not(:disabled),
+    .account-login-dialog .account-login-control:not(:focus-within):hover {
+        background-color: hsl(var(--color-foreground) / 0.03) !important;
+        border-color: hsl(var(--color-muted-foreground) / 0.5) !important;
+    }
+
+    .account-login-dialog .account-login-control:not(:focus-within):hover .account-login-input:is(:autofill, :-webkit-autofill) {
+        box-shadow:
+            inset 0 0 0 1000px hsl(var(--color-foreground) / 0.03),
+            inset 0 0 0 1000px hsl(var(--color-background));
+    }
+
+    .account-login-submit:hover:not(:disabled) {
+        border-color: #262626;
+        background: #262626;
+    }
+
+    .dark .account-login-dialog #account-google-btn:hover:not(:disabled),
+    .dark .account-login-dialog .account-login-control:not(:focus-within):hover {
+        background-color: hsl(0 0% 100% / 0.06) !important;
+        border-color: hsl(0 0% 100% / 0.3) !important;
+    }
+
+    .dark .account-login-dialog .account-login-control:not(:focus-within):hover .account-login-input:is(:autofill, :-webkit-autofill) {
+        box-shadow:
+            inset 0 0 0 1000px hsl(0 0% 100% / 0.06),
+            inset 0 0 0 1000px hsl(var(--color-background));
+    }
+
+    .dark .account-login-submit:hover:not(:disabled) {
+        border-color: hsl(0 0% 100% / 0.8);
+        background: hsl(0 0% 100% / 0.8);
+    }
+}
+
+@media (max-width: 400px) {
+    .account-login-dialog {
+        padding: 1.5rem;
+    }
+}
+
+/* Shared close control for account dialogs: 32px hit area, 10px radius,
+   same as the Billing & Plan close button. */
+#close-account-modal {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    place-items: center;
+    margin: 0 -0.375rem 0 0;
+    border-radius: 0.625rem;
+}
+#close-account-modal > svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Dark mode: interactive edges in the login card need more contrast than
+   the 25%-lightness border token gives on the 12% card. Matches the
+   Welcome back button (18% / 30% on hover). */
+.dark .account-login-control {
+    border-color: hsl(0 0% 100% / 0.18);
+}
+/* !important only because the global .border-border utility above is itself
+   !important; the button carries that class. */
+.dark .account-login-dialog #account-google-btn {
+    border-color: hsl(0 0% 100% / 0.18) !important;
+}
+
+/* Under 720px every account dialog is a bottom sheet, like Billing & Plan. */
+@media (max-width: 720px) {
+    #account-modal {
+        align-items: flex-end;
+        padding: 0;
+    }
+    #account-modal > [role="dialog"] {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        border-radius: 1.5rem 1.5rem 0 0;
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    }
+    #account-modal > .account-login-dialog,
+    #account-modal > .account-unlock-card {
+        padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+    }
+    #account-modal > .account-unlock-card {
+        padding-top: 2rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-login-spinner {
         animation: none;
     }
 }
@@ -6671,9 +7438,9 @@ html {
     background: hsl(var(--color-hover));
 }
 
-.split-result-icon-btn:focus-visible {
+html[data-keyboard-nav] .split-result-icon-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .split-result-share {
@@ -6701,9 +7468,9 @@ html {
     background: hsl(var(--color-accent) / 0.7);
 }
 
-.split-result-share-link:focus-visible {
+html[data-keyboard-nav] .split-result-share-link:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .split-result-share-copy-btn {
@@ -6728,9 +7495,9 @@ html {
     background: hsl(var(--color-primary) / 0.12);
 }
 
-.split-result-share-copy-btn:focus-visible {
+html[data-keyboard-nav] .split-result-share-copy-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 @media (max-width: 400px) {
@@ -7323,8 +8090,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
 /* Focus state when input is focused */
 .pin-input-container:focus-within .pin-box:not(.filled):first-of-type,
 .pin-input-container:focus-within .pin-box.active {
-    border-color: hsl(var(--color-primary));
-    box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.2);
+    border-color: hsl(var(--color-focus-ring));
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.2);
 }
 
 .toggle-pin-visibility {
@@ -7531,3 +8298,467 @@ div:has(> #input-card.scrubber-preview-expanded) {
     display: block;
     white-space: nowrap;
 }
+
+/* ----------------------------------------
+   Settings panel (composer gear)
+   One grammar for every row: label left, control right, all controls on one
+   right edge. Sections are separated by full-width hairlines and a small-caps
+   title. Compact on purpose: it hangs off the composer, so it must not be
+   taller than the menu it replaced — rows are 2rem, controls 1.75rem.
+   The ids, roles and data-actions inside are the ones ChatInput.js drives;
+   only the skin lives here.
+   ---------------------------------------- */
+
+.settings-panel {
+    --settings-row-h: 2rem;
+    --settings-control-h: 1.75rem;
+    --settings-line: hsl(var(--color-foreground) / 0.08);
+    --settings-control-border: hsl(var(--color-foreground) / 0.14);
+    --settings-control-border-hover: hsl(var(--color-foreground) / 0.26);
+    --settings-segment-bg: hsl(var(--color-foreground) / 0.06);
+    --settings-segment-on: hsl(var(--color-card));
+    --settings-accent: #0a84ff;
+    padding: 0;
+    border: 1px solid hsl(var(--color-border) / 0.7);
+    border-radius: 1rem;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / 0.04),
+        0 16px 48px -16px rgb(0 0 0 / 0.35);
+    color: hsl(var(--color-popover-foreground));
+    font-size: 0.75rem;
+    line-height: 1.3;
+    text-align: left;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+.dark .settings-panel {
+    --settings-segment-on: hsl(var(--color-foreground) / 0.14);
+    box-shadow:
+        0 0 0 1px hsl(0 0% 100% / 0.06),
+        0 24px 60px -20px rgb(0 0 0 / 0.7);
+}
+
+.settings-section {
+    padding: 0.625rem 1.125rem 0.75rem;
+    border-bottom: 1px solid var(--settings-line);
+}
+.settings-section:last-child { border-bottom: 0; }
+.settings-section-foot { padding-top: 0.375rem; padding-bottom: 0.5rem; }
+
+.settings-section-title {
+    margin: 0 0 0.25rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.settings-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: var(--settings-row-h);
+}
+.settings-row.hidden { display: none; }
+
+.settings-row-label {
+    font-size: 0.8125rem;
+    color: hsl(var(--color-foreground) / 0.9);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.settings-row-control {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+/* Outline buttons: Export / Import */
+.settings-button {
+    box-sizing: border-box;
+    height: var(--settings-control-h);
+    min-width: 4.25rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.1s ease-out;
+}
+.settings-button:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / 0.04);
+    border-color: var(--settings-control-border-hover);
+}
+.settings-button:active:not(:disabled) { transform: scale(0.98); }
+
+/* Selects: same outline as the buttons, a chevron drawn by the wrapper. */
+.settings-select { position: relative; }
+.settings-select select {
+    box-sizing: border-box;
+    appearance: none;
+    -webkit-appearance: none;
+    height: var(--settings-control-h);
+    width: 10.5rem;
+    max-width: 100%;
+    padding: 0 1.75rem 0 0.625rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.settings-select select:hover {
+    background: hsl(var(--color-foreground) / 0.04);
+    border-color: var(--settings-control-border-hover);
+}
+.settings-select select:focus { outline: none; }
+html[data-keyboard-nav] .settings-select select:focus-visible,
+html[data-keyboard-nav] .settings-button:focus-visible,
+html[data-keyboard-nav] .settings-switch:focus-visible,
+html[data-keyboard-nav] .settings-segment:focus-visible,
+html[data-keyboard-nav] .settings-link:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+.settings-select::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 0.7rem;
+    width: 0.375rem;
+    height: 0.375rem;
+    border-right: 1.5px solid hsl(var(--color-muted-foreground));
+    border-bottom: 1.5px solid hsl(var(--color-muted-foreground));
+    transform: translateY(-65%) rotate(45deg);
+    pointer-events: none;
+}
+.dark .settings-select select option { background: hsl(var(--color-popover)); }
+
+/* Switches: the blue iOS-style toggle from the design, at panel scale. The
+   row label already says what each one is, so no hover tooltip here — inside
+   a scrolling panel it was clipped and forced a horizontal scrollbar. */
+.settings-panel [data-tooltip]:hover::after,
+.settings-panel [data-tooltip]:hover::before { display: none; }
+.settings-panel .settings-switch {
+    width: 2.25rem;
+    height: 1.25rem;
+    border: 0;
+    padding: 0;
+    flex: 0 0 auto;
+    transition: background-color 0.15s ease;
+}
+.settings-panel .settings-switch .switch-toggle-indicator {
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.16);
+    transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1);
+}
+.settings-panel .settings-switch.switch-active .switch-toggle-indicator { transform: translateX(16px); }
+.settings-panel .settings-switch.switch-active { background-color: var(--settings-accent); }
+.settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.18); }
+.dark .settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.22); }
+
+/* Segmented controls: thinking effort, layout, font, theme. The selected
+   segment is a raised pill; no sliding indicator (its offsets assumed the
+   old fixed-width buttons). */
+.settings-panel .settings-segmented {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 0.5rem;
+    background: var(--settings-segment-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+.settings-panel .settings-segmented .theme-toggle-indicator,
+.settings-panel .settings-segmented .display-toggle-indicator { display: none; }
+.settings-panel .settings-segmented .settings-segment {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.5rem;
+    padding: 0 0.625rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: transparent;
+    box-shadow: none;
+    color: hsl(var(--color-muted-foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.settings-panel .settings-segmented .settings-segment:hover { color: hsl(var(--color-foreground)); }
+.settings-panel .settings-segmented .settings-segment[aria-checked="true"] {
+    background: var(--settings-segment-on);
+    color: hsl(var(--color-foreground));
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+.settings-panel .settings-segmented .settings-segment-icon { width: 2rem; padding: 0; }
+.settings-panel .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
+.settings-panel .settings-segmented .settings-segment-icon span { font-size: 0.8125rem; font-weight: 500; }
+.settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
+.settings-panel .settings-row.is-disabled { opacity: 0.55; }
+.settings-panel .settings-row.is-disabled select { cursor: default; }
+
+/* Share feedback: a row that is a link. */
+.settings-link {
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+.settings-link:hover .settings-row-label { color: hsl(var(--color-foreground)); }
+.settings-link-icon {
+    width: 1rem;
+    height: 1rem;
+    color: hsl(var(--color-muted-foreground));
+}
+.settings-link:hover .settings-link-icon { color: hsl(var(--color-foreground)); }
+
+.settings-note { margin: 0; font-size: 0.6875rem; color: hsl(var(--color-muted-foreground)); }
+.settings-note[hidden] { display: none; }
+
+/* The slot holds the hidden Web search row; with nothing visible in it
+   the section is gone: no divider, no gap. */
+.settings-panel .composer-settings-actions:not(:has(> :not([hidden]))) { display: none; }
+.settings-panel .settings-section:has(+ .composer-settings-actions:not(:has(> :not([hidden])))) { border-bottom: 0; }
+
+/* The Account dialog: the gear's row grammar, one step up from the gear's
+   compact sizes and one step down from where Billing used to be, so the
+   two dialogs (a menu row apart) share one scale: 14px rows, 32px controls,
+   14px sentence-case section titles. The gear keeps its compact sizes. */
+.settings-dialog {
+    --settings-row-h: 2.25rem;
+    --settings-control-h: 2rem;
+    position: relative;
+    isolation: isolate;
+    width: 100%;
+    max-width: 32rem;
+    background: hsl(var(--color-card));
+    border-radius: 1.5rem;
+    padding: 0.5rem 0 0.375rem;
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    font-size: 0.875rem;
+}
+.settings-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.125rem 1.5rem 0.625rem;
+}
+.settings-dialog-head > h2 { margin: 0; }
+.settings-dialog-head > button { display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; }
+.settings-dialog .settings-section { padding: 1rem 1.75rem 1.125rem; }
+.settings-dialog .settings-section-title {
+    margin: 0 0 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: hsl(var(--color-foreground));
+}
+.settings-dialog .settings-row { min-height: var(--settings-row-h); gap: 1rem; }
+.settings-dialog .settings-row-label { font-size: 0.875rem; }
+.settings-dialog .settings-button { padding: 0 0.875rem; border-radius: 0.625rem; font-size: 0.875rem; }
+.settings-dialog .settings-segmented { border-radius: 0.625rem; }
+/* Export / Import are text actions: no border or fill at rest, a soft tint
+   on hover. The padding is folded back with a negative margin so the last
+   word still ends on the control column's right edge. */
+.settings-dialog .settings-button-pair { gap: 0.125rem; margin-right: -0.625rem; }
+.settings-text-action {
+    display: inline-flex;
+    align-items: center;
+    height: var(--settings-control-h);
+    padding: 0 0.625rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground) / 0.78);
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 400;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color 120ms ease, background-color 120ms ease;
+}
+.settings-text-action:hover:not(:disabled) { color: hsl(var(--color-foreground)); background: hsl(var(--color-foreground) / 0.05); }
+.settings-text-action:disabled { opacity: 0.45; cursor: default; }
+/* Each Export / Import carries a one-line tooltip: exports say a file will
+   download, imports say which file they take. The buttons sit at the card's
+   right edge, so the tooltip hangs from its right corner and grows leftward
+   instead of running into the scroll edge. */
+/* Same tooltip as Billing's Share / Import: a small card above the action,
+   right-aligned to it, wrapping text, no arrow. */
+.settings-panel .settings-text-action[data-tooltip]:hover::after {
+    display: block;
+    top: auto;
+    bottom: calc(100% + 0.625rem);
+    left: auto;
+    right: 0;
+    width: max-content;
+    max-width: 15rem;
+    padding: 0.625rem 0.875rem;
+    border: 0;
+    border-radius: 0.75rem;
+    background: hsl(var(--color-popover));
+    color: hsl(var(--color-foreground));
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .06),
+        0 4px 16px -4px rgb(0 0 0 / .18);
+    transform: translateY(0);
+    animation: settingsTipIn 140ms ease;
+}
+.settings-panel .settings-text-action[data-tooltip]:hover::before { display: none; }
+@keyframes settingsTipIn {
+    from { opacity: 0; transform: translateY(0.25rem); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+    to   { opacity: 1; transform: translateY(4px) rotate(45deg); }
+}
+.settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
+.settings-dialog .settings-segmented .settings-segment-icon { width: 2.25rem; }
+.settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
+.settings-dialog .settings-segmented .settings-segment-icon span { font-size: 0.875rem; }
+.settings-dialog .settings-link-icon { width: 1rem; height: 1rem; }
+/* Import chat history: the Account dialog's skin, reached from it. */
+.import-head { justify-content: flex-start; gap: 0.5rem; }
+.import-head > h2 { flex: 1; min-width: 0; }
+.import-head .import-back { margin-left: -0.375rem; }
+.import-soon { font-size: 0.875rem; color: hsl(var(--color-muted-foreground)); }
+.import-howto { margin-top: 0.5rem; }
+.import-howto summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2rem;
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 120ms ease;
+}
+.import-howto summary::-webkit-details-marker { display: none; }
+.import-howto summary::before {
+    content: '';
+    width: 0.375rem;
+    height: 0.375rem;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms ease;
+    margin-right: 0.125rem;
+}
+.import-howto[open] summary::before { transform: rotate(45deg); }
+.import-howto summary:hover { color: hsl(var(--color-foreground)); }
+.import-howto ol { margin: 0.125rem 0 0.25rem; padding-left: 1.125rem; font-size: 0.8125rem; line-height: 1.5; color: hsl(var(--color-muted-foreground)); }
+.import-howto li { margin: 0.125rem 0; }
+.import-howto code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; }
+.import-counts { display: flex; gap: 2rem; padding: 0.5rem 0 0.25rem; }
+.import-count { display: flex; flex-direction: column; gap: 0.125rem; }
+.import-count span { font-size: 0.8125rem; color: hsl(var(--color-muted-foreground)); }
+.import-count strong { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; color: hsl(var(--color-foreground)); }
+.import-progress { height: 0.25rem; margin: 0.5rem 0 0.25rem; border-radius: 999px; background: hsl(var(--color-foreground) / 0.08); overflow: hidden; }
+.import-progress > div { height: 100%; border-radius: inherit; background: hsl(var(--color-foreground)); transition: width 200ms ease; }
+.import-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.import-actions-group { display: inline-flex; align-items: center; gap: 0.625rem; }
+.import-note { margin: 0.375rem 0 0; font-size: 0.8125rem; color: hsl(var(--color-muted-foreground)); text-wrap: pretty; }
+.import-error { margin: 0.5rem 0 0; font-size: 0.8125rem; color: hsl(0 72% 45%); text-wrap: pretty; }
+.import-spinner { width: 1rem; height: 1rem; border-radius: 50%; border: 1.5px solid hsl(var(--color-foreground) / 0.15); border-top-color: hsl(var(--color-foreground)); animation: import-spin 0.8s linear infinite; }
+@keyframes import-spin { to { transform: rotate(360deg); } }
+.settings-button-primary { color: hsl(var(--color-background)); background: hsl(var(--color-foreground)); border-color: hsl(var(--color-foreground)); }
+.settings-button-primary:hover:not(:disabled) { background: hsl(var(--color-foreground) / 0.88); border-color: transparent; }
+/* The Delete account confirmation sits over the Settings card, same backdrop. */
+.settings-confirm-layer {
+    /* Outside the .settings-dialog card, so it carries the same control tokens. */
+    --settings-control-h: 2.25rem;
+    --settings-control-border: hsl(var(--color-foreground) / 0.14);
+    --settings-control-border-hover: hsl(var(--color-foreground) / 0.26);
+    position: absolute;
+    inset: 0;
+    /* Above the card: the segmented controls inside it sit at z-index 1. */
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgb(0 0 0 / 0.35);
+}
+.settings-confirm-layer .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+/* Spacing lives here, not in utility classes: the generated Tailwind file is
+   a build artifact and did not carry the ones this card used. */
+.settings-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    margin-top: 1rem;
+}
+.settings-button:disabled { opacity: 0.45; cursor: default; }
+/* The typed confirmation: the label reads as a sentence, the word is set apart. */
+.settings-confirm-label {
+    display: block;
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
+    color: hsl(var(--color-foreground));
+    text-wrap: pretty;
+}
+.settings-confirm-word {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem;
+    letter-spacing: 0.04em;
+}
+.settings-confirm-input {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    height: var(--settings-control-h);
+    margin-top: 0.625rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.625rem;
+    background: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    letter-spacing: 0.04em;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.settings-confirm-input:hover:not(:disabled) { border-color: var(--settings-control-border-hover); }
+.settings-confirm-input:focus {
+    outline: none;
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
+}
+.settings-confirm-input:disabled { opacity: 0.6; }
+.settings-button-danger { color: #fff; background: hsl(0 72% 51%); border-color: hsl(0 72% 51%); }
+.settings-button-danger:hover:not(:disabled) { background: hsl(0 72% 45%); border-color: hsl(0 72% 45%); }
+.settings-button-danger:disabled { opacity: 0.45; }
+.dark .settings-button-danger { background: hsl(0 66% 50%); border-color: hsl(0 66% 50%); }
+.dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 66% 44%); border-color: hsl(0 66% 44%); }

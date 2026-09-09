@@ -4,6 +4,9 @@ const EXPOSED_ACCOUNT_STATUSES = new Set(['none', 'locked', 'unlocked', 'busy'])
 export function toExtensionAccountSnapshot(state = {}) {
     return Object.freeze({
         isReady: state.isReady === true,
+        // True once the restore attempt has settled, whichever way: only then
+        // does "no account" mean signed out rather than still loading.
+        authBootstrapComplete: state.authBootstrapComplete === true,
         accountId: state.accountId || null,
         sessionVerified: state.sessionVerified === true,
         accountScopeReady: state.accountScopeReady === true,

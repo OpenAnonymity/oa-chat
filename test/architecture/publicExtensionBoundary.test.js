@@ -83,8 +83,8 @@ test('public HTML keeps Account and contains only invisible generic extension ho
     assert.doesNotMatch(html, /id="account-tab-btn"[^>]+disabled/);
     assert.match(html, /id="account-identity-label"[^>]*><\/span>/);
     assert.match(html, /id="account-bootstrap-status"[^>]+role="status"[^>]*>Restoring account<\/span>/);
-    assert.match(html, /account-control-icon[\s\S]*M10\.343 3\.94/);
-    assert.doesNotMatch(html, /account-control-icon[\s\S]{0,250}m9 18 6-6-6-6/);
+    assert.match(html, /class="account-control-icon"[^>]+stroke-width="1\.8"[^>]+stroke-linecap="round"[^>]+stroke-linejoin="round"[^>]*>[\s\S]*?<path d="m6 9 6 6 6-6"/);
+    assert.doesNotMatch(html, /account-control-icon[\s\S]{0,250}M10\.343 3\.94/);
     assert.match(html, /id="account-settings-menu"[^>]+role="menu"[^>]+hidden/);
     assert.doesNotMatch(html, /account-menu-separator/);
     assert.match(html, /placeholder="Search chats\.\.\."/);
@@ -98,13 +98,22 @@ test('public HTML keeps Account and contains only invisible generic extension ho
 
 test('account footer keeps stable full-row trigger and menu dimensions', () => {
     const styles = read('chat/styles.css');
-    assert.match(styles, /\.account-nav\s*\{[^}]*padding:\s*0\.375rem 0\.75rem/s);
-    assert.match(styles, /\.account-tab-btn\s*\{[^}]*min-height:\s*3rem/s);
+    assert.match(styles, /\.account-nav\s*\{[^}]*padding:\s*0;/s);
+    assert.match(styles, /\.account-tab-btn\s*\{[^}]*min-height:\s*3rem;[^}]*padding:\s*0\.25rem 1rem;[^}]*border:\s*0;[^}]*border-radius:\s*0;/s);
+    assert.doesNotMatch(styles, /@media \(any-pointer: coarse\)\s*\{\s*\.account-tab-btn/);
+    assert.match(styles, /\.account-tab-avatar\s*\{[^}]*width:\s*1\.75rem;[^}]*height:\s*1\.75rem;/s);
+    assert.match(styles, /\.sidebar-main-content\s*\{[^}]*padding-bottom:\s*3\.5rem !important;/s);
     assert.match(styles, /\.account-settings-menu\s*\{[^}]*right:\s*0\.5rem;[^}]*left:\s*0\.5rem/s);
     assert.match(styles, /\.account-menu-item\s*\{[^}]*min-height:\s*2\.625rem/s);
     assert.match(styles, /\.account-tab-btn\[data-status="loading"\]\s*\{[^}]*cursor:\s*wait/s);
     assert.match(styles, /\.account-tab-btn:hover:not\(:disabled\)\s*\{/);
     assert.match(styles, /\.account-tab-btn:active:not\(:disabled\)\s*\{/);
+    const pressedRow = styles.match(/\.account-tab-btn:active:not\(:disabled\)\s*\{([^}]+)\}/)?.[1];
+    assert.match(pressedRow, /background-color: hsl\(var\(--color-foreground\) \/ 0\.14\)/);
+    assert.doesNotMatch(pressedRow, /transform/);
+    assert.match(styles, /\.account-control-icon\s*\{[^}]*transform-origin:\s*center;[^}]*transform 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
+    assert.match(styles, /\.account-tab-btn\[aria-expanded="true"\] \.account-control-icon\s*\{[^}]*transform:\s*rotate\(180deg\)/s);
+    assert.match(styles, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.account-control-icon\s*\{\s*transition:\s*none/s);
 });
 
 test('signed-in Account uses the compact identity and disclosure treatment', () => {
@@ -113,8 +122,13 @@ test('signed-in Account uses the compact identity and disclosure treatment', () 
     assert.match(styles, /\.account-compact-dialog\s*\{[^}]*max-width:\s*23rem[^}]*padding:\s*1rem/s);
     assert.match(styles, /\.account-compact-row:hover:not\(:disabled\)\s*\{[^}]*background:/s);
     assert.match(styles, /\.account-compact-row:active:not\(:disabled\)\s*\{[^}]*transform:\s*scale\(0\.985\)/s);
-    assert.match(styles, /\.account-compact-row\[aria-expanded="true"\] \.account-compact-chevron\s*\{[^}]*rotate\(90deg\)/s);
+    assert.match(styles, /\.account-compact-chevron\s*\{[^}]*width:\s*1\.125rem;[^}]*height:\s*1\.125rem;[^}]*transition:\s*transform 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
+    assert.match(styles, /\.account-compact-row\[aria-expanded="true"\] \.account-compact-chevron\s*\{[^}]*rotate\(180deg\)/s);
+    assert.match(styles, /\.account-compact-detail\s*\{[^}]*grid-template-rows:\s*0fr;[^}]*opacity:\s*0;[^}]*grid-template-rows 240ms cubic-bezier\(\.2, 0, 0, 1\)/s);
+    assert.match(styles, /\.account-compact-detail\[data-open="true"\]\s*\{[^}]*grid-template-rows:\s*1fr;[^}]*opacity:\s*1/s);
+    assert.match(styles, /\.account-compact-detail-clip\s*\{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden/s);
     assert.match(accountModal, /id="account-passkey-details-btn"[^>]+aria-expanded="\$\{this\.passkeyDetailsOpen\}"/);
+    assert.match(accountModal, /class="account-compact-chevron"[^>]+viewBox="0 0 24 24"[^>]+stroke-linecap="round"[^>]+stroke-linejoin="round"[^>]*><path d="m6 9 6 6 6-6"/);
     assert.match(accountModal, /id="account-clear-btn" class="account-compact-row"/);
 });
 

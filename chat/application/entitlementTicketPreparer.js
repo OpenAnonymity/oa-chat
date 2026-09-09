@@ -1,6 +1,7 @@
 import privacyPassProvider from '../services/privacyPass.js';
 import ticketStore from '../services/ticketStore.js';
 import entitlementClaimRecoveryStore from '../services/entitlementClaimRecoveryStore.js';
+import { requestQueuedLock } from './queuedLock.js';
 
 const CHUNK_SIZE = 10;
 const NORMAL_TICKET_FIELDS = new Set([
@@ -92,6 +93,11 @@ export class EntitlementTicketPreparer {
         this.pendingPublications = new WeakMap();
         this.publicationTasks = new WeakMap();
         this.publishedResults = new WeakSet();
+        this.lockOptions = {
+            timeoutMs: options.lockWaitTimeoutMs ?? 30_000,
+            setTimeoutImpl: options.setTimeoutImpl,
+            clearTimeoutImpl: options.clearTimeoutImpl
+        };
     }
 
     async acquirePublicationOwnership(scope, signal) {
@@ -122,15 +128,14 @@ export class EntitlementTicketPreparer {
             if (!committing) release();
         };
         signal?.addEventListener?.('abort', handleAbort, { once: true });
-        const lockTask = this.lockManager.request(
-            lockName,
-            { mode: 'exclusive', signal },
+        const lockTask = requestQueuedLock(
+            this.lockManager, lockName, signal,
             async () => {
                 if (signal?.aborted) throw abortError();
                 acquiredLock = true;
                 acquiredResolve();
                 await gate;
-            }
+            }, this.lockOptions
         );
         void Promise.resolve(lockTask).catch(error => {
             if (!acquiredLock) {
@@ -182,6 +187,7 @@ export class EntitlementTicketPreparer {
         }
         if (signal?.aborted) throw abortError();
 
+        onProgress?.({ phase: 'waiting', reason: 'storage', completed: 0, total: requestedCount });
         await this.ticketStore.init?.();
         const execute = () => this.runPreparation({
             scope,
@@ -195,7 +201,8 @@ export class EntitlementTicketPreparer {
         });
         const lockName = `oa-entitlement-claim-v2:${await sha256(scope)}`;
         if (this.lockManager?.request) {
-            return this.lockManager.request(lockName, { mode: 'exclusive', signal }, execute);
+            onProgress?.({ phase: 'waiting', reason: 'lock', completed: 0, total: requestedCount });
+            return requestQueuedLock(this.lockManager, lockName, signal, execute, this.lockOptions);
         }
         if (typeof window !== 'undefined') {
             const error = new Error('This browser cannot safely coordinate ticket preparation across tabs.');
@@ -236,6 +243,7 @@ export class EntitlementTicketPreparer {
             return issuer;
         };
 
+        onProgress?.({ phase: 'waiting', reason: 'storage', completed: 0, total: requestedCount });
         let pending = await this.pendingStore.get(scope);
         const hasSignedRecovery = Array.isArray(pending?.signedResponses);
         const targetCount = hasSignedRecovery
@@ -253,11 +261,11 @@ export class EntitlementTicketPreparer {
                 phase,
                 completed,
                 total: targetCount,
-                accountScope: scope,
                 source: intendedSource
             });
         };
 
+        onProgress?.({ phase: 'waiting', reason: 'issuer', completed: 0, total: targetCount });
         const currentIssuer = await fetchCurrentIssuer();
         if (pending) {
             const legacyFingerprint = await sha256(currentIssuer.publicKey);
@@ -298,6 +306,7 @@ export class EntitlementTicketPreparer {
         }
 
         if (!pending.signedResponses) {
+            updateProgress('generating', pending.generatedCount);
             while (pending.generatedCount < targetCount) {
                 assertActive();
                 const end = Math.min(pending.generatedCount + CHUNK_SIZE, targetCount);
@@ -391,6 +400,7 @@ export class EntitlementTicketPreparer {
             pending = await this.pendingStore.put(pending);
         }
 
+        onProgress?.({ phase: 'waiting', reason: 'publication', completed: targetCount, total: targetCount });
         const ownership = await this.acquirePublicationOwnership(scope, signal);
         try {
             // Another tab may have completed publication while this tab waited
