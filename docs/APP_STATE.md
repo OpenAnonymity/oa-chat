@@ -9,6 +9,10 @@
 - Wallet storage/journals and chat storage remain unchanged and independent.
   Anonymous SDK protocol/manifest/config/daemon traffic now explicitly omits
   account cookies, including same-origin proxy requests.
+- Plain Tickets deletion skips unrelated wallet state; private history stays
+  recoverable, and delete-all checks even unloaded private owners.
+- New deployments and exact verification/remaining wallet checks are recorded
+  in [SDK trial deployments](ZKAPI_SDK_TRIALS.md).
 - See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for build, deployment,
   lifecycle, and origin/persistence details. Commercial composition is outside
   this change; account onboarding remains the host's policy.
