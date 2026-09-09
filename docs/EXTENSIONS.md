@@ -300,3 +300,13 @@ settings, and storage/privacy boundaries. An extension's ticket-purchase
 onboarding should respect the selected payment method rather than assume that
 zero tickets means no available payment option. No private note or balance
 material should be exposed through the redacted commercial extension context.
+
+`context.payments` is how an extension respects that choice: `getMode()`
+returns `'tickets'` or `'zkapi'` (always `'tickets'` on a build without payment
+modes), `available()` says whether the build has both, and `setMode(mode)`
+switches, returning the runtime's promise. A host's ticket onboarding checks
+`getMode() === 'tickets'` before opening; a Stripe return calls
+`setMode('tickets')` because the purchase belongs to Tickets. On a host that
+requires sign-in, the requirement holds only in Tickets mode: zkAPI needs no
+account, the Log in dialog can be closed there, and it offers "Use zkAPI
+instead" when it stands in for a Tickets account.

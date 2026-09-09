@@ -12,7 +12,9 @@ import path from 'node:path';
 test('a required sign-in opens the dialog whenever the page loads signed out', () => {
     const app = fs.readFileSync(path.join(process.cwd(), 'chat/app.js'), 'utf8');
     const method = app.slice(app.indexOf('    async openSignInIfRequired() {'), app.indexOf('    registerLoggedOutHandler('));
-    assert.match(method, /if \(!this\.signInPolicy\.required \|\| !this\.accountModal\) return false;/);
+    // The requirement is a Tickets one: in zkAPI mode the page opens freely.
+    assert.match(method, /if \(!this\.signInRequiredNow\(\) \|\| !this\.accountModal\) return false;/);
+    assert.match(app, /signInRequiredNow\(\) \{\s*return this\.signInPolicy\.required === true && this\.getPaymentMode\(\) !== 'zkapi';/);
     assert.match(method, /await accountService\.waitForAuthBootstrap\(\)/);
     assert.match(method, /if \(state\?\.accountId && state\.status === 'unlocked'\) return false;/);
     assert.match(method, /this\.accountModal\.open\?\.\(\);/);
@@ -24,7 +26,28 @@ test('a required sign-in opens the dialog whenever the page loads signed out', (
 test('signed out, a send opens the dialog instead of a ticket shortage, and nothing sends from behind a dialog', () => {
     const app = fs.readFileSync(path.join(process.cwd(), 'chat/app.js'), 'utf8');
     const preflight = app.slice(app.indexOf('    async preflightTurnTicketBudget('), app.indexOf('const memoryTickets', app.indexOf('    async preflightTurnTicketBudget(')));
-    assert.match(preflight, /if \(this\.signInPolicy\.required && !accountService\.getState\(\)\?\.accountId\) \{\s*this\.accountModal\?\.open\?\.\(\);\s*return false;/);
+    assert.match(preflight, /if \(this\.signInRequiredNow\(\) && !accountService\.getState\(\)\?\.accountId\) \{\s*this\.accountModal\?\.open\?\.\(\);\s*return false;/);
     const send = app.slice(app.indexOf('    async sendMessage(options = {}) {'), app.indexOf('ensureDatabaseReady', app.indexOf('    async sendMessage(options = {}) {')));
     assert.match(send, /if \(hasOpenModalDialog\(\)\) return;/);
+});
+
+test('in zkAPI mode the sign-in is an offer: the dialog closes, offers "Use zkAPI instead" for Tickets, and logout asks nothing', () => {
+    const modal = fs.readFileSync(path.join(process.cwd(), 'chat/components/AccountModal.js'), 'utf8');
+    const gate = modal.slice(modal.indexOf('    mustStaySignedIn() {'), modal.indexOf('    canOfferZkapiInstead() {'));
+    assert.match(gate, /if \(this\.app\?\.getPaymentMode\?\.\(\) === 'zkapi'\) return false;/);
+    assert.match(modal, /canOfferZkapiInstead\(\) \{\s*return this\.app\?\.hasPaymentModes\?\.\(\) === true && this\.mustStaySignedIn\(\);/);
+    assert.match(modal, /await this\.app\.changePaymentMode\('zkapi'\);\s*this\.close\(\);/);
+    assert.match(modal, /id="account-use-zkapi-btn"[^>]*>\$\{this\.zkapiSwitchPending \? 'Switching to zkAPI…' : 'Use zkAPI instead'\}/);
+    // Rendered above the legal line in the login view.
+    assert.match(modal, /\$\{this\.renderZkapiInsteadOption\(\)\}\s*\$\{this\.renderLegalLine\(\)\}/);
+    // Logging out of zkAPI mode closes the dialog instead of showing the form.
+    const logout = modal.slice(modal.indexOf('    async handleAccountClear() {'), modal.indexOf('    async handleAccountClear() {') + 1800);
+    assert.match(logout, /if \(this\.app\?\.getPaymentMode\?\.\(\) === 'zkapi'\) \{\s*\/\/[^\n]*\n\s*this\.close\(\);/);
+    // Signed out on a sign-in host, the footer invites rather than says "Account".
+    assert.match(modal, /\? 'Log in or sign up'\s*: 'Account';/);
+    // Switching a signed-out chat to Tickets asks for the account.
+    const app = fs.readFileSync(path.join(process.cwd(), 'chat/app.js'), 'utf8');
+    assert.match(app, /askToSignInForBackend\(backendId\) \{\s*if \(backendId === 'zkapi' \|\| !this\.signInPolicy\.required\) return;\s*if \(accountService\.getState\(\)\?\.accountId\) return;\s*this\.accountModal\?\.open\?\.\(\);/);
+    // Extensions can read and set the mode.
+    assert.match(app, /payments: Object\.freeze\(\{[\s\S]*?getMode: \(\) => this\.getPaymentMode\(\),[\s\S]*?setMode: mode => this\.changePaymentMode\(mode\)/);
 });

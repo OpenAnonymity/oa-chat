@@ -257,6 +257,18 @@ export default class AccountModal {
             Number(note.current_balance) / Number(note.deposit_amount) * 100));
     }
 
+    /**
+     * The SDK method that drops a prepared (never broadcast) deposit, under
+     * whichever name this SDK version gives it; null when it has none, in
+     * which case the option is not offered.
+     */
+    pendingDepositDiscarder() {
+        for (const name of ['discardPendingDeposit', 'cancelPendingDeposit', 'clearPendingDeposit', 'abandonPendingDeposit', 'resetPendingDeposit']) {
+            if (typeof zkapiClient[name] === 'function') return () => zkapiClient[name]();
+        }
+        return null;
+    }
+
     renderWithdrawalStatusLink() {
         const records = zkapiClient.withdrawals.filter(record => !this.hasVerifiedExpiryClaim(record));
         const lateAttempts = zkapiClient.unresolvedLateWithdrawals;
@@ -552,6 +564,10 @@ export default class AccountModal {
             }
             const resumingDeposit = pendingDeposit
                 && ['prepared', 'retry_exact'].includes(pendingDeposit.phase);
+            // A prepared deposit that never reached the chain (MetaMask closed
+            // or rejected) can be dropped so the amount is editable again;
+            // retry_exact stays fixed because a transaction may already exist.
+            const canDiscardDeposit = pendingDeposit?.phase === 'prepared' && Boolean(this.pendingDepositDiscarder());
             const depositAmount = resumingDeposit
                 ? zkapiClient.formatBillingAmount(pendingDeposit.amount)
                 : this.depositAmount
@@ -574,6 +590,7 @@ export default class AccountModal {
                     <button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>
                         ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
                     </button>
+                    ${canDiscardDeposit ? `<button id="zkapi-discard-deposit-btn" class="zkapi-text-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Use a different amount</button>` : ''}
                 </div>`;
         }
 
@@ -765,6 +782,14 @@ export default class AccountModal {
                 this.setStatus('Deposit confirmed. Your private balance is ready.');
             }, { kind: 'deposit', title: 'Adding funds', phase: 'wallet', message: 'Connecting to MetaMask…', blocksSend: true });
         });
+        this.overlay.querySelector('#zkapi-discard-deposit-btn')?.addEventListener('click', () => this.run(async () => {
+            const discard = this.pendingDepositDiscarder();
+            if (!discard) throw new Error('This deposit cannot be changed here.');
+            await discard();
+            // Start from the suggested amount again; the field is editable.
+            this.depositAmount = null;
+            this.setStatus('Deposit cancelled. Choose an amount to continue.');
+        }, { kind: 'deposit', title: 'Cancelling deposit', phase: 'local', message: 'Discarding the saved deposit…', blocksSend: false }));
         this.overlay.querySelector('#zkapi-check-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             const result = await zkapiClient.recoverBrowserDeposit(report);
             if (result?.status !== 'confirmed') this.setStatus('The deposit has not appeared on-chain yet.');

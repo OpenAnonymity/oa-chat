@@ -1206,3 +1206,18 @@
     .payment-mode-toolbar #share-btn-text, .payment-mode-toolbar #wide-mode-btn { display: none; }
     .payment-mode-toolbar #share-btn { padding-inline: 6px; }
 }
+
+/* A quiet, text-only action under a primary one (Use a different amount). */
+.zkapi-text-button {
+    height: 2rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-muted-foreground));
+    font: inherit;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: color 120ms ease, background-color 120ms ease;
+}
+.zkapi-text-button:hover:not(:disabled) { color: hsl(var(--color-foreground)); background: hsl(var(--color-foreground) / 0.05); }
+.zkapi-text-button:disabled { opacity: 0.5; cursor: default; }

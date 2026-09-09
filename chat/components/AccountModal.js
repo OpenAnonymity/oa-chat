@@ -322,7 +322,9 @@ class AccountModal {
                 ? 'Finish account setup'
                 : needsEncryptionUnlock
                     ? 'Unlock encrypted data'
-                    : 'Account';
+                    : this.app?.getSignInPolicy?.()?.required === true
+                        ? 'Log in or sign up'
+                        : 'Account';
         if (identityLabel) identityLabel.textContent = identityText;
         if (bootstrapStatus) {
             bootstrapStatus.textContent = isAuthResolving ? 'Restoring account' : '';
@@ -515,8 +517,44 @@ class AccountModal {
      */
     mustStaySignedIn() {
         if (this.app?.getSignInPolicy?.()?.required !== true) return false;
+        // zkAPI pays from a private balance: no account needed, so the
+        // dialog is an offer that can be closed, not a wall.
+        if (this.app?.getPaymentMode?.() === 'zkapi') return false;
         const state = this.accountState || {};
         return !(state.accountId && state.status === 'unlocked');
+    }
+
+    /** The build has zkAPI and this dialog is standing in for a Tickets account. */
+    canOfferZkapiInstead() {
+        return this.app?.hasPaymentModes?.() === true && this.mustStaySignedIn();
+    }
+
+    /**
+     * "Use zkAPI instead": leave the account requirement by switching the
+     * payment mode. A Tickets switch that asked for this dialog is undone.
+     */
+    async handleUseZkapiInstead() {
+        if (this.zkapiSwitchPending) return;
+        this.zkapiSwitchPending = true;
+        this.render();
+        try {
+            await this.app.changePaymentMode('zkapi');
+            this.close();
+        } catch (error) {
+            this.app?.showToast?.(error?.message || 'zkAPI could not be selected.', 'error');
+        } finally {
+            this.zkapiSwitchPending = false;
+            if (this.isOpen) this.render();
+        }
+    }
+
+    renderZkapiInsteadOption() {
+        if (!this.canOfferZkapiInstead()) return '';
+        return `
+                <div class="account-zkapi-instead">
+                    <button id="account-use-zkapi-btn" type="button" class="account-zkapi-instead-btn" ${this.zkapiSwitchPending ? 'disabled' : ''}>${this.zkapiSwitchPending ? 'Switching to zkAPI…' : 'Use zkAPI instead'}</button>
+                    <p class="account-zkapi-instead-note">Pay per request from a private balance. No account needed.</p>
+                </div>`;
     }
 
     handleCloseAttempt() {
@@ -1260,6 +1298,12 @@ class AccountModal {
         // if it does, the dimmed page stays until the new page paints.
         if (this.app?.notifyLoggedOut?.() === true) return;
         this.loggingOut = false;
+        if (this.app?.getPaymentMode?.() === 'zkapi') {
+            // Logged out of the mode that needs no account: nothing to ask.
+            this.close();
+            this.app?.showToast?.('Logged out', 'success');
+            return;
+        }
         this.render();
         this.app?.showToast?.('Logged out', 'success');
     }
@@ -1902,6 +1946,7 @@ class AccountModal {
                 ` : ''}
 
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center" role="alert">${this.escapeHtml(state.error)}</p>` : ''}
+                ${this.renderZkapiInsteadOption()}
                 ${this.renderLegalLine()}
 
                 ${hasSignedOutSavedAccount ? `
@@ -2172,6 +2217,11 @@ class AccountModal {
         const googleBtn = document.getElementById('account-google-btn');
         if (googleBtn) {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
+        }
+
+        const useZkapiBtn = document.getElementById('account-use-zkapi-btn');
+        if (useZkapiBtn) {
+            useZkapiBtn.onclick = () => this.handleUseZkapiInstead();
         }
 
         const forgetSavedBtn = document.getElementById('account-forget-saved-btn');

@@ -524,6 +524,34 @@ class ChatApp {
         return this.signInPolicy;
     }
 
+    /** 'tickets' or 'zkapi'; 'tickets' on a build without payment modes. */
+    getPaymentMode(session = undefined) {
+        if (typeof this.runtime?.getMode !== 'function') return 'tickets';
+        try {
+            return this.runtime.getMode(session) === 'zkapi' ? 'zkapi' : 'tickets';
+        } catch {
+            return 'tickets';
+        }
+    }
+
+    hasPaymentModes() {
+        return typeof this.runtime?.changeMode === 'function';
+    }
+
+    async changePaymentMode(mode) {
+        if (!this.hasPaymentModes()) throw new Error('This build has one payment mode.');
+        await this.runtime.changeMode(mode);
+    }
+
+    /**
+     * Sign-in is a Tickets requirement, not a page requirement: zkAPI pays
+     * from a private balance and needs no account. So the policy applies
+     * only while the payment mode is Tickets.
+     */
+    signInRequiredNow() {
+        return this.signInPolicy.required === true && this.getPaymentMode() !== 'zkapi';
+    }
+
     /**
      * On a host that requires sign-in, a page that loads without an unlocked
      * account (a refresh after Log out, a new tab, a mode that needs an
@@ -531,7 +559,7 @@ class ChatApp {
      * landing page: that page is for a first visit only.
      */
     async openSignInIfRequired() {
-        if (!this.signInPolicy.required || !this.accountModal) return false;
+        if (!this.signInRequiredNow() || !this.accountModal) return false;
         const state = await accountService.waitForAuthBootstrap();
         if (state?.accountId && state.status === 'unlocked') return false;
         this.accountModal.open?.();
@@ -641,6 +669,13 @@ class ChatApp {
                     { throwOnError: true, onProgress }
                 ),
                 registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
+            }),
+            payments: Object.freeze({
+                // 'tickets' or 'zkapi'. Hosts use it to keep ticket
+                // onboarding (the Welcome offers) on the Tickets side.
+                getMode: () => this.getPaymentMode(),
+                available: () => this.hasPaymentModes(),
+                setMode: mode => this.changePaymentMode(mode)
             }),
             ui: Object.freeze({
                 persistNavigationForReturn: () => { saveNavigationSelection(this.state.currentSessionId); },
@@ -868,6 +903,7 @@ class ChatApp {
             if (this.getPendingSend(null) || this.featureOperations?.size) throw new Error('Wait for the message to finish sending before changing payment mode.');
             this.inferenceService.setDefaultBackendId(backendId);
             await this.refreshBackendPresentation(null);
+            this.askToSignInForBackend(backendId);
             return { sessionId: null, backendId };
         }
         const session = this.state.sessionsById.get(sessionId);
@@ -901,10 +937,21 @@ class ChatApp {
             Object.assign(session, stagedSession);
             this.clearMemoryApiOverrideContent(sessionId);
             await this.refreshBackendPresentation(session);
+            this.askToSignInForBackend(backendId);
             return { sessionId, backendId };
         } finally {
             this.endSessionMutation(sessionId, reservation);
         }
+    }
+
+    /**
+     * Switching a signed-out chat to Tickets asks for the account Tickets
+     * needs. The dialog offers "Use zkAPI instead", which undoes the switch.
+     */
+    askToSignInForBackend(backendId) {
+        if (backendId === 'zkapi' || !this.signInPolicy.required) return;
+        if (accountService.getState()?.accountId) return;
+        this.accountModal?.open?.();
     }
 
     async refreshBackendPresentation(session) {
@@ -2593,6 +2640,7 @@ class ChatApp {
             const route = this.features.accounts ? await routeAuthenticationIntent({
                 accountService,
                 accountModal: this.accountModal,
+                changePaymentMode: this.hasPaymentModes() ? mode => this.changePaymentMode(mode) : null,
                 locationImpl: window.location,
                 historyImpl: window.history
             }) : null;
@@ -4925,7 +4973,7 @@ class ChatApp {
         // Signed out on a host that requires sign-in: the answer is the Log
         // in dialog, not a ticket shortage (which would open the Welcome
         // offers over a page that cannot buy anything).
-        if (this.signInPolicy.required && !accountService.getState()?.accountId) {
+        if (this.signInRequiredNow() && !accountService.getState()?.accountId) {
             this.accountModal?.open?.();
             return false;
         }

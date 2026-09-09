@@ -1,8 +1,12 @@
 const GOOGLE_AUTH_INTENT = 'google';
 const USERNAME_AUTH_INTENT = 'username';
+// Not a sign-in: the landing page's zkAPI entry. The chat opens in zkAPI
+// mode (no account needed) and offers to fund the private balance.
+const ZKAPI_INTENT = 'zkapi';
 const AUTHENTICATION_INTENTS = new Set([
     GOOGLE_AUTH_INTENT,
-    USERNAME_AUTH_INTENT
+    USERNAME_AUTH_INTENT,
+    ZKAPI_INTENT
 ]);
 
 function normalizeUsername(value) {
@@ -78,11 +82,28 @@ export function clearAuthenticationIntent(
 export async function routeAuthenticationIntent({
     accountService,
     accountModal,
+    changePaymentMode = null,
     locationImpl = globalThis.location,
     historyImpl = globalThis.history
 }) {
     const intent = getAuthenticationIntent(locationImpl);
     if (!intent) return Object.freeze({ handled: false, action: 'none' });
+    if (intent === ZKAPI_INTENT) {
+        clearAuthenticationIntent(locationImpl, historyImpl);
+        if (typeof changePaymentMode !== 'function') {
+            // A build without zkAPI: the arrival is an ordinary visit.
+            return Object.freeze({ handled: false, action: 'none' });
+        }
+        await accountService.waitForAuthBootstrap();
+        try {
+            // Selecting zkAPI also runs the send preflight, which opens the
+            // funding dialog when the private balance is empty.
+            await changePaymentMode(ZKAPI_INTENT);
+        } catch (error) {
+            console.warn('zkAPI could not be selected on arrival:', error);
+        }
+        return Object.freeze({ handled: true, action: 'zkapi' });
+    }
     const username = intent === USERNAME_AUTH_INTENT
         ? getUsernameAuthenticationValue(locationImpl)
         : null;
