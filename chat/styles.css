@@ -8584,15 +8584,22 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 
 /* Share feedback: a row that is a link. */
 .settings-link {
+    /* A row that is a link: it lights up as one, edge to edge, on hover. */
+    margin: 0 -0.5rem;
+    padding: 0 0.5rem;
+    border-radius: 0.5rem;
     color: inherit;
     text-decoration: none;
     cursor: pointer;
+    transition: background-color 160ms cubic-bezier(.2, 0, 0, 1);
 }
+.settings-link:hover { background: hsl(var(--color-foreground) / 0.05); }
 .settings-link:hover .settings-row-label { color: hsl(var(--color-foreground)); }
 .settings-link-icon {
     width: 1rem;
     height: 1rem;
     color: hsl(var(--color-muted-foreground));
+    transition: color 160ms cubic-bezier(.2, 0, 0, 1);
 }
 .settings-link:hover .settings-link-icon { color: hsl(var(--color-foreground)); }
 
