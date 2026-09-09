@@ -53,7 +53,7 @@ test('ordinary model rows retain ticket prices without a product presenter', () 
     assert.match(html, /title="\d+ tickets?"/);
     assert.match(html, /data-model-name="OpenAI: Primary"/);
     assert.match(html, /bg-accent/);
-    assert.doesNotMatch(html, /data-model-budget-label/);
+    assert.doesNotMatch(html, /data-model-balance-badge/);
 });
 
 test('product pricing replaces only the ticket badge and safely escapes its copy', () => {
@@ -75,7 +75,7 @@ test('product pricing replaces only the ticket badge and safely escapes its copy
     assert.match(html, /bg-accent/);
 });
 
-test('optional model budgets wrap independently of rates and receive captured reasoning context', () => {
+test('optional minimum-balance badges use ticket styling and receive captured reasoning context', () => {
     const picker = createModelPicker();
     picker.app.reasoningEnabled = false;
     let suppliedOptions;
@@ -83,8 +83,8 @@ test('optional model budgets wrap independently of rates and receive captured re
         getModelPricing(_model, options) {
             suppliedOptions = options;
             return {
-                budgetLabel: '$4.50 key cap · $4.50 minimum <balance>',
-                budgetTooltip: 'Proof "threshold" <details>',
+                balanceBadgeLabel: '≥ $4.50 <balance>',
+                balanceBadgeTooltip: 'Proof "threshold" <details>',
                 label: '$10/M input · $50/M output',
                 description: 'Per-token rates'
             };
@@ -92,12 +92,15 @@ test('optional model budgets wrap independently of rates and receive captured re
     };
     const html = picker.buildModelOptionHTML(picker.app.state.models[0]);
     assert.deepEqual(suppliedOptions, { reasoningEnabled: false });
-    const budgetRow = html.match(/<div data-model-budget-label[^>]*>[\s\S]*?<\/div>/)?.[0];
-    assert.ok(budgetRow);
-    assert.match(budgetRow, /white-space:normal;overflow-wrap:break-word/);
-    assert.doesNotMatch(budgetRow, /truncate|overflow-hidden|text-overflow/);
-    assert.match(budgetRow, /\$4\.50 minimum &lt;balance&gt;/);
-    assert.match(budgetRow, /title="Proof &quot;threshold&quot; &lt;details&gt;"/);
-    assert.match(html, /data-model-budget-label[\s\S]*?<\/div>\s*<div[^>]*title="Per-token rates">\$10\/M input · \$50\/M output/);
+    const badge = html.match(/<span data-model-balance-badge[^>]*>[\s\S]*?<\/span>/)?.[0];
+    assert.ok(badge);
+    assert.match(badge, /≥ \$4\.50 &lt;balance&gt;/);
+    assert.match(badge, /title="Proof &quot;threshold&quot; &lt;details&gt;"/);
+    const ordinary = createModelPicker().buildModelOptionHTML(picker.app.state.models[0]);
+    const ticketClass = ordinary.match(/<span class="([^"]+)" title="\d+ tickets?"/)?.[1];
+    assert.ok(ticketClass);
+    assert.equal(badge.match(/class="([^"]+)"/)?.[1], ticketClass);
+    assert.match(html, /title="Per-token rates">\$10\/M input · \$50\/M output/);
+    assert.doesNotMatch(html, /data-model-budget-label/);
     assert.doesNotMatch(html, /title="\d+ tickets?"|<balance>|<details>/);
 });

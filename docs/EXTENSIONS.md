@@ -219,8 +219,11 @@ context above: product components run locally as part of the configured app.
   start funding work or install a timer that remounts the UI.
 - `presentation.getModelPricing(model, {reasoningEnabled})` may return
   `{label, description}` to replace ticket prices with escaped plain-text
-  pricing. Optional `budgetLabel` and `budgetTooltip` add a separate wrapping
-  line above the price subtitle, useful for a spending cap and minimum balance.
+  pricing. Optional `balanceBadgeLabel` and `balanceBadgeTooltip` show an escaped
+  minimum-balance badge in the same right-aligned position and style as ticket
+  counts. For example, `≥ $2` can carry an accessible explanation that a private
+  balance of at least $2 is required. The price subtitle remains below the model
+  name without an additional budget line.
 - `presentation.getSessionStatus(session)` may return `{label, tone}` where
   tone is `working`, `waiting`, `success`, or `error`.
 - `presentation.getPendingPresentation(phase, progress)` may return
