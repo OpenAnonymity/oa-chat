@@ -17,6 +17,7 @@ import {
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
+import ticketStore from './services/ticketStore.js';
 import scrubberService from './services/scrubberService.js';
 import {
     augmentQuery as runMemoryAugmentQuery,
@@ -31,6 +32,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
+import { saveNavigationSelection, restoreNavigationSelection } from './services/navigationState.js';
 import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -115,6 +117,7 @@ import {
     areCouncilConfigsEqual
 } from './domain/councilConfig.js';
 import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
+import { hasOpenModalDialog } from './ui/modalLayer.js';
 
 const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
@@ -157,7 +160,6 @@ function emitDesktopEvent(name, detail = {}) {
         // No-op: desktop hooks should never break web behavior.
     }
 }
-const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
     body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see mixed and unlinkable traffic.',
@@ -295,6 +297,7 @@ class ChatApp {
         this.chatInput = null;
         this.modelPicker = null;
         this.memoryEditor = null;
+        this.settingsDialog = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
         this.accessAcquisitionInFlight = new Map(); // backend/session/model -> shared access acquisition
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
@@ -343,11 +346,20 @@ class ChatApp {
         });
         this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
         this.welcomePanelEnabled = options.welcomePanel !== false;
+        // A host may make sign-in a condition of using the page (the Log in
+        // dialog cannot be closed while signed out) and name the legal pages
+        // the dialog links to.
+        this.signInPolicy = Object.freeze({
+            required: options.signIn?.required === true,
+            termsUrl: typeof options.signIn?.termsUrl === 'string' ? options.signIn.termsUrl : '',
+            privacyUrl: typeof options.signIn?.privacyUrl === 'string' ? options.signIn.privacyUrl : ''
+        });
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
         this.ticketShortageHandler = null;
         this.firstAccountReadyHandlers = new Set();
+        this.loggedOutHandlers = new Set();
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -429,6 +441,8 @@ class ChatApp {
         if (!response.ok || typeof data.public_key !== 'string' || !data.public_key) {
             const error = new Error('Unable to load the OA ticket issuer public key.');
             error.code = 'TICKET_ISSUER_UNAVAILABLE';
+            error.status = response.status;
+            error.retryAfter = response.headers?.get?.('Retry-After') || null;
             throw error;
         }
         const computedKeyId = await ticketPublicKeyId(data.public_key);
@@ -506,6 +520,47 @@ class ChatApp {
         }
     }
 
+    getSignInPolicy() {
+        return this.signInPolicy;
+    }
+
+    /**
+     * On a host that requires sign-in, a page that loads without an unlocked
+     * account (a refresh after Log out, a new tab, a mode that needs an
+     * account) gets the Log in or sign up dialog at once, rather than a
+     * landing page: that page is for a first visit only.
+     */
+    async openSignInIfRequired() {
+        if (!this.signInPolicy.required || !this.accountModal) return false;
+        const state = await accountService.waitForAuthBootstrap();
+        if (state?.accountId && state.status === 'unlocked') return false;
+        this.accountModal.open?.();
+        return true;
+    }
+
+    registerLoggedOutHandler(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.loggedOutHandlers.add(handler);
+        return () => this.loggedOutHandlers.delete(handler);
+    }
+
+    /**
+     * The person chose Log out and the account is gone from this device.
+     * Returns true when a handler is taking the page away (so the caller
+     * can hold its current frame rather than redraw a signed-out one).
+     */
+    notifyLoggedOut() {
+        let leaving = false;
+        for (const handler of [...this.loggedOutHandlers]) {
+            try {
+                if (handler() === true) leaving = true;
+            } catch (error) {
+                console.warn('Logged-out routing handler failed:', error);
+            }
+        }
+        return leaving;
+    }
+
     createExtensionContext() {
         const getAccountSnapshot = () => toExtensionAccountSnapshot(accountService.getState());
         return Object.freeze({
@@ -525,6 +580,19 @@ class ChatApp {
                 requestPublic: (path, init) => this.requestExtensionPublicApi(path, init)
             }),
             tickets: Object.freeze({
+                refreshSnapshot: async ({ signal } = {}) => {
+                    const before = getAccountSnapshot();
+                    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+                    await ticketStore.refreshForAccount(before.accountId || null, { signal });
+                    const after = getAccountSnapshot();
+                    if (signal?.aborted || after.accountId !== before.accountId) {
+                        throw new DOMException('Account changed', 'AbortError');
+                    }
+                    return toExtensionTicketSnapshot(
+                        this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
+                            { ticketCount: 0, maxShareCount: 0, busy: false }, after
+                    );
+                },
                 getPendingEntitlementClaim,
                 prepareEntitlementBatch,
                 publishPreparedTicketUpdate,
@@ -575,13 +643,16 @@ class ChatApp {
                 registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
             }),
             ui: Object.freeze({
+                persistNavigationForReturn: () => { saveNavigationSelection(this.state.currentSessionId); },
                 openAccount: () => this.accountModal?.open?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
                 ensureTicketStatusVisible: () => this.rightPanel?.show?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
+                getAccountIdentityLabel: () => this.accountModal?.getAccountIdentityLabel?.() || '',
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
+                registerLoggedOut: handler => this.registerLoggedOutHandler(handler),
                 showToast: (...args) => this.showToast(...args)
             })
         });
@@ -1053,6 +1124,16 @@ class ChatApp {
                 catch (error) { console.warn('Could not clear the local usage preview:', error?.message || 'Storage unavailable'); }
             }
         }
+    }
+
+    /** Whether an extension has mounted a node matching `selector` into `name`. */
+    hasExtensionSlotNode(name, selector) {
+        return this.extensionSlots.hasMatchingNode(name, selector);
+    }
+
+    /** Notify `listener` whenever the nodes mounted into `name` change. */
+    subscribeExtensionSlot(name, listener) {
+        return this.extensionSlots.subscribe(name, listener);
     }
 
     detectInitialLinkContext() {
@@ -2509,14 +2590,20 @@ class ChatApp {
         }
 
         try {
-            if (this.features.accounts) await routeAuthenticationIntent({
+            const route = this.features.accounts ? await routeAuthenticationIntent({
                 accountService,
                 accountModal: this.accountModal,
                 locationImpl: window.location,
                 historyImpl: window.history
-            });
+            }) : null;
+            if (this.features.accounts && !route?.handled) await this.openSignInIfRequired();
         } catch (error) {
             console.warn('Initial account route could not be completed:', error);
+        } finally {
+            // Whatever the route decided, the early arrival spinner from
+            // index.html must not outlive it (the dialog clears it itself on open).
+            document.documentElement?.removeAttribute?.('data-auth-arriving');
+            document.documentElement?.removeAttribute?.('data-auth-caption');
         }
 
         // Initialize preference-backed layout only after account context exists.
@@ -2655,13 +2742,14 @@ class ChatApp {
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
-        const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (savedSessionId) {
-            await this.ensureSessionLoaded(savedSessionId);
-            if (this.state.sessionsById.has(savedSessionId)) {
-                this.state.currentSessionId = savedSessionId;
+        const selection = await restoreNavigationSelection({
+            search: window.location.search,
+            loadSession: async sessionId => {
+                await this.ensureSessionLoaded(sessionId);
+                return this.state.sessionsById.has(sessionId);
             }
-        }
+        });
+        if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
 
         const [
             storedModelPreference,
@@ -3363,7 +3451,7 @@ class ChatApp {
                 this.saveChatbarStateForSession(this.state.currentSessionId);
             }
             this.state.currentSessionId = existingSession.id;
-            sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
+            saveNavigationSelection(existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -3496,7 +3584,7 @@ class ChatApp {
                 this.saveChatbarStateForSession(this.state.currentSessionId);
             }
             this.state.currentSessionId = session.id;
-            sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+            saveNavigationSelection(session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -4329,7 +4417,7 @@ class ChatApp {
 
         await chatDB.saveSession(session);
         if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(session.id)) return session;
-        sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+        saveNavigationSelection(session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
         if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(session.id)) return session;
 
@@ -4393,7 +4481,7 @@ class ChatApp {
         this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
-        sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+        saveNavigationSelection(sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
         // Keep current search state (global setting)
@@ -4834,6 +4922,13 @@ class ChatApp {
     }
 
     async preflightTurnTicketBudget(session, content, options = {}) {
+        // Signed out on a host that requires sign-in: the answer is the Log
+        // in dialog, not a ticket shortage (which would open the Welcome
+        // offers over a page that cannot buy anything).
+        if (this.signInPolicy.required && !accountService.getState()?.accountId) {
+            this.accountModal?.open?.();
+            return false;
+        }
         if (!this.usesTicketAccess(session)) {
             // An alternate access runtime must authorize its own path. Never
             // fabricate ticket balances or silently fall back to ticket access.
@@ -5118,6 +5213,7 @@ class ChatApp {
         // must not erase a draft typed into the immediately available composer.
         this.resetMessageInputLayout({ resetScroll: true });
         this.applyChatbarState(null);
+        saveNavigationSelection(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
@@ -6850,6 +6946,7 @@ class ChatApp {
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
                 let reasoningStartTime = null;
+                let reasoningEndTime = null;
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -6889,7 +6986,20 @@ class ChatApp {
                         }
 
                         // Handle subsequent chunks
-                        if (chunk) streamedContent += chunk;
+                        if (chunk) {
+                            streamedContent += chunk;
+                            // First content after reasoning: the thinking is over, settle its trace.
+                            if (!reasoningEndTime && reasoningStartTime && streamedReasoning.length > 0) {
+                                reasoningEndTime = Date.now();
+                                if (this.chatArea && this.isViewingSession(session.id)) {
+                                    this.chatArea.settleReasoningDisplay(
+                                        streamingMessageId,
+                                        streamedReasoning,
+                                        reasoningEndTime - reasoningStartTime
+                                    );
+                                }
+                            }
+                        }
 
                         // Handle image data
                         if (imageData && imageData.images) {
@@ -6947,6 +7057,8 @@ class ChatApp {
                             }
                         } else {
                             streamedReasoning += reasoningChunk;
+                            // Thinking after an answer segment (tools): the trace settles again at the next content.
+                            reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
                             // Save reasoning frequently so session switch can restore state
                             await chatDB.saveMessage(streamingMessage);
@@ -6982,8 +7094,7 @@ class ChatApp {
 
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
-                    const reasoningEndTime = Date.now();
-                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                    streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
                 }
 
                 await chatDB.saveMessage(streamingMessage);
@@ -7231,6 +7342,8 @@ class ChatApp {
      * Handles API key acquisition, model selection, and streaming updates.
      */
     async sendMessage(options = {}) {
+        // A dialog owns the page; never send from the composer behind it.
+        if (hasOpenModalDialog()) return;
         if (this.sessionSwitchInFlight) return;
         const sessionId = options.sessionId || this.state.currentSessionId;
         if (this.isDeletingAllChats || this.historyDeletionInProgress || this.isSessionDeleted(sessionId)) return;
@@ -7653,10 +7766,11 @@ class ChatApp {
                                     reasoningEndTime = Date.now();
                                     const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
-                                    // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                    // Settle the trace now: the answer has begun, so the thinking is over.
                                     if (this.chatArea && this.isViewingSession(session.id)) {
-                                        this.chatArea.updateReasoningSubtitleToDuration(
+                                        this.chatArea.settleReasoningDisplay(
                                             streamingMessageId,
+                                            streamedReasoning,
                                             reasoningDuration
                                         );
                                     }
@@ -7690,10 +7804,11 @@ class ChatApp {
                                 reasoningEndTime = Date.now();
                                 const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
-                                // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                // Settle the trace now: the answer has begun, so the thinking is over.
                                 if (this.chatArea && this.isViewingSession(session.id)) {
-                                    this.chatArea.updateReasoningSubtitleToDuration(
+                                    this.chatArea.settleReasoningDisplay(
                                         streamingMessageId,
+                                        streamedReasoning,
                                         reasoningDuration
                                     );
                                 }
@@ -7755,6 +7870,8 @@ class ChatApp {
                             }
                         } else {
                             streamedReasoning += reasoningChunk;
+                            // Thinking after an answer segment (tools): the trace settles again at the next content.
+                            firstContentChunk = true;
                             streamingMessage.reasoning = streamedReasoning;
                         }
 
@@ -8932,7 +9049,7 @@ class ChatApp {
             // Clear edit state only while this action still owns navigation.
             this.editingMessageId = null;
             this.editDrafts.clear();
-            sessionStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+            saveNavigationSelection(newSessionId);
             this.updateUrlWithSession(newSessionId);
 
             if (this.sidebar) this.sidebar.scrollToTop();
@@ -8984,6 +9101,7 @@ class ChatApp {
         this.state.sessions = [];
         this.state.sessionsById = new Map();
         this.state.currentSessionId = null;
+        saveNavigationSelection(null);
 
         if (typeof chatDB.clearAllChats === 'function') {
             await chatDB.clearAllChats();
@@ -10399,7 +10517,9 @@ class ChatApp {
                 activeElement.isContentEditable
             );
 
-            // Send message on Enter if no input is focused and there's unsent text
+            // Send message on Enter if no input is focused and there's unsent text.
+            // Never from behind a dialog (Log in, Account, Welcome): the page
+            // the message would go to is not the one the person is looking at.
             if (e.key === 'Enter' &&
                 !isInputFocused &&
                 !e.shiftKey &&
@@ -10407,7 +10527,8 @@ class ChatApp {
                 !e.ctrlKey &&
                 !e.altKey &&
                 !this.elements.sendBtn.disabled &&
-                this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.elements.modelPickerModal.classList.contains('hidden') &&
+                !hasOpenModalDialog()) {
                 e.preventDefault();
                 if (this.isCurrentSessionStreaming()) {
                     this.stopCurrentSessionStreaming();
@@ -10424,13 +10545,15 @@ class ChatApp {
             // - Key is a printable character
             // - Model picker is closed
             // - No share modal is open
+            // - No dialog is up (typing belongs to the dialog, not the page behind it)
             if (!isInputFocused &&
                 !e.metaKey &&
                 !e.ctrlKey &&
                 !e.altKey &&
                 e.key.length === 1 &&
                 this.elements.modelPickerModal.classList.contains('hidden') &&
-                !this.ui.shareModals.currentModal) {
+                !this.ui.shareModals.currentModal &&
+                !hasOpenModalDialog()) {
                 this.elements.messageInput.focus();
             }
         });
@@ -10718,6 +10841,8 @@ class ChatApp {
     focusMessageInput({ force = false } = {}) {
         const input = this.elements.messageInput;
         if (!input || input.disabled) return;
+        // Startup autofocus must not steal focus from an authentication intent.
+        if (this.accountModal?.isOpen) return;
 
         const active = document.activeElement;
         if (!force && active && active !== document.body && active !== document.documentElement && active !== input) {

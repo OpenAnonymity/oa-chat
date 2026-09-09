@@ -378,3 +378,17 @@ test('component app facade exposes an explicit compatibility contract', () => {
         facade.randomNewField = true;
     }, /unsupported app field/);
 });
+
+test('component app facade passes Account routing calls through to the app', () => {
+    const calls = [];
+    const app = {
+        notifyFirstAccountReady() { calls.push('first-account'); },
+        notifyLoggedOut() { calls.push('logged-out'); },
+        showSidebar(options) { calls.push(`sidebar:${JSON.stringify(options)}`); }
+    };
+    const facade = createComponentAppFacade(app);
+    facade.notifyFirstAccountReady?.();
+    facade.notifyLoggedOut?.();
+    facade.showSidebar?.({ persist: false });
+    assert.deepEqual(calls, ['first-account', 'logged-out', 'sidebar:{"persist":false}']);
+});

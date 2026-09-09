@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 globalThis.localStorage = globalThis.localStorage || {
     getItem: () => null,
@@ -103,4 +104,26 @@ test('optional minimum-balance badges use ticket styling and receive captured re
     assert.match(html, /title="Per-token rates">\$10\/M input · \$50\/M output/);
     assert.doesNotMatch(html, /data-model-budget-label/);
     assert.doesNotMatch(html, /title="\d+ tickets?"|<balance>|<details>/);
+});
+
+test('model search replaces automatic focus with a keyboard-only accent underline', () => {
+    const html = fs.readFileSync('chat/index.html', 'utf8');
+    const fixture = fs.readFileSync('test/fixtures/model-picker-focus.html', 'utf8');
+    const css = fs.readFileSync('chat/styles.css', 'utf8');
+
+    assert.match(html, /class="model-picker-search [^"]*" cmdk-input-wrapper=""/);
+    assert.match(fixture, /id="model-search"[^>]*autofocus/);
+    assert.match(css, /--color-focus-ring: var\(--blue-500\)/);
+    assert.match(css, /--tw-ring-color: hsl\(var\(--color-focus-ring\)\)/);
+    assert.match(css, /\.model-picker-search:has\(> #model-search:focus\)\s*\{[^}]*box-shadow: none/);
+    assert.match(css, /html\[data-keyboard-nav\] \.model-picker-search:has\(> #model-search:focus-visible\)\s*\{[^}]*box-shadow: inset 0 -2px 0 hsl\(var\(--color-focus-ring\)\)/);
+    assert.match(css, /#model-search:focus,\s*#model-search:focus-visible\s*\{\s*outline: none/);
+    assert.match(css, /@media \(forced-colors: active\)\s*\{\s*html\[data-keyboard-nav\] #model-search:focus-visible\s*\{[^}]*outline: 2px solid Highlight/);
+    assert.match(css, /html\[data-keyboard-nav\] \.account-login-control:focus-within\s*\{[^}]*border-color: hsl\(var\(--color-focus-ring\)/);
+    assert.match(css, /\.pin-input-container:focus-within \.pin-box\.active\s*\{[^}]*border-color: hsl\(var\(--color-focus-ring\)\)/);
+
+    const tailwindConfig = fs.readFileSync('tailwind.config.js', 'utf8');
+    const shareModals = fs.readFileSync('chat/components/ShareModals.js', 'utf8');
+    assert.match(tailwindConfig, /ring: 'hsl\(var\(--color-focus-ring\)\)'/);
+    assert.doesNotMatch(shareModals, /focus:ring-primary/);
 });

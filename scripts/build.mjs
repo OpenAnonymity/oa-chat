@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
@@ -105,7 +106,7 @@ const toPosixPath = (value) => value.split(path.sep).join('/');
 
 const replaceBundleBlock = (html, name, scriptPath) => {
     const blockRegex = new RegExp(`<!--\\s*BUNDLE:${name}\\s*-->[\\s\\S]*?<!--\\s*\\/BUNDLE:${name}\\s*-->`);
-    const tag = `<!-- BUNDLE:${name} -->\n    <script type="module" src="${scriptPath}"></script>\n    <!-- /BUNDLE:${name} -->`;
+    const tag = `<!-- BUNDLE:${name} -->\n    <script type="module" src="${scriptPath}" onerror="window.__oaRetryBundle(this)"></script>\n    <!-- /BUNDLE:${name} -->`;
     if (!blockRegex.test(html)) {
         throw new Error(`Missing BUNDLE:${name} block in index.html`);
     }
@@ -298,6 +299,13 @@ const build = async () => {
     }
 
     const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
+    // Core styles are copied, not part of the JS bundle hash. Version their
+    // content separately so CSS-only releases do not reuse a cached URL.
+    const stylesHash = createHash('sha256')
+        .update(await fs.readFile(path.join(outDir, 'styles.css')))
+        .digest('hex').slice(0, 16);
+    html = html.replace(/(<link\b[^>]*\bhref=")styles\.css(")/g,
+        `$1styles.css?v=${stylesHash}$2`);
     html = versionStaticAssetRefs(html, appHash);
 
     await fs.writeFile(indexPath, html, 'utf8');

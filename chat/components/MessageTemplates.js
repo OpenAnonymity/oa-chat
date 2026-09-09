@@ -11,7 +11,6 @@ import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
-import { normalizeMemoryRetrievalFailureReason } from '../services/memoryRetrievalError.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
 import { buildDetailedPendingIndicator } from './PendingIndicator.js';
 
@@ -1981,18 +1980,6 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </div>
         </div>
     ` : '';
-    const memoryRetrievalFailure = isMemoryAgent
-        ? normalizeMemoryRetrievalFailureReason(message.memoryRetrievalFailure)
-        : null;
-    const memoryFailureDetail = memoryRetrievalFailure?.title && memoryRetrievalFailure?.detail
-        ? `
-        <div class="memory-failure-detail mx-2 -mt-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            <span class="font-medium text-foreground">Note:</span>
-            <span class="font-medium text-foreground">${escapeHtml(memoryRetrievalFailure.title)}.</span>
-        </div>
-    `
-        : '';
-
     // Build imported thumbnails (small horizontal row before text)
     const thumbnailsBubble = buildImportedThumbnails(message.images);
 
@@ -2178,7 +2165,6 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${agentTraceBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
-                ${memoryFailureDetail}
                 ${imageBubble}
                 ${memoryApprovalActions}
                 ${assistantActionsRow}

@@ -1,8 +1,8 @@
 # Privacy Model: Unlinkable Inference
 
 This document defines the full-system unlinkability and zero-trust model for
-oa-chat users, including the metadata tradeoff introduced when an SSO user opts
-to sync inference tickets through an identity-authenticated account.
+oa-chat users, including the metadata tradeoff introduced when a user opts to
+sync inference tickets through a Google or pseudonymous username account.
 
 For the full technical description, see the blog post:
 [Unlinkable Inference as a User Privacy Architecture](https://openanonymity.ai/blog/unlinkable-inference/).
@@ -18,12 +18,14 @@ system and the inference provider -- from linking a specific user's identity to
 what they asked. The user obtains an ephemeral API key through blind signatures
 and uses it to talk directly to the inference provider.
 
-Optional Google ticket-wallet sync adds an identity-bound metadata
+Optional Google or username ticket-wallet sync adds a stable account metadata
 surface that is not covered by the strongest form of this claim. The org still
 cannot decrypt tickets or prompts, but it can observe authenticated sync timing,
 ciphertext sizes, and stable opaque blob IDs and can attempt to correlate those
-signals with ticket redemption. Users requiring strict identity-unlinkability
-at the metadata layer must use the identity-free account flow.
+signals with ticket redemption. For Google it also knows the external identity;
+for username accounts it knows the chosen stable pseudonym. Users requiring
+strict identity-unlinkability at the metadata layer must use the anonymous or
+random account-number flow.
 
 The two formal properties (defined in blog post
 [Section 3.1](https://openanonymity.ai/blog/unlinkable-inference/#31-threat-model)):
@@ -140,8 +142,9 @@ because the key was issued through blind signatures with no user identity attach
 
 ### 5. Optional account sign-in and encrypted sync
 
-Passkeys remain the identity-free account option. A user may alternatively connect
-Google to an OA sync account. In that opt-in flow:
+Random account-number passkeys remain the identity-free account option. A user
+may alternatively connect Google or choose a stable pseudonymous username for
+an OA sync account. In those opt-in flows:
 
 1. The org completes OAuth with PKCE, uses the access token once to obtain the
    provider's stable OpenID Connect `sub` and verified email, and immediately
@@ -150,24 +153,32 @@ Google to an OA sync account. In that opt-in flow:
    account ID and provider email. Google is requested with `openid email`. The
    email is returned to the authenticated
    browser and used as the encryption passkey's recognizable WebAuthn username.
-3. The browser generates a random 256-bit sync master key. A separate WebAuthn
-   PRF passkey produces an AES-GCM wrapping key locally; the org receives only
-   the passkey credential ID and encrypted master-key wrapper.
-4. A returning browser can use its locally persisted non-extractable CryptoKeys.
-   A new or logged-out browser must evaluate the synced passkey's PRF after
-   provider sign-in. The WebAuthn assertion and PRF output never leave the
-   browser, and OAuth authentication alone cannot decrypt sync data.
-5. Identity-backed accounts sync encrypted active/archived ticket wallets,
+3. A username account instead stores a mapping from the normalized username to
+   an opaque OA account ID. WebAuthn `user.id` remains that opaque ID; the
+   username is only the passkey label and public login locator. The same
+   WebAuthn gesture authenticates the account and evaluates PRF locally. No
+   recovery wrapper or verifier is stored; the username alone cannot recover a
+   lost passkey or decrypt the account.
+4. The browser generates a random 256-bit sync master key. A WebAuthn PRF
+   produces an AES-GCM wrapping key locally; the org receives only the passkey
+   credential ID and encrypted master-key wrapper.
+5. A returning browser can use its locally persisted non-extractable CryptoKeys.
+   A new or logged-out browser evaluates the synced passkey's PRF after Google
+   sign-in or as part of username WebAuthn authentication. PRF output never
+   leaves the browser, and account authentication alone cannot decrypt sync
+   data.
+6. Google and username accounts sync encrypted active/archived ticket wallets,
    high-entropy SHA-256 deletion tombstones for cash-style transfers, and
    preferences. Per-blob keys are derived locally; logical IDs and payload types
    are inside ciphertext or represented only by HMAC-derived opaque IDs.
-   For identity-backed accounts, redemption consumption does not trigger
+   For these accounts, redemption consumption does not trigger
    immediate sync; it propagates during the next initial/periodic sync.
-6. Provider identities cannot be linked onto an existing legacy account.
-   Google login resolves a dedicated identity partition so it cannot
+7. Neither a provider identity nor a username can be linked onto an existing
+   legacy account. Each resolves a dedicated account partition so it cannot
    inherit a namespace with historical ticket-sync metadata.
 
-This opt-in creates a provider-identity-to-sync-account relationship at the org.
+This opt-in gives the org either a provider-identity-to-account relationship or
+a stable username-to-account pseudonym.
 Account authentication is not present in ticket redemption or inference
 requests, finalized tickets in sync records remain encrypted, blind issuance
 remains unlinkable to redemption, ephemeral provider keys remain anonymous, and
@@ -179,7 +190,8 @@ two-second signal, but does not cryptographically eliminate correlation around
 later syncs. These metadata do not reveal ticket plaintext or prompt contents.
 See
 [Encryption Passkeys](ENCRYPTION_PASSKEYS.md) and
-[Google Sign-In](GOOGLE_SIGN_IN.md)
+[Google Sign-In](GOOGLE_SIGN_IN.md), and
+[Username Passkeys](USERNAME_PASSKEYS.md)
 for implementation details.
 
 ### 6. Verifier fail-closed policy
@@ -221,12 +233,20 @@ moving the staged batch. A commit in flight retains the lock and revalidates the
 account before its observable update. The extension never receives or supplies
 ticket material.
 
+Pseudonymous username accounts do not disclose an external identity provider
+subject, but the chosen username is a stable plaintext account locator visible
+to the org during authentication. It never accompanies ticket redemption or
+inference requests and does not alter client-side blinding or encryption. A
+username reused elsewhere can nevertheless be associated with an external
+identity, so users seeking the strongest identity-free posture should choose a
+fresh pseudonym or retain the random legacy account-number path.
+
 ## What Each Component Can and Cannot See
 
 
 | Actor | What it sees | Can it identify the user? | Why not? |
 |---|---|---|---|
-| **Org / Station** | Invitation or billing credential plus blinded requests at issuance; finalized tickets + issued API keys at redemption; station governance events; for optional SSO it also sees a provider subject plus opaque encrypted sync blobs and metadata | It identifies opt-in account activity such as billing and sync, but cannot link that identity to ticket redemption or inference | Blind signatures make blinded requests cryptographically unlinkable to finalized tickets. Synced ticket payloads and logical IDs are encrypted/HMAC-opaque, while identity credentials remain absent from redemption and inference. Never sees inference content. |
+| **Org / Station** | Invitation or billing credential plus blinded requests at issuance; finalized tickets + issued API keys at redemption; station governance events; for optional Google sign-in it also sees a provider subject, and for username accounts it sees the chosen pseudonym; account sync remains opaque ciphertext plus metadata | It identifies opt-in Google account activity and can observe a stable username account pseudonym, but cannot link either credential to ticket redemption or inference through the protocol | Blind signatures make blinded requests cryptographically unlinkable to finalized tickets. Synced ticket payloads and logical IDs are encrypted/HMAC-opaque, while account credentials remain absent from redemption and inference. Never sees inference content. |
 | **Verifier** | Raw ephemeral key transiently during `/submit_key`, station/org signatures, derived truncated key hash, broadcast status | No | The verifier derives the hash server-side and does not receive user identity or prompts. The key carries no user identity because ticket issuance and redemption are unlinkable. |
 | **Inference provider** | API key + inference content (prompts/responses) | No | Key is ephemeral and anonymous. No user identity binding. Even a malicious provider cannot link prompts to a user or across sessions. |
 | **User** | Everything (their own tickets, keys, prompts, responses) | N/A | The user is the only party who can link all steps together. |
@@ -249,15 +269,15 @@ The worst case for each component:
 
 | Component | Worst case | Can it break unlinkability? | Why not? |
 |---|---|---|---|
-| **Malicious org / station (even if closed-source)** | Denial of service; for optional SSO sync, analysis of identity-bound sync timing and ciphertext sizes | Not through the blind-signature or content path; SSO sync metadata can weaken identity-unlinkability | Blinding is client-side (@cloudflare/privacypass-ts, open-source pure JS), and the org cannot decrypt sync blobs or see prompts/responses. An identity-backed ticket wallet nevertheless exposes correlation metadata that the identity-free flow does not. |
+| **Malicious org / station (even if closed-source)** | Denial of service; for optional Google or username sync, analysis of account-bound sync timing and ciphertext sizes | Not through the blind-signature or content path; account sync metadata can weaken identity-unlinkability | Blinding is client-side (@cloudflare/privacypass-ts, open-source pure JS), and the org cannot decrypt sync blobs or see prompts/responses. An account-bound ticket wallet nevertheless exposes correlation metadata that the identity-free flow does not. |
 | **Malicious verifier** | Denial of service | No | Cannot link key to user identity (blind signatures). Sees raw key transiently, never stores. Cannot see prompts/responses. |
 | **Malicious inference provider** | Sees prompts from anonymous keys | No | Cannot link prompts to user identity. Each session uses an ephemeral key with no identity binding. |
-| **All OA components colluding** | Denial of service; SSO sync-metadata analysis | Cannot read prompts/responses; may attempt to associate an SSO identity with redemption through sync metadata | Still cannot decrypt wallet blobs or link finalized tickets to blinded issuance. The SSO metadata caveat remains. |
+| **All OA components colluding** | Denial of service; Google or username sync-metadata analysis | Cannot read prompts/responses; may attempt to associate a Google identity or stable username with redemption through sync metadata | Still cannot decrypt wallet blobs or link finalized tickets to blinded issuance. The account-sync metadata caveat remains. |
 
 
 ### Defense-in-depth
 
-Even if side-channel analysis associates an SSO user with obtaining an
+Even if side-channel analysis associates a Google or username account with obtaining an
 ephemeral key, prompt/response contents remain protected from OA because:
 
 1. No OA system (org, station, verifier) sees prompts or responses -- they are
@@ -321,11 +341,13 @@ a client only inside the existing end-to-end encrypted sync envelope.
 
 ## Zero-Trust Scope: OA Infrastructure
 
-For the identity-free account flow, "Zero trust" means users do not need to
+For the anonymous or random account-number flow, "Zero trust" means users do not need to
 trust any OA-operated component (org, stations, verifier operators) for
-**unlinkable inference**, which consists of two guarantees. SSO ticket-wallet
-sync preserves the cryptographic and content protections below but adds the
-metadata caveat documented in section 5.
+**unlinkable inference**, which consists of two guarantees. Google and username
+ticket-wallet sync preserve the cryptographic and content protections below but
+add the metadata caveat documented in section 5. Username accounts avoid an
+external identity mapping, but their user-chosen stable pseudonym has the reuse
+caveat described above.
 
 1. **Identity-unlinkability** -- blind signatures ensure no party can link
    ticket issuance to ticket redemption. The org/station that signed blinded
@@ -348,10 +370,11 @@ is measured by hardware and verifiable by anyone.
 APIs. A station cannot cheat on privacy toggles or use shadow accounts without
 being caught and banned.
 - The **org/registry** are governance infrastructure. The org may see an
-  opt-in Google identity for account authentication and metadata for
-  its encrypted ticket-wallet sync, but it never sees inference content.
+  opt-in Google identity or stable username for account authentication and
+  metadata for its encrypted ticket-wallet sync, but it never sees inference
+  content.
 - The identity-free flow preserves the full identity-to-inference separation.
-  The SSO flow preserves cryptographic ticket secrecy and prompt
+  Google and username flows preserve cryptographic ticket secrecy and prompt
   confidentiality while accepting the documented sync-metadata correlation
   surface.
 
@@ -380,10 +403,10 @@ The registry, org backend, and verifier are currently centralized:
 - In the identity-free flow, no centralized OA component possesses the
   identity-to-inference linkage needed for deanonymization.
 - The registry gates station admission (not user identity).
-- The org backend receives station governance events and, for opted-in OAuth
-  accounts, the external identity mapping plus encrypted sync ciphertext.
-  Neither is present in the inference content path, although sync metadata
-  creates the documented SSO correlation surface.
+- The org backend receives station governance events and, for opted-in Google
+  or username accounts, the external identity mapping or stable pseudonym plus
+  encrypted sync ciphertext. None is present in the inference content path,
+  although sync metadata creates the documented account-correlation surface.
 - Future roadmap: multiple verifier instances and stations operated by
 independent parties (universities, other organizations).
 
@@ -400,12 +423,12 @@ network layer, the following metadata vectors exist and should be mitigated:
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | IP address         | oa-chat's built-in proxy covers accountless invitation issuance, ticket redemption, and access requests, hiding the browser IP from the org/station. Account-authenticated billing issuance intentionally uses the narrow SuperTokens transport directly to the configured org (or a first-party same-origin deployment proxy), so a direct production org can observe the subscriber's source IP and request timing. It still sees only blinded requests and cannot link them to later finalized-ticket redemption. Users who need network-layer separation for this identity-bound issuance can use a trusted VPN/Tor; deployments may provide a first-party reverse proxy. |
 | Browser User-Agent | Standard browser fingerprinting concern; use a common browser or randomize UA.                                                                                                                                       |
-| Identity sync metadata | For SSO accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
+| Account sync metadata | For Google and username accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. A username also exposes the chosen stable pseudonym during authentication. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
 
 
 These vectors do not reveal prompt contents or break the blind-signature proof,
-but they can weaken metadata-level identity-unlinkability. The SSO sync tradeoff
-is therefore part of the privacy model, not orthogonal to it.
+but they can weaken metadata-level identity-unlinkability. The Google/username
+sync tradeoff is therefore part of the privacy model, not orthogonal to it.
 
 ## Wrong-Conclusion Traps
 
@@ -420,15 +443,15 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Component sees data, therefore unlinkability is broken."                    | False. The station sees finalized tickets and API keys; the verifier sees API keys in `/submit_key`. Neither breaks unlinkability because neither data item carries user identity. Blind signatures ensure the station cannot correlate issuance to redemption. The verifier uses the raw key transiently for signature verification, immediately hashes it (SHA-256), and never stores, logs, or reports it. Only a truncated hash prefix (16 hex chars) appears in structured logs. |
 | "OpenRouter is a trust anchor that violates zero-trust."                     | False. OpenRouter is the frontier model provider used by OA. Even a malicious provider cannot link prompts to a user's identity or to each other. Each session uses an ephemeral key issued via blind signatures with no identity binding. OA additionally enforces accountability via toggle verification and shadow-account prevention.                                                                                                                                             |
-| "Centralized infrastructure contradicts zero-trust."                         | For the identity-free flow, centralization is primarily an availability concern because no OA component possesses an identity-to-inference linkage. Optional SSO sync deliberately gives the org an identity mapping plus opaque sync metadata, with the documented correlation caveat; it still does not expose prompt/response contents. |
+| "Centralized infrastructure contradicts zero-trust."                         | For the identity-free flow, centralization is primarily an availability concern because no OA component possesses an identity-to-inference linkage. Optional Google or username sync deliberately gives the org an identity mapping or stable pseudonym plus opaque sync metadata, with the documented correlation caveat; it still does not expose prompt/response contents. |
 | "OA systems could see or log user prompts."                                  | False. No OA system (org, station, verifier) is in the inference data path. Prompts go directly from the user's browser to the inference provider over HTTPS. The verifier's attested code proves this architectural exclusion. Station operator cookies are governance material for toggle/ownership checks, not prompt-transport credentials.                                                                                                                                        |
 | "The org handles both issuance and redemption, so it can correlate them."    | False. At issuance the org sees blinded requests; at redemption it sees finalized (unblinded) tickets for the first time. These are cryptographically unlinkable -- that is the core guarantee of blind signatures. The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became.                                                                                                                                                     |
 | "The org knows the invitation code/email, so it knows who redeemed tickets." | False. The org knows identity -> credential -> N blinded requests. But it cannot link blinded requests to finalized tickets (blind signatures). The finalized tickets at redemption are unlinkable to any prior issuance step.                                                                                                                                                                                                                                                        |
 | "The provider sees prompts, so zero-trust is violated."                      | False. OA's claim is unlinkable inference, not invisible inference. Prompts reach the provider (they must for inference to work), but they are unlinkable to the user's identity and to each other. The provider sees anonymous requests from ephemeral keys.                                                                                                                                                                                                                         |
-| "Google login has exactly the same unlinkability as an identity-free account." | False. OAuth authorizes a dedicated identity account and its encrypted ticket-wallet sync exposes timing, size, and stable opaque-ID metadata. The org cannot decrypt a finalized ticket or prompt, and the identity credential is absent from redemption and inference requests, but metadata correlation is a documented SSO tradeoff. |
+| "Google login has exactly the same unlinkability as an identity-free account." | False. OAuth authorizes a dedicated identity account and its encrypted ticket-wallet sync exposes timing, size, and stable opaque-ID metadata. The org cannot decrypt a finalized ticket or prompt, and the identity credential is absent from redemption and inference requests, but metadata correlation is a documented Google-account tradeoff. |
 | "Station operator cookies stored in verifier memory affect user privacy."    | False. Station operator credentials are governance data for compliance checks on the operator's provider account. They are not end-user data. The verifier never receives or stores any end-user identity material.                                                                                                                                                                                                                                                                   |
-| "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated by the built-in proxy. SSO redemption consumption deliberately does not trigger immediate sync, but later identity-authenticated sync timing and size remain correlatable metadata. |
-| "The org is closed-source, so it's an unauditable trust anchor."             | Blinding/unblinding and sync encryption run client-side in open-source JS, so the org cannot decrypt ticket blobs or prompt contents. The identity-free flow does not rely on it for unlinkability. The SSO flow accepts the explicitly documented sync-metadata correlation surface. See [UNLINKABILITY_PROOF.md](UNLINKABILITY_PROOF.md) for the blind-signature proof. |
+| "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated by the built-in proxy. Ticket consumption by Google and username accounts deliberately does not trigger immediate sync, but later authenticated sync timing and size remain correlatable metadata. |
+| "The org is closed-source, so it's an unauditable trust anchor."             | Blinding/unblinding and sync encryption run client-side in open-source JS, so the org cannot decrypt ticket blobs or prompt contents. The identity-free flow does not rely on it for unlinkability. Google and username flows accept the explicitly documented sync-metadata correlation surface. See [UNLINKABILITY_PROOF.md](UNLINKABILITY_PROOF.md) for the blind-signature proof. |
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
 | "Toggle/ownership verification means trusting OpenRouter, violating zero trust to the OA system components." | False. Toggle and ownership checks enforce accountability on the *station's* provider account -- they are not about trusting the OA system. If OpenRouter lies about its own API state, it undermines itself, not OA. Regardless, user prompts remain unlinkable because blind signatures and ephemeral keys carry no user identity. |
