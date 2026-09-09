@@ -1568,6 +1568,15 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 }
 .payment-mode-control button[aria-pressed="true"] .payment-mode-mark,
 .payment-mode-control button:hover:not(:disabled) .payment-mode-mark { opacity: 1; }
+/* The OA square is the favicon's sage by day. On a dark ground that sage
+   goes muddy (it sits across the wheel from night's violet) and, dimmed,
+   turns into a grey tile — so in the dark the square is drawn in the
+   theme's own ink instead: muted when unselected, foreground when chosen,
+   at full opacity so it stays crisp. */
+.dark .payment-mode-control .payment-mode-mark-oa { fill: hsl(var(--color-muted-foreground)); opacity: 1; }
+.dark .payment-mode-control .payment-mode-mark-oa rect { fill: inherit; }
+.dark .payment-mode-control button[aria-pressed="true"] .payment-mode-mark-oa,
+.dark .payment-mode-control button:hover:not(:disabled) .payment-mode-mark-oa { fill: hsl(var(--color-foreground)); }
 .payment-mode-control button:focus-visible {
     outline: 2px solid hsl(var(--color-accent-primary));
     outline-offset: 2px;
