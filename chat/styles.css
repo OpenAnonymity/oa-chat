@@ -175,46 +175,48 @@ html.zkapi-mode.theme-light {
     --code-block-border: hsl(232, 35%, 87%);
 }
 
-/* Night: indigo at the purple's hue. Surfaces carry about twice the day
-   chroma (near-black loses its hue first), text keeps a trace of it, and
-   the accent is lifted and desaturated so it holds on the dark ground. */
+/* Night: the purple's complement — the same family at the other end of
+   lightness. Lifted off black (ground L 0.25), a violet cast rather than a
+   painted indigo (surface chroma 0.024, hue 290), text pulled back from
+   white so it does not glare, and the accent lighter and quieter so it
+   holds on the dark ground. Source values are OKLCH; these are their HSL. */
 html.zkapi-mode.dark {
-    --color-hover: 235 26% 18%;
+    --color-hover: 247 14% 21%;
 
-    --slate-1: hsl(235, 35%, 8.9%);
-    --slate-2: hsl(235, 32%, 10.8%);
-    --slate-3: hsl(235, 28%, 13.3%);
-    --slate-4: hsl(234, 26%, 15.8%);
-    --slate-200: hsl(234, 25%, 19%);
-    --slate-800: hsl(232, 24%, 86.5%);
-    --slate-6: hsl(234, 21%, 27.5%);
+    --slate-1: hsl(247, 18%, 11.5%);
+    --slate-2: hsl(247, 18%, 13%);
+    --slate-3: hsl(247, 16%, 15.9%);
+    --slate-4: hsl(247, 15%, 18.4%);
+    --slate-200: hsl(247, 14%, 21.6%);
+    --slate-800: hsl(245, 18%, 84%);
+    --slate-6: hsl(247, 12%, 30.2%);
 
-    --color-accent-primary: 225 100% 78.4%;
-    --color-focus-ring: 225 100% 78.4%;
+    --color-accent-primary: 238 93% 83.2%;
+    --color-focus-ring: 238 93% 83.2%;
 
-    --color-background: 235 30% 12.3%;
-    --color-foreground: 232 34% 94.1%;
-    --color-card: 235 34% 11.1%;
-    --color-card-foreground: 232 34% 94.1%;
-    --color-popover: 235 34% 11.1%;
-    --color-popover-foreground: 232 34% 94.1%;
-    --color-primary: 225 100% 78.4%;
-    --color-primary-foreground: 235 34% 11.1%;
-    --color-secondary: 235 27% 17%;
-    --color-secondary-foreground: 232 34% 94.1%;
-    --color-muted: 235 27% 17%;
-    --color-muted-foreground: 233 22% 68.8%;
-    --color-accent: 235 27% 17%;
-    --color-accent-foreground: 232 34% 94.1%;
+    --color-background: 247 17% 15%;
+    --color-foreground: 245 10% 87.9%;
+    --color-card: 247 19% 13.6%;
+    --color-card-foreground: 245 10% 87.9%;
+    --color-popover: 247 19% 13.6%;
+    --color-popover-foreground: 245 10% 87.9%;
+    --color-primary: 238 93% 83.2%;
+    --color-primary-foreground: 247 19% 13.6%;
+    --color-secondary: 247 15% 20.1%;
+    --color-secondary-foreground: 245 10% 87.9%;
+    --color-muted: 247 15% 20.1%;
+    --color-muted-foreground: 246 12% 65.2%;
+    --color-accent: 247 15% 20.1%;
+    --color-accent-foreground: 245 10% 87.9%;
     --color-destructive: 0 62.8% 30.6%;
     --color-destructive-foreground: 0 0% 95%;
-    --color-border: 235 25% 24.8%;
-    --color-input: 235 25% 24.8%;
-    --color-ring: 225 100% 78.4%;
+    --color-border: 247 15% 27.3%;
+    --color-input: 247 15% 27.3%;
+    --color-ring: 238 93% 83.2%;
 
-    --code-block-bg: hsl(235, 32%, 9.5%);
-    --code-block-header: hsl(235, 28%, 12.5%);
-    --code-block-border: hsl(235, 25%, 17%);
+    --code-block-bg: hsl(247, 20%, 12.1%);
+    --code-block-header: hsl(247, 17%, 15%);
+    --code-block-border: hsl(247, 16%, 19.7%);
 }
 /* In zkAPI's colours the gear's switches take the pole's accent. */
 html.zkapi-mode .settings-panel { --settings-accent: hsl(var(--color-accent-primary)); }
