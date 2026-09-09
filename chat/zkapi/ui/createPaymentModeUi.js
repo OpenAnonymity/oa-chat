@@ -23,8 +23,10 @@ export function createPaymentModeUi(runtime) {
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));
             button.disabled = busy;
-            button.dataset.tooltip = busy ? 'Finish or stop the current response to switch payment methods.'
-                : `Use ${button.dataset.paymentMode === 'zkapi' ? 'zkAPI' : 'tickets'} for this chat and new chats. Your history stays the same.`;
+            // No tooltip: the toolbar clips overflow, so one drawn below the
+            // control showed as a stray hairline on hover. The control says
+            // what it is; the busy case is explained by the composer.
+            delete button.dataset.tooltip;
             button.removeAttribute('title');
         }
     }
