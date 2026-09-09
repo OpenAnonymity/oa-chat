@@ -34,3 +34,20 @@ test('zkAPI provenance refuses floating or local SDK dependencies', async t => {
         await assert.rejects(zkapiBuildProvenance({ network: 'sepolia', repoRoot, outDir: repoRoot }), /immutable Git commit/);
     }
 });
+
+test('public deployment provenance excludes and removes host-omitted build metadata', async t => {
+    const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-sdk-public-files-'));
+    t.after(() => fs.rm(repoRoot, { recursive: true, force: true }));
+    const outDir = path.join(repoRoot, 'dist');
+    await fs.mkdir(path.join(outDir, '.cache'), { recursive: true });
+    await fs.writeFile(path.join(outDir, '.cache/metadata'), 'private metadata');
+    await fs.writeFile(path.join(outDir, '.gitignore'), 'ignored');
+    await fs.writeFile(path.join(outDir, 'vendor.js.map'), '{}');
+    await fs.writeFile(path.join(outDir, 'vendor.js'), 'export const ok = true;');
+    await fs.writeFile(path.join(repoRoot, 'package-lock.json'), JSON.stringify({ packages: {
+        'node_modules/@openanonymity/zkapi-browser-sdk': { version: '0.2.0', resolved: `git+https://github.com/example/sdk.git#${'a'.repeat(40)}` }
+    } }));
+    const result = await zkapiBuildProvenance({ network: 'sepolia', repoRoot, outDir });
+    assert.deepEqual(Object.keys(result.files), ['vendor.js']);
+    assert.deepEqual(await fs.readdir(outDir), ['vendor.js']);
+});
