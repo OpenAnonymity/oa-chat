@@ -703,81 +703,6 @@
                                                 <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
 
                                                 <!-- Privacy -->
-                                                <section id="scrubber-settings-section" class="settings-section" aria-labelledby="settings-privacy-title">
-                                                    <h3 id="settings-privacy-title" class="settings-section-title">Privacy</h3>
-                                                    <div class="settings-row">
-                                                        <label class="settings-row-label" for="scrubber-model-select">Scrubber model</label>
-                                                        <div class="settings-row-control settings-select">
-                                                            <select id="scrubber-model-select">
-                                                                <option value="" disabled selected>Loading…</option>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </section>
-
-                                                <!-- Memory -->
-                                                <section id="memory-settings-section" class="settings-section" aria-labelledby="settings-memory-title">
-                                                    <h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="memory-feature-label">Memory</span>
-                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="memory-feature-label" class="switch-toggle settings-switch switch-active" data-tooltip="Enable memory mode and background memory extraction" data-tooltip-position="left">
-                                                            <span class="switch-toggle-indicator"></span>
-                                                        </button>
-                                                    </div>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="memory-auto-include-label">Always attach retrieval</span>
-                                                        <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-auto-include-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
-                                                            <span class="switch-toggle-indicator"></span>
-                                                        </button>
-                                                    </div>
-                                                    <div class="settings-row">
-                                                        <label class="settings-row-label" for="memory-agent-model-select">Memory model</label>
-                                                        <div class="settings-row-control settings-select">
-                                                            <select id="memory-agent-model-select">
-                                                                <option value="" disabled selected>Loading…</option>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                </section>
-
-                                                <!-- Tools -->
-                                                <section id="parallel-settings-section" class="settings-section" aria-labelledby="settings-tools-title">
-                                                    <h3 id="settings-tools-title" class="settings-section-title">Tools</h3>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="search-setting-label">Web search</span>
-                                                        <button id="search-setting-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="search-setting-label" class="switch-toggle settings-switch switch-active">
-                                                            <span class="switch-toggle-indicator"></span>
-                                                        </button>
-                                                    </div>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="council-review-label">Council review</span>
-                                                        <button id="council-review-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="council-review-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
-                                                            <span class="switch-toggle-indicator"></span>
-                                                        </button>
-                                                    </div>
-                                                    <div id="council-review-model-row" class="settings-row is-disabled">
-                                                        <label class="settings-row-label" for="council-review-model-select">Council model</label>
-                                                        <div class="settings-row-control settings-select">
-                                                            <select id="council-review-model-select">
-                                                                <option value="" disabled selected>Loading…</option>
-                                                            </select>
-                                                            <select id="multi-model-synthesis-select" class="hidden" aria-hidden="true" tabindex="-1">
-                                                                <option value="" disabled selected>Loading…</option>
-                                                            </select>
-                                                        </div>
-                                                    </div>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="reasoning-effort-label">Effort</span>
-                                                        <div id="reasoning-effort-toggle" class="theme-toggle-container reasoning-effort-toggle settings-segmented" role="radiogroup" aria-labelledby="reasoning-effort-label" aria-disabled="false" data-effort="medium">
-                                                            <div class="theme-toggle-indicator"></div>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">Low</button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">Medium</button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">High</button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Max effort" title="Max effort">Max</button>
-                                                        </div>
-                                                    </div>
-                                                </section>
-
                                                 <section class="settings-section" aria-labelledby="settings-appearance-title">
                                                         <h3 id="settings-appearance-title" class="settings-section-title">Appearance</h3>
                                                         <div class="settings-row">
@@ -865,6 +790,81 @@
                                                             </svg>
                                                         </a>
                                                 </section>
+                                                <section id="scrubber-settings-section" class="settings-section" aria-labelledby="settings-privacy-title">
+                                                    <h3 id="settings-privacy-title" class="settings-section-title">Privacy</h3>
+                                                    <div class="settings-row">
+                                                        <label class="settings-row-label" for="scrubber-model-select">Scrubber model</label>
+                                                        <div class="settings-row-control settings-select">
+                                                            <select id="scrubber-model-select">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                </section>
+
+                                                <!-- Memory -->
+                                                <section id="memory-settings-section" class="settings-section" aria-labelledby="settings-memory-title">
+                                                    <h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="memory-feature-label">Memory</span>
+                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="memory-feature-label" class="switch-toggle settings-switch switch-active" data-tooltip="Enable memory mode and background memory extraction" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="memory-auto-include-label">Always attach retrieval</span>
+                                                        <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-auto-include-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <label class="settings-row-label" for="memory-agent-model-select">Memory model</label>
+                                                        <div class="settings-row-control settings-select">
+                                                            <select id="memory-agent-model-select">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                </section>
+
+                                                <!-- Tools -->
+                                                <section id="parallel-settings-section" class="settings-section" aria-labelledby="settings-tools-title">
+                                                    <h3 id="settings-tools-title" class="settings-section-title">Tools</h3>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="search-setting-label">Web search</span>
+                                                        <button id="search-setting-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="search-setting-label" class="switch-toggle settings-switch switch-active">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="council-review-label">Council review</span>
+                                                        <button id="council-review-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="council-review-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div id="council-review-model-row" class="settings-row is-disabled">
+                                                        <label class="settings-row-label" for="council-review-model-select">Council model</label>
+                                                        <div class="settings-row-control settings-select">
+                                                            <select id="council-review-model-select">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                            <select id="multi-model-synthesis-select" class="hidden" aria-hidden="true" tabindex="-1">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="reasoning-effort-label">Effort</span>
+                                                        <div id="reasoning-effort-toggle" class="theme-toggle-container reasoning-effort-toggle settings-segmented" role="radiogroup" aria-labelledby="reasoning-effort-label" aria-disabled="false" data-effort="medium">
+                                                            <div class="theme-toggle-indicator"></div>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">Low</button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">Medium</button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">High</button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Max effort" title="Max effort">Max</button>
+                                                        </div>
+                                                    </div>
+                                                </section>
+
                                                 <section id="composer-settings-actions" class="settings-section settings-section-foot composer-settings-actions"></section>
                                             </div>
                                         </div>

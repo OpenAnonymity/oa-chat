@@ -32,20 +32,20 @@ function settingsDialog(html) {
     return html.slice(start, end);
 }
 
-test('the gear holds Privacy, Memory, Tools, Appearance, Data controls and feedback — the same for every mode', () => {
+test('the gear leads with what is set once — Appearance, Data controls, feedback — then Privacy, Memory, Tools', () => {
     const html = read('chat/index.html');
     const panel = settingsPanel(html);
     assert.match(panel, /class="hidden z-\[100\] settings-panel settings-menu-glass" role="group" aria-label="Settings"/);
     const titles = [...panel.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
-    assert.deepEqual(titles, ['Privacy', 'Memory', 'Tools', 'Appearance', 'Data controls']);
+    assert.deepEqual(titles, ['Appearance', 'Data controls', 'Privacy', 'Memory', 'Tools']);
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
-        'Scrubber model',
-        'Memory', 'Always attach retrieval', 'Memory model',
-        'Web search', 'Council review', 'Council model', 'Effort',
         'Layout', 'Font', 'Theme',
         'All', 'Chat history', 'ChatGPT', 'Memories',
-        'Share feedback'
+        'Share feedback',
+        'Scrubber model',
+        'Memory', 'Always attach retrieval', 'Memory model',
+        'Web search', 'Council review', 'Council model', 'Effort'
     ]);
     // Memory export/import work whether Memory is on or off: the memories
     // are the person's data either way.

@@ -8527,6 +8527,16 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.18); }
 .dark .settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.22); }
 
+/* Export / Import in the gear: text actions at the gear's 13px, not the
+   Account dialog's 15px. */
+#settings-menu .settings-text-action {
+    height: var(--settings-control-h);
+    padding: 0 0.5rem;
+    font-size: 0.8125rem;
+}
+#settings-menu .settings-button-pair { gap: 0.125rem; margin-right: -0.5rem; }
+#settings-menu .settings-link-icon { width: 0.875rem; height: 0.875rem; }
+
 /* Segmented controls: thinking effort, layout, font, theme. The selected
    segment is a raised pill; no sliding indicator (its offsets assumed the
    old fixed-width buttons). */
