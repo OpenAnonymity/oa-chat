@@ -2758,7 +2758,23 @@ export default class ChatInput {
         if (councilReviewModelRow) {
             // The row is always there, dimmed while review is off: turning the
             // switch on must not grow the panel under the pointer.
-            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled);
+            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled || !councilSupported);
+        }
+
+        // In zkAPI mode the Council rows dim and the switch's bubble says
+        // why, so a greyed switch never reads as "off" when it is "not here".
+        const councilReviewRow = document.getElementById('council-review-row');
+        if (councilReviewRow) councilReviewRow.classList.toggle('is-disabled', !councilSupported);
+        if (councilReviewToggle) {
+            if (councilSupported) {
+                if (councilReviewToggle.dataset.availableTooltip) {
+                    councilReviewToggle.dataset.tooltip = councilReviewToggle.dataset.availableTooltip;
+                    delete councilReviewToggle.dataset.availableTooltip;
+                }
+            } else if (!councilReviewToggle.dataset.availableTooltip) {
+                councilReviewToggle.dataset.availableTooltip = councilReviewToggle.dataset.tooltip || '';
+                councilReviewToggle.dataset.tooltip = this.getFeatureUnavailableReason('council');
+            }
         }
 
         if (councilReviewModelSelect) {
@@ -2816,6 +2832,8 @@ export default class ChatInput {
             control.dataset.featureUnavailable = String(!councilSupported);
             control.setAttribute('aria-disabled', String(control.disabled));
         }
+        // The switch has an app bubble; a native title would say it twice.
+        if (councilReviewToggle && !councilSupported) councilReviewToggle.removeAttribute('title');
     }
 
     escapeOptionValue(value) {

@@ -13,6 +13,10 @@
    40px inset, 22/600 title, no header hairline, rows separated by space.
    Everything reads the app's colour tokens, so Light, Dark and Purple all
    apply; only the primary button's tint is theme-specific. */
+/* The balance bar's blue, shared by the dialog and the right panel: the
+   same blue as an "on" switch, in every theme. */
+:root { --zkapi-bar: #0a84ff; }
+.zkapi-panel-bar-fill { background: var(--zkapi-bar); }
 .zkapi-dialog {
     --zkapi-radius: 1.5rem;
     --zkapi-pad-x: 2.5rem;
@@ -25,7 +29,6 @@
     --zkapi-primary-border: hsl(var(--color-foreground) / 0.28);
     --zkapi-primary-border-hover: hsl(var(--color-foreground) / 0.4);
     --zkapi-primary-fg: hsl(var(--color-foreground));
-    --zkapi-bar: hsl(228 76% 65%);
     --zkapi-ease: cubic-bezier(0.2, 0, 0, 1);
     position: relative;
     display: flex;
@@ -52,7 +55,6 @@ html.dark .zkapi-dialog {
     --zkapi-control-border: hsl(var(--color-foreground) / 0.16);
     --zkapi-control-border-hover: hsl(var(--color-foreground) / 0.26);
     --zkapi-line: hsl(var(--color-foreground) / 0.1);
-    --zkapi-bar: hsl(228 70% 72%);
     box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.08), 0 16px 48px -12px rgb(0 0 0 / 0.6);
 }
 /* EF purple is the one theme that colours the wallet action — outline and
