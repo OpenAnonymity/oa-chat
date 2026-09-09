@@ -4,10 +4,7 @@ import WelcomePanel from '../../components/WelcomePanel.js';
 import ZkapiAccountModal from '../components/AccountModal.js';
 import PaymentModeRightPanel from '../components/PaymentModeRightPanel.js';
 import { createZkapiUi } from './createZkapiUi.js';
-import themeManager from '../../services/themeManager.js';
-import { applyZkapiDefaultTheme as applyDefaultTheme } from '../services/zkapiDefaultTheme.js';
-
-const applyZkapiDefaultTheme = () => applyDefaultTheme(globalThis.localStorage, themeManager);
+import { applyZkapiModeClass } from '../services/zkapiModeClass.js';
 
 /** Keep the payment choice in the toolbar and funding in the System Panel. */
 export function createPaymentModeUi(runtime) {
@@ -19,6 +16,9 @@ export function createPaymentModeUi(runtime) {
     function renderControls() {
         if (!app || !modeControl) return;
         const mode = runtime.getMode();
+        // zkAPI has its own colour axis: while the current chat pays with
+        // zkAPI the shared Light/Dark choice resolves to purple / night.
+        applyZkapiModeClass(document.documentElement, mode);
         const busy = runtime.isModeLocked();
         modeControl.setAttribute('aria-busy', runtime.isSwitching() ? 'true' : 'false');
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
@@ -67,7 +67,6 @@ export function createPaymentModeUi(runtime) {
                 if (!button || button.disabled) return;
                 try {
                     await runtime.changeMode(button.dataset.paymentMode);
-                    if (runtime.getMode() === 'zkapi') applyZkapiDefaultTheme();
                 } catch (error) { app.showToast(error.message || 'Could not switch payment method. Please try again.', 'error'); }
                 renderControls();
             });
@@ -81,7 +80,6 @@ export function createPaymentModeUi(runtime) {
             privateBalance = new ZkapiAccountModal(app, { triggerId: null, overlayId: 'payment-balance-modal' });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();
-            if (runtime.getMode() === 'zkapi') applyZkapiDefaultTheme();
         },
         presentation: {
             getPendingPresentation: (phase, progress) => runtime.getMode() === 'zkapi'

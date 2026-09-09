@@ -12,7 +12,8 @@
                 const storageKey = 'oa-theme-preference';
                 const stored = localStorage.getItem(storageKey);
                 const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                const preference = stored === 'light' || stored === 'dark' || stored === 'purple' ? stored : 'system';
+                // 'purple' was a light-family preference before zkAPI got its own poles; it now means light.
+                const preference = stored === 'light' || stored === 'purple' ? 'light' : stored === 'dark' ? 'dark' : 'system';
                 const effectiveTheme = preference === 'dark' || (preference === 'system' && prefersDark) ? 'dark' : 'light';
                 const root = document.documentElement;
 
@@ -26,7 +27,11 @@
                     root.classList.add('theme-light');
                     root.classList.remove('dark', 'theme-dark');
                 }
-                root.classList.toggle('theme-purple', preference === 'purple');
+                // zkAPI is a colour axis of its own: the same Light/Dark choice
+                // resolves to EF purple by day and indigo night. The default
+                // payment mode paints the first frame; the current chat's mode
+                // takes over once the app mounts.
+                root.classList.toggle('zkapi-mode', localStorage.getItem('oa-payment-mode') === 'zkapi');
             } catch (error) {
                 console.warn('Unable to apply stored theme preference before hydration:', error);
             }
@@ -733,11 +738,6 @@
                                                                 <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="light" aria-checked="false" aria-label="Light" title="Light">
                                                                     <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
-                                                                    </svg>
-                                                                </button>
-                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="purple" aria-checked="false" aria-label="EF purple" title="EF purple">
-                                                                    <svg class="w-[18px] h-[18px] theme-swatch-purple" viewBox="0 0 24 24" aria-hidden="true">
-                                                                        <circle cx="12" cy="12" r="6"></circle>
                                                                     </svg>
                                                                 </button>
                                                                 <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="dark" aria-checked="false" aria-label="Dark" title="Dark">

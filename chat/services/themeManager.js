@@ -1,9 +1,10 @@
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 
 const PREFERENCE_SYSTEM = 'system';
-// 'purple' is a light-family theme in Ethereum's hue (html.theme-purple);
-// it keeps every light rule and overrides the colour tokens.
-const VALID_PREFERENCES = new Set(['light', 'dark', 'purple', PREFERENCE_SYSTEM]);
+const VALID_PREFERENCES = new Set(['light', 'dark', PREFERENCE_SYSTEM]);
+// 'purple' was stored as a preference before zkAPI became its own colour
+// axis (html.zkapi-mode); anyone who chose it meant the light pole.
+const normalizePreference = value => (value === 'purple' ? 'light' : value);
 
 class ThemeManager {
     constructor() {
@@ -17,7 +18,7 @@ class ThemeManager {
     getInitialPreference() {
         try {
             const root = typeof document !== 'undefined' ? document.documentElement : null;
-            const domPreference = root?.getAttribute('data-theme-preference');
+            const domPreference = normalizePreference(root?.getAttribute('data-theme-preference'));
             if (domPreference && VALID_PREFERENCES.has(domPreference)) {
                 return domPreference;
             }
@@ -26,9 +27,9 @@ class ThemeManager {
         }
 
         try {
-            const stored = typeof localStorage !== 'undefined'
+            const stored = normalizePreference(typeof localStorage !== 'undefined'
                 ? localStorage.getItem('oa-theme-preference')
-                : null;
+                : null);
             if (stored && VALID_PREFERENCES.has(stored)) {
                 return stored;
             }
@@ -59,7 +60,8 @@ class ThemeManager {
             this.mediaQuery.addListener(this.mediaListener);
         }
 
-        preferencesStore.getPreference(PREF_KEYS.theme).then((storedPreference) => {
+        preferencesStore.getPreference(PREF_KEYS.theme).then((stored) => {
+            const storedPreference = normalizePreference(stored);
             if (storedPreference && VALID_PREFERENCES.has(storedPreference) && storedPreference !== this.preference) {
                 this.preference = storedPreference;
                 this.applyTheme();
@@ -70,6 +72,7 @@ class ThemeManager {
         // Listen for preference changes (e.g., from import or multi-tab sync)
         preferencesStore.onChange((key, value) => {
             if (key !== PREF_KEYS.theme) return;
+            value = normalizePreference(value);
             if (value && VALID_PREFERENCES.has(value) && value !== this.preference) {
                 this.preference = value;
                 this.applyTheme();
@@ -93,14 +96,12 @@ class ThemeManager {
         const hasMatchingThemeClass = effectiveTheme === 'dark'
             ? root.classList.contains('theme-dark') && !root.classList.contains('theme-light')
             : root.classList.contains('theme-light') && !root.classList.contains('theme-dark');
-        const hasMatchingPurpleClass = (effectiveTheme === 'purple') === root.classList.contains('theme-purple');
 
         if (
             currentTheme === effectiveTheme &&
             currentPreference === this.preference &&
             hasMatchingDarkClass &&
-            hasMatchingThemeClass &&
-            hasMatchingPurpleClass
+            hasMatchingThemeClass
         ) {
             return;
         }
@@ -124,7 +125,6 @@ class ThemeManager {
             root.classList.add('theme-light');
             root.classList.remove('theme-dark');
         }
-        root.classList.toggle('theme-purple', effectiveTheme === 'purple');
 
         // Re-enable transitions after a frame (colors already applied)
         requestAnimationFrame(() => {
@@ -135,6 +135,7 @@ class ThemeManager {
     }
 
     setPreference(preference) {
+        preference = normalizePreference(preference);
         if (!VALID_PREFERENCES.has(preference)) {
             preference = PREFERENCE_SYSTEM;
         }

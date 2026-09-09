@@ -2918,7 +2918,6 @@ export default class ChatInput {
      */
     formatThemeName(theme) {
         if (!theme) return '';
-        if (theme === 'purple') return 'EF purple';
         return theme.charAt(0).toUpperCase() + theme.slice(1);
     }
 

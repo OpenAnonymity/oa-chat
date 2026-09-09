@@ -74,10 +74,14 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
     }
     assert.match(panel, /data-mode="flat"[^>]*>Document</);
     assert.match(panel, /data-mode="bubble"[^>]*>Bubbles</);
-    for (const option of ['system', 'light', 'purple', 'dark']) {
+    // Light / Dark / System everywhere. zkAPI's purple is not a fourth
+    // option: it is what Light means while a chat pays with zkAPI
+    // (html.zkapi-mode), and Dark there is its night complement.
+    for (const option of ['system', 'light', 'dark']) {
         assert.match(panel, new RegExp(`data-theme-option="${option}"`), option);
     }
-    assert.match(panel, /data-theme-option="purple" aria-checked="false" aria-label="EF purple" title="EF purple"/);
+    assert.doesNotMatch(panel, /data-theme-option="purple"/);
+    assert.doesNotMatch(html, /theme-purple/);
     assert.match(panel, /<section class="settings-section settings-section-feedback" aria-label="Feedback">\s*<a href="https:\/\/forms\.gle\/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="settings-row settings-link">/);
     // The gear's data actions run through SettingsDialog without a card in between.
     const dialogSource = read('chat/components/SettingsDialog.js');

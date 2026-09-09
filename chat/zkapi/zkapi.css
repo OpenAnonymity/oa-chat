@@ -57,9 +57,9 @@ html.dark .zkapi-dialog {
     --zkapi-line: hsl(var(--color-foreground) / 0.1);
     box-shadow: 0 0 0 1px hsl(0 0% 100% / 0.08), 0 16px 48px -12px rgb(0 0 0 / 0.6);
 }
-/* EF purple is the one theme that colours the wallet action — outline and
-   text only, never a fill. */
-html.theme-purple .zkapi-dialog {
+/* In zkAPI's own colours (purple by day, night by dark) the wallet action
+   takes the accent — outline and text only, never a fill. */
+html.zkapi-mode .zkapi-dialog {
     --zkapi-primary-fill: transparent;
     --zkapi-primary-fill-hover: hsl(var(--color-primary) / 0.08);
     --zkapi-primary-border: hsl(var(--color-primary) / 0.5);
