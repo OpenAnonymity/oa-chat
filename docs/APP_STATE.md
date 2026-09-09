@@ -22,6 +22,10 @@ reading code alone.
   A key's cap is a cumulative usage limit and minimum balance proof, not an
   upfront fee. Its System Panel displays the actual owned key cap while that
   key is live; otherwise it uses the selected model's budget.
+- `renderCurrentModel()` notifies the optional right-panel
+  `onModelSelectionChange()` hook. The private panel updates only its existing
+  usage labels, so selecting a different model immediately updates the next
+  key cap without remounting billing controls or waiting for wallet activity.
 
 ## 2026-09-06: Composer capabilities follow the owning payment mode
 
