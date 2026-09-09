@@ -215,6 +215,23 @@ reading code alone.
   ordinary ticket key's signatures and persisted `submit_key` proof; this copy
   change does not create missing key evidence or alter any security checks.
 
+## 2026-09-06: Vercel Git builds restore the memory browser link
+
+- Vercel Git builds were receiving the initialized root `nanomem` submodule but
+  omitting the tracked `chat/nanomem -> ../nanomem` symlink. A diagnostic build
+  confirmed root `nanomem/browser.js` exists while `chat/nanomem` is absent.
+  `prepare:nanomem` passed because it checks the root source directory; esbuild
+  subsequently failed the three `../nanomem/browser.js` imports in chat services.
+- `scripts/build.mjs` now runs `prepareNanomemBrowser(...)` before copying and
+  bundling. It validates both root browser entrypoints and recreates the missing
+  link (or an exact Git link-text placeholder). Valid local symlinks and packaged
+  directories remain unchanged, and unrelated existing paths fail explicitly.
+- Copying root `nanomem` into `dist` cannot fix this alone: esbuild reads the
+  original `chat/` source. Keep the source link valid through bundle creation.
+- The existing `.vercelignore` includes the root submodule and its descendants;
+  this failure does not require widening the upload allowlist or restoring Git
+  metadata. Keep the final `.git` and `.env*` exclusions intact.
+
 ## 2026-09-06: Auto Router response model attribution
 
 - Assistant responses show the model reported by inference, with its provider
