@@ -1,3 +1,18 @@
+## 2026-09-09: OA owns optional zkAPI payments
+
+- The dependency is now OA Chat → `@openanonymity/zkapi-browser-sdk`. The
+  payment UI and chat adapter live in `chat/zkapi`; the SDK contains no OA UI.
+- `startChatApp` preserves the synchronous `createChatApp` API and lazily loads
+  the native payment adapter only when `OA_ZKAPI_NETWORK` selects a network.
+  The build validates and emits pinned proof/config/worker assets and records
+  immutable dependency provenance. Ticket-only builds keep their default path.
+- Wallet storage/journals and chat storage remain unchanged and independent.
+  Anonymous SDK protocol/manifest/config/daemon traffic now explicitly omits
+  account cookies, including same-origin proxy requests.
+- See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for build, deployment,
+  lifecycle, and origin/persistence details. Commercial composition is outside
+  this change; account onboarding remains the host's policy.
+
 # App State and Handoff
 
 This is the living handoff doc for the web app's current state. Use it to capture UI

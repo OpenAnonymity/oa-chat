@@ -9074,7 +9074,7 @@ class ChatApp {
         for (const id of ids) this.deletingSessionIds.add(id);
         try {
             await this.cancelSessionWork(null, { waitForMutations: true });
-            await this.runtime.beforeDelete?.({ sessionIds: ids });
+            await this.runtime.beforeDelete?.({ sessionIds: ids, all: true });
             await this.deleteAllIdleChats();
             for (const id of ids) this.deletedSessionIds.add(id);
         } finally {

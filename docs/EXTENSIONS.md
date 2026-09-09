@@ -287,3 +287,16 @@ exports can be imported in headless tests without requiring a `window` global.
 
 The shared `modelConfiguration` namespace is exported here so compositions can
 reuse standard ticket model availability without importing private services.
+
+
+## Native optional payment modes
+
+A zkAPI-enabled OA build owns both Tickets and private-payment UI/runtime.
+Downstream apps may call `startChatApp({ extensions, ... })` instead of
+implementing another adapter; it returns a promise and preserves the existing
+extension boundary. The original synchronous `createChatApp` remains available.
+See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for the SDK dependency, build
+settings, and storage/privacy boundaries. An extension's ticket-purchase
+onboarding should respect the selected payment method rather than assume that
+zero tickets means no available payment option. No private note or balance
+material should be exposed through the redacted commercial extension context.

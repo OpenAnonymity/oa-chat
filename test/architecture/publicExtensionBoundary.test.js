@@ -15,7 +15,7 @@ test('public API exposes only the documented application factory and constants',
 
 test('standalone public startup injects no extensions', () => {
     const source = read('chat/standalone.js');
-    assert.match(source, /createChatApp\(\)/);
+    assert.match(source, /startChatApp\(\)/);
     assert.doesNotMatch(source, /extensions\s*:/);
 });
 

@@ -1,7 +1,9 @@
-import { createChatApp } from './publicApi.js';
+import { startChatApp } from './publicApi.js';
 
 function start() {
-    createChatApp();
+    void startChatApp().catch(error => {
+        console.error('[Startup] Chat could not start:', error);
+    });
 }
 
 if (document.readyState === 'loading') {

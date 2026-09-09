@@ -15,7 +15,7 @@ test('public chat source does not contain the private billing implementation', (
     forbidden.forEach(relative => assert.equal(fs.existsSync(path.join(root, relative)), false));
 
     const entry = fs.readFileSync(path.join(root, 'chat/standalone.js'), 'utf8');
-    assert.match(entry, /createChatApp\(\)/);
+    assert.match(entry, /startChatApp\(\)/);
     assert.doesNotMatch(entry, /extensions\s*:/);
 });
 
