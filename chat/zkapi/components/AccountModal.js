@@ -1,6 +1,7 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
 import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
+import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
     privateBalanceExpired, privateBalanceHelpButton, privateBalanceHelpContent,
@@ -29,7 +30,7 @@ export default class AccountModal {
             // An unfunded modal contains an editable amount. Rebuilding it on
             // background refreshes resets that value and steals input focus.
             // Mutating actions render once from run() after they complete.
-            const editingDeposit = this.view === 'balance'
+            const editingDeposit = ['balance', 'fund'].includes(this.view)
                 && !zkapiClient.note
                 && document.activeElement?.id === 'zkapi-deposit-amount';
             if (this.isOpen && !this.busy && !editingDeposit) this.render();
@@ -103,7 +104,7 @@ export default class AccountModal {
     escapeHtml(value) {
         const div = document.createElement('div');
         div.textContent = value == null ? '' : String(value);
-        return div.innerHTML;
+        return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     setStatus(message, isError = false) {
@@ -521,12 +522,9 @@ export default class AccountModal {
             </div>`;
     }
 
-    renderBalance() {
+    renderBalance(fundingSetup = null) {
         const note = zkapiClient.note;
         const pendingDeposit = zkapiClient.config?.pending_deposit;
-        const mainnetWarning = zkapiClient.isMainnetFunding
-            ? '<div class="rounded-lg border border-amber-300/70 bg-amber-50/70 p-3 text-[11px] leading-relaxed text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100"><strong>Ethereum Mainnet:</strong> this deposits real USDC into experimental, unaudited zkAPI contracts and uses real ETH for gas. Private Merkle-tree updates are unusually gas-heavy on L1; zkAPI does not set the gas limit or fee rate, so review MetaMask’s maximum before confirming. Only use funds you can afford to lose.</div>'
-            : '';
         if (!note) {
             if (pendingDeposit && ['submitted', 'dropped_or_pending', 'awaiting_wallet', 'ambiguous'].includes(pendingDeposit.phase)) {
                 const title = pendingDeposit.phase === 'submitted'
@@ -564,6 +562,7 @@ export default class AccountModal {
                         <p class="text-sm font-medium text-foreground">${resumingDeposit ? 'Private deposit ready to resume' : 'Fund once, chat privately'}</p>
                         <p class="mt-1 text-xs leading-relaxed text-muted-foreground">${resumingDeposit ? 'No funds moved when the earlier MetaMask prompt closed. The same saved private note will be reused.' : 'MetaMask deposits billing tokens into a private prepaid note. The note secret and chat history remain on this machine.'}</p>
                     </div>
+                    ${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, open: fundingSetup?.open })}
                     <label class="block">
                         <span class="text-xs font-medium text-foreground">${resumingDeposit ? 'Saved deposit amount' : 'Deposit amount'}</span>
                         <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
@@ -571,8 +570,6 @@ export default class AccountModal {
                             <input id="zkapi-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} />
                         </div>
                     </label>
-                    ${mainnetWarning}
-                    ${zkapiClient.config?.funding?.demo_mint_enabled ? '<p class="text-[11px] text-muted-foreground">Sepolia demo billing tokens are minted automatically if your wallet needs them. You only pay testnet gas.</p>' : ''}
                     ${this.renderWithdrawalStatusLink()}
                     <button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>
                         ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
@@ -724,6 +721,7 @@ export default class AccountModal {
         if (!this.overlay) return;
         if (this.view === 'withdraw' && this.shouldShowClaimedBalance()) this.view = 'balance';
         const helpFocus = capturePrivateBalanceHelpFocus(this.overlay);
+        const fundingSetup = captureFundingSetupView(this.overlay);
         const showsBalance = !['withdraw', 'withdrawals'].includes(this.view);
         const title = this.view === 'withdraw'
             ? 'Withdraw private balance'
@@ -743,12 +741,13 @@ export default class AccountModal {
                         <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
                     </button>
                 </div>
-                <div class="max-h-[75vh] overflow-y-auto">${showsBalance ? `<div class="px-5">${privateBalanceHelpContent('modal', 'billing', this.privateBalanceHelpOpen?.billing)}</div>` : ''}${this.view === 'withdraw' ? this.renderWithdrawal() : this.view === 'withdrawals' ? this.renderWithdrawalRecords() : this.renderBalance()}</div>
+                <div data-funding-scroll class="max-h-[75vh] overflow-y-auto">${showsBalance ? `<div class="px-5">${privateBalanceHelpContent('modal', 'billing', this.privateBalanceHelpOpen?.billing)}</div>` : ''}${this.view === 'withdraw' ? this.renderWithdrawal() : this.view === 'withdrawals' ? this.renderWithdrawalRecords() : this.renderBalance(fundingSetup)}</div>
                 <p data-payment-status class="${this.status ? '' : 'hidden'} border-t border-border px-5 py-3 text-xs ${this.statusError ? 'text-destructive' : 'text-muted-foreground'}">${this.escapeHtml(this.status)}</p>
             </div>`;
 
         attachPrivateBalanceHelp(this.overlay, this);
         restorePrivateBalanceHelpFocus(this.overlay, helpFocus);
+        restoreFundingSetupView(this.overlay, fundingSetup);
         this.overlay.querySelector('#zkapi-payment-close')?.addEventListener('click', () => this.close());
         const depositInput = this.overlay.querySelector('#zkapi-deposit-amount');
         depositInput?.addEventListener('input', () => {
