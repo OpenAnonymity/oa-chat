@@ -7084,36 +7084,6 @@ html[data-keyboard-nav] .update-toast button:focus-visible {
     color: hsl(var(--color-foreground));
 }
 
-/* The way out of a Tickets sign-in on a build with zkAPI. */
-.account-zkapi-instead {
-    margin-top: 1.25rem;
-    padding-top: 1rem;
-    border-top: 1px solid hsl(var(--color-border));
-    text-align: center;
-}
-.account-zkapi-instead-btn {
-    height: 2.25rem;
-    padding: 0 0.875rem;
-    border: 0;
-    border-radius: 0.625rem;
-    background: transparent;
-    color: hsl(var(--color-foreground));
-    font: inherit;
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background-color 120ms ease;
-}
-.account-zkapi-instead-btn:hover:not(:disabled) { background: hsl(var(--color-foreground) / 0.05); }
-.account-zkapi-instead-btn:disabled { opacity: 0.6; cursor: default; }
-.account-zkapi-instead-note {
-    margin: 0.25rem 0 0;
-    font-size: 0.75rem;
-    line-height: 1.5;
-    color: hsl(var(--color-muted-foreground));
-    text-wrap: balance;
-}
-
 .account-login-heading {
     display: flex;
     justify-content: space-between;

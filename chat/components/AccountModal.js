@@ -323,7 +323,7 @@ class AccountModal {
                 : needsEncryptionUnlock
                     ? 'Unlock encrypted data'
                     : this.app?.getSignInPolicy?.()?.required === true
-                        ? 'Log in or sign up'
+                        ? 'Log in'
                         : 'Account';
         if (identityLabel) identityLabel.textContent = identityText;
         if (bootstrapStatus) {
@@ -517,26 +517,29 @@ class AccountModal {
      */
     mustStaySignedIn() {
         if (this.app?.getSignInPolicy?.()?.required !== true) return false;
-        // zkAPI pays from a private balance: no account needed, so the
-        // dialog is an offer that can be closed, not a wall.
+        // With zkAPI in the build there is always a way to chat without an
+        // account, so the dialog is an offer with a close button, not a wall.
+        if (this.app?.hasPaymentModes?.() === true) return false;
+        const state = this.accountState || {};
+        return !(state.accountId && state.status === 'unlocked');
+    }
+
+    /**
+     * Closing the dialog while Tickets would need an account (the person
+     * switched to Tickets signed out, or logged out of Tickets) returns the
+     * chat to zkAPI, the mode that needs none.
+     */
+    closeLeavesTicketsForZkapi() {
+        if (this.app?.getSignInPolicy?.()?.required !== true) return false;
+        if (this.app?.hasPaymentModes?.() !== true) return false;
         if (this.app?.getPaymentMode?.() === 'zkapi') return false;
         const state = this.accountState || {};
         return !(state.accountId && state.status === 'unlocked');
     }
 
-    /** The build has zkAPI and this dialog is standing in for a Tickets account. */
-    canOfferZkapiInstead() {
-        return this.app?.hasPaymentModes?.() === true && this.mustStaySignedIn();
-    }
-
-    /**
-     * "Use zkAPI instead": leave the account requirement by switching the
-     * payment mode. A Tickets switch that asked for this dialog is undone.
-     */
-    async handleUseZkapiInstead() {
+    async closeToZkapi() {
         if (this.zkapiSwitchPending) return;
         this.zkapiSwitchPending = true;
-        this.render();
         try {
             await this.app.changePaymentMode('zkapi');
             this.close();
@@ -544,22 +547,16 @@ class AccountModal {
             this.app?.showToast?.(error?.message || 'zkAPI could not be selected.', 'error');
         } finally {
             this.zkapiSwitchPending = false;
-            if (this.isOpen) this.render();
         }
-    }
-
-    renderZkapiInsteadOption() {
-        if (!this.canOfferZkapiInstead()) return '';
-        return `
-                <div class="account-zkapi-instead">
-                    <button id="account-use-zkapi-btn" type="button" class="account-zkapi-instead-btn" ${this.zkapiSwitchPending ? 'disabled' : ''}>${this.zkapiSwitchPending ? 'Switching to zkAPI…' : 'Use zkAPI instead'}</button>
-                    <p class="account-zkapi-instead-note">Pay per request from a private balance. No account needed.</p>
-                </div>`;
     }
 
     handleCloseAttempt() {
         // Log out owns the page until the account is cleared.
         if (this.loggingOut) return;
+        if (this.closeLeavesTicketsForZkapi()) {
+            void this.closeToZkapi();
+            return;
+        }
         if (this.mustStaySignedIn()) {
             // Cancelling a half-done sign-up is still allowed; it returns to
             // the form rather than to the page behind.
@@ -1946,7 +1943,6 @@ class AccountModal {
                 ` : ''}
 
                 ${state.error ? `<p class="text-xs text-destructive mt-3 text-center" role="alert">${this.escapeHtml(state.error)}</p>` : ''}
-                ${this.renderZkapiInsteadOption()}
                 ${this.renderLegalLine()}
 
                 ${hasSignedOutSavedAccount ? `
@@ -2217,11 +2213,6 @@ class AccountModal {
         const googleBtn = document.getElementById('account-google-btn');
         if (googleBtn) {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
-        }
-
-        const useZkapiBtn = document.getElementById('account-use-zkapi-btn');
-        if (useZkapiBtn) {
-            useZkapiBtn.onclick = () => this.handleUseZkapiInstead();
         }
 
         const forgetSavedBtn = document.getElementById('account-forget-saved-btn');
