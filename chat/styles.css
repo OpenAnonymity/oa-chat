@@ -8360,8 +8360,12 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .settings-text-action:hover:not(:disabled) { color: hsl(var(--color-foreground)); background: hsl(var(--color-foreground) / 0.05); }
 .settings-text-action:disabled { opacity: 0.45; cursor: default; }
-/* Row names carry a one-line tooltip saying what the row covers. */
-.settings-dialog .settings-row-label[data-tooltip] { cursor: default; }
+/* Each Export / Import carries a one-line tooltip: exports say a file will
+   download, imports say which file they take. The buttons sit at the card's
+   right edge, so the tooltip hangs from its right corner and grows leftward
+   instead of running into the scroll edge. */
+.settings-text-action[data-tooltip]:hover::after { left: auto; right: 0; transform: translateY(8px); }
+.settings-text-action[data-tooltip]:hover::before { left: auto; right: 0.875rem; transform: translateY(4px) rotate(45deg); }
 .settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
 .settings-dialog .settings-segmented .settings-segment-icon { width: 2.25rem; }
 .settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
