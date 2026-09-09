@@ -13,11 +13,13 @@ reading code alone.
   support display; access issuance must await the live tier map. Dollar budgets
   belong to the downstream payment policy, not the shared ticket service.
 - `presentation.getModelPricing(model, {reasoningEnabled})` receives the same
-  reasoning setting used for ticket pricing. Optional escaped `budgetLabel`
-  and `budgetTooltip` fields add a wrapping line below the model name, above
-  the existing token-price line. Keeping the lines separate prevents a cap or
-  minimum balance from hiding the other prices on narrow screens. Omitting
-  these fields preserves the existing presentation and ticket rows.
+  reasoning setting used for ticket pricing. Optional escaped
+  `balanceBadgeLabel` and `balanceBadgeTooltip` fields show the required private
+  balance in the same right-aligned badge position and style as ticket counts.
+  zkAPI uses concise labels such as `≥ $2`; the accessible tooltip explains
+  that a private balance of at least that amount is required. Token prices
+  remain below the model name, with no separate cap/minimum explanation line.
+  Omitting these fields preserves the existing presentation and ticket rows.
 - The zkAPI composition maps reviewed OA ticket tiers to public dollar buckets.
   A key's cap is a cumulative usage limit and minimum balance proof, not an
   upfront fee. Its System Panel displays the actual owned key cap while that
