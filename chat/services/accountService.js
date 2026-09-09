@@ -30,6 +30,7 @@ import { ORG_API_BASE, ORG_AUTH_ORIGIN } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 import sessionService from './sessionService.js';
+import storageEvents from './storageEvents.js';
 import syncService from './encryptedSyncService.js';
 import {
     createEncryptionKeyWrapper,
@@ -40,6 +41,8 @@ import {
 import { withAccountDataLock } from './accountDataLock.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
+// Cross-tab storage event: one tab logged out; the session is gone for all.
+export const ACCOUNT_SIGNED_OUT_EVENT = 'account-signed-out';
 const ACCOUNT_KEY_BUNDLE = 'account-key-bundle-v1';
 const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
 const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Legacy; removed after migration
@@ -1106,6 +1109,7 @@ class AccountService {
 
     async init() {
         if (this.state.isReady) return;
+        this.listenForSignOutElsewhere();
         try {
             await sessionService.init();
             if (!chatDB) {
@@ -2815,6 +2819,10 @@ class AccountService {
      */
     async logout() {
         this.syncInitializationGeneration += 1;
+        // Other tabs share this browser's ticket store but not this object:
+        // tell them the session is ending before anything shared is cleared,
+        // so they show Log in rather than an empty wallet's welcome dialog.
+        this.broadcastSignedOut();
         // The wallet is about to be emptied on this device. Say so first:
         // extensions read readyForAutomaticBilling from these flags, and an
         // empty wallet that still looked verified opened the welcome dialog
@@ -2871,6 +2879,34 @@ class AccountService {
             { confirm: DELETE_ACCOUNT_CONFIRMATION },
             { method: 'DELETE' }
         );
+    }
+
+    /** Log out in one tab ends the session for every tab of this browser. */
+    broadcastSignedOut() {
+        if (!this.state.accountId) return;
+        try {
+            storageEvents.init();
+            storageEvents.broadcast(ACCOUNT_SIGNED_OUT_EVENT, { accountId: this.state.accountId });
+        } catch (error) {
+            console.warn('[AccountService] Could not announce sign-out to other tabs:', error);
+        }
+    }
+
+    listenForSignOutElsewhere() {
+        if (this.signOutElsewhereUnsubscribe) return;
+        try {
+            storageEvents.init();
+            this.signOutElsewhereUnsubscribe = storageEvents.on(ACCOUNT_SIGNED_OUT_EVENT, payload => {
+                const accountId = payload?.accountId;
+                if (!accountId || this.state.accountId !== accountId) return;
+                if (!this.state.sessionVerified && this.state.status !== 'unlocked') return;
+                // The server session is already revoked; treat it exactly as
+                // an expired session here (locked, keys cleared, UI notified).
+                void this.handleTokenInvalidation();
+            });
+        } catch (error) {
+            console.warn('[AccountService] Could not listen for sign-out in other tabs:', error);
+        }
     }
 
     async clearLocalAccount() {
