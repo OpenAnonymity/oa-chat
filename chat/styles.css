@@ -2933,6 +2933,17 @@ a.quick-ask-source:focus-visible {
 }
 
 /* Match loading toast spinner to scrubbing blue border glow palette */
+/* The app toast: one line of 13px, tight padding, a 10px radius. Wallet
+   progress and feature notices all pass through it, so it stays small. */
+#app-toast {
+    max-width: min(24rem, calc(100vw - 2rem));
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.625rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    text-wrap: pretty;
+    font-variant-numeric: tabular-nums;
+}
 #app-toast .link-preview-spinner {
     border-color: rgba(59, 130, 246, 0.35);
     border-top-color: rgba(96, 165, 250, 0.95);

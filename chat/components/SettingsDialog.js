@@ -1,10 +1,9 @@
 /**
- * Account dialog: Data controls, feedback, and the account actions (Log out,
- * Delete account). Appearance (Layout, Font, Theme) lives in the composer
- * gear for every mode, so a zkAPI user without an account finds it too.
- *
- * The markup lives in index.html (#settings-dialog). This class only opens,
- * closes, and routes the data-action buttons.
+ * Data controls, Appearance and Share feedback live in the composer gear for
+ * every mode, so a zkAPI user without an account finds them too; this class
+ * runs the gear's data actions (export, import). What remains account-bound
+ * — Delete account — is reached from the account menu and opens straight
+ * into its confirmation over the #settings-dialog overlay.
  */
 import { exportChats, exportAllData } from '../services/globalExport.js';
 
@@ -54,10 +53,51 @@ class SettingsDialog {
             this.overlay.addEventListener('pointerdown', this.onOverlayPointerDown);
             this.overlay.addEventListener('click', this.onClick);
         }
-        document.getElementById('account-preferences-menu-item')?.addEventListener('click', () => {
+        document.getElementById('account-delete-menu-item')?.addEventListener('click', () => {
             this.app.accountModal?.closeAccountMenu?.();
-            this.open();
+            this.openDeleteAccount();
         });
+        // The gear's Data controls: exports run at once (the gear is a menu,
+        // not a place for a second card), imports open their pickers.
+        this.dataSection = document.getElementById('data-management-section');
+        this.onDataClick = event => this.handleDataClick(event);
+        this.dataSection?.addEventListener('click', this.onDataClick);
+    }
+
+    /** From the account menu: only the confirmation, over the backdrop. */
+    openDeleteAccount(returnFocusEl = null) {
+        if (!this.overlay) return;
+        this.open(returnFocusEl);
+        this.dialog?.setAttribute?.('hidden', '');
+        this.standaloneConfirm = true;
+        this.showDeleteConfirm();
+    }
+
+    async handleDataClick(event) {
+        const button = event.target.closest?.('button[data-action]');
+        if (!button || !this.dataSection?.contains(button)) return;
+        event.stopPropagation();
+        switch (button.dataset.action) {
+            case 'export-chats':
+            case 'export-all-data':
+            case 'export-memory':
+                button.disabled = true;
+                try { await this.runExport(button.dataset.action); }
+                finally { button.disabled = false; }
+                break;
+            case 'import-data':
+                document.getElementById('global-import-input')?.click?.();
+                break;
+            case 'import-memory':
+                document.getElementById('memory-import-input')?.click?.();
+                break;
+            case 'import-history':
+                this.app.chatInput?.closeSettingsMenu?.();
+                this.app.chatHistoryImportModal?.open?.();
+                break;
+            default:
+                break;
+        }
     }
 
     open(returnFocusEl = null) {
@@ -73,6 +113,8 @@ class SettingsDialog {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
         this.dismissDeleteConfirm();
+        this.dialog?.removeAttribute?.('hidden');
+        this.standaloneConfirm = false;
         this.overlay.classList.add('hidden');
         document.removeEventListener('keydown', this.onKeydown);
         const target = this.returnFocusEl;
@@ -267,6 +309,8 @@ class SettingsDialog {
         const target = this.confirmReturnFocus;
         this.confirmReturnFocus = null;
         target?.focus?.();
+        // Opened from the account menu there is nothing behind the card.
+        if (this.standaloneConfirm && this.isOpen) this.close();
     }
 
     /**

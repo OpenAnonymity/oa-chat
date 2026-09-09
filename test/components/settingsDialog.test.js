@@ -29,7 +29,7 @@ function harness({ deleteAllChats, deleteAccount } = {}) {
     const docListeners = new Map();
     globalThis.document = {
         activeElement: null,
-        getElementById: id => (id === 'settings-dialog' ? overlay : id === 'account-preferences-menu-item' ? menuItem : null),
+        getElementById: id => (id === 'settings-dialog' ? overlay : id === 'account-delete-menu-item' ? menuItem : null),
         addEventListener(type, fn) { docListeners.set(type, fn); },
         removeEventListener(type) { docListeners.delete(type); },
         contains: () => true,
@@ -52,18 +52,21 @@ function harness({ deleteAllChats, deleteAccount } = {}) {
 
 const click = (h, button) => h.overlay.listeners.get('click')({ target: { closest: () => button } });
 
-test('Settings opens from the account menu, closes on Escape, the close button and the backdrop', () => {
+test('Delete account opens from the account menu straight into its confirmation; the dialog closes on Escape, the close button and the backdrop', () => {
     const h = harness();
     try {
         h.menuItem.listeners.get('click')();
         assert.deepEqual(h.events, ['menu-closed']);
         assert.equal(h.settings.isOpen, true);
         assert.equal(h.overlay.classList.contains('hidden'), false);
-        assert.equal(h.dialog.focused, true, 'focus moves into the dialog');
+        assert.equal(h.settings.standaloneConfirm, true, 'only the confirmation shows; the card behind is hidden');
+        // No confirmation template in this harness, so nothing is appended.
+        assert.equal(h.settings.deleteConfirm, null);
 
         h.docListeners.get('keydown')({ key: 'Escape', preventDefault() {} });
         assert.equal(h.settings.isOpen, false);
         assert.equal(h.overlay.classList.contains('hidden'), true);
+        assert.equal(h.settings.standaloneConfirm, false);
 
         h.settings.open();
         h.overlay.listeners.get('pointerdown')({ target: h.dialog });
