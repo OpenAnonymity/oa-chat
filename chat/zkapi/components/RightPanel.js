@@ -162,7 +162,6 @@ export default class RightPanel extends SharedRightPanel {
         const keyLimit = card.querySelector('[data-chat-usage-key-limit]');
         if (cost) cost.textContent = view.costLabel;
         if (tokens) tokens.textContent = view.tokenLabel;
-        if (keyLimit) keyLimit.textContent = view.keyLimitLabel ? `${view.keyLimitLabel} per key` : '';
     }
 
     scheduleUsageEstimateUpdate() {
@@ -234,6 +233,9 @@ export default class RightPanel extends SharedRightPanel {
                 : expired ? 'expired' : note
                     ? 'ready'
                     : 'not funded';
+        // While a step runs the pill is a spinner; the words go to the toast
+        // over the chat bar, where a sentence fits.
+        const badgeBusy = !claimed && !hasError && experience.primary.busy && experience.primary.tone !== 'error';
 
         return `
             <div class="p-3">
@@ -243,7 +245,7 @@ export default class RightPanel extends SharedRightPanel {
                         <span class="text-xs font-medium">Private balance: <span class="font-semibold">${balance}</span></span>
                         ${privateBalanceHelpButton('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                     </div>
-                    <span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="max-w-[8.5rem] truncate rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : experience.primary.busy || actionableState || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : this.escapeHtml(statusBadge)}</span>
+                    <span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="max-w-[8.5rem] truncate rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : experience.primary.busy || actionableState || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : badgeBusy ? `<span class="zkapi-pill-spinner" role="img" aria-label="${this.escapeHtml(statusBadge)}"></span>` : this.escapeHtml(statusBadge)}</span>
                 </div>
                 ${privateBalanceHelpContent('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                 <div class="mt-3 h-1 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-blue-600 transition-all" style="width:${percent}%"></div></div>
@@ -251,7 +253,7 @@ export default class RightPanel extends SharedRightPanel {
                 ${note ? privateBalanceHelpContent('panel', 'expiry', this.privateBalanceHelpOpen?.expiry) : ''}
                 <div data-chat-usage-estimate class="mt-2 rounded-md bg-muted/50 px-2 py-1.5 ${usage.visible ? '' : 'hidden'}" title="Running model-usage estimate. OpenRouter's reported cost is used when available; zkAPI settlement is final.">
                     <div class="flex items-center justify-between gap-2 text-[10px]"><span class="text-muted-foreground">Estimated this chat</span><strong data-chat-usage-cost class="font-medium text-foreground">${this.escapeHtml(usage.costLabel)}</strong></div>
-                    <div class="mt-1 flex items-center justify-between gap-2 text-[9px] text-muted-foreground"><span data-chat-usage-tokens>${this.escapeHtml(usage.tokenLabel)}</span><span data-chat-usage-key-limit>${usage.keyLimitLabel ? `${this.escapeHtml(usage.keyLimitLabel)} per key` : ''}</span></div>
+                    <div class="mt-1 flex items-center justify-between gap-2 text-[9px] text-muted-foreground"><span data-chat-usage-tokens>${this.escapeHtml(usage.tokenLabel)}</span></div>
                 </div>
                 ${experienceHtml}
                 ${withdrawalRecoveryCount ? `<button id="zkapi-panel-withdrawals" class="btn-ghost-hover mt-2 flex w-full items-center justify-between rounded-md bg-muted/40 px-2.5 py-2 text-[10px] text-muted-foreground transition-colors" type="button"><span>Payment history</span><strong class="font-medium text-foreground">${withdrawalStatusLabel}</strong></button>` : ''}

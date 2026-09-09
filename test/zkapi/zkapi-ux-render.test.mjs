@@ -163,20 +163,23 @@ test('choosing a new model updates the existing panel budget before sending with
     const picker = createModelPickerInterface(app, {
         chatDBImpl: { saveSetting: async () => {}, saveSession: async () => {} }
     });
-    panel.updateUsageEstimate();
-    assert.equal(keyLabel.textContent, '$1 per key');
+    // The cap is per model and follows the live selection, but the panel no
+    // longer prints it: "$1 per key" read as a fee. The picker shows it.
+    const capLabel = () => { panel.updateUsageEstimate(); return panel.usageEstimateView().keyLimitLabel; };
+    assert.equal(capLabel(), '$1');
+    assert.equal(keyLabel.textContent, '', 'the usage box carries no per-key line');
     await picker.actions.selectModel('GPT-6 Astra Pro');
-    assert.equal(keyLabel.textContent, '$6 per key');
+    assert.equal(capLabel(), '$6');
     assert.equal(panel.currentSession, session, 'same-chat snapshots are refreshed from the live selection');
 
     zkapiClient.config = { active_lease: { session_id: session.id,
         spending_limit_usd: 4.5, expires_at: Date.now() / 1000 + 300 } };
     await picker.actions.selectModel('GPT-4o Mini');
-    assert.equal(keyLabel.textContent, '$4.50 per key', 'a live owned key still displays its actual cap');
+    assert.equal(capLabel(), '$4.50', 'a live owned key still reports its actual cap');
 
     session = { id: 'another-chat', model: 'GPT-6 Astra Pro' };
     app.renderCurrentModel();
-    assert.equal(keyLabel.textContent, '$4.50 per key', 'navigation waits for its own panel update');
+    assert.equal(panel.usageEstimateView().keyLimitLabel, '$4.50', 'navigation waits for its own panel update');
 });
 
 test('right-panel runtime completion advances once without clock-driven remounts', () => {

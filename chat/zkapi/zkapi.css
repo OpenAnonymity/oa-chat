@@ -275,6 +275,21 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
     outline-offset: 2px;
 }
 
+/* The right panel's status pill while a step runs: a spinner in place of a
+   sentence that never fit; the sentence is the toast over the chat bar. */
+.zkapi-pill-spinner {
+    display: inline-block;
+    width: 0.625rem;
+    height: 0.625rem;
+    vertical-align: -0.0625rem;
+    border-radius: 50%;
+    border: 1.5px solid currentColor;
+    border-right-color: transparent;
+    opacity: 0.8;
+    animation: zkapiPillSpin 900ms linear infinite;
+}
+@keyframes zkapiPillSpin { to { transform: rotate(360deg); } }
+
 /* ---------- Disclosures: the Invoices / inference-ticket idiom ---------- */
 .zkapi-guides { display: flex; flex-direction: column; gap: 0; margin-top: -0.625rem; }
 .zkapi-guide { display: flex; flex-direction: column; }
