@@ -3157,19 +3157,25 @@ export default class ChatArea {
             // The message was appended while it was still thinking, so its
             // action row is the empty placeholder. Swap in the real row
             // (Copy, Regenerate, …) from a fresh render of the finished message.
-            this.replaceAssistantActionsRow(messageEl, message);
+            const actionsSettled = this.replaceAssistantActionsRow(messageEl, message);
 
-            // Setup citation carousel if citations were added
-            if (message.citations && message.citations.length > 0) {
-                this.setupCitationCarouselScroll();
-            }
+            if (actionsSettled) {
+                // Setup citation carousel if citations were added
+                if (message.citations && message.citations.length > 0) {
+                    this.setupCitationCarouselScroll();
+                }
 
-            // Update message navigation to reflect final content (fixes preview + indicator height)
-            if (this.app.messageNavigation) {
-                this.app.messageNavigation.update();
+                // Update message navigation to reflect final content (fixes preview + indicator height)
+                if (this.app.messageNavigation) {
+                    this.app.messageNavigation.update();
+                }
+                this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
+                return;
             }
-            this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
-            return;
+            // The targeted swap could not produce the action row (the live
+            // element's anchors no longer line up with a fresh render). A
+            // finished answer without Copy is worse than a re-render: fall
+            // through to the full replacement.
         }
 
         // Full replacement for messages without finalized reasoning
@@ -3202,9 +3208,13 @@ export default class ChatArea {
      * finished message would have. Only the row changes; the reasoning trace
      * and content stay untouched.
      */
+    /**
+     * @returns {boolean} true when the live element ends up with the action
+     * row a fresh render of the finished message would have (or the fresh
+     * render has none either); false when the swap could not be made.
+     */
     replaceAssistantActionsRow(messageEl, message) {
         const currentRows = [...messageEl.querySelectorAll('.assistant-actions-anchor')];
-        if (!currentRows.some(row => row.classList.contains('assistant-actions-placeholder'))) return;
         const session = this.app.getCurrentSession();
         const helpers = {
             processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
@@ -3213,10 +3223,15 @@ export default class ChatArea {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
         const freshRows = [...tempDiv.querySelectorAll('.assistant-actions-anchor')];
-        currentRows.forEach((row, index) => {
-            const fresh = freshRows[index];
-            if (row.classList.contains('assistant-actions-placeholder') && fresh) row.replaceWith(fresh);
-        });
+        const freshHasRow = freshRows.some(row => row.classList.contains('assistant-actions-row'));
+        if (currentRows.some(row => row.classList.contains('assistant-actions-placeholder'))) {
+            currentRows.forEach((row, index) => {
+                const fresh = freshRows[index];
+                if (row.classList.contains('assistant-actions-placeholder') && fresh) row.replaceWith(fresh);
+            });
+        }
+        const liveHasRow = Boolean(messageEl.querySelector('.assistant-actions-row'));
+        return liveHasRow || !freshHasRow;
     }
 
     /**
