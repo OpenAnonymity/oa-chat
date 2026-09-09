@@ -8631,11 +8631,17 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
 .settings-panel .settings-segmented .settings-segment-icon span { font-size: 0.8125rem; font-weight: 500; }
 .settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
-.settings-panel .settings-row.is-disabled { opacity: 0.55; }
+/* A row that is out in this payment mode dims — but not as one opacity on
+   the row, because the switch's bubble is drawn by the switch (::after) and
+   would fade with it. The label and controls dim; the switch dims its own
+   track and knob by colour, so the bubble it shows stays a normal bubble. */
+.settings-panel .settings-row.is-disabled > :not(.settings-switch) { opacity: 0.55; }
 .settings-panel .settings-row.is-disabled select { cursor: default; }
+.settings-panel .settings-row.is-disabled .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.1); }
+.settings-panel .settings-row.is-disabled .settings-switch.switch-active { background-color: color-mix(in srgb, var(--settings-accent) 55%, transparent); }
+.settings-panel .settings-row.is-disabled .settings-switch .switch-toggle-indicator { opacity: 0.55; }
 /* A switch that is out in this payment mode still takes the pointer, so
-   its bubble says why, the same as the Parallel icon in the composer.
-   The row already dims; the switch does not dim again on top. */
+   its bubble says why, the same as the Parallel icon in the composer. */
 .settings-panel .settings-row.is-disabled .settings-switch:disabled {
     opacity: 1;
     pointer-events: auto;
