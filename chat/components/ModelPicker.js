@@ -407,7 +407,7 @@ export default class ModelPicker {
 
         // The default product prices in tickets. Compositions can supply plain
         // pricing copy without replacing model selection or its shared markup.
-        const pricing = this.app.presentation?.getModelPricing?.(model) || null;
+        const pricing = this.app.presentation?.getModelPricing?.(model, { reasoningEnabled }) || null;
         const escapePricing = value => String(value || '').replace(/[&<>"']/g, character => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
         }[character]));
@@ -428,6 +428,7 @@ export default class ModelPicker {
                     </div>
                     <div class="flex-1 min-w-0">
                         <div class="font-medium text-sm text-foreground truncate">${model.name}</div>
+                        ${pricing?.budgetLabel ? `<div data-model-budget-label class="mt-0.5 text-[10px] text-muted-foreground" style="white-space:normal;overflow-wrap:break-word" title="${escapePricing(pricing.budgetTooltip)}">${escapePricing(pricing.budgetLabel)}</div>` : ''}
                         ${pricing ? `<div class="mt-0.5 truncate text-[10px] text-muted-foreground" title="${escapePricing(pricing.description)}">${escapePricing(pricing.label)}</div>` : ''}
                     </div>
                     ${checkmarkSlot}

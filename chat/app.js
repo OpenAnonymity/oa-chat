@@ -4840,7 +4840,11 @@ class ChatApp {
             if (typeof this.runtime.checkCanSend !== 'function') {
                 throw new Error('This chat access integration is not configured.');
             }
-            return this.runtime.checkCanSend({ sessionId: session?.id, session, signal: options.signal });
+            const modelName = options.modelName || session?.model;
+            const model = this.getModelsForSession(session).find(entry => entry.id === modelName || entry.name === modelName)
+                || this.getFallbackModelEntry(session);
+            return this.runtime.checkCanSend({ sessionId: session?.id, session, signal: options.signal,
+                modelId: model?.id, reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled });
         }
         const memoryTickets = (options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
             && (options.memoryMode ?? this.memoryMode)
@@ -5317,6 +5321,10 @@ class ChatApp {
             const generated = await this.inferenceService.generateSessionTitle(accessSession, prompt, {
                 timeoutMs: 10000,
                 signal: options.signal,
+                accessModelId: this.getModelsForSession(accessSession).find(model =>
+                    model.id === firstUserMessage.model || model.name === firstUserMessage.model)?.id
+                    || (firstUserMessage.model?.includes('/') ? firstUserMessage.model : undefined),
+                reasoningEnabled: firstUserMessage.reasoningEnabled,
                 onUsage: usage => this.tryRecordRuntimeUsage({ sessionId, requestId: `title-${userMessageId}`, usage, kind: 'title' })
             });
             const title = this.cleanGeneratedSessionTitle(generated);

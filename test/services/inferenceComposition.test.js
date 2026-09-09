@@ -150,6 +150,91 @@ test('concurrent request leases keep endpoints, headers, policies and releases i
     assert.equal(api.baseUrl, 'https://openrouter.ai/api/v1');
 });
 
+test('strict completion access captures its actual model and reasoning before awaiting', async () => {
+    let continueAccess;
+    const gate = new Promise(resolve => { continueAccess = resolve; });
+    let captured;
+    const transport = transportWithResponse();
+    const api = new OpenRouterAPI({
+        networkTransport: transport,
+        acquireRequestAccess: async (_token, options) => {
+            captured = options;
+            await gate;
+            return { baseUrl: 'https://provider.test', headers: {} };
+        }
+    });
+    const options = { modelId: 'stale-option/model', reasoningEnabled: false };
+    const pending = api.sendCompletionStrict([], 'captured/model', 'binding', options);
+    options.modelId = 'new-ui/model';
+    options.reasoningEnabled = true;
+    continueAccess();
+    await pending;
+    assert.equal(captured.modelId, 'captured/model');
+    assert.equal(captured.reasoningEnabled, false);
+    const body = JSON.parse(transport.calls[0].init.body);
+    assert.equal(body.model, 'captured/model');
+    assert.equal(body.reasoning, undefined);
+    assert.equal(body.accessModelId, undefined);
+});
+
+test('concurrent title and stream keep the initiating chat access model after selection changes', async () => {
+    let continueAccess;
+    const gate = new Promise(resolve => { continueAccess = resolve; });
+    const acquired = [];
+    const transport = { ...transportWithResponse(), ...transportWithSseEvents([
+        { choices: [{ delta: { content: 'answer' }, finish_reason: 'stop' }] }
+    ]) };
+    const api = new OpenRouterAPI({
+        networkTransport: transport,
+        acquireRequestAccess: async (_token, options) => {
+            acquired.push(options);
+            await gate;
+            return { baseUrl: 'https://provider.test', headers: {} };
+        }
+    });
+    const backend = {
+        id: 'private', defaultModelId: 'provider/default',
+        getCachedModels: () => [{ id: 'provider/premium', name: 'Premium Model' }],
+        getAccessToken: session => session.id,
+        generateSessionTitle: (...args) => api.generateSessionTitle(...args),
+        streamCompletion: (...args) => api.streamCompletion(...args)
+    };
+    const service = createInferenceService({ backends: [backend] });
+    const session = { id: 'same-chat', model: 'Premium Model', reasoningEnabled: false };
+    const titleOptions = { modelId: 'provider/title-helper' };
+    const title = service.generateSessionTitle(session, 'Explain a subject', titleOptions);
+    const stream = service.streamCompletion([], 'provider/premium', session, () => {}, null,
+        [], false, null, null, null, false);
+    session.model = 'provider/cheap';
+    session.reasoningEnabled = true;
+    titleOptions.modelId = 'provider/different-title-helper';
+    continueAccess();
+    await Promise.all([title, stream]);
+    assert.equal(acquired.length, 2);
+    assert.deepEqual(acquired.map(options => options.accessModelId || options.modelId),
+        ['provider/premium', 'provider/premium']);
+    assert.deepEqual(acquired.map(options => options.reasoningEnabled), [false, false]);
+    const titleBody = JSON.parse(transport.calls[0].init.body);
+    assert.equal(titleBody.model, 'provider/title-helper', 'explicit title-model selection remains independent');
+    assert.equal(titleBody.accessModelId, undefined, 'access metadata never enters inference JSON');
+    assert.equal(acquired[0].modelId, 'provider/title-helper');
+});
+
+test('title access can preserve an earlier request model and reasoning over current session selection', async () => {
+    let captured;
+    const backend = {
+        id: 'private', getAccessToken: () => 'binding',
+        getCachedModels: () => [{ id: 'provider/now', name: 'Current Model' }],
+        generateSessionTitle: async (_prompt, _token, options) => { captured = options; return 'Title'; }
+    };
+    const service = createInferenceService({ backends: [backend] });
+    await service.generateSessionTitle({ model: 'Current Model', reasoningEnabled: true }, 'Prompt', {
+        accessModelId: 'provider/original', reasoningEnabled: false
+    });
+    assert.equal(captured.accessModelId, 'provider/original');
+    assert.equal(captured.reasoningEnabled, false);
+});
+
 test('a late abort and request-policy failure both release acquired access', async () => {
     const originalError = console.error;
     console.error = () => {};
