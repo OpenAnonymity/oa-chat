@@ -1,3 +1,19 @@
+## 2026-09-09: Read confirmed Sepolia balances after test-token minting
+
+- The SDK dependency now includes the confirmed-block balance read. A successful
+  Sepolia test-token mint could previously be followed by a cached `latest`
+  balance, stopping funding with a false insufficient-balance error.
+- Funding reads the balance at the mint receipt's block, verifies the canonical
+  block hash and selected network before and after the read, and retries only
+  reads for a bounded period. It never resends a mint during those retries.
+- The change is confined to automatic test-token minting. Mainnet funding,
+  withdrawal, private-note storage, and recovery journals keep their existing
+  paths. An indexer that cannot catch up to the chain still blocks new proofs;
+  a provider outage must be repaired without weakening that root check.
+- A fresh Node 24 install of the pinned dependency passed 758 OA tests and
+  180 native payment tests. The SDK's mint/read regression tests live with the
+  SDK implementation; live transaction verification is recorded separately.
+
 ## 2026-09-09: Commercial payment modes retain ephemeral-key controls
 
 - Commercial's ticket funding layout embeds the shared Ephemeral Access Key

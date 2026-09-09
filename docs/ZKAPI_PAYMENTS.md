@@ -105,6 +105,13 @@ been removed from the funding and welcome dialogs. The shared guide preserves
 its expansion, focus, and scroll position across wallet refreshes; the funding
 amount remains editable without refresh stealing focus in the `fund` view.
 
+After an automatic Sepolia test-token mint, funding reads the token balance at
+the confirmed receipt block instead of the provider's potentially cached
+`latest` state. The SDK checks the canonical block hash and selected network
+on both sides of the read and bounds read-only retries. A delayed read does not
+send another mint. Mainnet deposits and withdrawals retain their existing
+transaction paths, durable recovery, and on-chain/indexer root checks.
+
 Sources for the onboarding copy:
 
 - [Install MetaMask](https://support.metamask.io/start/getting-started-with-metamask)
