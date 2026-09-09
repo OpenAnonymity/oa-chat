@@ -11,8 +11,37 @@
   account cookies, including same-origin proxy requests.
 - Plain Tickets deletion skips unrelated wallet state; private history stays
   recoverable, and delete-all checks even unloaded private owners.
-- New deployments and exact verification/remaining wallet checks are recorded
+- New deployments and verification results are recorded
   in [SDK trial deployments](ZKAPI_SDK_TRIALS.md).
+- The new Sepolia origin completed a $5 deposit and live private-key/chat
+  checks. Auto Router's returned DeepSeek V4 Flash 0731 model was displayed,
+  and the $0.007184 private estimate matched settlement. Ticket continuation
+  completed before private settlement, retaining history without adding the
+  ticket response to private usage. A `≥ $6` model was blocked at a $4.99
+  balance without losing the draft. A new $1-cap Luna chat worked across
+  reload with its history and estimate retained. Withdrawal's automatic
+  settlement brought total usage to $0.00746. After wallet confirmation, the
+  UI reported $4.99 returned and payment history showed the completed mutual
+  withdrawal and original $5 deposit. Successful public receipts reconcile
+  $5.000000 deposited as $4.992540 returned to the same depositor plus
+  $0.007460 paid to the server, excluding gas. Post-withdrawal reload retained
+  both history entries, both Luna responses and their $0.000274 estimate,
+  with the wallet correctly showing $0.00/not funded. Ticket continuation
+  still recalled the conversation after the relay was explicitly re-enabled;
+  its final response used TLS-over-WSS without new OA errors. The funded
+  Sepolia flow is verified through mutual withdrawal and reload persistence.
+  Switching the empty balance back to zkAPI automatically reopened funding;
+  no further deposit was started, and both trial tabs were preserved.
+- The funded browser run exposed inherited relay behavior: a verifier relay
+  connection failure triggers immediate direct fallback, then RightPanel's
+  error listener persists `enabled: false`. The resulting unavailable status
+  and `Enable relay` action do not imply a user toggle, and later requests can
+  remain direct across reloads. SDK extraction did not add this policy or a
+  second proxy instance. Treat this as a transport-privacy limitation of the
+  trial, not a verified relay-preserving recovery; the detailed source path
+  and follow-up are recorded in the trial notes. Live Tinfoil and mainnet
+  wallet transactions remain untested, as do balance expiry and escape-hatch
+  withdrawal.
 - See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for build, deployment,
   lifecycle, and origin/persistence details. Commercial composition is outside
   this change; account onboarding remains the host's policy.
