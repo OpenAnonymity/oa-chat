@@ -34,7 +34,7 @@
     max-height: calc(100vh - 5rem);
     box-sizing: border-box;
     overflow: hidden;
-    padding: 2.25rem 0 2.5rem;
+    padding: 2rem 0 2.25rem;
     border: 0;
     border-radius: var(--zkapi-radius);
     background: hsl(var(--color-popover));
@@ -79,7 +79,7 @@ html.theme-purple .zkapi-dialog {
     flex: 1 1 auto;
     min-width: 0;
     margin: 0;
-    font-size: 1.375rem;
+    font-size: 1.25rem;
     font-weight: 600;
     line-height: 1.2;
     letter-spacing: -0.01em;
@@ -118,7 +118,7 @@ html.theme-purple .zkapi-dialog {
     text-wrap: pretty;
 }
 .zkapi-dialog-head + .zkapi-dialog-scroll > .zkapi-lede { margin-top: 0; }
-.zkapi-stack { display: flex; flex-direction: column; gap: 2rem; }
+.zkapi-stack { display: flex; flex-direction: column; gap: 1.5rem; }
 .zkapi-stack > .zkapi-lede { margin-bottom: -1.25rem; }
 .zkapi-section { display: flex; flex-direction: column; gap: 0.875rem; }
 .zkapi-section-title { margin: 0; font-size: 0.875rem; font-weight: 600; line-height: 1.2; }
@@ -144,13 +144,13 @@ html.theme-purple .zkapi-dialog {
     display: inline-flex;
     align-items: baseline;
     gap: 0.125rem;
-    font-size: 2rem;
+    font-size: 1.625rem;
     font-weight: 600;
     line-height: 1.05;
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
 }
-.zkapi-figure > span { color: hsl(var(--color-muted-foreground)); font-size: 1.625rem; font-weight: 500; }
+.zkapi-figure > span { color: hsl(var(--color-muted-foreground)); font-size: 1.3125rem; font-weight: 500; }
 .zkapi-figure input {
     width: 4.5ch;
     min-width: 2ch;
@@ -209,16 +209,16 @@ html.theme-purple .zkapi-dialog {
 .zkapi-secondary-button {
     display: inline-grid;
     flex: 0 0 auto;
-    height: 2rem;
+    height: 1.875rem;
     min-width: 0;
     margin: 0;
-    padding: 0 0.875rem;
+    padding: 0 0.75rem;
     place-items: center;
     border: 1px solid var(--zkapi-control-border);
     border-radius: 0.625rem;
     background: transparent;
     color: hsl(var(--color-foreground));
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 500;
     line-height: 1;
     white-space: nowrap;
@@ -250,13 +250,13 @@ html.theme-purple .zkapi-dialog {
 .zkapi-quiet-button {
     display: inline-grid;
     place-items: center;
-    height: 2rem;
+    height: 1.875rem;
     padding: 0 0.5rem;
     border: 1px solid transparent;
     border-radius: 0.625rem;
     background: transparent;
     color: hsl(var(--color-foreground) / 0.78);
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 500;
     line-height: 1;
     white-space: nowrap;
@@ -276,7 +276,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 }
 
 /* ---------- Disclosures: the Invoices / inference-ticket idiom ---------- */
-.zkapi-guides { display: flex; flex-direction: column; gap: 0.125rem; margin-top: -0.875rem; }
+.zkapi-guides { display: flex; flex-direction: column; gap: 0; margin-top: -0.625rem; }
 .zkapi-guide { display: flex; flex-direction: column; }
 .zkapi-guide-details > summary { list-style: none; }
 .zkapi-guide-details > summary::-webkit-details-marker { display: none; }
@@ -292,7 +292,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
     background: transparent;
     color: hsl(var(--color-foreground) / 0.78);
     font: inherit;
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     font-weight: 500;
     line-height: 1.3;
     letter-spacing: 0;
@@ -335,13 +335,13 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 .zkapi-guide-body > .zkapi-stack { gap: 0.75rem; }
 
 /* ---------- Funded balance ---------- */
-.zkapi-balance-card { display: flex; flex-direction: column; gap: 0.875rem; }
+.zkapi-balance-card { display: flex; flex-direction: column; gap: 0.75rem; }
 .zkapi-balance-card > .zkapi-note { margin-top: 0.25rem; max-width: 30rem; }
 .zkapi-balance-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
-.zkapi-balance-caption { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; font-weight: 500; }
+.zkapi-balance-caption { color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; font-weight: 500; }
 .zkapi-balance-amount {
     margin-top: 0.125rem;
-    font-size: 2rem;
+    font-size: 1.625rem;
     font-weight: 600;
     line-height: 1.05;
     letter-spacing: -0.02em;
@@ -349,21 +349,21 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 }
 .zkapi-pill {
     align-self: center;
-    padding: 0.25rem 0.5625rem;
+    padding: 0.1875rem 0.5rem;
     border-radius: 999px;
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     font-weight: 500;
     line-height: 1;
     text-transform: capitalize;
 }
-.zkapi-bar { height: 0.25rem; overflow: hidden; border-radius: 999px; background: hsl(var(--color-foreground) / 0.08); }
+.zkapi-bar { height: 0.1875rem; overflow: hidden; border-radius: 999px; background: hsl(var(--color-foreground) / 0.08); }
 .zkapi-bar-fill { height: 100%; border-radius: inherit; background: var(--zkapi-bar); transition: width 240ms var(--zkapi-ease); }
 .zkapi-balance-foot {
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
     color: hsl(var(--color-muted-foreground));
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
 }
 @media (prefers-reduced-motion: reduce) {
