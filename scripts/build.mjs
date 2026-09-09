@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
+import { buildZkapiAssets, resolveZkapiNetwork, zkapiBuildPlugins, zkapiBuildProvenance } from './zkapiBuild.mjs';
 import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
@@ -37,6 +38,7 @@ const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
+const zkapiNetwork = resolveZkapiNetwork();
 const configuredWebAuthnRelayUrl = resolveBuildWebAuthnRelayUrl();
 const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
 if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
@@ -211,6 +213,7 @@ const build = async () => {
 
     const result = await esbuild.build({
         entryPoints,
+        plugins: zkapiBuildPlugins(zkapiNetwork),
         bundle: true,
         splitting: true,
         format: 'esm',
@@ -233,6 +236,7 @@ const build = async () => {
         },
         define: {
             '__DEV__': 'false',
+            '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
             '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
                 sameOriginOrg
@@ -282,6 +286,10 @@ const build = async () => {
     html = replaceBundleBlock(html, 'APP', appScriptPath);
     if (appCssPath) {
         html = html.replace('</head>', `    <link rel="stylesheet" href="${appCssPath}">\n</head>`);
+    }
+    const sdkAssets = await buildZkapiAssets({ network: zkapiNetwork, outDir, repoRoot, build: esbuild.build });
+    if (zkapiNetwork) {
+        html = html.replace('</head>', '    <link rel="stylesheet" href="zkapi/zkapi.css">\n</head>');
     }
 
     if (sameOriginOrg) {
@@ -343,6 +351,7 @@ const build = async () => {
 
     // Extract content hash from esbuild output filename for update checking
     if (appHash) {
+        const zkapi = await zkapiBuildProvenance({ network: zkapiNetwork, repoRoot, outDir, sdkAssets });
         await fs.writeFile(
             path.join(outDir, 'build.json'),
             JSON.stringify({
@@ -352,7 +361,8 @@ const build = async () => {
                     ? 'same-origin'
                     : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN,
                 webauthnRelayUrl: configuredWebAuthnRelayUrl,
-                verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai'
+                verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai',
+                ...(zkapi ? { zkapi } : {})
             }, null, 2)
         );
     }

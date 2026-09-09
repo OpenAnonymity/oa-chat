@@ -455,3 +455,20 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
 | "Toggle/ownership verification means trusting OpenRouter, violating zero trust to the OA system components." | False. Toggle and ownership checks enforce accountability on the *station's* provider account -- they are not about trusting the OA system. If OpenRouter lies about its own API state, it undermines itself, not OA. Regardless, user prompts remain unlinkable because blind signatures and ephemeral keys carry no user identity. |
+
+
+## Optional zkAPI payment SDK
+
+When enabled, OA Chat can obtain an ephemeral provider key by proving a private
+prepaid note meets a coarse model-tier cap. The SDK owns local note/proof and
+settlement state; it does not receive account identities or chat content. OA's
+provider adapter sends inference with the ephemeral credential. Private note
+storage is browser-local and separate from account-backed chat/ticket sync.
+
+SDK protocol, manifest, configuration, and daemon requests explicitly omit
+account cookies, including on same-origin reverse-proxy paths. The host passes
+OA's existing opt-in proxy transport instead of creating a second proxy policy.
+Public on-chain deposits/withdrawals and the SDK's existing timing/metadata
+tradeoffs are not changed by this packaging integration. The ticket protocol
+and its privacy claims remain as described above; SDK inclusion does not turn
+public funding transactions into anonymous account activity.
