@@ -216,6 +216,8 @@ html.zkapi-mode.dark {
     --code-block-header: hsl(235, 28%, 12.5%);
     --code-block-border: hsl(235, 25%, 17%);
 }
+/* In zkAPI's colours the gear's switches take the pole's accent. */
+html.zkapi-mode .settings-panel { --settings-accent: hsl(var(--color-accent-primary)); }
 
 :root,
 .dark {
@@ -8766,6 +8768,10 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .settings-panel .settings-text-action[data-tooltip]:hover::before,
 .settings-panel .settings-switch[data-tooltip]:hover::before { display: none; }
+/* The bubble sits on the panel, which is popover-coloured: in the dark it
+   takes the next surface step so it reads as a card, not floating text. */
+.dark .settings-panel .settings-text-action[data-tooltip]:hover::after,
+.dark .settings-panel .settings-switch[data-tooltip]:hover::after { background: hsl(var(--color-secondary)); }
 @keyframes settingsTipIn {
     from { opacity: 0; transform: translateY(0.25rem); }
     to   { opacity: 1; transform: translateY(0); }
@@ -8917,8 +8923,12 @@ html[data-keyboard-nav] .settings-link:focus-visible {
         0 0 0 1px hsl(var(--color-foreground) / .06),
         0 4px 16px -4px rgb(0 0 0 / .18);
 }
+/* In the dark a shadow says nothing and the popover colour is the colour
+   of the panels tooltips sit on (the gear, Billing), so the tooltip takes
+   the next surface step up instead. */
 .dark [data-tooltip]:hover::after,
 .dark .chat-mode-html-tooltip {
+    background: hsl(var(--color-secondary));
     box-shadow:
         0 0 0 1px hsl(var(--color-foreground) / .1),
         0 4px 16px -4px rgb(0 0 0 / .5);
