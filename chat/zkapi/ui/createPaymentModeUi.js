@@ -19,6 +19,10 @@ export function createPaymentModeUi(runtime) {
         if (!app || !modeControl) return;
         const mode = runtime.getMode();
         const busy = runtime.isModeLocked();
+        // zkAPI needs no account: the sidebar Account row (and its menu to the
+        // Account dialog) belongs to Tickets. Appearance lives in the gear.
+        const accountNav = document.getElementById('account-nav');
+        if (accountNav) accountNav.hidden = mode === 'zkapi';
         modeControl.setAttribute('aria-busy', runtime.isSwitching() ? 'true' : 'false');
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));

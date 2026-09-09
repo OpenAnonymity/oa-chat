@@ -66,7 +66,7 @@ html.theme-purple .zkapi-dialog {
 }
 .zkapi-dialog * { box-sizing: border-box; }
 .zkapi-dialog :where(p) { margin: 0; }
-.zkapi-dialog button, .zkapi-dialog input { font: inherit; }
+.zkapi-dialog :where(button, input) { font: inherit; }
 
 .zkapi-dialog-head {
     display: flex;
@@ -134,6 +134,40 @@ html.theme-purple .zkapi-dialog {
     text-wrap: pretty;
 }
 .zkapi-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+/* Deposit: the amount is the figure, the way the funded state shows the
+   balance; the wallet action sits under it. */
+.zkapi-deposit { gap: 0.375rem; }
+.zkapi-deposit > .zkapi-helper { margin-top: 0.375rem; }
+.zkapi-deposit > .zkapi-actions { margin-top: 0.75rem; }
+.zkapi-figure {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.125rem;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+}
+.zkapi-figure > span { color: hsl(var(--color-muted-foreground)); font-size: 1.625rem; font-weight: 500; }
+.zkapi-figure input {
+    width: 4.5ch;
+    min-width: 2ch;
+    padding: 0 0 0.125rem;
+    border: 0;
+    border-bottom: 2px solid var(--zkapi-control-border);
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    outline: 0;
+    transition: border-color 160ms var(--zkapi-ease);
+}
+.zkapi-figure input:hover { border-bottom-color: var(--zkapi-control-border-hover); }
+.zkapi-figure input:focus { border-bottom-color: hsl(var(--color-focus-ring)); }
+.zkapi-figure input[readonly] { border-bottom-color: transparent; }
 
 /* Amount: one instrument with the button beside it — same height, same radius. */
 .zkapi-amount {

@@ -585,17 +585,15 @@ export default class AccountModal {
             return `
                 <div class="zkapi-stack">
                     ${resumingDeposit ? '<p class="zkapi-lede">Private deposit ready to resume. No funds moved when the earlier MetaMask prompt closed; the same saved private note will be reused.</p>' : ''}
-                    <section class="zkapi-section" aria-label="Add funds">
-                        <div class="zkapi-row">
-                            <label class="zkapi-row-label" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
-                            <div class="zkapi-row-end">
-                                <span class="zkapi-amount"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></span>
-                                <button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>
-                                    ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
-                                </button>
-                            </div>
-                        </div>
+                    <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
+                        <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
+                        <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
                         <p class="zkapi-helper">${helper}</p>
+                        <div class="zkapi-actions">
+                            <button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button" ${this.busy ? 'disabled' : ''}>
+                                ${this.busy ? 'Waiting for MetaMask…' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}
+                            </button>
+                        </div>
                     </section>
                     <div class="zkapi-guides">
                         ${fundingSetupGuide({ mainnet, demoMintEnabled, open: fundingSetup?.open })}
@@ -796,8 +794,14 @@ export default class AccountModal {
         restoreFundingSetupView(this.overlay, fundingSetup);
         this.overlay.querySelector('#zkapi-payment-close')?.addEventListener('click', () => this.close());
         const depositInput = this.overlay.querySelector('#zkapi-deposit-amount');
+        // The figure grows with what is typed, like a number, not a field.
+        const fitDeposit = () => {
+            if (depositInput?.style) depositInput.style.width = `${Math.max(3, String(depositInput.value || '').length + 0.5)}ch`;
+        };
+        fitDeposit();
         depositInput?.addEventListener('input', () => {
             this.depositAmount = depositInput.value;
+            fitDeposit();
         });
         this.overlay.querySelector('#zkapi-deposit-btn')?.addEventListener('click', () => {
             // Capture the edited amount before run() marks the modal busy and
