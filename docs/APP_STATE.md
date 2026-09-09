@@ -1,6 +1,7 @@
 ## 2026-09-09: Funding setup for first-time wallet users
 
 - Removed the mainnet risk banner from both native funding entry points.
+  The prerequisite sentence uses “Ethereum network” in the public UI.
   Mainnet now shows prerequisites and an optional guide to installing MetaMask,
   buying ETH for gas and USDC for chats, selecting Ethereum for both, and
   returning to confirm the deposit. Sepolia has its own free-test-token guide.
