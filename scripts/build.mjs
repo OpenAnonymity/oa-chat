@@ -105,7 +105,7 @@ const toPosixPath = (value) => value.split(path.sep).join('/');
 
 const replaceBundleBlock = (html, name, scriptPath) => {
     const blockRegex = new RegExp(`<!--\\s*BUNDLE:${name}\\s*-->[\\s\\S]*?<!--\\s*\\/BUNDLE:${name}\\s*-->`);
-    const tag = `<!-- BUNDLE:${name} -->\n    <script type="module" src="${scriptPath}"></script>\n    <!-- /BUNDLE:${name} -->`;
+    const tag = `<!-- BUNDLE:${name} -->\n    <script type="module" src="${scriptPath}" onerror="window.__oaRetryBundle(this)"></script>\n    <!-- /BUNDLE:${name} -->`;
     if (!blockRegex.test(html)) {
         throw new Error(`Missing BUNDLE:${name} block in index.html`);
     }

@@ -1073,14 +1073,36 @@
         </div>
     </div>
 
+    <!-- A bundle that fails to load (a 404 the browser cached during a
+         deploy, a dropped connection) is fetched once more under a fresh
+         URL, which bypasses every cache in the path. If that fails too, the
+         loading placeholder says so instead of spinning forever. -->
+    <script>
+        window.__oaRetryBundle = function (failed) {
+            var tries = Number(failed.getAttribute('data-retry') || 0);
+            if (tries >= 1) {
+                var loader = document.querySelector('#sessions-skeleton .loader-text');
+                if (loader) loader.innerHTML = '<span>oa-chat could not load.</span><span><a href="">Reload the page</a></span>';
+                document.querySelector('#sessions-skeleton .loader-bar')?.remove();
+                return;
+            }
+            var retry = document.createElement('script');
+            retry.type = 'module';
+            retry.src = failed.src + (failed.src.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now();
+            retry.setAttribute('data-retry', String(tries + 1));
+            retry.onerror = function () { window.__oaRetryBundle(retry); };
+            failed.parentNode.insertBefore(retry, failed.nextSibling);
+        };
+    </script>
+
     <!-- Prerender landing content early (skip if restoring a session) -->
     <!-- BUNDLE:PRELUDE -->
-    <script type="module" src="prelude.js?v=dev"></script>
+    <script type="module" src="prelude.js?v=dev" onerror="window.__oaRetryBundle(this)"></script>
     <!-- /BUNDLE:PRELUDE -->
 
     <!-- Single entry point - app bootstraps -->
     <!-- BUNDLE:APP -->
-    <script type="module" src="standalone.js?v=extensions-v2"></script>
+    <script type="module" src="standalone.js?v=extensions-v2" onerror="window.__oaRetryBundle(this)"></script>
     <!-- /BUNDLE:APP -->
 </body>
 </html>
