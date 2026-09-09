@@ -2,7 +2,7 @@ const LINK_CLASSES = 'underline underline-offset-2 hover:text-foreground';
 
 export function fundingSetupGuide({ mainnet, demoMintEnabled, open = false }) {
     const prerequisites = mainnet
-        ? '<strong>MetaMask</strong> installed, <strong>USDC</strong> to fund chats, and <strong>ETH</strong> to pay network fees (gas). Keep both tokens on <strong>Ethereum Mainnet</strong> in the same MetaMask account.'
+        ? '<strong>MetaMask</strong> installed, <strong>USDC</strong> to fund chats, and <strong>ETH</strong> to pay network fees (gas). Keep both tokens on the <strong>Ethereum network</strong> in the same MetaMask account.'
         : demoMintEnabled
             ? '<strong>MetaMask</strong> installed and <strong>Sepolia ETH</strong> for testnet fees. Demo billing tokens are provided automatically when needed. No real ETH or USDC purchase is needed.'
             : 'Install MetaMask to get started. The payment network and token requirements will appear when the payment service connects.';
