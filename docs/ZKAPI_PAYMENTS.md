@@ -39,7 +39,9 @@ The generated config routes anonymous zkAPI protocol traffic separately from
 the OA account/ticket endpoints. Mainnet funding uses real USDC and ETH.
 
 `build.json` records the OA revision, SDK version and immutable revision,
-network, protocol/artifact provenance, and emitted file hashes. Pin updates
+network, protocol/artifact provenance, and emitted file hashes. Hidden files and
+source maps are removed before hashing so the manifest describes files that
+static hosts actually serve. Pin updates
 must change the package dependency and lock together; floating SDK branch
 references and local workspace dependencies are rejected by enabled builds.
 
@@ -85,7 +87,7 @@ the balance help/history continue to explain the deployed contract behavior.
 ## Verification
 
 Run `npm test` for the existing OA suite and the native payment adapter tests.
-The SDK integration passed 743 OA tests and 164 native payment tests. The exact
+The SDK integration passed 744 OA tests and 164 native payment tests. The exact
 dependency and lockfile also passed a fresh `npm ci` without Git/npm credentials
 and with SSH disabled; the public GitHub package requires no private checkout.
 The SDK repository tests its own wallet, recovery, transport, and proof-asset

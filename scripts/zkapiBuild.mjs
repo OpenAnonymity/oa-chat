@@ -49,6 +49,12 @@ async function artifactFiles(root, directory = root) {
     const files = {};
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
         const absolute = path.join(directory, entry.name);
+        // Static hosts omit hidden files and protect source maps. Keep the
+        // deployment and its public integrity manifest identical.
+        if (entry.name.startsWith('.') || entry.name.endsWith('.map')) {
+            await fs.rm(absolute, { recursive: true, force: true });
+            continue;
+        }
         if (entry.isSymbolicLink()) throw new Error(`[build] Unexpected symlink in deployment: ${absolute}`);
         if (entry.isDirectory()) Object.assign(files, await artifactFiles(root, absolute));
         else if (entry.isFile()) {
@@ -69,7 +75,7 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
     if (!revision) throw new Error('[build] The zkAPI SDK dependency must resolve to an immutable Git commit.');
     let oaRevision = process.env.VERCEL_GIT_COMMIT_SHA || null;
     if (!oaRevision) {
-        try { oaRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim(); }
+        try { oaRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
         catch { /* Source archives may supply their revision through Vercel. */ }
     }
     return {
