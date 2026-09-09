@@ -87,7 +87,9 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
     const titles = [...dialog.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
     // The last section carries no title: the dialog is already called Account.
     assert.deepEqual(titles, ['Data controls', 'Appearance']);
-    assert.match(dialog, /<section class="settings-section" aria-label="Log out or delete">/);
+    // Share feedback is a row of the last section, not a section of its own.
+    assert.match(dialog, /<section class="settings-section" aria-label="Feedback, log out or delete">\s*<a href="https:\/\/forms\.gle[^"]*"[^>]*class="settings-row settings-link">/);
+    assert.equal((dialog.match(/<section /g) || []).length, 3, 'Data controls, Appearance, and the account actions');
     const labels = [...dialog.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
         'All', 'Chat history', 'ChatGPT', 'Memories',

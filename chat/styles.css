@@ -8391,6 +8391,54 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
 .settings-dialog .settings-segmented .settings-segment-icon span { font-size: 0.875rem; }
 .settings-dialog .settings-link-icon { width: 1rem; height: 1rem; }
+/* Import chat history: the Account dialog's skin, reached from it. */
+.import-head { justify-content: flex-start; gap: 0.5rem; }
+.import-head > h2 { flex: 1; min-width: 0; }
+.import-head .import-back { margin-left: -0.375rem; }
+.import-soon { font-size: 0.875rem; color: hsl(var(--color-muted-foreground)); }
+.import-howto { margin-top: 0.5rem; }
+.import-howto summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2rem;
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 120ms ease;
+}
+.import-howto summary::-webkit-details-marker { display: none; }
+.import-howto summary::before {
+    content: '';
+    width: 0.375rem;
+    height: 0.375rem;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms ease;
+    margin-right: 0.125rem;
+}
+.import-howto[open] summary::before { transform: rotate(45deg); }
+.import-howto summary:hover { color: hsl(var(--color-foreground)); }
+.import-howto ol { margin: 0.125rem 0 0.25rem; padding-left: 1.125rem; font-size: 0.8125rem; line-height: 1.5; color: hsl(var(--color-muted-foreground)); }
+.import-howto li { margin: 0.125rem 0; }
+.import-howto code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; }
+.import-counts { display: flex; gap: 2rem; padding: 0.5rem 0 0.25rem; }
+.import-count { display: flex; flex-direction: column; gap: 0.125rem; }
+.import-count span { font-size: 0.8125rem; color: hsl(var(--color-muted-foreground)); }
+.import-count strong { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; color: hsl(var(--color-foreground)); }
+.import-progress { height: 0.25rem; margin: 0.5rem 0 0.25rem; border-radius: 999px; background: hsl(var(--color-foreground) / 0.08); overflow: hidden; }
+.import-progress > div { height: 100%; border-radius: inherit; background: hsl(var(--color-foreground)); transition: width 200ms ease; }
+.import-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.import-actions-group { display: inline-flex; align-items: center; gap: 0.625rem; }
+.import-note { margin: 0.375rem 0 0; font-size: 0.8125rem; color: hsl(var(--color-muted-foreground)); text-wrap: pretty; }
+.import-error { margin: 0.5rem 0 0; font-size: 0.8125rem; color: hsl(0 72% 45%); text-wrap: pretty; }
+.import-spinner { width: 1rem; height: 1rem; border-radius: 50%; border: 1.5px solid hsl(var(--color-foreground) / 0.15); border-top-color: hsl(var(--color-foreground)); animation: import-spin 0.8s linear infinite; }
+@keyframes import-spin { to { transform: rotate(360deg); } }
+.settings-button-primary { color: hsl(var(--color-background)); background: hsl(var(--color-foreground)); border-color: hsl(var(--color-foreground)); }
+.settings-button-primary:hover:not(:disabled) { background: hsl(var(--color-foreground) / 0.88); border-color: transparent; }
+.settings-panel .settings-text-action[data-tooltip]:hover::after { white-space: nowrap; }
 /* The Delete account confirmation sits over the Settings card, same backdrop. */
 .settings-confirm-layer {
     /* Outside the .settings-dialog card, so it carries the same control tokens. */

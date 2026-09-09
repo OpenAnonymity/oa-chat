@@ -51,22 +51,28 @@ class ChatHistoryImportModal {
         };
     }
 
-    open() {
+    /**
+     * @param {{ returnTo?: 'account' | null }} [options] — where Back goes.
+     * Opened from the Account dialog, the header gets a back arrow that
+     * reopens it; the X always returns to the chat.
+     */
+    open(options = {}) {
         if (this.isOpen) return;
         this.isOpen = true;
+        this.returnTo = options.returnTo || null;
         this.state = this.getInitialState();
 
         document.querySelector('.chat-history-import-modal')?.remove();
 
         this.overlay = document.createElement('div');
-        this.overlay.className = 'chat-history-import-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
+        this.overlay.className = 'chat-history-import-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in';
 
         this.render();
         document.body.appendChild(this.overlay);
         this.setupEventListeners();
     }
 
-    close() {
+    close({ back = false } = {}) {
         if (!this.isOpen) return;
         if (this.state.step === 'importing' && !this.state.cancelRequested) {
             this.requestCancel();
@@ -81,6 +87,9 @@ class ChatHistoryImportModal {
             document.removeEventListener('keydown', this.escapeHandler);
             this.escapeHandler = null;
         }
+        const returnTo = this.returnTo;
+        this.returnTo = null;
+        if (back && returnTo === 'account') this.app.settingsDialog?.open?.();
     }
 
     render() {
@@ -108,188 +117,115 @@ class ChatHistoryImportModal {
         const detectedDescription = importerDescription || importer?.description || '';
 
         let bodyHtml = '';
+        const sourceName = label => String(label || '').replace(/\s*\(export\)$/i, '');
+        const counts = items => `
+                <div class="import-counts">
+                    ${items.map(([name, value]) => `<div class="import-count"><span>${name}</span><strong>${value}</strong></div>`).join('')}
+                </div>`;
         if (step === 'select') {
-            const importerListHtml = visibleImporters.length
-                ? `
-                    <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
-                        <div class="text-xs text-muted-foreground">Supported Formats</div>
-                        ${visibleImporters.map(entry => {
-                            const status = entry.enabled === false ? 'Coming soon' : 'Ready';
-                            const statusClass = entry.enabled === false ? 'text-muted-foreground' : 'text-foreground';
-                            const hint = entry.fileHint || entry.label;
-                            return `
-                                <div class="space-y-1">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <div class="text-sm text-foreground">${entry.label}</div>
-                                        <div class="text-xs ${statusClass}">${status}</div>
-                                    </div>
-                                    <div class="text-[11px] text-muted-foreground">${hint}</div>
-                                </div>
-                            `;
-                        }).join('')}
+            const rows = visibleImporters.map(entry => {
+                const ready = entry.enabled !== false;
+                return `
+                <div class="settings-row">
+                    <span class="settings-row-label">${sourceName(entry.label)}</span>
+                    <div class="settings-row-control">
+                        ${ready
+                            ? `<button type="button" class="settings-text-action" data-import-pick data-tooltip="${entry.fileHint && entry.fileHint.length < 40 ? `Choose ${entry.fileHint}` : 'Choose the export file'}">Choose file</button>`
+                            : '<span class="import-soon">Coming soon</span>'}
                     </div>
-                `
-                : '';
+                </div>`;
+            }).join('');
             bodyHtml = `
-                <div class="space-y-3">
-                    <p class="text-sm text-foreground">Import chat history into your local browser database.</p>
-                    ${importerListHtml}
-                    <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
-                        <div class="text-xs text-muted-foreground">Find your ChatGPT export</div>
-                        <ol class="list-decimal list-inside space-y-1">
-                            <li>Open ChatGPT Settings and go to Data Controls.</li>
-                            <li>Select "Export data" and confirm via email.</li>
-                            <li>Download and unzip the export archive.</li>
-                            <li>Choose <span class="font-mono">conversations.json</span> below.</li>
+                <section class="settings-section">
+                    ${rows}
+                    <details class="import-howto">
+                        <summary>How to get your ChatGPT export</summary>
+                        <ol>
+                            <li>Open ChatGPT Settings, then Data controls.</li>
+                            <li>Choose "Export data" and confirm by email.</li>
+                            <li>Download and unzip the archive, then choose <code>conversations.json</code>.</li>
                         </ol>
-                    </div>
-                    <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
-                        <div>Imports text, reasoning trace, citations, and web-search thumbnails if possible.</div>
-                        <div>Other media is shown as placeholders.</div>
-                        <div>Everything stays in your browser. Nothing is uploaded.</div>
-                        <div>More sources can be added over time.</div>
-                    </div>
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="text-xs text-muted-foreground">${fileInfo}</div>
-                        <button id="chat-import-pick-file" class="btn-primary-bright px-3 py-2 text-sm font-medium rounded-md bg-blue-600 text-white transition-all duration-200">Choose file</button>
-                    </div>
-                    ${parseError ? `<div class="text-sm text-red-600">${parseError}</div>` : ''}
-                </div>
+                    </details>
+                    ${parseError ? `<p class="import-error" role="alert">${parseError}</p>` : ''}
+                </section>
             `;
         } else if (step === 'parsing') {
             bodyHtml = `
-                <div class="space-y-4 text-sm">
-                    <div class="flex items-center gap-2 text-foreground">
-                        <span class="inline-flex h-2.5 w-2.5 rounded-full bg-primary animate-pulse"></span>
-                        Parsing export file...
-                    </div>
-                    <div class="text-xs text-muted-foreground">${fileInfo}</div>
-                </div>
+                <section class="settings-section">
+                    <div class="settings-row"><span class="settings-row-label">Reading ${fileInfo}</span><span class="import-spinner" aria-hidden="true"></span></div>
+                </section>
             `;
         } else if (step === 'preview') {
             bodyHtml = `
-                <div class="space-y-4 text-sm">
-                    <div class="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
-                        <div class="text-xs text-muted-foreground">Detected format</div>
-                        <div class="text-sm text-foreground font-medium">${detectedLabel}</div>
-                        ${detectedDescription ? `<div class="text-xs text-muted-foreground">${detectedDescription}</div>` : ''}
-                        <div class="text-xs text-muted-foreground">${fileInfo}</div>
-                    </div>
-                    <div class="grid grid-cols-2 gap-3">
-                        <div class="rounded-lg border border-border p-3">
-                            <div class="text-xs text-muted-foreground">Sessions</div>
-                            <div class="text-lg font-semibold text-foreground">${preview?.importableSessions ?? preview?.sessionCount ?? 0}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-3">
-                            <div class="text-xs text-muted-foreground">Messages</div>
-                            <div class="text-lg font-semibold text-foreground">${preview?.messageCount || 0}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-3">
-                            <div class="text-xs text-muted-foreground">Media placeholders</div>
-                            <div class="text-lg font-semibold text-foreground">${preview?.mediaMessages || 0}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-3">
-                            <div class="text-xs text-muted-foreground">Import order</div>
-                            <div class="text-sm text-foreground">Newest first</div>
-                        </div>
-                    </div>
-                    <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                        Imports text, reasoning trace, citations, and web-search thumbnails if possible. Other media is shown as placeholders.
-                    </div>
-                    <div class="flex items-center justify-between gap-2">
-                        <button id="chat-import-pick-file" class="px-3 py-2 text-sm font-medium rounded-md border border-border hover-highlight transition-colors">Choose another file</button>
-                        <button id="chat-import-start" class="px-3 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">Start import</button>
-                    </div>
-                </div>
+                <section class="settings-section">
+                    <div class="settings-row"><span class="settings-row-label">${detectedLabel}</span><span class="import-soon">${fileInfo}</span></div>
+                    ${counts([
+                        ['Chats', preview?.importableSessions ?? preview?.sessionCount ?? 0],
+                        ['Messages', preview?.messageCount || 0],
+                        ['Media placeholders', preview?.mediaMessages || 0]
+                    ])}
+                </section>
+                <section class="settings-section import-actions">
+                    <button type="button" id="chat-import-pick-file" class="settings-text-action">Choose another file</button>
+                    <button type="button" id="chat-import-start" class="settings-button settings-button-primary">Import</button>
+                </section>
             `;
         } else if (step === 'importing') {
             const progressPercent = progress.total ? Math.round((progress.processed / progress.total) * 100) : 0;
             bodyHtml = `
-                <div class="space-y-4 text-sm">
-                    <div class="text-sm text-foreground font-medium">Importing chats</div>
-                    <div class="text-xs text-muted-foreground">${fileInfo}</div>
-                    <div class="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div id="import-progress-fill" class="h-full bg-primary transition-all" style="width: ${progressPercent}%"></div>
-                    </div>
-                    <div id="import-progress-text" class="text-xs text-muted-foreground">
-                        ${progress.processed} of ${progress.total} sessions processed (${progressPercent}%)
-                    </div>
-                    <div class="grid grid-cols-3 gap-2 text-xs">
-                        <div class="rounded-lg border border-border p-2 text-center">
-                            <div class="text-muted-foreground">Imported</div>
-                            <div id="import-count" class="text-foreground font-semibold">${progress.imported}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-2 text-center">
-                            <div class="text-muted-foreground">Skipped</div>
-                            <div id="skip-count" class="text-foreground font-semibold">${progress.skipped}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-2 text-center">
-                            <div class="text-muted-foreground">Duplicates</div>
-                            <div id="dup-count" class="text-foreground font-semibold">${progress.duplicates}</div>
-                        </div>
-                    </div>
-                    ${cancelRequested ? `<div class="text-xs text-muted-foreground">Stopping after the current session...</div>` : ''}
-                    <div class="flex items-center justify-end gap-2">
-                        <button id="chat-import-cancel" class="px-3 py-2 text-sm font-medium rounded-md border border-border hover-highlight transition-colors">Cancel</button>
-                    </div>
+                <section class="settings-section">
+                    <div class="settings-row"><span class="settings-row-label">Importing</span><span id="import-progress-text" class="import-soon">${progress.processed} of ${progress.total}</span></div>
+                    <div class="import-progress"><div id="import-progress-fill" style="width: ${progressPercent}%"></div></div>
+                    ${counts([['Imported', `<span id="import-count">${progress.imported}</span>`], ['Skipped', `<span id="skip-count">${progress.skipped}</span>`], ['Duplicates', `<span id="dup-count">${progress.duplicates}</span>`]])}
+                    ${cancelRequested ? '<p class="import-note">Stopping after the current chat.</p>' : ''}
+                </section>
+                <section class="settings-section import-actions">
                     ${confirmingCancel ? `
-                        <div class="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground space-y-2">
-                            <div>Cancel the import? Imported sessions remain available.</div>
-                            <div class="flex items-center justify-end gap-2">
-                                <button id="chat-import-keep" class="px-3 py-1.5 text-xs font-medium rounded-md border border-border hover-highlight transition-colors">Keep importing</button>
-                                <button id="chat-import-confirm-cancel" class="px-3 py-1.5 text-xs font-medium rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors">Cancel import</button>
-                            </div>
-                        </div>
-                    ` : ''}
-                </div>
+                        <span class="import-note">Stop the import? Chats already imported stay.</span>
+                        <span class="import-actions-group">
+                            <button type="button" id="chat-import-keep" class="settings-text-action">Keep going</button>
+                            <button type="button" id="chat-import-confirm-cancel" class="settings-button settings-button-danger">Stop</button>
+                        </span>
+                    ` : `
+                        <span></span>
+                        <button type="button" id="chat-import-cancel" class="settings-button">Cancel</button>
+                    `}
+                </section>
             `;
         } else if (step === 'complete' || step === 'cancelled' || step === 'error') {
-            const heading = step === 'complete' ? 'Import complete' : step === 'cancelled' ? 'Import cancelled' : 'Import failed';
-            const summaryText = lastError ? lastError : '';
+            const heading = step === 'complete' ? 'Import complete' : step === 'cancelled' ? 'Import stopped' : 'Import failed';
             bodyHtml = `
-                <div class="space-y-4 text-sm">
-                    <div class="text-sm text-foreground font-medium">${heading}</div>
-                    <div class="grid grid-cols-3 gap-2 text-xs">
-                        <div class="rounded-lg border border-border p-2 text-center">
-                            <div class="text-muted-foreground">Imported</div>
-                            <div class="text-foreground font-semibold">${progress.imported}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-2 text-center">
-                            <div class="text-muted-foreground">Skipped</div>
-                            <div class="text-foreground font-semibold">${progress.skipped}</div>
-                        </div>
-                        <div class="rounded-lg border border-border p-2 text-center">
-                            <div class="text-muted-foreground">Duplicates</div>
-                            <div class="text-foreground font-semibold">${progress.duplicates}</div>
-                        </div>
-                    </div>
-                    ${summaryText ? `<div class="text-xs text-red-600">${summaryText}</div>` : ''}
-                    <div class="flex items-center justify-end">
-                        <button id="chat-import-done" class="px-3 py-2 text-sm font-medium rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors">Done</button>
-                    </div>
-                </div>
+                <section class="settings-section">
+                    <div class="settings-row"><span class="settings-row-label">${heading}</span></div>
+                    ${counts([['Imported', progress.imported], ['Skipped', progress.skipped], ['Duplicates', progress.duplicates]])}
+                    ${lastError ? `<p class="import-error" role="alert">${lastError}</p>` : ''}
+                </section>
+                <section class="settings-section import-actions">
+                    <span></span>
+                    <button type="button" id="chat-import-done" class="settings-button settings-button-primary">Done</button>
+                </section>
             `;
         }
 
-        this.overlay.innerHTML = `
-            <div class="bg-background border border-border rounded-xl shadow-2xl max-w-lg w-full mx-4 animate-in zoom-in-95 overflow-hidden">
-                <div class="p-4 border-b border-border flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <svg class="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+        const backButton = this.returnTo === 'account' ? `
+                    <button type="button" id="chat-import-back" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-accent import-back" aria-label="Back to account">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.7" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"></path>
                         </svg>
-                        <h2 class="text-base font-semibold text-foreground">Import Chat History</h2>
-                    </div>
-                    <button id="chat-import-close" class="text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg hover:bg-muted">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </button>` : '';
+        this.overlay.innerHTML = `
+            <div role="dialog" aria-modal="true" aria-labelledby="chat-import-title" tabindex="-1" class="settings-dialog settings-panel">
+                <header class="settings-dialog-head import-head${backButton ? ' has-back' : ''}">
+                    ${backButton}
+                    <h2 id="chat-import-title" class="account-dialog-title">Import chat history</h2>
+                    <button type="button" id="chat-import-close" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" aria-label="Close">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
                     </button>
-                </div>
-                <div class="p-4">
-                    <input id="chat-import-input" type="file" class="hidden" accept="${acceptTypes}">
-                    ${bodyHtml}
-                </div>
+                </header>
+                <input id="chat-import-input" type="file" class="hidden" accept="${acceptTypes}">
+                ${bodyHtml}
             </div>
         `;
     }
@@ -298,7 +234,9 @@ class ChatHistoryImportModal {
         if (!this.overlay) return;
 
         const closeBtn = this.overlay.querySelector('#chat-import-close');
+        const backBtn = this.overlay.querySelector('#chat-import-back');
         const pickFileBtn = this.overlay.querySelector('#chat-import-pick-file');
+        const rowPickBtns = [...this.overlay.querySelectorAll('[data-import-pick]')];
         const fileInput = this.overlay.querySelector('#chat-import-input');
         const startBtn = this.overlay.querySelector('#chat-import-start');
         const cancelBtn = this.overlay.querySelector('#chat-import-cancel');
@@ -309,12 +247,17 @@ class ChatHistoryImportModal {
         if (closeBtn) {
             closeBtn.onclick = () => this.close();
         }
+        if (backBtn) {
+            backBtn.onclick = () => this.close({ back: true });
+        }
+        this.overlay.querySelector('[role="dialog"]')?.focus?.({ preventScroll: true });
 
         this.overlay.onclick = (e) => {
             if (e.target === this.overlay) this.close();
         };
 
         pickFileBtn?.addEventListener('click', () => fileInput?.click());
+        rowPickBtns.forEach(button => button.addEventListener('click', () => fileInput?.click()));
         fileInput?.addEventListener('change', () => {
             const file = fileInput.files && fileInput.files[0];
             if (file) {

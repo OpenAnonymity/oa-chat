@@ -125,7 +125,7 @@ class SettingsDialog {
             case 'import-history':
                 // The import dialog takes the page over; this one steps aside.
                 this.close();
-                this.app.chatHistoryImportModal?.open?.();
+                this.app.chatHistoryImportModal?.open?.({ returnTo: 'account' });
                 break;
             case 'log-out':
                 this.close();
