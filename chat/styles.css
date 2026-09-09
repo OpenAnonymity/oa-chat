@@ -8364,8 +8364,28 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    download, imports say which file they take. The buttons sit at the card's
    right edge, so the tooltip hangs from its right corner and grows leftward
    instead of running into the scroll edge. */
-.settings-text-action[data-tooltip]:hover::after { left: auto; right: 0; transform: translateY(8px); }
-.settings-text-action[data-tooltip]:hover::before { left: auto; right: 0.875rem; transform: translateY(4px) rotate(45deg); }
+.settings-panel .settings-text-action[data-tooltip]:hover::after {
+    display: block;
+    left: auto;
+    right: 0;
+    transform: translateY(8px);
+    animation-name: tooltipBodyFadeInEnd;
+}
+.settings-panel .settings-text-action[data-tooltip]:hover::before {
+    display: block;
+    left: auto;
+    right: 0.875rem;
+    transform: translateY(4px) rotate(45deg);
+    animation-name: tooltipArrowFadeInEnd;
+}
+@keyframes tooltipBodyFadeInEnd {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(8px); }
+}
+@keyframes tooltipArrowFadeInEnd {
+    from { opacity: 0; transform: translateY(0) rotate(45deg); }
+    to   { opacity: 1; transform: translateY(4px) rotate(45deg); }
+}
 .settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
 .settings-dialog .settings-segmented .settings-segment-icon { width: 2.25rem; }
 .settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
