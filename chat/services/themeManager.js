@@ -1,7 +1,9 @@
 import preferencesStore, { PREF_KEYS } from './preferencesStore.js';
 
 const PREFERENCE_SYSTEM = 'system';
-const VALID_PREFERENCES = new Set(['light', 'dark', PREFERENCE_SYSTEM]);
+// 'purple' is a light-family theme in Ethereum's hue (html.theme-purple);
+// it keeps every light rule and overrides the colour tokens.
+const VALID_PREFERENCES = new Set(['light', 'dark', 'purple', PREFERENCE_SYSTEM]);
 
 class ThemeManager {
     constructor() {
@@ -91,12 +93,14 @@ class ThemeManager {
         const hasMatchingThemeClass = effectiveTheme === 'dark'
             ? root.classList.contains('theme-dark') && !root.classList.contains('theme-light')
             : root.classList.contains('theme-light') && !root.classList.contains('theme-dark');
+        const hasMatchingPurpleClass = (effectiveTheme === 'purple') === root.classList.contains('theme-purple');
 
         if (
             currentTheme === effectiveTheme &&
             currentPreference === this.preference &&
             hasMatchingDarkClass &&
-            hasMatchingThemeClass
+            hasMatchingThemeClass &&
+            hasMatchingPurpleClass
         ) {
             return;
         }
@@ -113,13 +117,14 @@ class ThemeManager {
             root.classList.remove('dark');
         }
 
-        if (effectiveTheme === 'light') {
-            root.classList.add('theme-light');
-            root.classList.remove('theme-dark');
-        } else {
+        if (effectiveTheme === 'dark') {
             root.classList.add('theme-dark');
             root.classList.remove('theme-light');
+        } else {
+            root.classList.add('theme-light');
+            root.classList.remove('theme-dark');
         }
+        root.classList.toggle('theme-purple', effectiveTheme === 'purple');
 
         // Re-enable transitions after a frame (colors already applied)
         requestAnimationFrame(() => {

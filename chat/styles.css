@@ -127,6 +127,46 @@
     --color-ring: 0 0% 80%;
 }
 
+/* Purple: a light-family theme in Ethereum's hue (#627EEA ~ hsl(228 76% 65%)).
+   html carries theme-light AND theme-purple, so every light rule applies and
+   only the colour tokens change: lavender ground, a deeper sidebar tint, a
+   near-white card, indigo text, the send button in the hue's darker step. */
+.theme-purple {
+    --color-hover: 232 50% 92%;
+
+    --slate-1: hsl(232, 60%, 98%);
+    --slate-2: hsl(232, 55%, 96.5%);
+    --slate-3: hsl(232, 50%, 94%);
+    --slate-4: hsl(232, 45%, 92%);
+    --slate-200: hsl(232, 35%, 86%);
+    --slate-800: hsl(232, 40%, 20%);
+    --slate-6: hsl(232, 25%, 80%);
+
+    --color-accent-primary: 228 76% 65%;
+    --color-focus-ring: 228 76% 65%;
+
+    --color-background: 232 60% 96%;
+    --color-foreground: 232 45% 14%;
+    --color-card: 232 70% 98.5%;
+    --color-card-foreground: 232 45% 14%;
+    --color-popover: 232 70% 98.5%;
+    --color-popover-foreground: 232 45% 14%;
+    --color-primary: 228 70% 55%;
+    --color-primary-foreground: 0 0% 100%;
+    --color-secondary: 232 50% 92%;
+    --color-secondary-foreground: 232 45% 14%;
+    --color-muted: 232 50% 92%;
+    --color-muted-foreground: 232 22% 44%;
+    --color-accent: 232 50% 92%;
+    --color-accent-foreground: 232 45% 14%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 0 0% 95%;
+    --color-border: 232 35% 86%;
+    --color-input: 232 35% 86%;
+    --color-ring: 228 76% 65%;
+}
+.theme-swatch-purple { fill: hsl(228 76% 65%); }
+
 :root,
 .dark {
     --tw-ring-offset-color: hsl(var(--color-background));

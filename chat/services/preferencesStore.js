@@ -176,7 +176,7 @@ class PreferencesStore {
             {
                 key: PREF_KEYS.theme,
                 storageKey: LOCAL_STORAGE_KEYS.theme,
-                parse: (value) => (value === 'light' || value === 'dark' || value === 'system') ? value : null
+                parse: (value) => (value === 'light' || value === 'dark' || value === 'purple' || value === 'system') ? value : null
             },
             {
                 key: PREF_KEYS.wideMode,
@@ -590,7 +590,7 @@ class PreferencesStore {
 
             let serialized = null;
             if (key === PREF_KEYS.theme) {
-                serialized = (value === 'light' || value === 'dark') ? value : null;
+                serialized = (value === 'light' || value === 'dark' || value === 'purple') ? value : null;
             } else if (key === PREF_KEYS.fontMode) {
                 serialized = value === 'serif' ? 'serif' : 'sans';
             } else if (key === PREF_KEYS.flatMode) {
