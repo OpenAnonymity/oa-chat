@@ -9705,6 +9705,7 @@ class ChatApp {
         this.chatInput?.updateMemoryToggleUI?.();
         this.chatInput?.refreshFeatureAvailability?.();
         this.updateCouncilLayoutMode();
+        this.rightPanel?.onModelSelectionChange?.();
     }
 
     updateCouncilLayoutMode(session = this.getCurrentSession(), messages = null) {
