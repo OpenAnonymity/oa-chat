@@ -77,10 +77,23 @@ class SettingsDialog {
         this.app.chatInput?.closeSettingsMenu?.();
     }
 
+    /** Puts the gear back the way it was: the card stepped in front of it,
+     *  it did not replace it. The gear button's own handler positions it. */
+    reopenGearMenu() {
+        const menu = this.app.elements?.settingsMenu;
+        const button = this.app.elements?.settingsBtn;
+        if (!menu || !button?.click) return;
+        const reopen = () => { if (menu.classList?.contains?.('hidden')) button.click(); };
+        // After the current click has finished bubbling, so the document's
+        // outside-click handler does not close what was just reopened.
+        if (typeof setTimeout === 'function') setTimeout(reopen, 0); else reopen();
+    }
+
     /** From the gear: only the export confirmation, over the backdrop. */
     openExportConfirm(action, returnFocusEl = null) {
         if (!this.overlay) return;
         this.closeGearMenu();
+        this.reopenGearOnClose = true;
         this.open(returnFocusEl);
         this.dialog?.setAttribute?.('hidden', '');
         this.standaloneConfirm = true;
@@ -132,6 +145,10 @@ class SettingsDialog {
         const target = this.returnFocusEl;
         this.returnFocusEl = null;
         if (target?.focus && document.contains?.(target)) target.focus({ preventScroll: true });
+        if (this.reopenGearOnClose) {
+            this.reopenGearOnClose = false;
+            this.reopenGearMenu();
+        }
     }
 
     handleKeydown(event) {

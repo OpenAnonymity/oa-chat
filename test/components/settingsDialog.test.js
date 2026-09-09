@@ -192,11 +192,22 @@ test('Export from the gear asks first too: the menu closes and only the confirma
     try {
         const gear = { classList: new Set(['hidden']) };
         gear.classList.add = value => { h.events.push(`gear:${value}`); };
-        h.settings.app.elements = { settingsMenu: gear };
+        gear.classList.contains = () => true;
+        const gearButton = { classList: new Set(), click() { h.events.push('gear:reopened'); } };
+        h.settings.app.elements = { settingsMenu: gear, settingsBtn: gearButton };
         h.settings.exportChats = async () => { h.events.push('export-chats'); };
         h.settings.openExportConfirm('export-chats');
         assert.equal(h.events.shift(), 'gear:hidden', 'the gear popover closes so the card is not behind it');
         assert.equal(h.settings.isOpen, true);
+
+        await click(h, { dataset: { exportConfirm: 'cancel' } });
+        assert.equal(h.settings.isOpen, false);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepEqual(h.events, ['gear:reopened'], 'Cancel puts the gear back up');
+        h.events.length = 0;
+
+        h.settings.openExportConfirm('export-chats');
+        h.events.length = 0;
         assert.equal(h.settings.standaloneConfirm, true, 'the settings card stays hidden behind the confirmation');
         assert.ok(h.settings.deleteConfirm, 'a confirmation card is up');
         assert.match(h.settings.deleteConfirm.innerHTML, /Export your chats\?/);
@@ -205,6 +216,8 @@ test('Export from the gear asks first too: the menu closes and only the confirma
         await click(h, { dataset: { exportConfirm: 'export-chats' } });
         assert.deepEqual(h.events, ['export-chats']);
         assert.equal(h.settings.isOpen, false, 'nothing is left behind the card');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepEqual(h.events, ['export-chats', 'gear:reopened'], 'so does Export');
     } finally {
         h.restore();
     }
