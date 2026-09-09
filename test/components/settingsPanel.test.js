@@ -32,16 +32,17 @@ function settingsDialog(html) {
     return html.slice(start, end);
 }
 
-test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () => {
+test('the gear holds Privacy, Memory, Tools, and Appearance', () => {
     const panel = settingsPanel(read('chat/index.html'));
     assert.match(panel, /class="hidden z-\[100\] settings-panel settings-menu-glass" role="group" aria-label="Settings"/);
     const titles = [...panel.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
-    assert.deepEqual(titles, ['Privacy', 'Memory', 'Tools']);
+    assert.deepEqual(titles, ['Privacy', 'Memory', 'Tools', 'Appearance']);
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
         'Scrubber model',
         'Memory', 'Always attach retrieval', 'Memory model',
-        'Web search', 'Council review', 'Council model', 'Effort'
+        'Web search', 'Council review', 'Council model', 'Effort',
+        'Layout', 'Font', 'Theme'
     ]);
     // Memory export/import live in the Account dialog now and work whether
     // Memory is on or off: the memories are the person's data either way.
@@ -55,8 +56,9 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
         assert.doesNotMatch(body, /memoryFeatureEnabled === false/, `${fn} does not gate on the toggle`);
     }
     assert.match(panel, /<input type="file" id="tickets-import-input"/);
-    // Nothing once-and-done is left here: no data rows, no appearance, no feedback.
-    assert.doesNotMatch(panel, /export-all-data|import-data|export-chats|import-history|global-import-input|Data controls|Appearance|Share feedback|>All</);
+    // No data rows or feedback here; Appearance is the one set-once section
+    // the gear carries, so it reaches zkAPI users who have no Account dialog.
+    assert.doesNotMatch(panel, /export-all-data|import-data|export-chats|import-history|global-import-input|Data controls|Share feedback|>All</);
     assert.doesNotMatch(panel, /import-tickets|Import from ChatGPT/, 'tickets import lives in Billing');
     for (const id of ['scrubber-model-select', 'memory-feature-toggle', 'memory-auto-include-toggle', 'memory-agent-model-select',
         'search-setting-toggle', 'council-review-toggle', 'council-review-model-row', 'council-review-model-select', 'multi-model-synthesis-select',
@@ -77,7 +79,7 @@ test('the gear keeps what changes between prompts: Privacy, Memory, Tools', () =
     assert.match(panel, /<section id="composer-settings-actions" class="settings-section settings-section-foot composer-settings-actions"><\/section>\s*<\/div>\s*<\/div>\s*$/);
 });
 
-test('the Account dialog holds what is set once: data, appearance, feedback, account actions', () => {
+test('the Account dialog holds data controls, feedback and the account actions; Appearance lives in the gear', () => {
     const html = read('chat/index.html');
     const dialog = settingsDialog(html);
     assert.match(dialog, /<div id="settings-dialog" class="hidden fixed inset-0 z-50 bg-black\/60 backdrop-blur-sm flex items-center justify-center p-4">/);
@@ -86,14 +88,13 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
     assert.match(dialog, /<button id="close-settings-dialog"[^>]*aria-label="Close account"/);
     const titles = [...dialog.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
     // The last section carries no title: the dialog is already called Account.
-    assert.deepEqual(titles, ['Data controls', 'Appearance']);
+    assert.deepEqual(titles, ['Data controls']);
     // Share feedback is a row of the last section, not a section of its own.
     assert.match(dialog, /<section class="settings-section" aria-label="Feedback, log out or delete">\s*<a href="https:\/\/forms\.gle[^"]*"[^>]*class="settings-row settings-link">/);
-    assert.equal((dialog.match(/<section /g) || []).length, 3, 'Data controls, Appearance, and the account actions');
+    assert.equal((dialog.match(/<section /g) || []).length, 2, 'Data controls and the account actions');
     const labels = [...dialog.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
         'All', 'Chat history', 'ChatGPT', 'Memories',
-        'Layout', 'Font', 'Theme',
         'Share feedback',
         'Log out', 'Delete your account'
     ]);
@@ -115,16 +116,21 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
         assert.match(dialogSource, new RegExp(`case '${action}':`), `${action} handled by the dialog`);
     }
     assert.match(dialog, /data-action="delete-account" class="settings-button settings-button-danger">Delete</);
-    // The Appearance controls keep their ids, so ChatInput binds them unchanged.
+    // Appearance sits in the composer gear for every mode (a zkAPI user has
+    // no Account dialog); the controls keep their ids, so ChatInput binds them unchanged.
+    const gear = html.slice(html.indexOf('id="settings-menu"'), html.indexOf('id="composer-settings-actions"'));
+    assert.match(gear, /class="settings-section-title">Appearance</);
+    assert.doesNotMatch(dialog, /Appearance/);
     for (const id of ['flat-mode-toggle', 'font-mode-toggle', 'theme-toggle', 'theme-effective-label']) {
-        assert.match(dialog, new RegExp(`id="${id}"`), id);
+        assert.match(gear, new RegExp(`id="${id}"`), id);
         assert.equal((html.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1, `${id} exists once`);
     }
-    assert.match(dialog, /data-mode="flat"[^>]*>Document</);
-    assert.match(dialog, /data-mode="bubble"[^>]*>Bubbles</);
-    for (const option of ['system', 'light', 'dark']) {
-        assert.match(dialog, new RegExp(`data-theme-option="${option}"`), option);
+    assert.match(gear, /data-mode="flat"[^>]*>Document</);
+    assert.match(gear, /data-mode="bubble"[^>]*>Bubbles</);
+    for (const option of ['system', 'light', 'purple', 'dark']) {
+        assert.match(gear, new RegExp(`data-theme-option="${option}"`), option);
     }
+    assert.match(gear, /data-theme-option="purple" aria-checked="false" aria-label="EF purple" title="EF purple"/);
     assert.match(dialog, /<a href="https:\/\/forms\.gle\/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="settings-row settings-link">/);
     // The confirmation card: one sentence on what goes, cancel first.
     assert.match(html, /<template id="settings-delete-account-template">[\s\S]*Are you sure you want to delete your account\?[\s\S]*After deleting, all of your information will be lost[\s\S]*data-delete-account="cancel"[\s\S]*data-delete-account="confirm"[^>]*>Delete account</);

@@ -1,11 +1,10 @@
 /**
- * Settings dialog: what you set once and leave. Data controls, Appearance,
- * feedback, and the account actions (Log out, Delete account). The gear on
- * the composer keeps what changes between one prompt and the next.
+ * Account dialog: Data controls, feedback, and the account actions (Log out,
+ * Delete account). Appearance (Layout, Font, Theme) lives in the composer
+ * gear for every mode, so a zkAPI user without an account finds it too.
  *
- * The markup lives in index.html (#settings-dialog); the Appearance
- * controls keep their ids, so ChatInput binds them as before. This class
- * only opens, closes, and routes the data-action buttons.
+ * The markup lives in index.html (#settings-dialog). This class only opens,
+ * closes, and routes the data-action buttons.
  */
 import { exportChats, exportAllData } from '../services/globalExport.js';
 

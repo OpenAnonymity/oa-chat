@@ -43,21 +43,15 @@ export function mountZkapiShell(doc = document, getApp = () => null) {
     return balance || null;
 }
 
-/** zkAPI users have no account, and the Account dialog (Data controls,
- * Appearance) opens only from the account menu the shell removes above. Give
- * the composer gear — which the shell has just emptied of Privacy, Memory and
- * Tools — the Appearance section itself (moved, not cloned: ChatInput binds
- * #flat-mode-toggle, #font-mode-toggle and #theme-toggle by id) and a one-row
- * Data section for chat export and import. */
+/** zkAPI users have no account, and the Account dialog's Data controls open
+ * only from the account menu the shell removes above. Appearance already
+ * lives in the composer gear for every mode; give the gear — which the shell
+ * has just emptied of Privacy, Memory and Tools — a one-row Data section for
+ * chat export and import as well. */
 export function mountZkapiSettings(doc = document, getApp = () => null) {
     const menu = doc.getElementById('settings-menu');
     if (!menu || menu.dataset.zkapiSettingsMounted === 'true') return null;
     const foot = doc.getElementById('composer-settings-actions');
-    const appearance = doc.querySelector('#settings-dialog section[aria-labelledby="settings-appearance-title"]');
-    if (appearance) {
-        if (foot && foot.parentElement === menu) foot.before(appearance);
-        else menu.append(appearance);
-    }
     const data = doc.createElement('section');
     data.id = 'zkapi-data-settings-section';
     data.className = 'settings-section';
