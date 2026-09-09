@@ -8581,6 +8581,14 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
 .settings-panel .settings-row.is-disabled { opacity: 0.55; }
 .settings-panel .settings-row.is-disabled select { cursor: default; }
+/* A switch that is out in this payment mode still takes the pointer, so
+   its bubble says why — the same as the Parallel icon in the composer.
+   The row already dims; the switch does not dim again on top. */
+.settings-panel .settings-row.is-disabled .settings-switch[data-feature-unavailable="true"]:disabled {
+    opacity: 1;
+    pointer-events: auto;
+    cursor: default;
+}
 
 /* Share feedback: a row that is a link. */
 .settings-link {
