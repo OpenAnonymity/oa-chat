@@ -1,5 +1,36 @@
 # Native zkAPI SDK trial deployments — 2026-09-09
 
+## Current funding-onboarding update
+
+The stable trial URLs now serve OA Chat
+`f6423dd0424417685efaf6ea7441f4c3e9779e14`, with the same immutable SDK pin
+`b188ab337d5a4888f19f7edbc296f94c320fff64` and unchanged payment contracts.
+
+| Network | Current build | Immutable deployment |
+| --- | --- | --- |
+| Sepolia | `JM4LULVQ` | https://oa-chat-sdk-sepolia-7k54uwls7-mingyech1.vercel.app/ |
+| Mainnet | `OS2TOXQL` | https://oa-chat-sdk-mainnet-d2aiui0ia-mingyech1.vercel.app/ |
+
+The mainnet warning banner was removed and funding now includes a shared
+MetaMask prerequisites/setup guide. Mainnet explains ETH, USDC and the Buy
+flow; Sepolia explains free test ETH and automatic demo tokens. All 165 native
+payment tests passed, including a regression check for pasted quotes in the
+saved deposit amount. A fresh adversarial review approved the final source.
+
+Each deployed trial passed all 466 public asset digests, the five SDK asset
+digests, build/network/vault/verifier provenance, and staging org endpoint
+checks. Both Vercel runtime error scans returned no logs. Desktop Chrome
+verified the new prerequisites, expanded network-specific instructions,
+official external links, removed warning, scrollable layout without horizontal
+overflow, and preservation of the amount while collapsing the guide. Existing
+chat history remained intact. No wallet connection or transaction was started
+for this copy/UI verification.
+
+The funded end-to-end results below describe the previous extraction builds;
+the current update changes onboarding UI, not wallet or settlement behavior.
+
+## Initial SDK extraction deployments
+
 The application is now built by OA Chat, using the immutable public browser SDK.
 OA Commercial and existing trial aliases were not changed.
 

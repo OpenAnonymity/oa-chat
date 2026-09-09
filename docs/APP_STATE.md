@@ -10,6 +10,9 @@
   preserves the entered deposit amount after a canceled wallet attempt.
 - See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for the official copy sources.
   No SDK, transaction, or transport behavior changed.
+- Updated both stable trial deployments and checked the guides in Chrome.
+  All 165 payment tests and deployed asset/provenance checks passed; see
+  [SDK trial deployments](ZKAPI_SDK_TRIALS.md) for exact source and build IDs.
 
 ## 2026-09-09: OA owns optional zkAPI payments
 
