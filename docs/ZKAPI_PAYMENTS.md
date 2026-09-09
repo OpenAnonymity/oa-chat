@@ -63,6 +63,15 @@ including calls through a same-origin reverse proxy and fallback transport.
 The SDK never receives account identity, ticket contents, or chat messages.
 Model inference stays in OA's provider adapter with the ephemeral credential.
 
+The System Panel keeps the shared Ephemeral Access Key, expiry, renewal,
+issuing-station, attestation, and proxy controls in both payment modes. The
+funding renderer declares key embedding through
+`fundingSectionIncludesAccessKey()`: the Commercial Tickets layout embeds it
+below the ticket summary, while zkAPI balance funding leaves it to the shared
+top section. The host's Membership action alone must not suppress private-key
+controls. This UI composition does not expose the SDK's provider credential;
+existing access masking and private chat-binding semantics remain unchanged.
+
 ## Persistence and behavior
 
 Both payment methods use OA's existing chat database and model catalog. Mode

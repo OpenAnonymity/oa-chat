@@ -1,3 +1,19 @@
+## 2026-09-09: Commercial payment modes retain ephemeral-key controls
+
+- Commercial's ticket funding layout embeds the shared Ephemeral Access Key
+  panel below its Membership launcher. Private-balance funding does not. The
+  old top-section renderer inferred embedding solely from the host's ticket
+  management action, so Commercial zkAPI hid the key, expiry, renewal, station,
+  and attestation UI even though the runtime still loaded the active lease.
+- `fundingSectionIncludesAccessKey()` now describes the selected funding
+  renderer. Tickets retain their compact embedded layout when Membership is
+  available; zkAPI always lets the shared top section render its key. Funding
+  replacements must override this hook when they do not embed access controls.
+- Render regressions cover standalone/Commercial, Tickets/zkAPI, pending/active
+  keys, proxy and attestation controls, and switching back to Parallel Tickets
+  during private settlement. The existing masking and lease ownership paths
+  remain unchanged: a private chat binding is not a provider credential.
+
 ## 2026-09-09: Funding setup for first-time wallet users
 
 - Removed the mainnet risk banner from both native funding entry points.

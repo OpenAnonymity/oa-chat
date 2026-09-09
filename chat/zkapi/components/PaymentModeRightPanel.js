@@ -31,6 +31,12 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
             : super.generateFundingSectionHTML();
     }
 
+    fundingSectionIncludesAccessKey() {
+        return this.isTicketMode()
+            ? TicketRightPanel.prototype.fundingSectionIncludesAccessKey.call(this)
+            : super.fundingSectionIncludesAccessKey();
+    }
+
     isClosingPreviousChat() {
         return ['settling', 'waiting'].includes(this.app.integration.getTransition?.()?.phase);
     }

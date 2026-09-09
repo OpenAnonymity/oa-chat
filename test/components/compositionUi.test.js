@@ -13,11 +13,12 @@ const { default: RightPanel } = await import('../../chat/components/RightPanel.j
 if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
 else delete globalThis.localStorage;
 
-test('funding section override retains shared access and proxy sections', () => {
+test('funding section override retains shared access and proxy even with ticket management', () => {
     const panel = Object.create(RightPanel.prototype);
-    panel.app = {};
+    panel.app = { hasTicketManagementAction: () => true };
     panel.hasAnyAccessKey = () => true;
     panel.generateFundingSectionHTML = () => '<section>External funding</section>';
+    panel.fundingSectionIncludesAccessKey = () => false;
     panel.generateAccessKeyPanelHTML = hasKey => `<section>Shared access: ${hasKey}</section>`;
     panel.generateProxySectionHTML = () => '<section>Shared proxy</section>';
     const html = panel.generateTopSectionHTML();

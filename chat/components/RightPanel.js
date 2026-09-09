@@ -1989,11 +1989,17 @@ class RightPanel {
     }
 
     generateTopSectionHTML() {
-        const hasExternalTicketManager = this.app.hasTicketManagementAction?.() === true;
         const hasApiKey = this.hasAnyAccessKey();
         return `${this.generateFundingSectionHTML()}
-            ${hasExternalTicketManager ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
+            ${this.fundingSectionIncludesAccessKey() ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
             ${this.generateProxySectionHTML()}`;
+    }
+
+    // The commercial ticket layout embeds access below its ticket summary.
+    // Funding replacements must describe their own layout independently of
+    // whether the host also offers ticket management.
+    fundingSectionIncludesAccessKey() {
+        return this.app.hasTicketManagementAction?.() === true;
     }
 
     // Compositions may replace funding while sharing the access, proxy and

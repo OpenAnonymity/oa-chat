@@ -268,6 +268,10 @@ export default class RightPanel extends SharedRightPanel {
         return this.billingSectionHTML();
     }
 
+    fundingSectionIncludesAccessKey() {
+        return false;
+    }
+
     getMissingApiKeyStatus() {
         const transition = this.app.integration?.getTransition?.();
         if (transition?.phase === 'settling' || transition?.phase === 'waiting') {

@@ -6,10 +6,22 @@ globalThis.localStorage = globalThis.sessionStorage = {
     getItem() { return null; }, setItem() {}, removeItem() {}
 };
 globalThis.window = globalThis;
-globalThis.location = { hostname: 'localhost', href: 'http://localhost/funding/' };
+globalThis.location = { hostname: 'localhost', origin: 'http://localhost', href: 'http://localhost/funding/' };
 globalThis.addEventListener = () => {};
 globalThis.dispatchEvent = () => {};
-globalThis.document = { documentElement: { dataset: {} }, getElementById: () => null };
+globalThis.document = {
+    documentElement: { dataset: {} },
+    getElementById: () => null,
+    createElement() {
+        return {
+            textContent: '',
+            get innerHTML() {
+                return String(this.textContent ?? '')
+                    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+            }
+        };
+    }
+};
 globalThis.zkapiWallet = {};
 const request = result => {
     const entry = {};
@@ -31,6 +43,10 @@ globalThis.indexedDB = {
 
 const { RightPanel: TicketRightPanel } = await import('../../chat/publicApi.js');
 const { default: PaymentModeRightPanel } = await import('../../chat/zkapi/components/PaymentModeRightPanel.js');
+const { default: ZkapiRightPanel } = await import('../../chat/zkapi/components/RightPanel.js');
+const { default: zkapiBackend } = await import('../../chat/zkapi/services/inference/backends/zkapiBackend.js');
+const { default: openRouterBackend } = await import('../../chat/services/inference/backends/openRouterBackend.js');
+const { createInferenceService } = await import('../../chat/services/inference/inferenceService.js');
 
 function panelFixture() {
     let transition = null;
@@ -125,4 +141,123 @@ test('switching into Tickets loads its panel once and later settlement only upda
     panel.onRuntimePresentationChange();
     assert.equal(loads, 1);
     assert.equal(notice.hidden, true);
+});
+
+function fullPanelFixture({ commercial, mode, active = false }) {
+    const panel = Object.create(PaymentModeRightPanel.prototype);
+    const session = { id: 'chat-fixture-0123456789abcdef' };
+    const inference = createInferenceService({ backends: [openRouterBackend, zkapiBackend] });
+    let currentMode;
+    let transition = null;
+    panel.ticketCount = 12;
+    panel.currentSession = session;
+    panel.timeRemaining = '04:12';
+    panel.app = {
+        state: { sessions: [session], models: [] },
+        hasTicketManagementAction: () => commercial,
+        supportsFeature: (_feature, owner) => (owner?.inferenceBackend || currentMode) !== 'zkapi',
+        services: {
+            inference,
+            account: { getState: () => ({}) },
+            networkProxy: {
+                getSettings: () => ({ enabled: true }),
+                getStatus: () => ({ usingProxy: true, connected: true }),
+                getTlsInfo: () => ({ version: null })
+            }
+        },
+        integration: {
+            getMode: () => currentMode,
+            getTransition: () => transition
+        }
+    };
+    function setMode(nextMode, hasKey = active) {
+        currentMode = nextMode;
+        session.inferenceBackend = nextMode === 'tickets' ? 'openrouter' : 'zkapi';
+        // zkAPI stores an opaque chat binding, never the provider credential.
+        session.apiKey = hasKey ? nextMode === 'tickets'
+            ? 'sk-ticket-fixture-secret-0123456789' : session.id : null;
+        session.apiKeyInfo = hasKey ? { stationId: `${nextMode}-fixture-station` } : null;
+        panel.apiKey = session.apiKey;
+        panel.apiKeyInfo = session.apiKeyInfo;
+    }
+    setMode(mode);
+    return { panel, session, setMode, setTransition: value => { transition = value; } };
+}
+
+for (const commercial of [false, true]) {
+    for (const mode of ['tickets', 'zkapi']) {
+        for (const active of [false, true]) {
+            test(`${commercial ? 'commercial' : 'standalone'} ${mode} renders one ${active ? 'active' : 'pending'} access panel`, () => {
+                const { panel, session } = fullPanelFixture({ commercial, mode, active });
+                const html = panel.generateTopSectionHTML();
+                assert.equal((html.match(/>Ephemeral Access Key<\/span>/g) || []).length, 1);
+                assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
+                assert.equal((html.match(/id="proxy-toggle-btn"/g) || []).length, 1);
+                assert.equal((html.match(/id="proxy-security-details-btn"/g) || []).length, 1);
+                assert.equal((html.match(/id="open-ticket-manager-btn"/g) || []).length,
+                    commercial && mode === 'tickets' ? 1 : 0);
+                assert.equal((html.match(/id="zkapi-panel-fund"/g) || []).length, mode === 'zkapi' ? 1 : 0);
+                assert.equal((html.match(/class="system-panel-divider"/g) || []).length,
+                    commercial && mode === 'tickets' ? 1 : 0);
+                assert.equal((html.match(/id="ephemeral-key-display"/g) || []).length, active ? 1 : 0);
+                assert.equal((html.match(/id="renew-key-btn"/g) || []).length, active ? 1 : 0);
+                assert.equal((html.match(/id="api-key-expiry"/g) || []).length, active ? 1 : 0);
+                if (active) {
+                    assert.ok(html.includes(panel.app.services.inference.maskAccessToken(session, session.apiKey)));
+                    assert.ok(!html.includes(session.apiKey), 'raw ticket key or complete private chat binding stays masked');
+                    assert.ok(html.includes(`${mode}-fixture-station`));
+                    assert.match(html, /04:12/);
+                    assert.equal(panel.getKeyDisplayInfo().hoverContentHtml, null);
+                } else {
+                    assert.ok(html.includes(mode === 'tickets' ? 'Requested on message send' : 'Key created when you send'));
+                    assert.match(html, /To be assigned/);
+                }
+                assert.ok(html.indexOf('Ephemeral Access Key') < html.indexOf('Network Proxy'));
+            });
+        }
+    }
+}
+
+test('private-only panel keeps shared access even when its host also manages tickets', () => {
+    const { panel } = fullPanelFixture({ commercial: true, mode: 'zkapi', active: true });
+    Object.setPrototypeOf(panel, ZkapiRightPanel.prototype);
+    const html = panel.generateTopSectionHTML();
+    assert.equal((html.match(/>Ephemeral Access Key<\/span>/g) || []).length, 1);
+    assert.match(html, /id="zkapi-panel-fund"/);
+    assert.match(html, /id="renew-key-btn"/);
+    assert.doesNotMatch(html, /id="open-ticket-manager-btn"/);
+});
+
+test('mode changes preserve single private access and commercial Parallel lane controls during settlement', () => {
+    const { panel, session, setMode, setTransition } = fullPanelFixture({ commercial: true, mode: 'tickets' });
+    session.responseMode = 'council';
+    session.councilConfig = { enabled: true, outputMode: 'parallel' };
+    session.councilAccess = {
+        primary: {
+            apiKey: 'sk-parallel-fixture-secret-0123456789',
+            apiKeyInfo: { stationId: 'parallel-fixture-station' },
+            expiresAt: new Date(Date.now() + 120_000).toISOString()
+        }
+    };
+    for (const mode of ['tickets', 'zkapi', 'tickets']) {
+        setMode(mode, mode === 'zkapi');
+        setTransition(mode === 'tickets' ? { phase: 'settling' } : null);
+        const html = panel.generateTopSectionHTML();
+        assert.equal((html.match(/>Ephemeral Access Keys?<\/span>/g) || []).length, 1);
+        if (mode === 'tickets') {
+            assert.match(html, />Ephemeral Access Keys<\/span>/);
+            assert.equal((html.match(/data-council-attestation-lane="primary"/g) || []).length, 1);
+            assert.match(html, /parallel-fixture-station/);
+            assert.match(html, /Requested on message send/);
+            assert.match(html, /You can keep using Tickets\./);
+            assert.doesNotMatch(html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/);
+            assert.doesNotMatch(html, /id="verifier-attestation-btn"/);
+        } else {
+            assert.match(html, />Ephemeral Access Key<\/span>/);
+            assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
+            assert.doesNotMatch(html, /data-council-attestation-lane|parallel-fixture-station/);
+        }
+        assert.doesNotMatch(html, /sk-parallel-fixture-secret-0123456789/);
+    }
+    assert.equal(session.councilConfig.enabled, true, 'payment selection does not discard the saved Parallel preference');
 });
