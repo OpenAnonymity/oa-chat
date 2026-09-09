@@ -95,7 +95,12 @@ test('the Account dialog holds what is set once: data, appearance, feedback, acc
         'Share feedback',
         'Log out', 'Delete your account'
     ]);
-    for (const action of ['export-all-data', 'import-data', 'export-chats', 'import-history', 'export-memory', 'import-memory', 'log-out', 'delete-account']) {
+    // Export / Import are text actions, the same voice as Import in Billing;
+    // the account actions keep their buttons.
+    for (const action of ['export-all-data', 'import-data', 'export-chats', 'import-history', 'export-memory', 'import-memory']) {
+        assert.match(dialog, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-text-action"`), action);
+    }
+    for (const action of ['log-out', 'delete-account']) {
         assert.match(dialog, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-button`), action);
     }
     // The file inputs the pickers click; ChatInput binds their change handlers by id.

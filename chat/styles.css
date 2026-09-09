@@ -8338,6 +8338,27 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-dialog .settings-row-label { font-size: 0.875rem; }
 .settings-dialog .settings-button { padding: 0 0.875rem; border-radius: 0.625rem; font-size: 0.875rem; }
 .settings-dialog .settings-segmented { border-radius: 0.625rem; }
+/* Export / Import are text actions, the same voice as Import in Billing:
+   no border or fill, soft foreground, darker on hover, only the colour moves. */
+.settings-dialog .settings-button-pair { gap: 1.25rem; }
+.settings-text-action {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0.125rem 0;
+    border: 0;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: hsl(var(--color-foreground) / 0.78);
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 400;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color 120ms ease;
+}
+.settings-text-action:hover:not(:disabled) { color: hsl(var(--color-foreground)); }
+.settings-text-action:disabled { opacity: 0.45; cursor: default; }
 .settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
 .settings-dialog .settings-segmented .settings-segment-icon { width: 2.25rem; }
 .settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
