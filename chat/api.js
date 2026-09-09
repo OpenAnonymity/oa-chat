@@ -158,20 +158,28 @@ export class OpenRouterAPI {
     }
 
     sendCompletionStrict(messages, modelId, token, options = {}) {
-        return this.withRequestAccess(token, options, request =>
-            request._sendCompletionStrict(messages, modelId, token, options));
+        const requestOptions = { ...options, modelId, reasoningEnabled: options.reasoningEnabled ?? true };
+        return this.withRequestAccess(token, requestOptions, request =>
+            request._sendCompletionStrict(messages, modelId, token, requestOptions));
     }
 
     generateSessionTitle(prompt, token, options = {}) {
         if (!this.extractTextContent(prompt).trim()) return Promise.resolve('');
-        return this.withRequestAccess(token, options, request =>
-            request._generateSessionTitle(prompt, token, options));
+        const requestOptions = {
+            ...options,
+            modelId: options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID,
+            reasoningEnabled: options.reasoningEnabled ?? true
+        };
+        return this.withRequestAccess(token, requestOptions, request =>
+            request._generateSessionTitle(prompt, token, requestOptions));
     }
 
     streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null) {
         return this.withRequestAccess(token, {
             signal: abortController?.signal,
-            onProgress: onAccessProgress
+            onProgress: onAccessProgress,
+            modelId,
+            reasoningEnabled
         }, request => request._streamCompletion(messages, modelId, token, onChunk,
             onTokenUpdate, files, searchEnabled, abortController, onStreamOpen,
             onReasoningChunk, reasoningEnabled, reasoningEffort));

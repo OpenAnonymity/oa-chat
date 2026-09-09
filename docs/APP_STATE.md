@@ -4,6 +4,25 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-08: Shared model tiers and private-key budgets
+
+- Trusted compositions can import the lightweight `chat/publicModelTierApi.js`
+  seam, or `publicRuntimeApi.modelTiers`, for `getTicketCost`,
+  `ensureModelTiersReady`, `initModelTiers`, and `onModelTiersUpdate`. Both paths
+  share the ordinary OA tier cache and live map. Cached and heuristic values
+  support display; access issuance must await the live tier map. Dollar budgets
+  belong to the downstream payment policy, not the shared ticket service.
+- `presentation.getModelPricing(model, {reasoningEnabled})` receives the same
+  reasoning setting used for ticket pricing. Optional escaped `budgetLabel`
+  and `budgetTooltip` fields add a wrapping line below the model name, above
+  the existing token-price line. Keeping the lines separate prevents a cap or
+  minimum balance from hiding the other prices on narrow screens. Omitting
+  these fields preserves the existing presentation and ticket rows.
+- The zkAPI composition maps reviewed OA ticket tiers to public dollar buckets.
+  A key's cap is a cumulative usage limit and minimum balance proof, not an
+  upfront fee. Its System Panel displays the actual owned key cap while that
+  key is live; otherwise it uses the selected model's budget.
+
 ## 2026-09-06: Composer capabilities follow the owning payment mode
 
 - Products may supply `runtime.supportsFeature(feature, session)` and

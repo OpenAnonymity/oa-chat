@@ -217,8 +217,10 @@ context above: product components run locally as part of the configured app.
 - `mountShell()` runs once after the components have mounted. It can relocate
   existing shell controls without replacing their event handlers. It must not
   start funding work or install a timer that remounts the UI.
-- `presentation.getModelPricing(model)` may return `{label, description}` to
-  replace ticket prices with escaped plain-text pricing.
+- `presentation.getModelPricing(model, {reasoningEnabled})` may return
+  `{label, description}` to replace ticket prices with escaped plain-text
+  pricing. Optional `budgetLabel` and `budgetTooltip` add a separate wrapping
+  line above the price subtitle, useful for a spending cap and minimum balance.
 - `presentation.getSessionStatus(session)` may return `{label, tone}` where
   tone is `working`, `waiting`, `success`, or `error`.
 - `presentation.getPendingPresentation(phase, progress)` may return

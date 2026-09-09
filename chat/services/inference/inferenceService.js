@@ -150,7 +150,22 @@ const inferenceService = {
         if (typeof backend.generateSessionTitle !== 'function') return '';
         const token = backend.getAccessToken(session);
         if (!token) return '';
-        return backend.generateSessionTitle(prompt, token, options);
+        // Titles use a cheap helper model, but share the initiating chat's
+        // access budget. Capture it before acquisition can await or the UI can
+        // select a different model; modelId continues to select the title model.
+        const models = typeof backend.getCachedModels === 'function' ? backend.getCachedModels() : [];
+        const sessionModel = session?.model;
+        const accessModelId = options.accessModelId
+            || models.find(model => model.id === sessionModel)?.id
+            || models.find(model => model.name === sessionModel)?.id
+            || sessionModel
+            || getBackendDefaultModelConfig(backend).defaultModelId
+            || backend.defaultModelId;
+        return backend.generateSessionTitle(prompt, token, {
+            ...options,
+            accessModelId,
+            reasoningEnabled: options.reasoningEnabled ?? session?.reasoningEnabled ?? true
+        });
     },
     getAccessInfo(session) {
         return getBackendForSession(session).getAccessInfo(session);
