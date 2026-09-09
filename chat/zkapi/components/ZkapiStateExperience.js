@@ -200,9 +200,11 @@ function showActivityPanel(app) {
 // wallet steps in the balance dialog do. The composer keeps its quiet glyph.
 const PHASE_TOAST_MS = 120000;
 let phaseToastText = null;
-function mirrorPhaseToast(app, primary) {
-    const busy = primary?.busy === true && primary?.tone !== 'error';
-    const text = busy ? String(primary.compact || '').trim() : '';
+function mirrorPhaseToast(app, ...candidates) {
+    // Whichever surface is busy speaks: the composer's private-access step,
+    // or wallet work (a deposit, a withdrawal) that only the balance knows.
+    const primary = candidates.find(entry => entry?.busy === true && entry?.tone !== 'error') || null;
+    const text = primary ? String(primary.compact || '').trim() : '';
     if (text) {
         if (text === phaseToastText) return;
         phaseToastText = text;
@@ -221,7 +223,7 @@ export function renderZkapiComposerStatus(element, app, stateOverride = null) {
     const state = stateOverride || getZkapiExperience(app);
     const primary = state.composerPrimary || state.primary;
     const { proposal } = state;
-    mirrorPhaseToast(app, primary);
+    mirrorPhaseToast(app, primary, state.balancePrimary || state.primary);
     if (['receipt', 'relay', 'ambient', 'capsule'].includes(proposal)
         && isPassiveLowTextState(primary)) {
         element.className = 'hidden';
