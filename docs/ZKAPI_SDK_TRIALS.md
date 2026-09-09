@@ -2,14 +2,19 @@
 
 ## Current funding-onboarding update
 
-The stable trial URLs now serve OA Chat
-`f6423dd0424417685efaf6ea7441f4c3e9779e14`, with the same immutable SDK pin
+The Sepolia trial serves OA Chat
+`f6423dd0424417685efaf6ea7441f4c3e9779e14`; mainnet serves the wording update
+`c8548452113ddd1108396fcf968366475d6ef42d`. Both use the same immutable SDK pin
 `b188ab337d5a4888f19f7edbc296f94c320fff64` and unchanged payment contracts.
 
 | Network | Current build | Immutable deployment |
 | --- | --- | --- |
 | Sepolia | `JM4LULVQ` | https://oa-chat-sdk-sepolia-7k54uwls7-mingyech1.vercel.app/ |
-| Mainnet | `OS2TOXQL` | https://oa-chat-sdk-mainnet-d2aiui0ia-mingyech1.vercel.app/ |
+| Mainnet | `5EPPKU73` | https://oa-chat-sdk-mainnet-jkn9cdbs9-mingyech1.vercel.app/ |
+
+The mainnet prerequisite says “Ethereum network” instead of “Ethereum Mainnet.”
+The revised text was verified in the live Chrome popup, and the new build
+passed all public asset and configuration checks.
 
 The mainnet warning banner was removed and funding now includes a shared
 MetaMask prerequisites/setup guide. Mainnet explains ETH, USDC and the Buy
