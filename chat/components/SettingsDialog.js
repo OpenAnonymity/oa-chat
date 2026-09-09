@@ -69,9 +69,18 @@ class SettingsDialog {
         this.showDeleteConfirm();
     }
 
+    /** The gear is a z-100 popover; the confirmation lives on the dialog's
+     *  backdrop beneath it, so the gear closes first. */
+    closeGearMenu() {
+        this.app.elements?.settingsMenu?.classList?.add?.('hidden');
+        this.app.elements?.settingsBtn?.classList?.remove?.('tooltip-disabled');
+        this.app.chatInput?.closeSettingsMenu?.();
+    }
+
     /** From the gear: only the export confirmation, over the backdrop. */
     openExportConfirm(action, returnFocusEl = null) {
         if (!this.overlay) return;
+        this.closeGearMenu();
         this.open(returnFocusEl);
         this.dialog?.setAttribute?.('hidden', '');
         this.standaloneConfirm = true;
@@ -86,7 +95,6 @@ class SettingsDialog {
             case 'export-chats':
             case 'export-all-data':
             case 'export-memory':
-                this.app.chatInput?.closeSettingsMenu?.();
                 this.openExportConfirm(button.dataset.action, button);
                 break;
             case 'import-data':
@@ -96,7 +104,7 @@ class SettingsDialog {
                 document.getElementById('memory-import-input')?.click?.();
                 break;
             case 'import-history':
-                this.app.chatInput?.closeSettingsMenu?.();
+                this.closeGearMenu();
                 this.app.chatHistoryImportModal?.open?.();
                 break;
             default:

@@ -8686,8 +8686,10 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    right edge, so the tooltip hangs from its right corner and grows leftward
    instead of running into the scroll edge. */
 /* Same tooltip as Billing's Share / Import: a small card above the action,
-   right-aligned to it, wrapping text, no arrow. */
-.settings-panel .settings-text-action[data-tooltip]:hover::after {
+   right-aligned to it, wrapping text, no arrow. A switch that is out in
+   this payment mode gets the same bubble, saying why. */
+.settings-panel .settings-text-action[data-tooltip]:hover::after,
+.settings-panel .settings-switch[data-feature-unavailable="true"][data-tooltip]:hover::after {
     display: block;
     top: auto;
     bottom: calc(100% + 0.625rem);
@@ -8712,7 +8714,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     transform: translateY(0);
     animation: settingsTipIn 140ms ease;
 }
-.settings-panel .settings-text-action[data-tooltip]:hover::before { display: none; }
+.settings-panel .settings-text-action[data-tooltip]:hover::before,
+.settings-panel .settings-switch[data-feature-unavailable="true"][data-tooltip]:hover::before { display: none; }
 @keyframes settingsTipIn {
     from { opacity: 0; transform: translateY(0.25rem); }
     to   { opacity: 1; transform: translateY(0); }
