@@ -8792,3 +8792,38 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-button-danger:disabled { opacity: 0.45; }
 .dark .settings-button-danger { background: hsl(0 66% 50%); border-color: hsl(0 66% 50%); }
 .dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 66% 44%); border-color: hsl(0 66% 44%); }
+
+/* ---------------------------------------------------------------------
+   One tooltip everywhere: the card Billing shows over Share and Import.
+   A small rounded panel, 14px wrapping text, no arrow, a soft shadow.
+   Positions (below / above / right) and the keyboard-only rules stay as
+   they are; only the skin is unified here, so this block comes last.
+   --------------------------------------------------------------------- */
+[data-tooltip]:hover::after,
+.chat-mode-html-tooltip {
+    width: max-content;
+    max-width: 15rem;
+    padding: 0.625rem 0.875rem;
+    border: 0;
+    border-radius: 0.75rem;
+    background: hsl(var(--color-popover));
+    color: hsl(var(--color-foreground));
+    font-size: 0.875rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .06),
+        0 4px 16px -4px rgb(0 0 0 / .18);
+}
+.dark [data-tooltip]:hover::after,
+.dark .chat-mode-html-tooltip {
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .1),
+        0 4px 16px -4px rgb(0 0 0 / .5);
+}
+[data-tooltip]:hover::before,
+.chat-mode-html-tooltip::before { display: none !important; }
+.chat-mode-html-tooltip { gap: 0.25rem; }

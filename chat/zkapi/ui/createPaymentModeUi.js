@@ -19,8 +19,9 @@ export function createPaymentModeUi(runtime) {
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));
             button.disabled = busy;
-            button.title = busy ? 'Finish or stop the current response to switch payment methods.'
+            button.dataset.tooltip = busy ? 'Finish or stop the current response to switch payment methods.'
                 : `Use ${button.dataset.paymentMode === 'zkapi' ? 'zkAPI' : 'tickets'} for this chat and new chats. Your history stays the same.`;
+            button.removeAttribute('title');
         }
     }
 

@@ -1917,8 +1917,8 @@ export default class ChatInput {
             featureToggle.disabled = !memorySupported;
             featureToggle.setAttribute('aria-disabled', String(!memorySupported));
             if (!memorySupported) {
-                featureToggle.title = memoryUnavailableReason;
                 featureToggle.dataset.tooltip = memoryUnavailableReason;
+                featureToggle.removeAttribute('title');
             }
         }
 
@@ -2186,7 +2186,8 @@ export default class ChatInput {
             button.dataset.tooltip = button.disabled
                 ? this.getFeatureUnavailableReason('council')
                 : (isParallel ? 'Parallel' : 'Chat');
-            button.title = button.dataset.tooltip;
+            // The app tooltip says it; a native title would say it twice.
+            button.removeAttribute('title');
             button.tabIndex = button.disabled ? -1 : 0;
         });
 
@@ -2198,11 +2199,8 @@ export default class ChatInput {
             memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             memoryButton.classList.toggle('memory-active', memoryEnabled);
             memoryButton.classList.toggle('memory-disabled', !memoryFeatureEnabled);
-            memoryButton.title = memoryFeatureEnabled
-                ? (memoryEnabled
-                    ? 'Auto-attach memory is on. Double-click to open memory.'
-                    : 'Auto-attach memory is off. Double-click to open memory.')
-                : this.getMemoryUnavailableReason();
+            // The button carries its own hover card; no native title on top of it.
+            memoryButton.removeAttribute('title');
 
             const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
             const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
