@@ -502,14 +502,19 @@ class ChatApp {
         };
     }
 
+    /**
+     * Tell the host's shortage handler (if any). It answers `{ retry: true }`
+     * when it reloaded the wallet (automatic reloads on) and the send should
+     * be tried again; anything else means the request stays unsent.
+     */
     async notifyTicketShortage(budget) {
-        if (typeof this.ticketShortageHandler !== 'function') return false;
+        if (typeof this.ticketShortageHandler !== 'function') return { retry: false };
         try {
-            await this.ticketShortageHandler(toExtensionTicketShortage(budget));
-            return true;
+            const result = await this.ticketShortageHandler(toExtensionTicketShortage(budget));
+            return { retry: result?.retry === true };
         } catch (error) {
             console.warn('Ticket shortage handler failed:', error);
-            return false;
+            return { retry: false };
         }
     }
 
@@ -5085,9 +5090,15 @@ class ChatApp {
             return false;
         }
 
+        // With automatic reloads on, the host reloads the wallet now and the
+        // budget is checked once more with the new balance; the request is
+        // still unsent, so nothing can be paid for twice.
+        if (!options.afterReload) {
+            const { retry } = await this.notifyTicketShortage(budget);
+            if (retry) return this.preflightTurnTicketBudget(session, content, { ...options, afterReload: true });
+        }
         this.showToast(budget.message, 'error', 7000);
         this.floatingPanel?.showMessage?.(budget.message, 'error', 7000);
-        await this.notifyTicketShortage(budget);
         return false;
     }
 

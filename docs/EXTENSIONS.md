@@ -111,11 +111,14 @@ content.
 send or regenerate a request whose account ticket balance is below the
 complete turn budget. Its frozen payload contains only `availableTickets` and
 `requiredTickets`; it excludes the prompt, model identities, Memory context,
-session identifiers, and account data. A commercial extension may present an
-explicit purchase surface, but this signal must not initiate automatic billing.
-Automatic reloads are limited to an independently observed synchronized zero
-balance. The core request remains unsent, so a purchase cannot duplicate an
-inference request.
+session identifiers, and account data. The handler either presents the ways to
+get tickets, or, when the person has turned automatic reloads on, runs one
+reload (deduplicated per depletion, as at zero balance) and resolves
+`{ retry: true }` once the tickets are in. On `retry` the chat checks the turn
+budget once more and continues the send; otherwise the request stays unsent.
+Nothing is sent while the handler runs, so a reload cannot pay for a request
+twice. (Decision 2026-09-10: a shortfall for a pricier request reloads too, not
+only an empty wallet.)
 Signed-in core preflight does not call this handler until the account is
 verified, unlocked, scope-ready, and ticket-synchronized.
 

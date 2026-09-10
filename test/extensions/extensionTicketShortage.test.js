@@ -24,8 +24,11 @@ test('insufficient preflight notifies the optional shortage handler before abort
     const end = source.indexOf('\n    async ', start + 20);
     const method = source.slice(start, end);
 
-    assert.match(method, /await this\.notifyTicketShortage\(budget\)/);
+    assert.match(method, /const \{ retry \} = await this\.notifyTicketShortage\(budget\);/);
     assert.ok(method.indexOf('notifyTicketShortage') < method.lastIndexOf('return false'));
+    // A reload re-checks the budget exactly once; the request is unsent meanwhile.
+    assert.match(method, /if \(retry\) return this\.preflightTurnTicketBudget\(session, content, \{ \.\.\.options, afterReload: true \}\);/);
+    assert.match(method, /if \(!options\.afterReload\) \{/);
     assert.match(source, /registerShortageHandler: handler => this\.registerTicketShortageHandler\(handler\)/);
     assert.match(source, /toExtensionTicketShortage\(budget\)/);
 });
