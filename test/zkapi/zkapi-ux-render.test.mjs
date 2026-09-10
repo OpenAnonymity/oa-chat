@@ -832,7 +832,10 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
 
     try {
         const html = modal.renderBalance();
-        assert.match(html, /Your last deposit didn’t finish/);
+        // The caption says "Saved deposit"; one short note says why. No lede.
+        assert.doesNotMatch(html, /zkapi-lede/);
+        assert.match(html, /Saved deposit/);
+        assert.match(html, /Saved when the MetaMask prompt closed\. Nothing was sent\./);
         assert.match(html, /value="5" readonly/);
         assert.doesNotMatch(html, /value="99"/);
         assert.match(html, /Resume deposit with MetaMask/);

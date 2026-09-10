@@ -674,13 +674,13 @@ export default class AccountModal {
                     : 'Install MetaMask to get started';
             return `
                 <div class="zkapi-stack">
-                    ${resumingDeposit ? '<p class="zkapi-lede">Your last deposit didn’t finish: the MetaMask prompt closed before anything was sent, so no funds moved. The amount is saved below; resume when you’re ready and MetaMask will ask again.</p>' : ''}
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
                         <div class="zkapi-figure-row">
                             <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
                             <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
                         </div>
                         <p class="zkapi-helper">${helper}</p>
+                        ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Saved when the MetaMask prompt closed. Nothing was sent.</p>' : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
                             ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))
