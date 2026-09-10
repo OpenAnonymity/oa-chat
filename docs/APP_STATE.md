@@ -1,3 +1,12 @@
+## 2026-09-10: Saved deposits do not imply an empty wallet transaction queue
+
+- A prepared deposit can coexist with a pending token-approval transaction if
+  confirmation polling times out before the vault deposit starts. Its recovery
+  notice now states only that the deposit did not finish and its amount/private
+  note remain saved, and asks the user to check pending MetaMask transactions
+  before resuming. It no longer claims that no transaction was sent or funds
+  moved. This is a copy correction; submission and recovery behavior is unchanged.
+
 ## 2026-09-09: Read confirmed Sepolia balances after test-token minting
 
 - The SDK dependency now includes the confirmed-block balance read. A successful

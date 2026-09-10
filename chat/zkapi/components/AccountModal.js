@@ -680,7 +680,7 @@ export default class AccountModal {
                             <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
                         </div>
                         <p class="zkapi-helper">${helper}</p>
-                        ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Saved when the MetaMask prompt closed. Nothing was sent.</p>' : ''}
+                        ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Saved in this browser. Check MetaMask for a pending transaction before resuming.</p>' : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
                             ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))
