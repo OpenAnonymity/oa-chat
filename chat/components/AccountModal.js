@@ -1679,15 +1679,12 @@ class AccountModal {
         const passkeySupported = state.passkeySupported;
         const isBusy = state.busy || this.usernameContinuePending;
         const action = state.action;
+        // Signing out and signing back in is the common case and needs no
+        // notice about the saved account. "Forget" appears only when it is
+        // the way out: a sign-in that does not match the account saved here.
         const hasSignedOutSavedAccount = Boolean(
             !state.sessionVerified &&
-            (
-                state.hasSavedAccountBinding ||
-                accountId ||
-                String(state.error || '').includes(
-                    'does not match the OA account saved on this device'
-                )
-            )
+            String(state.error || '').includes('does not match the OA account saved on this device')
         );
         const usesIdentityLogin =
             state.googleLinked &&
@@ -1934,10 +1931,7 @@ class AccountModal {
                 ${this.renderLegalLine()}
 
                 ${hasSignedOutSavedAccount ? `
-                    <div class="mt-4 pt-4 border-t border-border text-center">
-                        <p class="text-xs text-muted-foreground mb-2">
-                            This device remembers a signed-out OA account. Sign in to that account, or forget it before switching accounts.
-                        </p>
+                    <div class="mt-3 text-center">
                         <button id="account-forget-saved-btn" class="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors disabled:opacity-50" type="button" ${isBusy ? 'disabled' : ''}>
                             Forget saved account
                         </button>

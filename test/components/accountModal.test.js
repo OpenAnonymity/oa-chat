@@ -1399,6 +1399,37 @@ test('saved legacy passkey accounts keep the account-number login path', async (
     }
 });
 
+test('a plain signed-out dialog carries no saved-account notice and no Forget link', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById() { return null; } };
+    const state = {
+        accountId: null,
+        hasSavedAccountBinding: true,
+        sessionVerified: false,
+        passkeySupported: true,
+        busy: false,
+        action: null,
+        error: null
+    };
+    const modal = new AccountModal({
+        services: {
+            account: { getState: () => state, subscribe: () => () => {} },
+            sync: { getStatus: () => ({}), subscribe: () => () => {} }
+        }
+    });
+    modal.accountState = state;
+    modal.escapeHtml = value => String(value ?? '');
+    try {
+        const html = modal.renderAccountUI();
+        assert.match(html, /Continue with Google/);
+        assert.doesNotMatch(html, /remembers a signed-out OA account/);
+        assert.doesNotMatch(html, /id="account-forget-saved-btn"/);
+    } finally {
+        modal.destroy();
+        globalThis.document = originalDocument;
+    }
+});
+
 test('signed-out saved account exposes an explicit account-switch recovery', () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
@@ -1433,7 +1464,7 @@ test('signed-out saved account exposes an explicit account-switch recovery', () 
     try {
         const html = modal.renderAccountUI();
         assert.match(html, /Continue with Google/);
-        assert.match(html, /This device remembers a signed-out OA account/);
+        assert.doesNotMatch(html, /This device remembers a signed-out OA account/);
         assert.match(html, /id="account-forget-saved-btn"/);
         assert.match(html, /Forget saved account/);
         assert.doesNotMatch(html, /id="generate-account-btn"/);
