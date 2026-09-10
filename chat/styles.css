@@ -8881,6 +8881,22 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     background: rgb(0 0 0 / 0.35);
 }
 .settings-confirm-layer .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+/* Rendered like the Settings panel it floats over: the panel is antialiased
+   and its headings sit tight, so the card's text must be too, or the same
+   face reads heavier and looser than the text behind it. */
+.settings-confirm-layer [role="dialog"] {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+.settings-confirm-layer [role="dialog"] > div > p:first-child {
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+}
+.settings-confirm-layer [role="dialog"] > div > p:first-child + p {
+    line-height: 1.45;
+    text-wrap: pretty;
+}
 /* Spacing lives here, not in utility classes: the generated Tailwind file is
    a build artifact and did not carry the ones this card used. */
 .settings-confirm-actions {
