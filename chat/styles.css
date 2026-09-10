@@ -1536,9 +1536,12 @@ a.quick-ask-source:focus-visible {
     animation: reasoningShimmer var(--shimmer-duration) ease-in-out infinite !important;
 }
 
+/* The thought's body wears the same left rule as the pending trace it
+   continues from, so the two read as one stream. */
 .reasoning-content {
-    padding: 0.25rem 0 0 0;
+    padding: 0.35rem 0 0.25rem 0.65rem;
     margin-left: 1.75rem;
+    border-left: 1px solid hsl(var(--color-border) / 0.7);
     line-height: 1.4;
     white-space: normal; /* avoid rendering inter-element newlines as extra lines */
     word-wrap: break-word;
@@ -1607,6 +1610,11 @@ a.quick-ask-source:focus-visible {
 .kept-access-trace .pending-security-summary .pending-response-label { color: hsl(var(--color-muted-foreground)); }
 /* Inside the thinking disclosure: the steps lead, a hairline, then the thought. */
 .reasoning-content .kept-access-inline { margin: 0 0 0.625rem; padding: 0 0 0.625rem; border-bottom: 1px solid hsl(var(--color-foreground) / 0.08); }
+/* Inside the thought the step lists keep their own shape; the reasoning
+   body's markdown list styling does not apply to them. */
+.reasoning-content .kept-access-inline .pending-security-steps { display: grid; gap: 0.28rem; margin: 0; padding: 0; list-style: none; }
+.reasoning-content .kept-access-inline .pending-security-step { margin: 0; padding: 0; font-size: 0.75rem; }
+.reasoning-content .kept-access-inline .pending-security-note { margin: 0.4rem 0 0; }
 .reasoning-content .kept-access-inline .pending-security-category { display: block; margin-bottom: 0.375rem; }
 .kept-access-stage + .kept-access-stage { margin-top: 0.625rem; }
 .reasoning-content .kept-access-inline .pending-security-note { margin-top: 0.375rem; }
