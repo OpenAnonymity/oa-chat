@@ -555,7 +555,7 @@ class ChatApp {
 
     subscribePaymentMode(listener) {
         if (typeof listener !== 'function') return () => {};
-        this.paymentModeListeners.add(listener);
+        (this.paymentModeListeners ||= new Set()).add(listener);
         return () => this.paymentModeListeners.delete(listener);
     }
 
@@ -566,7 +566,7 @@ class ChatApp {
         const mode = this.getPaymentMode();
         if (mode === this.announcedPaymentMode) return;
         this.announcedPaymentMode = mode;
-        this.paymentModeListeners.forEach(listener => {
+        this.paymentModeListeners?.forEach(listener => {
             try { listener(mode); } catch (error) { console.warn('Payment mode listener failed:', error); }
         });
     }
@@ -1017,7 +1017,7 @@ class ChatApp {
             const trace = snapshotAccessTrace(
                 this.uiOptions?.presentation?.getPendingPresentation?.('preparing-access', progress)
             );
-            if (trace) this.accessTraces.set(sessionId, trace);
+            if (trace) (this.accessTraces ||= new Map()).set(sessionId, trace);
         }
         if (!this.isViewingSession(sessionId)) return;
         const streamState = this.getSessionStreamingState(sessionId);
@@ -1030,14 +1030,14 @@ class ChatApp {
 
     /** The access trace recorded for this session's current turn, once. */
     takeAccessTrace(sessionId) {
-        const trace = this.accessTraces.get(sessionId) || null;
-        this.accessTraces.delete(sessionId);
+        const trace = this.accessTraces?.get(sessionId) || null;
+        this.accessTraces?.delete(sessionId);
         return trace;
     }
 
     async prepareRuntimeTurn(session, signal) {
         this.throwIfAborted(signal);
-        this.accessTraces.delete(session.id);
+        this.accessTraces?.delete(session.id);
         try {
             await this.runtime.prepareTurn?.({
                 sessionId: session.id,
