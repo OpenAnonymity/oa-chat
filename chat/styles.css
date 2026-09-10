@@ -5487,12 +5487,13 @@ html.council-synthesis-layout-mode .council-secondary-model-btn .model-name-cont
     box-shadow: inset 0 0 0 1px hsl(var(--color-foreground) / 0.15);
 }
 
-/* A control that is out dims what it shows, not itself: its tooltip is
-   drawn by the element (::after) and must stay a normal tooltip. */
+/* A control that is out dims its icon, not itself and not its tooltip:
+   the memory tooltip is an HTML child of the button, so it must be left
+   out of the dimming to stay a normal bubble. */
 .memory-context-toggle.memory-disabled {
     cursor: not-allowed;
 }
-.memory-context-toggle.memory-disabled > * { opacity: 0.55; }
+.memory-context-toggle.memory-disabled > :not(.chat-mode-html-tooltip) { opacity: 0.55; }
 
 .memory-context-toggle.memory-disabled:hover {
     color: hsl(var(--color-muted-foreground));
