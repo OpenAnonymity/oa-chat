@@ -2695,6 +2695,7 @@ class ChatApp {
                 accountService,
                 accountModal: this.accountModal,
                 changePaymentMode: this.hasPaymentModes() ? mode => this.changePaymentMode(mode) : null,
+                getPaymentMode: () => this.getPaymentMode(),
                 locationImpl: window.location,
                 historyImpl: window.history
             }) : null;

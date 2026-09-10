@@ -357,6 +357,51 @@ test('the landing zkAPI entry opens chat in zkAPI mode, signed out, without a si
     assert.equal(harness.replacements.at(-1)?.[2], '/chat/', 'the intent leaves the address');
 });
 
+test('a Google arrival leaves a remembered zkAPI mode for Tickets', async () => {
+    const harness = createHarness({
+        accountId: 'acct-1',
+        username: 'winter-owl',
+        googleLinked: true,
+        sessionVerified: true,
+        status: 'unlocked'
+    }, '?auth=google', `#oauth=${COMPLETION_TOKEN}`);
+    const modes = [];
+    const pending = routeAuthenticationIntent({
+        ...harness,
+        getPaymentMode: () => 'zkapi',
+        changePaymentMode: async mode => { modes.push(mode); }
+    });
+    harness.releaseBootstrap();
+    assert.deepEqual(await pending, { handled: true, action: 'complete' });
+    assert.deepEqual(modes, ['tickets']);
+});
+
+test('a username arrival leaves a remembered zkAPI mode for Tickets', async () => {
+    const harness = createHarness({ accountId: null, status: 'none' }, '?auth=username&username=winter-owl', '');
+    const modes = [];
+    const pending = routeAuthenticationIntent({
+        ...harness,
+        getPaymentMode: () => 'zkapi',
+        changePaymentMode: async mode => { modes.push(mode); }
+    });
+    harness.releaseBootstrap({ accountId: null, status: 'none' });
+    await pending;
+    assert.deepEqual(modes, ['tickets']);
+});
+
+test('a Google arrival already on Tickets changes nothing', async () => {
+    const harness = createHarness({ accountId: null, status: 'none' }, '?auth=google', '');
+    const modes = [];
+    const pending = routeAuthenticationIntent({
+        ...harness,
+        getPaymentMode: () => 'tickets',
+        changePaymentMode: async mode => { modes.push(mode); }
+    });
+    harness.releaseBootstrap({ accountId: null, status: 'none' });
+    await pending;
+    assert.deepEqual(modes, []);
+});
+
 test('the zkAPI entry on a build without payment modes is an ordinary visit', async () => {
     const harness = createHarness({ accountId: null, status: 'none' }, '?auth=zkapi', '');
     const route = await routeAuthenticationIntent({ ...harness });

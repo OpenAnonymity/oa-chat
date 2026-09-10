@@ -83,6 +83,7 @@ export async function routeAuthenticationIntent({
     accountService,
     accountModal,
     changePaymentMode = null,
+    getPaymentMode = null,
     locationImpl = globalThis.location,
     historyImpl = globalThis.history
 }) {
@@ -113,6 +114,18 @@ export async function routeAuthenticationIntent({
 
     await accountService.waitForAuthBootstrap();
     clearAuthenticationIntent(locationImpl, historyImpl);
+
+    // Google and username are the ways in to a Tickets account. Only the
+    // landing's own zkAPI entry chooses zkAPI; a mode this browser remembers
+    // from an earlier zkAPI visit must not follow the person into their
+    // account.
+    if (typeof changePaymentMode === 'function' && getPaymentMode?.() === 'zkapi') {
+        try {
+            await changePaymentMode('tickets');
+        } catch (error) {
+            console.warn('Tickets could not be selected on arrival:', error);
+        }
+    }
 
     let account = accountService.getState();
     const hasExplicitIdentity = intent === GOOGLE_AUTH_INTENT || !!username;
