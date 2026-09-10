@@ -2197,6 +2197,14 @@ class AccountModal {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
         }
 
+        // Terms and Privacy remember this page, so their Back returns here
+        // (a new tab opened off the link inherits the saved value).
+        for (const anchor of this.overlay?.querySelectorAll?.('.account-login-legal a') || []) {
+            anchor.addEventListener('click', () => {
+                try { sessionStorage.setItem('oa-legal-return', window.location.pathname + window.location.search); } catch { /* storage may be blocked */ }
+            });
+        }
+
         const forgetSavedBtn = document.getElementById('account-forget-saved-btn');
         if (forgetSavedBtn) {
             forgetSavedBtn.onclick = () => this.handleForgetSavedAccount();
