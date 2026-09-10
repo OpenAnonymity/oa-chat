@@ -801,7 +801,7 @@ test('wallet work narrates inside the dialog: the action row becomes a status ro
 
         modal.isOpen = false;
         modal.setStatus('Confirming the deposit…');
-        assert.deepEqual(toasts, ['info:Confirming the deposit…'], 'closed, the toast carries the words');
+        assert.deepEqual(toasts, [], 'closed, no toast either: the right panel activity carries the words');
     } finally {
         zkapiClient.wallet = originalWallet;
         zkapiClient.config = originalConfig;
@@ -1173,7 +1173,7 @@ test('historical wallet progress changes in place without remounting the card', 
     assert.equal(modal.backgroundProgressLabel('new-note'), null);
 });
 
-test('mined withdrawals with a temporary status outage get neutral feedback instead of a failed-payment toast', async t => {
+test('mined withdrawals with a temporary status outage get neutral feedback instead of a failed-payment outcome', async t => {
     const modal = Object.create(AccountModal.prototype);
     const toasts = [];
     modal.app = { showToast: (...args) => toasts.push(args) };
@@ -1191,8 +1191,9 @@ test('mined withdrawals with a temporary status outage get neutral feedback inst
     await modal.run(async () => { throw error; }, { kind: 'withdrawal', title: 'Returning your balance' });
     assert.equal(modal.busy, false);
     assert.equal(modal.statusError, false);
-    assert.equal(toasts[0][0], error.shortMessage);
-    assert.equal(toasts[0][1], 'info');
+    assert.deepEqual(toasts, [], 'outcomes are said in the dialog, never toasted');
+    assert.equal(modal.outcome.message, error.shortMessage);
+    assert.equal(modal.outcome.tone, 'info');
     assert.equal(completed.title, 'Withdrawal transaction mined');
     assert.equal(completed.phase, 'mined');
 });

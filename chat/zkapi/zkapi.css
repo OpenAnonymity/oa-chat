@@ -18,8 +18,8 @@
 :root { --zkapi-bar: #0a84ff; }
 .zkapi-panel-bar-fill { background: var(--zkapi-bar); }
 .zkapi-dialog {
-    --zkapi-radius: 1.5rem;
-    --zkapi-pad-x: 2.5rem;
+    --zkapi-radius: 1.25rem;
+    --zkapi-pad-x: 2rem;
     --zkapi-line: hsl(var(--color-foreground) / 0.08);
     --zkapi-control-border: hsl(var(--color-foreground) / 0.14);
     --zkapi-control-border-hover: hsl(var(--color-foreground) / 0.22);
@@ -33,17 +33,17 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    width: min(35rem, 100%);
+    width: min(30rem, 100%);
     max-height: calc(100vh - 5rem);
     box-sizing: border-box;
     overflow: hidden;
-    padding: 2rem 0 2.25rem;
+    padding: 1.5rem 0 1.75rem;
     border: 0;
     border-radius: var(--zkapi-radius);
     background: hsl(var(--color-popover));
     color: hsl(var(--color-foreground));
     font-family: var(--font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif);
-    font-size: 0.9375rem;
+    font-size: 0.875rem;
     line-height: 1.4;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -120,7 +120,7 @@ html.zkapi-mode .zkapi-dialog {
     text-wrap: pretty;
 }
 .zkapi-dialog-head + .zkapi-dialog-scroll > .zkapi-lede { margin-top: 0; }
-.zkapi-stack { display: flex; flex-direction: column; gap: 1.5rem; }
+.zkapi-stack { display: flex; flex-direction: column; gap: 1.25rem; }
 .zkapi-stack > .zkapi-lede { margin-bottom: -1.25rem; }
 .zkapi-section { display: flex; flex-direction: column; gap: 0.875rem; }
 .zkapi-section-title { margin: 0; font-size: 0.875rem; font-weight: 600; line-height: 1.2; }
@@ -142,11 +142,14 @@ html.zkapi-mode .zkapi-dialog {
 .zkapi-deposit { gap: 0.375rem; }
 .zkapi-deposit > .zkapi-helper { margin-top: 0.375rem; }
 .zkapi-deposit > .zkapi-actions { margin-top: 0.75rem; }
+/* The figure and its caption on one line: "$ 4.00  Deposit". */
+.zkapi-figure-row { display: flex; align-items: baseline; gap: 0.75rem; }
+.zkapi-figure-row > .zkapi-balance-caption { font-size: 0.8125rem; }
 .zkapi-figure {
     display: inline-flex;
     align-items: baseline;
     gap: 0.125rem;
-    font-size: 1.625rem;
+    font-size: 1.5rem;
     font-weight: 600;
     line-height: 1.05;
     letter-spacing: -0.02em;
@@ -315,6 +318,46 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 .zkapi-dialog-close[hidden] { display: none; }
 
 /* ---------- Disclosures: the Invoices / inference-ticket idiom ---------- */
+/* ---------- Steps: the work a deposit or withdrawal does ----------
+   The same shape a zkAPI chat shows for private access, at dialog scale.
+   Complete steps get a check in the accent tint, the current one a ring
+   (spinning while the app works, still while it waits on the person),
+   the rest sit back. The list is drawn from persisted state after a
+   reload, so it looks the same before and after one. */
+.zkapi-steps { display: flex; flex-direction: column; gap: 0.625rem; }
+.zkapi-steps-title { margin: 0; font-size: 0.9375rem; font-weight: 600; line-height: 1.3; }
+.zkapi-steps-list { display: flex; flex-direction: column; gap: 0.5rem; margin: 0; padding: 0; list-style: none; }
+.zkapi-step { display: grid; grid-template-columns: 1.375rem 1fr; gap: 0.75rem; align-items: start; color: hsl(var(--color-muted-foreground)); }
+.zkapi-step-mark {
+    display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; margin-top: 0.0625rem;
+    border-radius: 9999px; border: 1.5px solid hsl(var(--color-foreground) / 0.18); color: hsl(var(--color-muted-foreground));
+    font-size: 0.75rem; font-weight: 600; line-height: 1;
+    transition: border-color 200ms var(--zkapi-ease), background-color 200ms var(--zkapi-ease), color 200ms var(--zkapi-ease);
+}
+.zkapi-step-mark svg { width: 0.75rem; height: 0.75rem; }
+.zkapi-step-text { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+.zkapi-step-label { font-size: 0.9375rem; line-height: 1.35; transition: color 200ms var(--zkapi-ease); }
+.zkapi-step-detail { font-size: 0.8125rem; line-height: 1.4; color: hsl(var(--color-muted-foreground)); text-wrap: pretty; }
+.zkapi-step[data-state="complete"] .zkapi-step-mark { border-color: hsl(var(--color-primary) / 0.45); background: hsl(var(--color-primary) / 0.1); color: hsl(var(--color-primary)); }
+.zkapi-step[data-state="active"], .zkapi-step[data-state="waiting"], .zkapi-step[data-state="error"] { color: hsl(var(--color-foreground)); }
+.zkapi-step[data-state="active"] .zkapi-step-mark { border-color: hsl(var(--color-primary)); border-top-color: transparent; animation: zkapi-step-spin 0.9s linear infinite; }
+.zkapi-step[data-state="waiting"] .zkapi-step-mark { border-color: hsl(var(--color-primary)); background: hsl(var(--color-primary) / 0.14); }
+.zkapi-step[data-state="error"] .zkapi-step-mark { border-color: hsl(var(--color-destructive) / 0.6); color: hsl(var(--color-destructive)); }
+.zkapi-step[data-state="upcoming"] { color: hsl(var(--color-muted-foreground) / 0.8); }
+@keyframes zkapi-step-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .zkapi-step[data-state="active"] .zkapi-step-mark { animation: none; border-top-color: hsl(var(--color-primary)); background: hsl(var(--color-primary) / 0.14); }
+}
+/* What a run ended with, said in the dialog instead of a toast: one line
+   under the work, in the ink for a result and the attention colour for
+   something to act on. */
+.zkapi-outcome { margin: 0; font-size: 0.875rem; line-height: 1.45; text-wrap: pretty; color: hsl(var(--color-foreground)); }
+.zkapi-outcome[data-tone="error"] { color: hsl(var(--color-destructive)); }
+.zkapi-outcome[data-tone="info"] { color: hsl(var(--color-muted-foreground)); }
+/* The decided method, one line where the choices were. */
+.zkapi-summary-line { margin: 0; font-size: 0.9375rem; color: hsl(var(--color-muted-foreground)); }
+.zkapi-summary-line strong { font-weight: 500; color: hsl(var(--color-foreground)); margin-right: 0.375rem; }
+
 .zkapi-guides { display: flex; flex-direction: column; gap: 0; margin-top: -0.625rem; }
 .zkapi-guide { display: flex; flex-direction: column; }
 .zkapi-guide-details > summary { list-style: none; }
@@ -400,7 +443,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 .zkapi-balance-caption { color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; font-weight: 500; }
 .zkapi-balance-amount {
     margin-top: 0.125rem;
-    font-size: 1.625rem;
+    font-size: 1.5rem;
     font-weight: 600;
     line-height: 1.05;
     letter-spacing: -0.02em;

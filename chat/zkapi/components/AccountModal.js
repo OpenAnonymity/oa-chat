@@ -3,6 +3,7 @@ import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-erro
 import { explainZkapiError, isIndexerLag } from '../services/zkapiErrorCopy.mjs';
 import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
+import { walletJourney } from '../domain/walletJourney.js';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
     privateBalanceExpired, privateBalanceGuide, privateBalanceHelpButton, privateBalanceHelpContent,
@@ -12,10 +13,9 @@ import {
 // The OA dialog frame (Account, Welcome): 560px, 24px radius, 40px inset, no
 // header hairline. Sizing and colour live in zkapi.css (.zkapi-dialog).
 const MODAL_CLASSES = 'zkapi-dialog';
-// Wallet progress ("Approving USDC… confirm in MetaMask") shows as a toast
-// under the dialog that holds until the next step replaces it; the final
-// result gets an ordinary timed toast from run().
-const PROGRESS_TOAST_MS = 120000;
+// Wallet work narrates in the dialog — the steps while it runs, one line
+// with the outcome when it ends. No toasts: with the dialog closed, the
+// right panel's activity rows carry the same words.
 
 export default class AccountModal {
     constructor(app, { triggerId = 'account-tab-btn', overlayId = 'account-modal' } = {}) {
@@ -99,6 +99,7 @@ export default class AccountModal {
     close() {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
+        this.outcome = null;
         this.overlay.classList.add('hidden');
         this.overlay.innerHTML = '';
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'false');
@@ -132,9 +133,57 @@ export default class AccountModal {
         // the dialog closed (work continued in the background) the toast
         // over the chat bar carries the same words.
         if (!message || !this.busy || isError) return;
+        this.outcome = null;
+        if (this.journeyKind) {
+            const journey = this.currentJourney(this.journeyKind, { message });
+            this.journeyLast = journey.position;
+            const mounted = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-journey]') : null;
+            if (mounted) { mounted.outerHTML = this.renderJourney(journey); return; }
+        }
         const progress = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-progress-text]') : null;
         if (progress) this.swapProgressText(progress, message);
-        else this.app?.showToast?.(message, 'info', PROGRESS_TOAST_MS);
+    }
+
+    /** The last run's result, shown in the dialog until the next run or
+     *  view change replaces it. */
+    renderOutcome() {
+        if (this.busy || !this.outcome?.message) return '';
+        return `<p class="zkapi-outcome" data-tone="${this.escapeHtml(this.outcome.tone)}" role="status">${this.escapeHtml(this.outcome.message)}</p>`;
+    }
+
+    /** The journey for a kind of wallet work, from the latest status line
+     *  while busy, or from what is persisted (a reload lands here). */
+    currentJourney(kind, { message = '', persistedPhase = '', failed = false } = {}) {
+        return walletJourney({
+            kind,
+            message,
+            persistedPhase,
+            last: this.journeyKind === kind ? this.journeyLast : null,
+            failed,
+            hasLease: Boolean(zkapiClient.activeLease),
+            tokenSymbol: zkapiClient.billingTokenSymbol || 'USDC',
+            demoMint: Boolean(zkapiClient.config?.funding?.demo_mint_enabled),
+            escapePeriod: typeof zkapiClient.escapePeriodPhrase === 'function' ? zkapiClient.escapePeriodPhrase() : ''
+        });
+    }
+
+    /** The steps, the current one saying what it is doing or waiting for.
+     *  `detail` replaces the current step's own line (a persisted-state
+     *  notice such as "MetaMask may still be open in this or another tab."). */
+    renderJourney(journey, { detail = '' } = {}) {
+        const current = journey.steps.find(step => ['active', 'waiting', 'error'].includes(step.state));
+        return `<div class="zkapi-steps" data-zkapi-journey data-kind="${this.escapeHtml(journey.kind)}" role="status" aria-live="polite" aria-atomic="false">
+            <p class="zkapi-steps-title">${this.escapeHtml(journey.category)}</p>
+            <ol class="zkapi-steps-list" aria-label="${this.escapeHtml(journey.category)}">
+                ${journey.steps.map(step => {
+                    const line = step === current ? (detail || step.detail || '') : '';
+                    return `<li class="zkapi-step" data-step="${this.escapeHtml(step.id)}" data-state="${step.state}" ${step === current ? 'aria-current="step"' : ''}>
+                        <span class="zkapi-step-mark" aria-hidden="true">${step.state === 'complete' ? '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>' : step.state === 'error' ? '!' : ''}</span>
+                        <span class="zkapi-step-text"><span class="zkapi-step-label">${this.escapeHtml(step.label)}</span>${line ? `<small class="zkapi-step-detail">${this.escapeHtml(line)}</small>` : ''}</span>
+                    </li>`;
+                }).join('')}
+            </ol>
+        </div>`;
     }
 
     /** New words fade in over the old ones; the row itself never moves. */
@@ -205,6 +254,9 @@ export default class AccountModal {
         this.busy = true;
         this.status = activityDetails?.message || 'Waiting for MetaMask…';
         this.statusError = false;
+        // Deposits and withdrawals show their steps; other work shows a line.
+        this.journeyKind = ['deposit', 'withdraw', 'escape'].includes(activityDetails?.kind) ? activityDetails.kind : null;
+        this.journeyLast = null;
         this.backgroundProgress = activityDetails?.withdrawalRecordId
             ? { recordId: activityDetails.withdrawalRecordId, phase: 'preparing' } : null;
         this.render();
@@ -230,7 +282,7 @@ export default class AccountModal {
             if (activityId) zkapiClient.completeActivity(activityId, {
                 message: this.status || 'Complete.'
             });
-            this.app.showToast?.(this.status || 'Private balance updated.', 'success', 5000);
+            this.outcome = { message: this.status || 'Private balance updated.', tone: 'success' };
         } catch (error) {
             const confirmationPending = error?.withdrawalConfirmationPending === true;
             const rejected = error?.code === 4001
@@ -257,10 +309,16 @@ export default class AccountModal {
             // Closing a wallet prompt is an ordinary user decision. The
             // durable recovery path above has already put the operation into a
             // safe retry/canceled state, so do not present it as an app error.
-            this.app.showToast?.(this.status, confirmationPending || indexerLag ? 'info' : rejected ? 'success' : 'error', indexerLag ? 9000 : 6000);
+            this.outcome = { message: this.status, tone: confirmationPending || indexerLag || rejected ? 'info' : 'error' };
         } finally {
             this.busy = false;
             this.backgroundProgress = null;
+            // Ended: the steps are drawn from what is persisted from here on.
+            this.journeyKind = null;
+            this.journeyLast = null;
+            // The outcome belongs to the view the run ended on; moving to
+            // another view (Withdraw, Back to balance) leaves it behind.
+            if (this.outcome) this.outcome.view = this.view;
             this.render();
         }
     }
@@ -579,19 +637,25 @@ export default class AccountModal {
                     : pendingDeposit.phase === 'awaiting_wallet'
                         ? 'Waiting for MetaMask'
                         : 'Deposit status unknown';
+                const pendingDetail = pendingDeposit.phase === 'submitted' ? 'Submitted. Checking the chain for the receipt.'
+                    : pendingDeposit.phase === 'dropped_or_pending' ? 'No receipt yet. It may still be pending, or MetaMask may have dropped it.'
+                    : pendingDeposit.phase === 'awaiting_wallet' ? 'MetaMask may still be open in this or another tab.'
+                    : 'MetaMask did not return a transaction ID. Check the vault before retrying.';
+                const pendingJourney = this.busy && this.journeyKind === 'deposit'
+                    ? this.currentJourney('deposit', { message: this.status })
+                    : this.currentJourney('deposit', { persistedPhase: pendingDeposit.phase, failed: this.statusError && !this.busy });
                 return `
                     <div class="zkapi-stack">
-                        <div class="rounded-lg border border-blue-300/60 bg-blue-50/60 p-4 dark:border-blue-500/30 dark:bg-blue-500/10">
-                            <div class="flex items-center justify-between gap-3">
-                                <p class="text-sm font-medium text-foreground">${title}</p>
-                                <span class="rounded-full bg-blue-600 px-2 py-1 text-[10px] font-semibold text-white">${zkapiClient.formatMoney(pendingDeposit.amount)}</span>
-                            </div>
-                            <p class="mt-2 text-xs text-muted-foreground">Your private note is saved in this browser.</p>
-                        </div>
-                        <button id="zkapi-check-deposit-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Check deposit</button>
+                        <section class="zkapi-section zkapi-deposit" aria-label="${title}">
+                            <div class="zkapi-figure-row"><p class="zkapi-balance-amount">${zkapiClient.formatMoney(pendingDeposit.amount)}</p><p class="zkapi-balance-caption">Deposit</p></div>
+                            <p class="zkapi-helper">Your private note is saved in this browser.</p>
+                        </section>
+                        ${this.renderJourney(pendingJourney, { detail: this.busy ? '' : pendingDetail })}
+                        ${this.renderOutcome()}
+                        ${this.busy ? '' : `<button id="zkapi-check-deposit-btn" class="zkapi-primary-button w-full" type="button">Check deposit</button>
                         ${pendingDeposit.phase === 'dropped_or_pending' && pendingDeposit.replacement_available ? `<button id="zkapi-retry-dropped-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Replace transaction</button>` : ''}
                         ${pendingDeposit.phase === 'awaiting_wallet' ? `<button id="zkapi-recover-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
-                        ${pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Retry same deposit</button>` : ''}
+                        ${pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Retry same deposit</button>` : ''}`}
                         ${this.renderWithdrawalStatusLink()}
                     </div>`;
             }
@@ -612,14 +676,19 @@ export default class AccountModal {
                 <div class="zkapi-stack">
                     ${resumingDeposit ? '<p class="zkapi-lede">Your last deposit didn’t finish: the MetaMask prompt closed before anything was sent, so no funds moved. The amount is saved below; resume when you’re ready and MetaMask will ask again.</p>' : ''}
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
-                        <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
-                        <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
+                        <div class="zkapi-figure-row">
+                            <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
+                            <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
+                        </div>
                         <p class="zkapi-helper">${helper}</p>
-                        <div class="zkapi-actions">
+                        ${this.renderOutcome()}
+                        ${this.busy && this.journeyKind === 'deposit'
+                            ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))
+                            : `<div class="zkapi-actions">
                             ${this.busy
                                 ? this.renderProgress(this.status || 'Waiting for MetaMask…')
                                 : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}</button>`}
-                        </div>
+                        </div>`}
                     </section>
                     <div class="zkapi-guides">
                         ${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}
@@ -648,6 +717,7 @@ export default class AccountModal {
                     ${privateBalanceHelpContent('modal', 'expiry', this.privateBalanceHelpOpen?.expiry)}
                 </div>
                 ${claimed ? '<p class="zkapi-helper">After expiry, the original deposit was paid to the service treasury. No refund was made.</p>' : `<div data-private-balance-expired-notice ${expired ? '' : 'hidden'}><p class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">This private balance has expired. You can still try withdrawing while it remains unclaimed.</p></div>`}
+                ${this.renderOutcome()}
                 ${!claimed && zkapiClient.withdrawalBlocksChat ? `<div class="rounded-lg border border-amber-300/60 bg-amber-50/60 p-3 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">${['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Your withdrawal transaction was submitted. Check its status before using this balance.' : zkapiClient.activeWithdrawal?.phase === 'dropped_or_pending' ? 'The saved transaction has no receipt yet. Open Withdraw to check or safely resubmit it with the same nonce.' : zkapiClient.activeWithdrawal?.phase === 'awaiting_wallet' ? 'MetaMask may still be open. Open Withdraw to check or recover the prompt.' : zkapiClient.activeWithdrawal?.phase === 'ambiguous' ? 'MetaMask did not return a transaction ID. Open Withdraw to check the vault or retry.' : 'No transaction is moving. This balance is ready to finish withdrawing.'}</div>` : ''}
                 <div class="zkapi-actions">
                     ${this.busy ? this.renderProgress(this.status || 'Working…') : `
@@ -747,6 +817,18 @@ export default class AccountModal {
             : 'The proof is ready; no transaction has been submitted yet.';
         const primaryLabel = this.busy ? 'Waiting for MetaMask…'
             : this.withdrawMode === 'mutual' ? 'Close balance and withdraw' : `Start ${zkapiClient.escapePeriodLabel()} escape`;
+        // Once the work has started — in this tab, or before a reload that
+        // left a prepared withdrawal — the method is decided: it folds to a
+        // line and the steps take the form's place.
+        const journeyKind = this.withdrawMode === 'escape' ? 'escape' : 'withdraw';
+        const busyJourney = this.busy && ['withdraw', 'escape'].includes(this.journeyKind);
+        const showJourney = busyJourney || Boolean(prepared);
+        const journey = showJourney
+            ? busyJourney
+                ? this.currentJourney(this.journeyKind, { message: this.status })
+                : this.currentJourney(journeyKind, { persistedPhase: prepared?.phase, failed: this.statusError })
+            : null;
+        const methodLine = `<p class="zkapi-summary-line"><strong>${this.withdrawMode === 'mutual' ? 'Mutual close' : 'Escape hatch'}</strong><span>· ${this.withdrawMode === 'mutual' ? 'closes this private balance' : `unilateral recovery, ${zkapiClient.escapePeriodPhrase()} safety window`}</span></p>`;
         return `
             <div class="zkapi-stack">
                 <div class="zkapi-balance-card">
@@ -756,8 +838,9 @@ export default class AccountModal {
                             <p data-withdraw-amount class="zkapi-balance-amount">${zkapiClient.formatMoney(note?.current_balance)}</p>
                         </div>
                     </div>
-                    ${notice ? `<p class="zkapi-note ${submissionActive || clearanceReserved ? '' : 'zkapi-note--attention'}">${notice}</p>` : ''}
+                    ${notice && !showJourney ? `<p class="zkapi-note ${submissionActive || clearanceReserved ? '' : 'zkapi-note--attention'}">${notice}</p>` : ''}
                 </div>
+                ${showJourney ? `${methodLine}${this.renderJourney(journey, { detail: busyJourney ? '' : notice })}${this.renderOutcome()}` : `
                 <fieldset class="zkapi-section zkapi-choices" ${this.busy || submissionActive ? 'disabled' : ''}>
                     <legend class="zkapi-section-title">Withdrawal method</legend>
                     <label class="zkapi-choice ${this.withdrawMode === 'mutual' ? 'selected' : ''}">
@@ -771,12 +854,13 @@ export default class AccountModal {
                 </fieldset>
                 ${submissionActive ? '' : '<label class="zkapi-check"><input id="zkapi-withdraw-confirm" type="checkbox" /><span>I understand that withdrawing closes this private balance.</span></label>'}
                 ${activeLease ? '<p data-active-lease-notice class="zkapi-note">The active chat key will settle automatically before withdrawal.</p>' : ''}
+                ${this.renderOutcome()}`}
                 <div class="zkapi-actions">
                     ${this.busy
-                        ? this.renderProgress(this.status || primaryLabel)
+                        ? (busyJourney ? '' : this.renderProgress(this.status || primaryLabel))
                         : submissionActive
                             ? '<button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button" type="button">Check transaction</button>'
-                            : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled>${primaryLabel}</button>`}
+                            : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${showJourney ? '' : 'disabled'}>${showJourney ? 'Continue in MetaMask' : primaryLabel}</button>`}
                     ${droppedOrPending && prepared?.replacement_available ? `<button id="zkapi-retry-dropped-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Resubmit with original nonce</button>` : ''}
                     ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
                     ${ambiguous ? `<button id="zkapi-retry-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Retry transaction</button>` : ''}
@@ -789,6 +873,7 @@ export default class AccountModal {
 
     render() {
         if (!this.overlay) return;
+        if (this.outcome?.view && this.outcome.view !== this.view) this.outcome = null;
         if (this.view === 'withdraw' && this.shouldShowClaimedBalance()) this.view = 'balance';
         const helpFocus = capturePrivateBalanceHelpFocus(this.overlay);
         const fundingSetup = captureFundingSetupView(this.overlay);
@@ -924,7 +1009,7 @@ export default class AccountModal {
         const confirm = this.overlay.querySelector('#zkapi-withdraw-confirm');
         const withdrawButton = this.overlay.querySelector('#zkapi-withdraw-btn');
         confirm?.addEventListener('change', () => {
-            withdrawButton.disabled = !confirm.checked || this.busy;
+            if (withdrawButton) withdrawButton.disabled = !confirm.checked || this.busy;
         });
         withdrawButton?.addEventListener('click', () => this.run(async (report) => {
             const result = await zkapiClient.withdraw(this.withdrawMode, report);
