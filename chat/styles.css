@@ -5054,9 +5054,9 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 }
 
 [data-memory-requires-feature]:disabled {
-    opacity: 0.45;
     cursor: not-allowed;
 }
+[data-memory-requires-feature]:disabled > * { opacity: 0.45; }
 
 [data-memory-requires-feature]:disabled:hover {
     color: hsl(var(--color-muted-foreground));
@@ -5321,9 +5321,9 @@ html[data-composer-mode="chat"] #model-picker-btn.composer-model-chip {
 }
 
 .council-secondary-model-btn:disabled {
-    opacity: 0.55;
     pointer-events: none;
 }
+.council-secondary-model-btn:disabled > * { opacity: 0.55; }
 
 html.council-layout-mode #model-picker-btn,
 html.council-layout-mode .council-secondary-model-btn {
@@ -5474,10 +5474,12 @@ html.council-synthesis-layout-mode .council-secondary-model-btn .model-name-cont
     box-shadow: inset 0 0 0 1px hsl(var(--color-foreground) / 0.15);
 }
 
+/* A control that is out dims what it shows, not itself: its tooltip is
+   drawn by the element (::after) and must stay a normal tooltip. */
 .memory-context-toggle.memory-disabled {
-    opacity: 0.55;
     cursor: not-allowed;
 }
+.memory-context-toggle.memory-disabled > * { opacity: 0.55; }
 
 .memory-context-toggle.memory-disabled:hover {
     color: hsl(var(--color-muted-foreground));
