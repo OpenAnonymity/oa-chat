@@ -34,21 +34,27 @@ function keptAccessSteps(trace) {
     }).join('');
 }
 
-/** The kept trace inside the thinking disclosure: the steps first, then
- *  the thinking — one stream, one toggle. */
-export function buildKeptAccessTraceInline(trace) {
-    if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) return '';
-    return `<div class="kept-access-inline" data-progress-phase="${escape(trace.phase)}">
+function keptStageBlock(trace) {
+    return `<div class="kept-access-stage" data-progress-phase="${escape(trace.phase)}">
         <strong class="pending-security-category">${escape(trace.summary || trace.category)}</strong>
         <ol class="pending-security-steps" aria-label="${escape(trace.category)}">${keptAccessSteps(trace)}</ol>
         ${trace.note ? `<p class="pending-security-note">${escape(trace.note)}</p>` : ''}
     </div>`;
 }
 
-export function buildKeptAccessTrace(trace, messageId) {
-    if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) return '';
+/** The kept stages inside the thinking disclosure, in order, then the
+ *  thinking — one stream, one toggle. */
+export function buildKeptAccessTraceInline(stages) {
+    const list = Array.isArray(stages) ? stages : stages ? [stages] : [];
+    if (!list.length) return '';
+    return `<div class="kept-access-inline">${list.map(keptStageBlock).join('')}</div>`;
+}
+
+export function buildKeptAccessTrace(stages, messageId) {
+    const list = Array.isArray(stages) ? stages : stages ? [stages] : [];
+    if (!list.length) return '';
+    const trace = list[list.length - 1];
     const traceId = `access-${messageId}`;
-    const stepHtml = keptAccessSteps(trace);
     return `<div class="pending-response-line kept-access-trace" data-progress-phase="${escape(trace.phase)}">
         <details class="pending-security-trace" data-pending-security-trace-id="${escape(traceId)}" ontoggle="window.rememberPendingSecurityTrace?.(this)"${expandedTraces.has(traceId) ? ' open' : ''}>
             <summary class="pending-security-summary" aria-label="${escape(trace.summary)}">
@@ -56,11 +62,7 @@ export function buildKeptAccessTrace(trace, messageId) {
                 <span class="pending-response-label">${escape(trace.summary)}</span>
                 <svg class="pending-security-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 6.5 2.5 2.5 2.5-2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/></svg>
             </summary>
-            <div class="pending-security-content">
-                <strong class="pending-security-category">${escape(trace.category)}</strong>
-                <ol class="pending-security-steps" aria-label="Preparation steps">${stepHtml}</ol>
-                ${trace.note ? `<p class="pending-security-note">${escape(trace.note)}</p>` : ''}
-            </div>
+            <div class="pending-security-content">${list.map(keptStageBlock).join('')}</div>
         </details>
     </div>`;
 }

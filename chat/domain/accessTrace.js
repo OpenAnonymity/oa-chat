@@ -37,3 +37,23 @@ export function completeAccessTrace(trace) {
         steps: trace.steps.map(step => ({ ...step, state: 'complete' }))
     };
 }
+
+/** A request can pass through more than one stage before the model answers
+ *  — finishing the previous chat's key, then securing private access. Each
+ *  stage is kept once, by category, in the order it appeared; a later
+ *  report for the same stage replaces the earlier one. */
+export function upsertAccessStage(stages, trace) {
+    if (!trace) return stages;
+    const list = Array.isArray(stages) ? stages : [];
+    const index = list.findIndex(stage => stage.category === trace.category);
+    if (index === -1) list.push(trace); else list[index] = trace;
+    return list;
+}
+
+/** The stages as rendered: always a list (older messages kept a single
+ *  object), and once the response has started, all finished. */
+export function keptAccessStages(value, finished = true) {
+    const list = Array.isArray(value) ? value : value ? [value] : [];
+    const stages = list.filter(stage => stage && Array.isArray(stage.steps) && stage.steps.length > 0);
+    return finished ? stages.map(completeAccessTrace) : stages;
+}

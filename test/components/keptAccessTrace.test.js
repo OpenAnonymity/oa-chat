@@ -50,9 +50,34 @@ test('once the message exists the trace is kept finished, whatever step the last
 
 test('with thinking present the steps open inside the thinking disclosure, not as a second one', async () => {
     const { buildKeptAccessTraceInline } = await import('../../chat/components/PendingIndicator.js');
-    const html = buildKeptAccessTraceInline(snapshotAccessTrace(ready));
+    const html = buildKeptAccessTraceInline([snapshotAccessTrace(ready)]);
     assert.match(html, /^<div class="kept-access-inline"/);
     assert.doesNotMatch(html, /<details/);
     assert.match(html, /pending-security-category">Private access secured</);
     assert.equal((html.match(/data-state="complete"/g) || []).length, 2);
+});
+
+test('a turn that finished the previous chat and then secured access keeps both stages, in order, finished', async () => {
+    const { upsertAccessStage, keptAccessStages } = await import('../../chat/domain/accessTrace.js');
+    const { buildKeptAccessTraceInline, buildKeptAccessTrace } = await import('../../chat/components/PendingIndicator.js');
+    const settling = snapshotAccessTrace({ mode: 'security', category: 'Finishing previous chat', current: 'Closing the previous chat key…', progressPhase: 'settling',
+        steps: [{ id: 'close', label: 'Close previous chat key', state: 'active' }, { id: 'usage', label: 'Confirm final usage', state: 'upcoming' }], note: '' });
+    const stages = upsertAccessStage([], settling);
+    // a later report of the same stage replaces it; a new stage appends
+    upsertAccessStage(stages, { ...settling, current: 'Confirming final usage…' });
+    upsertAccessStage(stages, snapshotAccessTrace({ ...ready, current: 'Generating a zero-knowledge funding proof…', progressPhase: 'proving', steps: [{ id: 'check', label: 'Check', state: 'complete' }, { id: 'proof', label: 'Proof', state: 'active' }] }));
+    assert.deepEqual(stages.map(s => s.category), ['Finishing previous chat', 'Private access']);
+
+    const pending = keptAccessStages(stages, false);
+    assert.equal(pending[1].steps[1].state, 'active', 'still pending: shown as it is');
+    const kept = keptAccessStages(stages, true);
+    assert.deepEqual(kept.map(s => s.summary), ['Previous chat finished', 'Private access secured']);
+    assert.ok(kept.every(s => s.steps.every(step => step.state === 'complete')));
+
+    const inline = buildKeptAccessTraceInline(kept);
+    assert.equal((inline.match(/class="kept-access-stage"/g) || []).length, 2);
+    assert.ok(inline.indexOf('Previous chat finished') < inline.indexOf('Private access secured'));
+    const own = buildKeptAccessTrace(kept, 'm');
+    assert.match(own, /<summary[^>]*aria-label="Private access secured"/, 'the disclosure is named by the last stage');
+    assert.deepEqual(keptAccessStages(snapshotAccessTrace(ready)).length, 1, 'older messages kept one object');
 });

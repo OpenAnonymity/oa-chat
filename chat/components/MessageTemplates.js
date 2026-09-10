@@ -13,6 +13,7 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
 import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
+import { keptAccessStages } from '../domain/accessTrace.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -1920,7 +1921,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     // message: inside its thinking disclosure when there is one, as their
     // own disclosure when the model showed no thinking.
     const hasReasoningStream = Boolean((message.reasoning || '').trim()) || Boolean(message.streamingReasoning);
-    const accessTraceBubble = hasReasoningStream ? '' : buildKeptAccessTrace(message.accessTrace, message.id);
+    // Once the response has started every stage is finished, whatever step
+    // its last report was on.
+    const accessStages = keptAccessStages(message.accessTrace, !message.streamingPending);
+    const accessTraceBubble = hasReasoningStream ? '' : buildKeptAccessTrace(accessStages, message.id);
     // Build reasoning trace if present
     const reasoningBubble = accessTraceBubble + buildReasoningTrace(
         message.reasoning,
@@ -1928,7 +1932,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         message.streamingReasoning || false,
         processContentWithLatex,
         message.reasoningDuration,
-        message.accessTrace || null
+        accessStages
     );
     const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
     const agentTraceBubble = hasAgentTrace

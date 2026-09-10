@@ -1,6 +1,6 @@
 // Main application logic
 import themeManager from './services/themeManager.js';
-import { snapshotAccessTrace, completeAccessTrace } from './domain/accessTrace.js';
+import { snapshotAccessTrace, upsertAccessStage } from './domain/accessTrace.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
@@ -1017,7 +1017,12 @@ class ChatApp {
             const trace = snapshotAccessTrace(
                 this.uiOptions?.presentation?.getPendingPresentation?.('preparing-access', progress)
             );
-            if (trace) (this.accessTraces ||= new Map()).set(sessionId, trace);
+            if (trace) {
+                const stages = (this.accessTraces ||= new Map()).get(sessionId) || [];
+                // The streaming message holds this same array, so stages that
+                // arrive after it exists (access follows settlement) land on it.
+                this.accessTraces.set(sessionId, upsertAccessStage(stages, trace));
+            }
         }
         if (!this.isViewingSession(sessionId)) return;
         const streamState = this.getSessionStreamingState(sessionId);
@@ -1029,13 +1034,11 @@ class ChatApp {
     }
 
     /** The access trace recorded for this session's current turn, once. */
+    /** The stages recorded for this session's current turn — the array
+     *  itself, so later stages keep landing on the message that took it.
+     *  Rendering completes them once the response has started. */
     takeAccessTrace(sessionId) {
-        // Taken when the streaming message is created, i.e. once access is
-        // secured — so the kept trace is the finished one, whichever step
-        // the last progress report happened to be on.
-        const trace = completeAccessTrace(this.accessTraces?.get(sessionId) || null);
-        this.accessTraces?.delete(sessionId);
-        return trace;
+        return this.accessTraces?.get(sessionId) || null;
     }
 
     async prepareRuntimeTurn(session, signal) {
