@@ -588,7 +588,7 @@ export default class AccountModal {
                     : 'Install MetaMask to get started';
             return `
                 <div class="zkapi-stack">
-                    ${resumingDeposit ? '<p class="zkapi-lede">Your last deposit didn’t finish: the MetaMask prompt closed before anything was sent, so no funds moved. The amount is saved below; resume when you’re ready and MetaMask will ask again.</p>' : ''}
+                    ${resumingDeposit ? '<p class="zkapi-lede">Your last deposit didn’t finish. Its amount and private note are saved in this browser. Check MetaMask for pending transactions before resuming.</p>' : ''}
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
                         <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
                         <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>

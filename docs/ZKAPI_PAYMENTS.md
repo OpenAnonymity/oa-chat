@@ -112,6 +112,12 @@ on both sides of the read and bounds read-only retries. A delayed read does not
 send another mint. Mainnet deposits and withdrawals retain their existing
 transaction paths, durable recovery, and on-chain/indexer root checks.
 
+A saved deposit can still have a pending token approval in MetaMask, including
+after approval confirmation polling times out. The recovery notice preserves
+the saved amount/private note and asks the user to check pending transactions
+before resuming; it does not infer that nothing was submitted from a prepared
+deposit alone.
+
 Sources for the onboarding copy:
 
 - [Install MetaMask](https://support.metamask.io/start/getting-started-with-metamask)
