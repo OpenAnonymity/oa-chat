@@ -18,3 +18,22 @@ export function snapshotAccessTrace(presentation) {
         note: String(presentation.note || '')
     };
 }
+
+/** The trace as it is kept once the response has started: whatever the
+ *  last presentation showed, the work finished — every step complete,
+ *  the summary in the past tense. */
+export function completeAccessTrace(trace) {
+    if (!trace) return null;
+    const done = {
+        'Private access': 'Private access secured',
+        'Refreshing private access': 'Private access refreshed',
+        'Finishing previous chat': 'Previous chat finished',
+        'Private access recovery': 'Private access recovered'
+    };
+    return {
+        ...trace,
+        phase: 'ready',
+        summary: done[trace.category] || trace.summary,
+        steps: trace.steps.map(step => ({ ...step, state: 'complete' }))
+    };
+}

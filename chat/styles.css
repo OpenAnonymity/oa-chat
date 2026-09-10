@@ -1605,6 +1605,10 @@ a.quick-ask-source:focus-visible {
     transform: none;
 }
 .kept-access-trace .pending-security-summary .pending-response-label { color: hsl(var(--color-muted-foreground)); }
+/* Inside the thinking disclosure: the steps lead, a hairline, then the thought. */
+.reasoning-content .kept-access-inline { margin: 0 0 0.625rem; padding: 0 0 0.625rem; border-bottom: 1px solid hsl(var(--color-foreground) / 0.08); }
+.reasoning-content .kept-access-inline .pending-security-category { display: block; margin-bottom: 0.375rem; }
+.reasoning-content .kept-access-inline .pending-security-note { margin-top: 0.375rem; }
 
 .pending-security-summary {
     width: fit-content;

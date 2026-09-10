@@ -24,16 +24,31 @@ if (typeof window !== 'undefined') {
  *  kept above the response's thinking so what secured the request stays in
  *  its thought trace. Collapsed by default; open state is remembered per
  *  message for the page's lifetime like the pending one. */
-export function buildKeptAccessTrace(trace, messageId) {
-    if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) return '';
-    const traceId = `access-${messageId}`;
-    const stepHtml = trace.steps.map((step, index) => {
+function keptAccessSteps(trace) {
+    return trace.steps.map((step, index) => {
         const state = ['active', 'waiting', 'complete', 'error', 'canceled', 'upcoming'].includes(step.state) ? step.state : 'upcoming';
         return `<li class="pending-security-step" data-step-id="${escape(step.id)}" data-state="${state}" aria-label="${escape(step.label)}, ${state}">
             <span class="pending-security-step-marker" aria-hidden="true">${state === 'complete' ? '✓' : index + 1}</span>
             <span class="pending-security-step-label">${escape(step.label)}</span>
         </li>`;
     }).join('');
+}
+
+/** The kept trace inside the thinking disclosure: the steps first, then
+ *  the thinking — one stream, one toggle. */
+export function buildKeptAccessTraceInline(trace) {
+    if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) return '';
+    return `<div class="kept-access-inline" data-progress-phase="${escape(trace.phase)}">
+        <strong class="pending-security-category">${escape(trace.summary || trace.category)}</strong>
+        <ol class="pending-security-steps" aria-label="${escape(trace.category)}">${keptAccessSteps(trace)}</ol>
+        ${trace.note ? `<p class="pending-security-note">${escape(trace.note)}</p>` : ''}
+    </div>`;
+}
+
+export function buildKeptAccessTrace(trace, messageId) {
+    if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) return '';
+    const traceId = `access-${messageId}`;
+    const stepHtml = keptAccessSteps(trace);
     return `<div class="pending-response-line kept-access-trace" data-progress-phase="${escape(trace.phase)}">
         <details class="pending-security-trace" data-pending-security-trace-id="${escape(traceId)}" ontoggle="window.rememberPendingSecurityTrace?.(this)"${expandedTraces.has(traceId) ? ' open' : ''}>
             <summary class="pending-security-summary" aria-label="${escape(trace.summary)}">

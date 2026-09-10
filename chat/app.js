@@ -1,6 +1,6 @@
 // Main application logic
 import themeManager from './services/themeManager.js';
-import { snapshotAccessTrace } from './domain/accessTrace.js';
+import { snapshotAccessTrace, completeAccessTrace } from './domain/accessTrace.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
@@ -1030,7 +1030,10 @@ class ChatApp {
 
     /** The access trace recorded for this session's current turn, once. */
     takeAccessTrace(sessionId) {
-        const trace = this.accessTraces?.get(sessionId) || null;
+        // Taken when the streaming message is created, i.e. once access is
+        // secured — so the kept trace is the finished one, whichever step
+        // the last progress report happened to be on.
+        const trace = completeAccessTrace(this.accessTraces?.get(sessionId) || null);
         this.accessTraces?.delete(sessionId);
         return trace;
     }

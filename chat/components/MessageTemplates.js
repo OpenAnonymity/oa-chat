@@ -12,7 +12,7 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
-import { buildDetailedPendingIndicator, buildKeptAccessTrace } from './PendingIndicator.js';
+import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -927,7 +927,7 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
  * @param {number} reasoningDuration - Duration in milliseconds (optional)
  * @returns {string} HTML string or empty string
  */
-function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration) {
+function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration, accessTrace = null) {
     if (!reasoning && !isStreaming) return '';
 
     const reasoningId = `reasoning-${messageId}`;
@@ -965,6 +965,9 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     } else {
         reasoningHtml = processContent ? processContent(trimmedReasoning) : trimmedReasoning;
     }
+    // The private-access steps that secured this request open the same
+    // stream as the thinking: one disclosure, steps first.
+    reasoningHtml = buildKeptAccessTraceInline(accessTrace) + reasoningHtml;
 
     // Generate subtitle - show timing for completed reasoning, or compute from content during streaming
     // When switching back to a streaming session, compute subtitle from available reasoning content
@@ -1914,15 +1917,18 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     }
 
     // The private-access steps that secured this request stay with the
-    // message, above its thinking, once the response has started.
-    const accessTraceBubble = buildKeptAccessTrace(message.accessTrace, message.id);
+    // message: inside its thinking disclosure when there is one, as their
+    // own disclosure when the model showed no thinking.
+    const hasReasoningStream = Boolean((message.reasoning || '').trim()) || Boolean(message.streamingReasoning);
+    const accessTraceBubble = hasReasoningStream ? '' : buildKeptAccessTrace(message.accessTrace, message.id);
     // Build reasoning trace if present
     const reasoningBubble = accessTraceBubble + buildReasoningTrace(
         message.reasoning,
         message.id,
         message.streamingReasoning || false,
         processContentWithLatex,
-        message.reasoningDuration
+        message.reasoningDuration,
+        message.accessTrace || null
     );
     const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
     const agentTraceBubble = hasAgentTrace

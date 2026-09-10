@@ -36,3 +36,23 @@ test('the kept trace renders the same disclosure as the pending one, collapsed a
     assert.match(html, /Verify with Open Anonymity/);
     assert.equal(buildKeptAccessTrace(null, 'msg-2'), '');
 });
+
+test('once the message exists the trace is kept finished, whatever step the last report was on', async () => {
+    const { completeAccessTrace } = await import('../../chat/domain/accessTrace.js');
+    const halfway = snapshotAccessTrace({ mode: 'security', category: 'Finishing previous chat', current: 'Closing the previous chat key…', progressPhase: 'settling',
+        steps: [{ id: 'close', label: 'Close previous chat key', state: 'active' }, { id: 'usage', label: 'Confirm final usage', state: 'upcoming' }], note: 'n' });
+    const kept = completeAccessTrace(halfway);
+    assert.equal(kept.summary, 'Previous chat finished');
+    assert.equal(kept.phase, 'ready');
+    assert.deepEqual(kept.steps.map(s => s.state), ['complete', 'complete']);
+    assert.equal(completeAccessTrace(null), null);
+});
+
+test('with thinking present the steps open inside the thinking disclosure, not as a second one', async () => {
+    const { buildKeptAccessTraceInline } = await import('../../chat/components/PendingIndicator.js');
+    const html = buildKeptAccessTraceInline(snapshotAccessTrace(ready));
+    assert.match(html, /^<div class="kept-access-inline"/);
+    assert.doesNotMatch(html, /<details/);
+    assert.match(html, /pending-security-category">Private access secured</);
+    assert.equal((html.match(/data-state="complete"/g) || []).length, 2);
+});
