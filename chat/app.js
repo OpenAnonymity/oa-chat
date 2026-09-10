@@ -360,6 +360,10 @@ class ChatApp {
         this.ticketShortageHandler = null;
         this.firstAccountReadyHandlers = new Set();
         this.loggedOutHandlers = new Set();
+        // Hosts that key onboarding off the payment method (the ticket
+        // Welcome stays on the Tickets side) hear about changes here.
+        this.paymentModeListeners = new Set();
+        this.announcedPaymentMode = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -541,6 +545,25 @@ class ChatApp {
     async changePaymentMode(mode) {
         if (!this.hasPaymentModes()) throw new Error('This build has one payment mode.');
         await this.runtime.changeMode(mode);
+        this.announcePaymentMode();
+    }
+
+    subscribePaymentMode(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this.paymentModeListeners.add(listener);
+        return () => this.paymentModeListeners.delete(listener);
+    }
+
+    /** Tells listeners when the current chat's payment mode differs from the
+     *  last one announced — a method switch or a switch to a chat that pays
+     *  the other way. Cheap to call on every presentation refresh. */
+    announcePaymentMode() {
+        const mode = this.getPaymentMode();
+        if (mode === this.announcedPaymentMode) return;
+        this.announcedPaymentMode = mode;
+        this.paymentModeListeners.forEach(listener => {
+            try { listener(mode); } catch (error) { console.warn('Payment mode listener failed:', error); }
+        });
     }
 
     /**
@@ -675,7 +698,10 @@ class ChatApp {
                 // onboarding (the Welcome offers) on the Tickets side.
                 getMode: () => this.getPaymentMode(),
                 available: () => this.hasPaymentModes(),
-                setMode: mode => this.changePaymentMode(mode)
+                setMode: mode => this.changePaymentMode(mode),
+                // Called with the new mode whenever the current chat's
+                // payment mode changes; returns an unsubscribe.
+                subscribe: listener => this.subscribePaymentMode(listener)
             }),
             ui: Object.freeze({
                 persistNavigationForReturn: () => { saveNavigationSelection(this.state.currentSessionId); },
@@ -805,6 +831,7 @@ class ChatApp {
                     this.updateInputState();
                 }
                 this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
+                this.announcePaymentMode();
             },
             cancelSessionWork: id => this.cancelSessionWork(id)
         });
@@ -962,6 +989,7 @@ class ChatApp {
         this.updateShareButtonUI();
         this.rightPanel?.onSessionChange?.(session);
         this.uiOptions.presentation?.renderComposer?.(session);
+        this.announcePaymentMode();
         try { await this.initVerifier(session); }
         catch (error) { console.warn('Could not initialize the selected access verifier:', error); }
         await this.refreshModelsForSessionBackend({ force: true });

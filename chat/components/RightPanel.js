@@ -1977,14 +1977,20 @@ class RightPanel {
             accountState.sessionVerified &&
             accountState.status === 'unlocked'
         );
-        const showGetTickets = hasUnlockedAccount && ticketCount === 0;
+        // Signed out there is nothing to count: the summary is the way in,
+        // and it leads to sign-in (tickets need an account), not to billing.
+        const needsSignIn = !hasUnlockedAccount && ticketCount === 0;
+        const showGetTickets = ticketCount === 0;
         return {
             hasUnlockedAccount,
+            needsSignIn,
             showGetTickets,
             ticketCount,
-            ariaLabel: showGetTickets
-                ? 'Get inference tickets'
-                : `Manage inference tickets, ${ticketCount} available`
+            ariaLabel: needsSignIn
+                ? 'Sign in to get inference tickets'
+                : showGetTickets
+                    ? 'Get inference tickets'
+                    : `Manage inference tickets, ${ticketCount} available`
         };
     }
 
@@ -2541,6 +2547,11 @@ class RightPanel {
         const ticketManagerButton = document.getElementById('open-ticket-manager-btn');
         if (ticketManagerButton) {
             ticketManagerButton.onclick = event => {
+                const accountState = this.app.services.account?.getState?.() || {};
+                if (this.getExternalTicketSummary(accountState).needsSignIn && this.app.accountModal?.open) {
+                    this.app.accountModal.open(event.currentTarget);
+                    return;
+                }
                 this.app.openTicketManagement?.(event.currentTarget);
             };
         }

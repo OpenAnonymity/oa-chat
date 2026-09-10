@@ -111,13 +111,14 @@ test('commercial ticket management replaces right-panel redemption with one comp
     assert.doesNotMatch(source, /border-b border-border\/60 pb-3/);
 });
 
-test('commercial zero balance is actionable only for an unlocked account', () => {
+test('commercial zero balance says Get tickets; signed out, that leads to sign-in', () => {
     const panel = createPanel(0);
 
     const signedOut = panel.getExternalTicketSummary({});
-    assert.equal(signedOut.showGetTickets, false);
+    assert.equal(signedOut.showGetTickets, true);
+    assert.equal(signedOut.needsSignIn, true);
     assert.equal(signedOut.ticketCount, 0);
-    assert.equal(signedOut.ariaLabel, 'Manage inference tickets, 0 available');
+    assert.equal(signedOut.ariaLabel, 'Sign in to get inference tickets');
 
     const signedIn = panel.getExternalTicketSummary({
         accountId: 'account-1',
@@ -125,7 +126,11 @@ test('commercial zero balance is actionable only for an unlocked account', () =>
         status: 'unlocked'
     });
     assert.equal(signedIn.showGetTickets, true);
+    assert.equal(signedIn.needsSignIn, false);
     assert.equal(signedIn.ariaLabel, 'Get inference tickets');
+
+    const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
+    assert.match(source, /needsSignIn && this\.app\.accountModal\?\.open/);
 });
 
 test('right-panel rerenders reattach commercial ticket status through the public facade', () => {
