@@ -1,6 +1,6 @@
 // Main application logic
 import themeManager from './services/themeManager.js';
-import { snapshotAccessTrace } from './components/PendingIndicator.js';
+import { snapshotAccessTrace } from './domain/accessTrace.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
