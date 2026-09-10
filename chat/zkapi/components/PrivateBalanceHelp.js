@@ -2,7 +2,7 @@ const HELP = {
     billing: {
         label: 'How private billing works',
         title: 'How private billing works',
-        text: 'Your deposit creates a private prepaid balance. The model list shows each model’s temporary-key spending cap and minimum balance. Your device proves you have at least that amount without revealing your exact balance. The cap covers all usage on that key; it is not a fee. When the key closes, verified usage is deducted and unused funds remain in your balance. Your wallet address is not attached to model requests.'
+        text: 'Your deposit becomes a private prepaid balance. Each chat gets a temporary key with a spending cap; your device proves the balance covers it without revealing the amount. Only verified usage is deducted, and your wallet address never reaches a model request.'
     },
     expiry: {
         label: 'What happens when my private balance expires?',
@@ -52,7 +52,24 @@ export function privateBalanceHelpContent(scope, kind, open = false) {
     </div>`;
 }
 
+/** The billing explanation as a disclosure among the dialog's guides,
+ *  where "Set up your wallet" and "Payment history" live — not a card
+ *  above the deposit. Open state is the owner's, so re-renders keep it. */
+export function privateBalanceGuide(kind, open = false) {
+    const help = HELP[kind];
+    return `<details data-zkapi-help-guide="${kind}" class="zkapi-guide zkapi-guide-details" ${open ? 'open' : ''}>
+        <summary class="zkapi-guide-trigger">${help.label}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <div class="zkapi-guide-body"><p class="zkapi-guide-lead">${help.text}</p></div>
+    </details>`;
+}
+
 export function attachPrivateBalanceHelp(root, owner) {
+    for (const guide of root?.querySelectorAll?.('[data-zkapi-help-guide]') || []) {
+        guide.addEventListener('toggle', () => {
+            const state = owner.privateBalanceHelpOpen ||= {};
+            state[guide.dataset.zkapiHelpGuide] = guide.open;
+        });
+    }
     if (!root?.querySelectorAll) return;
     for (const button of root.querySelectorAll('[data-zkapi-help]')) {
         button.addEventListener('click', () => {

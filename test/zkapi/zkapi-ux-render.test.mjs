@@ -1351,7 +1351,7 @@ test('right-panel progress disclosures preserve both open and closed state acros
     }
 });
 
-test('balance panel and modal expose billing and expiry help without the redundant bottom disclosure', () => {
+test('balance panel keeps its billing ? ; the modal explains billing as a guide disclosure', () => {
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config,
         withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
     Object.assign(zkapiClient, { wallet: { note: { note_id: 7, deposit_amount: 2_000_000,
@@ -1373,9 +1373,13 @@ test('balance panel and modal expose billing and expiry help without the redunda
         assert.match(html, /aria-controls="zkapi-panel-billing-help"/);
         assert.doesNotMatch(html, /data-zkapi-help-content="(?:billing|expiry)" hidden/);
         modal.render();
-        assert.match(modal.overlay.innerHTML, /zkapi-modal-billing-help-toggle/);
+        // The dialog explains billing as a disclosure among its guides, not
+        // as a ? in the header with a card above the deposit.
+        assert.doesNotMatch(modal.overlay.innerHTML, /zkapi-modal-billing-help-toggle/);
+        assert.doesNotMatch(modal.overlay.innerHTML, /data-zkapi-help-content="billing"/);
+        assert.match(modal.overlay.innerHTML, /<details data-zkapi-help-guide="billing" class="zkapi-guide zkapi-guide-details" >/);
+        assert.match(modal.overlay.innerHTML, /How private billing works/);
         assert.match(modal.overlay.innerHTML, /data-zkapi-balance-expiry>[^<]+<\/span><button id="zkapi-modal-expiry-help-toggle"/);
-        assert.match(modal.overlay.innerHTML, /data-zkapi-help-content="billing" hidden/);
         assert.doesNotMatch(modal.overlay.innerHTML, /data-zkapi-help-content="expiry" hidden/);
         modal.render();
         assert.doesNotMatch(modal.overlay.innerHTML, /data-zkapi-help-content="expiry" hidden/,

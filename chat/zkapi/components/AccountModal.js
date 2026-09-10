@@ -5,7 +5,7 @@ import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
-    privateBalanceExpired, privateBalanceHelpButton, privateBalanceHelpContent,
+    privateBalanceExpired, privateBalanceGuide, privateBalanceHelpButton, privateBalanceHelpContent,
     restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState
 } from './PrivateBalanceHelp.js';
 
@@ -622,6 +622,7 @@ export default class AccountModal {
                         </div>
                     </section>
                     <div class="zkapi-guides">
+                        ${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}
                         ${fundingSetupGuide({ mainnet, demoMintEnabled, open: fundingSetup?.open })}
                         ${this.renderWithdrawalStatusLink()}
                     </div>
@@ -655,7 +656,7 @@ export default class AccountModal {
                     ${claimed ? '<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button">Start a new balance</button>' : ''}
                     ${zkapiClient.config?.funding?.demo_mint_enabled ? '<button id="zkapi-mint-token-btn" class="zkapi-secondary-button" type="button">Get 10 test ZKAPI</button>' : ''}`}
                 </div>
-                <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
+                <div class="zkapi-guides">${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}${this.renderWithdrawalStatusLink()}</div>
             </div>`;
     }
 
@@ -791,7 +792,6 @@ export default class AccountModal {
         if (this.view === 'withdraw' && this.shouldShowClaimedBalance()) this.view = 'balance';
         const helpFocus = capturePrivateBalanceHelpFocus(this.overlay);
         const fundingSetup = captureFundingSetupView(this.overlay);
-        const showsBalance = !['withdraw', 'withdrawals'].includes(this.view);
         const title = this.view === 'withdraw'
             ? 'Withdraw'
             : this.view === 'withdrawals'
@@ -806,14 +806,12 @@ export default class AccountModal {
             <div role="dialog" aria-modal="true" aria-labelledby="zkapi-payment-title" class="${MODAL_CLASSES}">
                 <div class="zkapi-dialog-head">
                     <h2 id="zkapi-payment-title" class="zkapi-dialog-title">${title}</h2>
-                    ${showsBalance ? privateBalanceHelpButton('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}
                     <button id="zkapi-payment-close" class="zkapi-dialog-close" type="button" aria-label="Close" ${this.busy ? 'hidden' : ''}>
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
                     </button>
                 </div>
                 <div data-funding-scroll class="zkapi-dialog-scroll">
                     ${this.view === 'withdrawals' ? `<p class="zkapi-lede">${subtitle}</p>` : ''}
-                    ${showsBalance ? privateBalanceHelpContent('modal', 'billing', this.privateBalanceHelpOpen?.billing) : ''}
                     ${this.view === 'withdraw' ? this.renderWithdrawal() : this.view === 'withdrawals' ? this.renderWithdrawalRecords() : this.renderBalance(fundingSetup)}
                 </div>
             </div>`;
