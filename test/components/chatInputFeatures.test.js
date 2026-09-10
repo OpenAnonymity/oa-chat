@@ -222,3 +222,30 @@ test('scrubber binds a new chat before session persistence and updates only its 
         scrubberService.redactPrompt = originalRedact;
     }
 });
+
+
+test('pending scrub resizes newly wrapped text without another draft input', () => {
+    const previousWindow = globalThis.window;
+    globalThis.window = { innerHeight: 900 };
+    try {
+        const f = fixture();
+        f.messageInput.value = 'My name is [PERSON_1] and I live in [PLACE_1].';
+        f.messageInput.style.height = '24px';
+        f.messageInput.dispatchEvent = () => { throw new Error('Layout must not trigger draft input'); };
+        f.app.resetMessageInputLayout = () => { f.messageInput.style.height = '24px'; };
+        Object.defineProperty(f.messageInput, 'scrollHeight', {
+            get: () => f.app.elements.inputCard.classList.contains('has-scrubber-pending') ? 48 : 24
+        });
+        f.app.scrubberPending = { original: 'My name is Alex and I live in Paris.', redacted: f.messageInput.value };
+        ChatInput.prototype.updateScrubberPreviewHintVisibility.call(f.input);
+        assert.equal(f.messageInput.style.height, '48px');
+        assert.equal(f.input.scrubberState.draftRevision, 0);
+
+        f.app.scrubberPending = null;
+        ChatInput.prototype.updateScrubberPreviewHintVisibility.call(f.input);
+        assert.equal(f.messageInput.style.height, '24px');
+        assert.equal(f.input.scrubberState.draftRevision, 0);
+    } finally {
+        globalThis.window = previousWindow;
+    }
+});

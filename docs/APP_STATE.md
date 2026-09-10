@@ -1,3 +1,13 @@
+## 2026-09-10: Tab-Tab preview hints keep their own space
+
+- A pending scrub reserves 150px on the right of both the textarea and diff
+  preview for the Control/Option shortcut hints. Hiding the initial Tab-Tab
+  hint must not shrink that area while the preview/edit hint is visible.
+- Changing pending state recalculates input height after applying the padding,
+  so newly wrapped lines are visible immediately without another keystroke.
+- The same inset keeps wrapped text aligned while holding Control or editing
+  the preview. Clearing the pending scrub restores the existing input spacing.
+
 ## 2026-09-10: Saved deposits do not imply an empty wallet transaction queue
 
 - A prepared deposit can coexist with a pending token-approval transaction if

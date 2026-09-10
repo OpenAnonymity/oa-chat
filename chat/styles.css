@@ -7868,6 +7868,12 @@ div:has(> #input-card.scrubber-preview-expanded) {
     padding-right: 64px !important;
 }
 
+/* Keep rewritten text and its diff clear of the wider preview/edit hint. */
+#input-card.has-scrubber-pending #message-input,
+#input-card.has-scrubber-pending .scrubber-preview-diff {
+    padding-right: 150px !important;
+}
+
 /* Anchor scrubber hints to initial input center */
 #scrubber-shortcut-hint,
 #scrubber-preview-hint {

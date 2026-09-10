@@ -171,6 +171,25 @@ export default class ChatInput {
     }
 
 
+    resizeMessageInput() {
+        const input = this.app.elements.messageInput;
+        this.app.resetMessageInputLayout();
+        const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
+        const expandedMax = Math.floor(window.innerHeight * 0.55);
+        const maxHeight = isExpanded ? Math.max(MESSAGE_INPUT_MAX_HEIGHT_PX, expandedMax) : MESSAGE_INPUT_MAX_HEIGHT_PX;
+        // When expanded, also consider diff preview's scroll height for proper sizing
+        let contentHeight = input.scrollHeight;
+        if (isExpanded && this.app.elements.scrubberPreviewDiff) {
+            const diffHeight = this.app.elements.scrubberPreviewDiff.scrollHeight;
+            if (diffHeight > 0) {
+                contentHeight = Math.max(contentHeight, diffHeight);
+            }
+        }
+        input.style.maxHeight = `${maxHeight}px`;
+        input.style.height = Math.min(contentHeight, maxHeight) + 'px';
+        this.syncScrubberPreviewHeight();
+    }
+
     /**
      * Sets up all event listeners for the input area controls.
      */
@@ -178,22 +197,7 @@ export default class ChatInput {
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
             this.scrubberState.draftRevision += 1;
-            const input = this.app.elements.messageInput;
-            this.app.resetMessageInputLayout();
-            const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
-            const expandedMax = Math.floor(window.innerHeight * 0.55);
-            const maxHeight = isExpanded ? Math.max(MESSAGE_INPUT_MAX_HEIGHT_PX, expandedMax) : MESSAGE_INPUT_MAX_HEIGHT_PX;
-            // When expanded, also consider diff preview's scroll height for proper sizing
-            let contentHeight = input.scrollHeight;
-            if (isExpanded && this.app.elements.scrubberPreviewDiff) {
-                const diffHeight = this.app.elements.scrubberPreviewDiff.scrollHeight;
-                if (diffHeight > 0) {
-                    contentHeight = Math.max(contentHeight, diffHeight);
-                }
-            }
-            input.style.maxHeight = `${maxHeight}px`;
-            input.style.height = Math.min(contentHeight, maxHeight) + 'px';
-            this.syncScrubberPreviewHeight();
+            this.resizeMessageInput();
             this.app.updateInputState();
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
@@ -1690,10 +1694,16 @@ export default class ChatInput {
             inputValue === pending.redacted &&
             pending.original.trim() !== pending.redacted.trim();
 
+        const wasPending = this.app.elements.inputCard.classList.contains('has-scrubber-pending');
         if (hasMeaningfulDiff) {
             this.app.elements.inputCard.classList.add('has-scrubber-pending');
         } else {
             this.app.elements.inputCard.classList.remove('has-scrubber-pending');
+        }
+        // Hint padding changes wrapping after a scrub, without a new input event.
+        if (wasPending !== Boolean(hasMeaningfulDiff) && this.app.elements.messageInput) {
+            this.resizeMessageInput();
+            this.app.updateToastPosition?.();
         }
     }
 
