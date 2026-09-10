@@ -340,3 +340,26 @@ test('a completion token still signs out a remembered username account first', a
     assert.equal(harness.opens, 0);
     assert.deepEqual(harness.completions, [['google', COMPLETION_TOKEN]]);
 });
+
+test('the landing zkAPI entry opens chat in zkAPI mode, signed out, without a sign-in dialog', async () => {
+    const harness = createHarness({ accountId: null, status: 'none' }, '?auth=zkapi', '');
+    const modes = [];
+    const pending = routeAuthenticationIntent({
+        ...harness,
+        changePaymentMode: async mode => { modes.push(mode); }
+    });
+    harness.releaseBootstrap({ accountId: null, status: 'none' });
+    const route = await pending;
+    assert.deepEqual(route, { handled: true, action: 'zkapi' });
+    assert.deepEqual(modes, ['zkapi']);
+    assert.equal(harness.opens, 0, 'no account dialog');
+    assert.equal(harness.clears, 0, 'a remembered account is left alone');
+    assert.equal(harness.replacements.at(-1)?.[2], '/chat/', 'the intent leaves the address');
+});
+
+test('the zkAPI entry on a build without payment modes is an ordinary visit', async () => {
+    const harness = createHarness({ accountId: null, status: 'none' }, '?auth=zkapi', '');
+    const route = await routeAuthenticationIntent({ ...harness });
+    assert.deepEqual(route, { handled: false, action: 'none' });
+    assert.equal(harness.replacements.length, 1, 'the address is still cleaned');
+});

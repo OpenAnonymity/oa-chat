@@ -1,11 +1,9 @@
 /**
- * Settings dialog: what you set once and leave. Data controls, Appearance,
- * feedback, and the account actions (Log out, Delete account). The gear on
- * the composer keeps what changes between one prompt and the next.
- *
- * The markup lives in index.html (#settings-dialog); the Appearance
- * controls keep their ids, so ChatInput binds them as before. This class
- * only opens, closes, and routes the data-action buttons.
+ * Data controls, Appearance and Share feedback live in the composer gear for
+ * every mode, so a zkAPI user without an account finds them too; this class
+ * runs the gear's data actions (export, import). What remains account-bound
+ * — Delete account — is a row in the commercial Billing dialog, which opens
+ * it straight into its confirmation over the #settings-dialog overlay.
  */
 import { exportChats, exportAllData } from '../services/globalExport.js';
 
@@ -55,10 +53,76 @@ class SettingsDialog {
             this.overlay.addEventListener('pointerdown', this.onOverlayPointerDown);
             this.overlay.addEventListener('click', this.onClick);
         }
-        document.getElementById('account-preferences-menu-item')?.addEventListener('click', () => {
-            this.app.accountModal?.closeAccountMenu?.();
-            this.open();
-        });
+        // The gear's Data controls: exports ask first (a download should not
+        // be a surprise), on the dialog's backdrop; imports open their pickers.
+        this.dataSection = document.getElementById('data-management-section');
+        this.onDataClick = event => this.handleDataClick(event);
+        this.dataSection?.addEventListener('click', this.onDataClick);
+    }
+
+    /** From Billing's account row: only the confirmation, over the backdrop. */
+    openDeleteAccount(returnFocusEl = null) {
+        if (!this.overlay) return;
+        this.open(returnFocusEl);
+        this.dialog?.setAttribute?.('hidden', '');
+        this.standaloneConfirm = true;
+        this.showDeleteConfirm();
+    }
+
+    /** The gear is a z-100 popover; the confirmation lives on the dialog's
+     *  backdrop beneath it, so the gear closes first. */
+    closeGearMenu() {
+        this.app.elements?.settingsMenu?.classList?.add?.('hidden');
+        this.app.elements?.settingsBtn?.classList?.remove?.('tooltip-disabled');
+        this.app.chatInput?.closeSettingsMenu?.();
+    }
+
+    /** Puts the gear back the way it was: the card stepped in front of it,
+     *  it did not replace it. The gear button's own handler positions it. */
+    reopenGearMenu() {
+        const menu = this.app.elements?.settingsMenu;
+        const button = this.app.elements?.settingsBtn;
+        if (!menu || !button?.click) return;
+        const reopen = () => { if (menu.classList?.contains?.('hidden')) button.click(); };
+        // After the current click has finished bubbling, so the document's
+        // outside-click handler does not close what was just reopened.
+        if (typeof setTimeout === 'function') setTimeout(reopen, 0); else reopen();
+    }
+
+    /** From the gear: only the export confirmation, over the backdrop. */
+    openExportConfirm(action, returnFocusEl = null) {
+        if (!this.overlay) return;
+        this.closeGearMenu();
+        this.reopenGearOnClose = true;
+        this.open(returnFocusEl);
+        this.dialog?.setAttribute?.('hidden', '');
+        this.standaloneConfirm = true;
+        this.showExportConfirm(action);
+    }
+
+    async handleDataClick(event) {
+        const button = event.target.closest?.('button[data-action]');
+        if (!button || !this.dataSection?.contains(button)) return;
+        event.stopPropagation();
+        switch (button.dataset.action) {
+            case 'export-chats':
+            case 'export-all-data':
+            case 'export-memory':
+                this.openExportConfirm(button.dataset.action, button);
+                break;
+            case 'import-data':
+                document.getElementById('global-import-input')?.click?.();
+                break;
+            case 'import-memory':
+                document.getElementById('memory-import-input')?.click?.();
+                break;
+            case 'import-history':
+                this.closeGearMenu();
+                this.app.chatHistoryImportModal?.open?.();
+                break;
+            default:
+                break;
+        }
     }
 
     open(returnFocusEl = null) {
@@ -74,11 +138,17 @@ class SettingsDialog {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
         this.dismissDeleteConfirm();
+        this.dialog?.removeAttribute?.('hidden');
+        this.standaloneConfirm = false;
         this.overlay.classList.add('hidden');
         document.removeEventListener('keydown', this.onKeydown);
         const target = this.returnFocusEl;
         this.returnFocusEl = null;
         if (target?.focus && document.contains?.(target)) target.focus({ preventScroll: true });
+        if (this.reopenGearOnClose) {
+            this.reopenGearOnClose = false;
+            this.reopenGearMenu();
+        }
     }
 
     handleKeydown(event) {
@@ -268,6 +338,8 @@ class SettingsDialog {
         const target = this.confirmReturnFocus;
         this.confirmReturnFocus = null;
         target?.focus?.();
+        // Opened from the account menu there is nothing behind the card.
+        if (this.standaloneConfirm && this.isOpen) this.close();
     }
 
     /**

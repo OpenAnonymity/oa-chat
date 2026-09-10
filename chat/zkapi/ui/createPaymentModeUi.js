@@ -3,6 +3,10 @@ import WelcomePanel from '../../components/WelcomePanel.js';
 import ZkapiAccountModal from '../components/AccountModal.js';
 import PaymentModeRightPanel from '../components/PaymentModeRightPanel.js';
 import { createZkapiUi } from './createZkapiUi.js';
+import themeManager from '../../services/themeManager.js';
+import { applyZkapiDefaultTheme as applyDefaultTheme } from '../services/zkapiDefaultTheme.js';
+
+const applyZkapiDefaultTheme = () => applyDefaultTheme(globalThis.localStorage, themeManager);
 
 /** Keep the payment choice in the toolbar and funding in the System Panel. */
 export function createPaymentModeUi(runtime) {
@@ -19,8 +23,11 @@ export function createPaymentModeUi(runtime) {
         for (const button of modeControl.querySelectorAll('[data-payment-mode]')) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));
             button.disabled = busy;
-            button.title = busy ? 'Finish or stop the current response to switch payment methods.'
-                : `Use ${button.dataset.paymentMode === 'zkapi' ? 'zkAPI' : 'tickets'} for this chat and new chats. Your history stays the same.`;
+            // No tooltip: the toolbar clips overflow, so one drawn below the
+            // control showed as a stray hairline on hover. The control says
+            // what it is; the busy case is explained by the composer.
+            delete button.dataset.tooltip;
+            button.removeAttribute('title');
         }
     }
 
@@ -55,8 +62,10 @@ export function createPaymentModeUi(runtime) {
             modeControl.addEventListener('click', async event => {
                 const button = event.target.closest('[data-payment-mode]');
                 if (!button || button.disabled) return;
-                try { await runtime.changeMode(button.dataset.paymentMode); }
-                catch (error) { app.showToast(error.message || 'Could not switch payment method. Please try again.', 'error'); }
+                try {
+                    await runtime.changeMode(button.dataset.paymentMode);
+                    if (runtime.getMode() === 'zkapi') applyZkapiDefaultTheme();
+                } catch (error) { app.showToast(error.message || 'Could not switch payment method. Please try again.', 'error'); }
                 renderControls();
             });
             panelToggle.before(modeControl);
@@ -69,6 +78,7 @@ export function createPaymentModeUi(runtime) {
             privateBalance = new ZkapiAccountModal(app, { triggerId: null, overlayId: 'payment-balance-modal' });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();
+            if (runtime.getMode() === 'zkapi') applyZkapiDefaultTheme();
         },
         presentation: {
             getPendingPresentation: (phase, progress) => runtime.getMode() === 'zkapi'

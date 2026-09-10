@@ -289,7 +289,11 @@ const build = async () => {
     }
     const sdkAssets = await buildZkapiAssets({ network: zkapiNetwork, outDir, repoRoot, build: esbuild.build });
     if (zkapiNetwork) {
-        html = html.replace('</head>', '    <link rel="stylesheet" href="zkapi/zkapi.css">\n</head>');
+        // Same fixed path each build, so version it by content: a stale cached
+        // sheet otherwise survives a release and the new markup wears old styles.
+        const zkapiCss = await fs.readFile(path.join(repoRoot, 'chat/zkapi/zkapi.css'));
+        const zkapiCssVersion = createHash('sha256').update(zkapiCss).digest('hex').slice(0, 8);
+        html = html.replace('</head>', `    <link rel="stylesheet" href="zkapi/zkapi.css?v=${zkapiCssVersion}">\n</head>`);
     }
 
     if (sameOriginOrg) {

@@ -1,3 +1,4 @@
+import { zkapiErrorMessage } from './zkapiErrorCopy.mjs';
 import {
     buildUsageLedgerEntry, mergeUsageLedgerEntries, recoverUsageLedgerFromMessages,
     summarizeUsageLedger, upsertUsageLedgerEntry
@@ -110,7 +111,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             if (retirement === job) retirement = null;
         }, error => {
             if (retirement === job) retirement = null;
-            setTransition({ phase: 'error', sessionId: ownerId, message: error?.message || 'Could not finish the previous chat.' });
+            setTransition({ phase: 'error', sessionId: ownerId, message: zkapiErrorMessage(error, 'Could not finish the previous chat.') });
             logSettlement('lease-settlement-error', 'Could not finish the previous chat. Retry to continue.', ownerId);
         });
         return job;

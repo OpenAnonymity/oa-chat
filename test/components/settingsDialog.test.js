@@ -29,7 +29,7 @@ function harness({ deleteAllChats, deleteAccount } = {}) {
     const docListeners = new Map();
     globalThis.document = {
         activeElement: null,
-        getElementById: id => (id === 'settings-dialog' ? overlay : id === 'account-preferences-menu-item' ? menuItem : null),
+        getElementById: id => (id === 'settings-dialog' ? overlay : null),
         addEventListener(type, fn) { docListeners.set(type, fn); },
         removeEventListener(type) { docListeners.delete(type); },
         contains: () => true,
@@ -52,18 +52,20 @@ function harness({ deleteAllChats, deleteAccount } = {}) {
 
 const click = (h, button) => h.overlay.listeners.get('click')({ target: { closest: () => button } });
 
-test('Settings opens from the account menu, closes on Escape, the close button and the backdrop', () => {
+test('Delete account (from Billing) opens straight into its confirmation; the dialog closes on Escape, the close button and the backdrop', () => {
     const h = harness();
     try {
-        h.menuItem.listeners.get('click')();
-        assert.deepEqual(h.events, ['menu-closed']);
+        h.settings.openDeleteAccount();
         assert.equal(h.settings.isOpen, true);
         assert.equal(h.overlay.classList.contains('hidden'), false);
-        assert.equal(h.dialog.focused, true, 'focus moves into the dialog');
+        assert.equal(h.settings.standaloneConfirm, true, 'only the confirmation shows; the card behind is hidden');
+        // No confirmation template in this harness, so nothing is appended.
+        assert.equal(h.settings.deleteConfirm, null);
 
         h.docListeners.get('keydown')({ key: 'Escape', preventDefault() {} });
         assert.equal(h.settings.isOpen, false);
         assert.equal(h.overlay.classList.contains('hidden'), true);
+        assert.equal(h.settings.standaloneConfirm, false);
 
         h.settings.open();
         h.overlay.listeners.get('pointerdown')({ target: h.dialog });
@@ -180,6 +182,42 @@ test('Import history hands over to the import dialog', async () => {
         await click(h, { dataset: { action: 'import-history' } });
         assert.deepEqual(h.events, ['import-open']);
         assert.equal(h.settings.isOpen, false);
+    } finally {
+        h.restore();
+    }
+});
+
+test('Export from the gear asks first too: the menu closes and only the confirmation shows', async () => {
+    const h = harness();
+    try {
+        const gear = { classList: new Set(['hidden']) };
+        gear.classList.add = value => { h.events.push(`gear:${value}`); };
+        gear.classList.contains = () => true;
+        const gearButton = { classList: new Set(), click() { h.events.push('gear:reopened'); } };
+        h.settings.app.elements = { settingsMenu: gear, settingsBtn: gearButton };
+        h.settings.exportChats = async () => { h.events.push('export-chats'); };
+        h.settings.openExportConfirm('export-chats');
+        assert.equal(h.events.shift(), 'gear:hidden', 'the gear popover closes so the card is not behind it');
+        assert.equal(h.settings.isOpen, true);
+
+        await click(h, { dataset: { exportConfirm: 'cancel' } });
+        assert.equal(h.settings.isOpen, false);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepEqual(h.events, ['gear:reopened'], 'Cancel puts the gear back up');
+        h.events.length = 0;
+
+        h.settings.openExportConfirm('export-chats');
+        h.events.length = 0;
+        assert.equal(h.settings.standaloneConfirm, true, 'the settings card stays hidden behind the confirmation');
+        assert.ok(h.settings.deleteConfirm, 'a confirmation card is up');
+        assert.match(h.settings.deleteConfirm.innerHTML, /Export your chats\?/);
+        assert.deepEqual(h.events, [], 'no download yet');
+
+        await click(h, { dataset: { exportConfirm: 'export-chats' } });
+        assert.deepEqual(h.events, ['export-chats']);
+        assert.equal(h.settings.isOpen, false, 'nothing is left behind the card');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.deepEqual(h.events, ['export-chats', 'gear:reopened'], 'so does Export');
     } finally {
         h.restore();
     }

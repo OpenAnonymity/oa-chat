@@ -28,6 +28,7 @@ export function mountZkapiShell(doc = document) {
         element.querySelectorAll('button, select, input').forEach(control => { control.disabled = true; });
         if ('disabled' in element) element.disabled = true;
     }
+    mountZkapiSettings(doc);
     doc.querySelectorAll('[data-action="import-tickets"]').forEach(button => {
         button.disabled = true;
         const row = button.parentElement;
@@ -38,4 +39,21 @@ export function mountZkapiShell(doc = document) {
         }
     });
     return balance || null;
+}
+
+/** Data controls live in the composer gear for every mode. zkAPI has no
+ * memories (they need tickets), so its build hides that row and the memory
+ * import picker. */
+export function mountZkapiSettings(doc = document) {
+    const menu = doc.getElementById('settings-menu');
+    if (!menu || menu.dataset.zkapiSettingsMounted === 'true') return null;
+    const memoriesRow = doc.querySelector('[data-action="export-memory"]')?.closest?.('.settings-row');
+    if (memoriesRow) {
+        memoriesRow.hidden = true;
+        memoriesRow.inert = true;
+        memoriesRow.style.display = 'none';
+        memoriesRow.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    }
+    menu.dataset.zkapiSettingsMounted = 'true';
+    return memoriesRow || null;
 }

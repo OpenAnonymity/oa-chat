@@ -38,6 +38,10 @@ function fixture({ backend = 'openrouter', globalMemory = true } = {}) {
     const chatButton = element({ modeOption: 'chat' });
     const parallelButton = element({ modeOption: 'parallel' });
     const memoryButton = element();
+    // The button's own hover card; the reason is written into its text line.
+    const memoryTooltipText = { textContent: '' };
+    memoryButton.querySelector = selector => (selector === '[data-memory-tooltip-text]' ? memoryTooltipText : null);
+    memoryButton.tooltipText = memoryTooltipText;
     const modeControl = element();
     modeControl.querySelectorAll = () => [chatButton, parallelButton];
     const messageInput = element();
@@ -99,7 +103,8 @@ test('composer restores ticket features and remembered choices after an unsuppor
         assert.equal(f.modeControl.dataset.mode, 'chat');
         assert.equal(f.parallelButton.disabled, true);
         assert.equal(f.parallelButton.getAttribute('aria-disabled'), 'true');
-        assert.match(f.parallelButton.title, /requires Tickets/);
+        assert.match(f.parallelButton.dataset.tooltip, /requires Tickets/);
+        assert.equal(f.parallelButton.getAttribute('title'), undefined, 'no native title doubling the app tooltip');
         assert.equal(f.memoryButton.disabled, true);
         assert.equal(f.memoryButton.getAttribute('aria-checked'), 'false');
         assert.equal(f.app.memoryMode, true);
@@ -124,7 +129,7 @@ test('global Memory off remains disabled when ticket feature support returns', (
         const f = fixture({ globalMemory: false });
         f.input.updateMemoryToggleUI();
         assert.equal(f.memoryButton.disabled, true);
-        assert.match(f.memoryButton.title, /off in settings/);
+        assert.match(f.memoryButton.tooltipText.textContent, /off in settings/);
         assert.equal(f.parallelButton.disabled, false);
     } finally {
         globalThis.document = previousDocument;

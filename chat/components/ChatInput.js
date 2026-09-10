@@ -1897,9 +1897,21 @@ export default class ChatInput {
         toggle.classList.toggle('switch-active', enabled);
         toggle.classList.toggle('switch-inactive', !enabled);
         // The row label names the switch and aria-checked carries its state;
-        // a native title on top of that showed two tooltips at once.
+        // a native title on top of that showed two tooltips at once. The
+        // bubble says what the switch does (the markup's description, kept
+        // on first sight), not its state, which the switch already shows.
         toggle.removeAttribute('title');
-        toggle.dataset.tooltip = enabled ? enabledTitle : disabledTitle;
+        if (!toggle.dataset.description && toggle.dataset.tooltip) toggle.dataset.description = toggle.dataset.tooltip;
+        toggle.dataset.tooltip = toggle.dataset.description || (enabled ? enabledTitle : disabledTitle);
+    }
+
+    /** Dims a gear row and puts the reason in its switch's bubble while the
+     *  feature is out in this payment mode; restores the description after. */
+    markSwitchAvailability(toggle, available, reason) {
+        if (!toggle) return;
+        toggle.closest?.('.settings-row')?.classList?.toggle?.('is-disabled', !available);
+        toggle.dataset.featureUnavailable = String(!available);
+        if (!available) toggle.dataset.tooltip = reason;
     }
 
     refreshMemorySettingsUI() {
@@ -1916,10 +1928,7 @@ export default class ChatInput {
         if (featureToggle) {
             featureToggle.disabled = !memorySupported;
             featureToggle.setAttribute('aria-disabled', String(!memorySupported));
-            if (!memorySupported) {
-                featureToggle.title = memoryUnavailableReason;
-                featureToggle.dataset.tooltip = memoryUnavailableReason;
-            }
+            this.markSwitchAvailability(featureToggle, memorySupported, memoryUnavailableReason);
         }
 
         const memoryAutoIncludeToggle = document.getElementById('memory-auto-include-toggle');
@@ -1933,6 +1942,7 @@ export default class ChatInput {
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
             memoryAutoIncludeToggle.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+            this.markSwitchAvailability(memoryAutoIncludeToggle, memoryFeatureEnabled, memoryUnavailableReason);
         }
 
         if (this.scrubberModelSelect) {
@@ -1956,6 +1966,7 @@ export default class ChatInput {
             this.memoryAgentModelSelect.title = memoryFeatureEnabled
                 ? 'Memory agent model'
                 : memoryUnavailableReason;
+            this.memoryAgentModelSelect.closest?.('.settings-row')?.classList?.toggle?.('is-disabled', !memoryFeatureEnabled);
         }
 
         document.querySelectorAll('[data-memory-requires-feature]').forEach((element) => {
@@ -2186,7 +2197,8 @@ export default class ChatInput {
             button.dataset.tooltip = button.disabled
                 ? this.getFeatureUnavailableReason('council')
                 : (isParallel ? 'Parallel' : 'Chat');
-            button.title = button.dataset.tooltip;
+            // The app tooltip says it; a native title would say it twice.
+            button.removeAttribute('title');
             button.tabIndex = button.disabled ? -1 : 0;
         });
 
@@ -2198,11 +2210,8 @@ export default class ChatInput {
             memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             memoryButton.classList.toggle('memory-active', memoryEnabled);
             memoryButton.classList.toggle('memory-disabled', !memoryFeatureEnabled);
-            memoryButton.title = memoryFeatureEnabled
-                ? (memoryEnabled
-                    ? 'Auto-attach memory is on. Double-click to open memory.'
-                    : 'Auto-attach memory is off. Double-click to open memory.')
-                : this.getMemoryUnavailableReason();
+            // The button carries its own hover card; no native title on top of it.
+            memoryButton.removeAttribute('title');
 
             const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
             const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
@@ -2752,15 +2761,30 @@ export default class ChatInput {
             councilReviewToggle.setAttribute('aria-checked', String(isCouncilReviewEnabled));
             councilReviewToggle.classList.toggle('switch-active', isCouncilReviewEnabled);
             councilReviewToggle.classList.toggle('switch-inactive', !isCouncilReviewEnabled);
-            councilReviewToggle.title = isCouncilReviewEnabled
-                ? 'Council review is on'
-                : 'Council review is off';
+            // The bubble describes the switch; aria-checked carries its state.
+            councilReviewToggle.removeAttribute('title');
         }
 
         if (councilReviewModelRow) {
             // The row is always there, dimmed while review is off: turning the
             // switch on must not grow the panel under the pointer.
-            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled);
+            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled || !councilSupported);
+        }
+
+        // In zkAPI mode the Council rows dim and the switch's bubble says
+        // why, so a greyed switch never reads as "off" when it is "not here".
+        const councilReviewRow = document.getElementById('council-review-row');
+        if (councilReviewRow) councilReviewRow.classList.toggle('is-disabled', !councilSupported);
+        if (councilReviewToggle) {
+            if (councilSupported) {
+                if (councilReviewToggle.dataset.availableTooltip) {
+                    councilReviewToggle.dataset.tooltip = councilReviewToggle.dataset.availableTooltip;
+                    delete councilReviewToggle.dataset.availableTooltip;
+                }
+            } else if (!councilReviewToggle.dataset.availableTooltip) {
+                councilReviewToggle.dataset.availableTooltip = councilReviewToggle.dataset.tooltip || '';
+                councilReviewToggle.dataset.tooltip = this.getFeatureUnavailableReason('council');
+            }
         }
 
         if (councilReviewModelSelect) {
@@ -2818,6 +2842,8 @@ export default class ChatInput {
             control.dataset.featureUnavailable = String(!councilSupported);
             control.setAttribute('aria-disabled', String(control.disabled));
         }
+        // The switch has an app bubble; a native title would say it twice.
+        if (councilReviewToggle && !councilSupported) councilReviewToggle.removeAttribute('title');
     }
 
     escapeOptionValue(value) {
@@ -2892,6 +2918,7 @@ export default class ChatInput {
      */
     formatThemeName(theme) {
         if (!theme) return '';
+        if (theme === 'purple') return 'EF purple';
         return theme.charAt(0).toUpperCase() + theme.slice(1);
     }
 

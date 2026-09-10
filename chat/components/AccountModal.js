@@ -92,10 +92,28 @@ class AccountModal {
             const nav = document.getElementById('account-nav');
             if (this.menuOpen && !nav?.contains(event.target)) this.closeAccountMenu();
         };
+        // A press on the dimmed page outside the card is a close, the same
+        // as the X or Escape (and refused in the same cases).
+        this.onOverlayPointerDown = event => {
+            if (this.isOpen && event.target === this.overlay) this.handleCloseAttempt();
+        };
+        this.overlay?.addEventListener?.('pointerdown', this.onOverlayPointerDown);
 
         this.accountUnsubscribe = this.accountService.subscribe(state => {
+            const previous = this.accountState || {};
             this.accountState = state;
             this.updateTabIndicator();
+            // The session ended under this tab (Log out or deletion in
+            // another tab, an expired session). On the Tickets side that is
+            // a signed-out page: show Log in rather than leave a dead chat.
+            if (
+                previous.sessionVerified === true && state?.sessionVerified !== true &&
+                !this.isOpen && !this.loggingOut &&
+                this.app?.signInRequiredNow?.() === true
+            ) {
+                this.open();
+                return;
+            }
             if (
                 this.isOpen &&
                 !this.shouldSuppressAuthenticationExitRender(state) &&
@@ -322,7 +340,9 @@ class AccountModal {
                 ? 'Finish account setup'
                 : needsEncryptionUnlock
                     ? 'Unlock encrypted data'
-                    : 'Account';
+                    : this.app?.getSignInPolicy?.()?.required === true
+                        ? 'Log in'
+                        : 'Account';
         if (identityLabel) identityLabel.textContent = identityText;
         if (bootstrapStatus) {
             bootstrapStatus.textContent = isAuthResolving ? 'Restoring account' : '';
@@ -515,6 +535,9 @@ class AccountModal {
      */
     mustStaySignedIn() {
         if (this.app?.getSignInPolicy?.()?.required !== true) return false;
+        // With zkAPI in the build there is always a way to chat without an
+        // account, so the dialog is an offer with a close button, not a wall.
+        if (this.app?.hasPaymentModes?.() === true) return false;
         const state = this.accountState || {};
         return !(state.accountId && state.status === 'unlocked');
     }
@@ -1260,6 +1283,12 @@ class AccountModal {
         // if it does, the dimmed page stays until the new page paints.
         if (this.app?.notifyLoggedOut?.() === true) return;
         this.loggingOut = false;
+        if (this.app?.getPaymentMode?.() === 'zkapi') {
+            // Logged out of the mode that needs no account: nothing to ask.
+            this.close();
+            this.app?.showToast?.('Logged out', 'success');
+            return;
+        }
         this.render();
         this.app?.showToast?.('Logged out', 'success');
     }
@@ -2303,6 +2332,7 @@ class AccountModal {
         this.clearAnimationTimeouts();
         this.closeAccountMenu();
         document.removeEventListener?.('pointerdown', this.onDocumentPointerDown);
+        this.overlay?.removeEventListener?.('pointerdown', this.onOverlayPointerDown);
         if (this.accountUnsubscribe) {
             this.accountUnsubscribe();
             this.accountUnsubscribe = null;

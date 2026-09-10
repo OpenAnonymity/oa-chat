@@ -127,6 +127,46 @@
     --color-ring: 0 0% 80%;
 }
 
+/* Purple: a light-family theme in Ethereum's hue (#627EEA ~ hsl(228 76% 65%)).
+   html carries theme-light AND theme-purple, so every light rule applies and
+   only the colour tokens change: lavender ground, a deeper sidebar tint, a
+   near-white card, indigo text, the send button in the hue's darker step. */
+.theme-purple {
+    --color-hover: 232 50% 92%;
+
+    --slate-1: hsl(232, 60%, 98%);
+    --slate-2: hsl(232, 55%, 96.5%);
+    --slate-3: hsl(232, 50%, 94%);
+    --slate-4: hsl(232, 45%, 92%);
+    --slate-200: hsl(232, 35%, 86%);
+    --slate-800: hsl(232, 40%, 20%);
+    --slate-6: hsl(232, 25%, 80%);
+
+    --color-accent-primary: 228 76% 65%;
+    --color-focus-ring: 228 76% 65%;
+
+    --color-background: 232 60% 96%;
+    --color-foreground: 232 45% 14%;
+    --color-card: 232 65% 97.5%;
+    --color-card-foreground: 232 45% 14%;
+    --color-popover: 232 65% 97.5%;
+    --color-popover-foreground: 232 45% 14%;
+    --color-primary: 228 70% 55%;
+    --color-primary-foreground: 0 0% 100%;
+    --color-secondary: 232 50% 92%;
+    --color-secondary-foreground: 232 45% 14%;
+    --color-muted: 232 50% 92%;
+    --color-muted-foreground: 232 22% 44%;
+    --color-accent: 232 50% 92%;
+    --color-accent-foreground: 232 45% 14%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 0 0% 95%;
+    --color-border: 232 35% 86%;
+    --color-input: 232 35% 86%;
+    --color-ring: 228 76% 65%;
+}
+.theme-swatch-purple { fill: hsl(228 76% 65%); }
+
 :root,
 .dark {
     --tw-ring-offset-color: hsl(var(--color-background));
@@ -2893,6 +2933,17 @@ a.quick-ask-source:focus-visible {
 }
 
 /* Match loading toast spinner to scrubbing blue border glow palette */
+/* The app toast: one line of 13px, tight padding, a 10px radius. Wallet
+   progress and feature notices all pass through it, so it stays small. */
+#app-toast {
+    max-width: min(24rem, calc(100vw - 2rem));
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.625rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    text-wrap: pretty;
+    font-variant-numeric: tabular-nums;
+}
 #app-toast .link-preview-spinner {
     border-color: rgba(59, 130, 246, 0.35);
     border-top-color: rgba(96, 165, 250, 0.95);
@@ -8476,6 +8527,16 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.18); }
 .dark .settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.22); }
 
+/* Export / Import in the gear: text actions at the gear's 13px, not the
+   Account dialog's 15px. */
+#settings-menu .settings-text-action {
+    height: var(--settings-control-h);
+    padding: 0 0.5rem;
+    font-size: 0.8125rem;
+}
+#settings-menu .settings-button-pair { gap: 0.125rem; margin-right: -0.5rem; }
+#settings-menu .settings-link-icon { width: 0.875rem; height: 0.875rem; }
+
 /* Segmented controls: thinking effort, layout, font, theme. The selected
    segment is a raised pill; no sliding indicator (its offsets assumed the
    old fixed-width buttons). */
@@ -8520,18 +8581,33 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
 .settings-panel .settings-row.is-disabled { opacity: 0.55; }
 .settings-panel .settings-row.is-disabled select { cursor: default; }
+/* A switch that is out in this payment mode still takes the pointer, so
+   its bubble says why, the same as the Parallel icon in the composer.
+   The row already dims; the switch does not dim again on top. */
+.settings-panel .settings-row.is-disabled .settings-switch:disabled {
+    opacity: 1;
+    pointer-events: auto;
+    cursor: default;
+}
 
 /* Share feedback: a row that is a link. */
 .settings-link {
+    /* A row that is a link: it lights up as one, edge to edge, on hover. */
+    margin: 0 -0.5rem;
+    padding: 0 0.5rem;
+    border-radius: 0.5rem;
     color: inherit;
     text-decoration: none;
     cursor: pointer;
+    transition: background-color 160ms cubic-bezier(.2, 0, 0, 1);
 }
+.settings-link:hover { background: hsl(var(--color-foreground) / 0.05); }
 .settings-link:hover .settings-row-label { color: hsl(var(--color-foreground)); }
 .settings-link-icon {
     width: 1rem;
     height: 1rem;
     color: hsl(var(--color-muted-foreground));
+    transition: color 160ms cubic-bezier(.2, 0, 0, 1);
 }
 .settings-link:hover .settings-link-icon { color: hsl(var(--color-foreground)); }
 
@@ -8610,23 +8686,25 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    right edge, so the tooltip hangs from its right corner and grows leftward
    instead of running into the scroll edge. */
 /* Same tooltip as Billing's Share / Import: a small card above the action,
-   right-aligned to it, wrapping text, no arrow. */
-.settings-panel .settings-text-action[data-tooltip]:hover::after {
+   right-aligned to it, wrapping text, no arrow. A switch that is out in
+   this payment mode gets the same bubble, saying why. */
+.settings-panel .settings-text-action[data-tooltip]:hover::after,
+.settings-panel .settings-switch[data-tooltip]:hover::after {
     display: block;
     top: auto;
     bottom: calc(100% + 0.625rem);
     left: auto;
     right: 0;
     width: max-content;
-    max-width: 15rem;
-    padding: 0.625rem 0.875rem;
+    max-width: 14rem;
+    padding: 0.375rem 0.625rem;
     border: 0;
-    border-radius: 0.75rem;
+    border-radius: 0.5rem;
     background: hsl(var(--color-popover));
     color: hsl(var(--color-foreground));
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     font-weight: 400;
-    line-height: 1.45;
+    line-height: 1.4;
     text-align: left;
     text-wrap: pretty;
     white-space: normal;
@@ -8636,7 +8714,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     transform: translateY(0);
     animation: settingsTipIn 140ms ease;
 }
-.settings-panel .settings-text-action[data-tooltip]:hover::before { display: none; }
+.settings-panel .settings-text-action[data-tooltip]:hover::before,
+.settings-panel .settings-switch[data-tooltip]:hover::before { display: none; }
 @keyframes settingsTipIn {
     from { opacity: 0; transform: translateY(0.25rem); }
     to   { opacity: 1; transform: translateY(0); }
@@ -8762,3 +8841,38 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 .settings-button-danger:disabled { opacity: 0.45; }
 .dark .settings-button-danger { background: hsl(0 66% 50%); border-color: hsl(0 66% 50%); }
 .dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 66% 44%); border-color: hsl(0 66% 44%); }
+
+/* ---------------------------------------------------------------------
+   One tooltip everywhere: the card Billing shows over Share and Import.
+   A small rounded panel, 12px wrapping text, no arrow, a soft shadow.
+   Positions (below / above / right) and the keyboard-only rules stay as
+   they are; only the skin is unified here, so this block comes last.
+   --------------------------------------------------------------------- */
+[data-tooltip]:hover::after,
+.chat-mode-html-tooltip {
+    width: max-content;
+    max-width: 14rem;
+    padding: 0.375rem 0.625rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: hsl(var(--color-popover));
+    color: hsl(var(--color-foreground));
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.4;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .06),
+        0 4px 16px -4px rgb(0 0 0 / .18);
+}
+.dark [data-tooltip]:hover::after,
+.dark .chat-mode-html-tooltip {
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .1),
+        0 4px 16px -4px rgb(0 0 0 / .5);
+}
+[data-tooltip]:hover::before,
+.chat-mode-html-tooltip::before { display: none !important; }
+.chat-mode-html-tooltip { gap: 0.25rem; }

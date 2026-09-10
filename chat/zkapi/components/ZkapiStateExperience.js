@@ -195,11 +195,35 @@ function showActivityPanel(app) {
     });
 }
 
+// Private-access work narrates itself in words over the chat bar: the app
+// toast, held while the step runs and replaced by the next step, the way
+// wallet steps in the balance dialog do. The composer keeps its quiet glyph.
+const PHASE_TOAST_MS = 120000;
+let phaseToastText = null;
+function mirrorPhaseToast(app, ...candidates) {
+    // Whichever surface is busy speaks: the composer's private-access step,
+    // or wallet work (a deposit, a withdrawal) that only the balance knows.
+    const primary = candidates.find(entry => entry?.busy === true && entry?.tone !== 'error') || null;
+    const text = primary ? String(primary.compact || '').trim() : '';
+    if (text) {
+        if (text === phaseToastText) return;
+        phaseToastText = text;
+        app?.showToast?.(text, 'info', PHASE_TOAST_MS);
+        return;
+    }
+    if (!phaseToastText) return;
+    const current = typeof document !== 'undefined' ? document.getElementById?.('app-toast') : null;
+    // Only our own toast is taken down; a result toast that replaced it stays.
+    if (current && current.textContent === phaseToastText) app?.clearToast?.();
+    phaseToastText = null;
+}
+
 export function renderZkapiComposerStatus(element, app, stateOverride = null) {
     if (!element) return;
     const state = stateOverride || getZkapiExperience(app);
     const primary = state.composerPrimary || state.primary;
     const { proposal } = state;
+    mirrorPhaseToast(app, primary, state.balancePrimary || state.primary);
     if (['receipt', 'relay', 'ambient', 'capsule'].includes(proposal)
         && isPassiveLowTextState(primary)) {
         element.className = 'hidden';

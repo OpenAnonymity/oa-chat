@@ -91,7 +91,9 @@ test('concurrent wallet work keeps its badge while the separate card describes c
     const html = renderPanel({ activities, transition: { phase: 'waiting' } });
     assert.match(html, /<strong>Closing previous chat<\/strong>/);
     assert.match(html, /send automatically/);
-    assert.match(html, />Adding funds</);
+    // The badge spins while wallet work runs and keeps the words for
+    // assistive tech; the sentence itself is the toast over the chat bar.
+    assert.match(html, /class="zkapi-pill-spinner" role="img" aria-label="Adding funds"/);
     assert.doesNotMatch(html, /<strong>Adding funds<\/strong>/);
     const state = deriveZkapiUxState({ snapshot: snapshot({ activities }), transition: { phase: 'waiting' } });
     assert.equal(state.composerPrimary.phase, 'queued');
