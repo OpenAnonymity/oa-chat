@@ -17,6 +17,53 @@ if (typeof window !== 'undefined') {
     };
 }
 
+/** What of a security presentation is worth keeping on the message once the
+ *  response starts: the category, the steps as they ended, the note, and a
+ *  summary without the "sending your message…" tail. Null for anything that
+ *  is not a security trace. */
+export function snapshotAccessTrace(presentation) {
+    if (!presentation || presentation.mode !== 'security') return null;
+    const steps = (Array.isArray(presentation.steps) ? presentation.steps : [])
+        .map(step => ({ id: String(step?.id ?? ''), label: String(step?.label ?? ''), state: String(step?.state ?? 'upcoming') }));
+    return {
+        category: String(presentation.category || 'Private access'),
+        summary: String(presentation.current || '').split(' · ')[0] || String(presentation.category || 'Private access'),
+        phase: String(presentation.progressPhase || ''),
+        steps,
+        note: String(presentation.note || '')
+    };
+}
+
+/** The trace after the fact: the same disclosure the pending message showed,
+ *  kept above the response's thinking so what secured the request stays in
+ *  its thought trace. Collapsed by default; open state is remembered per
+ *  message for the page's lifetime like the pending one. */
+export function buildKeptAccessTrace(trace, messageId) {
+    if (!trace || !Array.isArray(trace.steps) || trace.steps.length === 0) return '';
+    const traceId = `access-${messageId}`;
+    const stepHtml = trace.steps.map((step, index) => {
+        const state = ['active', 'waiting', 'complete', 'error', 'canceled', 'upcoming'].includes(step.state) ? step.state : 'upcoming';
+        return `<li class="pending-security-step" data-step-id="${escape(step.id)}" data-state="${state}" aria-label="${escape(step.label)}, ${state}">
+            <span class="pending-security-step-marker" aria-hidden="true">${state === 'complete' ? '✓' : index + 1}</span>
+            <span class="pending-security-step-label">${escape(step.label)}</span>
+        </li>`;
+    }).join('');
+    return `<div class="pending-response-line kept-access-trace" data-progress-phase="${escape(trace.phase)}">
+        <details class="pending-security-trace" data-pending-security-trace-id="${escape(traceId)}" ontoggle="window.rememberPendingSecurityTrace?.(this)"${expandedTraces.has(traceId) ? ' open' : ''}>
+            <summary class="pending-security-summary" aria-label="${escape(trace.summary)}">
+                <svg class="pending-security-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 5 .8 2.9a4.5 4.5 0 0 0 3.1 3.1L16 12l-3.1.8a4.5 4.5 0 0 0-3.1 3.1L9 19l-.8-3.1a4.5 4.5 0 0 0-3.1-3.1L2 12l3.1-.8a4.5 4.5 0 0 0 3.1-3.1L9 5Zm9-3 .5 2L21 5l-2.5 1-.5 2-.5-2L15 5l2.5-1 .5-2Z"/></svg>
+                <span class="pending-response-label">${escape(trace.summary)}</span>
+                <svg class="pending-security-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 6.5 2.5 2.5 2.5-2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/></svg>
+            </summary>
+            <div class="pending-security-content">
+                <strong class="pending-security-category">${escape(trace.category)}</strong>
+                <ol class="pending-security-steps" aria-label="Preparation steps">${stepHtml}</ol>
+                ${trace.note ? `<p class="pending-security-note">${escape(trace.note)}</p>` : ''}
+            </div>
+        </details>
+    </div>`;
+}
+
 export function buildDetailedPendingIndicator(presentation, { phase, traceId = '' } = {}) {
     const showDetails = presentation.mode === 'security';
     const steps = Array.isArray(presentation.steps) ? presentation.steps : [];

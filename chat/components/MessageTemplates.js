@@ -12,7 +12,7 @@ import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
-import { buildDetailedPendingIndicator } from './PendingIndicator.js';
+import { buildDetailedPendingIndicator, buildKeptAccessTrace } from './PendingIndicator.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -1913,8 +1913,11 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         });
     }
 
+    // The private-access steps that secured this request stay with the
+    // message, above its thinking, once the response has started.
+    const accessTraceBubble = buildKeptAccessTrace(message.accessTrace, message.id);
     // Build reasoning trace if present
-    const reasoningBubble = buildReasoningTrace(
+    const reasoningBubble = accessTraceBubble + buildReasoningTrace(
         message.reasoning,
         message.id,
         message.streamingReasoning || false,

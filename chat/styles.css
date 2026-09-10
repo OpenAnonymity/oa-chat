@@ -1595,6 +1595,16 @@ a.quick-ask-source:focus-visible {
     min-width: 0;
     margin: 0;
 }
+/* The trace kept on a finished message sits where the thinking toggle
+   sits — same left edge, no pending offset — and reads at rest, not
+   shimmering. */
+.kept-access-trace {
+    display: block;
+    margin-left: 0;
+    padding: 0.25rem 0.5rem 0;
+    transform: none;
+}
+.kept-access-trace .pending-security-summary .pending-response-label { color: hsl(var(--color-muted-foreground)); }
 
 .pending-security-summary {
     width: fit-content;

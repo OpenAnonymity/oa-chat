@@ -1,5 +1,6 @@
 // Main application logic
 import themeManager from './services/themeManager.js';
+import { snapshotAccessTrace } from './components/PendingIndicator.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
@@ -182,6 +183,10 @@ class ChatApp {
         this.inferenceService = this.runtime.inferenceService || inferenceService;
         this.uiOptions = options.ui || {};
         this.pendingProgress = new Map();
+        // The last security presentation each session showed while preparing
+        // access; the streaming message takes it so the steps stay with the
+        // response instead of vanishing when the first token arrives.
+        this.accessTraces = new Map();
         this.sendSubmissionsInFlight = new Map();
         this.titleGenerationJobs = new Map();
         this.quickAskJobs = new Map();
@@ -1008,6 +1013,12 @@ class ChatApp {
         if (!sessionId) return;
         if (progress) this.pendingProgress.set(sessionId, progress);
         else this.pendingProgress.delete(sessionId);
+        if (progress) {
+            const trace = snapshotAccessTrace(
+                this.uiOptions?.presentation?.getPendingPresentation?.('preparing-access', progress)
+            );
+            if (trace) this.accessTraces.set(sessionId, trace);
+        }
         if (!this.isViewingSession(sessionId)) return;
         const streamState = this.getSessionStreamingState(sessionId);
         if (progress && streamState.isStreaming) streamState.phase = 'preparing-access';
@@ -1017,8 +1028,16 @@ class ChatApp {
         }
     }
 
+    /** The access trace recorded for this session's current turn, once. */
+    takeAccessTrace(sessionId) {
+        const trace = this.accessTraces.get(sessionId) || null;
+        this.accessTraces.delete(sessionId);
+        return trace;
+    }
+
     async prepareRuntimeTurn(session, signal) {
         this.throwIfAborted(signal);
+        this.accessTraces.delete(session.id);
         try {
             await this.runtime.prepareTurn?.({
                 sessionId: session.id,
@@ -7004,7 +7023,8 @@ class ChatApp {
                     streamingReasoning: false,
                     streamingPending: true, // Indicates waiting for first chunk
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
-                    scrubber: scrubberMetadata
+                    scrubber: scrubberMetadata,
+                    accessTrace: this.takeAccessTrace(session.id)
                 };
 
                 // Save placeholder immediately so switching sessions back can find it
@@ -7799,7 +7819,8 @@ class ChatApp {
                     streamingReasoning: false,
                     streamingPending: true,
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
-                    scrubber: scrubberMetadata
+                    scrubber: scrubberMetadata,
+                    accessTrace: this.takeAccessTrace(session.id)
                 };
 
                 // Track progress for periodic saves
