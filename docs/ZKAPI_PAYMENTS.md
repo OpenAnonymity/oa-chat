@@ -93,6 +93,14 @@ This source reorganization changes neither contract expiry nor withdrawal
 behavior. Private balance expiry does not automatically refund unused funds;
 the balance help/history continue to explain the deployed contract behavior.
 
+When the SDK finishes loading a saved pending deposit/approval or selected
+unfinished withdrawal, the private-balance dialog opens that view once. The
+opening performs only the existing quiet status refresh; continuing or sending
+any wallet transaction still requires an explicit user action. Dismissing the
+dialog prevents background updates from reopening it during that page visit.
+A manual open during initialization also takes precedence. Ordinary balances
+and completed withdrawals do not automatically open a dialog.
+
 ## Funding setup
 
 Funding onboarding shows MetaMask, USDC, and ETH prerequisites on mainnet,

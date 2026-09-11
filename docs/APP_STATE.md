@@ -1,3 +1,15 @@
+## 2026-09-11: Restore the pending wallet dialog on page load
+
+- After SDK initialization, a saved deposit/approval or selected unfinished
+  withdrawal opens its existing funding/withdrawal view once. Initialization
+  failure can still show progress if the SDK already loaded the saved record.
+- Opening only refreshes status; it never submits or resumes a wallet request.
+  Closing the dialog keeps it closed through background updates. A manual open
+  during initialization takes precedence over automatic restoration.
+- Approval copy says Approve USDC for this deposit; the escape confirmation
+  asks the user to review the transaction and network fee; a submitted deposit
+  says Waiting for deposit confirmation.
+
 ## 2026-09-11: Google popup close timing
 
 - Chat and the standalone commercial landing listen before popup navigation and

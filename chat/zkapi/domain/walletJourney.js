@@ -13,7 +13,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             { id: 'connect', label: 'Connect MetaMask' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             ...(approvalReset || approval?.kind === 'reset' ? [{ id: 'reset', label: approval?.kind === 'reset' && approval.phase === 'submitted' ? `Waiting for ${tokenSymbol} approval reset` : `Reset ${tokenSymbol} approval in MetaMask`, detail: 'Reset the existing allowance before approving this deposit.' }] : []),
-            { id: 'approve', label: approval?.kind === 'approve' && approval.phase === 'submitted' ? `Waiting for ${tokenSymbol} approval` : `Approve ${tokenSymbol} in MetaMask`, detail: 'Allow the vault to receive your deposit.' },
+            { id: 'approve', label: approval?.kind === 'approve' && approval.phase === 'submitted' ? `Waiting for ${tokenSymbol} approval` : `Approve ${tokenSymbol} in MetaMask`, detail: `Approve ${tokenSymbol} for this deposit.` },
             { id: 'deposit', label: 'Confirm your deposit in MetaMask', detail: 'Review the deposit and network fee.' },
             { id: 'chain', label: 'Wait for confirmation', detail: 'Your deposit has been submitted.' }
         ];
@@ -25,7 +25,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
             : { id: 'proof', label: 'Prepare your withdrawal', detail: 'Generate the proof securely on this device.' },
         escape
-            ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
+            ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'Review the transaction and network fee.' }
             : { id: 'wallet', label: 'Confirm in MetaMask', detail: 'Review the withdrawal and network fee.' },
         escape
             ? { id: 'chain', label: 'Wait for confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }

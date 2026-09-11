@@ -64,7 +64,7 @@ test('a deposit in flight shows its steps under the figure; a persisted pending 
         const pending = modalWith({}, { view: 'balance' }).renderBalance();
         assert.match(pending, /data-step="deposit" data-state="complete"/);
         assert.match(pending, /data-step="chain" data-state="active"/);
-        assert.match(pending, /Submitted\. Checking the chain for the receipt\./);
+        assert.match(pending, /Waiting for deposit confirmation\./);
         assert.match(pending, /id="zkapi-check-deposit-btn"/);
     } finally { Object.assign(zkapiClient, original); }
 });

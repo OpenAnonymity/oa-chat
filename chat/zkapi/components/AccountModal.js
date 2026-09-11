@@ -22,6 +22,7 @@ export default class AccountModal {
         this.app = app;
         this.triggerId = triggerId;
         this.isOpen = false;
+        this.restorePendingOnInit = true;
         this.overlay = document.getElementById(overlayId);
         this.view = 'balance';
         this.withdrawMode = 'mutual';
@@ -48,7 +49,10 @@ export default class AccountModal {
         });
         this.attachTabListener();
         this.updateTabIndicator();
-        void zkapiClient.init().catch(() => this.updateTabIndicator());
+        void zkapiClient.init().then(() => this.restorePendingOperation()).catch(() => {
+            this.updateTabIndicator();
+            this.restorePendingOperation();
+        });
 
         window.addEventListener('zkapi-payment-required', (event) => {
             this.open(event.detail?.view || 'fund');
@@ -66,7 +70,26 @@ export default class AccountModal {
         updateZkapiBalanceControl(tabBtn, this.app);
     }
 
+    // Restore the saved journey once on startup. Opening the view only refreshes
+    // status; submitting or resuming a wallet request still needs a user action.
+    restorePendingOperation() {
+        if (!this.restorePendingOnInit) return;
+        this.restorePendingOnInit = false;
+        if (this.isOpen || this.busy) return;
+        if (zkapiClient.config?.pending_deposit && !zkapiClient.note) {
+            this.open('fund');
+        } else if (zkapiClient.config?.prepared_withdrawal
+            || ['prepared', 'submitted', 'pending'].includes(zkapiClient.withdrawal?.phase)
+            || zkapiClient.activeLateWithdrawal) {
+            this.withdrawMode = (zkapiClient.config?.prepared_withdrawal?.mode
+                || zkapiClient.withdrawal?.mode || zkapiClient.activeLateWithdrawal?.mode) === 'escape'
+                ? 'escape' : 'mutual';
+            this.open('withdraw');
+        }
+    }
+
     open(view = 'balance') {
+        this.restorePendingOnInit = false;
         if (!this.overlay) return;
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
@@ -651,7 +674,7 @@ export default class AccountModal {
                     : pendingDeposit.phase === 'awaiting_wallet'
                         ? 'Waiting for MetaMask'
                         : 'Deposit status unknown';
-                const pendingDetail = pendingDeposit.phase === 'submitted' ? 'Submitted. Checking the chain for the receipt.'
+                const pendingDetail = pendingDeposit.phase === 'submitted' ? 'Waiting for deposit confirmation.'
                     : pendingDeposit.phase === 'dropped_or_pending' ? 'No receipt yet. It may still be pending, or MetaMask may have dropped it.'
                     : pendingDeposit.phase === 'awaiting_wallet' ? 'MetaMask may still be open in this or another tab.'
                     : 'MetaMask did not return a transaction ID. Check the vault before retrying.';
