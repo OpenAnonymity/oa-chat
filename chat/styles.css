@@ -8781,7 +8781,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    right-aligned to it, wrapping text, no arrow. A switch that is out in
    this payment mode gets the same bubble, saying why. */
 .settings-panel .settings-text-action[data-tooltip]:hover::after,
-.settings-panel .settings-switch[data-tooltip]:hover::after {
+.settings-panel .settings-switch[data-tooltip]:hover::after,
+.settings-panel .settings-select-tooltip {
     display: block;
     top: auto;
     bottom: calc(100% + 0.625rem);
@@ -8811,7 +8812,14 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 /* The bubble sits on the panel, which is popover-coloured: in the dark it
    takes the next surface step so it reads as a card, not floating text. */
 .dark .settings-panel .settings-text-action[data-tooltip]:hover::after,
-.dark .settings-panel .settings-switch[data-tooltip]:hover::after { background: hsl(var(--color-secondary)); }
+.dark .settings-panel .settings-switch[data-tooltip]:hover::after,
+.dark .settings-panel .settings-select-tooltip { background: hsl(var(--color-secondary)); }
+.settings-select-tooltip { position: absolute; z-index: 60; visibility: hidden; pointer-events: none; }
+.settings-select-tooltip[hidden] { display: none !important; }
+.settings-select-help:hover .settings-select-tooltip,
+.settings-select-help:focus-visible .settings-select-tooltip { visibility: visible; }
+.settings-select-help[data-feature-unavailable="true"] { cursor: not-allowed; }
+.settings-select-help[data-feature-unavailable="true"] select { pointer-events: none; }
 @keyframes settingsTipIn {
     from { opacity: 0; transform: translateY(0.25rem); }
     to   { opacity: 1; transform: translateY(0); }

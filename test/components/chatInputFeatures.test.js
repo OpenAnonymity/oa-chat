@@ -118,6 +118,37 @@ function deferred() {
     return { promise, resolve };
 }
 
+test('disabled scrubber model explains its payment restriction on the focusable wrapper and restores Tickets', () => {
+    const previousDocument = globalThis.document;
+    globalThis.document = { getElementById: () => null, querySelectorAll: () => [] };
+    try {
+        const f = fixture({ backend: 'zkapi' });
+        const wrapper = element();
+        const tooltip = { id: 'scrubber-model-unavailable', hidden: true, textContent: '' };
+        wrapper.querySelector = () => tooltip;
+        const select = element();
+        select.closest = () => wrapper;
+        f.input.scrubberModelSelect = select;
+        f.input.refreshMemorySettingsUI();
+        assert.equal(select.disabled, true);
+        assert.equal(wrapper.getAttribute('tabindex'), '0');
+        assert.equal(wrapper.getAttribute('aria-describedby'), tooltip.id);
+        assert.equal(tooltip.textContent, 'scrubber requires Tickets.');
+        assert.equal(tooltip.hidden, false);
+        assert.equal(select.title, '');
+        f.app.getCurrentSession().inferenceBackend = 'openrouter';
+        f.input.refreshMemorySettingsUI();
+        assert.equal(select.disabled, false);
+        assert.equal(wrapper.getAttribute('tabindex'), undefined);
+        assert.equal(wrapper.getAttribute('aria-describedby'), undefined);
+        assert.equal(tooltip.hidden, true);
+        assert.equal(tooltip.textContent, '');
+        assert.equal(f.writes.length, 0);
+    } finally {
+        globalThis.document = previousDocument;
+    }
+});
+
 test('composer restores ticket features and remembered choices after an unsupported payment mode', () => {
     const previousDocument = globalThis.document;
     globalThis.document = { documentElement: { dataset: {} } };

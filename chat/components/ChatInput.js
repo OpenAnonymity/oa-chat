@@ -1961,7 +1961,21 @@ export default class ChatInput {
             this.scrubberModelSelect.setAttribute('aria-disabled', String(!scrubberSupported));
             this.scrubberModelSelect.title = scrubberSupported
                 ? 'Privacy scrubber model'
-                : this.getFeatureUnavailableReason('scrubber');
+                : '';
+            const control = this.scrubberModelSelect.closest?.('.settings-select-help');
+            const tooltip = control?.querySelector?.('.settings-select-tooltip');
+            if (control && tooltip) {
+                control.dataset.featureUnavailable = String(!scrubberSupported);
+                tooltip.hidden = scrubberSupported;
+                tooltip.textContent = scrubberSupported ? '' : this.getFeatureUnavailableReason('scrubber');
+                if (scrubberSupported) {
+                    control.removeAttribute('tabindex');
+                    control.removeAttribute('aria-describedby');
+                } else {
+                    control.setAttribute('tabindex', '0');
+                    control.setAttribute('aria-describedby', tooltip.id);
+                }
+            }
             const selectedScrubberModel = scrubberService.getSelectedModel();
             if (selectedScrubberModel) {
                 this.scrubberModelSelect.value = selectedScrubberModel;

@@ -1,3 +1,10 @@
+## 2026-09-11: Disabled scrubber model explains its payment restriction
+
+- The Settings scrubber model control shows the runtime's unavailable reason
+  on hover and keyboard focus of its wrapper, including in zkAPI mode. The
+  select remains disabled; returning to Tickets removes the wrapper's extra
+  tab stop and explanation. Model preferences and capability gates are unchanged.
+
 ## 2026-09-10: Current Tinfoil chat models in Tab-Tab and Memory
 
 - Added Kimi K3, GLM-5.3, GLM-5.3 Flash, DeepSeek V4 Flash, and Llama 3.3 70B

@@ -793,11 +793,12 @@
                                                 <section id="scrubber-settings-section" class="settings-section" aria-labelledby="settings-privacy-title">
                                                     <h3 id="settings-privacy-title" class="settings-section-title">Privacy</h3>
                                                     <div class="settings-row">
-                                                        <label class="settings-row-label" for="scrubber-model-select">Scrubber model</label>
-                                                        <div class="settings-row-control settings-select">
+                                                        <label id="scrubber-model-label" class="settings-row-label" for="scrubber-model-select">Scrubber model</label>
+                                                        <div class="settings-row-control settings-select settings-select-help" role="group" aria-labelledby="scrubber-model-label">
                                                             <select id="scrubber-model-select">
                                                                 <option value="" disabled selected>Loading…</option>
                                                             </select>
+                                                            <span id="scrubber-model-unavailable" class="settings-select-tooltip" role="tooltip" hidden></span>
                                                         </div>
                                                     </div>
                                                 </section>
