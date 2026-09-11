@@ -19,13 +19,13 @@ test('while a withdrawal runs, the form folds to its method and the steps follow
     try {
         const modal = modalWith({}, { busy: true, journeyKind: 'withdraw', status: 'Confirm the mutual close in MetaMask…' });
         const html = modal.renderWithdrawal();
-        assert.match(html, /zkapi-summary-line"><strong>Mutual close<\/strong>/);
+        assert.match(html, /zkapi-summary-line">Withdraw your remaining balance and close this private balance\./);
         assert.doesNotMatch(html, /zkapi-withdraw-confirm|name="zkapi-withdraw-mode"/);
         assert.match(html, /data-zkapi-journey data-kind="withdraw"/);
         assert.match(html, /data-step="proof" data-state="complete"/);
         assert.match(html, /data-step="wallet" data-state="waiting" aria-current="step"/);
         assert.match(html, /data-step="chain" data-state="upcoming"/);
-        assert.match(html, /One transaction\. Nothing moves before you confirm\./);
+        assert.match(html, /Review the withdrawal and network fee\./);
         assert.doesNotMatch(html, /zkapi-progress-text/);
     } finally { Object.assign(zkapiClient, original); }
 });

@@ -48,3 +48,25 @@ test('after a reload the persisted phase places the journey, and a failure marks
     assert.deepEqual(states(walletJourney({ kind: 'deposit', persistedPhase: 'dropped_or_pending' })), ['connect:complete', 'approve:complete', 'deposit:complete', 'chain:active']);
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'awaiting_wallet', failed: true })), ['proof:complete', 'wallet:error', 'chain:upcoming']);
 });
+
+test('saved token approval and reset restore their own step after reload', () => {
+    const approve = walletJourney({ kind: 'deposit', persistedPhase: 'prepared', approval: { kind: 'approve', phase: 'submitted' } });
+    assert.deepEqual(states(approve), ['connect:complete', 'approve:active', 'deposit:upcoming', 'chain:upcoming']);
+    assert.equal(approve.steps[1].label, 'Waiting for USDC approval');
+    const reset = walletJourney({ kind: 'deposit', approval: { kind: 'reset', phase: 'submitted' } });
+    assert.deepEqual(states(reset), ['connect:complete', 'reset:active', 'approve:upcoming', 'deposit:upcoming', 'chain:upcoming']);
+    assert.match(reset.steps[1].label, /approval reset/);
+    const unknown = walletJourney({ kind: 'deposit', approval: { kind: 'approve', phase: 'ambiguous' } });
+    assert.equal(unknown.steps[1].state, 'waiting');
+});
+
+test('live approval confirmation is distinct from deposit confirmation', () => {
+    const j = walletJourney({ kind: 'deposit', message: 'Waiting for USDC approval…' });
+    assert.equal(j.position.step, 'approve');
+    assert.equal(j.position.state, 'active');
+    assert.equal(j.steps.at(-1).state, 'upcoming');
+    const w = walletJourney({ kind: 'withdraw', message: 'Withdrawal submitted 0xabc · waiting for confirmation…' });
+    assert.equal(w.steps[0].label, 'Prepare your withdrawal');
+    assert.equal(w.steps[1].label, 'Confirm in MetaMask');
+    assert.equal(w.steps[2].detail, 'Your withdrawal has been submitted.');
+});

@@ -7,14 +7,15 @@
 
 const STATES = ['complete', 'active', 'waiting', 'upcoming', 'error'];
 
-function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, escapePeriod = '' } = {}) {
+function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, escapePeriod = '', approval = null, approvalReset = false } = {}) {
     if (kind === 'deposit') {
         return [
             { id: 'connect', label: 'Connect MetaMask' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
-            { id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' },
-            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
-            { id: 'chain', label: 'Wait for the chain', detail: 'Usually under a minute.' }
+            ...(approvalReset || approval?.kind === 'reset' ? [{ id: 'reset', label: approval?.kind === 'reset' && approval.phase === 'submitted' ? `Waiting for ${tokenSymbol} approval reset` : `Reset ${tokenSymbol} approval in MetaMask`, detail: 'Reset the existing allowance before approving this deposit.' }] : []),
+            { id: 'approve', label: approval?.kind === 'approve' && approval.phase === 'submitted' ? `Waiting for ${tokenSymbol} approval` : `Approve ${tokenSymbol} in MetaMask`, detail: 'Allow the vault to receive your deposit.' },
+            { id: 'deposit', label: 'Confirm your deposit in MetaMask', detail: 'Review the deposit and network fee.' },
+            { id: 'chain', label: 'Wait for confirmation', detail: 'Your deposit has been submitted.' }
         ];
     }
     const escape = kind === 'escape';
@@ -22,13 +23,13 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
         ...(hasLease ? [{ id: 'settle', label: 'Settle the active chat key', detail: 'Finishes the open chat and confirms its usage.' }] : []),
         escape
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
-            : { id: 'proof', label: 'Request server clearance and generate the proof', detail: 'zkAPI co-signs the close; the proof is made on this device.' },
+            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'Generate the proof securely on this device.' },
         escape
             ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
-            : { id: 'wallet', label: 'Confirm the close in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
+            : { id: 'wallet', label: 'Confirm in MetaMask', detail: 'Review the withdrawal and network fee.' },
         escape
-            ? { id: 'chain', label: 'Wait for the chain', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
-            : { id: 'chain', label: 'Wait for the chain', detail: 'Usually under a minute.' }
+            ? { id: 'chain', label: 'Wait for confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
+            : { id: 'chain', label: 'Wait for confirmation', detail: 'Your withdrawal has been submitted.' }
     ];
 }
 
@@ -38,10 +39,12 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
 export function classifyWalletStatus(kind, message = '') {
     const text = String(message || '');
     if (!text) return null;
-    if (/returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
+    if (/returned to (?:MetaMask|your wallet)|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
     if (/submitted|waiting for confirmation|Checking submitted|checking confirmation/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
+        if (/approval reset|Resetting the existing token allowance/i.test(text)) return { step: 'reset', state: /Waiting/i.test(text) ? 'active' : 'waiting' };
+        if (/Waiting for .* approval/i.test(text)) return { step: 'approve', state: 'active' };
         if (/allowance|Approving/i.test(text)) return { step: 'approve', state: 'waiting' };
         if (/Minting|test billing tokens|test ZKAPI/i.test(text)) return { step: 'tokens', state: 'waiting' };
         if (/Connecting to MetaMask|Connecting to the MetaMask account/i.test(text)) return { step: 'connect', state: 'active' };
@@ -80,8 +83,15 @@ export function positionForPersistedPhase(kind, phase = '') {
  * @param {boolean} [input.failed]   the run ended in an error at the current step
  */
 export function walletJourney({ kind, message = '', persistedPhase = '', last = null, failed = false, ...options } = {}) {
-    const steps = stepsFor(kind, options);
-    const position = classifyWalletStatus(kind, message) || last || positionForPersistedPhase(kind, persistedPhase) || { step: steps[0].id, state: 'active' };
+    let approval = options.approval;
+    const classified = classifyWalletStatus(kind, message);
+    if (kind === 'deposit' && /approval|allowance/i.test(message)) {
+        approval = { kind: classified?.step === 'reset' ? 'reset' : 'approve', phase: /Waiting/i.test(message) ? 'submitted' : 'awaiting_wallet' };
+    }
+    const steps = stepsFor(kind, { ...options, approval });
+    const savedApprovalPosition = kind === 'deposit' && approval
+        ? { step: approval.kind === 'reset' ? 'reset' : 'approve', state: approval.phase === 'submitted' ? 'active' : 'waiting' } : null;
+    const position = savedApprovalPosition || classified || last || positionForPersistedPhase(kind, persistedPhase) || { step: steps[0].id, state: 'active' };
     const index = position.step === 'done' ? steps.length : Math.max(0, steps.findIndex(step => step.id === position.step));
     const state = STATES.includes(position.state) ? position.state : 'active';
     return {

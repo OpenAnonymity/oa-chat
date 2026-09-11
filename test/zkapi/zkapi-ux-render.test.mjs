@@ -1735,3 +1735,46 @@ test('message recovery controls have a visible busy state and reduced motion kee
     assert.match(reducedMotion, /\.message-action-btn\.is-processing::after/);
     assert.match(reducedMotion, /-webkit-text-fill-color: currentColor !important/);
 });
+
+test('saved pending approvals expose a read-only check rather than another deposit action', () => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
+    const modal = Object.create(AccountModal.prototype);
+    modal.busy = false;
+    try {
+        zkapiClient.wallet = { has_note: false, note: null };
+        for (const phase of ['submitted', 'ambiguous', 'awaiting_wallet']) {
+            zkapiClient.config = { funding: { chain_id: 1, billing_token_symbol: 'USDC' }, pending_deposit: {
+                phase: 'prepared', amount: 2_000_000,
+                approval: { kind: 'approve', phase, transaction_hash: phase === 'submitted' ? '0x123' : null }
+            } };
+            const html = modal.renderBalance();
+            assert.match(html, /Check approval/);
+            assert.match(html, /Saved deposit/);
+            assert.doesNotMatch(html, /id="zkapi-deposit-btn"|Resume deposit|Retry same deposit/);
+            assert.match(html, phase === 'submitted' ? /Waiting for USDC approval/ : /outcome is unknown/);
+        }
+    } finally { Object.assign(zkapiClient, original); }
+});
+
+test('withdrawal stays neutrally labeled until confirmed and provides a collapsed explanation', () => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawals: zkapiClient.withdrawals };
+    const modal = Object.create(AccountModal.prototype);
+    modal.busy = false;
+    modal.withdrawMode = 'mutual';
+    try {
+        zkapiClient.wallet = { has_note: true, note: { current_balance: 1_850_000 } };
+        zkapiClient.withdrawals = [];
+        for (const phase of [null, 'prepared', 'awaiting_wallet', 'submitted']) {
+            zkapiClient.config = { funding: { chain_id: 1, billing_token_symbol: 'USDC' },
+                prepared_withdrawal: phase ? { phase, mode: 'mutual' } : null };
+            const html = modal.renderWithdrawal();
+            assert.doesNotMatch(html, /Returned to MetaMask|Returned to your wallet|Usually under a minute/);
+            assert.match(html, phase === 'submitted' ? /Withdrawal amount/ : /Amount to withdraw/);
+            assert.match(html, /How withdrawal works/);
+            assert.match(html, /<details data-withdrawal-help class="zkapi-guide zkapi-guide-details" >/);
+            assert.match(html, /paying the network fee in ETH/);
+        }
+        modal.withdrawalHelpOpen = true;
+        assert.match(modal.renderWithdrawal(), /<details data-withdrawal-help class="zkapi-guide zkapi-guide-details" open>/);
+    } finally { Object.assign(zkapiClient, original); }
+});

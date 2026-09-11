@@ -1,3 +1,21 @@
+## 2026-09-11: Approval recovery and clearer wallet progress
+
+- The wallet SDK now journals USDC approval/reset steps alongside the pending
+  deposit. Reload restores a read-only Check approval view; unresolved wallet
+  results block a second approval/deposit. Replaced transactions require
+  finalized nonce evidence and a canonical allowance read before resuming.
+- An unknown attempt without usable chain evidence stays blocked for manual
+  investigation. Old-version approvals cannot be reconstructed retroactively;
+  the existing saved-deposit reminder remains for those records.
+- Deposit progress distinguishes reset, approval, and deposit confirmation.
+  Withdrawal uses Prepare your withdrawal → Confirm in MetaMask → Wait for
+  confirmation. Amount labels remain neutral before confirmation; confirmed
+  payout feedback says returned to your wallet. The timing promise is removed.
+- How withdrawal works is a collapsed native disclosure below the withdrawal
+  steps, with the existing guide styling; its open state survives dialog renders.
+- Mocked SDK recovery tests and OA wallet rendering tests cover these paths;
+  no real wallet transactions are used for validation.
+
 ## 2026-09-11: Disabled scrubber model explains its payment restriction
 
 - The Settings scrubber model control shows the runtime's unavailable reason
