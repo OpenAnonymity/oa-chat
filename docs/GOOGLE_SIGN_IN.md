@@ -61,9 +61,10 @@ accounts' encrypted data unrecoverable even when Google authentication succeeds.
   email before discarding the access token.
 - The callback stores `(provider=google, provider_subject=sub, email,
   account_id)`. The authenticated session returns the email so the browser can
-  use it as the encryption passkey's WebAuthn username. The popup returns no
-  token or profile data to JavaScript; it sets the HttpOnly OA refresh cookie
-  and posts a fixed result to the exact allowlisted app origin.
+  use it as the encryption passkey's WebAuthn username. The popup returns a
+  one-use completion token to the exact allowlisted app origin. The client
+  completes the session through the session SDK, then verifies the installed
+  session before reading account data; it receives no Google access token.
 - `GET /auth/keyring` returns opaque PRF-passkey wrappers only to the
   authenticated account. `POST /auth/keyring` appends a client-produced wrapper;
   it never receives WebAuthn registration or assertion data.
@@ -143,3 +144,31 @@ callback remains on canonical `localhost:8005`.
 7. In OA Desktop, verify the system-browser handoff returns to both a running
    and cold-started app; reject a wrong state, wrong PKCE verifier, replayed
    code, arbitrary callback host/path, and unallowlisted org origin.
+
+## Popup completion and diagnosis
+
+The browser registers its result listener before navigating the popup. The org
+callback posts the completion result and immediately closes; a close poll can
+run before the queued message is delivered. The client keeps listening for
+1.5 seconds after observing closure, then reports that the sign-in window
+closed before completion instead of claiming the user cancelled. A transient
+closed observation is cleared if the window becomes readable as open again.
+An unreadable window is not treated as proof of cancellation; the existing
+five-minute timeout still applies. Cleanup removes all timers and listeners.
+The standalone commercial landing implements the same lifecycle.
+
+The expected origin, exact popup window, provider message type, and completion
+token format are still required. There is no cookie-only success fallback and
+no change to logout, session verification, PKCE, or encryption-passkey checks.
+A severed popup connection cannot be repaired by this grace period.
+
+For a failing real-browser attempt, add `oauthDiagnostics=1` to the chat or
+landing query string and enable Debug/Verbose console messages. `[OAuth popup]`
+entries contain only fixed event names and milliseconds since listening began;
+no message bodies, tokens, URLs, account identifiers, or provider error details
+are logged. Remove the flag to disable diagnostics. A `popup-closed-observed`
+followed by `completion-received` confirms the grace period caught a late result.
+`closed-without-completion` alone does not distinguish a user closure from a
+browser-isolated window. No real-user failure has yet been captured for the
+2026-09-11 report; the regression tests reproduce the close-before-message order
+with simulated events, not a live Google account.

@@ -497,18 +497,28 @@ function getOAuthProvider(provider) {
     return config;
 }
 
-function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
+// Keep the standalone commercial landing waiter in sync with this protocol.
+export function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000, navigate = () => {}) {
     const providerConfig = getOAuthProvider(provider);
     const orgOrigin = ORG_AUTH_ORIGIN;
+    const startedAt = Date.now();
+    // Opt-in, local console diagnostics: fixed event names and elapsed time only.
+    const diagnostic = new URLSearchParams(window.location?.search || '').get('oauthDiagnostics') === '1'
+        ? event => { try { console.debug('[OAuth popup]', event, Date.now() - startedAt); } catch {} }
+        : () => {};
 
     return new Promise((resolve, reject) => {
         let settled = false;
-        const finish = (callback) => {
+        let closeGrace = null;
+        let reportedUnreadable = false;
+        const finish = (event, callback) => {
             if (settled) return;
             settled = true;
             window.removeEventListener('message', handleMessage);
             clearInterval(closePoll);
+            clearTimeout(closeGrace);
             clearTimeout(timeout);
+            diagnostic(event);
             callback();
         };
         const handleMessage = (event) => {
@@ -521,38 +531,59 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
             }
             if (event.data.ok) {
                 const completionToken = event.data.completionToken;
-                if (!OAUTH_COMPLETION_TOKEN_PATTERN.test(completionToken)) {
-                    finish(() => reject(new Error(
+                if (typeof completionToken !== 'string' || !OAUTH_COMPLETION_TOKEN_PATTERN.test(completionToken)) {
+                    finish('invalid-completion', () => reject(new Error(
                         `${providerConfig.label} sign in completion was invalid`
                     )));
                     return;
                 }
-                finish(() => resolve(completionToken));
+                finish('completion-received', () => resolve(completionToken));
             } else {
-                finish(() => reject(new Error(
+                finish('provider-error', () => reject(new Error(
                     event.data.error || `${providerConfig.label} sign in failed`
                 )));
             }
         };
-        const closePoll = setInterval(() => {
-            if (popup.closed) {
-                finish(() => reject(new Error(
-                    `${providerConfig.label} sign in was cancelled`
+        const checkClosed = () => {
+            let closed;
+            try { closed = popup.closed; } catch {
+                if (!reportedUnreadable) diagnostic('popup-state-unreadable');
+                reportedUnreadable = true;
+                return;
+            }
+            if (!closed) {
+                if (closeGrace !== null) {
+                    clearTimeout(closeGrace);
+                    closeGrace = null;
+                    diagnostic('popup-open-again');
+                }
+                return;
+            }
+            if (closeGrace !== null) return;
+            diagnostic('popup-closed-observed');
+            // The callback posts its result and closes immediately. A close poll
+            // can run before that queued message; keep listening briefly.
+            closeGrace = setTimeout(() => {
+                closeGrace = null;
+                try { if (!popup.closed) return; } catch { return; }
+                finish('closed-without-completion', () => reject(new Error(
+                    `${providerConfig.label} sign-in window closed before sign-in finished. Please try again.`
                 )));
-            }
-        }, 500);
+            }, 1500);
+        };
+        const closePoll = setInterval(checkClosed, 500);
         const timeout = setTimeout(() => {
-            try {
-                popup.close();
-            } catch (error) {
-                // The popup may already have navigated or closed.
-            }
-            finish(() => reject(new Error(
+            try { popup.close(); } catch { /* Already closed or inaccessible. */ }
+            finish('timed-out', () => reject(new Error(
                 `${providerConfig.label} sign in timed out`
             )));
         }, timeoutMs);
 
         window.addEventListener('message', handleMessage);
+        diagnostic('listening');
+        try { navigate(); } catch (error) {
+            finish('navigation-failed', () => reject(error));
+        }
     });
 }
 
@@ -1888,8 +1919,10 @@ class AccountService {
                     );
                 }
 
-                popup.location.replace(startData.authorizationUrl);
-                const completionToken = await waitForOAuthPopup(popup, provider);
+                const completionToken = await waitForOAuthPopup(
+                    popup, provider, undefined,
+                    () => popup.location.replace(startData.authorizationUrl)
+                );
                 session = await bootstrapOAuthSession(
                     provider,
                     completionToken

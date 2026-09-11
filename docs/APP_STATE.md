@@ -1,3 +1,16 @@
+## 2026-09-11: Google popup close timing
+
+- Chat and the standalone commercial landing listen before popup navigation and
+  allow 1.5 seconds after observed closure for a queued completion message.
+  Closing without a result is no longer described as a user cancellation.
+- Exact origin/window/provider checks, token validation, SDK session completion,
+  logout, and encryption-passkey behavior remain intact. Unreadable window state
+  waits for a result or the existing timeout; disconnected windows still fail.
+- Opt-in `oauthDiagnostics=1` logs only fixed event names and elapsed time to
+  the local console. See [Google Sign-In](GOOGLE_SIGN_IN.md#popup-completion-and-diagnosis).
+- Local tests reproduce and cover the event-order race, but the user's specific
+  Google failure still needs a real-browser trace before its cause is confirmed.
+
 ## 2026-09-11: Approval recovery and clearer wallet progress
 
 - The wallet SDK now journals USDC approval/reset steps alongside the pending
