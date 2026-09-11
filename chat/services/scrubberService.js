@@ -4,6 +4,7 @@ import ticketClient from './ticketClient.js';
 import {
     ALLOWED_CONFIDENTIAL_MODELS,
     DEFAULT_SCRUBBER_MODEL,
+    isAllowedConfidentialModel,
     isSlowConfidentialModel
 } from './confidentialModelConfig.js';
 
@@ -346,10 +347,11 @@ class ScrubberService {
                     await chatDB.init();
                 }
                 const stored = await chatDB.getSetting(SCRUBBER_MODEL_SETTING_KEY);
-                if (stored) {
-                    this.selectedModel = stored;
-                    return stored;
+                if (isAllowedConfidentialModel(stored)) {
+                    this.selectedModel = String(stored).trim();
+                    return this.selectedModel;
                 }
+                if (stored) await chatDB.saveSetting(SCRUBBER_MODEL_SETTING_KEY, DEFAULT_SCRUBBER_MODEL);
             }
         } catch (error) {
             console.warn('Failed to load scrubber model preference:', error);
@@ -359,7 +361,7 @@ class ScrubberService {
     }
 
     async setSelectedModel(modelId) {
-        this.selectedModel = modelId || DEFAULT_SCRUBBER_MODEL;
+        this.selectedModel = isAllowedConfidentialModel(modelId) ? String(modelId).trim() : DEFAULT_SCRUBBER_MODEL;
         if (typeof chatDB !== 'undefined') {
             try {
                 if (!chatDB.db && typeof chatDB.init === 'function') {
@@ -373,7 +375,7 @@ class ScrubberService {
     }
 
     getSelectedModel() {
-        return this.selectedModel || DEFAULT_SCRUBBER_MODEL;
+        return isAllowedConfidentialModel(this.selectedModel) ? String(this.selectedModel).trim() : DEFAULT_SCRUBBER_MODEL;
     }
 
     getModeLabel() {

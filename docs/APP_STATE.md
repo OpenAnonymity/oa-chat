@@ -3,7 +3,10 @@
 - Added Kimi K3, GLM-5.3, GLM-5.3 Flash, DeepSeek V4 Flash, and Llama 3.3 70B
   to the shared confidential-model allowlist. Tinfoil's public model catalog
   confirms these IDs and tool-calling support. Gemma 4 31B and GPT-OSS 120B
-  remain the Memory and Tab-Tab defaults respectively; legacy choices remain.
+  remain the Memory and Tab-Tab defaults respectively.
+- Removed the unavailable Kimi K2.5 and GPT-OSS Safeguard entries. Saved
+  selections of unavailable models fall back to each feature's default;
+  Tab-Tab now validates stored and runtime choices as Memory already did.
 - No key, provider, transport, or cap changes. The new choices are catalog
   verified, not live inference certified. GLM's always-on reasoning can consume
   request budgets before content appears; see [Local inference](local_inference.md).

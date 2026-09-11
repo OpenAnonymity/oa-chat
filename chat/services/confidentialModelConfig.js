@@ -8,15 +8,10 @@ export const ALLOWED_CONFIDENTIAL_MODELS = new Set([
     'glm-5-3',
     'glm-5-3-flash',
     'deepseek-v4-flash',
-    'llama3-3-70b',
-    'gpt-oss-safeguard-120b',
-    'kimi-k2-5',
-    'gemma4-31b'
+    'llama3-3-70b'
 ]);
 
-export const SLOW_CONFIDENTIAL_MODELS = new Set([
-    'kimi-k2-5'
-]);
+export const SLOW_CONFIDENTIAL_MODELS = new Set();
 
 export function isAllowedConfidentialModel(modelId) {
     return ALLOWED_CONFIDENTIAL_MODELS.has(String(modelId || '').trim());

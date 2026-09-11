@@ -8,8 +8,38 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 const { default: ChatInput } = await import('../../chat/components/ChatInput.js');
 const { default: scrubberService } = await import('../../chat/services/scrubberService.js');
+const { chatDB } = await import('../../chat/db.js');
 if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
 else delete globalThis.localStorage;
+
+test('Tab-Tab replaces retired saved models while preserving hosted selections', async () => {
+    const old = { db: chatDB.db, get: chatDB.getSetting, save: chatDB.saveSetting, model: scrubberService.selectedModel };
+    let stored;
+    const writes = [];
+    chatDB.db = {};
+    chatDB.getSetting = async () => stored;
+    chatDB.saveSetting = async (key, value) => writes.push([key, value]);
+    try {
+        for (const retired of ['kimi-k2-5', 'gpt-oss-safeguard-120b']) {
+            stored = retired;
+            assert.equal(await scrubberService.loadSelectedModel(), 'gpt-oss-120b');
+            assert.deepEqual(writes.at(-1), ['scrubberModel', 'gpt-oss-120b']);
+            await scrubberService.setSelectedModel(retired);
+            assert.equal(scrubberService.getSelectedModel(), 'gpt-oss-120b');
+        }
+        stored = 'kimi-k3';
+        const count = writes.length;
+        assert.equal(await scrubberService.loadSelectedModel(), 'kimi-k3');
+        assert.equal(writes.length, count);
+        scrubberService.selectedModel = 'kimi-k2-5';
+        assert.equal(scrubberService.getSelectedModel(), 'gpt-oss-120b');
+    } finally {
+        chatDB.db = old.db;
+        chatDB.getSetting = old.get;
+        chatDB.saveSetting = old.save;
+        scrubberService.selectedModel = old.model;
+    }
+});
 
 function element(dataset = {}) {
     const attributes = new Map();
