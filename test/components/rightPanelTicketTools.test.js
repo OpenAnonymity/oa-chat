@@ -169,8 +169,11 @@ test('commercial ticket launcher keeps a question-mark ticket explanation', () =
     assert.match(source, /h-3\.5 w-3\.5 flex-shrink-0 items-center justify-center rounded-full/);
     assert.match(source, /aria-controls="external-ticket-info-panel"/);
     assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
-    assert.match(source, /Inference tickets provide unlinkable access to frontier AI models/);
-    assert.match(source, /queries go directly to the model provider, not OA/);
+    assert.match(source, /temporary API key with up to 20 minutes of access/);
+    assert.match(source, /Each key supports multiple queries, until its time or usage limit is reached/);
+    assert.match(source, /Longer prompts and responses use more of the allowance/);
+    assert.match(source, /Blind signatures prevent redeemed tickets from being linked to your purchase/);
+    assert.match(source, /queries go directly to the model provider, not The Open Anonymity Project/);
     assert.match(source, /this\.updateExternalTicketInfoVisibility\(\)/);
 });
 
