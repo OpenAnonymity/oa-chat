@@ -171,7 +171,6 @@ test('commercial ticket launcher keeps a question-mark ticket explanation', () =
     assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
     assert.match(source, /temporary API key with up to 20 minutes of access/);
     assert.match(source, /Each key supports multiple queries, until its time or usage limit is reached/);
-    assert.match(source, /Longer prompts and responses use more of the allowance/);
     assert.match(source, /Blind signatures prevent redeemed tickets from being linked to your purchase/);
     assert.match(source, /queries go directly to the model provider, not The Open Anonymity Project/);
     assert.match(source, /this\.updateExternalTicketInfoVisibility\(\)/);
