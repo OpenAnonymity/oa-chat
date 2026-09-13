@@ -4,6 +4,7 @@
  * send button state, search toggle UI, and settings dropdown.
  */
 
+import { setupInfoTooltips } from './InfoTooltips.js';
 import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats } from '../services/globalExport.js';
@@ -194,6 +195,7 @@ export default class ChatInput {
      * Sets up all event listeners for the input area controls.
      */
     setupEventListeners() {
+        setupInfoTooltips(this.app.elements.settingsMenu);
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
             this.scrubberState.draftRevision += 1;
@@ -3070,7 +3072,7 @@ export default class ChatInput {
         if (applied.has('memoryFeatureEnabled') || applied.has('memoryMode')) {
             const storedMemoryFeatureEnabled = await this.app.data.getSetting('memoryFeatureEnabled');
             const storedMemoryMode = await this.app.data.getSetting('memoryMode');
-            await this.app.setMemoryFeatureEnabled(storedMemoryFeatureEnabled !== false, { persist: false });
+            await this.app.setMemoryFeatureEnabled(storedMemoryFeatureEnabled === true, { persist: false });
             this.app.memoryMode = this.app.memoryFeatureEnabled !== false && storedMemoryMode === true;
             this.updateMemoryToggleUI();
         }

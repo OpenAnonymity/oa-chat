@@ -23,11 +23,11 @@ function getResolveImportedMemoryPreferences() {
     return memorySettings.resolveImportedMemoryPreferences;
 }
 
-test('memory feature defaults on and preserves saved memory mode', () => {
+test('an explicit saved memory opt-in preserves saved memory mode', () => {
     const resolveMemoryFeatureState = getResolveMemoryFeatureState();
 
     assert.deepEqual(resolveMemoryFeatureState({
-        savedMemoryFeatureEnabled: undefined,
+        savedMemoryFeatureEnabled: true,
         savedMemoryMode: true
     }), {
         memoryFeatureEnabled: true,
@@ -99,4 +99,21 @@ test('importing disabled memory feature persists a memory mode reset even when b
         memoryMode: false,
         shouldApplyMemoryMode: true
     });
+});
+
+
+test('memory defaults off for a new profile and clamps a legacy mode-only setting', () => {
+    const resolve = getResolveMemoryFeatureState();
+    assert.deepEqual(resolve(), { memoryFeatureEnabled: false, memoryMode: false, shouldPersistMemoryMode: false });
+    assert.deepEqual(resolve({ savedMemoryMode: true }), { memoryFeatureEnabled: false, memoryMode: false, shouldPersistMemoryMode: true });
+});
+
+test('import without a feature opt-in keeps a fresh profile off', () => {
+    const resolve = getResolveImportedMemoryPreferences();
+    assert.deepEqual(resolve({ preferences: { memoryMode: true } }), {
+        memoryFeatureEnabled: false, shouldApplyMemoryFeatureEnabled: false,
+        memoryMode: false, shouldApplyMemoryMode: true
+    });
+    assert.equal(resolve({ preferences: {}, currentMemoryFeatureEnabled: true }).memoryFeatureEnabled, true);
+    assert.equal(resolve({ preferences: { memoryFeatureEnabled: true } }).memoryFeatureEnabled, true);
 });

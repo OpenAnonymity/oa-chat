@@ -1,3 +1,17 @@
+## 2026-09-13: Ticket cues and Privacy/Memory explanations
+
+- Tab-Tab keeps the existing shortcut layout with one adjacent decorative ticket
+  icon, no hover or click behavior. Its existing visibility and input inset apply.
+- Privacy and Memory have matching info buttons with the approved one-line cost
+  descriptions. Hover/focus opens, click pins, outside click or Escape dismisses.
+  Explanations render outside scrolling containers, have no shadow, and stay
+  within the viewport. Payment mode names use the same tooltip below the marks.
+- Memory defaults off when no preference is saved, including imports without a
+  feature preference. Explicit saved on/off choices and memory entries survive.
+  Key issuance, cost/cap enforcement, and runtime availability gates are unchanged.
+- This UI release starts at staging's b4bed57 and retains the published wallet
+  SDK 06e3ee9; later wallet recovery commits remain on the feature branch.
+
 ## 2026-09-11: Disabled scrubber model explains its payment restriction
 
 - The Settings scrubber model control shows the runtime's unavailable reason

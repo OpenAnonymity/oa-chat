@@ -272,7 +272,7 @@ class ChatApp {
         };
 
         this.searchEnabled = true;
-        this.memoryFeatureEnabled = true;
+        this.memoryFeatureEnabled = false;
         this.memoryMode = false;
         this.memoryAutoInclude = false;
         this.memoryAgentModel = DEFAULT_MEMORY_AGENT_MODEL;

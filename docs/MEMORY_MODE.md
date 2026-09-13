@@ -229,7 +229,8 @@ forwarding its details into the final prompt.
 ## UI Notes
 
 - The global memory feature switch is persisted in IndexedDB setting
-  `memoryFeatureEnabled` and defaults on for existing users. When it is off,
+  `memoryFeatureEnabled` and defaults off when no preference is saved. Explicit
+  saved on/off choices and saved memory entries are preserved. When it is off,
   the app forces `memoryMode` false, skips live post-turn extraction, skips
   memory retrieval, aborts active memory retrieval/extraction work, blocks the
   memory editor/backfill/import/export entry points, and disables only the

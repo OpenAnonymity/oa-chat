@@ -4,7 +4,7 @@ export function resolveMemoryFeatureState(options = {}) {
         savedMemoryMode
     } = options;
 
-    const memoryFeatureEnabled = savedMemoryFeatureEnabled !== false;
+    const memoryFeatureEnabled = savedMemoryFeatureEnabled === true;
     const savedMemoryModeEnabled = savedMemoryMode === true;
     const memoryMode = memoryFeatureEnabled && savedMemoryModeEnabled;
 
@@ -35,15 +35,15 @@ export function resolveMemoryFeatureToggle(options = {}) {
 export function resolveImportedMemoryPreferences(options = {}) {
     const {
         preferences = {},
-        currentMemoryFeatureEnabled = true,
+        currentMemoryFeatureEnabled = false,
         currentMemoryMode = false
     } = options;
 
     const hasMemoryFeatureEnabled = Object.prototype.hasOwnProperty.call(preferences, 'memoryFeatureEnabled');
     const hasMemoryMode = Object.prototype.hasOwnProperty.call(preferences, 'memoryMode');
     const memoryFeatureEnabled = hasMemoryFeatureEnabled
-        ? preferences.memoryFeatureEnabled !== false
-        : currentMemoryFeatureEnabled !== false;
+        ? preferences.memoryFeatureEnabled === true
+        : currentMemoryFeatureEnabled === true;
     const requestedMemoryMode = hasMemoryMode
         ? preferences.memoryMode === true
         : currentMemoryMode === true;

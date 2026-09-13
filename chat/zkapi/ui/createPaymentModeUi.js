@@ -56,9 +56,8 @@ export function createPaymentModeUi(runtime) {
             modeControl.setAttribute('aria-label', 'Chat payment method');
             // Icons, not words: OA's square for tickets, the Ethereum diamond
             // for zkAPI. The name is the aria-label and the hover tooltip.
-            // The tooltip sits beside the mark, not below it: the toolbar
-            // clips overflow, and one drawn below showed as a stray hairline.
-            modeControl.innerHTML = `<button type="button" id="payment-mode-tickets" data-payment-mode="tickets" aria-pressed="false" aria-label="OA tickets" data-tooltip="OA tickets" data-tooltip-position="start">${OA_MARK}</button><button type="button" id="payment-mode-zkapi" data-payment-mode="zkapi" aria-pressed="false" aria-label="zkAPI" data-tooltip="zkAPI" data-tooltip-position="start">${ETHEREUM_MARK}</button>`;
+            // Portaled tooltips sit below the marks without toolbar clipping.
+            modeControl.innerHTML = `<button type="button" id="payment-mode-tickets" data-payment-mode="tickets" aria-pressed="false" aria-label="OA tickets" data-info-tooltip="The Open Anonymity Project">${OA_MARK}</button><button type="button" id="payment-mode-zkapi" data-payment-mode="zkapi" aria-pressed="false" aria-label="zkAPI" data-info-tooltip="Ethereum Foundation zkAPI">${ETHEREUM_MARK}</button>`;
             modeControl.addEventListener('click', async event => {
                 const button = event.target.closest('[data-payment-mode]');
                 if (!button || button.disabled) return;

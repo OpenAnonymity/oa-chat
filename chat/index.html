@@ -615,6 +615,7 @@
                                                 <span class="scrubber-shortcut-key">tab</span>
                                                 <span class="scrubber-shortcut-key">tab</span>
                                                 <span>to scrub</span>
+                                                <svg class="scrubber-ticket-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16v4a3 3 0 0 0 0 6v4H4v-4a3 3 0 0 0 0-6V5Z"/><path d="M15 5v2m0 3v1m0 3v1m0 2v2"/></svg>
                                             </div>
                                             <div id="scrubber-preview-hint" class="absolute right-1.5 flex items-center gap-1 pointer-events-none text-muted-foreground/60 text-[11px] opacity-0 transition-opacity duration-150" aria-hidden="true">
                                                 <span id="scrubber-preview-hint-text" class="flex items-center gap-1"><span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌥</span> <span>edit</span></span>
@@ -791,7 +792,9 @@
                                                         </a>
                                                 </section>
                                                 <section id="scrubber-settings-section" class="settings-section" aria-labelledby="settings-privacy-title">
-                                                    <h3 id="settings-privacy-title" class="settings-section-title">Privacy</h3>
+                                                    <div class="settings-heading-with-info"><h3 id="settings-privacy-title" class="settings-section-title">Privacy</h3>
+                                                        <button type="button" class="settings-info-button" aria-label="About Privacy" aria-expanded="false" data-info-toggle data-info-tooltip="Use Tab-Tab to redact personal information for one ticket."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></svg></button>
+                                                    </div>
                                                     <div class="settings-row">
                                                         <label id="scrubber-model-label" class="settings-row-label" for="scrubber-model-select">Scrubber model</label>
                                                         <div class="settings-row-control settings-select settings-select-help" role="group" aria-labelledby="scrubber-model-label">
@@ -805,10 +808,12 @@
 
                                                 <!-- Memory -->
                                                 <section id="memory-settings-section" class="settings-section" aria-labelledby="settings-memory-title">
-                                                    <h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
+                                                    <div class="settings-heading-with-info"><h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
+                                                        <button type="button" class="settings-info-button" aria-label="About Memory" aria-expanded="false" data-info-toggle data-info-tooltip="Use and save memories from your chats for one ticket."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></svg></button>
+                                                    </div>
                                                     <div class="settings-row">
                                                         <span class="settings-row-label" id="memory-feature-label">Memory</span>
-                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="memory-feature-label" class="switch-toggle settings-switch switch-active" data-tooltip="Enable memory mode and background memory extraction" data-tooltip-position="left">
+                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-feature-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Use and save memories from your chats for one ticket." data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
                                                     </div>

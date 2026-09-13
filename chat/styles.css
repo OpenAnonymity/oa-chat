@@ -9016,3 +9016,17 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     to   { opacity: 1; transform: translateY(-50%) translateX(0); }
 }
 .chat-mode-html-tooltip { gap: 0.25rem; }
+
+/* Quiet ticket cue; it belongs to the existing non-interactive shortcut hint. */
+.scrubber-ticket-icon { width: 14px; height: 14px; flex: 0 0 14px; }
+.settings-heading-with-info { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.settings-heading-with-info .settings-section-title { margin: 0; }
+.settings-info-button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground)); }
+.settings-info-button svg { width: 14px; height: 14px; }
+.settings-info-button:hover { background: hsl(var(--color-muted)); }
+html[data-keyboard-nav] .settings-info-button:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
+/* A body-level tooltip avoids clipping inside Settings and the chat toolbar. */
+.info-tooltip { position: fixed; z-index: 10010; width: max-content; max-width: min(285px, calc(100vw - 24px)); box-sizing: border-box; padding: 10px 12px; border: 1px solid hsl(var(--color-border)); border-radius: 9px; background: hsl(var(--color-popover)); color: hsl(var(--color-foreground)); font: 400 12px/1.5 var(--font-sans), sans-serif; box-shadow: none; overflow-wrap: anywhere; }
+.info-tooltip[hidden] { display: none; }
+/* Commercial's older label shim can still set data-tooltip on these buttons. */
+[data-info-tooltip][data-tooltip]:hover::after, [data-info-tooltip][data-tooltip]:hover::before { display: none; }
