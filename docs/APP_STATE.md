@@ -2,6 +2,10 @@
 
 - Tab-Tab keeps the existing shortcut layout with one adjacent decorative ticket
   icon, no hover or click behavior. Its existing visibility and input inset apply.
+- Privacy and Memory headings use sentence case with compact, muted info icons
+  and 24px click targets; this overrides the gear menu's old uppercase titles.
+- Privacy and Memory use a 14px circled info icon with a filled dot and rounded
+  stem, keeping it legible at Settings scale.
 - Privacy and Memory have matching info buttons with the approved one-line cost
   descriptions. Hover/focus opens, click pins, outside click or Escape dismisses.
   Explanations render outside scrolling containers, have no shadow, and stay

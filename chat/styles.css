@@ -9019,9 +9019,9 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 
 /* Quiet ticket cue; it belongs to the existing non-interactive shortcut hint. */
 .scrubber-ticket-icon { width: 14px; height: 14px; flex: 0 0 14px; }
-.settings-heading-with-info { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
-.settings-heading-with-info .settings-section-title { margin: 0; }
-.settings-info-button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground)); }
+.settings-heading-with-info { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
+.settings-heading-with-info .settings-section-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; color: hsl(var(--color-foreground)); }
+.settings-info-button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground) / 0.7); }
 .settings-info-button svg { width: 14px; height: 14px; }
 .settings-info-button:hover { background: hsl(var(--color-muted)); }
 html[data-keyboard-nav] .settings-info-button:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
