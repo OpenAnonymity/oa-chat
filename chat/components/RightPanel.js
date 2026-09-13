@@ -2062,9 +2062,10 @@ class RightPanel {
                         class="${this.showExternalTicketInfo ? 'mt-2 max-h-[480px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out"
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
-                        <p class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
-                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider, not OA.
-                        </p>
+                        <div class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                            <p>Redeem inference tickets for a temporary API key with up to 20 minutes of access. Each key supports multiple queries, until its time or usage limit is reached. Longer prompts and responses use more of the allowance.</p>
+                            <p class="mt-2">Blind signatures prevent redeemed tickets from being linked to your purchase. Your queries go directly to the model provider, not The Open Anonymity Project.</p>
+                        </div>
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
                     <div class="system-panel-divider" aria-hidden="true"></div>

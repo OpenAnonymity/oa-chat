@@ -1,3 +1,13 @@
+## 2026-09-13: Inference Tickets explanation
+
+- The commercial Inference Tickets question-mark panel leads with the 20-minute
+  access window, reuse for multiple queries, and token-dependent usage, followed
+  by the existing privacy explanation using The Open Anonymity Project's full name.
+- Verified read-only against staging's active Redis tier configuration: all active
+  ordinary-chat tiers currently have duration_minutes=20. Revisit this copy if tier
+  durations change; it does not describe the separate 60-minute Tinfoil keys used
+  by Tab-Tab and Memory. No issuance, pricing, or expiration logic changed.
+
 ## 2026-09-13: Ticket cues and Privacy/Memory explanations
 
 - Tab-Tab keeps the existing shortcut layout with one adjacent decorative ticket
