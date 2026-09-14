@@ -30,10 +30,12 @@ function normalizeAccountSessionUrl(input) {
     return url.toString();
 }
 
-function isAccountSessionUrl(input) {
+export function shouldRefreshAccountSession(input) {
     try {
-        normalizeAccountSessionUrl(input);
-        return true;
+        const url = new URL(normalizeAccountSessionUrl(input));
+        // This pre-login endpoint reports unknown usernames / credentials as
+        // 401. Refreshing an existing session cannot resolve that lookup.
+        return url.pathname !== '/auth/challenge';
     } catch {
         return false;
     }
@@ -97,7 +99,7 @@ class SessionService {
                                 apiDomain,
                                 sessionTokenBackendDomain
                             ) => (
-                                isAccountSessionUrl(toCheckUrl) &&
+                                shouldRefreshAccountSession(toCheckUrl) &&
                                 originalImplementation.shouldDoInterceptionBasedOnUrl(
                                     toCheckUrl,
                                     apiDomain,

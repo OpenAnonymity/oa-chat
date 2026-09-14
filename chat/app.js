@@ -3886,6 +3886,13 @@ class ChatApp {
         const toast = document.getElementById('app-toast');
         if (!toast) return;
 
+        if (toast.dataset.position === 'top-center') {
+            toast.style.top = 'calc(env(safe-area-inset-top, 0px) + 72px)';
+            toast.style.bottom = 'auto';
+            toast.style.maxWidth = 'calc(100vw - 32px)';
+            toast.style.textAlign = 'center';
+            return;
+        }
         const inputCard = document.getElementById('input-card');
         if (inputCard) {
             const rect = inputCard.getBoundingClientRect();
@@ -3906,7 +3913,7 @@ class ChatApp {
      * @param {string} type - 'success' or 'error'
      * @param {number} durationMs - Time to auto-dismiss in milliseconds
      */
-    showToast(message, type = 'success', durationMs = 3000) {
+    showToast(message, type = 'success', durationMs = 3000, { position = 'composer' } = {}) {
         if (this.isWelcomeWorkflowActive()) {
             return;
         }
@@ -3915,6 +3922,8 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
+        toast.dataset.position = position;
+        toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-foreground';
         // Removed fixed bottom-36, will be set by updateToastPosition
         toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} `;

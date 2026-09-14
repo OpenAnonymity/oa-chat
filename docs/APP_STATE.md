@@ -1,3 +1,16 @@
+## 2026-09-14: Checkout toast placement and username challenge errors
+
+- Commercial checkout can request `showToast` with `{ position: 'top-center' }`.
+  It sits below the header with a safe-area inset and a viewport width cap;
+  ordinary notifications retain their position above the composer.
+- Browser session interception excludes the exact `/auth/challenge` lookup.
+  Its 401 is an authentication lookup outcome, not session expiry; preserving
+  the response lets username continuation recognize `AUTHENTICATION_FAILED`
+  without exhausting SuperTokens refresh retries. Other account and billing
+  APIs retain automatic session refresh. Electron's separate bridge is unchanged.
+- Creating an encryption passkey is still required for a new Google account
+  (`PRF_PENDING`) or new username; existing PRF accounts should unlock instead.
+
 ## 2026-09-14: Toggle motion
 
 - Settings and small switches use the Transitions.dev toggle recipe: 350ms thumb
