@@ -2063,7 +2063,7 @@ class RightPanel {
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
                         <div class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
-                            <p>Redeem inference tickets for a temporary API key with up to 20 minutes of access. Each key supports multiple queries, until its time or usage limit is reached.</p>
+                            <p>Redeem inference tickets for a temporary API key with up to 20 minutes of model access. Each key supports multiple queries, until its time or usage limit is reached.</p>
                             <p class="mt-2">Blind signatures prevent redeemed tickets from being linked to your purchase. Your queries go directly to the model provider, not The Open Anonymity Project.</p>
                         </div>
                     </div>
