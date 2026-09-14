@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * Data controls, Appearance and Share feedback live in the composer gear for
  * every mode, so a zkAPI user without an account finds them too; this class
@@ -129,7 +130,7 @@ class SettingsDialog {
         if (this.isOpen || !this.overlay) return;
         this.isOpen = true;
         this.returnFocusEl = returnFocusEl || document.activeElement;
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
         document.addEventListener('keydown', this.onKeydown);
         this.dialog?.focus?.({ preventScroll: true });
     }
@@ -140,7 +141,7 @@ class SettingsDialog {
         this.dismissDeleteConfirm();
         this.dialog?.removeAttribute?.('hidden');
         this.standaloneConfirm = false;
-        this.overlay.classList.add('hidden');
+        hideSurface(this.overlay);
         document.removeEventListener('keydown', this.onKeydown);
         const target = this.returnFocusEl;
         this.returnFocusEl = null;

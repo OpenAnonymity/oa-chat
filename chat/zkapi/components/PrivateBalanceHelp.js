@@ -1,3 +1,4 @@
+import { setDisclosure } from '../../ui/uiMotion.js';
 const HELP = {
     billing: {
         label: 'How private billing works',
@@ -79,7 +80,7 @@ export function attachPrivateBalanceHelp(root, owner) {
             if (!content) return;
             const state = owner.privateBalanceHelpOpen ||= {};
             state[kind] = !state[kind];
-            content.hidden = !state[kind];
+            setDisclosure(content, state[kind]);
             button.setAttribute('aria-expanded', String(state[kind]));
         });
     }

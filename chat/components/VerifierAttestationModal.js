@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * Verifier Attestation Modal Component
  * Shows hardware attestation verification for the OA-Verifier enclave
@@ -44,6 +45,7 @@ export class VerifierAttestationModal {
         this.error = null;
         this.render();
         document.body.appendChild(this.overlay);
+        showSurface(this.overlay);
         this.setupEventListeners();
 
         await this.fetchAndVerifyAttestation();
@@ -55,7 +57,7 @@ export class VerifierAttestationModal {
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
         }
-        this.overlay?.remove();
+        hideSurface(this.overlay, { remove: true });
         this.overlay = null;
     }
 

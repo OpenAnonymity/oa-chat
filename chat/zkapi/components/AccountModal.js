@@ -1,3 +1,4 @@
+import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
 import { explainZkapiError, isIndexerLag } from '../services/zkapiErrorCopy.mjs';
@@ -78,7 +79,7 @@ export default class AccountModal {
         this.status = '';
         this.statusError = false;
         this.render();
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'true');
         // Wallet work is not interruptible from here: while it runs the
         // dialog stays, and the close affordances go quiet.
@@ -100,8 +101,7 @@ export default class AccountModal {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
         this.outcome = null;
-        this.overlay.classList.add('hidden');
-        this.overlay.innerHTML = '';
+        hideSurface(this.overlay, { clear: true });
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'false');
         if (this.escapeHandler) document.removeEventListener('keydown', this.escapeHandler);
         this.escapeHandler = null;
@@ -138,7 +138,8 @@ export default class AccountModal {
             const journey = this.currentJourney(this.journeyKind, { message });
             this.journeyLast = journey.position;
             const mounted = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-journey]') : null;
-            if (mounted) { mounted.outerHTML = this.renderJourney(journey); return; }
+            if (mounted) { mounted.outerHTML = this.renderJourney(journey);
+                revealText(this.overlay.querySelector('[data-zkapi-journey] .zkapi-step[aria-current] .zkapi-step-text')); return; }
         }
         const progress = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-progress-text]') : null;
         if (progress) this.swapProgressText(progress, message);
@@ -189,10 +190,8 @@ export default class AccountModal {
     /** New words fade in over the old ones; the row itself never moves. */
     swapProgressText(element, message) {
         if (element.textContent === message) return;
-        element.classList.remove('is-entering');
-        void element.offsetWidth;
         element.textContent = message;
-        element.classList.add('is-entering');
+        revealText(element);
     }
 
     renderProgress(message) {

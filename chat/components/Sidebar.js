@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * Sidebar Component
  * Manages the left sidebar including session list rendering and session controls.
@@ -341,7 +342,7 @@ export default class Sidebar {
                 const menu = list.querySelector(`.session-menu[data-session-id="${sessionId}"]`);
                 this.closeAllMenus(menu);
                 if (menu) {
-                    menu.classList.toggle('hidden');
+                    menu.classList.contains('hidden') ? showSurface(menu, 'dropdown') : hideSurface(menu);
                 }
                 return;
             }
@@ -579,7 +580,7 @@ export default class Sidebar {
         if (!list) return;
         list.querySelectorAll('.session-menu').forEach(menu => {
             if (menu !== exceptMenu) {
-                menu.classList.add('hidden');
+                hideSurface(menu);
             }
         });
     }

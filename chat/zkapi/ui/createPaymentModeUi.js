@@ -1,3 +1,4 @@
+import { slideTabs } from '../../ui/uiMotion.js';
 import AccountModal from '../../components/AccountModal.js';
 import { ETHEREUM_MARK, OA_MARK } from './paymentModeMarks.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
@@ -15,6 +16,8 @@ export function createPaymentModeUi(runtime) {
 
     function renderControls() {
         if (!app || !modeControl) return;
+        const pill = modeControl.querySelector('.t-tabs-pill');
+        const previous = pill ? { width: pill.style.width, transform: pill.style.transform } : null;
         const mode = runtime.getMode();
         // zkAPI has its own colour axis: while the current chat pays with
         // zkAPI the shared Light/Dark choice resolves to purple / night.
@@ -25,6 +28,7 @@ export function createPaymentModeUi(runtime) {
             button.setAttribute('aria-pressed', String(button.dataset.paymentMode === mode));
             button.disabled = busy;
         }
+        slideTabs(modeControl, previous);
     }
 
     return {
@@ -67,6 +71,7 @@ export function createPaymentModeUi(runtime) {
                 renderControls();
             });
             panelToggle.before(modeControl);
+            window.addEventListener('resize', () => slideTabs(modeControl));
             const overlay = document.createElement('div');
             overlay.id = 'payment-balance-modal';
             overlay.className = document.getElementById('account-modal').className;

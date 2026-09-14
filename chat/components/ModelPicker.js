@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ModelPicker Component
  * Manages the model selection modal including search, filtering,
@@ -119,7 +120,7 @@ export default class ModelPicker {
     open(options = {}) {
         this.selectionMode = options.selectionMode || options.mode || 'primary';
         const modal = this.app.elements.modelPickerModal;
-        modal.classList.remove('hidden');
+        showSurface(modal);
         modal.dataset.selectionMode = this.selectionMode;
         if (this.app.elements.modelSearch) {
             this.app.elements.modelSearch.placeholder = this.isSecondarySelectionMode()
@@ -146,7 +147,7 @@ export default class ModelPicker {
     close() {
         // Save scroll position before hiding (from the scroll container, not inner list)
         this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
-        this.app.elements.modelPickerModal.classList.add('hidden');
+        hideSurface(this.app.elements.modelPickerModal);
         delete this.app.elements.modelPickerModal.dataset.selectionMode;
         // Clear search
         this.app.elements.modelSearch.value = '';

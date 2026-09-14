@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * TLS Security Modal Component
  * Shows VERIFIABLE security information - not just parsed strings
@@ -31,6 +32,7 @@ class TLSSecurityModal {
 
         this.render();
         document.body.appendChild(this.overlay);
+        showSurface(this.overlay);
         this.setupEventListeners();
 
         // Verify WASM integrity on first open
@@ -45,7 +47,7 @@ class TLSSecurityModal {
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
         }
-        this.overlay?.remove();
+        hideSurface(this.overlay, { remove: true });
         this.overlay = null;
     }
 

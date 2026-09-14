@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * Account Modal Component
  * Modern, clean design matching ShareModals aesthetic
@@ -408,7 +409,7 @@ class AccountModal {
             this.captionShownAt = 0;
         }
         this.render();
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
         // The dialog's own backdrop is now painted; the early arrival layer from
         // index.html (same dim, same spinner, same caption) can go without a
         // visible change.
@@ -581,8 +582,7 @@ class AccountModal {
         this.waitingCaptionShown = false;
         this.usernameIntroPending = false;
         this.dropHeldRegistration();
-        this.overlay.classList.add('hidden');
-        this.overlay.innerHTML = '';
+        hideSurface(this.overlay, { clear: true });
         this.clearAnimationTimeouts();
 
         const tabBtn = document.getElementById('account-tab-btn');

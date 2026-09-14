@@ -793,7 +793,7 @@ test('wallet work narrates inside the dialog: the action row becomes a status ro
         assert.doesNotMatch(html, /id="zkapi-deposit-btn"/, 'the button gives way to the status row');
 
         modal.setStatus('Waiting for MetaMask…');
-        assert.equal(progressText, 'Waiting for MetaMask…|is-entering', 'new words settle into the same row');
+        assert.equal(progressText, 'Waiting for MetaMask…|t-text-swap', 'new words settle into the same row');
         assert.deepEqual(toasts, [], 'the open dialog narrates; no toast');
 
         modal.close();

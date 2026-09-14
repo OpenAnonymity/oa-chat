@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 import {
     parseChatHistoryFile,
     buildImportPlan,
@@ -69,6 +70,7 @@ class ChatHistoryImportModal {
 
         this.render();
         document.body.appendChild(this.overlay);
+        showSurface(this.overlay);
         this.setupEventListeners();
     }
 
@@ -81,7 +83,7 @@ class ChatHistoryImportModal {
         this.isOpen = false;
         this.state.plan = [];
         this.state.preview = null;
-        this.overlay?.remove();
+        hideSurface(this.overlay, { remove: true });
         this.overlay = null;
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);

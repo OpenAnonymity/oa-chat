@@ -2740,3 +2740,31 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     aliases while separately named downstream apps are deployed explicitly.
   - Ordinary later commits still build normally; no project settings or domains
     need changing. This does not change the chat runtime or ticket/account defaults.
+
+### Approved UI motion pass (2026-09-14)
+
+The approved motion studies now use the Transitions.dev recipes in `chat/styles.css`
+and the presentation-only adapter `chat/ui/uiMotion.js`. Shared dialogs (Settings,
+Memory, Account, model picker, Share, Import, security details and delete history),
+zkAPI Welcome/balance/withdrawal, Settings/context menus, Quick Ask, tooltips,
+activity details, memory folders, native proof/wallet disclosures, toasts, wallet
+status text and the accepted payment-mode pill have matching motion. Production's
+waiting-response shimmer remains unchanged. No transaction, sign-in, memory or
+inference state is delayed by these animations.
+
+Closing surfaces become logically hidden and inert immediately, then retain the
+actual outgoing DOM for the CSS close duration. Rapid reopening cancels that
+cleanup; modal rerenders are resolved to the current child when closing. Never
+clone private content for animations. Replaced toasts relinquish their ID before
+an incoming toast is mounted. Activity disclosures reuse an outgoing node when
+reopened. Native details retain their own open state and keyboard behavior; direct
+child CSS overrides prevent an open parent exposing closed nested disclosures.
+Browsers without `::details-content` keep native disclosure behavior. Reduced-motion
+preferences skip delayed cleanup and CSS movement.
+
+Quick Ask animates its inner scroller so its measured outer position and viewport
+height cap stay stable. Payment-mode pill movement follows runtime acceptance,
+not the initial click; initial layout and resize place it without motion. Motion
+helpers are owned by the UI layer, not imported as concrete components by app.js.
+Commercial's separately deployed landing/billing adapter deliberately contains only
+its used DOM utilities; the commercial build deploys those modules under /landing.

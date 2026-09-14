@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 
@@ -49,7 +50,7 @@ export default class WelcomePanel {
         this.error = '';
         this.returnFocusEl = document.activeElement;
         this.render();
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
         document.documentElement.removeAttribute('data-welcome-hidden');
         this.overlay.onclick = event => { if (event.target === this.overlay && !this.busy) this.close(); };
         this.escapeHandler = event => { if (event.key === 'Escape' && !this.busy) this.close(); };
@@ -60,8 +61,7 @@ export default class WelcomePanel {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
         localStorage.setItem(DISMISSED_KEY, 'true');
-        this.overlay.classList.add('hidden');
-        this.overlay.innerHTML = '';
+        hideSurface(this.overlay, { clear: true });
         document.documentElement.setAttribute('data-welcome-hidden', 'true');
         if (this.escapeHandler) document.removeEventListener('keydown', this.escapeHandler);
         this.escapeHandler = null;

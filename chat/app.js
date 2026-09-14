@@ -1,3 +1,4 @@
+import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
 // Main application logic
 import themeManager from './services/themeManager.js';
 import { snapshotAccessTrace, upsertAccessStage } from './domain/accessTrace.js';
@@ -176,6 +177,7 @@ const DELETE_HISTORY_COPY = {
  */
 class ChatApp {
     constructor(options = {}) {
+        watchDisclosures(document.body);
         // Product integrations supply behavior; the shared controller owns the
         // chat lifecycle. Missing integrations retain the standalone defaults.
         this.runtime = options.runtime || {};
@@ -3913,20 +3915,22 @@ class ChatApp {
         toast.id = 'app-toast';
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-foreground';
         // Removed fixed bottom-36, will be set by updateToastPosition
-        toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} `;
         toast.textContent = message;
         document.body.appendChild(toast);
+        showSurface(toast, 'toast');
 
         this.updateToastPosition();
 
         this._toastTimeout = setTimeout(() => {
-            toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
-            setTimeout(() => toast.remove(), 150);
+            hideSurface(toast, { remove: true });
         }, durationMs);
     }
 
     clearToast() {
-        document.getElementById('app-toast')?.remove();
+        const previous = document.getElementById('app-toast');
+        previous?.removeAttribute('id');
+        hideSurface(previous, { remove: true });
         clearTimeout(this._toastTimeout);
         this._toastTimeout = null;
     }
@@ -3963,7 +3967,7 @@ class ChatApp {
         const toast = document.createElement('div');
         toast.id = 'app-toast';
         // Use same styling as showToast for consistency
-        toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
+        toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground  flex items-center gap-2';
 
         const spinner = document.createElement('span');
         spinner.className = 'link-preview-spinner';
@@ -3973,12 +3977,12 @@ class ChatApp {
         toast.appendChild(spinner);
         toast.appendChild(text);
         document.body.appendChild(toast);
+        showSurface(toast, 'toast');
 
         this.updateToastPosition();
 
         return () => {
-            toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
-            setTimeout(() => toast.remove(), 150);
+            hideSurface(toast, { remove: true });
         };
     }
 
@@ -4033,6 +4037,7 @@ class ChatApp {
         toast.appendChild(refreshBtn);
         toast.appendChild(dismissBtn);
         document.body.appendChild(toast);
+        showSurface(toast, 'toast');
         this.updateToastVisible = true;
     }
 
@@ -4123,7 +4128,9 @@ class ChatApp {
     }
 
     clearUpdateToast() {
-        document.getElementById('app-update-toast')?.remove();
+        const previous = document.getElementById('app-update-toast');
+        previous?.removeAttribute('id');
+        hideSurface(previous, { remove: true });
         this.updateToastVisible = false;
     }
 
@@ -9280,7 +9287,7 @@ class ChatApp {
         if (!modal) return;
 
         this.deleteHistoryReturnFocusEl = document.activeElement;
-        modal.classList.remove('hidden');
+        showSurface(modal);
 
         requestAnimationFrame(() => {
             this.elements.deleteHistoryConfirmBtn?.focus();
@@ -9291,7 +9298,7 @@ class ChatApp {
         const modal = this.elements.deleteHistoryModal;
         if (!modal) return;
 
-        modal.classList.add('hidden');
+        hideSurface(modal);
 
         if (this.deleteHistoryReturnFocusEl && typeof this.deleteHistoryReturnFocusEl.focus === 'function') {
             this.deleteHistoryReturnFocusEl.focus();
@@ -9738,14 +9745,14 @@ class ChatApp {
     openSidebarFilterMenu() {
         const menu = this.elements.sidebarFilterMenu;
         if (!menu) return;
-        menu.classList.remove('hidden');
+        showSurface(menu, 'dropdown');
         this.updateSidebarFilterUI();
     }
 
     closeSidebarFilterMenu() {
         const menu = this.elements.sidebarFilterMenu;
         if (!menu) return;
-        menu.classList.add('hidden');
+        hideSurface(menu);
         this.updateSidebarFilterUI();
     }
 
@@ -10516,7 +10523,7 @@ class ChatApp {
                 if (this.supportsFeature('council', session) && this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {
                     e.preventDefault();
                     if (isSettingsOpen) {
-                        this.elements.settingsMenu.classList.add('hidden');
+                        hideSurface(this.elements.settingsMenu);
                         this.elements.settingsBtn?.classList.remove('tooltip-disabled');
                     }
                     this.modelPicker.toggle({ selectionMode: 'council-synthesis' });
@@ -10580,10 +10587,10 @@ class ChatApp {
             // Escape to close settings menu and session menus
             if (e.key === 'Escape') {
                 if (!this.elements.settingsMenu.classList.contains('hidden')) {
-                    this.elements.settingsMenu.classList.add('hidden');
+                    hideSurface(this.elements.settingsMenu);
                 }
                 document.querySelectorAll('.session-menu').forEach(menu => {
-                    menu.classList.add('hidden');
+                    hideSurface(menu);
                 });
             }
 

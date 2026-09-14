@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ChatArea Component
  * Manages the main chat messages area including rendering messages,
@@ -553,6 +554,7 @@ export default class ChatArea {
         const panel = this.ensureQuickAskWindow();
         if (this.quickAsk.activeKey && this.quickAsk.activeKey === key) {
             panel.classList.remove('hidden');
+            showSurface(panel);
             panel.setAttribute('aria-hidden', 'false');
             this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
             this.updateQuickAskLayerState();
@@ -567,6 +569,7 @@ export default class ChatArea {
         this.quickAsk.activeKey = key;
 
         panel.classList.remove('hidden');
+            showSurface(panel);
         panel.setAttribute('aria-hidden', 'false');
         this.updateQuickAskLayerState();
         panel.querySelector('.quick-ask-user-bubble').textContent = this.quickAsk.question;
@@ -843,7 +846,7 @@ export default class ChatArea {
             this.quickAsk.requestInFlight = false;
         }
         if (this.quickAsk.window) {
-            this.quickAsk.window.classList.add('hidden');
+            hideSurface(this.quickAsk.window);
             this.quickAsk.window.setAttribute('aria-hidden', 'true');
             this.updateQuickAskLayerState();
         }

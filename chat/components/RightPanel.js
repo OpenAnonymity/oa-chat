@@ -1,3 +1,4 @@
+import { setDisclosure } from '../ui/uiMotion.js';
 /**
  * Right Panel Component
  * Manages the ticket system UI panel
@@ -1536,7 +1537,7 @@ class RightPanel {
         if (!wasExpanded) {
             // Remove all existing expanded details
             document.querySelectorAll('.activity-log-details').forEach(details => {
-                details.remove();
+                setDisclosure(details, false, { remove: true });
             });
             this.expandedLogIds.clear();
         }
@@ -1549,7 +1550,7 @@ class RightPanel {
             // Collapse: remove the details element
             const details = logEntry.querySelector('.activity-log-details');
             if (details) {
-                details.remove();
+                setDisclosure(details, false, { remove: true });
             }
             this.expandedLogIds.delete(logId);
         } else {
@@ -1561,7 +1562,9 @@ class RightPanel {
             const detailsHTML = this.generateExpandedDetailsHTML(log);
             const contentColumn = logEntry.querySelector('.flex-1.min-w-0');
             if (contentColumn) {
-                contentColumn.insertAdjacentHTML('beforeend', detailsHTML);
+                // A rapid reopen reverses one existing detail instead of duplicating it.
+                if (!contentColumn.querySelector('.activity-log-details')) contentColumn.insertAdjacentHTML('beforeend', detailsHTML);
+                setDisclosure(contentColumn.querySelector('.activity-log-details'), true);
             }
 
             this.expandedLogIds.add(logId);

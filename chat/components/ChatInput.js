@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ChatInput Component
  * Manages the chat input area including textarea auto-resize,
@@ -427,7 +428,7 @@ export default class ChatInput {
                 const btnRect = btn.getBoundingClientRect();
                 // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
                 document.body.appendChild(menu);
-                menu.classList.remove('hidden');
+                showSurface(menu, 'dropdown');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
                 // Centre the panel over the gear button, clamped so it never
@@ -449,7 +450,7 @@ export default class ChatInput {
                 this.refreshMemorySettingsUI();
                 this.refreshMultiModelSettingsUI();
             } else {
-                menu.classList.add('hidden');
+                hideSurface(menu);
                 btn.classList.remove('tooltip-disabled');
             }
         });
@@ -660,7 +661,7 @@ export default class ChatInput {
                     this.handleImportMemory();
                     return; // Don't close menu until file is selected
                 }
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
             }
         });
 
@@ -707,7 +708,7 @@ export default class ChatInput {
         //     if (session) {
         //         await this.app.data.deleteSessionMessages(session.id);
         //         this.app.renderMessages();
-        //         this.app.elements.settingsMenu.classList.add('hidden');
+        //         hideSurface(this.app.elements.settingsMenu);
         //     }
         // });
 
@@ -723,12 +724,12 @@ export default class ChatInput {
         // Note: Toggle controls inside the menu use stopPropagation() to prevent this from firing
         document.addEventListener('click', () => {
             if (!this.app.elements.settingsMenu.classList.contains('hidden')) {
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
                 this.app.elements.settingsBtn.classList.remove('tooltip-disabled');
             }
             // Also close session menus
             document.querySelectorAll('.session-menu').forEach(menu => {
-                menu.classList.add('hidden');
+                hideSurface(menu);
             });
         });
 
@@ -2141,7 +2142,7 @@ export default class ChatInput {
         const menu = this.app.elements.settingsMenu;
         const button = this.app.elements.settingsBtn;
         if (!menu) return;
-        menu.classList.add('hidden');
+        hideSurface(menu);
         button?.classList.remove('tooltip-disabled');
     }
 
@@ -2455,7 +2456,7 @@ export default class ChatInput {
 
     closeSettingsMenu() {
         if (!this.app.elements.settingsMenu) return;
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
         this.app.elements.settingsBtn?.classList.remove('tooltip-disabled');
     }
 
@@ -2964,7 +2965,7 @@ export default class ChatInput {
         if (assistantMessages.length === 0) {
             alert('No assistant responses to copy');
             if (buttonElement) {
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
             }
             return;
         }
@@ -2981,14 +2982,14 @@ export default class ChatInput {
                 buttonElement.textContent = '✓ Copied!';
                 setTimeout(() => {
                     buttonElement.textContent = originalText;
-                    this.app.elements.settingsMenu.classList.add('hidden');
+                    hideSurface(this.app.elements.settingsMenu);
                 }, 1500);
             }
         } catch (err) {
             console.error('Failed to copy markdown:', err);
             alert('Failed to copy to clipboard');
             if (buttonElement) {
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
             }
         }
     }
@@ -3038,7 +3039,7 @@ export default class ChatInput {
         if (input) {
             input.click();
         }
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
     }
 
     async handleExportMemory() {
@@ -3062,7 +3063,7 @@ export default class ChatInput {
         if (input) {
             input.click();
         }
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
     }
 
     async applyImportedRuntimePreferences(appliedPreferences = []) {
@@ -3133,7 +3134,7 @@ export default class ChatInput {
         if (input) {
             input.click();
         }
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
     }
 
     /**

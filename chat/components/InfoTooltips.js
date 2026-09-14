@@ -1,3 +1,4 @@
+import { motionDuration } from '../ui/uiMotion.js';
 let initialized = false;
 
 /** Shared, portaled explanations for Settings info buttons and payment marks. */
@@ -6,7 +7,7 @@ export function setupInfoTooltips(settingsMenu) {
     initialized = true;
     const tooltip = document.createElement('div');
     tooltip.id = 'oa-info-tooltip';
-    tooltip.className = 'info-tooltip';
+    tooltip.className = 'info-tooltip t-tt';
     tooltip.setAttribute('role', 'tooltip');
     tooltip.hidden = true;
     document.body.appendChild(tooltip);
@@ -15,6 +16,7 @@ export function setupInfoTooltips(settingsMenu) {
     let showTimer;
     let hideTimer;
     let previousDescription;
+    let exitTimer;
     const trigger = target => target?.closest?.('[data-info-tooltip]');
 
     function hide() {
@@ -25,7 +27,9 @@ export function setupInfoTooltips(settingsMenu) {
             else active.removeAttribute('aria-describedby');
             if (active.hasAttribute('data-info-toggle')) active.setAttribute('aria-expanded', 'false');
         }
-        tooltip.hidden = true;
+        tooltip.dataset.show = 'false';
+        clearTimeout(exitTimer);
+        exitTimer = setTimeout(() => { tooltip.hidden = true; }, motionDuration(tooltip, '--tt-out-dur', 50));
         active = null;
         pinned = false;
     }
@@ -42,7 +46,10 @@ export function setupInfoTooltips(settingsMenu) {
         tooltip.textContent = button.dataset.infoTooltip;
         button.setAttribute('aria-describedby', [previousDescription, tooltip.id].filter(Boolean).join(' '));
         if (button.hasAttribute('data-info-toggle')) button.setAttribute('aria-expanded', 'true');
+        clearTimeout(exitTimer);
         tooltip.hidden = false;
+        void tooltip.offsetWidth;
+        tooltip.dataset.show = 'true';
         const rect = button.getBoundingClientRect();
         const width = tooltip.offsetWidth;
         const height = tooltip.offsetHeight;

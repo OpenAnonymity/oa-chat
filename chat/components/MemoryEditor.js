@@ -1,3 +1,4 @@
+import { showSurface, hideSurface, setDisclosure } from '../ui/uiMotion.js';
 /**
  * MemoryEditor — Modal UI for browsing and editing memory files.
  *
@@ -101,7 +102,7 @@ class MemoryEditor {
         }
 
         this.render();
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
 
         this.overlay.onclick = (event) => {
             if (event.target === this.overlay) {
@@ -122,8 +123,7 @@ class MemoryEditor {
         const { silent = false } = options;
         const keepBackfillRunning = this._isBackfillActive();
         this.isOpen = false;
-        this.overlay.classList.add('hidden');
-        this.overlay.innerHTML = '';
+        hideSurface(this.overlay, { clear: true });
         this.selectedPath = null;
         this.editorContent = '';
         this.isDirty = false;
@@ -790,11 +790,11 @@ class MemoryEditor {
 
         if (this.expandedDirs.has(dir)) {
             this.expandedDirs.delete(dir);
-            children?.classList.add('hidden');
+            setDisclosure(children, false);
             chevron?.classList.remove('is-expanded');
         } else {
             this.expandedDirs.add(dir);
-            children?.classList.remove('hidden');
+            setDisclosure(children, true);
             chevron?.classList.add('is-expanded');
         }
 

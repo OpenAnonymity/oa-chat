@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ShareModals Component
  * Handles all share-related modal UI (create, import, update, revoke)
@@ -375,7 +376,7 @@ class ShareModals {
             this._restoreMainInput = null;
         }
         if (this.currentModal) {
-            this.currentModal.remove();
+            hideSurface(this.currentModal, { remove: true });
             this.currentModal = null;
         }
     }
@@ -388,6 +389,7 @@ class ShareModals {
         modal.className = `fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm fade-in ${className}`;
         this.currentModal = modal;
         document.body.appendChild(modal);
+        queueMicrotask(() => { if (this.currentModal === modal) showSurface(modal); });
 
         // Prevent main input from stealing focus while modal is open
         const mainInput = document.getElementById('message-input');
