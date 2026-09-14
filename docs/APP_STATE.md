@@ -1844,6 +1844,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     The memory panel/import/export storage bank is also lazy and only constructs
     when the feature is enabled and the user explicitly opens or uses memory
     management.
+- 2026-09-14: Quick Ask caps its growing panel at the space below its positioned
+  top edge, leaving 16px at the viewport bottom. Chat scrolling and window resize
+  re-fit the panel while retaining its content anchor. The mini-chat scrolls
+  internally and is keyboard focusable. Streaming follows the end only while
+  the reader is within 24px of the bottom; scrolling upward preserves their place.
 - 2026-06-03: Inline quick ask is a non-persistent mini-chat for selected
   assistant text.
   - Selecting text inside an assistant `.message-content` shows a compact

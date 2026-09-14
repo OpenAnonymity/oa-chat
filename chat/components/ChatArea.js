@@ -414,7 +414,10 @@ export default class ChatArea {
             }
         });
 
-        window.addEventListener('resize', () => this.hideQuickAskPopover());
+        window.addEventListener('resize', () => {
+            this.hideQuickAskPopover();
+            this.syncQuickAskWindowToScroll();
+        });
         this.app.elements.chatArea?.addEventListener('scroll', () => {
             this.hideQuickAskPopover();
             this.syncQuickAskWindowToScroll();
@@ -590,7 +593,7 @@ export default class ChatArea {
         panel.setAttribute('aria-label', 'Inline quick ask');
         panel.setAttribute('aria-hidden', 'true');
         panel.innerHTML = `
-            <div class="quick-ask-mini-chat" tabindex="-1">
+            <div class="quick-ask-mini-chat" tabindex="0" aria-label="Scrollable Ask answer">
                 <div class="quick-ask-turn quick-ask-turn-user">
                     <div class="quick-ask-user-bubble message-user py-3 px-4 font-normal max-w-full"></div>
                 </div>
@@ -631,6 +634,20 @@ export default class ChatArea {
         const panelRect = panel.getBoundingClientRect();
         const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
         const height = panelRect.height || 360;
+        const maxTop = Math.max(margin, window.innerHeight - margin - Math.min(height, 160));
+        const fitToViewport = (left, top, visibility = '') => {
+            const fittedTop = Math.min(Math.max(margin, top), maxTop);
+            Object.assign(panel.style, {
+                left: `${Math.max(margin, Math.min(left, window.innerWidth - width - margin))}px`,
+                top: `${fittedTop}px`,
+                visibility
+            });
+            // Constrain growth using the space below the panel's actual position.
+            // A viewport-wide height cap alone lets a low panel grow off-screen.
+            panel.style.setProperty('--quick-ask-available-height',
+                `${Math.max(0, window.innerHeight - fittedTop - margin)}px`);
+            return fittedTop;
+        };
 
         if (options.preserveAnchor && this.quickAsk.windowAnchor) {
             const anchoredLeft = (chatAreaRect?.left || 0) + this.quickAsk.windowAnchor.left - scrollLeft;
@@ -638,11 +655,7 @@ export default class ChatArea {
             const isInChatViewport = !chatAreaRect ||
                 (anchoredTop + height > chatAreaRect.top && anchoredTop < chatAreaRect.bottom);
 
-            Object.assign(panel.style, {
-                left: `${anchoredLeft}px`,
-                top: `${anchoredTop}px`,
-                visibility: isInChatViewport ? '' : 'hidden'
-            });
+            fitToViewport(anchoredLeft, anchoredTop, isInChatViewport ? '' : 'hidden');
             return;
         }
 
@@ -664,13 +677,7 @@ export default class ChatArea {
         const top = belowTop + height <= window.innerHeight - margin
             ? belowTop
             : Math.max(margin, aboveTop);
-        const clampedTop = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
-
-        Object.assign(panel.style, {
-            left: `${left}px`,
-            top: `${clampedTop}px`,
-            visibility: ''
-        });
+        const clampedTop = fitToViewport(left, top);
         this.quickAsk.windowAnchor = {
             left: left - (chatAreaRect?.left || 0) + scrollLeft,
             top: clampedTop - (chatAreaRect?.top || 0) + scrollTop
@@ -742,6 +749,9 @@ export default class ChatArea {
         const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
         if (!answerEl) return;
         const assistantBubble = answerEl.closest('.quick-ask-assistant-bubble');
+        const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
+        const followAnswer = miniChat &&
+            miniChat.scrollHeight - miniChat.clientHeight - miniChat.scrollTop <= 24;
 
         if (options.pending && !content) {
             assistantBubble?.classList.add('quick-ask-assistant-pending');
@@ -757,10 +767,7 @@ export default class ChatArea {
         this.updateQuickAskStatus(content ? '' : options.status);
         answerEl.innerHTML = this.app.processContentWithLatex(content || '');
         renderMathContent(answerEl);
-        const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
-        if (miniChat) {
-            miniChat.scrollTop = miniChat.scrollHeight;
-        }
+        if (followAnswer) miniChat.scrollTop = miniChat.scrollHeight;
     }
 
     updateQuickAskReasoning(reasoning, options = {}) {
