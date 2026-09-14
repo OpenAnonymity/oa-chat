@@ -1,3 +1,13 @@
+## 2026-09-14: Ask chooses room for a readable answer
+
+- Ask opens below a selection when at least 320px is available; otherwise it
+  chooses above if that side has more room. Placement no longer depends on the
+  height of the initial loading message.
+- The edge beside the selected text stays anchored: an above panel grows upward,
+  a below panel downward. Streaming never flips sides. Long answers retain their
+  internal scrolling and reader-position behavior. Chat scroll and viewport resize
+  re-fit the same side, preserving the selection gap where space permits.
+
 ## 2026-09-14: Consistent model waiting shimmer
 
 - zkAPI now shows “Waiting for response” with the same text shimmer as OA tickets,

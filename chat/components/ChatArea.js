@@ -634,53 +634,52 @@ export default class ChatArea {
         const panelRect = panel.getBoundingClientRect();
         const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
         const height = panelRect.height || 360;
-        const maxTop = Math.max(margin, window.innerHeight - margin - Math.min(height, 160));
-        const fitToViewport = (left, top, visibility = '') => {
-            const fittedTop = Math.min(Math.max(margin, top), maxTop);
+        const viewportHeight = window.innerHeight;
+        const fitToViewport = (left, edge, side, visibility = '') => {
+            const above = side === 'above';
+            const fittedEdge = Math.max(margin, Math.min(edge, viewportHeight - margin));
             Object.assign(panel.style, {
                 left: `${Math.max(margin, Math.min(left, window.innerWidth - width - margin))}px`,
-                top: `${fittedTop}px`,
+                top: above ? 'auto' : `${fittedEdge}px`,
+                bottom: above ? `${viewportHeight - fittedEdge}px` : 'auto',
                 visibility
             });
-            // Constrain growth using the space below the panel's actual position.
-            // A viewport-wide height cap alone lets a low panel grow off-screen.
+            // Fix the edge nearest the selection. Above panels grow upward;
+            // below panels grow downward, without switching sides mid-response.
             panel.style.setProperty('--quick-ask-available-height',
-                `${Math.max(0, window.innerHeight - fittedTop - margin)}px`);
-            return fittedTop;
+                `${Math.max(0, above ? fittedEdge - margin : viewportHeight - fittedEdge - margin)}px`);
         };
 
         if (options.preserveAnchor && this.quickAsk.windowAnchor) {
-            const anchoredLeft = (chatAreaRect?.left || 0) + this.quickAsk.windowAnchor.left - scrollLeft;
-            const anchoredTop = (chatAreaRect?.top || 0) + this.quickAsk.windowAnchor.top - scrollTop;
+            const anchor = this.quickAsk.windowAnchor;
+            const anchoredLeft = (chatAreaRect?.left || 0) + anchor.left - scrollLeft;
+            const anchoredEdge = (chatAreaRect?.top || 0) + anchor.top - scrollTop;
+            const anchoredTop = anchor.side === 'above' ? anchoredEdge - height : anchoredEdge;
             const isInChatViewport = !chatAreaRect ||
                 (anchoredTop + height > chatAreaRect.top && anchoredTop < chatAreaRect.bottom);
 
-            fitToViewport(anchoredLeft, anchoredTop, isInChatViewport ? '' : 'hidden');
+            fitToViewport(anchoredLeft, anchoredEdge, anchor.side, isInChatViewport ? '' : 'hidden');
             return;
         }
 
         const sourceRect = rect || {
             left: window.innerWidth / 2,
-            right: window.innerWidth / 2,
-            top: window.innerHeight / 3,
-            bottom: window.innerHeight / 3,
-            width: 0,
-            height: 0
+            top: viewportHeight / 3,
+            bottom: viewportHeight / 3,
+            width: 0
         };
         const centerX = sourceRect.left + ((sourceRect.width || 0) / 2);
-        const left = Math.min(
-            Math.max(margin, centerX - (width / 2)),
-            window.innerWidth - width - margin
-        );
-        const belowTop = sourceRect.bottom + margin;
-        const aboveTop = sourceRect.top - height - margin;
-        const top = belowTop + height <= window.innerHeight - margin
-            ? belowTop
-            : Math.max(margin, aboveTop);
-        const clampedTop = fitToViewport(left, top);
+        const left = centerX - (width / 2);
+        const belowSpace = viewportHeight - sourceRect.bottom - margin * 2;
+        const aboveSpace = sourceRect.top - margin * 2;
+        // Choose using room for the answer, not the tiny initial loading row.
+        const side = belowSpace < 320 && aboveSpace > belowSpace ? 'above' : 'below';
+        const edge = side === 'above' ? sourceRect.top - margin : sourceRect.bottom + margin;
+        fitToViewport(left, edge, side);
         this.quickAsk.windowAnchor = {
             left: left - (chatAreaRect?.left || 0) + scrollLeft,
-            top: clampedTop - (chatAreaRect?.top || 0) + scrollTop
+            top: edge - (chatAreaRect?.top || 0) + scrollTop,
+            side
         };
     }
 
