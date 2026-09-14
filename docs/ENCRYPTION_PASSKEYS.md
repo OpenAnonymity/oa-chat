@@ -22,6 +22,12 @@ operation, so stale async work cannot repopulate a replacement account.
 
 ## New-account flow
 
+After Google sign-in, the app shows the same brief passkey explanation as
+username setup, then opens the native creation prompt automatically once.
+If the browser refuses or the user cancels, an explicit retry button remains.
+This removes an extra UI click; it does not remove encryption-passkey setup.
+
+
 1. The org completes OAuth and maps the provider's stable subject to an internal
    OA account ID.
 2. The browser generates a random 256-bit account master key.
@@ -51,15 +57,14 @@ wrap/unwrap operations used by the ordinary browser flow.
 
 ## Username-account flow
 
-Google and username entry share the same encryption explanation card. Username
-lookup selects **Encrypt your data → Create passkey** for registration or
-**Welcome back → Unlock** for returning accounts, and waits for that action before
-WebAuthn. Username Unlock fetches a fresh challenge rather than holding the initial
-lookup challenge while the user reads. This UI parity does not turn username into
-OAuth or add a second passkey ceremony; it remains one proof for authentication and PRF.
+Google and username entry share the same passkey explanation and automatic
+continuation. New username accounts briefly show the explanation before creation;
+returning accounts proceed to unlock. A refused prompt exposes a manual retry.
+Username Unlock fetches a fresh challenge rather than holding the initial lookup
+challenge while the user reads. This UI parity does not turn username into OAuth
+or add a second passkey ceremony; it remains one proof for authentication and PRF.
 New username lookup does not reserve the name or create a registration challenge;
-those start only on **Create passkey**, so reading or backing out of the explanation
-cannot expire the challenge. Finalization briefly disables dismissal while the
+those start when the creation ceremony begins, after the brief explanation. Finalization briefly disables dismissal while the
 master-key wrapper is committed. Late cancelled operations cannot change a new
 dialog or replacement pending account.
 

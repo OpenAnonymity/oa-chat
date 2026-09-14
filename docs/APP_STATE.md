@@ -1,3 +1,15 @@
+## 2026-09-14: Google passkey setup matches username entry
+
+- New Google accounts now show the shared brief passkey explanation and open
+  the native creation prompt automatically once, like new username accounts.
+  The extra initial Create passkey card is skipped; cancelled or refused
+  prompts retain an explicit retry action. Returning Google accounts retain
+  automatic unlock, and legacy recovery/migration remains explicit.
+- The setup timer is bound to the open login view and account. Closing,
+  switching accounts, losing the verified session, or entering recovery cannot
+  launch a delayed passkey ceremony. Key generation, wrapping, and persistence
+  continue through the existing account service without changes.
+
 ## 2026-09-14: Checkout toast placement and username challenge errors
 
 - Commercial checkout can request `showToast` with `{ position: 'top-center' }`.

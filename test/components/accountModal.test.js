@@ -1108,12 +1108,13 @@ test('cancelling the first-time sheet goes back to an empty username field; a re
     }
 });
 
-test('username and Google share exactly the same encryption explanation shell and copy', () => {
+test('username and Google share the same fallback encryption explanation shell and copy', () => {
     for (const isSetup of [false, true]) {
         const { modal } = continuationModal();
         modal.generatedUsername = isSetup ? 'winter-owl' : null;
         modal.creationStep = isSetup ? 'username_ready' : 'idle';
         modal.accountState.oauthSetupRequired = isSetup;
+        modal.passkeyAutoPromptAttempted = true;
         const google = modal.renderOAuthUnlockUI();
         const username = modal.renderUsernameUnlockUI();
         const withoutSecondaryAction = html => html.replace(/<button[^>]*class="account-unlock-signout"[^>]*>[\s\S]*?<\/button>/, '');
@@ -1922,7 +1923,7 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
     }
 });
 
-test('opening a Google account prompts its passkey at once, once, for keyring unlock only', async () => {
+test('opening a Google account automatically prompts once for setup or keyring unlock', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
         activeElement: null,
@@ -1936,7 +1937,7 @@ test('opening a Google account prompts its passkey at once, once, for keyring un
         [{ oauthKeyringRequired: true, busy: true }, 0],
         [{ oauthKeyringRequired: true, passkeySupported: false }, 0],
         [{ oauthKeyringRequired: true, oauthLegacyPasskeyRequired: true }, 0],
-        [{ oauthSetupRequired: true }, 0], // first-time setup waits on Create passkey
+        [{ oauthSetupRequired: true }, 100], // first-time setup follows the shared intro
         [{ oauthRecoveryRequired: true }, 0]
     ];
     for (const [flags, expectedPrompts] of cases) {
@@ -1946,12 +1947,13 @@ test('opening a Google account prompts its passkey at once, once, for keyring un
             authBootstrapComplete: true, ...flags
         };
         let prompts = 0;
+        let onState;
         const modal = new AccountModal({
             services: {
                 account: {
                     getState: () => state,
-                    subscribe: () => () => {},
-                    clearErrors() {},
+                    subscribe(listener) { onState = listener; return () => {}; },
+                    clearErrors() { onState?.(state); },
                     async unlockOAuthKeyring() { prompts += 1; return false; },
                     async setupOAuthKeyring() { prompts += 100; return false; },
                     async unlockWithPasskey() { prompts += 100; return false; }
@@ -1963,14 +1965,16 @@ test('opening a Google account prompts its passkey at once, once, for keyring un
         modal.overlay = { classList: { add() {}, remove() {} }, innerHTML: '', querySelector() { return null; }, querySelectorAll() { return []; } };
         modal.render = () => {};
         modal.focusModal = () => {};
+        modal.remainingPasskeyIntroMs = () => 0;
         modal.escapeHtml = value => String(value ?? '');
         try {
             modal.open();
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise(resolve => setTimeout(resolve, 10));
             assert.equal(prompts, expectedPrompts, JSON.stringify(flags));
+            if (flags.oauthSetupRequired) assert.equal(modal.animationTimeouts.length, 1);
             // A second render/open of the same dialog never re-prompts on its own.
             modal.maybeAutoPromptPasskey();
-            await new Promise(resolve => setImmediate(resolve));
+            await new Promise(resolve => setTimeout(resolve, 10));
             assert.equal(prompts, expectedPrompts, `repeat ${JSON.stringify(flags)}`);
         } finally {
             modal.destroy();
@@ -2441,5 +2445,106 @@ test('a host that requires sign-in gets an undismissable dialog with the legal l
     } finally {
         modal.destroy();
         globalThis.document = originalDocument;
+    }
+});
+
+test('new Google setup shows the shared caption before one automatic prompt and retains retry after refusal', async () => {
+    const previousSetTimeout = globalThis.setTimeout;
+    let fire;
+    let prompts = 0;
+    const state = { accountId: 'new-google', sessionVerified: true, oauthSetupRequired: true, passkeySupported: true, busy: false };
+    const modal = Object.assign(Object.create(AccountModal.prototype), {
+        isOpen: true, accountState: state, loginViewVersion: 2,
+        animationTimeouts: [], passkeyAutoPromptAttempted: false,
+        escapeHtml: value => String(value ?? ''),
+        accountService: { getState: () => state },
+        render() {}, focusModal() {},
+        remainingPasskeyIntroMs: () => 1500,
+        async handleOAuthKeyringUnlock(options) {
+            assert.equal(options.restoreRetryFocus, true);
+            prompts += 1;
+            state.error = 'Passkey cancelled';
+        }
+    });
+    globalThis.setTimeout = (fn, ms) => { assert.equal(ms, 1500); fire = fn; return 1; };
+    try {
+        const firstFrame = modal.renderOAuthUnlockUI();
+        assert.match(firstFrame, /data-waiting="true"/);
+        assert.match(firstFrame, /uses a passkey to secure your account/);
+        modal.maybeAutoPromptPasskey();
+        assert.equal(modal.oauthIntroPending, true);
+        assert.equal(prompts, 0);
+        fire();
+        await Promise.resolve();
+        assert.equal(prompts, 1);
+        assert.equal(modal.oauthIntroPending, false);
+        modal.maybeAutoPromptPasskey();
+        assert.equal(prompts, 1);
+        const retry = modal.renderOAuthUnlockUI();
+        assert.doesNotMatch(retry, /data-waiting="true"/);
+        assert.match(retry, /Try again/);
+    } finally { globalThis.setTimeout = previousSetTimeout; }
+});
+
+test('scheduled Google setup cannot prompt after closing, changing accounts, or entering recovery', () => {
+    const previousSetTimeout = globalThis.setTimeout;
+    try {
+        for (const change of [
+            modal => { modal.isOpen = false; },
+            modal => { modal.loginViewVersion += 1; },
+            modal => { modal.accountState.accountId = 'other'; },
+            modal => { modal.accountState.oauthRecoveryRequired = true; },
+            modal => { modal.accountState.sessionVerified = false; }
+        ]) {
+            let fire;
+            const state = { accountId: 'new-google', sessionVerified: true, oauthSetupRequired: true };
+            const modal = Object.assign(Object.create(AccountModal.prototype), {
+                isOpen: true, accountState: state, loginViewVersion: 2, animationTimeouts: [],
+                accountService: { getState: () => state }, render() {}, focusModal() {}, remainingPasskeyIntroMs: () => 1500,
+                handleOAuthKeyringUnlock() { assert.fail('stale setup must not open a passkey prompt'); }
+            });
+            globalThis.setTimeout = fn => { fire = fn; return 1; };
+            modal.maybeAutoPromptPasskey();
+            change(modal);
+            fire();
+        }
+    } finally { globalThis.setTimeout = previousSetTimeout; }
+});
+
+test('Google setup arriving after the dialog opens schedules once when restoration becomes ready', async () => {
+    const previousDocument = globalThis.document;
+    let onState;
+    let prompts = 0;
+    let state = { busy: true, passkeySupported: true, status: 'locked' };
+    globalThis.document = { activeElement: null, getElementById: () => null, addEventListener() {}, removeEventListener() {} };
+    const modal = new AccountModal({ services: {
+        account: {
+            getState: () => state,
+            subscribe(listener) { onState = listener; return () => {}; },
+            clearErrors() {},
+            async setupOAuthKeyring() { prompts += 1; return false; }
+        },
+        sync: { getStatus: () => ({}), subscribe: () => () => {} }
+    } });
+    modal.overlay = { classList: { add() {}, remove() {} }, innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+    modal.render = () => {};
+    modal.focusModal = () => {};
+    modal.remainingPasskeyIntroMs = () => 0;
+    try {
+        modal.open();
+        assert.equal(prompts, 0);
+        state = { ...state, accountId: 'restored-new-google', sessionVerified: true, oauthSetupRequired: true };
+        onState(state);
+        assert.equal(prompts, 0, 'restoration is still busy');
+        state = { ...state, busy: false };
+        onState(state);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(prompts, 1);
+        onState({ ...state });
+        await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(prompts, 1, 'subsequent notifications must not repeat the ceremony');
+    } finally {
+        modal.destroy();
+        globalThis.document = previousDocument;
     }
 });

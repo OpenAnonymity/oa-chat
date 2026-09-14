@@ -121,6 +121,8 @@ class AccountModal {
                 (this.creationStep === 'idle' || this.creationStep === 'complete')
             ) {
                 this.render();
+                // Session restoration can finish after the dialog opened.
+                this.maybeAutoPromptPasskey();
             }
         });
 
@@ -397,9 +399,10 @@ class AccountModal {
 
         this.resetCreationFlow();
         this.recoveryStep = 'idle';
-        // Clear any stale errors when opening
-        this.accountService.clearErrors();
+        // clearErrors notifies subscribers synchronously and can schedule the
+        // automatic prompt. Reset the one-attempt guard before that notification.
         this.passkeyAutoPromptAttempted = false;
+        this.accountService.clearErrors();
         // The arrival layer from index.html has been showing the same caption
         // since before any script ran: the dialog's copy is already on
         // screen, so it must not enter again, and the hold before an
@@ -425,28 +428,40 @@ class AccountModal {
         this.maybeAutoPromptPasskey();
     }
 
-    /**
-     * A returning account goes straight to the passkey: no explanation card
-     * to click through. Only the plain Google keyring unlock qualifies — setup,
-     * legacy migration and legacy-passkey accounts still need their one line
-     * of context first. Runs once per open; a cancelled or failed prompt
-     * leaves the card in its untitled Try again state, never re-prompts.
-     */
+    /** One automatic ceremony per open; cancellations leave an explicit retry. */
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
         if (!this.isOpen || this.passkeyAutoPromptAttempted) return;
-        // Only a returning keyring unlock prompts on open. First-time setup
-        // waits for Create passkey on a one-line card, like every other site
-        // that creates a passkey: the OS sheet is unexpected without it, and
-        // the click gives WebAuthn the user activation Safari wants. The
-        // legacy recovery migration and legacy-passkey accounts explain
-        // themselves first too.
-        const automatic = state.oauthKeyringRequired && !state.oauthSetupRequired &&
-            !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired;
-        if (!automatic) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
+        if (state.oauthRecoveryRequired || state.oauthLegacyPasskeyRequired) return;
+        const setup = state.oauthSetupRequired === true;
+        if (setup && !state.sessionVerified) return;
+        if (!setup && !state.oauthKeyringRequired) return;
         this.passkeyAutoPromptAttempted = true;
-        void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
+        if (!setup) {
+            void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
+            return;
+        }
+        // Match username setup: hold the shared explanation, then open the
+        // OS prompt. Never postpone the account/key operation once it starts.
+        const viewVersion = this.loginViewVersion;
+        const accountId = state.accountId;
+        this.oauthIntroPending = true;
+        this.render();
+        this.focusModal();
+        this.animationTimeouts.push(setTimeout(() => {
+            if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
+            this.oauthIntroPending = false;
+            const current = this.accountService.getState();
+            if (current.accountId !== accountId || !current.sessionVerified ||
+                !current.oauthSetupRequired || current.busy || current.error ||
+                current.passkeySupported === false || current.oauthRecoveryRequired ||
+                current.oauthLegacyPasskeyRequired) {
+                this.render();
+                return;
+            }
+            void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
+        }, this.remainingPasskeyIntroMs()));
     }
 
     async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
@@ -581,6 +596,7 @@ class AccountModal {
         this.usernameUnlockReady = false;
         this.waitingCaptionShown = false;
         this.usernameIntroPending = false;
+        this.oauthIntroPending = false;
         this.dropHeldRegistration();
         hideSurface(this.overlay, { clear: true });
         this.clearAnimationTimeouts();
@@ -612,6 +628,7 @@ class AccountModal {
         this.revealedDigits = 0;
         this.waitingCaptionShown = false;
         this.usernameIntroPending = false;
+        this.oauthIntroPending = false;
         this.clearAnimationTimeouts();
     }
 
@@ -665,6 +682,7 @@ class AccountModal {
 
     async handleOAuthAuthentication(provider, { completionToken = null } = {}) {
         this.oauthProvider = provider;
+        this.passkeyAutoPromptAttempted = false;
         this.creationStep = 'oauth_authorizing';
         this.creationError = null;
         this.oauthHandoffPending = Boolean(completionToken);
@@ -692,7 +710,7 @@ class AccountModal {
         }
         this.render();
         // OAuth completes inside an already-open dialog. If it resolved to a
-        // returning keyring, open its passkey prompt now rather than waiting
+        // keyring setup or unlock, continue to its passkey prompt rather than waiting
         // for a close/reopen that may never happen.
         this.maybeAutoPromptPasskey();
     }
@@ -1944,11 +1962,16 @@ class AccountModal {
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
         const showLogout = Boolean(state.oauthRecoveryRequired || state.oauthSetupRequired);
+        // Paint the caption from the first setup frame, without flashing the
+        // Create button before maybeAutoPromptPasskey schedules the ceremony.
+        const automaticSetup = state.oauthSetupRequired && state.sessionVerified && !this.passkeyAutoPromptAttempted &&
+            !state.error && state.passkeySupported !== false &&
+            !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired;
         return this.renderPasskeyUnlockCard({
             isLegacyMigration: state.oauthRecoveryRequired,
             isSetup: state.oauthSetupRequired,
             isLegacyPasskey: state.oauthLegacyPasskeyRequired,
-            busy: Boolean(state.busy),
+            busy: Boolean(state.busy || this.oauthIntroPending || automaticSetup),
             error: state.error ? String(state.error) : '',
             secondaryId: showLogout ? 'account-clear-btn' : '',
             secondaryLabel: showLogout ? 'Log out' : ''
