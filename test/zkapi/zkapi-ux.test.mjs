@@ -276,7 +276,7 @@ test('low-text proposals keep protocol detail behind disclosure and preserve the
     assert.match(templates, /edit-prompt-btn/);
     assert.match(templates, /pending-response-line/);
     assert.match(templates, /buildDetailedPendingIndicator\(presentation/);
-    assert.match(pendingIndicator, /pending-response-dots/);
+    assert.doesNotMatch(pendingIndicator, /pending-response-dots/);
     assert.match(css, /prefers-reduced-motion: reduce/);
     assert.match(css, /zkapi-composer-state--ambient/);
 });

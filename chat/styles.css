@@ -1582,7 +1582,10 @@ a.quick-ask-source:focus-visible {
     opacity: 1; /* Override parent's 0.85 opacity to match bold subtitles */
 }
 
-.pending-response-simple,
+.pending-response-simple {
+    min-width: 0;
+}
+
 .pending-security-summary {
     display: flex;
     align-items: center;

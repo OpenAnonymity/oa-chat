@@ -94,7 +94,6 @@ export function buildDetailedPendingIndicator(presentation, { phase, traceId = '
             </div>
         </details>
         <div class="pending-response-simple${showDetails ? ' hidden' : ''}">
-            <span class="pending-response-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             <span class="pending-response-label pending-response-streaming">${escape(presentation.current)}</span>
         </div>
     </div>`;

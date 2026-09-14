@@ -1523,7 +1523,7 @@ test('user bubbles omit delivery state while assistant rows show precise private
         );
         assert.match(thinking, /data-phase="waiting-response"/);
         assert.match(thinking, /data-progress-phase="waiting-response"/);
-        assert.match(thinking, />Thinking</);
+        assert.match(thinking, /pending-response-label pending-response-streaming">Waiting for response</);
         assert.doesNotMatch(thinking, /Generate funding proof|zero-knowledge proof is exchanged/);
     }
 
@@ -1566,7 +1566,7 @@ test('assistant pending rows keep verbose announcements clipped with one compact
             name: 'model wait',
             phase: 'waiting-response',
             progress: { kind: 'access', phase: 'Hold stale proof copy out of view' },
-            current: 'Thinking',
+            current: 'Waiting for response',
             announcement: 'Message sent. Waiting for the response.',
             securityVisible: false
         }

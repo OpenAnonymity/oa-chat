@@ -82,7 +82,7 @@ test('private-access progress maps truthful phases to compact copy and ordered s
         phase: 'proving'
     });
     assert.equal(thinking.mode, 'thinking');
-    assert.equal(thinking.current, 'Thinking');
+    assert.equal(thinking.current, 'Waiting for response');
     assert.deepEqual(thinking.steps, []);
 });
 

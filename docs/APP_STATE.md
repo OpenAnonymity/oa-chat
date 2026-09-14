@@ -1,3 +1,13 @@
+## 2026-09-14: Consistent model waiting shimmer
+
+- zkAPI now shows “Waiting for response” with the same text shimmer as OA tickets,
+  without the additional animated dots. Access/proof preparation remains separate.
+- Verified the existing shimmer CSS against production styles.css: the gradient,
+  240% background and 1.9-second alternating animation match exactly. The original
+  pending shimmer was introduced in commit 10b1ced. zkAPI’s smaller text and flex
+  layout overrides now apply only to preparation details, leaving the waiting row
+  at production’s 12px size and normal line layout.
+
 ## 2026-09-13: Inference Tickets explanation
 
 - The commercial Inference Tickets question-mark panel leads with the 20-minute

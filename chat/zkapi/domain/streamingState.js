@@ -219,7 +219,7 @@ export function derivePendingIndicatorPresentation(phase, progress = null) {
     if (normalizedPhase === 'waiting-response') {
         return {
             mode: 'thinking',
-            current: 'Thinking',
+            current: 'Waiting for response',
             description: 'Message sent. Waiting for the response.',
             progressPhase: 'waiting-response',
             steps: []

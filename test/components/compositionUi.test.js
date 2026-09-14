@@ -51,12 +51,13 @@ test('generic preparation presentation escapes untrusted copy in every surface',
     assert.equal(normalizePendingPhase('preparing-access'), 'preparing-access');
 });
 
-test('response-ready presentation hides preparation details and shows a single thinking row', () => {
+test('response-ready presentation hides preparation details and shows the production waiting shimmer', () => {
     const html = buildDetailedPendingIndicator({
-        mode: 'thinking', current: 'Thinking', description: 'Message sent', steps: []
+        mode: 'thinking', current: 'Waiting for response', description: 'Message sent', steps: []
     }, { phase: 'waiting-response' });
     assert.match(html, /pending-security-trace hidden/);
-    assert.match(html, /class="pending-response-simple"/);
+    assert.match(html, /class="pending-response-simple">\s*<span class="pending-response-label pending-response-streaming">Waiting for response<\/span>/);
+    assert.doesNotMatch(html, /pending-response-dots/);
     assert.doesNotMatch(html, /user-message|delivery-state|Queued/);
 });
 
