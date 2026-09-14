@@ -7,7 +7,16 @@ import {
 } from '../../chat/zkapi/components/PrivateBalanceHelp.js';
 
 function helpRoot(scope = 'panel') {
-    const content = { billing: { hidden: true }, expiry: { hidden: true } };
+    // The motion adapter uses both native hidden and the existing utility class.
+    // Model that DOM contract so this test exercises the real disclosure path.
+    const panel = () => {
+        const classes = new Set(['hidden']);
+        return { hidden: true, inert: true, classList: {
+            toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
+            contains(name) { return classes.has(name); }
+        } };
+    };
+    const content = { billing: panel(), expiry: panel() };
     const buttons = ['billing', 'expiry'].map(kind => {
         const listeners = new Map();
         return {
@@ -56,6 +65,8 @@ test('help clicks patch only their own disclosure and preserve independent open 
     attachPrivateBalanceHelp(root, owner);
     root.buttons[0].click();
     assert.equal(root.content.billing.hidden, false);
+    assert.equal(root.content.billing.inert, false);
+    assert.equal(root.content.billing.classList.contains('hidden'), false);
     assert.equal(root.content.expiry.hidden, true);
     assert.equal(root.buttons[0].attributes.get('aria-expanded'), 'true');
     root.buttons[1].click();
@@ -63,6 +74,8 @@ test('help clicks patch only their own disclosure and preserve independent open 
     root.buttons[0].click();
     assert.deepEqual(owner.privateBalanceHelpOpen, { billing: false, expiry: true });
     assert.equal(root.content.billing.hidden, true);
+    assert.equal(root.content.billing.inert, true);
+    assert.equal(root.content.billing.classList.contains('hidden'), true);
     assert.equal(root.buttons[0].attributes.get('aria-expanded'), 'false');
     assert.match(privateBalanceHelpContent('panel', 'billing', owner.privateBalanceHelpOpen.billing), / hidden>/);
     assert.doesNotMatch(privateBalanceHelpContent('panel', 'expiry', owner.privateBalanceHelpOpen.expiry), / hidden>/);

@@ -2768,3 +2768,9 @@ not the initial click; initial layout and resize place it without motion. Motion
 helpers are owned by the UI layer, not imported as concrete components by app.js.
 Commercial's separately deployed landing/billing adapter deliberately contains only
 its used DOM utilities; the commercial build deploys those modules under /landing.
+
+The private-balance help fixture must implement `classList.toggle`, native `hidden`,
+and `inert`: `setDisclosure` now owns those states together. After changing shared
+motion adapters, run the entire native zkAPI suite, including
+`private-balance-help.test.mjs`, not only the wallet render tests. Vercel runs both
+the core and native suites from the pinned commercial checkout.
