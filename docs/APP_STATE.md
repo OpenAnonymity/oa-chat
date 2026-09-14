@@ -1,3 +1,14 @@
+## 2026-09-14: Toggle motion
+
+- Settings and small switches use the Transitions.dev toggle recipe: 350ms thumb
+  overshoot and settle, with travel matched to each existing control size.
+- `ui/toggleMotion.js` initializes controls at their current checked state and
+  enables motion after pointer/keyboard interaction changes that state. Newly
+  rendered controls do not play an off animation. Reduced motion skips keyframes.
+- Legacy transforms are excluded on animated small switches to avoid double
+  movement. The commercial Billing toggle uses the same recipe and retains its
+  two-step consent: revealing the explanation does not move the thumb.
+
 ## 2026-09-14: Ask chooses room for a readable answer
 
 - Ask opens below a selection when at least 320px is available; otherwise it

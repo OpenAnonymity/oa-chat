@@ -1,3 +1,4 @@
+import { installToggleMotion } from './ui/toggleMotion.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
 // Main application logic
 import themeManager from './services/themeManager.js';
@@ -178,6 +179,7 @@ const DELETE_HISTORY_COPY = {
 class ChatApp {
     constructor(options = {}) {
         watchDisclosures(document.body);
+        installToggleMotion(document.body);
         // Product integrations supply behavior; the shared controller owns the
         // chat lifecycle. Missing integrations retain the standalone defaults.
         this.runtime = options.runtime || {};

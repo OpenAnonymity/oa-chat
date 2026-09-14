@@ -5118,7 +5118,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     height: 12px;
 }
 
-.switch-toggle.switch-toggle-sm.switch-active .switch-toggle-indicator {
+.switch-toggle.switch-toggle-sm.switch-active:not(.t-toggle) .switch-toggle-indicator {
     transform: translateX(12px);
 }
 
@@ -9518,3 +9518,43 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 
 /* Outgoing toasts relinquish their id before a replacement is mounted. */
 .t-toast { translate: -50% 0; --tw-translate-x: 0px; }
+
+
+/* Transitions.dev — Toggle */
+:root {
+  --toggle-dur: 350ms;
+  --toggle-travel: 14.66px;
+  --toggle-ov1: 1px;
+  --toggle-ov2: 0px;
+  --toggle-track: 0ms;
+  --toggle-ease: cubic-bezier(0.34, 1.35, 0.64, 1);
+}
+
+
+.t-toggle { transition: background var(--toggle-track) var(--toggle-ease); }
+.t-toggle-thumb { translate: 0 0; will-change: translate; }
+.t-toggle[data-on="true"] .t-toggle-thumb { translate: var(--toggle-travel) 0; }
+.t-toggle.is-init[data-on="true"] .t-toggle-thumb { animation: t-toggle-on var(--toggle-dur) var(--toggle-ease) both; }
+.t-toggle.is-init[data-on="false"] .t-toggle-thumb { animation: t-toggle-off var(--toggle-dur) var(--toggle-ease) both; }
+@keyframes t-toggle-on {
+  0% { translate: 0 0; }
+  55% { translate: calc(var(--toggle-travel) + var(--toggle-ov1)) 0; }
+  80% { translate: calc(var(--toggle-travel) - var(--toggle-ov2)) 0; }
+  100% { translate: var(--toggle-travel) 0; }
+}
+@keyframes t-toggle-off {
+  0% { translate: var(--toggle-travel) 0; }
+  55% { translate: calc(0px - var(--toggle-ov1)) 0; }
+  80% { translate: var(--toggle-ov2) 0; }
+  100% { translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-toggle-thumb { animation: none !important; }
+}
+
+.switch-toggle.t-toggle { --toggle-travel: 14px; transition: background-color var(--toggle-track) var(--toggle-ease); }
+.switch-toggle.t-toggle .switch-toggle-indicator { transform: none; transition: none; }
+.switch-toggle-sm.t-toggle { --toggle-travel: 12px; }
+.settings-panel .settings-switch.t-toggle { --toggle-travel: 16px; }
+.settings-panel .settings-switch.t-toggle .switch-toggle-indicator { transform: none; transition: none; }
