@@ -50,9 +50,10 @@
 - Privacy and Memory have matching info buttons with the approved one-line cost
   descriptions. Hover/focus opens, click pins, outside click or Escape dismisses.
   Explanations render outside scrolling containers, have no shadow, and stay
-  within the viewport. Both payment mode names sit left of the entire mode
-  switch, clear of the System Panel. On narrow screens without enough left-side
-  space, they fall back below/above, aligned to the switch’s right edge.
+  within the viewport. Both payment mode names open below the entire mode
+  switch, with the tooltip’s right edge aligned to the switch’s right edge.
+  The labels extend left into whitespace, keeping Share and the System Panel
+  clear. Viewport clamping and an above fallback remain for limited space.
 - Memory defaults off when no preference is saved, including imports without a
   feature preference. Explicit saved on/off choices and memory entries survive.
   Key issuance, cost/cap enforcement, and runtime availability gates are unchanged.

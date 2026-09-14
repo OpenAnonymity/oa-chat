@@ -1,16 +1,10 @@
 import { motionDuration } from '../ui/uiMotion.js';
 let initialized = false;
 
-export function infoTooltipPosition(rect, width, height, viewport, preferLeft = false) {
+export function infoTooltipPosition(rect, width, height, viewport, alignRight = false) {
     const clampX = left => Math.max(12, Math.min(left, viewport.width - width - 12));
-    if (preferLeft && rect.left - width - 8 >= 12) {
-        return {
-            left: rect.left - width - 8,
-            top: Math.max(12, Math.min((rect.top + rect.bottom - height) / 2, viewport.height - height - 12))
-        };
-    }
     return {
-        left: clampX(preferLeft ? rect.right - width : rect.left),
+        left: clampX(alignRight ? rect.right - width : rect.left),
         top: rect.bottom + height + 8 <= viewport.height - 12
             ? rect.bottom + 8 : Math.max(12, rect.top - height - 8)
     };
@@ -66,8 +60,8 @@ export function setupInfoTooltips(settingsMenu) {
         tooltip.hidden = false;
         void tooltip.offsetWidth;
         tooltip.dataset.show = 'true';
-        // Both payment labels sit left of the whole switch, clear of the
-        // System Panel and of the neighbouring payment mark.
+        // Payment labels open below the switch and extend left from its
+        // right edge, keeping Share and the System Panel clear.
         const paymentControl = button.closest('.payment-mode-control');
         const rect = (paymentControl || button).getBoundingClientRect();
         const position = infoTooltipPosition(rect, tooltip.offsetWidth, tooltip.offsetHeight,

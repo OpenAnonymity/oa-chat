@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { infoTooltipPosition } from '../../chat/components/InfoTooltips.js';
 
-test('both payment labels clear the whole switch and System Panel on its right', () => {
+test('both payment labels sit below Share and end at the switch right edge', () => {
     const rect = { left: 750, right: 820, top: 12, bottom: 44 };
     for (const width of [200, 240]) {
         const position = infoTooltipPosition(rect, width, 36, { width: 1100, height: 700 }, true);
-        assert.equal(position.left + width, rect.left - 8);
-        assert.equal(position.top, 12);
+        assert.equal(position.left + width, rect.right);
+        assert.equal(position.top, rect.bottom + 8);
     }
 });
 
