@@ -1,3 +1,17 @@
+## 2026-09-15: Shared conversation entry and Memory wording
+
+- A nonempty `?s=` conversation link skips only the automatic startup sign-in
+  dialog. The normal URL-session importer can load the transcript without an
+  account, including its existing password and expiry handling. Explicit auth
+  handoffs retain priority; Tickets sending still runs the normal sign-in gate.
+  Commercial routing must also exempt `s` from the first-visit landing redirect.
+- Settings labels the existing global Memory feature switch “Save memories”,
+  with “Save useful details from your chats.” The book tooltip says “Use memories
+  in replies”. “Always attach retrieval” and its approval behavior are unchanged.
+  Save memories still gates the feature as a whole: disabling it also disables
+  live retrieval; book off alone leaves background saving enabled.
+  Fresh/default preferences remain off, and explicit saved choices survive.
+
 ## 2026-09-14: Google passkey setup matches username entry
 
 - New Google accounts now show the shared brief passkey explanation and open

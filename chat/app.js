@@ -597,6 +597,9 @@ class ChatApp {
      */
     async openSignInIfRequired() {
         if (!this.signInRequiredNow() || !this.accountModal) return false;
+        // Conversation links are readable without signing in. This only skips
+        // the automatic startup dialog; sending still uses the normal preflight.
+        if (new URLSearchParams(window.location.search).get('s')?.trim()) return false;
         const state = await accountService.waitForAuthBootstrap();
         if (state?.accountId && state.status === 'unlocked') return false;
         this.accountModal.open?.();

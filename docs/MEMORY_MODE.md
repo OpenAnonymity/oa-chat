@@ -3,6 +3,16 @@
 This document describes the root `oa-chat` memory-mode integration that reuses
 `nanomem` as a git submodule while keeping the app-side code thin.
 
+## Settings wording
+
+“Save memories” is the existing global feature switch, default off. Turning
+it on permits background extraction independently of the book toggle. Turning
+it off disables both extraction and retrieval, without deleting saved memories.
+The book tooltip is “Use memories in replies”; turning the book off alone does
+not stop saving while Save memories is enabled. “Always attach retrieval” keeps
+its existing name and skips per-message approval only when retrieval is active.
+These labels do not change stored preferences, defaults, or runtime behavior.
+
 ## Scope
 
 - Root `oa-chat` now has an independent Memory book toggle beside the

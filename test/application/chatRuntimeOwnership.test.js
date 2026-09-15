@@ -1504,3 +1504,38 @@ describe('production ChatApp runtime ownership', () => {
     });
 
 });
+
+
+test('shared conversation arrival skips startup sign-in but still requires sign-in to send', async () => {
+    const restore = installBrowser();
+    const { default: accountService } = await import('../../chat/services/accountService.js');
+    const originalWait = accountService.waitForAuthBootstrap;
+    const originalState = accountService.getState;
+    let opened = 0;
+    try {
+        accountService.waitForAuthBootstrap = async () => ({ accountId: null });
+        accountService.getState = () => ({ accountId: null });
+        const app = Object.create(ChatApp.prototype);
+        app.signInPolicy = { required: true };
+        app.getPaymentMode = () => 'tickets';
+        app.accountModal = { open() { opened += 1; } };
+        for (const search of ['?s=01m24-vns1h-1jeze-svet6e', '?s=shared&view=read']) {
+            window.location.search = search;
+            assert.equal(await app.openSignInIfRequired(), false);
+        }
+        assert.equal(opened, 0);
+        assert.equal(app.signInRequiredNow(), true);
+        // This must stop before any wallet, model, or inference work.
+        assert.equal(await app.preflightTurnTicketBudget({}, 'Continue this conversation'), false);
+        assert.equal(opened, 1);
+        for (const search of ['', '?s=', '?s=%20', '?subject=shared']) {
+            window.location.search = search;
+            assert.equal(await app.openSignInIfRequired(), true);
+        }
+        assert.equal(opened, 5);
+    } finally {
+        accountService.waitForAuthBootstrap = originalWait;
+        accountService.getState = originalState;
+        restore();
+    }
+});

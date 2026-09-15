@@ -1935,8 +1935,8 @@ export default class ChatInput {
         this.updateSwitchToggleUI(
             featureToggle,
             this.app.memoryFeatureEnabled !== false,
-            'Memory feature is on',
-            'Memory feature is off'
+            'Save memories is on',
+            'Save memories is off'
         );
         if (featureToggle) {
             featureToggle.disabled = !memorySupported;
@@ -2245,7 +2245,7 @@ export default class ChatInput {
             const tooltipBeta = memoryButton.querySelector('[data-memory-tooltip-beta]');
             if (tooltipText) {
                 tooltipText.textContent = memoryFeatureEnabled
-                    ? 'Auto-attach relevant context'
+                    ? 'Use memories in replies'
                     : this.getMemoryUnavailableReason();
             }
             if (tooltipDetail) {
