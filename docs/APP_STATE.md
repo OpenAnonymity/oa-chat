@@ -5,6 +5,10 @@
   account, including its existing password and expiry handling. Explicit auth
   handoffs retain priority; Tickets sending still runs the normal sign-in gate.
   Commercial routing must also exempt `s` from the first-visit landing redirect.
+- Shared URLs use the active site origin and route root, including root-mounted
+  builds. Staging shares therefore stay on staging; production shares stay on
+  production instead of crossing into a different share backend. Native/opaque
+  renderer origins retain the configured public URL fallback.
 - Settings labels the existing global Memory feature switch “Save memories”,
   with “Save useful details from your chats.” The book tooltip says “Use memories
   in replies”. “Always attach retrieval” and its approval behavior are unchanged.

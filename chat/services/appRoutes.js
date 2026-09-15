@@ -23,6 +23,15 @@ export function getAppRouteRoot() {
 }
 
 export function getShareBaseUrl() {
-    if (appRouteRoot === '/' || typeof window === 'undefined') return SHARE_BASE_URL;
-    return new URL(appRouteRoot, window.location.origin).toString();
+    // Keep readers on the deployment that stored the share (staging, production,
+    // or a mounted composition). Cross-origin links can point at another backend.
+    if (typeof window === 'undefined') return SHARE_BASE_URL;
+    try {
+        const origin = new URL(window.location.origin);
+        // Native app:// and opaque file origins are not public reader URLs.
+        if (origin.protocol !== 'https:' && origin.protocol !== 'http:') return SHARE_BASE_URL;
+        return new URL(appRouteRoot, origin).toString();
+    } catch {
+        return SHARE_BASE_URL;
+    }
 }
