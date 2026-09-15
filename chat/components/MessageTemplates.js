@@ -6,6 +6,7 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
+import { citationIconHtml } from '../services/citationIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
@@ -1229,11 +1230,10 @@ function buildCitationsToggleButton(citations, messageId) {
     }
 
     const faviconsHtml = uniqueDomains.map((domain, i) => {
-        const marker = domain.charAt(0).toUpperCase() || '•';
         return `<span class="citations-toggle-favicon"
             title="${escapeHtmlAttribute(domain)}"
             aria-hidden="true"
-            style="z-index: ${uniqueDomains.length - i};">${escapeHtml(marker)}</span>`;
+            style="z-index: ${uniqueDomains.length - i};">${citationIconHtml(`https://${domain}`)}</span>`;
     }).join('');
 
     return `
@@ -1324,7 +1324,7 @@ function buildCitationsSection(citations, messageId) {
                title="${escapeHtmlAttribute(citation.url)}">
                 <div class="citation-card-header">
                     <div class="citation-favicon-fallback" style="display: flex;" aria-hidden="true">
-                        ${displayIndex}
+                        ${citationIconHtml(citation.url)}
                     </div>
                     <span class="citation-domain">${escapeHtml(domain)}</span>
                 </div>

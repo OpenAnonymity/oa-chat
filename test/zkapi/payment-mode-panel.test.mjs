@@ -251,7 +251,7 @@ test('mode changes preserve single private access and commercial Parallel lane c
             assert.match(html, /Requested on message send/);
             assert.match(html, /You can keep using Tickets\./);
             assert.doesNotMatch(html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/);
-            assert.doesNotMatch(html, /id="verifier-attestation-btn"/);
+            assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
         } else {
             assert.match(html, />Ephemeral Access Key<\/span>/);
             assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);

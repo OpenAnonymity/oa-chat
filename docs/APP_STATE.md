@@ -1,3 +1,26 @@
+## 2026-09-15: Panel help, layout stability, and usage feedback
+
+- The ephemeral key question mark expands an in-panel explanation. Learn more
+  opens the existing attestation modal; parallel chats expose a link per issued
+  lane. Expansion state survives top-section refreshes, and collapsed interactive
+  content is inert. Key and ticket explanation text is consistently 12px.
+- Key detail rows share a 42px minimum height; expiry and renew controls have
+  separate spacing. The System Panel uses one fixed top-right toggle outside the
+  resizing layout, preserving its position and focus when opening or closing.
+  A closed panel is inert. Sidebar contents keep their final width while the
+  outer rail clips, including saved widths and mobile overlays.
+- Successful verifier activity uses a colored shield instead of a second green
+  dot. Its check draws on hover using the Transitions.dev recipe; unsuccessful
+  and pending verification never receive a success check. Reduced motion is kept.
+- Tab-Tab no longer carries a decorative ticket icon. A toast reports one ticket
+  only after new confidential access is issued; reusing a valid key produces no
+  cost toast. UI callback failures cannot break key issuance or persistence.
+- Widen uses a theater-style rectangle. Citation cards and their collapsed source
+  stack use bundled website icons for supported domains and a local website
+  symbol otherwise. Never add remote favicon fetching based on response URLs.
+- Commercial welcome places the inference-ticket explanation below all payment
+  and code options; it remains absent from zkAPI funding screens.
+
 ## 2026-09-15: Shared conversation entry and Memory wording
 
 - A nonempty `?s=` conversation link skips only the automatic startup sign-in

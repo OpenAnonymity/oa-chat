@@ -373,6 +373,13 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-background text-foreground h-screen overflow-hidden">
+    <button id="show-right-panel-btn" type="button" aria-controls="right-panel" aria-label="Open system panel" aria-expanded="false" class="system-panel-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
+                                <path d="M14 4v16"/>
+                            </svg>
+                        </button>
     <!-- Mobile sidebar backdrop -->
     <div id="mobile-sidebar-backdrop" class="mobile-sidebar-backdrop"></div>
 
@@ -540,8 +547,8 @@
 
                         <!-- Wide Mode Button -->
                         <button id="wide-mode-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand view">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            <svg class="h-5 w-5 theater-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                <rect x="2" y="6" width="20" height="12" rx="1.5"/>
                             </svg>
                         </button>
                     </div>
@@ -557,13 +564,7 @@
                         </button>
 
                         <!-- Show Right Panel Button -->
-                        <button id="show-right-panel-btn" class="system-panel-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                                <path d="M14 4v16"/>
-                            </svg>
-                        </button>
+                        <span class="system-panel-toggle-space" aria-hidden="true"></span>
                     </div>
                 </div>
                 <!-- Status Indicator Dot (Always visible) -->
@@ -615,7 +616,6 @@
                                                 <span class="scrubber-shortcut-key">tab</span>
                                                 <span class="scrubber-shortcut-key">tab</span>
                                                 <span>to scrub</span>
-                                                <svg class="scrubber-ticket-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16v4a3 3 0 0 0 0 6v4H4v-4a3 3 0 0 0 0-6V5Z"/><path d="M15 5v2m0 3v1m0 3v1m0 2v2"/></svg>
                                             </div>
                                             <div id="scrubber-preview-hint" class="absolute right-1.5 flex items-center gap-1 pointer-events-none text-muted-foreground/60 text-[11px] opacity-0 transition-opacity duration-150" aria-hidden="true">
                                                 <span id="scrubber-preview-hint-text" class="flex items-center gap-1"><span class="scrubber-shortcut-key">ctrl</span> <span>preview</span> <span class="opacity-40 mx-0.5">|</span> <span class="scrubber-shortcut-key">⌥</span> <span>edit</span></span>

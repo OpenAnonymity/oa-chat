@@ -317,7 +317,7 @@ class ScrubberService {
      * Keys are stored on the session object and persisted via chatDB.
      * @param {Object} session - The current chat session object
      */
-    async ensureApiKey(session) {
+    async ensureApiKey(session, { onTicketSpent } = {}) {
         if (!session) {
             throw new Error('No session available for scrubber key.');
         }
@@ -331,6 +331,8 @@ class ScrubberService {
             const keyData = await this.requestConfidentialKey();
             session.scrubberKey = keyData.key;
             session.scrubberKeyInfo = keyData;
+            // UI feedback must never turn successful issuance into a failed request.
+            try { onTicketSpent?.(CONFIDENTIAL_KEY_TICKETS_REQUIRED); } catch { /* Non-critical UI feedback. */ }
             await chatDB.saveSession(session);
             await this.ensureBackend(keyData.key);
             return keyData.key;
@@ -432,12 +434,12 @@ class ScrubberService {
         return updated;
     }
 
-    async redactPrompt(text, session) {
+    async redactPrompt(text, session, options = {}) {
         const inputText = typeof text === 'string' ? text : '';
         if (!inputText.trim()) {
             return { success: false, text: '' };
         }
-        await this.ensureApiKey(session);
+        await this.ensureApiKey(session, options);
 
         const request = buildResponsesRequest({
             model: this.getSelectedModel(),

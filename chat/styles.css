@@ -4392,36 +4392,19 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     pointer-events: auto; /* But buttons remain clickable */
 }
 
-/* Keep toolbar button geometry stable even when right-panel toggle is hidden */
+/* One persistent viewport-anchored control for opening and closing. */
 #show-right-panel-btn {
-    display: inline-flex;
-    width: 0;
-    min-width: 0;
-    max-width: 0;
-    padding-left: 0;
-    padding-right: 0;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    overflow: hidden;
-    transition: width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-        max-width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-        opacity 0.2s ease,
-        visibility 0s linear 0.26s;
-}
-
-#show-right-panel-btn.system-panel-toggle-visible,
-html[data-right-panel-hidden="true"] #show-right-panel-btn {
+    position: fixed;
+    top: 6px;
+    right: 12px;
+    z-index: 50;
     width: 2.25rem;
-    min-width: 2.25rem;
-    max-width: 2.25rem;
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transition-delay: 0s;
+    height: 2.25rem;
+    display: inline-flex;
 }
-
-/* Show right panel button on mobile too (panel is overlay on narrow screens). */
+.oa-system-panel-header { padding-right: 3.75rem; }
+.system-panel-toggle-space { width: 0; }
+html[data-right-panel-hidden="true"] .system-panel-toggle-space { width: 2.75rem; }
 
 /* --- Mobile Sidebar Backdrop --- */
 .mobile-sidebar-backdrop {
@@ -9021,8 +9004,6 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .chat-mode-html-tooltip { gap: 0.25rem; }
 
-/* Quiet ticket cue; it belongs to the existing non-interactive shortcut hint. */
-.scrubber-ticket-icon { width: 14px; height: 14px; flex: 0 0 14px; }
 .settings-heading-with-info { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
 .settings-heading-with-info .settings-section-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; color: hsl(var(--color-foreground)); }
 .settings-info-button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground) / 0.7); }
@@ -9558,3 +9539,140 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 .switch-toggle-sm.t-toggle { --toggle-travel: 12px; }
 .settings-panel .settings-switch.t-toggle { --toggle-travel: 16px; }
 .settings-panel .settings-switch.t-toggle .switch-toggle-indicator { transform: none; transition: none; }
+
+/* Keep the sidebar's contents at their final width while its outer rail clips. */
+#sidebar .sidebar-main-content,
+#sidebar .account-nav {
+    width: calc(var(--oa-left-sidebar-width, 220px) - 1px);
+    min-width: calc(var(--oa-left-sidebar-width, 220px) - 1px);
+}
+.oa-panel-help {
+    border: 1px solid hsl(var(--color-border));
+    border-radius: .5rem;
+    background: hsl(var(--color-muted) / .05);
+    padding: .625rem;
+    font-family: inherit;
+    font-size: .75rem;
+    line-height: 1.6;
+    color: hsl(var(--color-muted-foreground));
+}
+.oa-panel-help p + p { margin-top: .5rem; }
+.oa-panel-learn-more {
+    display: inline-flex;
+    margin-top: .5rem;
+    color: hsl(var(--color-foreground));
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+.oa-panel-disclosure-inner { min-height: 0; }
+.oa-panel-disclosure .oa-panel-help { margin-bottom: .5rem; }
+.oa-key-detail-row {
+    min-height: 2.625rem;
+    gap: .625rem;
+    width: 100%;
+}
+.oa-key-detail-row > span:last-child { text-align: right; }
+.oa-key-badges { gap: .375rem; margin-left: .375rem; }
+.oa-key-detail-row #api-key-expiry { padding: .25rem .375rem; }
+.oa-key-detail-row #renew-key-btn { width: 1.375rem; height: 1.375rem; }
+.oa-key-detail-row > span { min-width: 0; overflow-wrap: anywhere; }
+.citation-site-icon { width: 1rem; height: 1rem; object-fit: contain; flex-shrink: 0; }
+.citations-toggle-favicon .citation-site-icon { width: .75rem; height: .75rem; }
+
+/* Transitions.dev — verifier check */
+:root {
+  --check-opacity-dur: 500ms;
+  --check-rotate-dur: 500ms;
+  --check-rotate-from: 80deg;
+  --check-bob-dur: 500ms;
+  --check-y-amount: 40px;
+  --check-blur-dur: 500ms;
+  --check-blur-from: 10px;
+  --check-path-dur: 500ms;
+  --check-path-delay: 80ms;
+  --check-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-opacity: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-rotate: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-bob: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --check-ease-path: cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Wrapper drives the appear animation; it doesn't own any
+   sizing or color so you can drop in any icon. */
+.t-success-check {
+  display: inline-block;
+  transform-origin: center;
+  opacity: 0;
+  will-change: transform, opacity, filter;
+}
+/* overflow: visible keeps the stroke from clipping while it
+   draws; display: block kills the inline whitespace under SVGs. */
+.t-success-check svg { display: block; overflow: visible; }
+/* Stroke-draw setup. Replace 20 with the result of
+   path.getTotalLength() for your path; round caps mean any
+   sub-pixel overshoot is invisible. */
+.t-success-check svg path {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+}
+
+.t-success-check[data-state="in"] {
+  animation:
+    t-check-fade   var(--check-opacity-dur) var(--check-ease-opacity) forwards,
+    t-check-rotate var(--check-rotate-dur)  var(--check-ease-rotate)  forwards,
+    t-check-blur   var(--check-blur-dur)    var(--check-ease-out)     forwards,
+    t-check-bob    var(--check-bob-dur)     var(--check-ease-bob)     forwards;
+}
+.t-success-check[data-state="in"] svg path {
+  animation: t-check-draw var(--check-path-dur) var(--check-ease-path) var(--check-path-delay, 0ms) forwards;
+}
+
+@keyframes t-check-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes t-check-rotate {
+  from { transform: rotate(var(--check-rotate-from)); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes t-check-blur {
+  from { filter: blur(var(--check-blur-from)); }
+  to   { filter: blur(0); }
+}
+@keyframes t-check-bob {
+  from { translate: 0 var(--check-y-amount); }
+  to   { translate: 0 0; }
+}
+@keyframes t-check-draw { to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-success-check { animation: none !important; opacity: 1; }
+  .t-success-check svg path { animation: none !important; stroke-dashoffset: 0 !important; }
+}
+
+.verifier-status-icon { position: relative; display: inline-flex; width: 1rem; height: 1rem; }
+.verifier-status-icon > svg { width: 100%; height: 100%; }
+.verifier-status-icon .t-success-check {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    --check-rotate-from: 0deg;
+    --check-y-amount: 0px;
+    --check-blur-from: 0px;
+    --check-opacity-dur: 240ms;
+    --check-path-dur: 320ms;
+    --check-path-delay: 0ms;
+}
+.verifier-status-icon .t-success-check svg { width: 100%; height: 100%; }
+.verifier-status-icon .t-success-check:not([data-state="in"]) svg path { stroke-dashoffset: 0; }
+
+.verifier-status-icon .t-success-check svg path { stroke-dasharray: var(--verifier-check-length, 14); }
+.verifier-status-icon .t-success-check[data-state="in"] svg path { stroke-dashoffset: var(--verifier-check-length, 14); }
+
+@media (max-width: 767px) {
+    #sidebar .sidebar-main-content, #sidebar .account-nav { width: calc(16rem - 1px); min-width: calc(16rem - 1px); }
+}
+.oa-lane-key-card { padding: .625rem; }
+.oa-lane-key-card .oa-lane-key-badges { gap: .5rem; }
+.oa-panel-help [data-council-attestation-lane] { display: block; }
+
+.oa-ticket-help-copy { font-family: inherit; font-size: .75rem; line-height: 1.6; }
+.oa-system-panel-header { flex-shrink: 0; }
+.oa-system-panel-body { overflow-y: auto; overscroll-behavior: contain; }
+.oa-system-timeline { min-height: 12rem; }

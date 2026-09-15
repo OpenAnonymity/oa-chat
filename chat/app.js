@@ -10041,6 +10041,7 @@ class ChatApp {
         }
         btn.classList.toggle('wide-active', isWide);
         btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view');
+        btn.setAttribute('aria-pressed', String(isWide));
     }
 
     /**

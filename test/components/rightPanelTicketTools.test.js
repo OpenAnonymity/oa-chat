@@ -256,20 +256,23 @@ test('commercial zero balance and active-key controls survive the layout change'
     assert.match(panel.generateTopSectionHTML(), /id="renew-key-btn"[\s\S]*?disabled\s*>/);
 });
 
-test('parallel keys retain per-lane attestation without a duplicate header control', () => {
+test('parallel keys keep per-lane Learn more actions behind one explanation', () => {
     const panel = createRenderPanel();
     panel.maskCouncilAccessToken = () => 'masked-lane-key';
     panel.escapeHtmlAttribute = panel.escapeHtml;
     panel.getAccessExpiryClasses = () => '';
     panel.getAccessExpiryLabel = () => '02:00';
-    const html = panel.generateCouncilAccessKeyPanelHTML([
+    const rows = [
         { id: 'lane-1', label: 'First model', access: { apiKey: 'fixture-key' } },
         { id: 'lane-2', label: 'Second model', access: null }
-    ], { embedded: true });
+    ];
+    panel.getCouncilAccessRows = () => rows;
+    const html = panel.generateCouncilAccessKeyPanelHTML(rows, { embedded: true });
     assert.match(html, /text-xs font-medium">Ephemeral Access Keys<\/span>/);
     assert.match(html, /data-council-attestation-lane="lane-1"/);
     assert.match(html, /Requested on message send/);
-    assert.doesNotMatch(html, /id="verifier-attestation-btn"/);
+    assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
+    assert.match(html, /Learn more: First model/);
 });
 
 test('System Panel restores original typography and retains only a non-layout divider', () => {
@@ -283,4 +286,26 @@ test('System Panel restores original typography and retains only a non-layout di
     assert.match(css, /\.oa-right-panel-ticket-summary \{[^}]*position: relative;/);
     assert.match(css, /\.system-panel-divider \{[^}]*position: absolute;[^}]*right: -12px;[^}]*bottom: -12px;[^}]*left: -12px;[^}]*height: 1px;[^}]*var\(--color-border\)/);
     assert.doesNotMatch(css, /\.system-panel-(?:header|row|help|close|ticket-trigger)/);
+});
+
+
+test('key help expands inline and retains its state through panel refreshes', () => {
+    const panel = createRenderPanel();
+    const attrs = {};
+    const disclosure = { dataset: {}, inert: true, setAttribute: (key, value) => attrs[key] = value };
+    const button = { setAttribute: (key, value) => attrs[`button-${key}`] = value };
+    const oldDocument = globalThis.document;
+    globalThis.document = { getElementById: id => id === 'ephemeral-key-info-panel' ? disclosure : button };
+    try {
+        assert.match(panel.generateAccessKeyInfoHTML(), /aria-hidden="true" inert/);
+        panel.toggleAccessKeyInfo();
+        assert.equal(disclosure.dataset.open, 'true');
+        assert.equal(disclosure.inert, false);
+        assert.equal(attrs['button-aria-expanded'], 'true');
+        assert.match(panel.generateTopSectionHTML(), /id="ephemeral-key-info-panel"[^>]*aria-hidden="false"/);
+        assert.match(panel.generateAccessKeyInfoHTML(), /id="verifier-attestation-learn-more"/);
+        panel.toggleAccessKeyInfo();
+        assert.equal(disclosure.inert, true);
+        assert.equal(attrs['button-aria-expanded'], 'false');
+    } finally { globalThis.document = oldDocument; }
 });

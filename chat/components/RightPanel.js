@@ -7,7 +7,7 @@ import { setDisclosure } from '../ui/uiMotion.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
-import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
+import { getActivityDescription, getActivityIcon, getHostFromUrl, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -26,6 +26,7 @@ class RightPanel {
         tlsSecurityModal.configureServices?.(this.app.services);
         verifierAttestationModal.configureServices?.(this.app.services);
         this.currentSession = null;
+        this.showAccessKeyInfo = false;
 
         // Responsive behavior
         this.isDesktop = window.innerWidth >= 1024;
@@ -588,7 +589,11 @@ class RightPanel {
         panel.style.transform = '';
 
         if (showBtn) {
-            showBtn.classList.toggle('system-panel-toggle-visible', !this.isVisible);
+            showBtn.classList.add('system-panel-toggle-visible');
+            showBtn.setAttribute('aria-expanded', String(this.isVisible));
+            showBtn.setAttribute('aria-label', this.isVisible ? 'Close system panel' : 'Open system panel');
+            showBtn.title = this.isVisible ? 'Close system panel' : 'Open system panel';
+            if (!this.isVisible && panel.contains(document.activeElement)) showBtn.focus();
         }
 
         if (appContainer) {
@@ -599,6 +604,7 @@ class RightPanel {
             }
         }
 
+        panel.inert = !this.isVisible;
         this.lastAppliedVisibility = this.isVisible;
     }
 
@@ -1815,20 +1821,12 @@ class RightPanel {
                 : 'Requested on message send';
             const station = access?.apiKeyInfo?.stationId || access?.apiKeyInfo?.station_name || null;
             return `
-                <div class="rounded-md border ${hasKey ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10'} p-2">
+                <div class="oa-lane-key-card rounded-md border ${hasKey ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10'} p-2">
                     <div class="flex items-center justify-between gap-2 mb-1.5">
                         <div class="min-w-0">
                             <div class="text-[10px] font-semibold text-foreground">${this.escapeHtml(row.label)}</div>
                         </div>
-                        <div class="flex items-center gap-1 flex-shrink-0">
-                            ${hasKey ? `
-                                <button
-                                    class="lane-verifier-attestation-btn inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                                    title="Show verifier attestation for ${this.escapeHtmlAttribute(row.label)}"
-                                    type="button"
-                                    data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}"
-                                >?</button>
-                            ` : ''}
+                        <div class="oa-lane-key-badges flex items-center gap-1 flex-shrink-0">
                             <span class="font-medium px-1.5 py-0.5 rounded-full text-[10px] tabular-nums whitespace-nowrap ${this.getAccessExpiryClasses(access)}">
                                 ${this.escapeHtml(this.getAccessExpiryLabel(access))}
                             </span>
@@ -1853,7 +1851,9 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Keys</span>
+                        ${this.generateAccessKeyInfoButtonHTML()}
                     </div>
+                    ${this.generateAccessKeyInfoHTML()}
                     <div class="space-y-2">
                         ${rowHtml}
                     </div>
@@ -1870,6 +1870,37 @@ class RightPanel {
         };
     }
 
+    generateAccessKeyInfoButtonHTML() {
+        return `<button id="verifier-attestation-btn" type="button"
+            class="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            title="What is an ephemeral key?" aria-label="What is an ephemeral key?"
+            aria-controls="ephemeral-key-info-panel" aria-expanded="${!!this.showAccessKeyInfo}">?</button>`;
+    }
+
+    generateAccessKeyInfoHTML() {
+        return `
+            <div id="ephemeral-key-info-panel" class="oa-panel-disclosure t-acc" data-open="${!!this.showAccessKeyInfo}" aria-hidden="${!this.showAccessKeyInfo}"${this.showAccessKeyInfo ? '' : ' inert'}>
+                <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner">
+                    <div class="oa-panel-help">
+                        <p>An ephemeral key is a temporary API key your device requests when you send a message. It lets you make multiple queries until its time or usage limit is reached.</p>
+                        <p>The issuing station provides the key, and the verifier checks its ownership and limits. Shared keys keep their existing expiry and remaining allowance.</p>
+                        ${this.getCouncilAccessRows().length ? this.getCouncilAccessRows().filter(row => row.access?.apiKey).map(row => `<button type="button" data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}" class="oa-panel-learn-more">Learn more: ${this.escapeHtml(row.label)}</button>`).join('') || '<p>Key details appear after you send a message.</p>' : '<button type="button" id="verifier-attestation-learn-more" class="oa-panel-learn-more">Learn more</button>'}
+                    </div>
+                </div></div>
+            </div>`;
+    }
+
+    toggleAccessKeyInfo() {
+        this.showAccessKeyInfo = !this.showAccessKeyInfo;
+        const panel = document.getElementById('ephemeral-key-info-panel');
+        const button = document.getElementById('verifier-attestation-btn');
+        if (!panel || !button) return;
+        panel.dataset.open = String(this.showAccessKeyInfo);
+        panel.setAttribute('aria-hidden', String(!this.showAccessKeyInfo));
+        panel.inert = !this.showAccessKeyInfo;
+        button.setAttribute('aria-expanded', String(this.showAccessKeyInfo));
+    }
+
     generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
         const missingAccess = this.getMissingApiKeyStatus();
         return hasApiKey ? `
@@ -1880,21 +1911,17 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Key</span>
-                        <button
-                            id="verifier-attestation-btn"
-                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                            title="Show verifier attestation"
-                            type="button"
-                        >?</button>
+                        ${this.generateAccessKeyInfoButtonHTML()}
                     </div>
-                    <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
+                    ${this.generateAccessKeyInfoHTML()}
+                    <div class="oa-key-detail-row flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                         ${(() => {
                             const keyInfo = this.getKeyDisplayInfo();
                             const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
                             return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
                                 ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
                         })()}
-                        <div class="flex items-center gap-0 flex-shrink-0 ml-1">
+                        <div class="oa-key-badges flex items-center flex-shrink-0">
                             <button
                                 id="renew-key-btn"
                                 class="inline-flex items-center justify-center w-4 h-4 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:pointer-events-none"
@@ -1918,14 +1945,14 @@ class RightPanel {
                 <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
 
                     ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
-                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                        <div class="oa-key-detail-row flex items-center justify-between p-2 bg-background rounded-md border border-border">
                             <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                             <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.stationId || this.apiKeyInfo.station_name)}</span>
                         </div>
                     ` : ''}
 
                     ${this.getSharedKeyCount() > 1 ? `
-                        <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
+                        <div class="oa-key-detail-row flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
                             <span class="text-[10px] text-muted-foreground">Shared across</span>
                             <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
                         </div>
@@ -1941,20 +1968,16 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Key</span>
-                        <button
-                            id="verifier-attestation-btn"
-                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                            title="Show verifier attestation"
-                            type="button"
-                        >?</button>
+                        ${this.generateAccessKeyInfoButtonHTML()}
                     </div>
-                    <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
+                    ${this.generateAccessKeyInfoHTML()}
+                    <div class="oa-key-detail-row flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
                         <span class="flex-1 min-w-0">${this.escapeHtml(missingAccess.label)}</span>
                         <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.escapeHtmlAttribute(missingAccess.badgeClass)}">${this.escapeHtml(missingAccess.badge)}</span>
                     </div>
                 </div>
                 <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
-                    <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
+                    <div class="oa-key-detail-row flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
                         <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                         <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
                     </div>
@@ -2065,7 +2088,7 @@ class RightPanel {
                         class="${this.showExternalTicketInfo ? 'mt-2 max-h-[480px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out"
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
-                        <div class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                        <div class="oa-panel-help rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
                             <p>Redeem inference tickets for a temporary API key with up to 20 minutes of model access. Each key supports multiple queries, until its time or usage limit is reached.</p>
                             <p class="mt-2">Blind signatures prevent redeemed tickets from being linked to your purchase. Your queries go directly to the model provider, not The Open Anonymity Project.</p>
                         </div>
@@ -2321,7 +2344,7 @@ class RightPanel {
                                 </svg>
                             </button>
                         </div>
-                    <p class="text-[10px] text-muted-foreground leading-snug mt-1">
+                    <p class="oa-ticket-help-copy text-[10px] text-muted-foreground leading-snug mt-1">
                     Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash or casino chips).
                     When you start a new chat session, your device auto-redeems tickets for a short-lived, credit-limited access key just for this session (think prepaid SIM cards), making your inference traffic unlinkable to you.<br><br>
                     Cryptographically, tickets are implemented with <a href="https://en.wikipedia.org/wiki/Blind_signature" class="underline hover:text-foreground transition-colors" target="_blank" rel="noopener noreferrer">blind signatures</a>: your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them for later use.
@@ -2804,7 +2827,11 @@ class RightPanel {
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
         if (verifierAttestationBtn) {
-            verifierAttestationBtn.onclick = () => verifierAttestationModal.open({
+            verifierAttestationBtn.onclick = () => this.toggleAccessKeyInfo();
+        }
+        const learnMore = document.getElementById('verifier-attestation-learn-more');
+        if (learnMore) {
+            learnMore.onclick = () => verifierAttestationModal.open({
                 session: this.currentSession || null,
                 accessInfo: this.apiKeyInfo || null,
                 stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
@@ -2878,6 +2905,17 @@ class RightPanel {
      * Attaches click handlers to activity log headers for expand/collapse.
      */
     attachLogRowHandlers() {
+        document.querySelectorAll('.activity-log-entry').forEach(row => {
+            const check = row.querySelector('.verifier-status-icon .t-success-check');
+            if (!check) return;
+            const path = check.querySelector('path');
+            check.style.setProperty('--verifier-check-length', String(Math.ceil(path.getTotalLength()) + 1));
+            row.onpointerenter = () => {
+                check.setAttribute('data-state', 'out');
+                void check.offsetWidth;
+                check.setAttribute('data-state', 'in');
+            };
+        });
         document.querySelectorAll('.activity-log-header').forEach(header => {
             header.onclick = (e) => {
                 const logId = e.currentTarget.dataset.logId;
@@ -2923,6 +2961,7 @@ class RightPanel {
             const description = this.escapeHtml(descriptionRaw);
             const descriptionAttr = this.escapeHtmlAttribute(descriptionRaw);
             const icon = getActivityIcon(log);
+            const isVerifier = getHostFromUrl(log.url) === 'verifier2.openanonymity.ai';
             const dotClass = getStatusDotClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
@@ -2993,7 +3032,7 @@ class RightPanel {
 
                         <!-- Activity node -->
                         <div class="relative flex items-center justify-center" style="width: 16px; height: 16px; flex-shrink: 0;">
-                            <div class="${dotClass} activity-node rounded-full transition-all duration-200" style="width: 8px; height: 8px;"></div>
+                            ${isVerifier ? icon : `<div class="${dotClass} activity-node rounded-full transition-all duration-200" style="width: 8px; height: 8px;"></div>`}
                             </div>
 
                         <!-- Bottom line (extends to next entry) -->
@@ -3006,7 +3045,7 @@ class RightPanel {
                         <div class="activity-log-header cursor-pointer ${hoverClass} pl-1 pr-2 py-1 rounded transition-all duration-150 text-[10px] ${highlightClass}" data-log-id="${log.id}">
                             <div class="flex items-center gap-1.5">
                                 <span class="flex-shrink-0 text-muted-foreground">
-                                    ${icon}
+                                    ${isVerifier ? '' : icon}
                                 </span>
                                 <span class="truncate flex-1 font-medium" title="${descriptionAttr}">
                                     ${description}
@@ -3033,20 +3072,14 @@ class RightPanel {
 
         panel.innerHTML = `
             <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->
-            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 flex items-center">
+            <div style="min-height: calc(3rem + 1px);" class="oa-system-panel-header px-3 bg-muted/10 flex items-center">
                 <div class="flex items-center justify-between w-full">
                     <h2 class="text-sm font-semibold text-foreground">System Panel</h2>
-                    <button id="close-right-panel" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
-                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <rect x="4" y="4" width="16" height="16" rx="2"/>
-                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                            <path d="M14 4v16"/>
-                        </svg>
-                    </button>
+
                 </div>
             </div>
 
-            <div class="flex flex-col flex-1 min-h-0">
+            <div class="oa-system-panel-body flex flex-col flex-1 min-h-0">
             <!-- Top Section: Tickets and API Key (non-scrollable) -->
             <div class="flex-shrink-0">
                 ${this.generateTopSectionHTML()}
@@ -3054,7 +3087,7 @@ class RightPanel {
             <!-- End of Top Section -->
 
             <!-- Activity Timeline (scrollable) -->
-            <div class="border-t border-border flex flex-col bg-background flex-1 min-h-0">
+            <div class="oa-system-timeline border-t border-border flex flex-col bg-background flex-1 min-h-0">
                 <div class="p-3 border-b border-border bg-muted/10">
                     <div class="flex items-center justify-between gap-1.5">
                         <div class="flex items-center gap-1.5">
@@ -3090,12 +3123,6 @@ class RightPanel {
     }
 
     attachEventListeners() {
-        // Close panel button
-        const closeBtn = document.getElementById('close-right-panel');
-        if (closeBtn) {
-            closeBtn.onclick = () => this.closeRightPanel();
-        }
-
         // Attach top section event listeners (tickets/API key)
         this.attachTopSectionEventListeners();
 

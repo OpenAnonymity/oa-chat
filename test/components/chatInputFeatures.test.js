@@ -310,3 +310,35 @@ test('pending scrub resizes newly wrapped text without another draft input', () 
         globalThis.window = previousWindow;
     }
 });
+
+
+test('scrubber ticket feedback only follows new issuance, including downstream failures', async () => {
+    const saved = { request: scrubberService.requestConfidentialKey, backend: scrubberService.ensureBackend, save: chatDB.saveSession };
+    const charges = [];
+    let requests = 0;
+    scrubberService.requestConfidentialKey = async () => { requests++; return { key: 'fixture-key', expires_at: Date.now() / 1000 + 1200 }; };
+    scrubberService.ensureBackend = async () => {};
+    chatDB.saveSession = async () => {};
+    try {
+        const session = {};
+        const options = { onTicketSpent: count => charges.push(count) };
+        await scrubberService.ensureApiKey(session, options);
+        await scrubberService.ensureApiKey(session, options);
+        assert.deepEqual(charges, [1]);
+        assert.equal(requests, 1);
+        scrubberService.requestConfidentialKey = async () => { throw new Error('issuance failed'); };
+        await assert.rejects(scrubberService.ensureApiKey({}, options), /issuance failed/);
+        assert.deepEqual(charges, [1]);
+        scrubberService.requestConfidentialKey = saved.request;
+        scrubberService.requestConfidentialKey = async () => ({ key: 'second-fixture-key' });
+        scrubberService.ensureBackend = async () => { throw new Error('backend unavailable'); };
+        await assert.rejects(scrubberService.ensureApiKey({}, options), /backend unavailable/);
+        assert.deepEqual(charges, [1, 1], 'issued tickets are reported even if a later operation fails');
+        scrubberService.ensureBackend = async () => {};
+        assert.equal(await scrubberService.ensureApiKey({}, { onTicketSpent() { throw new Error('UI failure'); } }), 'second-fixture-key');
+    } finally {
+        scrubberService.requestConfidentialKey = saved.request;
+        scrubberService.ensureBackend = saved.backend;
+        chatDB.saveSession = saved.save;
+    }
+});

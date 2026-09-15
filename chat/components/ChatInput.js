@@ -917,7 +917,9 @@ export default class ChatInput {
             // The confidential service does not support aborting its transport.
             // Keep the reservation through its actual completion, and discard
             // a late result when its captured chat or draft no longer owns it.
-            const result = await scrubberService.redactPrompt(text, session);
+            const result = await scrubberService.redactPrompt(text, session, {
+                onTicketSpent: count => this.app.showToast?.(`${count} ticket${count === 1 ? '' : 's'} used for scrubbing`, 'info', 4000)
+            });
             if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
             if (!result?.success || !result.text) {
                 this.app.showToast(result?.error || 'Scrubber failed', 'error');
