@@ -309,3 +309,31 @@ test('key help expands inline and retains its state through panel refreshes', ()
         assert.equal(attrs['button-aria-expanded'], 'false');
     } finally { globalThis.document = oldDocument; }
 });
+
+
+test('activity timeline combines status and event icon in one rail marker', () => {
+    const panel = createPanel();
+    panel.expandedLogIds = new Set();
+    panel.escapeHtml = value => String(value);
+    panel.escapeHtmlAttribute = value => String(value);
+    panel.getSessionTitle = () => '';
+    panel.isCurrentSession = () => false;
+    panel.getSessionKey = () => '';
+    for (const [status, extra, color] of [
+        [200, {}, 'text-status-success'],
+        [400, {}, 'text-red-600'],
+        [0, {}, 'text-red-600'],
+        ['pending', {}, 'text-amber-600'],
+        ['queued', {}, 'text-amber-600'],
+        [200, { isAborted: true }, 'text-orange-600'],
+        [200, { response: { detail: 'key_near_expiry' } }, 'text-amber-600'],
+        [302, {}, 'text-gray-600']
+    ]) {
+        panel.networkLogs = [{ id: 'event', type: 'local', action: 'ticket-select',
+            status, timestamp: Date.now(), ...extra }];
+        const html = panel.renderNetworkLogs();
+        assert.match(html, new RegExp('activity-status-icon[^>]*' + color));
+        assert.equal((html.match(/<svg/g) || []).length, 1);
+        assert.doesNotMatch(html, /activity-node/);
+    }
+});

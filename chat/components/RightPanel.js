@@ -7,7 +7,7 @@ import { setDisclosure } from '../ui/uiMotion.js';
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
-import { getActivityDescription, getActivityIcon, getHostFromUrl, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
+import { getActivityDescription, getActivityIcon, getStatusIconClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -2961,8 +2961,7 @@ class RightPanel {
             const description = this.escapeHtml(descriptionRaw);
             const descriptionAttr = this.escapeHtmlAttribute(descriptionRaw);
             const icon = getActivityIcon(log);
-            const isVerifier = getHostFromUrl(log.url) === 'verifier2.openanonymity.ai';
-            const dotClass = getStatusDotClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
+            const iconClass = getStatusIconClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
             // Highlight the latest (last in reversed array) with a more visible background
@@ -3031,9 +3030,9 @@ class RightPanel {
                         ${!isFirst ? `<div class="w-0.5 bg-border" style="height: 6px;"></div>` : '<div style="height: 6px;"></div>'}
 
                         <!-- Activity node -->
-                        <div class="relative flex items-center justify-center" style="width: 16px; height: 16px; flex-shrink: 0;">
-                            ${isVerifier ? icon : `<div class="${dotClass} activity-node rounded-full transition-all duration-200" style="width: 8px; height: 8px;"></div>`}
-                            </div>
+                        <div class="activity-status-icon relative flex items-center justify-center ${iconClass}" aria-hidden="true" style="width: 16px; height: 16px; flex-shrink: 0;">
+                            ${icon}
+                        </div>
 
                         <!-- Bottom line (extends to next entry) -->
                         ${!isLast ? `<div class="w-0.5 bg-border" style="height: 12px;"></div>` : ''}
@@ -3044,9 +3043,6 @@ class RightPanel {
                         <!-- Compact one-line view -->
                         <div class="activity-log-header cursor-pointer ${hoverClass} pl-1 pr-2 py-1 rounded transition-all duration-150 text-[10px] ${highlightClass}" data-log-id="${log.id}">
                             <div class="flex items-center gap-1.5">
-                                <span class="flex-shrink-0 text-muted-foreground">
-                                    ${isVerifier ? '' : icon}
-                                </span>
                                 <span class="truncate flex-1 font-medium" title="${descriptionAttr}">
                                     ${description}
                                 </span>

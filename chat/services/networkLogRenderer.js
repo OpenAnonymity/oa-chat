@@ -62,6 +62,18 @@ export function getStatusDotClass(status, isAborted = false, detail = '') {
     return 'bg-gray-500';
 }
 
+// Keep timeline icon colors aligned with the existing status-dot policy.
+export function getStatusIconClass(status, isAborted = false, detail = '') {
+    const colors = {
+        'bg-orange-500': 'text-orange-600',
+        'bg-amber-500': 'text-amber-600',
+        'bg-status-success': 'text-status-success',
+        'bg-red-500': 'text-red-600',
+        'bg-gray-500': 'text-gray-600'
+    };
+    return colors[getStatusDotClass(status, isAborted, detail)];
+}
+
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text == null ? '' : String(text);

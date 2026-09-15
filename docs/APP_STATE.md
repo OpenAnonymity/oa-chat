@@ -1,3 +1,10 @@
+## 2026-09-15: Activity status lives on each event icon
+
+Activity Timeline rows use one status-colored activity icon in the timeline rail,
+replacing the separate dot and gray content icon. The shared dot status policy
+still determines success, error, pending, interruption, and near-expiry colors.
+Verifier shields retain their more specific validation warnings and hover check.
+
 ## 2026-09-15: Payment controls stay inside the toolbar
 
 The persistent System Panel toggle now lives outside the app layout. Both the
