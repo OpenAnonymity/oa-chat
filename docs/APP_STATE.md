@@ -25,7 +25,7 @@ shell, not only isolated RightPanel previews, when changing header controls.
 - Tab-Tab no longer carries a decorative ticket icon. A toast reports one ticket
   only after new confidential access is issued; reusing a valid key produces no
   cost toast. UI callback failures cannot break key issuance or persistence.
-- Widen uses a theater-style rectangle. Citation cards and their collapsed source
+- Widen uses a rectangle with outward chevrons and a lower divider, matching the user’s reference. Citation cards and their collapsed source
   stack use bundled website icons for supported domains and a local website
   symbol otherwise. Never add remote favicon fetching based on response URLs.
 - Commercial welcome places the inference-ticket explanation below all payment
