@@ -53,7 +53,7 @@ export function createPaymentModeUi(runtime) {
         },
         mountShell() {
             document.getElementById('chat-toolbar').classList.add('payment-mode-toolbar');
-            const panelToggle = document.getElementById('show-right-panel-btn');
+            const toolbarAnchor = document.getElementById('chat-toolbar-panel-space');
             modeControl = document.createElement('div');
             modeControl.className = 'payment-mode-control';
             modeControl.setAttribute('role', 'group');
@@ -70,7 +70,7 @@ export function createPaymentModeUi(runtime) {
                 } catch (error) { app.showToast(error.message || 'Could not switch payment method. Please try again.', 'error'); }
                 renderControls();
             });
-            panelToggle.before(modeControl);
+            toolbarAnchor.before(modeControl);
             window.addEventListener('resize', () => slideTabs(modeControl));
             const overlay = document.createElement('div');
             overlay.id = 'payment-balance-modal';

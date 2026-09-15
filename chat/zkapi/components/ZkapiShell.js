@@ -2,15 +2,15 @@
  * (and their handlers) instead of rebuilding the toolbar on status updates. */
 export function mountZkapiShell(doc = document) {
     const balance = doc.getElementById('account-tab-btn');
-    const panelToggle = doc.getElementById('show-right-panel-btn');
-    if (balance && panelToggle && balance.dataset.zkapiShellMounted !== 'true') {
+    const toolbarAnchor = doc.getElementById('chat-toolbar-panel-space');
+    if (balance && toolbarAnchor && balance.dataset.zkapiShellMounted !== 'true') {
         balance.dataset.zkapiShellMounted = 'true';
         balance.classList.add('zkapi-private-balance-control');
         balance.setAttribute('aria-label', 'Private balance');
         balance.setAttribute('aria-busy', 'false');
         balance.setAttribute('aria-expanded', 'false');
         balance.innerHTML = '<span class="account-tab-dot" aria-hidden="true"></span><span data-private-balance-label>Private balance</span>';
-        panelToggle.before(balance);
+        toolbarAnchor.before(balance);
         doc.getElementById('account-nav')?.remove();
     }
     const disabledIds = [

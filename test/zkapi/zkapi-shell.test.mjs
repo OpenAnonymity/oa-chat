@@ -17,9 +17,10 @@ function fixture() {
     };
     const balance = node('account-tab-btn');
     const footer = node('account-nav');
-    const panelToggle = node('show-right-panel-btn');
+    const toolbarAnchor = node('chat-toolbar-panel-space');
+    node('show-right-panel-btn').before = () => { throw new Error('Payment controls must not be inserted beside the floating toggle'); };
     let moves = 0;
-    panelToggle.before = element => { moves += 1; assert.equal(element, balance); };
+    toolbarAnchor.before = element => { moves += 1; assert.equal(element, balance); };
     const memory = node('memory-context-toggle');
     const settings = node('memory-settings-section');
     settings.controls = [{ disabled: false }];

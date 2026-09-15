@@ -1662,7 +1662,7 @@ test('consumer-facing payment UI omits note numbers and the redundant sidebar ac
     for (const source of [panel, account, client]) {
         assert.doesNotMatch(source, /(?:private\s+)?note\s*#/i);
     }
-    assert.match(shell, /panelToggle\.before\(balance\)/);
+    assert.match(shell, /toolbarAnchor\.before\(balance\)/);
     assert.match(shell, /getElementById\('account-nav'\)\?\.remove\(\)/);
     assert.match(shell, /data-private-balance-label/);
 });
@@ -1734,4 +1734,20 @@ test('message recovery controls have a visible busy state and reduced motion kee
     assert.match(reducedMotion, /\.pending-response-streaming\s*\{[\s\S]*?animation: none !important/);
     assert.match(reducedMotion, /\.message-action-btn\.is-processing::after/);
     assert.match(reducedMotion, /-webkit-text-fill-color: currentColor !important/);
+});
+
+
+test('both payment shells mount into the toolbar independently of the floating panel toggle', () => {
+    const html = fs.readFileSync(new URL('../../chat/index.html', import.meta.url), 'utf8');
+    const toolbarStart = html.indexOf('id="chat-toolbar"');
+    const anchor = html.indexOf('id="chat-toolbar-panel-space"');
+    const toolbarEnd = html.indexOf('<!-- Status Indicator Dot', toolbarStart);
+    assert.ok(toolbarStart > 0 && anchor > toolbarStart && anchor < toolbarEnd);
+    assert.equal((html.match(/id="chat-toolbar-panel-space"/g) || []).length, 1);
+    for (const file of ['components/ZkapiShell.js', 'ui/createPaymentModeUi.js']) {
+        const source = fs.readFileSync(new URL(`../../chat/zkapi/${file}`, import.meta.url), 'utf8');
+        assert.match(source, /getElementById\('chat-toolbar-panel-space'\)/);
+        assert.match(source, /toolbarAnchor\.before\(/);
+        assert.doesNotMatch(source, /getElementById\('show-right-panel-btn'\)/);
+    }
 });

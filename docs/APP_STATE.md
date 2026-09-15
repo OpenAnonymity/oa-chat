@@ -1,3 +1,13 @@
+## 2026-09-15: Payment controls stay inside the toolbar
+
+The persistent System Panel toggle now lives outside the app layout. Both the
+combined Tickets/zkAPI switch and zkAPI-only Private balance control must insert
+before `chat-toolbar-panel-space`, not before that floating toggle. Using the
+old sibling anchor placed payment controls in normal body flow above `#app`,
+pushing the entire shell down and misaligning the System Panel header. Keep the
+explicit toolbar anchor in all shared HTML builds. Verify the composed payment
+shell, not only isolated RightPanel previews, when changing header controls.
+
 ## 2026-09-15: Panel help, layout stability, and usage feedback
 
 - The ephemeral key question mark expands an in-panel explanation. Learn more
