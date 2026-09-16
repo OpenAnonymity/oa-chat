@@ -150,3 +150,86 @@ test('destroy during a pending proxy change does not schedule a later panel rend
         assert.equal(f.panel.proxyRenderTimer, undefined);
     } finally { f.cleanup(); }
 });
+
+function feedbackFixture() {
+    const f = fixture();
+    const element = () => ({ dataset: {}, hidden: false, inert: false, textContent: '', attrs: {},
+        classList: { add() {}, remove() {} }, style: { setProperty() {} },
+        setAttribute(name, value) { this.attrs[name] = value; },
+        getAttribute(name) { return this.attrs[name]; },
+        contains(target) { return target === this || target === button; }
+    });
+    const row = element(), button = element(), label = element(), swap = element(), check = element();
+    label.textContent = 'Proxy unavailable';
+    check.querySelector = () => ({ getTotalLength: () => 20 });
+    row.querySelector = selector => ({ '#proxy-retry-btn': button, '.oa-proxy-feedback-text': label,
+        '.t-icon-swap': swap, '.t-success-check': check })[selector];
+    f.nodes.set('proxy-failure-notice', row);
+    return { ...f, row, button, label, swap };
+}
+
+test('retry feedback distinguishes ready from verified connected, then fades and hides', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = feedbackFixture();
+    try {
+        f.panel.proxyRetryFeedbackActive = true;
+        f.panel.proxySettings = { enabled: true };
+        f.panel.proxyStatus = { ready: true };
+        f.panel.updateProxyFeedback();
+        t.mock.timers.tick(150);
+        assert.equal(f.label.textContent, 'Ready');
+        assert.equal(f.swap.dataset.state, 'b');
+        assert.equal(f.button.attrs['aria-disabled'], 'true');
+        assert.equal(f.panel.getProxyStatusMeta().state, 'ready');
+        f.panel.proxyStatus = { ready: true, usingProxy: true, connectionVerified: true };
+        f.panel.updateProxyFeedback();
+        t.mock.timers.tick(150);
+        assert.equal(f.label.textContent, 'Connected');
+        t.mock.timers.tick(1499);
+        assert.equal(f.row.hidden, false);
+        t.mock.timers.tick(1);
+        assert.equal(f.row.inert, true);
+        t.mock.timers.tick(250);
+        assert.equal(f.row.hidden, true);
+        assert.equal(f.panel.proxyRetryFeedbackActive, false);
+        f.panel.updateProxyFeedback();
+        assert.equal(f.row.hidden, true, 'subsequent updates do not replay confirmation');
+    } finally { f.cleanup(); }
+});
+
+test('new failure cancels confirmation dismissal and re-enables retry', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = feedbackFixture();
+    try {
+        f.panel.proxyRetryFeedbackActive = true;
+        f.panel.proxySettings = { enabled: true };
+        f.panel.proxyStatus = { ready: true };
+        f.panel.updateProxyFeedback();
+        t.mock.timers.tick(500);
+        f.panel.proxyStatus = { lastError: 'Connection lost', fallbackActive: true };
+        f.panel.updateProxyFeedback();
+        t.mock.timers.tick(2500);
+        assert.equal(f.label.textContent, 'Proxy unavailable');
+        assert.equal(f.row.hidden, false);
+        assert.equal(f.row.inert, false);
+        assert.equal(f.button.attrs['aria-disabled'], 'false');
+        assert.equal(f.swap.dataset.state, 'a');
+    } finally { f.cleanup(); }
+});
+
+test('pending retry ignores repeat activation and destruction cancels text and dismissal timers', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = feedbackFixture();
+    try {
+        let calls = 0, finish;
+        f.networkProxy.updateSettings = () => { calls++; return new Promise(resolve => { finish = resolve; }); };
+        const pending = f.panel.handleProxyToggle({ retry: true });
+        await f.panel.handleProxyToggle({ retry: true });
+        assert.equal(calls, 1);
+        assert.equal(f.button.attrs['aria-disabled'], 'true');
+        f.panel.destroy(); finish(); await pending;
+        t.mock.timers.tick(3000);
+        assert.equal(f.label.textContent, 'Proxy unavailable', 'no queued text mutation after destruction');
+        assert.equal(f.panel.proxyRenderTimer, undefined);
+    } finally { f.cleanup(); }
+});

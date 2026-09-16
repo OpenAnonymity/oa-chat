@@ -2583,9 +2583,14 @@ class RightPanel {
                     </button>
                 </div>
 
-                <div id="proxy-failure-notice" class="oa-proxy-failure text-amber-600 dark:text-amber-400"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
-                    <span>Proxy unavailable</span>
-                    <button type="button" id="proxy-retry-btn" class="oa-proxy-retry"${pending ? ' disabled' : ''}>Retry</button>
+                <div id="proxy-failure-notice" class="oa-proxy-failure" data-state="unavailable"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
+                    <span class="oa-proxy-feedback-text t-text-swap" role="status">Proxy unavailable</span>
+                    <button type="button" id="proxy-retry-btn" class="oa-proxy-retry" aria-label="Retry proxy connection" aria-disabled="${!!pending}">
+                        <span class="t-icon-swap" data-state="a" aria-hidden="true">
+                            <span class="t-icon" data-icon="a"><svg class="oa-proxy-retry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.7 10M4.3 14a8 8 0 0 0 13.6 3.9"/></svg></span>
+                            <span class="t-icon" data-icon="b"><span class="t-success-check" data-state="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"/></svg></span></span>
+                        </span>
+                    </button>
                 </div>
                 ${this.generateProxyInfoHTML()}
 
@@ -2601,6 +2606,75 @@ class RightPanel {
                 ` : ''}
             </div>
         `;
+    }
+
+    clearProxyFeedbackTimers() {
+        clearTimeout(this.proxyFeedbackTextTimer);
+        clearTimeout(this.proxyFeedbackSettleTimer);
+        clearTimeout(this.proxyFeedbackHideTimer);
+    }
+
+    updateProxyFeedback() {
+        const row = document.getElementById('proxy-failure-notice');
+        if (!row || this.destroyed) return;
+        const meta = this.getProxyStatusMeta();
+        const visible = meta.state === 'unavailable' || (this.proxyRetryFeedbackActive && meta.state !== 'off');
+        const state = visible ? meta.state : 'hidden';
+        if (row.dataset.feedbackState === state) return;
+        this.clearProxyFeedbackTimers();
+        row.dataset.feedbackState = state;
+        row.dataset.state = meta.state;
+        row.classList.remove('is-settled');
+        row.inert = !visible;
+        const button = row.querySelector('#proxy-retry-btn');
+        const label = row.querySelector('.oa-proxy-feedback-text');
+        const swap = row.querySelector('.t-icon-swap');
+        const check = row.querySelector('.t-success-check');
+        const confirmed = meta.state === 'ready' || meta.state === 'connected';
+        if (!visible) {
+            if (row.contains(document.activeElement)) document.querySelector('.oa-proxy-status-icon')?.focus();
+            row.hidden = true;
+            return;
+        }
+        const wasHidden = row.hidden;
+        row.hidden = false;
+        const text = { unavailable: 'Proxy unavailable', connecting: 'Connecting…', ready: 'Ready', connected: 'Connected' }[state];
+        button.setAttribute('aria-disabled', String(state !== 'unavailable'));
+        button.setAttribute('aria-label', state === 'unavailable' ? 'Retry proxy connection' : meta.label);
+        swap.dataset.state = confirmed ? 'b' : 'a';
+        check.dataset.state = 'out';
+        if (confirmed) {
+            const path = check.querySelector('path');
+            const length = Math.ceil(path.getTotalLength()) + 1;
+            check.style.setProperty('--proxy-check-length', String(length));
+            void check.offsetWidth;
+            check.dataset.state = 'in';
+        }
+        label.classList.remove('is-exit', 'is-enter-start');
+        const duration = motionDuration(label, '--text-swap-dur', 150);
+        if (wasHidden || !duration || label.textContent === text) label.textContent = text;
+        else {
+            label.classList.add('is-exit');
+            this.proxyFeedbackTextTimer = setTimeout(() => {
+                label.textContent = text;
+                label.classList.remove('is-exit');
+                label.classList.add('is-enter-start');
+                void label.offsetHeight;
+                label.classList.remove('is-enter-start');
+            }, duration);
+        }
+        if (confirmed) {
+            this.proxyFeedbackSettleTimer = setTimeout(() => {
+                this.proxyRetryFeedbackActive = false;
+                if (row.contains(document.activeElement)) document.querySelector('.oa-proxy-status-icon')?.focus();
+                row.inert = true;
+                row.classList.add('is-settled');
+                this.proxyFeedbackHideTimer = setTimeout(() => {
+                    row.hidden = true;
+                    row.dataset.feedbackState = 'hidden';
+                }, motionDuration(row, '--proxy-feedback-fade', 250));
+            }, 1500 + duration);
+        }
     }
 
     async handleProxyToggle({ retry = false } = {}) {
@@ -2622,6 +2696,8 @@ class RightPanel {
 
         const nextEnabled = retry || !this.proxySettings.enabled;
         this.proxyFailureDismissed = !nextEnabled;
+        this.clearProxyFeedbackTimers();
+        this.proxyRetryFeedbackActive = retry;
         this.proxyActionError = null;
         this.proxyPendingEnabled = nextEnabled;
         this.proxyActionPending = true;
@@ -2641,10 +2717,7 @@ class RightPanel {
 
         const icon = document.querySelector('.oa-proxy-status-icon');
         if (icon) icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
-        const notice = document.getElementById('proxy-failure-notice');
-        if (notice) notice.hidden = true;
-        const retryButton = document.getElementById('proxy-retry-btn');
-        if (retryButton) retryButton.disabled = true;
+        this.updateProxyFeedback();
         try {
             if (retry && this.proxySettings.enabled) await this.app.services.networkProxy.reconnect();
             else await this.app.services.networkProxy.updateSettings({ enabled: nextEnabled });
@@ -2660,6 +2733,7 @@ class RightPanel {
             if (this.destroyed) return;
             this.proxySettings = this.app.services.networkProxy.getSettings();
             this.proxyStatus = this.app.services.networkProxy.getStatus();
+            this.updateProxyFeedback();
             this.lastProxyToggleTime = Date.now(); // Update after completion too
             // Finish the switch animation before replacing its DOM.
             this.proxyRenderTimer = setTimeout(() => {
@@ -2674,6 +2748,7 @@ class RightPanel {
      */
     attachTopSectionEventListeners() {
         this.attachHelpDismissal();
+        this.updateProxyFeedback();
         const ticketManagerButton = document.getElementById('open-ticket-manager-btn');
         if (ticketManagerButton) {
             ticketManagerButton.onclick = event => {
@@ -2930,7 +3005,9 @@ class RightPanel {
         const proxyLearnMore = document.getElementById('proxy-info-learn-more');
         if (proxyLearnMore) proxyLearnMore.onclick = () => proxyInfoModal.open();
         const proxyRetry = document.getElementById('proxy-retry-btn');
-        if (proxyRetry) proxyRetry.onclick = () => this.handleProxyToggle({ retry: true });
+        if (proxyRetry) proxyRetry.onclick = () => {
+                if (proxyRetry.getAttribute('aria-disabled') !== 'true') this.handleProxyToggle({ retry: true });
+            };
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
         if (verifierAttestationBtn) {
@@ -2976,7 +3053,14 @@ class RightPanel {
         }
 
         // Generate and update only the top section HTML
+        const proxyFeedback = topSection.querySelector('#proxy-failure-notice');
+        const proxyRetryFocused = proxyFeedback?.contains(document.activeElement);
         topSection.innerHTML = this.generateTopSectionHTML();
+        // Keep the retry animation and its timers alive across unrelated updates.
+        if (proxyFeedback) {
+            topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
+            if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
+        }
         this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
@@ -3273,6 +3357,7 @@ class RightPanel {
 
     destroy() {
         this.destroyed = true;
+        this.clearProxyFeedbackTimers();
         this.helpAnchorCleanup?.();
         if (this.proxyRenderTimer) clearTimeout(this.proxyRenderTimer);
         if (this.helpDismissClick) document.removeEventListener('click', this.helpDismissClick);

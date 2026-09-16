@@ -3,8 +3,13 @@
 - Network Proxy uses its globe for status: muted when off, pulsing while
   connecting, blue when ready but not verified, green after a verified proxied
   request, and amber after failure. Hover/focus exposes the exact status. Normal
-  states have no status row; failures show a 12px amber status with a separate
-  outlined Retry button aligned to the right. Retry
+  states have no status row; failures show a 12px amber status with a compact
+  adjacent retry arrow. Retry has hover/press feedback, rotates while pending,
+  and uses the shared Transitions.dev text/icon swap and success-check recipes.
+  A completed retry shows Ready until a proxied request is verified; only verified
+  connections say Connected and turn the globe green. Confirmation fades after
+  1.5 seconds, leaving the globe. The retry row survives top-section refreshes;
+  repeated activation is blocked and timers are cleared on failure or destruction. Retry
   respects active requests and reconnects without accidentally toggling off.
 - The proxy question mark expands the same bordered, 12px explanation as tickets
   and ephemeral keys. Learn more opens the existing proxy modal; Security Details

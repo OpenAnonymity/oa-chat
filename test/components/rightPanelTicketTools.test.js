@@ -136,7 +136,7 @@ test('commercial zero balance says Get tickets; signed out, that leads to sign-i
 test('right-panel rerenders reattach commercial ticket status through the public facade', () => {
     const originalDocument = globalThis.document;
     const calls = [];
-    const topSection = { innerHTML: '' };
+    const topSection = { innerHTML: '', querySelector: () => null };
     const panel = Object.create(RightPanel.prototype);
     panel.app = {
         refreshExtensionSlot(name) {
