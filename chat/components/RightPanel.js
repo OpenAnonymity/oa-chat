@@ -2584,8 +2584,8 @@ class RightPanel {
                 </div>
 
                 <div id="proxy-failure-notice" class="oa-proxy-failure text-amber-600 dark:text-amber-400"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
-                    <span>Proxy unavailable ·</span>
-                    <button type="button" id="proxy-retry-btn" class="underline"${pending ? ' disabled' : ''}>Retry</button>
+                    <span>Proxy unavailable</span>
+                    <button type="button" id="proxy-retry-btn" class="oa-proxy-retry"${pending ? ' disabled' : ''}>Retry</button>
                 </div>
                 ${this.generateProxyInfoHTML()}
 
