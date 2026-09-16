@@ -1,3 +1,23 @@
+## 2026-09-16: Proxy status and mutually exclusive panel help
+
+- Network Proxy uses its globe for status: muted when off, pulsing while
+  connecting, blue when ready but not verified, green after a verified proxied
+  request, and amber after failure. Hover/focus exposes the exact status. Normal
+  states have no status row; failures show an actionable Retry notice. Retry
+  respects active requests and reconnects without accidentally toggling off.
+- The proxy question mark expands the same bordered, 12px explanation as tickets
+  and ephemeral keys. Learn more opens the existing proxy modal; Security Details
+  remains available while enabled. The switch uses the shared Transitions.dev
+  toggle and connecting motion honors reduced-motion preferences.
+- Only one of those three explanations may be open. Outside clicks dismiss it
+  without consuming the action; inside clicks stay open. Escape closes focused
+  panel help and returns focus from its content to its trigger, without taking
+  Escape away from a foreground modal. Hidden explanations are inert.
+- Explanation switches adjust the panel scroll position during the accordion
+  transition to compensate for content collapsing above the selected question
+  mark, within the scroller's bounds. At the top boundary movement remains a
+  smooth collapse. Wheel/touch scrolling cancels this adjustment.
+
 ## 2026-09-15: Activity status lives on each event icon
 
 Activity Timeline rows use one status-colored activity icon in the timeline rail,

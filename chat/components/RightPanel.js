@@ -1,4 +1,4 @@
-import { setDisclosure } from '../ui/uiMotion.js';
+import { motionDuration, setDisclosure } from '../ui/uiMotion.js';
 /**
  * Right Panel Component
  * Manages the ticket system UI panel
@@ -27,6 +27,7 @@ class RightPanel {
         verifierAttestationModal.configureServices?.(this.app.services);
         this.currentSession = null;
         this.showAccessKeyInfo = false;
+        this.showProxyInfo = false;
 
         // Responsive behavior
         this.isDesktop = window.innerWidth >= 1024;
@@ -360,17 +361,102 @@ class RightPanel {
         const toggle = document.getElementById('toggle-external-ticket-info-btn');
         if (!panel || !toggle) return;
 
-        const show = this.showExternalTicketInfo;
-        panel.classList.toggle('mt-2', show);
-        panel.classList.toggle('max-h-[480px]', show);
-        panel.classList.toggle('max-h-0', !show);
-        panel.classList.toggle('opacity-100', show);
-        panel.classList.toggle('opacity-0', !show);
-        panel.classList.toggle('pointer-events-none', !show);
-        panel.setAttribute('aria-hidden', show ? 'false' : 'true');
+        const show = !!this.showExternalTicketInfo;
+        this.updateHelpDisclosure(panel, toggle, show);
         toggle.title = show ? 'Hide inference ticket description' : 'What is an inference ticket?';
-        toggle.setAttribute('aria-label', show ? 'Hide inference ticket description' : 'What is an inference ticket?');
-        toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+        toggle.setAttribute('aria-label', toggle.title);
+    }
+
+    getHelpDisclosures() {
+        return [
+            ['showExternalTicketInfo', 'external-ticket-info-panel', 'toggle-external-ticket-info-btn'],
+            ['showAccessKeyInfo', 'ephemeral-key-info-panel', 'verifier-attestation-btn'],
+            ['showProxyInfo', 'proxy-info-panel', 'proxy-info-btn']
+        ];
+    }
+
+    updateHelpDisclosure(panel, button, open) {
+        if (!panel || !button) return;
+        panel.dataset.open = String(open);
+        panel.setAttribute('aria-hidden', String(!open));
+        panel.inert = !open;
+        button.setAttribute('aria-expanded', String(open));
+    }
+
+    setOpenHelp(property = null) {
+        for (const [name, panelId, buttonId] of this.getHelpDisclosures()) {
+            this[name] = name === property;
+            this.updateHelpDisclosure(document.getElementById(panelId), document.getElementById(buttonId), this[name]);
+        }
+        this.updateExternalTicketInfoVisibility();
+    }
+
+    togglePanelHelp(property) {
+        const entry = this.getHelpDisclosures().find(([name]) => name === property);
+        if (!entry) return;
+        const button = document.getElementById(entry[2]);
+        this.preserveHelpAnchor(button);
+        this.setOpenHelp(this[property] ? null : property);
+    }
+
+    preserveHelpAnchor(button) {
+        this.helpAnchorCleanup?.();
+        const scroller = button?.closest('.oa-system-panel-body');
+        if (!scroller) return;
+        const top = button.getBoundingClientRect().top;
+        const previousAnchor = scroller.style.overflowAnchor;
+        scroller.style.overflowAnchor = 'none';
+        const duration = Math.max(motionDuration(scroller, '--acc-expand', 250), motionDuration(scroller, '--acc-collapse', 250));
+        const start = performance.now();
+        let frame;
+        const stop = () => {
+            cancelAnimationFrame(frame);
+            scroller.style.overflowAnchor = previousAnchor;
+            scroller.removeEventListener('wheel', stop);
+            scroller.removeEventListener('touchstart', stop);
+            this.helpAnchorCleanup = null;
+        };
+        const keepPosition = () => {
+            if (!button.isConnected) { stop(); return; }
+            // Counter movement from another explanation closing above this one.
+            // At the scroll boundary the accordion still collapses smoothly.
+            scroller.scrollTop += button.getBoundingClientRect().top - top;
+            if (performance.now() - start <= duration + 50) frame = requestAnimationFrame(keepPosition);
+            else stop();
+        };
+        scroller.addEventListener('wheel', stop, { passive: true });
+        scroller.addEventListener('touchstart', stop, { passive: true });
+        this.helpAnchorCleanup = stop;
+        frame = requestAnimationFrame(keepPosition);
+    }
+
+    attachHelpDismissal() {
+        if (this.helpDismissClick) return;
+        this.helpDismissClick = event => {
+            const root = document.getElementById('right-panel-content');
+            if (!root) return;
+            const insideHelp = this.getHelpDisclosures().some(([, panelId, buttonId]) =>
+                document.getElementById(panelId)?.contains(event.target) || document.getElementById(buttonId)?.contains(event.target));
+            if (insideHelp) return;
+            this.helpAnchorCleanup?.();
+            this.setOpenHelp();
+        };
+        this.helpDismissKey = event => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            const entry = this.getHelpDisclosures().find(([name]) => this[name]);
+            if (!entry) return;
+            const panel = document.getElementById(entry[1]);
+            const button = document.getElementById(entry[2]);
+            // Let a foreground modal handle its own Escape without moving focus.
+            if (!document.getElementById('right-panel-content')?.contains(event.target)) return;
+            event.preventDefault();
+            const restoreFocus = panel?.contains(document.activeElement);
+            this.preserveHelpAnchor(button);
+            this.setOpenHelp();
+            if (restoreFocus) button?.focus({ preventScroll: true });
+        };
+        document.addEventListener('click', this.helpDismissClick);
+        document.addEventListener('keydown', this.helpDismissKey);
     }
 
     setupEventListeners() {
@@ -1891,14 +1977,7 @@ class RightPanel {
     }
 
     toggleAccessKeyInfo() {
-        this.showAccessKeyInfo = !this.showAccessKeyInfo;
-        const panel = document.getElementById('ephemeral-key-info-panel');
-        const button = document.getElementById('verifier-attestation-btn');
-        if (!panel || !button) return;
-        panel.dataset.open = String(this.showAccessKeyInfo);
-        panel.setAttribute('aria-hidden', String(!this.showAccessKeyInfo));
-        panel.inert = !this.showAccessKeyInfo;
-        button.setAttribute('aria-expanded', String(this.showAccessKeyInfo));
+        this.togglePanelHelp('showAccessKeyInfo');
     }
 
     generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
@@ -2085,13 +2164,13 @@ class RightPanel {
                     </div>
                     <div
                         id="external-ticket-info-panel"
-                        class="${this.showExternalTicketInfo ? 'mt-2 max-h-[480px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out"
+                        class="oa-panel-disclosure t-acc" data-open="${!!this.showExternalTicketInfo}"${this.showExternalTicketInfo ? '' : ' inert'}
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
-                        <div class="oa-panel-help rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
+                        <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner"><div class="oa-panel-help">
                             <p>Redeem inference tickets for a temporary API key with up to 20 minutes of model access. Each key supports multiple queries, until its time or usage limit is reached.</p>
                             <p class="mt-2">Blind signatures prevent redeemed tickets from being linked to your purchase. Your queries go directly to the model provider, not The Open Anonymity Project.</p>
-                        </div>
+                        </div></div></div>
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
                     <div class="system-panel-divider" aria-hidden="true"></div>
@@ -2429,25 +2508,49 @@ class RightPanel {
     }
 
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
-        if (status?.fallbackActive || status?.lastError) {
-            return { label: 'Proxy Unavailable — try again or use your own VPN', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
+        if (this.proxyActionPending) {
+            return this.proxyPendingEnabled
+                ? { state: 'connecting', label: 'Connecting to proxy…', textClass: 'text-muted-foreground' }
+                : { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
         }
-
-        if (!settings || !settings.enabled) {
-            return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
+        if (!settings?.enabled && this.proxyFailureDismissed) {
+            return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
         }
-
-        // Connected and verified (first request succeeded)
+        // A failed connection may have automatically switched off. Keep the
+        // warning visible until the user retries or explicitly disables it.
+        if (status?.fallbackActive || status?.lastError || this.proxyActionError) {
+            return { state: 'unavailable', label: 'Proxy unavailable', textClass: 'text-amber-600 dark:text-amber-400' };
+        }
+        if (!settings?.enabled) {
+            return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
+        }
         if (status?.connectionVerified && status?.usingProxy) {
-            return { label: 'Connected', textClass: 'text-status-success', dotClass: 'bg-status-success' };
+            return { state: 'connected', label: 'Connected through proxy', textClass: 'text-status-success' };
         }
-
-        // Ready to use (WebSocket set up, verification happens on first request)
         if (status?.ready) {
-            return { label: 'Ready', textClass: 'text-blue-600 dark:text-blue-400', dotClass: 'bg-blue-500' };
+            return { state: 'ready', label: 'Proxy ready; connection verified on the next request', textClass: 'text-blue-600 dark:text-blue-400' };
         }
+        return { state: 'connecting', label: 'Connecting to proxy…', textClass: 'text-muted-foreground' };
+    }
 
-        return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
+    generateProxyStatusIconHTML(meta) {
+        return `<span class="oa-proxy-status-icon ${meta.textClass}" data-proxy-state="${meta.state}" tabindex="0" role="img" aria-label="${this.escapeHtmlAttribute(meta.label)}">
+            <span class="t-skel-skeleton ${meta.state === 'connecting' ? 'is-pulsing' : ''}">
+                <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <circle cx="12" cy="9" r="8"/><path d="M4 9h16M12 1a12 12 0 0 1 3.5 8 12 12 0 0 1-3.5 8 12 12 0 0 1-3.5-8A12 12 0 0 1 12 1zM12 17v4M4 22h6m4 0h6"/><circle cx="12" cy="22" r="1.5" fill="currentColor"/>
+                </svg>
+            </span>
+            <span class="oa-proxy-status-tooltip" aria-hidden="true">${this.escapeHtml(meta.label)}</span>
+        </span>`;
+    }
+
+    generateProxyInfoHTML() {
+        return `<div id="proxy-info-panel" class="oa-panel-disclosure t-acc" data-open="${!!this.showProxyInfo}" aria-hidden="${!this.showProxyInfo}"${this.showProxyInfo ? '' : ' inert'}>
+            <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner"><div class="oa-panel-help">
+                <p>The network proxy routes supported requests through a relay to help hide your IP address from the destination. It may add latency.</p>
+                <button type="button" id="proxy-info-learn-more" class="oa-panel-learn-more">Learn more</button>
+            </div></div></div>
+        </div>`;
     }
 
     generateProxySectionHTML() {
@@ -2457,52 +2560,34 @@ class RightPanel {
         const pending = this.proxyActionPending;
         const tlsInfo = this.app.services.networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
-        const isEncrypted = settings.enabled && status.usingProxy;
 
         return `<div class="p-3 space-y-2">
                 <!-- Header Row: Title + Toggle -->
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
-                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                            <circle cx="12" cy="9" r="8"/>
-                            <path d="M4 9h16"/>
-                            <path d="M12 1a12 12 0 0 1 3.5 8 12 12 0 0 1-3.5 8 12 12 0 0 1-3.5-8A12 12 0 0 1 12 1z"/>
-                            <path d="M12 17v4"/>
-                            <circle cx="12" cy="22" r="1.5" fill="currentColor"/>
-                            <path d="M4 22h6m4 0h6"/>
-                        </svg>
+                        ${this.generateProxyStatusIconHTML(statusMeta)}
                         <span class="text-xs font-medium text-foreground">Network Proxy</span>
                         <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
-                        <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is this?" type="button">
+                        <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is the network proxy?" aria-label="What is the network proxy?" aria-controls="proxy-info-panel" aria-expanded="${!!this.showProxyInfo}" type="button">
                             ?
                         </button>
                     </div>
                     <button
                         id="proxy-toggle-btn"
-                        class="switch-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
+                        class="switch-toggle t-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
+                        role="switch" aria-label="Network proxy" aria-checked="${!!settings.enabled}" data-on="${!!settings.enabled}"
                         ${pending ? 'disabled' : ''}
                         title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
                     >
-                        <span class="switch-toggle-indicator"></span>
+                        <span class="switch-toggle-indicator t-toggle-thumb"></span>
                     </button>
                 </div>
 
-                <!-- Status Row -->
-                <div class="flex items-center justify-between text-[10px] ${!settings.enabled ? 'opacity-50' : ''}">
-                    <div class="flex items-center gap-1.5 min-w-0">
-                        <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
-                        <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
-                        ${isEncrypted ? `
-                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium badge-status-success" title="TLS tunnel over WebSocket proxy">
-                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                                </svg>
-                                TLS-over-WSS
-                            </span>
-                        ` : ''}
-                    </div>
+                <div id="proxy-failure-notice" class="oa-proxy-failure text-amber-600 dark:text-amber-400"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
+                    <span>Proxy unavailable ·</span>
+                    <button type="button" id="proxy-retry-btn" class="underline"${pending ? ' disabled' : ''}>Retry</button>
                 </div>
+                ${this.generateProxyInfoHTML()}
 
                 <!-- Security Details Button -->
                 ${settings.enabled ? `
@@ -2518,8 +2603,8 @@ class RightPanel {
         `;
     }
 
-    async handleProxyToggle() {
-        if (this.proxyActionPending) return;
+    async handleProxyToggle({ retry = false } = {}) {
+        if (this.destroyed || this.proxyActionPending) return;
 
         // Block toggle when there are active proxy requests (e.g., streaming response)
         if (this.app.services.networkProxy.hasActiveRequests()) {
@@ -2535,35 +2620,52 @@ class RightPanel {
         }
         this.lastProxyToggleTime = now;
 
+        const nextEnabled = retry || !this.proxySettings.enabled;
+        this.proxyFailureDismissed = !nextEnabled;
         this.proxyActionError = null;
+        this.proxyPendingEnabled = nextEnabled;
         this.proxyActionPending = true;
         this.proxyAnimating = true; // Prevent onChange callback from re-rendering during animation
 
         // Update toggle visually BEFORE re-render to trigger CSS animation
         const toggle = document.getElementById('proxy-toggle-btn');
         if (toggle) {
-            const newEnabled = !this.proxySettings.enabled;
+            const newEnabled = nextEnabled;
+            toggle.classList.add('is-init');
+            toggle.dataset.on = String(newEnabled);
+            toggle.setAttribute('aria-checked', String(newEnabled));
             toggle.classList.toggle('switch-active', newEnabled);
             toggle.classList.toggle('switch-inactive', !newEnabled);
             toggle.disabled = true;
         }
 
+        const icon = document.querySelector('.oa-proxy-status-icon');
+        if (icon) icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
+        const notice = document.getElementById('proxy-failure-notice');
+        if (notice) notice.hidden = true;
+        const retryButton = document.getElementById('proxy-retry-btn');
+        if (retryButton) retryButton.disabled = true;
         try {
-            await this.app.services.networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
+            if (retry && this.proxySettings.enabled) await this.app.services.networkProxy.reconnect();
+            else await this.app.services.networkProxy.updateSettings({ enabled: nextEnabled });
         } catch (error) {
             // Show toast for active request errors (race condition protection)
             if (error.message?.includes('requests are in progress')) {
                 this.app?.showToast?.('Cannot change proxy while data is streaming', 'error');
             }
             this.proxyActionError = error.message;
+            this.proxyFailureDismissed = false;
         } finally {
             this.proxyActionPending = false;
+            if (this.destroyed) return;
+            this.proxySettings = this.app.services.networkProxy.getSettings();
+            this.proxyStatus = this.app.services.networkProxy.getStatus();
             this.lastProxyToggleTime = Date.now(); // Update after completion too
-            // Wait for CSS animation to complete (200ms) before re-rendering
-            setTimeout(() => {
+            // Finish the switch animation before replacing its DOM.
+            this.proxyRenderTimer = setTimeout(() => {
                 this.proxyAnimating = false;
                 this.renderTopSectionOnly();
-            }, 230); // Slightly longer than 200ms CSS transition
+            }, motionDuration(toggle, '--toggle-dur', 350));
         }
     }
 
@@ -2571,6 +2673,7 @@ class RightPanel {
      * Attaches event listeners to the top section elements only.
      */
     attachTopSectionEventListeners() {
+        this.attachHelpDismissal();
         const ticketManagerButton = document.getElementById('open-ticket-manager-btn');
         if (ticketManagerButton) {
             ticketManagerButton.onclick = event => {
@@ -2586,8 +2689,7 @@ class RightPanel {
         const toggleExternalTicketInfo = document.getElementById('toggle-external-ticket-info-btn');
         if (toggleExternalTicketInfo) {
             toggleExternalTicketInfo.onclick = () => {
-                this.showExternalTicketInfo = !this.showExternalTicketInfo;
-                this.updateExternalTicketInfoVisibility();
+                this.togglePanelHelp('showExternalTicketInfo');
             };
         }
 
@@ -2822,8 +2924,13 @@ class RightPanel {
 
         const proxyInfoBtn = document.getElementById('proxy-info-btn');
         if (proxyInfoBtn) {
-            proxyInfoBtn.onclick = () => proxyInfoModal.open();
+            proxyInfoBtn.onclick = () => this.togglePanelHelp('showProxyInfo');
         }
+
+        const proxyLearnMore = document.getElementById('proxy-info-learn-more');
+        if (proxyLearnMore) proxyLearnMore.onclick = () => proxyInfoModal.open();
+        const proxyRetry = document.getElementById('proxy-retry-btn');
+        if (proxyRetry) proxyRetry.onclick = () => this.handleProxyToggle({ retry: true });
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
         if (verifierAttestationBtn) {
@@ -3165,6 +3272,13 @@ class RightPanel {
     }
 
     destroy() {
+        this.destroyed = true;
+        this.helpAnchorCleanup?.();
+        if (this.proxyRenderTimer) clearTimeout(this.proxyRenderTimer);
+        if (this.helpDismissClick) document.removeEventListener('click', this.helpDismissClick);
+        if (this.helpDismissKey) document.removeEventListener('keydown', this.helpDismissKey);
+        this.helpDismissClick = null;
+        this.helpDismissKey = null;
         this.smoothProgress.stop();
         this.hasMounted = false;
         if (this.timerInterval) {

@@ -293,9 +293,9 @@ test('key help expands inline and retains its state through panel refreshes', ()
     const panel = createRenderPanel();
     const attrs = {};
     const disclosure = { dataset: {}, inert: true, setAttribute: (key, value) => attrs[key] = value };
-    const button = { setAttribute: (key, value) => attrs[`button-${key}`] = value };
+    const button = { closest: () => null, setAttribute: (key, value) => attrs[`button-${key}`] = value };
     const oldDocument = globalThis.document;
-    globalThis.document = { getElementById: id => id === 'ephemeral-key-info-panel' ? disclosure : button };
+    globalThis.document = { getElementById: id => id === 'ephemeral-key-info-panel' ? disclosure : id === 'verifier-attestation-btn' ? button : null };
     try {
         assert.match(panel.generateAccessKeyInfoHTML(), /aria-hidden="true" inert/);
         panel.toggleAccessKeyInfo();
