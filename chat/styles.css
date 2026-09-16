@@ -9684,7 +9684,7 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 .oa-system-timeline { min-height: 12rem; }
 
 /* Compact proxy status: explanatory text lives in the help disclosure. */
-.oa-proxy-status-icon { position: relative; display: inline-flex; width: .875rem; height: .875rem; flex-shrink: 0; cursor: help; --pulse-dur: 1400ms; --pulse-count: infinite; --pulse-min: .35; }
+.oa-proxy-status-icon { position: relative; display: inline-flex; width: .875rem; height: .875rem; flex-shrink: 0; cursor: default; --pulse-dur: 1400ms; --pulse-count: infinite; --pulse-min: .35; }
 .oa-proxy-status-tooltip { position: absolute; top: calc(100% + 8px); left: 0; width: max-content; max-width: 240px; padding: .4rem .6rem; border: 1px solid hsl(var(--color-border)); border-radius: .375rem; background: hsl(var(--color-background)); color: hsl(var(--color-foreground)); font-size: .625rem; line-height: 1.5; visibility: hidden; pointer-events: none; z-index: 30; }
 .oa-proxy-status-icon:hover .oa-proxy-status-tooltip, .oa-proxy-status-icon:focus-visible .oa-proxy-status-tooltip { visibility: visible; }
 .oa-proxy-failure {
