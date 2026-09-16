@@ -21,8 +21,9 @@ shell, not only isolated RightPanel previews, when changing header controls.
   opens the existing attestation modal; parallel chats expose a link per issued
   lane. Expansion state survives top-section refreshes, and collapsed interactive
   content is inert. Key and ticket explanation text is consistently 12px.
-- Key detail rows share a 50px minimum height, 16px horizontal padding,
-  and 12px vertical padding; expiry and renew controls have a 12px gap. The System Panel uses one fixed top-right toggle outside the
+- Key detail rows share a compact 42px minimum height, 12px horizontal padding,
+  and 8px vertical padding; expiry and renew controls have a 12px gap. Row labels
+  and masked keys stay on one line and ellipsize instead of increasing row height. The System Panel uses one fixed top-right toggle outside the
   resizing layout, preserving its position and focus when opening or closing.
   A closed panel is inert. Sidebar contents keep their final width while the
   outer rail clips, including saved widths and mobile overlays.
