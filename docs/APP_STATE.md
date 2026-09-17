@@ -1,3 +1,15 @@
+## 2026-09-17: Toast placement with the centered composer
+
+- Ordinary and loading toasts sit 16px below a centered composer and 16px above
+  a docked composer. Payment confirmations keep their existing top-center slot.
+- A toast keeps its last position when the composer switches between those
+  layouts. Later notifications choose the current layout. During first-send
+  motion they use the composer's final destination, not a moving animation frame.
+- Position remains responsive to draft resizing within the same layout and is
+  clamped on window/visual-viewport resize and viewport scroll. Listeners are
+  removed on replacement or dismissal; weak placement remains through the exit
+  fade. Existing toast fades and reduced-motion rules remain in place.
+
 ## 2026-09-17: No empty-chat flash during conversation restoration
 
 - The restoration flag must also be exposed by `COMPONENT_APP_KEYS`: ChatArea

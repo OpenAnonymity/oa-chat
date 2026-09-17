@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { leaveChatArrival, cancelChatArrival } from '../../chat/ui/chatArrival.js';
+import { leaveChatArrival, cancelChatArrival, getChatArrivalDestination } from '../../chat/ui/chatArrival.js';
+import { positionAppToast } from '../../chat/ui/toastPosition.js';
 
 function fixture({ reduced = false, empty = true } = {}) {
     const animations = [];
@@ -35,10 +36,12 @@ test('first message moves the same composer and removes the brand after motion',
     assert.equal(f.animations[0].frames[0].transform, 'translate(0px, -300px)');
     assert.equal(f.welcome.inert, true);
     assert.equal(f.welcome.overlay, true);
+    assert.equal(getChatArrivalDestination(f.container).top, 600);
     f.animations.forEach(animation => animation.finish());
     await Promise.resolve(); await Promise.resolve();
     assert.equal(f.welcome.overlay, false);
     assert.equal(f.listeners.size, 0);
+    assert.equal(getChatArrivalDestination(f.container), undefined);
 });
 
 test('reduced motion and non-user arrivals dock without animation', () => {
@@ -53,6 +56,19 @@ test('reduced motion and non-user arrivals dock without animation', () => {
 test('existing conversations do not replay arrival motion', () => {
     const f = fixture({ empty: false }); leaveChatArrival(f.container);
     assert.equal(f.animations.length, 0);
+});
+
+test('a new toast during first-send motion uses the final docked position', () => {
+    const f = fixture();
+    leaveChatArrival(f.container);
+    f.composer.getBoundingClientRect = () => ({ top: 350 }); // Moving animation frame.
+    const toast = { dataset: {}, style: {}, offsetHeight: 40 };
+    positionAppToast(toast, {
+        document: { getElementById: id => id === 'input-card' ? f.composer : f.container },
+        window: { innerHeight: 900 }
+    });
+    assert.equal(toast.style.top, '544px'); // Destination 600 minus gap and toast.
+    cancelChatArrival(f.container);
 });
 
 test('new chat and resizing cancel old animation and clear the outgoing brand', () => {

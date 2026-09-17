@@ -1,4 +1,5 @@
 import { installToggleMotion } from './ui/toggleMotion.js';
+import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
 // Main application logic
 import themeManager from './services/themeManager.js';
@@ -3897,23 +3898,7 @@ class ChatApp {
     }
 
     updateToastPosition() {
-        const toast = document.getElementById('app-toast');
-        if (!toast) return;
-
-        if (toast.dataset.position === 'top-center') {
-            toast.style.top = 'calc(env(safe-area-inset-top, 0px) + 72px)';
-            toast.style.bottom = 'auto';
-            toast.style.maxWidth = 'calc(100vw - 32px)';
-            toast.style.textAlign = 'center';
-            return;
-        }
-        const inputCard = document.getElementById('input-card');
-        if (inputCard) {
-            const rect = inputCard.getBoundingClientRect();
-            // Position above input card with 16px gap
-            const bottomSpace = window.innerHeight - rect.top + 16;
-            toast.style.bottom = `${bottomSpace}px`;
-        }
+        positionAppToast(document.getElementById('app-toast'), { document, window });
     }
 
     isWelcomeWorkflowActive() {
@@ -3939,21 +3924,23 @@ class ChatApp {
         toast.dataset.position = position;
         toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-foreground';
-        // Removed fixed bottom-36, will be set by updateToastPosition
+        // Position independently of the composer's arrival animation.
         toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} `;
         toast.textContent = message;
         document.body.appendChild(toast);
         showSurface(toast, 'toast');
 
-        this.updateToastPosition();
+        watchToastPosition(toast, { document, window });
 
         this._toastTimeout = setTimeout(() => {
+            stopToastPositioning(toast);
             hideSurface(toast, { remove: true });
         }, durationMs);
     }
 
     clearToast() {
         const previous = document.getElementById('app-toast');
+        if (previous) stopToastPositioning(previous);
         previous?.removeAttribute('id');
         hideSurface(previous, { remove: true });
         clearTimeout(this._toastTimeout);
@@ -4004,9 +3991,10 @@ class ChatApp {
         document.body.appendChild(toast);
         showSurface(toast, 'toast');
 
-        this.updateToastPosition();
+        watchToastPosition(toast, { document, window });
 
         return () => {
+            stopToastPositioning(toast);
             hideSurface(toast, { remove: true });
         };
     }

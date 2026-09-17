@@ -3,8 +3,13 @@
 const arrivals = new WeakMap();
 
 export function cancelChatArrival(container) {
-    const cleanup = container && arrivals.get(container);
-    cleanup?.();
+    const arrival = container && arrivals.get(container);
+    arrival?.cleanup();
+}
+
+// New notifications use the docked destination, never a moving animation frame.
+export function getChatArrivalDestination(container) {
+    return container && arrivals.get(container)?.destination;
 }
 
 export function leaveChatArrival(container, { animate = true } = {}) {
@@ -54,10 +59,10 @@ export function leaveChatArrival(container, { animate = true } = {}) {
         view.visualViewport?.removeEventListener('resize', cleanup);
         arrivals.delete(container);
     };
-    arrivals.set(container, cleanup);
+    arrivals.set(container, { cleanup, destination: after });
     view.addEventListener('resize', cleanup, { once: true });
     view.visualViewport?.addEventListener('resize', cleanup, { once: true });
     Promise.all(animations.map(animation => animation.finished)).then(() => {
-        if (arrivals.get(container) === cleanup) cleanup();
+        if (arrivals.get(container)?.cleanup === cleanup) cleanup();
     }, () => {}); // Cancellation is normal when changing chats or resizing.
 }
