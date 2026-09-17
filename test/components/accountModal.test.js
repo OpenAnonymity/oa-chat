@@ -1566,11 +1566,7 @@ test('Log out holds a dimmed "Logging out…" frame; a host that takes the page 
         modal.escapeHtml = value => String(value ?? '');
         modal.renderAccountUI = () => '<form>Log in</form>';
         modal.app = {
-            showToast(message, type, duration, options) {
-                assert.equal(duration, 3000);
-                assert.deepEqual(options, { position: 'account' });
-                events.push(`toast:${message}`);
-            },
+            showToast(message) { events.push(`toast:${message}`); },
             notifyLoggedOut() { events.push('logged-out'); return hostLeaves; }
         };
 
@@ -1582,7 +1578,7 @@ test('Log out holds a dimmed "Logging out…" frame; a host that takes the page 
             assert.equal(modal.loggingOut, true);
             assert.match(modal.overlay.innerHTML, /Logging out…/);
         } else {
-            assert.deepEqual(events, ['clear', 'logged-out', 'toast:Logged out']);
+            assert.deepEqual(events, ['clear', 'logged-out']);
             assert.equal(modal.loggingOut, false);
             assert.match(modal.overlay.innerHTML, /<form>Log in<\/form>/);
         }

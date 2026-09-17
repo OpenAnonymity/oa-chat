@@ -84,31 +84,3 @@ test('live toasts respond to viewport events and detach listeners on dismissal',
     view.dispatchEvent(new Event('resize'));
     assert.equal(f.toast.style.top, '516px');
 });
-
-
-test('account confirmation clears the dialog with room reserved on short screens', t => {
-    const f = fixture(t, { position: 'account' });
-    const properties = {};
-    const overlay = {
-        style: { setProperty: (key, value) => { properties[key] = value; } },
-        setAttribute() {},
-        classList: { contains: () => false },
-        querySelector: () => ({ getBoundingClientRect: () => ({ top: f.dialogTop }) })
-    };
-    const getElementById = globalThis.document.getElementById;
-    globalThis.document.getElementById = id => id === 'account-modal' ? overlay : getElementById(id);
-    f.dialogTop = 180;
-    f.update();
-    assert.equal(f.toast.style.top, '124px');
-    assert.equal(properties['--account-notice-max-height'], 'max(0px, calc(100dvh - 144px))');
-    // A shorter viewport gives the dialog a smaller scrollable area and leaves
-    // the same clearance above it. The browser layout test verifies actual CSS.
-    globalThis.window.innerHeight = 400;
-    f.dialogTop = 72;
-    f.update();
-    assert.equal(properties['--account-notice-max-height'], 'max(0px, calc(100dvh - 144px))');
-    assert.equal(f.toast.style.top, '16px');
-    stopToastPositioning(f.toast);
-    // The retained cap remains viewport-relative after listeners detach.
-    assert.equal(properties['--account-notice-max-height'], 'max(0px, calc(100dvh - 144px))');
-});

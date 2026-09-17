@@ -1,10 +1,9 @@
 ## 2026-09-17: Toast placement with the centered composer
 
-- Logout keeps the normal dimmed backdrop and loading indicator instead of
-  an opaque white cover. Its three-second confirmation sits above the returning
-  login dialog, following dialog resize/replacement and viewport changes. Tall
-  dialogs reserve a scrollable area below the notice; the reservation lasts until
-  the next opening to avoid a jump when the toast disappears.
+- Logout keeps the normal dimmed backdrop and “Logging out…” indicator during
+  cleanup, then shows the login modal (or returns to zkAPI). It no longer shows
+  a success toast: the destination already confirms logout. The unused account
+  toast anchor and its dialog height reservation have been removed.
 - After the account modal closes, unlock confirmations use the composer position
   (below centered / above docked). A fixed top offset is not safe for account
   notices: a tall login dialog can occupy that same space.

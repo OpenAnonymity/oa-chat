@@ -391,8 +391,6 @@ class AccountModal {
 
     open(returnFocusEl = null) {
         if (this.isOpen || !this.overlay) return;
-        this.overlay.removeAttribute?.('data-account-notice');
-        this.overlay.style?.removeProperty('--account-notice-max-height');
         this.closeAccountMenu();
         this.dismissOverlaySidebar();
         this.isOpen = true;
@@ -1306,11 +1304,9 @@ class AccountModal {
         if (this.app?.getPaymentMode?.() === 'zkapi') {
             // Logged out of the mode that needs no account: nothing to ask.
             this.close();
-            this.app?.showToast?.('Logged out', 'success', 3000, { position: 'composer' });
             return;
         }
         this.render();
-        this.app?.showToast?.('Logged out', 'success', 3000, { position: 'account' });
     }
 
     togglePasskeyDetails() {
