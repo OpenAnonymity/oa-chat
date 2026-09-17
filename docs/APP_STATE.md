@@ -1,3 +1,21 @@
+## 2026-09-17: Centered composer on empty chats
+
+- Empty chats center the existing welcome/byline and composer with no prompt
+  suggestions. CSS keys off the actual welcome node, including the prelude's
+  first paint. Typing does not leave the centered state.
+- Appending the first accepted user message animates the same input card to its
+  normal bottom position over 500ms. The welcome fades away, and the transcript
+  fades in without transforming its geometry (prompt scroll anchoring depends
+  on that geometry). No draft, attachment, focus, or input event binding is cloned.
+- Full session renders and new-chat resets cancel transient animations; viewport
+  resizing cancels motion too. Reduced motion docks immediately. Existing/shared
+  conversations render at the bottom without replaying arrival.
+- Empty state overrides the mobile fixed-card/display-contents rules below 768px.
+  Animate the input card itself, never its ancestor: transforming its wrapper
+  would change the containing block of the mobile fixed-position card.
+- Empty transcript padding overrides the input ResizeObserver's inline bottom
+  padding; normal transcript padding resumes as soon as the welcome is removed.
+
 ## 2026-09-16: Proxy status and mutually exclusive panel help
 
 - Network Proxy uses its globe for status: muted when off, pulsing while

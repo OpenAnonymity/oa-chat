@@ -9742,3 +9742,66 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
   }
   .t-skel-skeleton.is-pulsing > * { animation: none !important; }
 }
+
+/* Empty-chat arrival. Content determines layout, including the prelude's first paint.
+   No second input is mounted: drafts, attachments, and focus stay on the same node. */
+#chat-stage:has(#messages-container > .welcome-landing) {
+    justify-content: center;
+    justify-content: safe center;
+    gap: 28px;
+    padding-block: 20px;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #chat-area {
+    flex: 0 1 auto;
+    max-height: 40%;
+    padding-top: 0;
+    overflow-y: auto;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #messages-container {
+    padding-block: 0 !important; /* Overrides the input ResizeObserver's transcript padding. */
+}
+#chat-stage:has(#messages-container > .welcome-landing) .welcome-landing {
+    margin-top: 0;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #chat-composer {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    z-index: 20;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #message-input {
+    max-height: min(300px, 30dvh) !important;
+}
+.chat-arrival-outgoing {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    margin: 0;
+    animation: none;
+}
+@media (max-height: 500px) {
+    #chat-stage:has(#messages-container > .welcome-landing) {
+        gap: 12px;
+        padding-block: 8px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .welcome-landing { animation: none; opacity: 1; transform: none; }
+}
+
+/* Mobile normally fixes the input card to the viewport and removes this wrapper.
+   Restore flow only while empty; animate the card itself when docking so its
+   fixed positioning never acquires a transformed ancestor. */
+@media (max-width: 767px) {
+    main > #chat-stage:has(#messages-container > .welcome-landing) {
+        display: flex !important;
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #chat-area {
+        flex: 0 1 auto !important;
+        margin-bottom: 0 !important;
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
+        position: relative !important;
+        inset: auto !important;
+    }
+}

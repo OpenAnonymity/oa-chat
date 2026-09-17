@@ -1,3 +1,4 @@
+import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ChatArea Component
@@ -903,6 +904,7 @@ export default class ChatArea {
      * Desktop hooks can call this to avoid intermediate flashes.
      */
     renderEmptyStateImmediate() {
+        cancelChatArrival(this.app.elements.messagesContainer);
         const messagesContainer = this.app.elements.messagesContainer;
         if (!messagesContainer) return;
         messagesContainer.innerHTML = buildEmptyState();
@@ -1786,6 +1788,7 @@ export default class ChatArea {
     async render() {
         // Increment render generation - used to cancel stale renders during rapid session switching
         const currentGeneration = ++this.renderGeneration;
+        cancelChatArrival(this.app.elements.messagesContainer);
         const session = this.app.getCurrentSession();
         const sessionId = session?.id || '';
         const messagesContainer = this.app.elements.messagesContainer;
@@ -3073,6 +3076,7 @@ export default class ChatArea {
         // Check if we need to clear the empty state
         const emptyState = messagesContainer.querySelector('.text-center.text-muted-foreground');
         if (emptyState) {
+            leaveChatArrival(messagesContainer, { animate: message.role === 'user' });
             messagesContainer.innerHTML = '';
         }
 

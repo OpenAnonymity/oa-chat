@@ -578,15 +578,15 @@
                 </div>
                 -->
 
-                <div class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
+                <div id="chat-stage" class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
                     <!-- Chat Messages Area -->
                     <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-scroll">
                         <div id="messages-container" class="w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pt-4 pb-32">
                         </div>
                     </div>
 
-                    <!-- Input Area - always visible at bottom with consistent padding -->
-                    <div class="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-1 flex-shrink-0">
+                    <!-- The same composer centers in empty chats and docks after the first message. -->
+                    <div id="chat-composer" class="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-1 flex-shrink-0">
                         <div id="input-card" class="rounded-lg p-1.5 border w-full max-w-[42rem] mx-auto flex-shrink-0 shadow-lg relative" style="isolation: isolate;">
                                 <!-- Drop Zone Overlay -->
                                 <div id="drop-zone-overlay" class="hidden absolute inset-0 z-[60] rounded-lg border-2 border-dashed border-primary/30 bg-card flex items-center justify-center pointer-events-none transition-all duration-200">
