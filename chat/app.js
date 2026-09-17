@@ -10040,6 +10040,7 @@ class ChatApp {
         }
         btn.classList.toggle('wide-active', isWide);
         btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view');
+        btn.setAttribute('data-tooltip', isWide ? 'Narrow chat' : 'Widen chat');
         btn.setAttribute('aria-pressed', String(isWide));
     }
 

@@ -4396,14 +4396,79 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 /* One persistent viewport-anchored control for opening and closing. */
 #show-right-panel-btn {
     position: fixed;
-    top: 6px;
+    /* Centred on the 49px header's text line: (49 - 28) / 2, rounded down
+       so the glyph's optical weight (its filled right pane) sits level. */
+    top: 10px;
     right: 12px;
     z-index: 50;
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 28px;
+    height: 28px;
     display: inline-flex;
 }
-.oa-system-panel-header { padding-right: 3.75rem; }
+.oa-system-panel-header { padding-right: 3rem; }
+
+/* System Panel icon buttons — the widen, collapse and clear controls share
+   one rule: a 16px glyph from the same 24px outline set at a 1.5 stroke,
+   muted until hovered, a soft tint behind it, and a 1px nudge that says
+   which way the control acts. The clear control is destructive and rare:
+   it earns its red only on hover. */
+.oa-panel-icon-btn {
+    border-radius: 8px;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 150ms ease, background-color 150ms ease;
+}
+.oa-panel-icon-btn > svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 1.5;
+    overflow: visible;
+    transition: transform 150ms ease;
+}
+.oa-panel-icon-btn > svg path,
+.oa-panel-icon-btn > svg rect {
+    transition: transform 150ms ease;
+}
+.oa-panel-icon-btn:hover,
+.oa-panel-icon-btn:focus-visible {
+    color: hsl(var(--color-foreground));
+    background-color: hsl(var(--color-hover));
+}
+.oa-panel-icon-btn--destructive:hover,
+.oa-panel-icon-btn--destructive:focus-visible {
+    color: hsl(var(--color-destructive));
+}
+.oa-panel-icon-btn:active > svg {
+    transform: scale(0.94);
+    transition-duration: 80ms;
+}
+/* Inside a text row: keep the 28px target without growing the row. */
+.oa-panel-icon-btn--tight { margin-block: -4px; }
+/* Collapse: the panel leaves to the right, so the glyph leans that way;
+   with the panel closed the same control opens it, and leans back in. */
+#show-right-panel-btn:hover > svg,
+#show-right-panel-btn:focus-visible > svg { transform: translateX(1px); }
+html[data-right-panel-hidden="true"] #show-right-panel-btn:hover > svg,
+html[data-right-panel-hidden="true"] #show-right-panel-btn:focus-visible > svg { transform: translateX(-1px); }
+/* Widen: the arrows spread; when already wide they draw back in. */
+#wide-mode-btn:hover .theater-arrow-start,
+#wide-mode-btn:focus-visible .theater-arrow-start { transform: translateX(-1px); }
+#wide-mode-btn:hover .theater-arrow-end,
+#wide-mode-btn:focus-visible .theater-arrow-end { transform: translateX(1px); }
+#wide-mode-btn.wide-active:hover .theater-arrow-start,
+#wide-mode-btn.wide-active:focus-visible .theater-arrow-start { transform: translateX(1px); }
+#wide-mode-btn.wide-active:hover .theater-arrow-end,
+#wide-mode-btn.wide-active:focus-visible .theater-arrow-end { transform: translateX(-1px); }
+/* Their tooltips wait a beat, so a pass of the pointer says nothing. */
+.oa-panel-icon-btn[data-tooltip]:hover::after,
+.oa-panel-icon-btn[data-tooltip]:hover::before {
+    animation-delay: 350ms;
+    animation-fill-mode: both;
+}
+@media (prefers-reduced-motion: reduce) {
+    .oa-panel-icon-btn > svg,
+    .oa-panel-icon-btn > svg path,
+    .oa-panel-icon-btn > svg rect { transition: none; transform: none !important; }
+}
 .system-panel-toggle-space { width: 0; }
 html[data-right-panel-hidden="true"] .system-panel-toggle-space { width: 2.75rem; }
 
@@ -9002,6 +9067,21 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 @keyframes tooltipBodyFadeInStart {
     from { opacity: 0; transform: translateY(-50%) translateX(0.25rem); }
+    to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+/* Its mirror: to the right of the element, for controls at the toolbar's
+   left edge (the widen control), where a tooltip below is clipped. */
+[data-tooltip-position="end"]:hover::after {
+    top: 50%;
+    left: calc(100% + 0.5rem);
+    right: auto;
+    bottom: auto;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    animation: tooltipBodyFadeInEnd 0.15s ease-out;
+}
+@keyframes tooltipBodyFadeInEnd {
+    from { opacity: 0; transform: translateY(-50%) translateX(-0.25rem); }
     to   { opacity: 1; transform: translateY(-50%) translateX(0); }
 }
 .chat-mode-html-tooltip { gap: 0.25rem; }

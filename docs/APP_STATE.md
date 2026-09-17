@@ -1,3 +1,23 @@
+## 2026-09-17: System Panel icon buttons; submitted transactions resolve themselves
+
+- The widen, collapse and clear-timeline controls share `.oa-panel-icon-btn`:
+  a 16px glyph from the 24px outline set at a 1.5 stroke, muted until hovered,
+  `--color-hover` tint behind it (150ms colour/background transitions), the
+  same state on `:focus-visible`, and a 1px nudge that says which way the
+  control acts (collapse leans toward the edge it leaves to, widen's arrows
+  spread, or draw in when already wide). Clear is destructive and rare: red
+  on hover only. Collapse is a 28px target centred on the header text line;
+  clear is 28px inside the timeline row without growing it (`--tight`).
+- Tooltips (12px, existing system) on all three, delayed 350ms so a pass of
+  the pointer says nothing; labels follow state ("Open/Close panel",
+  "Widen/Narrow chat"). New `data-tooltip-position="end"` (beside, to the
+  right) for controls at the toolbar's left edge, which clips tooltips below.
+- A submitted deposit or withdrawal needs nothing from the person: the step
+  says "Waiting for confirmation. Usually under a minute; this updates on its
+  own." and the check button is the quiet fallback ("Check now"). Other
+  phases (dropped, awaiting wallet, ambiguous) keep the primary check. The
+  SDK reconciles every 15 s and on focus; the dialog re-renders on change.
+
 ## 2026-09-17: Wallet progress survives a reload; System Panel inline from 768px
 
 - Private balance dialog: after SDK initialization, a saved deposit or an

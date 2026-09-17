@@ -373,11 +373,11 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-background text-foreground h-screen overflow-hidden">
-    <button id="show-right-panel-btn" type="button" aria-controls="right-panel" aria-label="Open system panel" aria-expanded="false" class="system-panel-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                                <path d="M14 4v16"/>
+    <button id="show-right-panel-btn" type="button" aria-controls="right-panel" aria-label="Open system panel" aria-expanded="false" data-tooltip="Open panel" data-tooltip-position="start" class="system-panel-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                                <rect x="3.75" y="4.5" width="16.5" height="15" rx="2.25"/>
+                                <path d="M14.25 4.5h3.75a2.25 2.25 0 0 1 2.25 2.25v10.5a2.25 2.25 0 0 1-2.25 2.25h-3.75V4.5z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
+                                <path d="M14.25 4.5v15"/>
                             </svg>
                         </button>
     <!-- Mobile sidebar backdrop -->
@@ -546,10 +546,12 @@
                         </button>
 
                         <!-- Wide Mode Button -->
-                        <button id="wide-mode-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand view">
-                            <svg class="h-5 w-5 theater-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                                <rect x="2" y="4" width="20" height="16" rx="1.5"/>
-                                <path d="M2 17h20M9 8l-3 3 3 3m6-6 3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                        <button id="wide-mode-btn" class="oa-panel-icon-btn hidden inline-flex items-center justify-center h-9 w-9 cursor-pointer select-none" aria-label="Expand view" data-tooltip="Widen chat" data-tooltip-position="end">
+                            <svg class="theater-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                                <rect x="2.25" y="4.5" width="19.5" height="15" rx="2.25"/>
+                                <path d="M2.25 16.5h19.5" stroke-linecap="round"/>
+                                <path class="theater-arrow-start" d="M9 8.25 6.25 11l2.75 2.75" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path class="theater-arrow-end" d="m15 8.25 2.75 2.75L15 13.75" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
                         </button>
                     </div>
