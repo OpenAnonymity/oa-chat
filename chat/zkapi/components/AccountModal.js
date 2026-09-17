@@ -14,6 +14,9 @@ import {
 // The OA dialog frame (Account, Welcome): 560px, 24px radius, 40px inset, no
 // header hairline. Sizing and colour live in zkapi.css (.zkapi-dialog).
 const MODAL_CLASSES = 'zkapi-dialog';
+// Closing the MetaMask prompt is the person's own decision, said once, in
+// the fewest words: no funds moved and the saved work is still there.
+const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
 // Wallet work narrates in the dialog — the steps while it runs, one line
 // with the outcome when it ends. No toasts: with the dialog closed, the
 // right panel's activity rows carry the same words.
@@ -23,6 +26,7 @@ export default class AccountModal {
         this.app = app;
         this.triggerId = triggerId;
         this.isOpen = false;
+        this.restorePendingOnInit = true;
         this.overlay = document.getElementById(overlayId);
         this.view = 'balance';
         this.withdrawMode = 'mutual';
@@ -49,7 +53,10 @@ export default class AccountModal {
         });
         this.attachTabListener();
         this.updateTabIndicator();
-        void zkapiClient.init().catch(() => this.updateTabIndicator());
+        void zkapiClient.init().then(() => this.restorePendingOperation()).catch(() => {
+            this.updateTabIndicator();
+            this.restorePendingOperation();
+        });
 
         window.addEventListener('zkapi-payment-required', (event) => {
             this.open(event.detail?.view || 'fund');
@@ -67,7 +74,29 @@ export default class AccountModal {
         updateZkapiBalanceControl(tabBtn, this.app);
     }
 
+    // A reload loses the dialog, not the work: the SDK keeps reconciling the
+    // saved deposit or withdrawal in the background. Once, after startup, put
+    // the steps back where they were. Opening only refreshes status; a wallet
+    // request still needs the user's own click. A close, or any manual open
+    // during startup, wins over restoration.
+    restorePendingOperation() {
+        if (!this.restorePendingOnInit) return;
+        this.restorePendingOnInit = false;
+        if (this.isOpen || this.busy) return;
+        if (zkapiClient.config?.pending_deposit && !zkapiClient.note) {
+            this.open('fund');
+        } else if (zkapiClient.config?.prepared_withdrawal
+            || ['prepared', 'submitted', 'pending'].includes(zkapiClient.withdrawal?.phase)
+            || zkapiClient.activeLateWithdrawal) {
+            this.withdrawMode = (zkapiClient.config?.prepared_withdrawal?.mode
+                || zkapiClient.withdrawal?.mode || zkapiClient.activeLateWithdrawal?.mode) === 'escape'
+                ? 'escape' : 'mutual';
+            this.open('withdraw');
+        }
+    }
+
     open(view = 'balance') {
+        this.restorePendingOnInit = false;
         if (!this.overlay) return;
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
@@ -143,6 +172,13 @@ export default class AccountModal {
         }
         const progress = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-progress-text]') : null;
         if (progress) this.swapProgressText(progress, message);
+    }
+
+    /** The last run ended with the MetaMask prompt closed. Two states share
+     *  a saved deposit or withdrawal — just canceled, or found again after a
+     *  reload — and each gets its own one line, never both. */
+    justCanceled() {
+        return !this.busy && this.outcome?.canceled === true;
     }
 
     /** The last run's result, shown in the dialog until the next run or
@@ -293,9 +329,8 @@ export default class AccountModal {
             // An indexer that has not caught up is a wait, not a fault.
             const indexerLag = isIndexerLag(error);
             explainZkapiError(error);
-            this.setStatus(rejected
-                ? error.shortMessage || 'MetaMask canceled the transaction. No funds moved; you can safely try again.'
-                : walletErrorMessage(error), !rejected && !confirmationPending && !indexerLag);
+            this.setStatus(rejected ? CANCELED_LINE : walletErrorMessage(error),
+                !rejected && !confirmationPending && !indexerLag);
             if (activityId) {
                 if (confirmationPending) zkapiClient.completeActivity(activityId, {
                     title: 'Withdrawal transaction mined',
@@ -308,7 +343,7 @@ export default class AccountModal {
             // Closing a wallet prompt is an ordinary user decision. The
             // durable recovery path above has already put the operation into a
             // safe retry/canceled state, so do not present it as an app error.
-            this.outcome = { message: this.status, tone: confirmationPending || indexerLag || rejected ? 'info' : 'error' };
+            this.outcome = { message: this.status, tone: confirmationPending || indexerLag || rejected ? 'info' : 'error', canceled: rejected };
         } finally {
             this.busy = false;
             this.backgroundProgress = null;
@@ -660,6 +695,9 @@ export default class AccountModal {
             }
             const resumingDeposit = pendingDeposit
                 && ['prepared', 'retry_exact'].includes(pendingDeposit.phase);
+            // Just canceled here: the plan is still saved, but "resume" and
+            // "check MetaMask for a pending transaction" would be untrue.
+            const canceled = this.justCanceled();
             const depositAmount = resumingDeposit
                 ? zkapiClient.formatBillingAmount(pendingDeposit.amount)
                 : this.depositAmount
@@ -676,17 +714,17 @@ export default class AccountModal {
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
                         <div class="zkapi-figure-row">
                             <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
-                            <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
+                            <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit && !canceled ? 'Saved deposit' : 'Deposit'}</label>
                         </div>
                         <p class="zkapi-helper">${helper}</p>
-                        ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Saved in this browser. Check MetaMask for a pending transaction before resuming.</p>' : ''}
+                        ${resumingDeposit && !canceled && !this.busy ? '<p class="zkapi-note">Saved in this browser. Check MetaMask for a pending transaction before resuming.</p>' : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
                             ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))
                             : `<div class="zkapi-actions">
                             ${this.busy
                                 ? this.renderProgress(this.status || 'Waiting for MetaMask…')
-                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}</button>`}
+                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${canceled ? 'Try again with MetaMask' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}</button>`}
                         </div>`}
                     </section>
                     <div class="zkapi-guides">

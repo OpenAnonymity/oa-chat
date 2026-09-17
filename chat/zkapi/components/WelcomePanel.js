@@ -98,7 +98,7 @@ export default class WelcomePanel {
         } catch (error) {
             this.step = 'welcome';
             this.error = error?.code === 4001
-                ? 'MetaMask canceled the transaction. No funds moved; you can safely try again.'
+                ? 'Canceled in MetaMask. Nothing moved.'
                 : error.shortMessage || error.message || String(error);
             this.render();
         } finally {

@@ -82,7 +82,33 @@ test('a canceled MetaMask prompt is said in the dialog, on the step it stopped a
         assert.deepEqual(toasts, []);
         assert.equal(modal.outcome.tone, 'info');
         assert.match(modal.rendered, /data-step="wallet" data-state="upcoming"/, 'nothing was submitted: the persisted phase is still prepared');
-        assert.match(modal.rendered, /MetaMask canceled the transaction\. No funds moved; you can safely try again\./);
+        assert.match(modal.rendered, /Canceled in MetaMask\. Nothing moved\./);
         assert.match(modal.rendered, /id="zkapi-withdraw-btn"[^>]*>Continue in MetaMask/);
+    } finally { Object.assign(zkapiClient, original); }
+});
+
+test('a canceled deposit says so once: no "saved" caption or resume note beside the cancel line', async t => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
+    Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {}, pending_deposit: { phase: 'prepared', amount: 2_000_000 } }, withdrawal: null, withdrawals: [], lastError: null });
+    const modal = modalWith({}, { view: 'balance', app: { showToast: () => {} } });
+    modal.renderWithdrawalStatusLink = () => '';
+    modal.render = function () { this.rendered = this.renderBalance(); };
+    t.mock.method(zkapiClient, 'beginActivity', () => 'a1');
+    t.mock.method(zkapiClient, 'cancelActivity', () => {});
+    try {
+        // Found after a reload: the saved plan, and how to pick it up.
+        const saved = modal.renderBalance();
+        assert.match(saved, /Saved deposit/);
+        assert.match(saved, /Saved in this browser\. Check MetaMask for a pending transaction before resuming\./);
+        assert.match(saved, /Resume deposit with MetaMask/);
+        assert.doesNotMatch(saved, /Canceled in MetaMask/);
+
+        await modal.run(async report => { report('Confirm the deposit in MetaMask…'); throw Object.assign(new Error('User rejected the request.'), { code: 4001 }); }, { kind: 'deposit', title: 'Adding your balance' });
+        assert.equal(modal.outcome.canceled, true);
+        assert.match(modal.rendered, /Canceled in MetaMask\. Nothing moved\./);
+        assert.doesNotMatch(modal.rendered, /Saved deposit/);
+        assert.doesNotMatch(modal.rendered, /Saved in this browser/);
+        assert.match(modal.rendered, /Try again with MetaMask/);
+        assert.doesNotMatch(modal.rendered, /Resume deposit with MetaMask/);
     } finally { Object.assign(zkapiClient, original); }
 });
