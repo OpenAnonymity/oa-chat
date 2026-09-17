@@ -1,5 +1,10 @@
 ## 2026-09-17: No empty-chat flash during conversation restoration
 
+- The restoration flag must also be exposed by `COMPONENT_APP_KEYS`: ChatArea
+  receives the restricted component facade, not the controller itself. Without
+  that entry, renders see `undefined` and show the welcome while loading, and
+  explicit New Chat throws when it tries to clear the flag. The regression test
+  exercises the production `createVanillaUiInterface` for both directions.
 - Prelude and app bootstrap use the same navigation predicate: explicit `?s`
   links and saved conversation selections keep the normal bottom composer while
   loading. The versioned navigation record wins over the legacy key, including

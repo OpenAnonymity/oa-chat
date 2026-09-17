@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prerenderInitialChat } from '../../chat/ui/initialChat.js';
 import { isConversationRestorePending, saveNavigationSelection } from '../../chat/services/navigationState.js';
+import { createVanillaUiInterface } from '../../chat/ui/appInterface.js';
 
 function fixture() {
     const values = new Map();
@@ -49,15 +50,18 @@ test('a late template import cannot overwrite mounted app, restored messages, or
     }
 });
 
-test('the mounted chat area does not render New Chat while navigation is restoring', async t => {
+test('the mounted chat area respects restoration through the production UI interface', async t => {
     const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
     const previousDocument = globalThis.document;
     globalThis.document = { createElement: () => ({ textContent: '', get innerHTML() { return this.textContent; } }) };
     t.after(() => { globalThis.document = previousDocument; });
     const container = { innerHTML: '', querySelector: () => null };
+    const app = { restoringInitialConversation: true, getCurrentSession: () => null,
+        elements: { messagesContainer: container }, state: {} };
+    const { componentApp } = createVanillaUiInterface(app);
     const area = Object.create(ChatArea.prototype);
     Object.assign(area, {
-        app: { restoringInitialConversation: true, getCurrentSession: () => null, elements: { messagesContainer: container } },
+        app: componentApp,
         renderGeneration: 0, reasoningBuffer: {}, typewriter: {},
         shouldPreserveQuickAskWindowForRender: () => false,
         hideQuickAskPopover() {}, closeQuickAskWindow() {}, clearAllCouncilReasoningStreams() {},
@@ -65,7 +69,13 @@ test('the mounted chat area does not render New Chat while navigation is restori
     });
     await area.render();
     assert.equal(container.innerHTML, '');
-    area.app.restoringInitialConversation = false;
+    app.restoringInitialConversation = false;
     await area.render();
+    assert.match(container.innerHTML, /welcome-landing/);
+    // Explicit New Chat must clear the controller's guard through the same
+    // interface, not throw on a disallowed field or only update a local copy.
+    app.restoringInitialConversation = true;
+    area.renderEmptyStateImmediate();
+    assert.equal(app.restoringInitialConversation, false);
     assert.match(container.innerHTML, /welcome-landing/);
 });

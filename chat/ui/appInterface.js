@@ -290,6 +290,7 @@ const COMPONENT_APP_KEYS = new Set([
     'reloadSessions',
     'renderMessages',
     'resetMessageInputLayout',
+    'restoringInitialConversation',
     'restoreSessionScrollPosition',
     'restoreActivePromptScrollAnchor',
     'restorePromptSlideUpEffectForSession',
