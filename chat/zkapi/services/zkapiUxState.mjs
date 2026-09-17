@@ -268,7 +268,7 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
     const withdrawalCopy = withdrawalPhase === 'submitted'
         ? {
             title: 'Withdrawal submitted',
-            detail: 'The transaction is on its way. Check its status before using this balance.',
+            detail: 'Confirming on chain. This balance updates on its own.',
             compact: 'Withdrawal submitted'
         }
         : withdrawalPhase === 'dropped_or_pending'

@@ -39,7 +39,13 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         assert.match(html, /data-step="wallet" data-state="waiting"/);
         assert.match(html, /MetaMask may still be open in this or another tab\./);
         assert.match(html, /id="zkapi-recover-withdrawal-btn"/);
-        assert.match(html, /id="zkapi-sync-withdrawal-btn"/);
+        assert.match(html, /id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button"/);
+
+        zkapiClient.config = { prepared_withdrawal: { phase: 'submitted', mode: 'mutual', transaction_hash: '0xabc' } };
+        const submitted = modalWith().renderWithdrawal();
+        assert.match(submitted, /data-step="chain" data-state="active"/);
+        assert.match(submitted, /Waiting for confirmation\. Usually under a minute; this updates on its own\./);
+        assert.match(submitted, /id="zkapi-sync-withdrawal-btn" class="zkapi-quiet-button"[^>]*>Check now/, 'a submitted withdrawal resolves itself; the check is a quiet fallback');
 
         zkapiClient.config = { prepared_withdrawal: { phase: 'prepared', mode: 'mutual' } };
         const ready = modalWith().renderWithdrawal();
@@ -64,8 +70,12 @@ test('a deposit in flight shows its steps under the figure; a persisted pending 
         const pending = modalWith({}, { view: 'balance' }).renderBalance();
         assert.match(pending, /data-step="deposit" data-state="complete"/);
         assert.match(pending, /data-step="chain" data-state="active"/);
-        assert.match(pending, /Submitted\. Checking the chain for the receipt\./);
-        assert.match(pending, /id="zkapi-check-deposit-btn"/);
+        assert.match(pending, /Waiting for confirmation\. Usually under a minute; this updates on its own\./);
+        assert.match(pending, /id="zkapi-check-deposit-btn" class="zkapi-quiet-button w-full"[^>]*>Check now/, 'a submitted deposit resolves itself; the check is a quiet fallback');
+
+        zkapiClient.config = { funding: {}, pending_deposit: { phase: 'ambiguous', amount: 4_000_000 } };
+        const ambiguous = modalWith({}, { view: 'balance' }).renderBalance();
+        assert.match(ambiguous, /id="zkapi-check-deposit-btn" class="zkapi-primary-button w-full"[^>]*>Check deposit/, 'an unknown outcome still asks for a check');
     } finally { Object.assign(zkapiClient, original); }
 });
 

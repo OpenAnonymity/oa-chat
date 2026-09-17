@@ -17,6 +17,10 @@ const MODAL_CLASSES = 'zkapi-dialog';
 // Closing the MetaMask prompt is the person's own decision, said once, in
 // the fewest words: no funds moved and the saved work is still there.
 const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
+// A submitted transaction needs nothing from the person: the SDK checks
+// the chain every 15 s and on focus, and the dialog re-renders on change.
+// The check button stays as a quiet fallback for a slow indexer.
+const CONFIRMING_LINE = 'Waiting for confirmation. Usually under a minute; this updates on its own.';
 // Wallet work narrates in the dialog — the steps while it runs, one line
 // with the outcome when it ends. No toasts: with the dialog closed, the
 // right panel's activity rows carry the same words.
@@ -671,7 +675,7 @@ export default class AccountModal {
                     : pendingDeposit.phase === 'awaiting_wallet'
                         ? 'Waiting for MetaMask'
                         : 'Deposit status unknown';
-                const pendingDetail = pendingDeposit.phase === 'submitted' ? 'Submitted. Checking the chain for the receipt.'
+                const pendingDetail = pendingDeposit.phase === 'submitted' ? CONFIRMING_LINE
                     : pendingDeposit.phase === 'dropped_or_pending' ? 'No receipt yet. It may still be pending, or MetaMask may have dropped it.'
                     : pendingDeposit.phase === 'awaiting_wallet' ? 'MetaMask may still be open in this or another tab.'
                     : 'MetaMask did not return a transaction ID. Check the vault before retrying.';
@@ -686,7 +690,7 @@ export default class AccountModal {
                         </section>
                         ${this.renderJourney(pendingJourney, { detail: this.busy ? '' : pendingDetail })}
                         ${this.renderOutcome()}
-                        ${this.busy ? '' : `<button id="zkapi-check-deposit-btn" class="zkapi-primary-button w-full" type="button">Check deposit</button>
+                        ${this.busy ? '' : `<button id="zkapi-check-deposit-btn" class="${pendingDeposit.phase === 'submitted' ? 'zkapi-quiet-button' : 'zkapi-primary-button'} w-full" type="button">${pendingDeposit.phase === 'submitted' ? 'Check now' : 'Check deposit'}</button>
                         ${pendingDeposit.phase === 'dropped_or_pending' && pendingDeposit.replacement_available ? `<button id="zkapi-retry-dropped-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Replace transaction</button>` : ''}
                         ${pendingDeposit.phase === 'awaiting_wallet' ? `<button id="zkapi-recover-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
                         ${pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Retry same deposit</button>` : ''}`}
@@ -847,7 +851,7 @@ export default class AccountModal {
         if (preparedMode === 'escape') this.withdrawMode = 'escape';
         const notice = !prepared ? ''
             : droppedOrPending ? 'No receipt was found for the saved transaction. It may still be pending, or MetaMask may have dropped it. Check again, or resubmit the same withdrawal with its original nonce.'
-            : submitted ? 'Transaction submitted. Check the chain before trying again.'
+            : submitted ? CONFIRMING_LINE
             : awaitingWallet ? 'MetaMask may still be open in this or another tab.'
             : ambiguous ? 'MetaMask did not return a transaction ID. Check the vault before retrying.'
             : clearanceReserved ? 'This balance already has a close authorization. Finish it in MetaMask, or set it aside and add a new balance.'
@@ -896,7 +900,7 @@ export default class AccountModal {
                     ${this.busy
                         ? (busyJourney ? '' : this.renderProgress(this.status || primaryLabel))
                         : submissionActive
-                            ? '<button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button" type="button">Check transaction</button>'
+                            ? `<button id="zkapi-sync-withdrawal-btn" class="${submitted ? 'zkapi-quiet-button' : 'zkapi-primary-button'}" type="button">${submitted ? 'Check now' : 'Check transaction'}</button>`
                             : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${showJourney ? '' : 'disabled'}>${showJourney ? 'Continue in MetaMask' : primaryLabel}</button>`}
                     ${droppedOrPending && prepared?.replacement_available ? `<button id="zkapi-retry-dropped-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Resubmit with original nonce</button>` : ''}
                     ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
