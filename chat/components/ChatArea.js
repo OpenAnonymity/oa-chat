@@ -904,6 +904,7 @@ export default class ChatArea {
      * Desktop hooks can call this to avoid intermediate flashes.
      */
     renderEmptyStateImmediate() {
+        this.app.restoringInitialConversation = false;
         cancelChatArrival(this.app.elements.messagesContainer);
         const messagesContainer = this.app.elements.messagesContainer;
         if (!messagesContainer) return;
@@ -1815,6 +1816,7 @@ export default class ChatArea {
         const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
 
         if (!session) {
+            if (this.app.restoringInitialConversation) return;
             if (!hasEmptyState) {
                 messagesContainer.innerHTML = buildEmptyState();
             }

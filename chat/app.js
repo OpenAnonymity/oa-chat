@@ -35,7 +35,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
-import { saveNavigationSelection, restoreNavigationSelection } from './services/navigationState.js';
+import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
 import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -2575,6 +2575,7 @@ class ChatApp {
      * Initializes the application: loads data, sets up components, and renders initial state.
      */
     async init() {
+        this.restoringInitialConversation = isConversationRestorePending({ search: window.location.search });
         // Configure marked.js renderer for code blocks (with syntax highlighting + copy button)
         this.configureMarkedRenderer();
 
@@ -2653,7 +2654,8 @@ class ChatApp {
         void this.extensionHost.mountAll(this.extensions, this.createExtensionContext());
 
         // Render core shell immediately so non-sidebar UI is never blank on startup.
-        this.chatArea.renderEmptyStateImmediate();
+        this.elements.messagesContainer.dataset.chatBootstrapped = 'true';
+        if (!this.restoringInitialConversation) this.chatArea.renderEmptyStateImmediate();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateReasoningToggleUI();
@@ -2865,6 +2867,7 @@ class ChatApp {
             }
         });
         if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
+        if (!new URLSearchParams(window.location.search).has('s')) this.restoringInitialConversation = false;
 
         const [
             storedModelPreference,
@@ -3064,11 +3067,19 @@ class ChatApp {
         this.captureTicketCodeFromUrl();
 
         // Check for session in URL (?s=sessionId)
+        const finishInitialNavigation = () => {
+            this.restoringInitialConversation = false;
+            if (!this.getCurrentSession()) this.renderMessages();
+            this.handlePendingTicketCode();
+        };
         const sessionCheck = this.checkForUrlSession();
         if (sessionCheck && typeof sessionCheck.then === 'function') {
-            sessionCheck.finally(() => this.handlePendingTicketCode());
+            sessionCheck.then(finishInitialNavigation, error => {
+                console.warn('Initial conversation could not be restored:', error);
+                finishInitialNavigation();
+            });
         } else {
-            this.handlePendingTicketCode();
+            finishInitialNavigation();
         }
 
         // Start update checks for new app versions

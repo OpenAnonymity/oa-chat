@@ -1,13 +1,8 @@
-// Pre-render the empty state before app bootstrap for a fast first paint.
-(async () => {
-    try {
-        const container = document.getElementById('messages-container');
-        const hasSavedSession = sessionStorage.getItem('oa-current-session');
-        if (container && container.childElementCount === 0 && !hasSavedSession) {
-            const { buildEmptyState } = await import('./components/MessageTemplates.js');
-            container.innerHTML = buildEmptyState();
-        }
-    } catch (error) {
-        console.warn('Prerender failed:', error);
-    }
-})();
+import { prerenderInitialChat } from './ui/initialChat.js';
+
+// Fast first paint for genuinely new chats only. Conversation restoration keeps
+// the ordinary bottom composer while local/shared messages load.
+prerenderInitialChat({
+    container: document.getElementById('messages-container'),
+    search: window.location.search
+}).catch(error => console.warn('Prerender failed:', error));

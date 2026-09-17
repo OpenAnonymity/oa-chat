@@ -1,3 +1,17 @@
+## 2026-09-17: No empty-chat flash during conversation restoration
+
+- Prelude and app bootstrap use the same navigation predicate: explicit `?s`
+  links and saved conversation selections keep the normal bottom composer while
+  loading. The versioned navigation record wins over the legacy key, including
+  explicit New Chat selections and interrupted legacy writes.
+- Bootstrap no longer unconditionally renders the welcome. No-session renders
+  stay blank until saved/local/shared navigation resolves; missing/failed links
+  can then fall back to the normal empty state. Explicit New Chat resets the
+  guard immediately.
+- Prelude rechecks navigation, container contents, and app ownership after its
+  asynchronous template import. A late import cannot insert a welcome into a
+  mounted app or overwrite restored messages.
+
 ## 2026-09-17: Centered composer on empty chats
 
 - Empty chats center the existing welcome/byline and composer with no prompt

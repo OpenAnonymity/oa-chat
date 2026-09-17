@@ -45,3 +45,10 @@ export async function restoreNavigationSelection({ search = '', loadSession, sto
     if (await loadSession(selection.sessionId)) return selection;
     return saveNavigationSelection(null, storage);
 }
+
+// Shared by the fast first paint and app bootstrap. Explicit links take priority
+// even when this tab last selected New Chat.
+export function isConversationRestorePending({ search = '', storage = tabStorage() } = {}) {
+    return new URLSearchParams(search).has('s') ||
+        readNavigationSelection(storage)?.kind === 'conversation';
+}
