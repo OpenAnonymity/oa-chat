@@ -1,0 +1,82 @@
+{
+  "started_at_utc": "2026-09-10T20:50:48.081Z",
+  "environment": "Public Sepolia zkAPI deployment; OA-org issuer environment is not exposed by the manifest",
+  "network": "sepolia",
+  "client": "Open WebUI 0.11.3",
+  "model": "oa-sepolia.openai/gpt-4o-mini",
+  "prompt": "Explain why the daytime sky looks blue in six short paragraphs, about 180 words total. Use plain language.",
+  "result": "pass",
+  "observation_method": "Computer use: sampled the visible accessibility tree after sending the chat; partial assistant content appeared while the Stop control remained visible",
+  "first_visible_content_seconds": 13.815,
+  "completion_seconds": 15.277,
+  "partial_content_frames": 8,
+  "frames": [
+    {
+      "elapsed_ms": 324,
+      "content_characters": 0,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 13815,
+      "content_characters": 78,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 13960,
+      "content_characters": 227,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 14063,
+      "content_characters": 331,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 14183,
+      "content_characters": 371,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 14300,
+      "content_characters": 530,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 14685,
+      "content_characters": 702,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 15014,
+      "content_characters": 1081,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 15138,
+      "content_characters": 1291,
+      "streaming": true
+    },
+    {
+      "elapsed_ms": 15277,
+      "content_characters": 1252,
+      "streaming": false
+    }
+  ],
+  "timing_scope": "Includes UI submission, proof/access issuance, verification, inference, and browser rendering",
+  "measurement_limits": "Visible content frames are not SSE token counts. Final rendering can change the character count. Browser HTTP status and raw [DONE] were not captured in this test; see sepolia-direct-stream.json for independent API-level verification.",
+  "automatic_webui_tasks": "Disabled to avoid additional paid requests",
+  "relay": "Temporary Wisp helper reached through SSH; destination TLS remains end to end",
+  "settlement": {
+    "observed_at_utc": "2026-09-10T20:56:01Z",
+    "confirmed_at_utc": "2026-09-10T20:56:31Z",
+    "status": "finalized",
+    "usage_usd": "0.000723",
+    "charge_units": 723,
+    "private_balance_before_units": 100000,
+    "private_balance_after_units": 99277,
+    "token_decimals": 6,
+    "pending_cleared": true,
+    "durable_key_handoffs": 1,
+    "observation_method": "Read-only existing lease status and local wallet metadata; no new issuance"
+  }
+}

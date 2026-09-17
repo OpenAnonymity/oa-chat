@@ -1,0 +1,469 @@
+{
+  "environment": "OA staging ticket issuance/redemption, production verifier, OpenRouter inference, temporary encrypted Wisp relay",
+  "model": "openai/gpt-4.1-mini",
+  "stream": true,
+  "http_status": 200,
+  "done": true,
+  "content_events": 114,
+  "first_content_ms": 3329,
+  "completion_ms": 4183,
+  "events": [
+    {
+      "milliseconds": 3329,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3329,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3329,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3329,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3357,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3357,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3386,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3411,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3411,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3416,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3416,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3416,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3438,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3438,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3438,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3438,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3444,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3444,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3464,
+      "characters": 7
+    },
+    {
+      "milliseconds": 3464,
+      "characters": 6
+    },
+    {
+      "milliseconds": 3464,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3464,
+      "characters": 4
+    },
+    {
+      "milliseconds": 3464,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3473,
+      "characters": 12
+    },
+    {
+      "milliseconds": 3473,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3473,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3473,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3491,
+      "characters": 4
+    },
+    {
+      "milliseconds": 3514,
+      "characters": 9
+    },
+    {
+      "milliseconds": 3515,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3515,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3515,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3516,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3516,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3543,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3543,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3543,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3543,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3544,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3562,
+      "characters": 7
+    },
+    {
+      "milliseconds": 3562,
+      "characters": 14
+    },
+    {
+      "milliseconds": 3562,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3569,
+      "characters": 7
+    },
+    {
+      "milliseconds": 3569,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3596,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3596,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3623,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3623,
+      "characters": 6
+    },
+    {
+      "milliseconds": 3623,
+      "characters": 4
+    },
+    {
+      "milliseconds": 3623,
+      "characters": 6
+    },
+    {
+      "milliseconds": 3648,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3648,
+      "characters": 4
+    },
+    {
+      "milliseconds": 3648,
+      "characters": 11
+    },
+    {
+      "milliseconds": 3648,
+      "characters": 12
+    },
+    {
+      "milliseconds": 3672,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3672,
+      "characters": 6
+    },
+    {
+      "milliseconds": 3672,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3672,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3675,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3700,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3700,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3701,
+      "characters": 6
+    },
+    {
+      "milliseconds": 3727,
+      "characters": 9
+    },
+    {
+      "milliseconds": 3727,
+      "characters": 11
+    },
+    {
+      "milliseconds": 3727,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3727,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3754,
+      "characters": 11
+    },
+    {
+      "milliseconds": 3754,
+      "characters": 9
+    },
+    {
+      "milliseconds": 3754,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3776,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3776,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3776,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3780,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3780,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3806,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3806,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3806,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3806,
+      "characters": 9
+    },
+    {
+      "milliseconds": 3827,
+      "characters": 12
+    },
+    {
+      "milliseconds": 3827,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3827,
+      "characters": 7
+    },
+    {
+      "milliseconds": 3832,
+      "characters": 6
+    },
+    {
+      "milliseconds": 3832,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3832,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3858,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3858,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3879,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3880,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3880,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3880,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3884,
+      "characters": 9
+    },
+    {
+      "milliseconds": 3884,
+      "characters": 9
+    },
+    {
+      "milliseconds": 3907,
+      "characters": 12
+    },
+    {
+      "milliseconds": 3907,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3907,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3907,
+      "characters": 5
+    },
+    {
+      "milliseconds": 3910,
+      "characters": 13
+    },
+    {
+      "milliseconds": 3910,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3936,
+      "characters": 3
+    },
+    {
+      "milliseconds": 3936,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3961,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3961,
+      "characters": 8
+    },
+    {
+      "milliseconds": 3961,
+      "characters": 1
+    },
+    {
+      "milliseconds": 3961,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3988,
+      "characters": 10
+    },
+    {
+      "milliseconds": 3988,
+      "characters": 7
+    },
+    {
+      "milliseconds": 4014,
+      "characters": 2
+    },
+    {
+      "milliseconds": 4014,
+      "characters": 5
+    },
+    {
+      "milliseconds": 4040,
+      "characters": 11
+    },
+    {
+      "milliseconds": 4040,
+      "characters": 4
+    },
+    {
+      "milliseconds": 4040,
+      "characters": 8
+    },
+    {
+      "milliseconds": 4040,
+      "characters": 5
+    },
+    {
+      "milliseconds": 4066,
+      "characters": 11
+    },
+    {
+      "milliseconds": 4066,
+      "characters": 1
+    }
+  ],
+  "response_text": "1. Streaming responses send partial data as soon as it is generated.  \n2. This allows users to see answers immediately instead of waiting for complete results.  \n3. It reduces perceived latency, making conversations feel faster.  \n4. Users can begin reading and processing information without delay.  \n5. Streaming helps maintain engagement by providing continuous feedback.  \n6. It enables dynamic updates, allowing corrections or elaborations in real time.  \n7. Streaming supports smoother interaction flow in chat applications.  \n8. Overall, streaming responses create a more responsive and natural user experience."
+}

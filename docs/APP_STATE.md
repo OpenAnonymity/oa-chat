@@ -4,6 +4,118 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-10: Funded Sepolia CLI streaming and settlement verified
+
+- The live flow now passes: MetaMask test-token mint/approval/deposit → private
+  note activation → local Groth16 proof → OA-verified provider key → streamed
+  inference → automatic signed-state recovery. Open WebUI 0.11.3 used
+  `oa-sepolia.openai/gpt-4o-mini`, starting at `2026-09-10T20:50:48.081Z`.
+  First visible content arrived at 13.815 seconds, with eight partial-content
+  frames before completion at 15.277 seconds. These timings include access
+  preparation and browser rendering. See the
+  [browser evidence](../daemon/packaging/validation/openwebui-sepolia-stream.json).
+- Independent read-only settlement checks observed `finalized` at 20:56:01 UTC:
+  actual usage/charge was 0.000723 USDC (723 microcredits), balance changed
+  100000 → 99277, pending cleared, and exactly one durable key handoff existed.
+  The 0.05-USDC lease limit is a cap, not the debit. The earlier rejected lease
+  settled without reducing the balance. The undeployed early-settlement patch
+  assumes full-cap billing and is unsuitable for this metered deployment;
+  redesign and validation are required before using it. See [details](CLI_ZKAPI.md).
+- After settlement, one new independent direct SSE request passed HTTP 200,
+  delivered 100 content events, first content at 7.081 seconds and `[DONE]`
+  at 7.843 seconds. Catalog and authentication checks passed. See the
+  [API evidence](../daemon/packaging/validation/sepolia-direct-stream.json).
+  Browser content frames are not SSE token counts; the API test verifies raw
+  framing separately. Automatic Open WebUI background tasks were disabled.
+  This second lease finalized at 21:03:36 UTC, charging 65 microcredits
+  (0.000065 USDC), moving balance 99277 → 99212, clearing pending, and leaving
+  two durable key handoffs. No extra request was made to observe settlement.
+- Remaining limits: each provider key is handed out once, so independent API
+  calls wait for the prior lease's settlement (about 4.5 minutes plus grace in
+  this deployment). Withdrawal is not implemented in the Go CLI. Public Sepolia
+  metadata does not disclose its OA-org issuer URL, so that issuer's staging
+  status remains unknown. The live tests used the owned temporary Wisp helper
+  through SSH after the public relay failed; its four-hour lifetime and local
+  tunnel must both remain healthy. No direct-transport fallback was used.
+- The first funded request proved and issued a lease, then failed the old
+  native equality check on signed-key and lease expiry. The deployed server
+  shortens the usable lease by 30 seconds; the browser permits a signed expiry
+  covering it by 0–60 seconds. The fixed companion uses checked subtraction,
+  preserves the original signed expiry in verifier submissions, and returns
+  the shorter lease expiry to Go. Active boundary and HTTP/bridge tests pass.
+- The successful deposit was wrapped by MetaMask: its outer recipient was an
+  execution contract while the configured vault emitted `NoteDeposited`.
+  Receipt status plus the exact vault event/commitment/amount/note/expiry bind
+  the deposit; requiring `receipt.to == vault` incorrectly rejected it.
+  Recovery activated the original 0.100000-token note without another deposit.
+- Wallet handoffs require a persistent daemon. A foreground tool session
+  stopped after a successful mint, causing the next local path request to fail.
+  The test service now uses launchd job
+  `ai.openanonymity.cli-sepolia-e2e-20260910`, configured by
+  `/tmp/oa-cli-sepolia-e2e-20260910.plist`, with the same private state directory.
+  A restart invalidates funding capabilities: renew and reload before recovery.
+- Earlier gas failure was RPC admission, not a mined revert: MetaMask supplied
+  21,000,000 gas above the 16,777,216 cap when the page omitted an explicit
+  estimate. Mint/approval/deposit now simulate the exact call, use the SDK's
+  20% plus 50,000-gas margin, reject failed/oversized estimates, and recheck
+  account/chain afterward. The connected wallet's approval estimate/limit was
+  26,363/81,635 gas; mint 51,353/111,623; deposit 6,814,110/8,226,932.
+  Fee rates remain MetaMask's choice. Never fall back to a guessed gas limit.
+- The original flow also omitted missing test-token minting. Both Go and browser
+  now require chain 11155111 plus the deployment's explicit demo flag, mint only
+  the missing amount, and verify balance at the canonical receipt block. RPC
+  lag retries reads without another mint. Existing balances and allowances are
+  reused across expired sessions. Mainnet never enters the demo-mint path.
+- Earlier unfunded Open WebUI and wallet-preflight records are retained as
+  historical failure-path evidence; they no longer describe the current funded
+  validation result. Wallet confirmations were performed by the user because
+  browser security policy prohibited controlling the extension or alternate
+  surfaces. The allowed local funding page was exercised through computer use.
+
+## 2026-09-09: Go local API daemon and service packages
+
+- The standalone `daemon/` Go module exposes OpenAI models/chat completions
+  with immediate SSE flushing for Open WebUI and other clients. See
+  [CLI setup and validation](CLI.md), [ticket recovery](CLI_TICKETS.md),
+  [zkAPI companion/funding](CLI_ZKAPI.md), and [packaging](CLI_PACKAGING.md).
+- Ticket blinding uses CIRCL with browser interoperability tests. Wallet
+  mutations use a process-shared lock and durable reservations. Each API call
+  obtains a separately verified key; client identity headers/metadata are stripped.
+- zkAPI retains its Rust prover as a supervised authenticated companion. Go
+  owns streaming and self-hosted MetaMask funding. Companion HTTPS uses a
+  local authenticated CONNECT bridge over Wisp. Mainnet is default, Sepolia
+  explicit. Leases are single-use across requests/restarts; current servers
+  may require waiting for settlement before the next request.
+- Live ticket issuance passed at `org-staging.openanonymity.ai`; the dotted
+  historical hostname is stale. The verifier intentionally returns 16 hex:
+  browser `_hashKey()` truncates SHA-256 to eight bytes, matching the deployed
+  verifier. Requiring 64 hex was a daemon implementation error, now corrected
+  with exact 16/full-64 comparisons on the key-specific HTTPS response while
+  retaining station/status checks. No verifier server change is needed.
+  The public Wisp relay closed before its handshake; tests use a temporary
+  relay on the staging host via SSH, with no direct-transport bypass.
+- Live staging ticket inference now passes: 114 content events, first content
+  at 3.329 seconds and `[DONE]` at 4.183 seconds, including access preparation.
+  The temporary SSH forward must remain alive independently of the remote
+  Wisp process; a healthy remote helper does not guarantee a local listener.
+- Open WebUI streaming passed both with the deterministic fixture and with
+  real staging tickets/OpenRouter inference. The live browser recorded 38
+  content updates, first content at 3.329 seconds and completion at 6.095 seconds.
+  Evidence and screenshots are linked from CLI.md. Its automatic title/tag
+  requests cost extra access and conflict with pending zkAPI settlement.
+- Homebrew install/start/stop passed. Linux packages were built and inspected;
+  publishing and Linux boot tests remain distinct from that validation record.
+  Real MetaMask/Sepolia funding and inference later passed on September 10,
+  as recorded above.
+- Computer use of the MetaMask extension page was rejected by browser security
+  policy, including alternate control paths. On September 10, computer use of
+  the local funding page progressed through wallet connection to the exact
+  0.100000 test-USDC allowance prompt. A user-reported submission was rejected
+  before broadcast for an excessive gas limit; see the September 10 fix above.
+  Subsequent user confirmations and the compatibility fixes completed the
+  Sepolia deposit, streamed inference, and settlement on September 10; see the
+  current result above.
+
 ## 2026-09-06: Vercel Git builds restore the memory browser link
 
 - Vercel Git builds were receiving the initialized root `nanomem` submodule but

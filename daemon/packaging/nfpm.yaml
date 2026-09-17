@@ -1,0 +1,55 @@
+name: oa-chat
+arch: ${OA_PACKAGE_ARCH}
+platform: linux
+version: ${OA_PACKAGE_VERSION}
+maintainer: Open Anonymity <contact@openanonymity.ai>
+vendor: Open Anonymity
+homepage: https://github.com/OpenAnonymity/oa-chat
+description: Local OpenAI-compatible API with Open Anonymity ticket and ZKAPI access
+license: MIT
+section: net
+priority: optional
+depends:
+  - ca-certificates
+recommends:
+  - systemd
+contents:
+  - src: ${OA_PACKAGE_STAGE}/oa-chat
+    dst: /usr/bin/oa-chat
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${OA_PACKAGE_STAGE}/oa-zkapi
+    dst: /usr/bin/oa-zkapi
+    expand: true
+    file_info:
+      mode: 0755
+  - src: ${OA_PACKAGE_STAGE}/share/oa-chat/
+    dst: /usr/share/oa-chat
+    type: tree
+    expand: true
+  - src: daemon/packaging/systemd/oa-chat.service
+    dst: /usr/lib/systemd/user/oa-chat.service
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/licenses/oa-chat/LICENSE
+    file_info:
+      mode: 0644
+  - src: docs/CLI_PACKAGING.md
+    dst: /usr/share/doc/oa-chat/CLI_PACKAGING.md
+    file_info:
+      mode: 0644
+overrides:
+  deb:
+    depends:
+      - ca-certificates
+      - libc6 (>= 2.39)
+      - libgcc-s1
+      - libssl3 | libssl3t64
+  rpm:
+    depends:
+      - ca-certificates
+      - glibc >= 2.39
+      - libgcc
+      - openssl-libs

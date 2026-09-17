@@ -1,0 +1,30 @@
+{
+  "model": "openai/gpt-4o-mini",
+  "catalog": "pass",
+  "authentication": "pass",
+  "nonstream": "not_run",
+  "stream": "pass",
+  "stream_http_status": 200,
+  "done_marker_received": true,
+  "content_events": 100,
+  "first_content_seconds": 7.081,
+  "completion_seconds": 7.843,
+  "tested_at_utc": "2026-09-10",
+  "environment": "Public Sepolia zkAPI deployment; OA-org issuer environment is not exposed by the manifest",
+  "network": "sepolia",
+  "scenario": "Fresh independent request after the Open WebUI lease settled",
+  "relay": "Temporary Wisp helper reached through SSH; destination TLS remains end to end",
+  "request_count": 1,
+  "settlement": {
+    "observed_at_utc": "2026-09-10T21:03:36Z",
+    "status": "finalized",
+    "usage_usd": "0.000065",
+    "charge_units": 65,
+    "private_balance_before_units": 99277,
+    "private_balance_after_units": 99212,
+    "token_decimals": 6,
+    "pending_cleared": true,
+    "durable_key_handoffs_total": 2,
+    "observation_method": "Read-only existing lease status and local wallet metadata; no new issuance"
+  }
+}

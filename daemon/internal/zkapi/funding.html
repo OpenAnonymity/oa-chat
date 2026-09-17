@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fund OA Chat</title><style>
+:root{color-scheme:light dark;font-family:system-ui,sans-serif;font-size:16px;background:#121516;color:#e7ecea}body{max-width:600px;margin:8vh auto;padding:24px}h1{font-size:32px;margin-bottom:12px}p{line-height:1.6;color:#b9c7c2}label{display:block;margin-top:24px}input,button{font:inherit;border-radius:8px;padding:12px;border:1px solid #53635d}input{width:calc(100% - 26px);margin:8px 0;background:#1b2220;color:inherit}button{background:#b5ebcb;color:#122219;cursor:pointer;margin:12px 8px 8px 0}button:disabled{opacity:.45;cursor:wait}.network{display:inline-block;border:1px solid #53635d;padding:6px 12px;border-radius:20px}#status{white-space:pre-wrap;overflow-wrap:anywhere;border-left:3px solid #8dbfa1;padding-left:16px;min-height:24px}details{margin-top:28px}small{color:#aab8b1}code{overflow-wrap:anywhere}footer{margin-top:36px;font-size:13px}
+</style><script src="/funding/app.js" defer></script></head><body>
+<span class="network" id="network">Loading network…</span><h1>Fund your private balance</h1>
+<p>Connect MetaMask, approve USDC, then deposit into the zkAPI vault. Your private note stays on this computer. Wallet keys stay in MetaMask.</p>
+<p id="balance"></p><label for="amount">Amount in USDC</label><input id="amount" type="text" inputmode="decimal" value="0.10" autocomplete="off"><button id="fund" disabled>Connect MetaMask and fund</button>
+<p id="status" role="status" aria-live="polite">Connecting to your local OA Chat service…</p>
+<p id="wallet-status" style="overflow-wrap:anywhere"></p>
+<details><summary>Resume a deposit</summary><p>If the browser closed after sending a deposit, paste its transaction hash from MetaMask. OA Chat keeps the private recovery note on disk.</p><label for="tx">Deposit transaction hash</label><input id="tx" autocomplete="off" spellcheck="false" placeholder="0x…"><button id="resume">Confirm deposit</button></details>
+<details><summary>Deployment details</summary><p>Vault: <code id="vault"></code></p><p>Token: <code id="token"></code></p></details>
+<footer><small>Transactions require your wallet approval. This local page loads no third-party scripts. The public chain records the deposit; inference uses the private note and a verified ephemeral key.</small></footer>
+</body></html>

@@ -1,0 +1,80 @@
+# A daemon-vMAJOR.MINOR.PATCH tag creates a draft release for human publication.
+name: OA daemon release
+on:
+  push:
+    tags: ['daemon-v[0-9]+.[0-9]+.[0-9]+']
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: linux-amd64
+          - runner: ubuntu-24.04-arm
+            target: linux-arm64
+          - runner: macos-15-intel
+            target: darwin-amd64
+          - runner: macos-15
+            target: darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: daemon/go.mod
+          cache-dependency-path: daemon/go.sum
+      - name: Install native build dependencies
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" = Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential pkg-config libssl-dev cmake
+          else
+            brew install pkg-config openssl@3 cmake
+            echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+      - name: Test Go daemon
+        working-directory: daemon
+        run: go test -race ./...
+      - name: Build native bundle and Linux packages
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#daemon-v}
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          daemon/scripts/prepare-zkapi.sh "$RUNNER_TEMP/oa-zkapi-source"
+          daemon/scripts/build-native.sh "$version" "$RUNNER_TEMP/artifacts" "$RUNNER_TEMP/oa-zkapi-source"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ runner.temp }}/artifacts/*
+          if-no-files-found: error
+  assemble:
+    needs: native
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+      - name: Generate checksum-pinned Homebrew and AUR manifests
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#daemon-v}
+          python3 daemon/scripts/assemble-release.py "$version" release
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/*.deb release/*.rpm release/SHA256SUMS \
+            --draft --verify-tag --title "OA Chat daemon ${GITHUB_REF_NAME#daemon-v}" --generate-notes

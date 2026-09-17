@@ -1,0 +1,735 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index c9907ee..d485e85 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -3190,7 +3190,9 @@ dependencies = [
+  "reqwest",
+  "serde",
+  "serde_json",
++ "sha2",
+  "sha3",
++ "tempfile",
+  "thiserror",
+  "tokio",
+  "tower",
+diff --git a/crates/zkapi-cli/src/main.rs b/crates/zkapi-cli/src/main.rs
+index 2337fc9..81581ca 100644
+--- a/crates/zkapi-cli/src/main.rs
++++ b/crates/zkapi-cli/src/main.rs
+@@ -635,6 +635,7 @@ fn build_auth_service_with_mode(
+             .collect(),
+         demo_rpc_url: cli.demo_rpc_url.clone(),
+         demo_billing_token_address: cli.demo_billing_token_address.clone(),
++        demo_mint_enabled: false,
+         demo_private_key: cli.demo_private_key.clone(),
+         demo_note_ttl_seconds: cli.demo_note_ttl_seconds,
+         proof_mode: "groth16_bn254".to_string(),
+@@ -692,6 +693,11 @@ async fn run_one_command_client(options: OneCommandClientOptions<'_>) -> anyhow:
+     } = options;
+     let manifest = load_deployment_manifest(deployment).await?;
+     validate_deployment_manifest(&manifest)?;
++    let expected_chain: u64 = std::env::var("OA_ZKAPI_CHAIN_ID")
++        .unwrap_or_else(|_| "1".to_string()).parse()?;
++    if manifest.chain_id != expected_chain {
++        anyhow::bail!("deployment chain does not match explicitly selected OA network");
++    }
+ 
+     let state_dir =
+         requested_state_dir.unwrap_or_else(|| default_client_state_dir(&manifest.deployment_id));
+@@ -843,12 +849,13 @@ fn auth_service_from_manifest(
+         models,
+         demo_rpc_url: Some(manifest.rpc_url.clone()),
+         demo_billing_token_address: manifest.billing_token_address.clone(),
++        demo_mint_enabled: manifest.chain_id == 11_155_111 && manifest.demo_mint_enabled,
+         demo_private_key: None,
+         demo_note_ttl_seconds: None,
+         proof_mode: "groth16_bn254".to_string(),
+         cairo_dir: String::new(),
+         trusted_epoch_roots: Vec::new(),
+-        proof_setup_dir: "protocol/setup/v2".to_string(),
++        proof_setup_dir: std::env::var("ZKAPI_PROOF_SETUP_DIR").unwrap_or_else(|_| "protocol/setup/v2".to_string()),
+         state_signing_key: parse_curve_point(
+             "deployment state signing key",
+             &manifest.state_signing_key.x,
+diff --git a/crates/zkapi-clientd/Cargo.toml b/crates/zkapi-clientd/Cargo.toml
+index 0b24c2c..0dd4244 100644
+--- a/crates/zkapi-clientd/Cargo.toml
++++ b/crates/zkapi-clientd/Cargo.toml
+@@ -23,6 +23,7 @@ reqwest = { workspace = true }
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+ sha3 = { workspace = true }
++sha2 = "0.10"
+ thiserror = { workspace = true }
+ tokio = { workspace = true }
+ tower = { workspace = true }
+@@ -31,6 +32,7 @@ tracing = { workspace = true }
+ tracing-subscriber = { workspace = true }
+ 
+ [dev-dependencies]
++tempfile = { workspace = true }
+ zkapi-core = { path = "../../protocol/rust/crates/zkapi-core" }
+ zkapi-serverd = { path = "../zkapi-serverd" }
+ http-body-util = "0.1"
+diff --git a/crates/zkapi-clientd/src/config.rs b/crates/zkapi-clientd/src/config.rs
+index 0787fac..00da439 100644
+--- a/crates/zkapi-clientd/src/config.rs
++++ b/crates/zkapi-clientd/src/config.rs
+@@ -50,6 +50,7 @@ pub struct AuthConfig {
+     pub models: Vec<ModelDescriptor>,
+     pub demo_rpc_url: Option<String>,
+     pub demo_billing_token_address: Option<String>,
++    pub demo_mint_enabled: bool,
+     pub demo_private_key: Option<String>,
+     pub demo_note_ttl_seconds: Option<u64>,
+     /// Retired v1 compatibility field; v2 always uses Groth16 BN254.
+@@ -99,6 +100,7 @@ impl Default for AuthConfig {
+             models: vec![ModelDescriptor::new("zkapi-echo")],
+             demo_rpc_url: None,
+             demo_billing_token_address: None,
++            demo_mint_enabled: false,
+             demo_private_key: None,
+             demo_note_ttl_seconds: None,
+             proof_mode: "groth16_bn254".to_string(),
+diff --git a/crates/zkapi-clientd/src/indexer.rs b/crates/zkapi-clientd/src/indexer.rs
+index 6952f58..cb8c9ab 100644
+--- a/crates/zkapi-clientd/src/indexer.rs
++++ b/crates/zkapi-clientd/src/indexer.rs
+@@ -6,7 +6,6 @@ use crate::error::AuthError;
+ #[derive(Debug, Clone)]
+ pub struct IndexerClient {
+     base_url: String,
+-    http: reqwest::Client,
+ }
+ 
+ #[derive(Debug, Deserialize)]
+@@ -28,14 +27,12 @@ impl IndexerClient {
+     pub fn new(base_url: impl Into<String>) -> Self {
+         Self {
+             base_url: base_url.into().trim_end_matches('/').to_string(),
+-            http: reqwest::Client::new(),
+         }
+     }
+ 
+     pub async fn root(&self) -> Result<Felt252, AuthError> {
+         let url = format!("{}/v1/tree/root", self.base_url);
+-        let response = self
+-            .http
++        let response = reqwest::Client::new()
+             .get(&url)
+             .send()
+             .await
+@@ -52,8 +49,7 @@ impl IndexerClient {
+ 
+     pub async fn next_note_id(&self) -> Result<u32, AuthError> {
+         let url = format!("{}/v1/tree/next-note-id", self.base_url);
+-        let response = self
+-            .http
++        let response = reqwest::Client::new()
+             .get(&url)
+             .send()
+             .await
+@@ -82,8 +78,7 @@ impl IndexerClient {
+     }
+ 
+     async fn path(&self, url: String) -> Result<Vec<Felt252>, AuthError> {
+-        let response = self
+-            .http
++        let response = reqwest::Client::new()
+             .get(&url)
+             .send()
+             .await
+diff --git a/crates/zkapi-clientd/src/main.rs b/crates/zkapi-clientd/src/main.rs
+index 75a1e9a..83554d6 100644
+--- a/crates/zkapi-clientd/src/main.rs
++++ b/crates/zkapi-clientd/src/main.rs
+@@ -116,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
+         models: args.models.into_iter().map(ModelDescriptor::new).collect(),
+         demo_rpc_url: args.demo_rpc_url,
+         demo_billing_token_address: args.demo_billing_token_address,
++        demo_mint_enabled: false,
+         demo_private_key: args.demo_private_key,
+         demo_note_ttl_seconds: args.demo_note_ttl_seconds,
+         proof_mode: "groth16_bn254".to_string(),
+diff --git a/crates/zkapi-clientd/src/routes.rs b/crates/zkapi-clientd/src/routes.rs
+index d5d0955..5b9ff21 100644
+--- a/crates/zkapi-clientd/src/routes.rs
++++ b/crates/zkapi-clientd/src/routes.rs
+@@ -15,7 +15,8 @@
+ 
+ use std::sync::Arc;
+ 
+-use axum::extract::State;
++use axum::extract::{State, Request};
++use axum::middleware::{self, Next};
+ use axum::http::{header, HeaderValue, Method, StatusCode};
+ use axum::response::{Html, IntoResponse, Response};
+ use axum::routing::{get, post};
+@@ -42,9 +43,16 @@ struct WithdrawBody {
+ }
+ 
+ pub fn build_router(service: Arc<AuthService>) -> Router {
++    build_router_with_token(service, std::env::var("OA_ZKAPI_BRIDGE_TOKEN").ok())
++}
++
++fn build_router_with_token(service: Arc<AuthService>, token: Option<String>) -> Router {
+     Router::new()
+         .route("/", get(funding_index))
+         .route("/health", get(healthz))
++        .route("/oa/v1/status", get(oa_bridge_status))
++        .route("/oa/v1/lease", post(oa_bridge_lease))
++        .route("/oa/v1/deposit/path", get(oa_deposit_path))
+         .route("/healthz", get(healthz))
+         .route("/request", post(core_request))
+         .route("/status", get(wallet_status))
+@@ -77,9 +85,46 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
+         .route("/zkapi/v1/config", get(zkapi_config))
+         .route("/zkapi/v1/inference", post(zkapi_inference))
+         .layer(local_cors_layer())
++        .layer(middleware::from_fn_with_state(token, oa_bridge_auth))
+         .with_state(service)
+ }
+ 
++// A packaged companion is private to the Go daemon. The token is generated
++// locally and inherited via environment, never command-line arguments. No
++// unauthenticated route (including funding and reset) is left accessible.
++async fn oa_bridge_auth(State(token): State<Option<String>>, request: Request, next: Next) -> Response {
++    let expected = match token {
++        Some(token) if token.len() >= 32 => format!("Bearer {token}"),
++        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
++    };
++    let actual = request.headers().get(header::AUTHORIZATION)
++        .and_then(|value| value.to_str().ok()).unwrap_or("");
++    let different = actual.len() != expected.len()
++        || actual.bytes().zip(expected.bytes()).fold(0u8, |diff, (a,b)| diff | (a ^ b)) != 0;
++    if different { return StatusCode::UNAUTHORIZED.into_response(); }
++    let mut response = next.run(request).await;
++    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
++    response
++}
++
++async fn oa_bridge_status(State(service): State<Arc<AuthService>>) -> Json<Value> {
++    Json(service.oa_bridge_status())
++}
++
++async fn oa_deposit_path(State(service): State<Arc<AuthService>>) -> Response {
++    match service.oa_deposit_path().await {
++        Ok(value) => Json(value).into_response(),
++        Err(error) => generic_error(error),
++    }
++}
++
++async fn oa_bridge_lease(State(service): State<Arc<AuthService>>) -> Response {
++    match service.oa_bridge_lease().await {
++        Ok(value) => Json(value).into_response(),
++        Err(error) => generic_error(error),
++    }
++}
++
+ /// A deliberately narrow CORS policy.
+ ///
+ /// The funding UI is served by this same daemon, so it is same-origin and does
+@@ -370,6 +415,16 @@ fn openai_error(err: AuthError) -> Response {
+ 
+ #[cfg(test)]
+ mod tests {
++    #[tokio::test]
++    async fn oa_bridge_requires_authentication_for_every_route() {
++        let service = AuthService::new(AuthConfig::default()).unwrap();
++        let router = build_router_with_token(service, Some("companion-test-token-thirty-two-characters".into()));
++        for path in ["/oa/v1/status", "/oa/v1/lease", "/oa/v1/deposit/path", "/funding", "/wallet/reset", "/health"] {
++            let response = router.clone().oneshot(axum::http::Request::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
++            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
++        }
++    }
++
+     use axum::body::Body;
+     use http_body_util::BodyExt;
+     use tower::ServiceExt;
+@@ -390,12 +445,12 @@ mod tests {
+             ..Default::default()
+         })
+         .unwrap();
+-        let router = build_router(service);
++        let router = build_router_with_token(service, Some("companion-test-token-thirty-two-characters".into()));
+ 
+         let funding = router
+             .clone()
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .uri("/funding")
+                     .body(Body::empty())
+                     .unwrap(),
+@@ -407,7 +462,7 @@ mod tests {
+         let models = router
+             .clone()
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .uri("/v1/models")
+                     .body(Body::empty())
+                     .unwrap(),
+@@ -421,7 +476,7 @@ mod tests {
+         let health = router
+             .clone()
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .uri("/health")
+                     .body(Body::empty())
+                     .unwrap(),
+@@ -433,7 +488,7 @@ mod tests {
+         let config = router
+             .clone()
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .uri("/funding/config")
+                     .body(Body::empty())
+                     .unwrap(),
+@@ -453,7 +508,7 @@ mod tests {
+             let removed = router
+                 .clone()
+                 .oneshot(
+-                    axum::http::Request::builder()
++                    axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                         .method("POST")
+                         .uri(path)
+                         .body(Body::empty())
+@@ -466,7 +521,7 @@ mod tests {
+ 
+         let demo = router
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .uri("/funding/api/demo")
+                     .body(Body::empty())
+                     .unwrap(),
+diff --git a/crates/zkapi-clientd/src/service.rs b/crates/zkapi-clientd/src/service.rs
+index 41dc152..80a7171 100644
+--- a/crates/zkapi-clientd/src/service.rs
++++ b/crates/zkapi-clientd/src/service.rs
+@@ -31,6 +31,67 @@ use zkapi_types::wire::{
+ };
+ use zkapi_types::{EpochRoots, Felt252, WithdrawalPublicInputsV2};
+ 
++// A generic OpenAI request has no authenticated conversation boundary. Never
++// hand the same provider key to two calls, including after a lost reply or a
++// daemon restart. A consumed lease remains reserved until server settlement
++// allows the wallet to create a different lease.
++fn reserve_oa_bridge_lease(state_dir: &Path, lease_id: &str) -> Result<(), AuthError> {
++    use sha3::{Digest, Keccak256};
++    #[cfg(unix)]
++    use std::os::unix::fs::OpenOptionsExt;
++    let directory = state_dir.join("oa-issued-leases");
++    std::fs::create_dir_all(&directory).map_err(|_| AuthError::Wallet("cannot persist lease reservation".into()))?;
++    std::fs::File::open(state_dir).and_then(|file| file.sync_all())
++        .map_err(|_| AuthError::Wallet("cannot sync lease reservation parent".into()))?;
++    let name = format!("{:x}", Keccak256::digest(lease_id.as_bytes()));
++    let mut options = OpenOptions::new();
++    options.write(true).create_new(true);
++    #[cfg(unix)]
++    options.mode(0o600);
++    let file = options.open(directory.join(name)).map_err(|error| {
++        if error.kind() == std::io::ErrorKind::AlreadyExists {
++            AuthError::LeasePending("this key has already been used; wait for settlement before requesting another".into())
++        } else {
++            AuthError::Wallet("cannot persist lease reservation".into())
++        }
++    })?;
++    file.sync_all().map_err(|_| AuthError::Wallet("cannot sync lease reservation".into()))?;
++    std::fs::File::open(&directory).and_then(|file| file.sync_all())
++        .map_err(|_| AuthError::Wallet("cannot sync lease reservation directory".into()))?;
++    Ok(())
++}
++
++// OA server leases stop before the signed provider key expires. Match the
++// browser's bounded safety margin; never extend the lease's usable deadline.
++fn oa_key_expiry_covers_lease(key_valid_till: u64, lease_expires_at: u64) -> bool {
++    key_valid_till.checked_sub(lease_expires_at)
++        .is_some_and(|safety_margin| safety_margin <= 60)
++}
++
++fn oa_verifier_binds_key(result: &Value, station_id: &str, api_key: &str) -> bool {
++    use sha2::{Digest, Sha256};
++    let expected_hash = format!("{:x}", Sha256::digest(api_key.as_bytes()));
++    result.get("status").and_then(Value::as_str) == Some("verified")
++        && result.get("station_id").and_then(Value::as_str) == Some(station_id)
++        && result.get("key_hash").and_then(Value::as_str)
++            .is_some_and(|hash| match hash.len() {
++                // The deployed verifier and browser use an exact eight-byte
++                // SHA-256 prefix. Full hashes are accepted without weakening
++                // their comparison to a prefix-only match.
++                16 => hash == &expected_hash[..16],
++                64 => hash == expected_hash,
++                _ => false,
++            })
++}
++
++// A new client has neither a connection pool nor prior TLS session state.
++// It still inherits the mandatory authenticated local anonymity proxy.
++fn fresh_private_http() -> Result<reqwest::Client, AuthError> {
++    reqwest::Client::builder().timeout(Duration::from_secs(180))
++        .redirect(reqwest::redirect::Policy::none()).build()
++        .map_err(|_| AuthError::Wallet("cannot initialize private transport".into()))
++}
++
+ fn compute_payload_hash(payload: impl AsRef<[u8]>) -> Felt252 {
+     // Must match the protocol's canonical request-payload binding; the wallet
+     // re-derives and rejects on mismatch (`request_flow`), and the value feeds
+@@ -98,6 +159,7 @@ pub struct FundingConfig {
+     pub demo_rpc_url: Option<String>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub demo_billing_token_address: Option<String>,
++    pub demo_mint_enabled: bool,
+     #[serde(skip_serializing_if = "Option::is_none")]
+     pub demo_private_key: Option<String>,
+     #[serde(skip_serializing_if = "Option::is_none")]
+@@ -331,7 +393,6 @@ pub struct AuthService {
+     config: AuthConfig,
+     wallet_mutex: Arc<Mutex<()>>,
+     indexer: IndexerClient,
+-    http: reqwest::Client,
+     direct_lease: tokio::sync::Mutex<Option<ActiveOpenRouterLease>>,
+ }
+ 
+@@ -343,11 +404,6 @@ impl AuthService {
+             indexer: IndexerClient::new(config.indexer_url.clone()),
+             config,
+             wallet_mutex: Arc::new(Mutex::new(())),
+-            http: reqwest::Client::builder()
+-                .timeout(Duration::from_secs(180))
+-                .redirect(reqwest::redirect::Policy::none())
+-                .build()
+-                .map_err(|error| AuthError::Wallet(error.to_string()))?,
+             direct_lease: tokio::sync::Mutex::new(None),
+         }))
+     }
+@@ -560,6 +616,7 @@ impl AuthService {
+             models: self.config.models.clone(),
+             demo_rpc_url: self.config.demo_rpc_url.clone(),
+             demo_billing_token_address: self.config.demo_billing_token_address.clone(),
++            demo_mint_enabled: self.config.demo_mint_enabled && self.config.chain_id == 11_155_111,
+             demo_private_key: self.config.demo_private_key.clone(),
+             demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
+         }
+@@ -599,13 +656,56 @@ impl AuthService {
+         }
+     }
+ 
+-    async fn execute_direct_openrouter(
+-        &self,
+-        request: CoreRequest,
+-    ) -> Result<CoreResponse, AuthError> {
++    // The Go gateway receives only a verified provider lease. Prompt content
++    // never enters the wallet/prover bridge or the zkAPI payment server.
++    pub fn oa_bridge_status(&self) -> serde_json::Value {
++        serde_json::json!({
++            "bridge_version": 1,
++            "chain_id": self.config.chain_id,
++            "mode": self.config.request_mode,
++            "require_oa_org_key_source": self.config.require_oa_org_key_source,
++        })
++    }
++
++    pub async fn oa_deposit_path(&self) -> Result<serde_json::Value, AuthError> {
++        let note_id = self.indexer.next_note_id().await?;
++        let siblings = self.indexer.zero_path(note_id).await?;
++        Ok(serde_json::json!({"zero_path": siblings}))
++    }
++
++    pub async fn oa_bridge_lease(&self) -> Result<serde_json::Value, AuthError> {
++        if self.config.request_mode != RequestMode::DirectOpenrouter
++            || !self.config.require_oa_org_key_source
++        {
++            return Err(AuthError::KeyVerification("OA bridge requires verified direct mode".into()));
++        }
++        let guard = self.ready_direct_lease().await?;
++        let lease = guard.as_ref().ok_or_else(|| AuthError::Wallet("lease disappeared".into()))?;
++        reserve_oa_bridge_lease(&self.config.state_dir, &lease.client_request_id)?;
++        Ok(serde_json::json!({
++            "api_key": lease.api_key,
++            "base_url": lease.openrouter_api_base,
++            "expires_at": lease.expires_at,
++            "verified": lease.verified,
++        }))
++    }
++
++    async fn ready_direct_lease(&self) -> Result<tokio::sync::MutexGuard<'_, Option<ActiveOpenRouterLease>>, AuthError> {
+         self.ensure_scheme_agreement().await?;
+         let mut lease_guard = self.direct_lease.lock().await;
+ 
++        if let Some(lease) = lease_guard.as_ref() {
++            use sha3::{Digest, Keccak256};
++            let marker = self.config.state_dir.join("oa-issued-leases")
++                .join(format!("{:x}", Keccak256::digest(lease.client_request_id.as_bytes())));
++            if marker.exists() {
++                if self.recover().await?.recovered {
++                    *lease_guard = None;
++                } else {
++                    return Err(AuthError::LeasePending("the previous API request is awaiting lease settlement".into()));
++                }
++            }
++        }
+         if let Some(lease) = lease_guard.as_ref() {
+             // Leave a small margin so a key cannot expire while a request is
+             // being transmitted to OpenRouter.
+@@ -649,6 +749,15 @@ impl AuthService {
+             }
+             lease.verified = true;
+         }
++        Ok(lease_guard)
++    }
++
++    async fn execute_direct_openrouter(
++        &self,
++        request: CoreRequest,
++    ) -> Result<CoreResponse, AuthError> {
++        let mut lease_guard = self.ready_direct_lease().await?;
++        let lease = lease_guard.as_mut().ok_or_else(|| AuthError::Wallet("lease disappeared".into()))?;
+         let (upstream_path, upstream_body) =
+             crate::compat::openrouter_request(&request.path, request.body);
+         let url = format!(
+@@ -656,8 +765,7 @@ impl AuthService {
+             lease.openrouter_api_base.trim_end_matches('/'),
+             upstream_path
+         );
+-        let response = self
+-            .http
++        let response = fresh_private_http()?
+             .post(url)
+             .bearer_auth(&lease.api_key)
+             .header("content-type", "application/json")
+@@ -698,8 +806,7 @@ impl AuthService {
+     async fn issue_direct_openrouter_lease(&self) -> Result<ActiveOpenRouterLease, AuthError> {
+         for attempt in 0..2 {
+             let request = self.prepare_direct_lease_request().await?;
+-            let response = self
+-                .http
++            let response = fresh_private_http()?
+                 .post(format!(
+                     "{}/v2/openrouter/leases",
+                     self.config.protocol_server_url.trim_end_matches('/')
+@@ -815,7 +922,7 @@ impl AuthService {
+             ));
+         }
+         if evidence.station_id.is_empty()
+-            || evidence.key_valid_till != expires_at
++            || !oa_key_expiry_covers_lease(evidence.key_valid_till, expires_at)
+             || evidence.station_signature.len() != 128
+             || evidence.org_signature.len() != 128
+         {
+@@ -823,8 +930,7 @@ impl AuthService {
+                 "OA key evidence is incomplete or inconsistent".to_string(),
+             ));
+         }
+-        let response = self
+-            .http
++        let response = fresh_private_http()?
+             .post(format!("{expected_verifier}/submit_key"))
+             .json(&serde_json::json!({
+                 "station_id": evidence.station_id,
+@@ -842,7 +948,7 @@ impl AuthService {
+         let result: Value = response.json().await.map_err(|error| {
+             AuthError::KeyVerification(format!("invalid verifier response: {error}"))
+         })?;
+-        if !status.is_success() || result.get("status").and_then(Value::as_str) != Some("verified")
++        if !status.is_success() || !oa_verifier_binds_key(&result, &evidence.station_id, api_key)
+         {
+             return Err(AuthError::KeyVerification(format!(
+                 "trusted verifier rejected the station key (HTTP {status})"
+@@ -914,7 +1020,7 @@ impl AuthService {
+         &self,
+         client_request_id: &str,
+     ) -> Result<OpenRouterLeaseStatusResponse, AuthError> {
+-        self.http
++        fresh_private_http()?
+             .get(format!(
+                 "{}/v2/openrouter/leases/{client_request_id}",
+                 self.config.protocol_server_url.trim_end_matches('/')
+@@ -1404,6 +1510,184 @@ fn default_body() -> Value {
+ 
+ #[cfg(test)]
+ mod security_tests {
++    #[tokio::test]
++    async fn anonymous_http_calls_use_distinct_connections() {
++        use tokio::io::{AsyncReadExt, AsyncWriteExt};
++        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let address=listener.local_addr().unwrap();
++        let connections=std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
++        let count=connections.clone();
++        let server=tokio::spawn(async move {
++            for _ in 0..2 {
++                let (mut socket,_)=listener.accept().await.unwrap();
++                count.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
++                tokio::spawn(async move {
++                    let mut request=[0u8;1024];
++                    socket.read(&mut request).await.unwrap();
++                    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok").await.unwrap();
++                    let _=socket.read(&mut request).await;
++                });
++            }
++        });
++        for _ in 0..2 {
++            let response=super::fresh_private_http().unwrap().get(format!("http://{address}/")).send().await.unwrap();
++            assert_eq!(response.text().await.unwrap(),"ok");
++        }
++        tokio::time::timeout(std::time::Duration::from_secs(3),server).await.unwrap().unwrap();
++        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst),2);
++    }
++
++    #[test]
++    fn browser_demo_mint_requires_explicit_sepolia_flag() {
++        for (chain_id, enabled, expected) in [
++            (11_155_111, true, true),
++            (11_155_111, false, false),
++            (1, true, false),
++            (31_337, true, false),
++        ] {
++            let directory = tempfile::tempdir().unwrap();
++            let service = super::AuthService::new(crate::config::AuthConfig {
++                state_dir: directory.path().to_path_buf(),
++                chain_id,
++                demo_mint_enabled: enabled,
++                ..Default::default()
++            }).unwrap();
++            assert_eq!(service.funding_config().demo_mint_enabled, expected);
++        }
++    }
++
++    #[test]
++    fn oa_key_expiry_accepts_only_bounded_covering_lifetimes() {
++        for (signed_expiry, lease_expiry, valid) in [
++            (1_000, 1_000, true),
++            (1_030, 1_000, true),
++            (1_060, 1_000, true),
++            (999, 1_000, false),
++            (1_061, 1_000, false),
++            (0, 0, true),
++            (0, 1, false),
++            (u64::MAX, u64::MAX, true),
++            (u64::MAX, u64::MAX - 60, true),
++            (u64::MAX, u64::MAX - 61, false),
++            (u64::MAX - 1, u64::MAX, false),
++            (0, u64::MAX, false),
++            (u64::MAX, 0, false),
++        ] {
++            assert_eq!(super::oa_key_expiry_covers_lease(signed_expiry, lease_expiry), valid);
++        }
++    }
++
++    #[tokio::test]
++    async fn verify_oa_key_posts_original_signed_expiry_and_evidence() {
++        use axum::{extract::State, routing::post, Json, Router};
++        use serde_json::{json, Value};
++        use sha2::{Digest, Sha256};
++        use std::sync::{Arc, Mutex};
++
++        async fn submit(
++            State(seen): State<Arc<Mutex<Vec<Value>>>>,
++            Json(body): Json<Value>,
++        ) -> Json<Value> {
++            seen.lock().unwrap().push(body);
++            let hash = format!("{:x}", Sha256::digest(b"test-key"));
++            Json(json!({"status":"verified", "station_id":"test-station", "key_hash":&hash[..16]}))
++        }
++        let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let verifier_url = format!("http://{}", listener.local_addr().unwrap());
++        let app = Router::new().route("/submit_key", post(submit)).with_state(seen.clone());
++        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
++        let directory = tempfile::tempdir().unwrap();
++        let service = super::AuthService::new(crate::config::AuthConfig {
++            state_dir: directory.path().to_path_buf(),
++            oa_verifier_url: verifier_url.clone(),
++            protocol_server_url: verifier_url.clone(),
++            request_mode: crate::config::RequestMode::DirectOpenrouter,
++            require_oa_org_key_source: true,
++            ..Default::default()
++        }).unwrap();
++        let mut evidence = super::OaKeyVerificationEvidence {
++            verifier_url,
++            station_id: "test-station".into(),
++            station_recently_attested: true,
++            key_valid_till: 1_000,
++            station_signature: "ab".repeat(64),
++            org_signature: "cd".repeat(64),
++        };
++        for signed_expiry in [1_000, 1_030, 1_060] {
++            evidence.key_valid_till = signed_expiry;
++            service.verify_oa_key("test-key", 1_000, &evidence).await.unwrap();
++            assert_eq!(seen.lock().unwrap().last().unwrap(), &json!({
++                "station_id":"test-station", "api_key":"test-key",
++                "key_valid_till":signed_expiry,
++                "station_signature":evidence.station_signature,
++                "org_signature":evidence.org_signature,
++            }));
++        }
++        for signed_expiry in [999, 1_061, u64::MAX] {
++            evidence.key_valid_till = signed_expiry;
++            assert!(matches!(service.verify_oa_key("test-key", 1_000, &evidence).await,
++                Err(super::AuthError::KeyVerification(_))));
++        }
++        assert_eq!(seen.lock().unwrap().len(), 3, "invalid expiry must fail before HTTP submission");
++
++        let lease_expiry = super::now_seconds() + 300;
++        evidence.key_valid_till = lease_expiry + 30;
++        *service.direct_lease.lock().await = Some(super::ActiveOpenRouterLease {
++            client_request_id: "test-existing-lease".into(),
++            api_key: "test-key".into(),
++            openrouter_api_base: "https://openrouter.ai/api/v1".into(),
++            expires_at: lease_expiry,
++            settle_after: lease_expiry + 5,
++            verification: Some(evidence.clone()),
++            verified: false,
++        });
++        let handout = service.oa_bridge_lease().await.unwrap();
++        assert_eq!(handout["expires_at"], lease_expiry, "signed-key margin must not extend usable lease");
++        assert_eq!(handout["verified"], true);
++        assert_eq!(seen.lock().unwrap().last().unwrap()["key_valid_till"], lease_expiry + 30);
++        assert_eq!(seen.lock().unwrap().len(), 4);
++        server.abort();
++    }
++
++    #[test]
++    fn oa_verifier_accepts_only_exact_protocol_hash_forms() {
++        use sha2::{Digest, Sha256};
++        let hash = format!("{:x}", Sha256::digest(b"test-secret"));
++        for accepted in [&hash[..16], &hash] {
++            let valid = serde_json::json!({"status":"verified","station_id":"station-one","key_hash":accepted});
++            assert!(super::oa_verifier_binds_key(&valid,"station-one","test-secret"));
++        }
++        let wrong_suffix = format!("{}{}", &hash[..16], "0".repeat(48));
++        assert_ne!(wrong_suffix,hash);
++        for invalid in [
++            serde_json::json!({"status":"pending","station_id":"station-one","key_hash":&hash[..16]}),
++            serde_json::json!({"status":"verified","station_id":"station-two","key_hash":&hash[..16]}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":&hash[..15]}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":&hash[..17]}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":&hash[..63]}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":format!("{}0",hash)}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":"0".repeat(16)}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":wrong_suffix}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":"g".repeat(16)}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":hash[..16].to_uppercase()}),
++            serde_json::json!({"status":"verified","station_id":"station-one","key_hash":hash.to_uppercase()}),
++            serde_json::json!({"status":"verified"}),
++        ] {
++            assert!(!super::oa_verifier_binds_key(&invalid,"station-one","test-secret"));
++        }
++    }
++
++    #[test]
++    fn oa_bridge_reservation_is_durable_and_single_use() {
++        let directory = tempfile::tempdir().unwrap();
++        super::reserve_oa_bridge_lease(directory.path(), "first").unwrap();
++        assert!(matches!(super::reserve_oa_bridge_lease(directory.path(), "first"), Err(super::AuthError::LeasePending(_))));
++        assert!(super::reserve_oa_bridge_lease(directory.path(), "first").is_err());
++        super::reserve_oa_bridge_lease(directory.path(), "../../second").unwrap();
++        assert_eq!(std::fs::read_dir(directory.path().join("oa-issued-leases")).unwrap().count(), 2);
++    }
++
+     use super::{enforce_required_key_source, matches_trusted_url};
+ 
+     #[test]
