@@ -4154,12 +4154,13 @@ html.flat-mode.dark .file-attachment-icon .text-destructive {
    Breakpoints (mobile-first):
    - Base: < 640px  (mobile)
    - sm:  >= 640px  (tablet)
+   - md:  >= 768px  (large tablet)
    - lg:  >= 1024px (desktop)
 
    Behavior:
-   - Mobile:  Sidebar overlay, Right panel overlay, input buttons collapsed
-   - Tablet:  Sidebar toggleable, Right panel overlay
-   - Desktop: Both panels can be inline
+   - Mobile:  Sidebar overlay, System panel sheet over the chat, input buttons collapsed
+   - Tablet:  Sidebar overlay, System panel sheet
+   - md+:     Both panels inline (the System panel opens by default only from lg)
    ============================================ */
 
 /* --- Core Layout Constraints --- */
@@ -4477,12 +4478,31 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     transition-timing-function: var(--system-panel-close-ease);
 }
 
-@media (max-width: 1023px) {
+/* The sheet's scrim. Only the phone range shows it; inline layouts keep the
+   element inert. It fades a beat faster than the panel it belongs to. */
+.right-panel-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgb(0 0 0 / 0.32);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--system-panel-close-duration) var(--system-panel-close-ease);
+}
+
+@media (max-width: 767px) {
     #right-panel {
         position: fixed !important;
         right: 0;
         top: 0;
         transform: translateX(0);
+    }
+
+    html:not([data-right-panel-hidden="true"]) .right-panel-scrim {
+        opacity: 1;
+        pointer-events: auto;
+        transition-duration: var(--system-panel-open-duration);
+        transition-timing-function: var(--system-panel-open-ease);
     }
 
     html[data-right-panel-hidden="true"] #right-panel {
@@ -4496,7 +4516,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 768px) {
     #right-panel {
         position: relative !important;
         transform: translateX(0);
@@ -4761,7 +4781,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-/* --- Large Tablet: 768px to 1023px (sidebar inline, right panel overlay) --- */
+/* --- Large Tablet: 768px to 1023px (sidebar inline, right panel inline) --- */
 @media (min-width: 768px) and (max-width: 1023px) {
     #sidebar:not(.sidebar-hidden) {
         width: var(--oa-left-sidebar-width, 220px);
@@ -4831,8 +4851,8 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-/* Desktop: adjust for inline right panel */
-@media (min-width: 1024px) {
+/* Inline right panel: keep the navigation beside the chat, not under the panel */
+@media (min-width: 768px) {
     .right-panel-open .message-navigation {
         right: calc(12px + 288px);
     }

@@ -1,3 +1,26 @@
+## 2026-09-17: Wallet progress survives a reload; System Panel inline from 768px
+
+- Private balance dialog: after SDK initialization, a saved deposit or an
+  unfinished withdrawal (prepared/submitted/pending, escape window, late
+  attempt) reopens its own view once, on its steps. Opening only refreshes
+  status; nothing is submitted or resumed without a click. A close, or any
+  manual open during startup, wins and stays through background updates.
+  The SDK was already reconciling the chain every 15 s; only the view was lost.
+- The panel's Private balance status pill no longer truncates ("Withdrawal
+  submi…"): the header row wraps and the pill keeps its whole label.
+- Canceling the MetaMask prompt and finding a saved plan after a reload are two
+  states with one line each, never both. Just canceled: "Canceled in MetaMask.
+  Nothing moved." with "Try again with MetaMask"; the "Saved deposit" caption
+  and "Saved in this browser…" note appear only when nothing was just canceled
+  (a reload). MetaMask's own shortMessage is no longer shown for a rejection.
+- System Panel: inline beside the chat from 768px (was 1024px), so a wallet
+  side panel that narrows a laptop window no longer turns it into a fixed
+  overlay covering the composer. Below 768px it is a sheet with a scrim that
+  closes it on tap (`#right-panel-scrim`). Default-open stays at 1024px+
+  (`DEFAULT_OPEN_MIN_WIDTH`), so tablets in the 768–1023 range keep their old
+  default; with both sidebar and panel open there the chat column is narrow
+  (≈260px at 768) — close one.
+
 ## 2026-09-17: Toast placement with the centered composer
 
 - Logout keeps the normal dimmed backdrop and “Logging out…” indicator during

@@ -86,9 +86,9 @@
         // Apply right panel state immediately to prevent flash
         (function () {
             try {
-                const isDesktop = window.innerWidth >= 1024;
+                const defaultOpen = window.innerWidth >= 1024;
                 const savedState = localStorage.getItem('oa-right-panel-visible');
-                const isVisible = savedState !== null ? savedState === 'true' : isDesktop;
+                const isVisible = savedState !== null ? savedState === 'true' : defaultOpen;
 
                 if (!isVisible) {
                     document.documentElement.setAttribute('data-right-panel-hidden', 'true');
@@ -931,6 +931,7 @@
             </main>
 
             <!-- Right Panel: Ticket System -->
+            <div id="right-panel-scrim" class="right-panel-scrim" aria-hidden="true"></div>
             <aside id="right-panel" class="right-panel-desktop fixed lg:relative right-0 top-0 h-full bg-background border-l border-border shadow-lg z-40 lg:flex-shrink-0 flex flex-col">
                 <div id="right-panel-content" class="h-full flex flex-col">
                     <!-- Content will be rendered by RightPanel.js -->
