@@ -1,7 +1,13 @@
 ## 2026-09-17: Toast placement with the centered composer
 
-- Logout and encrypted-data unlock confirmations use top center for three
-  seconds, keeping account feedback separate from the centered composer/modal.
+- Logout keeps the normal dimmed backdrop and loading indicator instead of
+  an opaque white cover. Its three-second confirmation sits above the returning
+  login dialog, following dialog resize/replacement and viewport changes. Tall
+  dialogs reserve a scrollable area below the notice; the reservation lasts until
+  the next opening to avoid a jump when the toast disappears.
+- After the account modal closes, unlock confirmations use the composer position
+  (below centered / above docked). A fixed top offset is not safe for account
+  notices: a tall login dialog can occupy that same space.
 - Ordinary and loading toasts sit 16px below a centered composer and 16px above
   a docked composer. Payment confirmations keep their existing top-center slot.
 - A toast keeps its last position when the composer switches between those

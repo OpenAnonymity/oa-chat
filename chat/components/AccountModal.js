@@ -391,6 +391,8 @@ class AccountModal {
 
     open(returnFocusEl = null) {
         if (this.isOpen || !this.overlay) return;
+        this.overlay.removeAttribute?.('data-account-notice');
+        this.overlay.style?.removeProperty('--account-notice-max-height');
         this.closeAccountMenu();
         this.dismissOverlaySidebar();
         this.isOpen = true;
@@ -1247,9 +1249,9 @@ class AccountModal {
                     ? await this.accountService.setupOAuthKeyring()
                     : await this.accountService.unlockOAuthKeyring();
             if (success) {
-                this.app?.showToast?.('Encrypted data unlocked', 'success', 3000, { position: 'top-center' });
                 if (isFirstAccountSetup) this.completeFirstAccountRouting();
                 else this.close({ afterAuthentication: true });
+                this.app?.showToast?.('Encrypted data unlocked', 'success', 3000, { position: 'composer' });
             }
         } finally {
             this.authenticationExitPending = false;
@@ -1304,11 +1306,11 @@ class AccountModal {
         if (this.app?.getPaymentMode?.() === 'zkapi') {
             // Logged out of the mode that needs no account: nothing to ask.
             this.close();
-            this.app?.showToast?.('Logged out', 'success', 3000, { position: 'top-center' });
+            this.app?.showToast?.('Logged out', 'success', 3000, { position: 'composer' });
             return;
         }
         this.render();
-        this.app?.showToast?.('Logged out', 'success', 3000, { position: 'top-center' });
+        this.app?.showToast?.('Logged out', 'success', 3000, { position: 'account' });
     }
 
     togglePasskeyDetails() {
@@ -1358,10 +1360,8 @@ class AccountModal {
         const isCreationFlow = this.creationStep !== 'idle' &&
             (oauthCreationInProgress || Boolean(this.generatedUsername) || !accountId);
         if (this.loggingOut) {
-            // Nothing but a blank page and a spinner while the account is
-            // cleared and (on the commercial host) the landing page loads.
-            // The cover is opaque: clearing the account empties the chat
-            // behind it, and that empty screen is not what Log out shows.
+            // Keep the usual dimmed backdrop while clearing the account,
+            // then return to the login form without a white interstitial.
             this.overlay.setAttribute?.('data-logging-out', 'true');
             this.overlay.innerHTML = `
                 <div role="dialog" aria-modal="true" aria-label="Logging out" tabindex="-1" class="account-unlock-card account-unlock-card-untitled" data-waiting="true">

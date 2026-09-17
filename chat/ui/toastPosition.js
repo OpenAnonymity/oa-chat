@@ -18,7 +18,21 @@ export function watchToastPosition(toast, environment) {
     view.addEventListener('resize', update);
     view.visualViewport?.addEventListener('resize', update);
     view.visualViewport?.addEventListener('scroll', update);
+    const overlay = toast.dataset.position === 'account' ? environment.document.getElementById('account-modal') : null;
+    const resize = overlay && view.ResizeObserver ? new view.ResizeObserver(update) : null;
+    const observeDialog = () => {
+        resize?.disconnect();
+        resize?.observe(toast);
+        const dialog = overlay?.querySelector('[role="dialog"]');
+        if (dialog) resize?.observe(dialog);
+        update();
+    };
+    const mutation = overlay && view.MutationObserver ? new view.MutationObserver(observeDialog) : null;
+    mutation?.observe(overlay, { childList: true });
+    if (overlay) observeDialog();
     watchers.set(toast, () => {
+        resize?.disconnect();
+        mutation?.disconnect();
         view.removeEventListener('resize', update);
         view.visualViewport?.removeEventListener('resize', update);
         view.visualViewport?.removeEventListener('scroll', update);
@@ -34,6 +48,24 @@ export function positionAppToast(toast, { document: doc, window: view }) {
         toast.style.maxWidth = 'calc(100vw - 32px)';
         toast.style.textAlign = 'center';
         return;
+    }
+    if (toast.dataset.position === 'account') {
+        const overlay = doc.getElementById('account-modal');
+        const dialog = overlay?.querySelector('[role="dialog"]');
+        if (dialog && !overlay.classList.contains('hidden')) {
+            const viewport = view.visualViewport;
+            const top = viewport?.offsetTop || 0;
+            const clearance = toast.offsetHeight + 32;
+            // Leave space outside tall dialogs as well as desktop cards. Keep
+            // the reservation until close so dismissal does not jump the form.
+            overlay.style.setProperty('--account-notice-max-height', `max(0px, calc(100dvh - ${clearance * 2}px))`);
+            overlay.setAttribute('data-account-notice', 'true');
+            toast.style.maxWidth = 'calc(100vw - 32px)';
+            toast.style.textAlign = 'center';
+            toast.style.top = `${Math.max(top + 16, dialog.getBoundingClientRect().top - toast.offsetHeight - 16)}px`;
+            toast.style.bottom = 'auto';
+            return;
+        }
     }
     const card = doc.getElementById('input-card');
     if (!card) return;
