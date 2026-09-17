@@ -1247,7 +1247,7 @@ class AccountModal {
                     ? await this.accountService.setupOAuthKeyring()
                     : await this.accountService.unlockOAuthKeyring();
             if (success) {
-                this.app?.showToast?.('Encrypted data unlocked', 'success');
+                this.app?.showToast?.('Encrypted data unlocked', 'success', 3000, { position: 'top-center' });
                 if (isFirstAccountSetup) this.completeFirstAccountRouting();
                 else this.close({ afterAuthentication: true });
             }
@@ -1304,11 +1304,11 @@ class AccountModal {
         if (this.app?.getPaymentMode?.() === 'zkapi') {
             // Logged out of the mode that needs no account: nothing to ask.
             this.close();
-            this.app?.showToast?.('Logged out', 'success');
+            this.app?.showToast?.('Logged out', 'success', 3000, { position: 'top-center' });
             return;
         }
         this.render();
-        this.app?.showToast?.('Logged out', 'success');
+        this.app?.showToast?.('Logged out', 'success', 3000, { position: 'top-center' });
     }
 
     togglePasskeyDetails() {

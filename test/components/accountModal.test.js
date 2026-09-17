@@ -1566,7 +1566,11 @@ test('Log out holds a dimmed "Logging out…" frame; a host that takes the page 
         modal.escapeHtml = value => String(value ?? '');
         modal.renderAccountUI = () => '<form>Log in</form>';
         modal.app = {
-            showToast(message) { events.push(`toast:${message}`); },
+            showToast(message, type, duration, options) {
+                assert.equal(duration, 3000);
+                assert.deepEqual(options, { position: 'top-center' });
+                events.push(`toast:${message}`);
+            },
             notifyLoggedOut() { events.push('logged-out'); return hostLeaves; }
         };
 
@@ -1808,7 +1812,11 @@ test('first Google keyring setup closes Account and routes once to Membership', 
     };
     modal.close = () => { closed += 1; };
     modal.app = {
-        showToast() {},
+        showToast(message, type, duration, options) {
+            assert.equal(message, 'Encrypted data unlocked');
+            assert.equal(duration, 3000);
+            assert.deepEqual(options, { position: 'top-center' });
+        },
         notifyFirstAccountReady() { firstAccountReady += 1; }
     };
 

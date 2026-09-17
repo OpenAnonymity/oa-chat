@@ -1,5 +1,7 @@
 ## 2026-09-17: Toast placement with the centered composer
 
+- Logout and encrypted-data unlock confirmations use top center for three
+  seconds, keeping account feedback separate from the centered composer/modal.
 - Ordinary and loading toasts sit 16px below a centered composer and 16px above
   a docked composer. Payment confirmations keep their existing top-center slot.
 - A toast keeps its last position when the composer switches between those
