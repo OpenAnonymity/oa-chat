@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 
-function setup(t, { config = {}, note = null, withdrawal = null, failInit = false } = {}) {
+function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal };
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
@@ -38,7 +38,7 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
         globalThis.document = oldDocument;
         globalThis.window = oldWindow;
     });
-    const modal = new AccountModal({});
+    const modal = new AccountModal({}, canRestore ? { canRestore } : {});
     return { modal, classes, refresh, mutations, notify: () => subscriber({}, { reason: 'refresh' }),
         load: async () => { loaded(); await new Promise(resolve => setImmediate(resolve)); } };
 }
@@ -69,11 +69,28 @@ for (const mode of ['mutual', 'escape']) {
     });
 }
 
-test('escape safety-window progress reopens after reload', async t => {
+test('an escape safety window (days of waiting) does not reopen on every reload', async t => {
     const f = setup(t, { withdrawal: { phase: 'pending', mode: 'escape' } });
     await f.load();
-    assert.equal(f.modal.view, 'withdraw');
-    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.modal.isOpen, false);
+});
+
+test('a merely saved plan (prepared deposit, prepared withdrawal proof) does not reopen', async t => {
+    for (const state of [
+        { config: { pending_deposit: { phase: 'prepared' } } },
+        { config: { pending_deposit: { phase: 'retry_exact' } } },
+        { config: { prepared_withdrawal: { mode: 'mutual', phase: 'prepared' } }, note: { note_id: 7 } }
+    ]) {
+        const f = setup(t, state);
+        await f.load();
+        assert.equal(f.modal.isOpen, false, JSON.stringify(state));
+    }
+});
+
+test('a tickets chat never sees saved zkAPI progress reopen', async t => {
+    const f = setup(t, { config: { pending_deposit: { phase: 'submitted' } }, canRestore: () => false });
+    await f.load();
+    assert.equal(f.modal.isOpen, false);
 });
 
 for (const state of [{}, { note: { note_id: 7 } }, { withdrawal: { phase: 'closed' } }]) {

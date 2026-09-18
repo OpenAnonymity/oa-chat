@@ -78,7 +78,13 @@ export function createPaymentModeUi(runtime) {
             overlay.classList.add('hidden');
             document.body.append(overlay);
             // Payment selection, System Panel actions and send preflight open it.
-            privateBalance = new ZkapiAccountModal(app, { triggerId: null, overlayId: 'payment-balance-modal' });
+            privateBalance = new ZkapiAccountModal(app, {
+                triggerId: null,
+                overlayId: 'payment-balance-modal',
+                // Saved wallet progress reopens after a reload only while the
+                // current chat pays with zkAPI; a tickets chat never sees it.
+                canRestore: () => runtime.getMode() === 'zkapi'
+            });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();
         },

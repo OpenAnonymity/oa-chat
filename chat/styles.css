@@ -4448,15 +4448,8 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 #show-right-panel-btn:focus-visible > svg { transform: translateX(1px); }
 html[data-right-panel-hidden="true"] #show-right-panel-btn:hover > svg,
 html[data-right-panel-hidden="true"] #show-right-panel-btn:focus-visible > svg { transform: translateX(-1px); }
-/* Widen: the arrows spread; when already wide they draw back in. */
-#wide-mode-btn:hover .theater-arrow-start,
-#wide-mode-btn:focus-visible .theater-arrow-start { transform: translateX(-1px); }
-#wide-mode-btn:hover .theater-arrow-end,
-#wide-mode-btn:focus-visible .theater-arrow-end { transform: translateX(1px); }
-#wide-mode-btn.wide-active:hover .theater-arrow-start,
-#wide-mode-btn.wide-active:focus-visible .theater-arrow-start { transform: translateX(1px); }
-#wide-mode-btn.wide-active:hover .theater-arrow-end,
-#wide-mode-btn.wide-active:focus-visible .theater-arrow-end { transform: translateX(-1px); }
+/* Widen: no glyph motion — the same arrows mean "narrow" once wide, so a
+   directional nudge would lie half the time. The tint alone says "button". */
 /* Their tooltips wait a beat, so a pass of the pointer says nothing. */
 .oa-panel-icon-btn[data-tooltip]:hover::after,
 .oa-panel-icon-btn[data-tooltip]:hover::before {

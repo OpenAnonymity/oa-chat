@@ -20,17 +20,22 @@ const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
 // A submitted transaction needs nothing from the person: the SDK checks
 // the chain every 15 s and on focus, and the dialog re-renders on change.
 // The check button stays as a quiet fallback for a slow indexer.
+const IN_MOTION_PHASES = ['submitted', 'awaiting_wallet', 'dropped_or_pending', 'ambiguous'];
 const CONFIRMING_LINE = 'Waiting for confirmation. Usually under a minute; this updates on its own.';
 // Wallet work narrates in the dialog — the steps while it runs, one line
 // with the outcome when it ends. No toasts: with the dialog closed, the
 // right panel's activity rows carry the same words.
 
 export default class AccountModal {
-    constructor(app, { triggerId = 'account-tab-btn', overlayId = 'account-modal' } = {}) {
+    constructor(app, { triggerId = 'account-tab-btn', overlayId = 'account-modal', canRestore = () => true } = {}) {
         this.app = app;
         this.triggerId = triggerId;
         this.isOpen = false;
         this.restorePendingOnInit = true;
+        // Whether a reload may reopen saved wallet progress here at all —
+        // the payment-mode shell says no while the current chat pays with
+        // tickets, where a zkAPI dialog would be an intrusion.
+        this.canRestore = canRestore;
         this.overlay = document.getElementById(overlayId);
         this.view = 'balance';
         this.withdrawMode = 'mutual';
@@ -86,11 +91,16 @@ export default class AccountModal {
     restorePendingOperation() {
         if (!this.restorePendingOnInit) return;
         this.restorePendingOnInit = false;
-        if (this.isOpen || this.busy) return;
+        if (this.isOpen || this.busy || !this.canRestore()) return;
+        // Only work that is actually in motion — a transaction sent, a
+        // MetaMask prompt possibly still open, an outcome the chain has to
+        // settle. A plan that is merely saved (prepared, the proof made) is
+        // not: it waits quietly until the person comes back for it.
+        const inMotion = phase => IN_MOTION_PHASES.includes(phase);
         if (zkapiClient.config?.pending_deposit && !zkapiClient.note) {
-            this.open('fund');
-        } else if (zkapiClient.config?.prepared_withdrawal
-            || ['prepared', 'submitted', 'pending'].includes(zkapiClient.withdrawal?.phase)
+            if (inMotion(zkapiClient.config.pending_deposit.phase)) this.open('fund');
+        } else if (inMotion(zkapiClient.config?.prepared_withdrawal?.phase)
+            || inMotion(zkapiClient.withdrawal?.phase)
             || zkapiClient.activeLateWithdrawal) {
             this.withdrawMode = (zkapiClient.config?.prepared_withdrawal?.mode
                 || zkapiClient.withdrawal?.mode || zkapiClient.activeLateWithdrawal?.mode) === 'escape'
