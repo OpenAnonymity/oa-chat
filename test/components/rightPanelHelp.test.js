@@ -160,7 +160,7 @@ function feedbackFixture() {
         contains(target) { return target === this || target === button; }
     });
     const row = element(), button = element(), label = element(), swap = element(), check = element();
-    label.textContent = 'Proxy unavailable';
+    label.textContent = 'Unavailable';
     check.querySelector = () => ({ getTotalLength: () => 20 });
     row.querySelector = selector => ({ '#proxy-retry-btn': button, '.oa-proxy-feedback-text': label,
         '.t-icon-swap': swap, '.t-success-check': check })[selector];
@@ -209,7 +209,7 @@ test('new failure cancels confirmation dismissal and re-enables retry', t => {
         f.panel.proxyStatus = { lastError: 'Connection lost', fallbackActive: true };
         f.panel.updateProxyFeedback();
         t.mock.timers.tick(2500);
-        assert.equal(f.label.textContent, 'Proxy unavailable');
+        assert.equal(f.label.textContent, 'Unavailable');
         assert.equal(f.row.hidden, false);
         assert.equal(f.row.inert, false);
         assert.equal(f.button.attrs['aria-disabled'], 'false');
@@ -229,7 +229,7 @@ test('pending retry ignores repeat activation and destruction cancels text and d
         assert.equal(f.button.attrs['aria-disabled'], 'true');
         f.panel.destroy(); finish(); await pending;
         t.mock.timers.tick(3000);
-        assert.equal(f.label.textContent, 'Proxy unavailable', 'no queued text mutation after destruction');
+        assert.equal(f.label.textContent, 'Unavailable', 'no queued text mutation after destruction');
         assert.equal(f.panel.proxyRenderTimer, undefined);
     } finally { f.cleanup(); }
 });

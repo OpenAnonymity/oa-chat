@@ -9779,30 +9779,44 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 .oa-proxy-status-icon { position: relative; display: inline-flex; width: .875rem; height: .875rem; flex-shrink: 0; cursor: default; --pulse-dur: 1400ms; --pulse-count: infinite; --pulse-min: .35; }
 .oa-proxy-status-tooltip { position: absolute; top: calc(100% + 8px); left: 0; width: max-content; max-width: 240px; padding: .4rem .6rem; border: 1px solid hsl(var(--color-border)); border-radius: .375rem; background: hsl(var(--color-background)); color: hsl(var(--color-foreground)); font-size: .625rem; line-height: 1.5; visibility: hidden; pointer-events: none; z-index: 30; }
 .oa-proxy-status-icon:hover .oa-proxy-status-tooltip, .oa-proxy-status-icon:focus-visible .oa-proxy-status-tooltip { visibility: visible; }
+/* The failure row is the Network Proxy row's subtitle: it exists only while
+   the proxy is unavailable (and through the retry that follows), sits under
+   the label's text rather than under the globe, and stays muted — the globe
+   already carries the state's colour. Retry is the single-arc arrow with a
+   real 22px target; each press turns it one full turn by transition, so a
+   second press continues the motion rather than restarting it. */
 .oa-proxy-failure {
-    display: flex; gap: 0; align-items: center; font-size: .75rem; line-height: 1.4;
+    display: flex; gap: .25rem; align-items: center; font-size: .6875rem; line-height: 1.4;
+    padding-left: 1.25rem; margin-top: .25rem;
     --proxy-feedback-fade: 250ms;
     --text-swap-translate-y: 2px; --text-swap-blur: 1px;
     --icon-swap-start-scale: .8; --icon-swap-blur: 1px;
     color: hsl(var(--color-muted-foreground));
     transition: opacity var(--proxy-feedback-fade) var(--ease-smooth-out, cubic-bezier(.22,1,.36,1));
 }
-.oa-proxy-failure[data-state="unavailable"] { color: #b45309; }
-.dark .oa-proxy-failure[data-state="unavailable"] { color: #fbbf24; }
+.oa-proxy-failure[data-state="unavailable"] { color: hsl(var(--color-muted-foreground)); }
 .oa-proxy-failure[data-state="ready"] { color: hsl(var(--color-muted-foreground)); }
 .oa-proxy-failure[data-state="connected"] { color: var(--color-status-success); }
 .oa-proxy-failure.is-settled { opacity: 0; pointer-events: none; }
 .oa-proxy-failure[hidden] { display: none; }
 .oa-proxy-retry {
     display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
-    width: 2rem; height: 2rem; padding: .5rem; border: 0; border-radius: .375rem;
+    width: 1.375rem; height: 1.375rem; padding: 0; border: 0; border-radius: .375rem;
     background: transparent; color: hsl(var(--color-muted-foreground)); cursor: pointer;
-    transition: background-color 150ms ease-out, transform 150ms ease-out;
+    transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
 }
-.oa-proxy-retry:hover:not([aria-disabled="true"]) { background: hsl(var(--color-foreground) / .05); color: hsl(var(--color-foreground)); }
+.oa-proxy-retry:hover:not([aria-disabled="true"]),
+.oa-proxy-retry:focus-visible:not([aria-disabled="true"]) { background: hsl(var(--color-hover)); color: hsl(var(--color-foreground)); }
 .oa-proxy-retry:active:not([aria-disabled="true"]) { transform: scale(.94); }
 .oa-proxy-retry[aria-disabled="true"] { cursor: default; }
-.oa-proxy-retry .t-icon, .oa-proxy-retry svg { display: block; width: 1rem; height: 1rem; }
+.oa-proxy-retry .t-icon, .oa-proxy-retry svg { display: block; width: .8125rem; height: .8125rem; }
+.oa-proxy-retry .oa-proxy-retry-turns {
+    display: block; transform: rotate(var(--proxy-turns, 0turn));
+    transition: transform 700ms cubic-bezier(.4, 0, .2, 1);
+}
+/* Hover: a small lean in the direction the arrow travels, undone on leave. */
+.oa-proxy-retry:hover:not([aria-disabled="true"]) .oa-proxy-retry-arrow { transform: rotate(18deg); }
+.oa-proxy-retry .oa-proxy-retry-arrow { transition: transform 200ms ease; }
 .oa-proxy-retry .t-success-check {
     color: inherit; --check-y-amount: 2px; --check-rotate-from: 0deg; --check-blur-from: 1px;
     --check-opacity-dur: 250ms; --check-bob-dur: 250ms; --check-rotate-dur: 250ms;
@@ -9810,11 +9824,12 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 }
 .oa-proxy-retry .t-success-check svg path { stroke-dasharray: var(--proxy-check-length, 21); stroke-dashoffset: var(--proxy-check-length, 21); }
 .oa-proxy-failure[data-state="connected"] .oa-proxy-retry { color: inherit; }
-.oa-proxy-failure[data-state="connecting"] .oa-proxy-retry-arrow { animation: oa-proxy-retry-spin 900ms linear infinite; }
-@keyframes oa-proxy-retry-spin { to { transform: rotate(360deg); } }
+/* Connecting: turns chain (see turnProxyRetryArrow), so the pace is even. */
+.oa-proxy-failure[data-state="connecting"] .oa-proxy-retry-turns { transition-timing-function: linear; transition-duration: 900ms; }
 @media (prefers-reduced-motion: reduce) {
-    .oa-proxy-failure, .oa-proxy-retry { transition: none; }
-    .oa-proxy-failure[data-state="connecting"] .oa-proxy-retry-arrow { animation: none; }
+    .oa-proxy-failure, .oa-proxy-retry, .oa-proxy-retry .oa-proxy-retry-turns, .oa-proxy-retry .oa-proxy-retry-arrow { transition: none; }
+    .oa-proxy-retry .oa-proxy-retry-turns { transform: none; }
+    .oa-proxy-retry:hover .oa-proxy-retry-arrow { transform: none; }
     .oa-proxy-retry .t-success-check[data-state="out"] { opacity: 0; }
 }
 .oa-panel-disclosure .oa-panel-help { margin-top: .5rem; }

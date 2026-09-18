@@ -2529,7 +2529,7 @@ class RightPanel {
         // A failed connection may have automatically switched off. Keep the
         // warning visible until the user retries or explicitly disables it.
         if (status?.fallbackActive || status?.lastError || this.proxyActionError) {
-            return { state: 'unavailable', label: 'Proxy unavailable', textClass: 'text-amber-600 dark:text-amber-400' };
+            return { state: 'unavailable', label: 'Unavailable', textClass: 'text-amber-600 dark:text-amber-400' };
         }
         if (!settings?.enabled) {
             return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
@@ -2593,10 +2593,10 @@ class RightPanel {
                 </div>
 
                 <div id="proxy-failure-notice" class="oa-proxy-failure" data-state="unavailable"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
-                    <span class="oa-proxy-feedback-text t-text-swap" role="status">Proxy unavailable</span>
-                    <button type="button" id="proxy-retry-btn" class="oa-proxy-retry" aria-label="Retry proxy connection" aria-disabled="${!!pending}">
+                    <span class="oa-proxy-feedback-text t-text-swap" role="status">Unavailable</span>
+                    <button type="button" id="proxy-retry-btn" class="oa-proxy-retry" aria-label="Retry proxy connection" aria-disabled="${!!pending}" data-tooltip="Retry" data-tooltip-position="end">
                         <span class="t-icon-swap" data-state="a" aria-hidden="true">
-                            <span class="t-icon" data-icon="a"><svg class="oa-proxy-retry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 19.7 10M4.3 14a8 8 0 0 0 13.6 3.9"/></svg></span>
+                            <span class="t-icon" data-icon="a"><span class="oa-proxy-retry-turns"><svg class="oa-proxy-retry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span></span>
                             <span class="t-icon" data-icon="b"><span class="t-success-check" data-state="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"/></svg></span></span>
                         </span>
                     </button>
@@ -2623,6 +2623,15 @@ class RightPanel {
         clearTimeout(this.proxyFeedbackHideTimer);
     }
 
+    /** One more full turn of the retry arrow. A CSS transition, not a
+     *  keyframe: a second press mid-turn continues from where it is. */
+    turnProxyRetryArrow() {
+        const turns = document.getElementById('proxy-retry-btn')?.querySelector?.('.oa-proxy-retry-turns');
+        if (!turns) return;
+        this.proxyRetryTurns = (this.proxyRetryTurns || 0) + 1;
+        turns.style.setProperty('--proxy-turns', `${this.proxyRetryTurns}turn`);
+    }
+
     updateProxyFeedback() {
         const row = document.getElementById('proxy-failure-notice');
         if (!row || this.destroyed) return;
@@ -2647,7 +2656,7 @@ class RightPanel {
         }
         const wasHidden = row.hidden;
         row.hidden = false;
-        const text = { unavailable: 'Proxy unavailable', connecting: 'Connecting…', ready: 'Ready', connected: 'Connected' }[state];
+        const text = { unavailable: 'Unavailable', connecting: 'Connecting…', ready: 'Ready', connected: 'Connected' }[state];
         button.setAttribute('aria-disabled', String(state !== 'unavailable'));
         button.setAttribute('aria-label', state === 'unavailable' ? 'Retry proxy connection' : meta.label);
         swap.dataset.state = confirmed ? 'b' : 'a';
@@ -3014,9 +3023,20 @@ class RightPanel {
         const proxyLearnMore = document.getElementById('proxy-info-learn-more');
         if (proxyLearnMore) proxyLearnMore.onclick = () => proxyInfoModal.open();
         const proxyRetry = document.getElementById('proxy-retry-btn');
-        if (proxyRetry) proxyRetry.onclick = () => {
-                if (proxyRetry.getAttribute('aria-disabled') !== 'true') this.handleProxyToggle({ retry: true });
+        if (proxyRetry) {
+            proxyRetry.onclick = () => {
+                if (proxyRetry.getAttribute('aria-disabled') === 'true') return;
+                this.turnProxyRetryArrow();
+                this.handleProxyToggle({ retry: true });
             };
+            // While still connecting when a turn ends, take another: the
+            // motion is continuous, and always ends on a whole turn.
+            proxyRetry.querySelector('.oa-proxy-retry-turns')?.addEventListener('transitionend', event => {
+                if (event.propertyName !== 'transform') return;
+                const row = document.getElementById('proxy-failure-notice');
+                if (row?.dataset.state === 'connecting' && !row.hidden) this.turnProxyRetryArrow();
+            });
+        }
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
         if (verifierAttestationBtn) {
