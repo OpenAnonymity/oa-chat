@@ -2593,13 +2593,13 @@ class RightPanel {
                 </div>
 
                 <div id="proxy-failure-notice" class="oa-proxy-failure" data-state="unavailable"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
-                    <span class="oa-proxy-feedback-text t-text-swap" role="status">Unavailable</span>
                     <button type="button" id="proxy-retry-btn" class="oa-proxy-retry" aria-label="Retry proxy connection" aria-disabled="${!!pending}" data-tooltip="Retry" data-tooltip-position="end">
                         <span class="t-icon-swap" data-state="a" aria-hidden="true">
                             <span class="t-icon" data-icon="a"><span class="oa-proxy-retry-turns"><svg class="oa-proxy-retry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span></span>
-                            <span class="t-icon" data-icon="b"><span class="t-success-check" data-state="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"/></svg></span></span>
+                            <span class="t-icon" data-icon="b"><span class="t-success-check" data-state="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"/></svg></span></span>
                         </span>
                     </button>
+                    <span class="oa-proxy-feedback-text t-text-swap" role="status">Unavailable</span>
                 </div>
                 ${this.generateProxyInfoHTML()}
 
@@ -2629,7 +2629,21 @@ class RightPanel {
         const turns = document.getElementById('proxy-retry-btn')?.querySelector?.('.oa-proxy-retry-turns');
         if (!turns) return;
         this.proxyRetryTurns = (this.proxyRetryTurns || 0) + 1;
+        this.proxyRetryTurning = true;
         turns.style.setProperty('--proxy-turns', `${this.proxyRetryTurns}turn`);
+    }
+
+    /** A turn ended. The outcome, if it arrived mid-turn, shows now; if the
+     *  proxy is still answering, take another turn so the pace stays even. */
+    onProxyRetryTurnEnd() {
+        this.proxyRetryTurning = false;
+        if (this.proxyFeedbackDeferred) {
+            this.proxyFeedbackDeferred = false;
+            this.updateProxyFeedback();
+            return;
+        }
+        const row = document.getElementById('proxy-failure-notice');
+        if (row?.dataset.state === 'connecting' && !row.hidden) this.turnProxyRetryArrow();
     }
 
     updateProxyFeedback() {
@@ -2639,6 +2653,11 @@ class RightPanel {
         const visible = meta.state === 'unavailable' || (this.proxyRetryFeedbackActive && meta.state !== 'off');
         const state = visible ? meta.state : 'hidden';
         if (row.dataset.feedbackState === state) return;
+        // The answer waits for the motion: an outcome that lands mid-turn
+        // shows when the arrow completes the turn it is on, never before.
+        const confirmed = meta.state === 'ready' || meta.state === 'connected';
+        if (confirmed && this.proxyRetryTurning) { this.proxyFeedbackDeferred = true; return; }
+        this.proxyFeedbackDeferred = false;
         this.clearProxyFeedbackTimers();
         row.dataset.feedbackState = state;
         row.dataset.state = meta.state;
@@ -2648,7 +2667,6 @@ class RightPanel {
         const label = row.querySelector('.oa-proxy-feedback-text');
         const swap = row.querySelector('.t-icon-swap');
         const check = row.querySelector('.t-success-check');
-        const confirmed = meta.state === 'ready' || meta.state === 'connected';
         if (!visible) {
             if (row.contains(document.activeElement)) document.querySelector('.oa-proxy-status-icon')?.focus();
             row.hidden = true;
@@ -2656,7 +2674,9 @@ class RightPanel {
         }
         const wasHidden = row.hidden;
         row.hidden = false;
-        const text = { unavailable: 'Unavailable', connecting: 'Connecting…', ready: 'Ready', connected: 'Connected' }[state];
+        // While the arrow turns the word stays: the motion already says
+        // "trying". Success is one moment of change — check and word together.
+        const text = { unavailable: 'Unavailable', connecting: 'Unavailable', ready: 'Connected', connected: 'Connected' }[state];
         button.setAttribute('aria-disabled', String(state !== 'unavailable'));
         button.setAttribute('aria-label', state === 'unavailable' ? 'Retry proxy connection' : meta.label);
         swap.dataset.state = confirmed ? 'b' : 'a';
@@ -2690,8 +2710,8 @@ class RightPanel {
                 this.proxyFeedbackHideTimer = setTimeout(() => {
                     row.hidden = true;
                     row.dataset.feedbackState = 'hidden';
-                }, motionDuration(row, '--proxy-feedback-fade', 250));
-            }, 1500 + duration);
+                }, motionDuration(row, '--proxy-feedback-fade', 280));
+            }, 1800 + duration);
         }
     }
 
@@ -3032,9 +3052,7 @@ class RightPanel {
             // While still connecting when a turn ends, take another: the
             // motion is continuous, and always ends on a whole turn.
             proxyRetry.querySelector('.oa-proxy-retry-turns')?.addEventListener('transitionend', event => {
-                if (event.propertyName !== 'transform') return;
-                const row = document.getElementById('proxy-failure-notice');
-                if (row?.dataset.state === 'connecting' && !row.hidden) this.turnProxyRetryArrow();
+                if (event.propertyName === 'transform') this.onProxyRetryTurnEnd();
             });
         }
 

@@ -9786,18 +9786,24 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
    real 22px target; each press turns it one full turn by transition, so a
    second press continues the motion rather than restarting it. */
 .oa-proxy-failure {
-    display: flex; gap: .25rem; align-items: center; font-size: .6875rem; line-height: 1.4;
-    padding-left: 1.25rem; margin-top: .25rem;
-    --proxy-feedback-fade: 250ms;
+    display: flex; gap: .375rem; align-items: center; font-size: .6875rem; line-height: 1.4;
+    padding-left: 1rem; margin-top: .25rem; max-height: 1.5rem;
+    --proxy-feedback-fade: 280ms;
     --text-swap-translate-y: 2px; --text-swap-blur: 1px;
     --icon-swap-start-scale: .8; --icon-swap-blur: 1px;
     color: hsl(var(--color-muted-foreground));
-    transition: opacity var(--proxy-feedback-fade) var(--ease-smooth-out, cubic-bezier(.22,1,.36,1));
+    /* Settling: the line collapses in height as it fades, so the rows
+       below slide up instead of jumping. */
+    transition: opacity var(--proxy-feedback-fade) ease, filter var(--proxy-feedback-fade) ease,
+        max-height var(--proxy-feedback-fade) cubic-bezier(.4, 0, .2, 1), margin-top var(--proxy-feedback-fade) cubic-bezier(.4, 0, .2, 1);
 }
 .oa-proxy-failure[data-state="unavailable"] { color: hsl(var(--color-muted-foreground)); }
 .oa-proxy-failure[data-state="ready"] { color: hsl(var(--color-muted-foreground)); }
 .oa-proxy-failure[data-state="connected"] { color: var(--color-status-success); }
-.oa-proxy-failure.is-settled { opacity: 0; pointer-events: none; }
+.oa-proxy-failure.is-settled { opacity: 0; filter: blur(1px); max-height: 0; margin-top: 0; overflow: hidden; pointer-events: none; }
+.oa-proxy-failure[data-state="ready"] .oa-proxy-retry, .oa-proxy-failure[data-state="connected"] .oa-proxy-retry { color: var(--color-status-success); }
+/* The globe's colour change is felt, not seen. */
+.oa-proxy-status-icon { transition: color 420ms ease; }
 .oa-proxy-failure[hidden] { display: none; }
 .oa-proxy-retry {
     display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;

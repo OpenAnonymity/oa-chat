@@ -177,7 +177,7 @@ test('retry feedback distinguishes ready from verified connected, then fades and
         f.panel.proxyStatus = { ready: true };
         f.panel.updateProxyFeedback();
         t.mock.timers.tick(150);
-        assert.equal(f.label.textContent, 'Ready');
+        assert.equal(f.label.textContent, 'Connected', 'one word with the check; "ready" is a state only the code needs');
         assert.equal(f.swap.dataset.state, 'b');
         assert.equal(f.button.attrs['aria-disabled'], 'true');
         assert.equal(f.panel.getProxyStatusMeta().state, 'ready');
@@ -185,11 +185,11 @@ test('retry feedback distinguishes ready from verified connected, then fades and
         f.panel.updateProxyFeedback();
         t.mock.timers.tick(150);
         assert.equal(f.label.textContent, 'Connected');
-        t.mock.timers.tick(1499);
+        t.mock.timers.tick(1799);
         assert.equal(f.row.hidden, false);
         t.mock.timers.tick(1);
         assert.equal(f.row.inert, true);
-        t.mock.timers.tick(250);
+        t.mock.timers.tick(280);
         assert.equal(f.row.hidden, true);
         assert.equal(f.panel.proxyRetryFeedbackActive, false);
         f.panel.updateProxyFeedback();
@@ -231,5 +231,23 @@ test('pending retry ignores repeat activation and destruction cancels text and d
         t.mock.timers.tick(3000);
         assert.equal(f.label.textContent, 'Unavailable', 'no queued text mutation after destruction');
         assert.equal(f.panel.proxyRenderTimer, undefined);
+    } finally { f.cleanup(); }
+});
+
+test('an outcome that lands mid-turn waits for the arrow to finish its turn', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = feedbackFixture();
+    try {
+        f.panel.proxyRetryFeedbackActive = true;
+        f.panel.proxySettings = { enabled: true };
+        f.panel.proxyRetryTurning = true;
+        f.panel.proxyStatus = { ready: true };
+        f.panel.updateProxyFeedback();
+        assert.notEqual(f.label.textContent, 'Connected', 'nothing shown while the arrow is mid-turn');
+        assert.equal(f.panel.proxyFeedbackDeferred, true);
+        f.panel.onProxyRetryTurnEnd();
+        t.mock.timers.tick(150);
+        assert.equal(f.label.textContent, 'Connected');
+        assert.equal(f.swap.dataset.state, 'b');
     } finally { f.cleanup(); }
 });
