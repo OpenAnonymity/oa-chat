@@ -4415,7 +4415,7 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
    The clear control is destructive and rare: it earns its red only on
    hover. Glyph sizes live on the SVGs themselves (h-5 / h-4). */
 .oa-panel-icon-btn {
-    border-radius: 8px;
+    border-radius: 0.375rem; /* rounded-md, like the toolbar buttons beside it */
     color: hsl(var(--color-muted-foreground));
     transition: color 150ms ease, background-color 150ms ease;
 }
@@ -4440,8 +4440,8 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     transform: scale(0.94);
     transition-duration: 80ms;
 }
-/* Inside a text row: keep the 28px target without growing the row. */
-.oa-panel-icon-btn--tight { margin-block: -4px; }
+/* Inside a text row: a 28px target in the row's original 24px of height. */
+.oa-panel-icon-btn--tight { margin-block: -2px; }
 /* Collapse: the panel leaves to the right, so the glyph leans that way;
    with the panel closed the same control opens it, and leans back in. */
 #show-right-panel-btn:hover > svg,
