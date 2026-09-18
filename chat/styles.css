@@ -4409,8 +4409,8 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 
 /* System Panel icon buttons — the widen, collapse and clear controls share
    one rule: the app's icon convention (a 24px outline glyph drawn at 20px
-   with a 1.5 stroke; the trash keeps its 16px box with the stroke scaled
-   so it renders at the same 1.25px weight), muted until hovered, a soft
+   with a 1.5 stroke, straight geometry like the panel glyphs — the trash
+   is drawn to match, not borrowed from a rounder set), muted until hovered, a soft
    tint behind it, and a 1px nudge that says which way the control acts.
    The clear control is destructive and rare: it earns its red only on
    hover. Glyph sizes live on the SVGs themselves (h-5 / h-4). */
