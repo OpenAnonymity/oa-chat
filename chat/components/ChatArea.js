@@ -2038,7 +2038,7 @@ export default class ChatArea {
         if (this.app.editingMessageId) {
             this.initializeEditForm();
         }
-        syncAllScrollFades(messagesContainer, '.reasoning-content:not(.hidden)');
+        syncAllScrollFades(messagesContainer, '.reasoning-body[data-open="true"] > .reasoning-content');
     }
 
     /**

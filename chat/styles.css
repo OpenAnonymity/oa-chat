@@ -1449,8 +1449,45 @@ a.quick-ask-source:focus-visible {
 }
 
 /* Add spacing after reasoning content only when expanded */
-.reasoning-trace:has(.reasoning-content:not(.hidden)) {
+.reasoning-trace:has(.reasoning-body[data-open="true"]) {
     margin-bottom: 0.5rem;
+}
+
+/* Opening and closing a trace is a height transition (grid rows 0fr ↔ 1fr),
+   so a second press mid-way reverses from where it is. The words settle in a
+   beat behind the height — they drift down 4px, from blurred to sharp — and
+   leave about 20% faster than they arrive. The chevron turns on the same
+   curve. Reduced motion keeps the state change and drops the travel. */
+.reasoning-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 190ms cubic-bezier(.2, 0, 0, 1);
+}
+.reasoning-body[data-open="true"] { grid-template-rows: 1fr; transition-duration: 240ms; }
+.reasoning-body > .reasoning-content {
+    min-height: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+    filter: blur(1px);
+    transition: opacity 150ms ease, transform 190ms cubic-bezier(.2, 0, 0, 1), filter 150ms ease;
+}
+/* Closed, the box is also out of the tab order: visibility flips at the end
+   of the close and at the start of the open. */
+.reasoning-body:not([data-open="true"]) > .reasoning-content {
+    overflow: hidden; pointer-events: none; visibility: hidden;
+    transition: opacity 150ms ease, transform 190ms cubic-bezier(.2, 0, 0, 1), filter 150ms ease, visibility 0s linear 190ms;
+}
+.reasoning-body[data-open="true"] > .reasoning-content {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    visibility: visible;
+    transition: opacity 200ms ease 40ms, transform 240ms cubic-bezier(.2, 0, 0, 1) 40ms, filter 200ms ease 40ms, visibility 0s;
+}
+.reasoning-chevron { transition: transform 240ms cubic-bezier(.2, 0, 0, 1) !important; }
+@media (prefers-reduced-motion: reduce) {
+    .reasoning-body, .reasoning-body > .reasoning-content, .reasoning-chevron { transition: none !important; }
+    .reasoning-body > .reasoning-content { transform: none; filter: none; }
 }
 
 /*

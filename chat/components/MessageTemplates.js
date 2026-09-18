@@ -283,8 +283,10 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
             </button>
-            <div class="agent-trace-content reasoning-content text-xs text-muted-foreground overflow-auto ${isExpanded ? '' : 'hidden'}" id="${contentId}">
+            <div class="reasoning-body" data-open="${isExpanded ? 'true' : 'false'}">
+            <div class="agent-trace-content reasoning-content text-xs text-muted-foreground overflow-auto" id="${contentId}">
                 ${stepHtml}
+            </div>
             </div>
         </div>
     `;
@@ -940,7 +942,6 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
 
     // Check in-memory cache for expanded state (persists across session switches, not page reloads)
     const isExpanded = reasoningExpandedState.has(messageId);
-    const contentVisibilityClass = isExpanded ? '' : 'hidden';
     const chevronRotation = isExpanded ? 'style="transform: rotate(180deg)"' : '';
 
     // Trim whitespace and process content appropriately
@@ -1016,7 +1017,9 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
             </button>
-            <div class="reasoning-content ${contentStreamingClass} ${contentVisibilityClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
+            <div class="reasoning-body" data-open="${isExpanded ? 'true' : 'false'}">
+            <div class="reasoning-content ${contentStreamingClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
+            </div>
         </div>
     `;
 }
@@ -2418,23 +2421,34 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates.enhanceInlineLinks = enhanceInlineLinks;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
 
+    // A trace opens and closes by height (grid rows 0fr ↔ 1fr on its body),
+    // a transition rather than a display flip, so a second press mid-way
+    // reverses from wherever it is. The fade edge is re-synced once the
+    // box has its final height. Returns whether the trace is now opening.
+    function openTraceBody(contentEl) {
+        const body = contentEl.closest('.reasoning-body');
+        const opening = body ? body.dataset.open !== 'true' : false;
+        if (!body) return opening;
+        body.dataset.open = String(opening);
+        if (opening) {
+            syncScrollFade(contentEl);
+            body.addEventListener('transitionend', event => {
+                if (event.target === body && event.propertyName === 'grid-template-rows') syncScrollFade(contentEl);
+            }, { once: true });
+        }
+        return opening;
+    }
+
     // Global function to toggle reasoning trace visibility
     window.toggleReasoning = function(messageId) {
         const contentEl = document.getElementById(`reasoning-content-${messageId}`);
         const chevronEl = document.querySelector(`#reasoning-toggle-${messageId} .reasoning-chevron`);
 
         if (contentEl && chevronEl) {
-            const isHidden = contentEl.classList.contains('hidden');
-            if (isHidden) {
-                contentEl.classList.remove('hidden');
-                chevronEl.style.transform = 'rotate(180deg)';
-                reasoningExpandedState.add(messageId);
-                syncScrollFade(contentEl);
-            } else {
-                contentEl.classList.add('hidden');
-                chevronEl.style.transform = 'rotate(0deg)';
-                reasoningExpandedState.delete(messageId);
-            }
+            const opening = openTraceBody(contentEl);
+            chevronEl.style.transform = opening ? 'rotate(180deg)' : 'rotate(0deg)';
+            if (opening) reasoningExpandedState.add(messageId);
+            else reasoningExpandedState.delete(messageId);
 
             // Update scroll button visibility after content change
             if (window.app && window.app.updateScrollButtonVisibility) {
@@ -2448,16 +2462,9 @@ if (typeof window !== 'undefined') {
         const chevronEl = document.querySelector(`#agent-trace-toggle-${messageId} .reasoning-chevron`);
 
         if (contentEl && chevronEl) {
-            const isHidden = contentEl.classList.contains('hidden');
-            if (isHidden) {
-                contentEl.classList.remove('hidden');
-                chevronEl.style.transform = 'rotate(180deg)';
-                syncScrollFade(contentEl);
-            } else {
-                contentEl.classList.add('hidden');
-                chevronEl.style.transform = '';
-            }
-            preferencesStore.savePreference(PREF_KEYS.agentTraceExpanded, isHidden);
+            const opening = openTraceBody(contentEl);
+            chevronEl.style.transform = opening ? 'rotate(180deg)' : '';
+            preferencesStore.savePreference(PREF_KEYS.agentTraceExpanded, opening);
         }
     };
 }
