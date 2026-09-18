@@ -10014,7 +10014,6 @@ class ChatApp {
         if (!btn) return;
 
         const hasSession = !!this.getCurrentSession();
-        const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
         const isMobile = this.isMobileView();
         const session = this.getCurrentSession();
         const usesParallelLayout = this.sessionUsesCouncilLayout(session);
@@ -10025,15 +10024,12 @@ class ChatApp {
         if (hasSession && !isMobile && !parallelRequiresWide) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
-            // When sidebar hidden: show-sidebar-btn at left-4, wide-mode at left-14
-            // When sidebar visible: wide-mode at left-4
-            if (sidebarHidden) {
-                btn.classList.remove('left-4');
-                btn.classList.add('left-14');
-            } else {
-                btn.classList.remove('left-14');
-                btn.classList.add('left-4');
-            }
+            // The toolbar's flex row places it: first, or after the
+            // show-sidebar control when that is shown. (It once carried
+            // left-4 / left-14 offsets from an absolute layout; those became
+            // live again the moment the button got a tooltip, which makes it
+            // position: relative, and pushed it up to 56px off its slot.)
+            btn.classList.remove('left-4', 'left-14');
         } else {
             btn.classList.add('hidden');
             btn.classList.remove('flex');
