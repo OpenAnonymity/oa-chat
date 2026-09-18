@@ -1,5 +1,6 @@
 import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
+import { syncScrollFade, syncAllScrollFades, watchScrollFade } from '../ui/scrollFade.js';
 /**
  * ChatArea Component
  * Manages the main chat messages area including rendering messages,
@@ -39,6 +40,8 @@ export default class ChatArea {
         };
         // Track if user has scrolled up in reasoning content (pauses auto-scroll)
         this.reasoningAutoScrollPaused = false;
+        // Reasoning boxes fade the edge that hides more (see ui/scrollFade.js).
+        if (typeof document !== 'undefined') watchScrollFade(document, '.reasoning-content');
         // Pending animation frame for debounced auto-grow
         this.pendingAutoGrowFrame = null;
         // Pointer-down copy is used for streaming code blocks because token updates
@@ -2035,6 +2038,7 @@ export default class ChatArea {
         if (this.app.editingMessageId) {
             this.initializeEditForm();
         }
+        syncAllScrollFades(messagesContainer, '.reasoning-content:not(.hidden)');
     }
 
     /**
@@ -2483,6 +2487,7 @@ export default class ChatArea {
         if (!state.autoScrollPaused) {
             reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
         }
+        syncScrollFade(reasoningContentEl);
         this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
@@ -2776,6 +2781,7 @@ export default class ChatArea {
             if (!this.reasoningAutoScrollPaused) {
                 reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
             }
+            syncScrollFade(reasoningContentEl);
             return;
         }
 
@@ -2791,6 +2797,7 @@ export default class ChatArea {
         if (!this.reasoningAutoScrollPaused) {
             reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
         }
+        syncScrollFade(reasoningContentEl);
 
         // Update scroll button visibility
         this.app.updateActivePromptScrollSpacer();

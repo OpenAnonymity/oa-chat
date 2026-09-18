@@ -1549,6 +1549,24 @@ a.quick-ask-source:focus-visible {
     opacity: 0.85;
 }
 
+/* A trace that hides more content ends in a soft edge, not a cut. The mask
+   exists only on the edge that hides something (data-scroll-fade, set from
+   the scroll position), so a short trace keeps its last line whole. The
+   left rule fades with the text, so the box has no hard corner either. */
+.reasoning-content { --reasoning-fade: 28px; }
+.reasoning-content[data-scroll-fade="bottom"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--reasoning-fade)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--reasoning-fade)), transparent);
+}
+.reasoning-content[data-scroll-fade="top"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade));
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade));
+}
+.reasoning-content[data-scroll-fade="both"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade), #000 calc(100% - var(--reasoning-fade)), transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade), #000 calc(100% - var(--reasoning-fade)), transparent);
+}
+
 /* Streaming uses div wrappers for each line to enable vertical spacing */
 .reasoning-content.streaming .streaming-line {
     margin-bottom: 0.4em;

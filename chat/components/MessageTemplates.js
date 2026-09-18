@@ -10,6 +10,7 @@ import { citationIconHtml } from '../services/citationIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
+import { syncScrollFade } from '../ui/scrollFade.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
@@ -2428,6 +2429,7 @@ if (typeof window !== 'undefined') {
                 contentEl.classList.remove('hidden');
                 chevronEl.style.transform = 'rotate(180deg)';
                 reasoningExpandedState.add(messageId);
+                syncScrollFade(contentEl);
             } else {
                 contentEl.classList.add('hidden');
                 chevronEl.style.transform = 'rotate(0deg)';
@@ -2450,6 +2452,7 @@ if (typeof window !== 'undefined') {
             if (isHidden) {
                 contentEl.classList.remove('hidden');
                 chevronEl.style.transform = 'rotate(180deg)';
+                syncScrollFade(contentEl);
             } else {
                 contentEl.classList.add('hidden');
                 chevronEl.style.transform = '';
