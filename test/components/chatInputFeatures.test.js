@@ -6,7 +6,7 @@ Object.defineProperty(globalThis, 'localStorage', {
     configurable: true,
     value: { getItem: () => null, setItem() {}, removeItem() {} }
 });
-const { default: ChatInput } = await import('../../chat/components/ChatInput.js');
+const { default: ChatInput, trimPastedText } = await import('../../chat/components/ChatInput.js');
 const { default: scrubberService } = await import('../../chat/services/scrubberService.js');
 const { chatDB } = await import('../../chat/db.js');
 if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
@@ -341,4 +341,38 @@ test('scrubber ticket feedback only follows new issuance, including downstream f
         scrubberService.ensureBackend = saved.backend;
         chatDB.saveSession = saved.save;
     }
+});
+
+test('a paste loses the blank lines a page or bubble wrapped it in, and nothing else', () => {
+    assert.equal(trimPastedText('Hello there.\n\n\n'), 'Hello there.');
+    assert.equal(trimPastedText('\n \nHello there.\r\n'), 'Hello there.');
+    assert.equal(trimPastedText('One.\n\nTwo.  \n'), 'One.\n\nTwo.  ', 'inner paragraph breaks and trailing spaces on a line survive');
+    assert.equal(trimPastedText('  indented start'), '  indented start', 'leading spaces on the first line are content');
+    assert.equal(trimPastedText('a\r\nb'), 'a\nb');
+});
+
+test('the composer rewrites only a paste that needs trimming, keeping native paste otherwise', () => {
+    const calls = [];
+    const oldDocument = globalThis.document;
+    globalThis.document = { execCommand: (...args) => { calls.push(args); return true; } };
+    try {
+        const input = Object.create(ChatInput.prototype);
+        const event = raw => ({
+            clipboardData: { items: [{ kind: 'string' }], getData: () => raw },
+            currentTarget: {},
+            prevented: false,
+            preventDefault() { this.prevented = true; }
+        });
+        const clean = event('Hello');
+        input.handleTextPaste(clean);
+        assert.equal(clean.prevented, false);
+        assert.deepEqual(calls, []);
+        const padded = event('Hello\n\n');
+        input.handleTextPaste(padded);
+        assert.equal(padded.prevented, true);
+        assert.deepEqual(calls, [['insertText', false, 'Hello']]);
+        const withFile = { clipboardData: { items: [{ kind: 'file' }], getData: () => 'x\n' }, prevented: false, preventDefault() { this.prevented = true; } };
+        input.handleTextPaste(withFile);
+        assert.equal(withFile.prevented, false, 'files stay with the document-level handler');
+    } finally { globalThis.document = oldDocument; }
 });

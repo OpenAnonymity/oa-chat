@@ -39,6 +39,11 @@ import {
 } from '../domain/modelSelection.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
+
+/** Blank lines at either end of a paste are never wanted; inner text is. */
+export function trimPastedText(text) {
+    return String(text).replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').replace(/(?:\n[ \t]*)+$/, '');
+}
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
 const SETTINGS_MENU_WIDTH_PX = 340;
 
@@ -197,6 +202,7 @@ export default class ChatInput {
      */
     setupEventListeners() {
         setupInfoTooltips(this.app.elements.settingsMenu);
+        this.app.elements.messageInput.addEventListener('paste', event => this.handleTextPaste(event));
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
             this.scrubberState.draftRevision += 1;
@@ -834,6 +840,31 @@ export default class ChatInput {
         // Add global Escape handler for expanded mode
         this.addGlobalEscapeHandler();
         this.updateScrubberPreviewHint();
+    }
+
+    /**
+     * Pasted text arrives with whatever a page or message bubble wrapped it
+     * in — most often a run of trailing newlines, which the composer would
+     * grow to hold as empty lines. Trim blank lines at both ends; keep the
+     * inside exactly as copied. Files and rich clipboards are handled by the
+     * document-level paste handler, which lets plain text through natively.
+     */
+    handleTextPaste(event) {
+        const clipboard = event.clipboardData;
+        if (!clipboard || Array.from(clipboard.items || []).some(item => item.kind === 'file')) return;
+        const raw = clipboard.getData('text/plain');
+        if (!raw) return;
+        const text = trimPastedText(raw);
+        if (text === raw) return;
+        event.preventDefault();
+        const input = event.currentTarget;
+        // execCommand keeps the browser's own undo history for the paste.
+        const inserted = typeof document.execCommand === 'function'
+            && document.execCommand('insertText', false, text);
+        if (!inserted) {
+            input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
     }
 
     resizeInputForExpandedPreview() {
