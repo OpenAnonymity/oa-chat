@@ -4408,19 +4408,18 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 .oa-system-panel-header { padding-right: 3rem; }
 
 /* System Panel icon buttons — the widen, collapse and clear controls share
-   one rule: a 16px glyph from the same 24px outline set at a 1.5 stroke,
-   muted until hovered, a soft tint behind it, and a 1px nudge that says
-   which way the control acts. The clear control is destructive and rare:
-   it earns its red only on hover. */
+   one rule: the app's icon convention (a 24px outline glyph drawn at 20px
+   with a 1.5 stroke; the trash keeps its 16px box with the stroke scaled
+   so it renders at the same 1.25px weight), muted until hovered, a soft
+   tint behind it, and a 1px nudge that says which way the control acts.
+   The clear control is destructive and rare: it earns its red only on
+   hover. Glyph sizes live on the SVGs themselves (h-5 / h-4). */
 .oa-panel-icon-btn {
     border-radius: 8px;
     color: hsl(var(--color-muted-foreground));
     transition: color 150ms ease, background-color 150ms ease;
 }
 .oa-panel-icon-btn > svg {
-    width: 16px;
-    height: 16px;
-    stroke-width: 1.5;
     overflow: visible;
     transition: transform 150ms ease;
 }
