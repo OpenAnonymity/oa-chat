@@ -4385,17 +4385,24 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 
 @media (hover: hover) and (pointer: fine) {
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
-    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip {
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:focus-visible:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
         opacity: 1;
         visibility: visible;
         animation: tooltipBodyFadeIn 0.15s ease-out;
     }
 
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip-right,
-    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right {
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right,
+    .sidebar-filter-btn:focus-visible:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right {
         animation: tooltipBodyFadeInRight 0.15s ease-out;
     }
 }
+/* The filter control is centred by a transform; its tooltip must not inherit
+   that and lands 8px under the control, right-aligned like the collapse tooltip. */
+.sidebar-filter-btn .sidebar-toggle-tooltip { top: calc(100% + 2px); }
 
 .dark .sidebar-toggle-tooltip {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
