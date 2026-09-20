@@ -3050,3 +3050,68 @@ and `inert`: `setDisclosure` now owns those states together. After changing shar
 motion adapters, run the entire native zkAPI suite, including
 `private-balance-help.test.mjs`, not only the wallet render tests. Vercel runs both
 the core and native suites from the pinned commercial checkout.
+
+## 2026-09-19: Recover OpenRouter output-budget rejections before rotating access
+
+- Normal browser streaming requests previously omitted `max_tokens` under the
+  incorrect assumption that OpenRouter would fit output to the key's credits.
+  A provider default (65,536 in the reported incident) can exceed the allowance
+  even when a useful answer is affordable. Broad 402 detection then spent a
+  fresh ticket without changing the rejected request.
+- `services/inference/openRouterCreditRecovery.js` retries a rejected HTTP 402
+  once on the same key with 90% of the explicitly reported affordable output,
+  respecting smaller product caps. Body preparation runs once so composed
+  products cannot overwrite the reduced cap. The user subsequently requested
+  a 30,000-token default ceiling, applied as described below.
+- Structured in-flight-budget errors wait for `Retry-After` (1s fallback), up to
+  two retries. A requested wait over 30s surfaces rather than being shortened.
+  Waits are abortable. No successful HTTP body or partial generation is replayed.
+- Access rotation excludes positive affordability, account-wide credit limits,
+  in-flight holds and unknown structured limit sources. Explicit key exhaustion
+  and legacy generic credit errors retain the existing single refresh policy.
+- Terminal activity errors now carry status and an allowlisted local credit
+  code, not provider text. This explains why the earlier timeline said only
+  `Request failed`: its privacy sanitizer discards strings, including the
+  provider message. Prompts, keys and raw error bodies remain excluded.
+- Coverage: browser streaming, including regeneration and Parallel/Council
+  through the shared adapter. Native Android transport and non-streaming helper
+  requests do not use this HTTP recovery wrapper. These remain follow-up work,
+  alongside production monitoring of station balance and admission failures.
+- Tests include the exact reported affordability rejection, repeated rejection,
+  cancellation, provider scope, exhausted-key classification, composed budgets,
+  and a production API streaming harness. No live credentials or ticket spending
+  are needed. Changes prepared against commercial chat revision `a38e534`;
+  deployment and live verification are separate from local validation.
+- Validation: production build succeeds; 843 core and 200 native tests pass,
+  including all 11 new regression tests. Six existing native streaming tests
+  fail attempting to load live model tiers; the same six failures reproduce
+  on unchanged `a38e534` in this environment. Independent final diff review
+  approved the change with no actionable findings.
+
+## 2026-09-19: Set a 30,000-token generation ceiling
+
+- At the user's request, shared request-body preparation now caps output at
+  exactly 30,000 tokens. This covers browser streams, strict completions and
+  Android native request bodies. Input history is not truncated. Reasoning
+  continues to count toward the provider's generation budget where applicable.
+- Smaller caller limits (including 24-token titles), catalog output limits and
+  composed billing limits win. Capture the caller limit, run billing policy on
+  the original body, then apply the ceiling. The actual SDK skips affordability
+  calculation when `max_tokens` is already set; applying the ceiling first
+  would raise a $1 key's 18,000-token budget to 30,000. A regression test uses
+  the real SDK adapter. The 402 recovery still reduces the result further if
+  the key cannot afford the request.
+- Fable 5.1's published standard rates checked on 2026-09-19 are $10/M input
+  and $50/M output. At these rates 65,536 output tokens cost $3.2768 and 30,000
+  cost $1.50, excluding input. Thus a fresh $5 key with a short input should
+  cover 65,536 output tokens; the reported 46,897 affordability does not by
+  itself establish why the first request failed. Its output value is $2.34485.
+  Actual key limit/usage, request input and error metadata are needed to tell
+  whether this was an input cost, issued-key cap, account balance or hold issue.
+  Sources: https://openrouter.ai/anthropic/claude-fable-5.1 and
+  https://platform.claude.com/docs/en/models/fable-5-1/overview.
+- Validation after the ceiling change: 846 core tests and 203 native tests pass;
+  the same six baseline native streaming failures remain. Production build
+  succeeds and independent re-review approves the real SDK budget integration.
+  The user confirmed the failed request's panel shows only HTTP 402 and generic
+  `Request failed`, so the incident's actual key balance remains unverified.

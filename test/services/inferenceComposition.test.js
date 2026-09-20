@@ -72,7 +72,7 @@ test('ordinary OpenRouter requests retain direct provider URL and bearer key', a
     assert.equal(result.content, 'answer');
     assert.equal(transport.calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
     assert.equal(transport.calls[0].init.headers.Authorization, 'Bearer ephemeral');
-    assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, undefined);
+    assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, 30000);
 });
 
 test('changing the default never retargets existing sessions or unknown paid backends', async () => {
@@ -144,7 +144,8 @@ test('concurrent request leases keep endpoints, headers, policies and releases i
     for (const call of transport.calls) {
         assert.equal(call.url, `https://${call.init.headers['x-session']}.test/v1/chat/completions`);
         assert.equal(call.init.headers.Authorization, undefined);
-        assert.equal(JSON.parse(call.init.body).max_tokens, 1234);
+        assert.equal(JSON.parse(call.init.body).max_tokens,
+            call.init.headers['x-session'] === 'two' ? 24 : 1234);
         assert.deepEqual(call.config.proxyConfig, { bypassProxy: true });
     }
     assert.equal(api.baseUrl, 'https://openrouter.ai/api/v1');
