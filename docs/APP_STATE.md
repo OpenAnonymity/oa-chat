@@ -1,3 +1,31 @@
+## 2026-09-20: Ticket-code redemption survives leaving Billing or reloading
+
+- `TicketCodeRedeemer` persists each code's exact blinded batch, issuer key, and
+  serialized unblinding state in the browser-local `oa-ticket-code-recovery-v1`
+  IndexedDB before `/api/alpha-register` can consume it. Signed responses are
+  validated and saved before unblinding. Interrupted work replays the exact
+  batch or finishes locally from saved signatures; it never generates replacement
+  blinding secrets for a pending code.
+- Recovery is isolated by wallet owner (including anonymous), serialized by an
+  origin-wide Web Lock, and gated on verified/unlocked/synced account readiness.
+  The final wallet write requires durable persistence and the original account.
+  Successful recovery is deleted only after that commit. Definitively unusable
+  codes are retired; transient failures remain saved and do not block other
+  codes. Key rotation retains the bearer code while replacing stale blinding
+  state. Reimports use identical token bytes and treat durably removed or
+  invalidated tokens as settled without resurrecting them.
+- The commercial extension receives only pending count, progress, and final
+  wallet count. Opening Membership resumes saved work; a wallet-ready notification
+  retries an earlier readiness check. Closing the view never cancels issuance.
+  Reopening retains the same owner's progress/success. Account changes suppress
+  stale UI completion and preserve the original owner's recovery record.
+- Code and blinding secrets remain local bearer material; they are never synced
+  or sent to billing/account APIs. Issuance explicitly omits account cookies.
+  Clearing site data removes recovery. Existing codes lost before this journal
+  existed cannot be reconstructed; this change protects new redemptions.
+- The org's existing exact-batch replay implementation is required (present in
+  `oa-org-staging-release`). No production redemption was performed for testing.
+
 ## 2026-09-19: Responsive landing and compact composer
 
 - Welcome and composer share the available chat column (680px composer cap),

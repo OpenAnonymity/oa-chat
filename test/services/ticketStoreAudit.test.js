@@ -75,3 +75,24 @@ test('ticket import preserves archive precedence and never resurrects a spent ti
         Object.assign(ticketStore, originals);
     }
 });
+
+test('durable recovery settles transferred/deleted and invalidated tickets without resurrecting them', async () => {
+    const { TicketStore } = await import('../../chat/services/ticketStore.js');
+    const { createTicketTombstones } = await import('../../chat/services/ticketTombstones.js');
+    const removed = { finalized_ticket: 'previously-transferred-token' };
+    const invalidated = { finalized_ticket: 'old-generation-token', ticket_key_id: 'a'.repeat(64) };
+    const fresh = { finalized_ticket: 'still-valid-token' };
+    let stored = { active: [], archived: [], tombstones: await createTicketTombstones([removed]), invalidatedKeyIds: ['a'.repeat(64)] };
+    const store = new TicketStore();
+    store.withLock = async handler => handler();
+    store.ensureDbReady = async () => {};
+    store.readFromDatabase = async () => structuredClone(stored);
+    store.persistTickets = async (active, archived, options) => {
+        stored = { active, archived, tombstones: options.tombstones, invalidatedKeyIds: options.invalidatedKeyIds };
+    };
+    await store.addTickets([removed, invalidated, fresh], { requireDurable: true, allowPreviouslyRemoved: true });
+    assert.deepEqual(stored.active.map(ticket => ticket.finalized_ticket), ['still-valid-token']);
+    assert.equal(stored.tombstones.length, 1);
+    // Existing strict import callers still reject missing tokens.
+    await assert.rejects(store.addTickets([removed], { requireDurable: true }), /did not round-trip/);
+});

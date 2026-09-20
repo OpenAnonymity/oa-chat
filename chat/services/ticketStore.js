@@ -729,7 +729,16 @@ export class TicketStore {
                         .map(ticket => ticket?.finalized_ticket)
                         .filter(Boolean)
                 );
-                if (!tickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
+                // A resumed issuance can race a later transfer, deletion, or
+                // global key invalidation after its original wallet commit.
+                // Durable removal markers settle those tokens without reviving them.
+                const requiredTickets = options.allowPreviouslyRemoved === true
+                    ? await filterTicketsByTombstones(
+                        filterTicketsByInvalidatedKeyIds(tickets, confirmed.invalidatedKeyIds),
+                        confirmed.tombstones
+                    )
+                    : tickets;
+                if (!requiredTickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
                     throw new Error('The local ticket database did not round-trip every prepared ticket.');
                 }
                 this.tickets = confirmed.active;

@@ -709,6 +709,11 @@ class ChatApp {
                     this.rightPanel.normalizeInvitationCode(code),
                     { throwOnError: true, onProgress }
                 ),
+                getPendingAccessCodeRedemption: () => this.services.tickets.getPendingCodeRedemption(),
+                resumeAccessCodeRedemption: async onProgress => {
+                    const result = await this.services.tickets.resumeCodeRedemption((message, percent) => onProgress?.({ message, percent }));
+                    return result ? Object.freeze({ ticketCount: this.services.tickets.getTicketCount(), pendingCount: result.pendingCount || 0 }) : null;
+                },
                 registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
             }),
             payments: Object.freeze({
