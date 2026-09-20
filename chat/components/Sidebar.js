@@ -474,12 +474,10 @@ export default class Sidebar {
         }
 
         window.addEventListener('resize', () => {
-            const inlineWidth = parseFloat(sidebar.style.width);
-            if (!Number.isFinite(inlineWidth) || inlineWidth <= 0) return;
-            const clampedWidth = this.clampSidebarWidth(inlineWidth);
-            if (clampedWidth !== inlineWidth) {
-                this.applySidebarWidth(clampedWidth);
-            }
+            // A narrow viewport changes presentation, never the saved desktop width.
+            this.applySidebarWidth(this.preferredSidebarWidth || SIDEBAR_DEFAULT_WIDTH, {
+                persist: false, layoutOnly: true
+            });
         });
     }
 
@@ -488,7 +486,7 @@ export default class Sidebar {
             const raw = localStorage.getItem(SIDEBAR_SNAPSHOT_KEY);
             const parsed = parseInt(raw, 10);
             if (!Number.isFinite(parsed)) return null;
-            return this.clampSidebarWidth(parsed);
+            return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, parsed));
         } catch (error) {
             return null;
         }
@@ -507,16 +505,18 @@ export default class Sidebar {
     }
 
     clampSidebarWidth(width) {
-        const layoutMaxWidth = Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - 240);
+        const layoutMaxWidth = window.innerWidth < 1100 ? SIDEBAR_MAX_WIDTH
+            : Math.max(SIDEBAR_MIN_WIDTH, window.innerWidth - 848);
         const maxWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, layoutMaxWidth));
         return Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxWidth, Math.round(width)));
     }
 
     applySidebarWidth(width, options = {}) {
-        const { persist = true } = options;
+        const { persist = true, layoutOnly = false } = options;
         const sidebar = this.app.elements.sidebar;
         if (!sidebar) return;
 
+        if (!layoutOnly) this.preferredSidebarWidth = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, width));
         const clampedWidth = this.clampSidebarWidth(width);
         sidebar.style.width = `${clampedWidth}px`;
         document.documentElement.style.setProperty('--oa-left-sidebar-width', `${clampedWidth}px`);
@@ -527,7 +527,7 @@ export default class Sidebar {
     }
 
     startResize(clientX) {
-        if (window.innerWidth < 768) return;
+        if (window.innerWidth < 1100) return;
         const sidebar = this.app.elements.sidebar;
         if (!sidebar || sidebar.classList.contains('sidebar-hidden')) return;
 

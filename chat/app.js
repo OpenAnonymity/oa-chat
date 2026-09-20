@@ -3031,7 +3031,13 @@ class ChatApp {
         // Set up resize listener for toolbar divider (content width changes)
         // Debounced to avoid overriding predicted state during panel animations (300ms)
         let resizeDebounceTimer;
+        let wasCompact = this.isMobileView();
         window.addEventListener('resize', () => {
+            const compact = this.isMobileView();
+            if (compact !== wasCompact) {
+                wasCompact = compact;
+                void this.initSidebarVisibility();
+            }
             clearTimeout(resizeDebounceTimer);
             resizeDebounceTimer = setTimeout(() => {
                 this.updateWideModeButtonVisibility();
@@ -4270,9 +4276,10 @@ class ChatApp {
         // Create a ResizeObserver to watch for size changes
         const resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                const inputHeight = entry.contentRect.height;
-                // Add extra padding to ensure messages aren't covered
-                const paddingBottom = inputHeight + 16; // 16px extra for spacing
+                const inputHeight = entry.target.getBoundingClientRect().height;
+                // Measure the card itself: on phones it is fixed outside wrapper flow.
+                const paddingBottom = inputHeight + 32;
+                document.documentElement.style.setProperty('--composer-reserved-height', `${paddingBottom}px`);
                 this.elements.messagesContainer.style.paddingBottom = `${paddingBottom}px`;
 
                 // Auto-scroll to bottom using our reliable scroll helper
@@ -4280,7 +4287,7 @@ class ChatApp {
             }
         });
 
-        resizeObserver.observe(inputContainer);
+        resizeObserver.observe(this.elements.inputCard || inputContainer);
     }
 
     async loadModels() {
@@ -10209,6 +10216,7 @@ class ChatApp {
             // Use CSS class instead of inline styles
             sidebar.classList.add('sidebar-hidden');
             sidebar.classList.remove('mobile-visible');
+            sidebar.inert = true;
         }
         this.setSidebarHiddenAttribute(true);
         if (showBtn) {
@@ -10249,6 +10257,7 @@ class ChatApp {
         if (sidebar) {
             // Use CSS class instead of inline styles
             sidebar.classList.remove('sidebar-hidden');
+            sidebar.inert = false;
             if (this.isMobileView()) {
                 sidebar.classList.add('mobile-visible');
             } else {
@@ -10279,7 +10288,7 @@ class ChatApp {
     }
 
     isMobileView() {
-        return window.innerWidth <= 768;
+        return window.innerWidth < 1100;
     }
 
     setupSidebarFilterControls() {

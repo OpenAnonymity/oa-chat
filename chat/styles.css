@@ -4609,7 +4609,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     transition: opacity var(--system-panel-close-duration) var(--system-panel-close-ease);
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1099px) {
     #right-panel {
         position: fixed !important;
         right: 0;
@@ -4635,7 +4635,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-@media (min-width: 768px) {
+@media (min-width: 1100px) {
     #right-panel {
         position: relative !important;
         transform: translateX(0);
@@ -9905,8 +9905,9 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 #chat-stage:has(#messages-container > .welcome-landing) {
     justify-content: center;
     justify-content: safe center;
-    gap: 28px;
-    padding-block: 20px;
+    align-items: stretch;
+    gap: 24px;
+    padding-block: 20px clamp(20px, 10dvh, 100px);
 }
 #chat-stage:has(#messages-container > .welcome-landing) #chat-area {
     flex: 0 1 auto;
@@ -9924,6 +9925,7 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
     position: relative;
     inset: auto;
     width: 100%;
+    min-width: 0;
     z-index: 20;
 }
 #chat-stage:has(#messages-container > .welcome-landing) #message-input {
@@ -9962,3 +9964,132 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
         inset: auto !important;
     }
 }
+
+/* Shared available-width column for the landing and docked composer. */
+#chat-stage { width: 100%; min-width: 0; }
+#chat-composer { padding-inline: 24px; }
+#input-card { max-width: 680px; }
+#chat-stage:has(#messages-container > .welcome-landing) #messages-container {
+    width: 100%;
+    max-width: 728px;
+    margin-inline: auto;
+    padding-inline: 24px;
+}
+.composer-more-glyph { display: none !important; }
+#compact-composer-actions[hidden] { display: none; }
+
+/* Side panels overlay until the viewport can afford both rails and a chat. */
+@media (min-width: 768px) and (max-width: 1099px) {
+    #sidebar:not(.mobile-visible) {
+        position: fixed !important;
+        left: 0; top: 0;
+        width: 0 !important;
+        border-right-width: 0;
+        overflow: hidden !important;
+    }
+    #sidebar.mobile-visible {
+        position: fixed !important;
+        left: 0; top: 0;
+        z-index: 40;
+        width: 280px !important;
+        height: 100dvh;
+        border-right-width: 1px;
+    }
+    #show-sidebar-btn { display: flex !important; }
+    .mobile-sidebar-backdrop.visible { display: block !important; }
+    .sidebar-resize-handle { display: none; }
+}
+@media (max-width: 1099px) {
+    .system-panel-toggle-space { width: 2.75rem; }
+}
+
+/* ResizeObserver uses the card width, including any open desktop sidebars. */
+html[data-composer-compact="true"] .composer-bottom-actions { gap: 4px; }
+html[data-composer-compact="true"] .model-shortcut,
+html[data-composer-compact="true"] #scrubber-shortcut-hint { display: none !important; }
+html[data-composer-compact="true"] #settings-btn > svg { display: none; }
+html[data-composer-compact="true"] #settings-btn > .composer-more-glyph {
+    display: block !important;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 1px;
+}
+html[data-composer-compact="true"] #model-picker-btn.composer-model-chip {
+    max-width: 100%;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-bottom-actions {
+    flex-wrap: wrap;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-left-actions {
+    flex: 1 0 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-model-chip,
+html[data-composer-compact="true"][data-composer-mode="parallel"] .council-inline-models {
+    width: 100%;
+    max-width: 100%;
+}
+#compact-composer-actions .chat-mode-toggle-container { width: auto; }
+#compact-composer-actions .chat-mode-toggle-btn { width: auto; padding-inline: 10px; }
+#compact-composer-actions .chat-mode-toggle-btn::after { content: attr(aria-label); font-size: 12px; }
+#compact-composer-actions .chat-mode-toggle-btn svg { display: none; }
+#compact-composer-actions #memory-context-toggle { width: 44px; height: 44px; }
+#compact-composer-actions .memory-context-tooltip { display: none; }
+#compact-scrub-btn { width: 100%; text-align: left; min-height: 44px; }
+
+@media (max-width: 767px) {
+    body { height: 100dvh; }
+    main { height: 100dvh !important; }
+    #chat-composer { padding-inline: 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    #chat-stage:has(#messages-container > .welcome-landing) {
+        gap: 20px;
+        padding-block: 16px clamp(24px, 12dvh, 96px);
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
+        width: 100% !important;
+        margin-inline: auto;
+    }
+    #input-card {
+        left: 16px !important;
+        right: 16px !important;
+        bottom: max(12px, env(safe-area-inset-bottom)) !important;
+    }
+    #message-input { font-size: 16px; }
+    #model-picker-btn.composer-model-chip,
+    .council-secondary-model-btn.composer-model-chip,
+    #composer-more-menu #file-upload-btn,
+    #composer-more-menu #settings-btn,
+    .composer-right-actions #send-btn,
+    #chat-toolbar button,
+    #show-right-panel-btn { min-width: 44px !important; min-height: 44px !important; height: 44px !important; }
+    #show-right-panel-btn { top: 4px; right: 8px; }
+    #chat-area { margin-bottom: 0 !important; }
+    #messages-container { padding-bottom: var(--composer-reserved-height, 160px) !important; }
+    html[data-composer-keyboard] main {
+        top: var(--composer-viewport-top) !important;
+        height: var(--composer-viewport-height) !important;
+        bottom: auto !important;
+    }
+    html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) {
+        justify-content: flex-end;
+        gap: 0;
+        padding-block: 0;
+    }
+    html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) #chat-area { display: none; }
+    html[data-composer-keyboard] #chat-stage:not(:has(#messages-container > .welcome-landing)) #input-card {
+        top: auto !important;
+        bottom: calc(100dvh - var(--composer-viewport-height) - var(--composer-viewport-top) + 12px) !important;
+    }
+    html[data-composer-keyboard] #message-input { max-height: min(160px, 25dvh) !important; }
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip { width: 100%; }
+@media (max-width: 767px) {
+    #compact-composer-actions .chat-mode-toggle-btn { min-height: 44px; }
+}
+
+@media (max-width: 767px) {
+    #compact-composer-actions .chat-mode-toggle-container { height: 48px; }
+}
+#compact-scrub-btn:disabled { opacity: .5; cursor: not-allowed; }

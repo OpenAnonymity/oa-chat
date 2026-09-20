@@ -16,12 +16,12 @@ import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
-// The panel shares the row with the chat from 768px up (a wallet side panel
+// The panel shares the row with the chat from 1100px up (a wallet side panel
 // narrows a laptop window into this range and the chat must still be usable
 // beside it). Below that it is a sheet over the chat, with a scrim. It is
-// open by default only where the chat keeps a wide column: from 1024px.
-const INLINE_PANEL_MIN_WIDTH = 768;
-const DEFAULT_OPEN_MIN_WIDTH = 1024;
+// open by default only where the chat keeps a wide column: from 1100px.
+const INLINE_PANEL_MIN_WIDTH = 1100;
+const DEFAULT_OPEN_MIN_WIDTH = 1100;
 
 // Feature flag for showing underlying implementation on hover
 const SHOW_UNDERLYING_KEY_DETAILS = true;
@@ -622,7 +622,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, true);
         this.updatePanelVisibility();
         // Predict final width: panel is opening, main area will be NARROWER
-        // Only affects width while the panel is inline (>=768px); the sheet overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         // Grace period in updateToolbarDivider blocks intermediate updates during animation
         this.app?.updateToolbarDivider(this.isDesktop ? -RIGHT_PANEL_WIDTH : 0);
     }
@@ -632,7 +632,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
-        // Only affects width while the panel is inline (>=768px); the sheet overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         this.app?.updateToolbarDivider(this.isDesktop ? RIGHT_PANEL_WIDTH : 0);
     }
 
@@ -643,7 +643,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, this.isVisible);
         this.updatePanelVisibility();
         // Predict final width based on toggle direction
-        // Only affects width while the panel is inline (>=768px); the sheet overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         this.app?.updateToolbarDivider(this.isDesktop ? (wasVisible ? RIGHT_PANEL_WIDTH : -RIGHT_PANEL_WIDTH) : 0);
     }
 
@@ -653,7 +653,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
-        // Only affects width while the panel is inline (>=768px); the sheet overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         this.app?.updateToolbarDivider(this.isDesktop ? RIGHT_PANEL_WIDTH : 0);
     }
 
@@ -661,8 +661,8 @@ class RightPanel {
      * Updates right panel visibility based on isDesktop and isVisible state.
      *
      * Behavior:
-     * - Inline (>= 768px): panel reserves layout width and content slides out while width collapses
-     * - Sheet (< 768px): panel slides in over the chat behind a scrim
+     * - Inline (>= 1100px): panel reserves layout width and content slides out while width collapses
+     * - Sheet (< 1100px): panel slides in over the chat behind a scrim
      */
     updatePanelVisibility() {
         const panel = document.getElementById('right-panel');

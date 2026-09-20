@@ -1,3 +1,4 @@
+import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ChatInput Component
@@ -100,6 +101,11 @@ export default class ChatInput {
     }
 
     refreshFeatureAvailability() {
+        const compactScrub = document.getElementById('compact-scrub-btn');
+        if (compactScrub) {
+            compactScrub.disabled = !this.supportsFeature('scrubber');
+            compactScrub.title = compactScrub.disabled ? this.getFeatureUnavailableReason('scrubber') : '';
+        }
         this.updateMemoryToggleUI();
         this.refreshMultiModelSettingsUI();
         this.refreshMemorySettingsUI();
@@ -202,6 +208,15 @@ export default class ChatInput {
      */
     setupEventListeners() {
         setupInfoTooltips(this.app.elements.settingsMenu);
+        this.responsiveComposerCleanup?.();
+        this.responsiveComposerCleanup = setupResponsiveComposer({
+            input: this.app.elements.messageInput,
+            onScrub: () => {
+                hideSurface(this.app.elements.settingsMenu);
+                this.app.elements.settingsBtn.setAttribute('aria-expanded', 'false');
+                void this.runScrubberShortcut();
+            }
+        });
         this.app.elements.messageInput.addEventListener('paste', event => this.handleTextPaste(event));
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
@@ -429,6 +444,7 @@ export default class ChatInput {
             const menu = this.app.elements.settingsMenu;
             const btn = this.app.elements.settingsBtn;
             const isHidden = menu.classList.contains('hidden');
+            btn.setAttribute('aria-expanded', String(isHidden));
 
             if (isHidden) {
                 const btnRect = btn.getBoundingClientRect();
@@ -440,16 +456,21 @@ export default class ChatInput {
                 // Centre the panel over the gear button, clamped so it never
                 // leaves the viewport, and scroll instead of growing past the top.
                 const viewportMargin = 12;
+                const viewport = window.visualViewport;
+                const viewTop = viewport?.offsetTop || 0;
+                const viewHeight = viewport?.height || window.innerHeight;
                 const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
                 const centred = btnRect.left + btnRect.width / 2 - width / 2;
                 const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
+                const availableAbove = btnRect.top - viewTop - viewportMargin - 8;
                 const bottom = window.innerHeight - btnRect.top + 8;
                 menu.style.left = `${left}px`;
-                menu.style.bottom = `${bottom}px`;
+                menu.style.bottom = availableAbove >= 220 ? `${bottom}px` : 'auto';
+                menu.style.top = availableAbove >= 220 ? 'auto' : `${viewTop + viewportMargin}px`;
                 menu.style.width = `${width}px`;
                 menu.style.minWidth = `${width}px`;
                 menu.style.maxWidth = `${width}px`;
-                menu.style.maxHeight = `${Math.max(160, btnRect.top - 8 - viewportMargin)}px`;
+                menu.style.maxHeight = `${availableAbove >= 220 ? availableAbove : viewHeight - viewportMargin * 2}px`;
                 menu.style.overflowY = 'auto';
 
                 this.ensureScrubberModelsLoaded();

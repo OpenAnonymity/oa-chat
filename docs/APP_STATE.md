@@ -1,3 +1,28 @@
+## 2026-09-19: Responsive landing and compact composer
+
+- Welcome and composer share the available chat column (680px composer cap),
+  with 24px desktop / 16px phone gutters and bounded space below the landing
+  group to place it slightly above center. The same input node docks on first send.
+- Both side panels overlay below 1100px. CSS, pre-hydration defaults, sidebar
+  interaction logic, and RightPanel use that boundary. Sidebar resize clamps
+  presentation while retaining the preferred desktop width; crossing the boundary
+  restores the saved desktop visibility without overwriting it.
+- A card ResizeObserver selects compact controls below 560px of actual composer
+  width. The original mode and memory nodes move into the existing Settings
+  popover (labelled More options); they retain their listeners/state. A Scrub
+  prompt button calls the same capability-checked scrubber path. Parallel model
+  selectors get a separate two-column row. Phone primary controls have 44px targets.
+- VisualViewport shrink greater than 120px while editing, without pinch zoom,
+  hides the empty welcome and docks the composer above the phone keyboard.
+  Focus-out and viewport resize/scroll update that layout. Short settings menus
+  can use the visible viewport rather than extending above it.
+- Transcript padding now measures the input card itself, including the additional
+  model row and draft growth; the fixed mobile card is outside its wrapper flow.
+- Local demo files are outside the application repository in `oa-responsive-demos`.
+  They exercise the actual chat modules but disable inference submission. The
+  keyboard demo simulates visual-viewport shrink; physical iOS/Android keyboard
+  behavior still needs a device check. Nothing has been pushed.
+
 ## 2026-09-17: System Panel icon buttons; submitted transactions resolve themselves
 
 - The widen, collapse and clear-timeline controls share `.oa-panel-icon-btn`:
