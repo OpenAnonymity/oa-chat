@@ -1,3 +1,4 @@
+import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
@@ -10059,7 +10060,20 @@ class ChatApp {
         }
     }
 
+    preserveChatBottomDuringWidthChange() {
+        this.cancelWidthScrollAnchor?.();
+        const sessionId = this.state.currentSessionId;
+        this.cancelWidthScrollAnchor = preserveBottomDuringWidthChange({
+            scroller: this.elements.chatArea,
+            content: this.elements.messagesContainer,
+            isCurrent: () => this.state.currentSessionId === sessionId
+        });
+    }
+
     applyWideMode(isWide) {
+        if (document.documentElement.classList.contains('wide-mode') !== isWide) {
+            this.preserveChatBottomDuringWidthChange();
+        }
         document.documentElement.classList.toggle('wide-mode', isWide);
         this.updateWideModeButtonVisibility();
     }
@@ -10074,6 +10088,7 @@ class ChatApp {
             session?.hasCouncilTranscript
         );
         if (hasParallelLayoutHistory && !this.councilLayoutRequiresMultipleColumns(session)) {
+            this.preserveChatBottomDuringWidthChange();
             const isWide = document.documentElement.classList.contains('wide-mode') ||
                 this.sessionUsesCouncilLayout(session);
             if (isWide) {

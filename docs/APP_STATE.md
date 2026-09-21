@@ -1,3 +1,16 @@
+## 2026-09-21: Keep the transcript bottom visible through width changes
+
+- Widen/narrow captures whether the chat scroller is within 8px of the bottom
+  before reflow. It follows the bottom throughout the computed CSS transition,
+  preventing widening's scrollTop clamp from leaving the view higher up after
+  narrowing. Includes the collapsed Council/Parallel transcript width toggle.
+- Readers above the bottom are not moved to the end. Wheel, touch, pointer, or
+  scrolling keys immediately release the temporary anchor. Session changes and
+  rapid reversals cancel stale work; original scroll behavior is restored.
+- This is a brief layout adjustment, not a change to streaming auto-scroll,
+  persisted positions, messages, or inference. Zero-duration/reduced-motion
+  layouts settle without relying on a transitionend event.
+
 ## 2026-09-21: Stable left sidebar toggle and stateful widen control
 
 - Left sidebar has one viewport-anchored button at the top-left, outside the
