@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 
-function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore } = {}) {
+function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, blockedStorage = false } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal };
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
@@ -16,7 +16,12 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
         addEventListener: (_, fn) => listeners.add(fn),
         removeEventListener: (_, fn) => listeners.delete(fn)
     };
-    globalThis.window = { addEventListener() {} };
+    const storage = new Map(savedModal ? [['oa-zkapi-running-modal', JSON.stringify(savedModal)]] : []);
+    globalThis.window = { addEventListener() {}, sessionStorage: {
+        getItem(key) { if (blockedStorage) throw new Error('Storage blocked'); return storage.get(key) ?? null; },
+        setItem(key, value) { if (blockedStorage) throw new Error('Storage blocked'); storage.set(key, value); },
+        removeItem(key) { if (blockedStorage) throw new Error('Storage blocked'); storage.delete(key); }
+    } };
     let loaded;
     const loading = new Promise(resolve => { loaded = resolve; });
     let subscriber;
@@ -39,7 +44,7 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
         globalThis.window = oldWindow;
     });
     const modal = new AccountModal({}, canRestore ? { canRestore } : {});
-    return { modal, classes, refresh, mutations, notify: () => subscriber({}, { reason: 'refresh' }),
+    return { modal, classes, refresh, mutations, storage, notify: () => subscriber({}, { reason: 'refresh' }),
         load: async () => { loaded(); await new Promise(resolve => setImmediate(resolve)); } };
 }
 
@@ -116,4 +121,81 @@ test('saved progress is shown even when initialization loaded state but refresh 
     await f.load();
     assert.equal(f.modal.isOpen, true);
     assert.equal(f.modal.view, 'fund');
+});
+
+for (const view of ['fund', 'balance', 'withdraw', 'withdrawals']) {
+    test(`reload restores running ${view} before the SDK has a transaction`, async t => {
+        const f = setup(t, { savedModal: { view, mode: 'escape' } });
+        f.modal.restorePendingOperation();
+        assert.equal(f.modal.isOpen, false, 'wait for SDK initialization');
+        await f.load();
+        assert.equal(f.modal.isOpen, true);
+        assert.equal(f.modal.view, view);
+        assert.equal(f.modal.withdrawMode, 'escape');
+        f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+        assert.equal(f.storage.has('oa-zkapi-running-modal'), false, 'consume UI intent; SDK records own ongoing recovery');
+        f.modal.close();
+        assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+        f.notify();
+        assert.equal(f.modal.isOpen, false);
+    });
+}
+
+test('restoration waits for the saved chat payment mode to load', async t => {
+    let eligible = false;
+    const f = setup(t, { savedModal: { view: 'fund' }, canRestore: () => eligible });
+    await f.load();
+    assert.equal(f.modal.isOpen, false);
+    eligible = true;
+    f.modal.restorePendingOperation();
+    assert.equal(f.modal.isOpen, true);
+    f.modal.close();
+    f.modal.restorePendingOperation();
+    assert.equal(f.modal.isOpen, false);
+});
+
+test('reload restores an in-flight USDC approval on a prepared deposit', async t => {
+    const f = setup(t, { config: { pending_deposit: { phase: 'prepared', approvals: [{ phase: 'awaiting_wallet' }] } } });
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.modal.view, 'fund');
+    f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+});
+
+test('running action stores only the view and clears it on completion', async t => {
+    const f = setup(t);
+    await f.load();
+    f.modal.open('fund');
+    let complete;
+    const action = f.modal.run(() => new Promise(resolve => { complete = resolve; }));
+    assert.deepEqual(JSON.parse(f.storage.get('oa-zkapi-running-modal')), { view: 'fund', mode: 'mutual' });
+    complete();
+    await action;
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+    assert.equal(f.modal.busy, false);
+});
+
+test('restricted session storage does not stop modal restoration or wallet work', async t => {
+    const f = setup(t, { blockedStorage: true, config: { pending_deposit: { phase: 'submitted' } } });
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+    let ran = false;
+    await f.modal.run(async () => { ran = true; });
+    assert.equal(ran, true);
+    assert.equal(f.modal.busy, false);
+});
+
+test('invalid saved views are ignored', async t => {
+    const f = setup(t, { savedModal: { view: 'invalid' } });
+    await f.load();
+    assert.equal(f.modal.isOpen, false);
+});
+
+test('a deposit settled during initialization opens its result once and consumes UI intent', async t => {
+    const f = setup(t, { savedModal: { view: 'fund' }, note: { note_id: 7 } });
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+    f.notify();
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
 });

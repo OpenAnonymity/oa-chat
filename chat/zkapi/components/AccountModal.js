@@ -21,6 +21,9 @@ const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
 // A submitted transaction needs nothing from the person: the SDK checks
 // the chain every 15 s and on focus, and the dialog re-renders on change.
 // The check button stays as a quiet fallback for a slow indexer.
+// UI intent only; wallet secrets and transaction recovery remain in the SDK.
+const RUNNING_MODAL_KEY = 'oa-zkapi-running-modal';
+const RESTORABLE_VIEWS = ['balance', 'fund', 'withdraw', 'withdrawals'];
 const IN_MOTION_PHASES = ['submitted', 'awaiting_wallet', 'dropped_or_pending', 'ambiguous'];
 const CONFIRMING_LINE = 'Waiting for confirmation. Usually under a minute; this updates on its own.';
 // Wallet work narrates in the dialog — the steps while it runs, one line
@@ -33,6 +36,7 @@ export default class AccountModal {
         this.triggerId = triggerId;
         this.isOpen = false;
         this.restorePendingOnInit = true;
+        this.restoreStateReady = false;
         // Whether a reload may reopen saved wallet progress here at all —
         // the payment-mode shell says no while the current chat pays with
         // tickets, where a zkAPI dialog would be an intrusion.
@@ -50,6 +54,7 @@ export default class AccountModal {
         this.unsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
             if (detail?.reason === 'clock') return;
             this.updateTabIndicator();
+            this.restorePendingOperation();
             // An unfunded modal contains an editable amount. Rebuilding it on
             // background refreshes resets that value and steals input focus.
             // Mutating actions render once from run() after they complete.
@@ -63,10 +68,12 @@ export default class AccountModal {
         });
         this.attachTabListener();
         this.updateTabIndicator();
-        void zkapiClient.init().then(() => this.restorePendingOperation()).catch(() => {
+        const finishInit = () => {
+            this.restoreStateReady = true;
             this.updateTabIndicator();
             this.restorePendingOperation();
-        });
+        };
+        void zkapiClient.init().then(finishInit, finishInit);
 
         window.addEventListener('zkapi-payment-required', (event) => {
             this.open(event.detail?.view || 'fund');
@@ -84,22 +91,48 @@ export default class AccountModal {
         updateZkapiBalanceControl(tabBtn, this.app);
     }
 
+    rememberRunningModal(running) {
+        try {
+            if (running && this.isOpen) {
+                window.sessionStorage?.setItem(RUNNING_MODAL_KEY, JSON.stringify({
+                    view: this.view, mode: this.withdrawMode
+                }));
+            } else {
+                window.sessionStorage?.removeItem(RUNNING_MODAL_KEY);
+            }
+        } catch { /* Restricted storage must not block wallet work. */ }
+    }
+
+    readRunningModal() {
+        try {
+            const saved = JSON.parse(window.sessionStorage?.getItem(RUNNING_MODAL_KEY) || 'null');
+            return RESTORABLE_VIEWS.includes(saved?.view) ? saved : null;
+        } catch { return null; }
+    }
+
     // A reload loses the dialog, not the work: the SDK keeps reconciling the
     // saved deposit or withdrawal in the background. Once, after startup, put
     // the steps back where they were. Opening only refreshes status; a wallet
     // request still needs the user's own click. A close, or any manual open
     // during startup, wins over restoration.
     restorePendingOperation() {
-        if (!this.restorePendingOnInit) return;
-        this.restorePendingOnInit = false;
+        if (!this.restorePendingOnInit || !this.restoreStateReady) return;
         if (this.isOpen || this.busy || !this.canRestore()) return;
+        this.restorePendingOnInit = false;
+        const saved = this.readRunningModal();
+        if (saved) {
+            this.withdrawMode = saved.mode === 'escape' ? 'escape' : 'mutual';
+            this.open(saved.view);
+            return;
+        }
         // Only work that is actually in motion — a transaction sent, a
         // MetaMask prompt possibly still open, an outcome the chain has to
         // settle. A plan that is merely saved (prepared, the proof made) is
         // not: it waits quietly until the person comes back for it.
         const inMotion = phase => IN_MOTION_PHASES.includes(phase);
         if (zkapiClient.config?.pending_deposit && !zkapiClient.note) {
-            if (inMotion(zkapiClient.config.pending_deposit.phase)) this.open('fund');
+            const plan = zkapiClient.config.pending_deposit;
+            if (inMotion(plan.phase) || plan.approvals?.some(approval => inMotion(approval.phase))) this.open('fund');
         } else if (inMotion(zkapiClient.config?.prepared_withdrawal?.phase)
             || inMotion(zkapiClient.withdrawal?.phase)
             || zkapiClient.activeLateWithdrawal) {
@@ -112,6 +145,7 @@ export default class AccountModal {
 
     open(view = 'balance') {
         this.restorePendingOnInit = false;
+        this.rememberRunningModal(false);
         if (!this.overlay) return;
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
@@ -145,6 +179,7 @@ export default class AccountModal {
     close() {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
+        this.rememberRunningModal(false);
         this.disposeFundingDisclosures?.();
         this.outcome = null;
         hideSurface(this.overlay, { clear: true });
@@ -304,6 +339,7 @@ export default class AccountModal {
     async run(action, activityDetails = null) {
         if (this.busy) return;
         this.busy = true;
+        this.rememberRunningModal(true);
         this.status = activityDetails?.message || 'Waiting for MetaMask…';
         this.statusError = false;
         // Deposits and withdrawals show their steps; other work shows a line.
@@ -362,6 +398,7 @@ export default class AccountModal {
             // safe retry/canceled state, so do not present it as an app error.
             this.outcome = { message: this.status, tone: confirmationPending || indexerLag || rejected ? 'info' : 'error', canceled: rejected };
         } finally {
+            this.rememberRunningModal(false);
             this.busy = false;
             this.backgroundProgress = null;
             // Ended: the steps are drawn from what is persisted from here on.
@@ -695,7 +732,7 @@ export default class AccountModal {
                     <div class="zkapi-stack">
                         <section class="zkapi-section zkapi-deposit" aria-label="${title}">
                             <div class="zkapi-figure-row"><p class="zkapi-balance-amount">${zkapiClient.formatMoney(pendingDeposit.amount)}</p><p class="zkapi-balance-caption">Deposit</p></div>
-                            <p class="zkapi-helper">Your private note is saved in this browser.</p>
+                            <p class="zkapi-helper">Your deposit progress is saved in this browser.</p>
                         </section>
                         ${this.renderJourney(pendingJourney, { detail: this.busy ? '' : pendingDetail })}
                         ${this.renderOutcome()}

@@ -29,6 +29,7 @@ export function createPaymentModeUi(runtime) {
             button.disabled = busy;
         }
         slideTabs(modeControl, previous);
+        privateBalance?.restorePendingOperation();
     }
 
     return {
@@ -82,7 +83,7 @@ export function createPaymentModeUi(runtime) {
                 overlayId: 'payment-balance-modal',
                 // Saved wallet progress reopens after a reload only while the
                 // current chat pays with zkAPI; a tickets chat never sees it.
-                canRestore: () => runtime.getMode() === 'zkapi'
+                canRestore: () => !app.restoringInitialConversation && runtime.getMode() === 'zkapi'
             });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();

@@ -4336,7 +4336,7 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     width: 36px;
     height: 36px;
 }
-.sidebar-header-actions { padding-left: 40px; }
+.sidebar-header-actions { padding-left: 36px; }
 .sidebar-header-actions #new-chat-btn { min-width: 0; }
 .sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
 .left-sidebar-toggle-space { display: none; width: 36px; flex-shrink: 0; }

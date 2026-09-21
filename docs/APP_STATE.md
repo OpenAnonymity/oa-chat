@@ -1,3 +1,9 @@
+## 2026-09-21: Restore interrupted wallet dialogs
+
+- While an open wallet dialog runs an action, a tab-scoped sessionStorage marker records only its view and withdrawal mode. Reload restores that view even before a transaction exists; restoration consumes it, and completion or dismissal clears it. Ongoing transactions continue to restore from SDK records. Wallet secrets and recovery records remain exclusively SDK-owned. Restoration only opens and refreshes status, never reconnects MetaMask or submits a transaction.
+- Startup waits for SDK initialization, initial conversation restoration, and an eligible zkAPI chat before consuming restoration. In-flight USDC approvals also qualify, even when the surrounding deposit plan is still prepared. Manual navigation/dismissal wins. Restricted session storage falls back to SDK-persisted transaction restoration.
+- Funding copy says “Your deposit progress is saved in this browser.” Sidebar trash moves 4px closer to the fixed toggle without overlapping either 36px hit target.
+
 ## 2026-09-21: Named payment selector
 
 - The chat toolbar now shows OA and zkAPI beside their existing marks, with larger 32px-high targets. Labels remain visible on phones. Existing hover explanations, keyboard focus, sliding selection, and locked-mode behavior are retained.

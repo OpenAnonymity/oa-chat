@@ -3052,6 +3052,7 @@ class ChatApp {
         // Check for session in URL (?s=sessionId)
         const finishInitialNavigation = () => {
             this.restoringInitialConversation = false;
+            this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
             if (!this.getCurrentSession()) this.renderMessages();
             this.handlePendingTicketCode();
         };
