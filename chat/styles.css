@@ -4318,10 +4318,6 @@ html[data-left-sidebar-hidden="true"] #sidebar {
     border-right-width: 0 !important;
 }
 
-html[data-left-sidebar-hidden="true"]:not([data-left-sidebar-closing="true"]) #show-sidebar-btn {
-    display: flex !important;
-}
-
 html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::after,
 html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     display: none !important;
@@ -4330,6 +4326,32 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 .sidebar-toggle-btn {
     position: relative;
 }
+
+/* Keep one target under the pointer while the rail opens/closes beneath it. */
+#show-sidebar-btn {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 41;
+    width: 36px;
+    height: 36px;
+}
+.sidebar-header-actions { padding-left: 40px; }
+.sidebar-header-actions #new-chat-btn { min-width: 0; }
+.sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
+.left-sidebar-toggle-space { display: none; width: 36px; flex-shrink: 0; }
+html[data-left-sidebar-hidden="true"] .left-sidebar-toggle-space { display: block; }
+@media (max-width: 1099px) {
+    .left-sidebar-toggle-space { display: block; }
+}
+#show-sidebar-btn .sidebar-toggle-tooltip {
+    left: 0;
+    transform: translateY(8px);
+}
+#show-sidebar-btn:hover > svg,
+#show-sidebar-btn:focus-visible > svg { transform: translateX(-1px); }
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn:hover > svg,
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn:focus-visible > svg { transform: translateX(1px); }
 
 .sidebar-toggle-tooltip {
     position: absolute;
@@ -4520,8 +4542,18 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 #show-right-panel-btn:focus-visible > svg { transform: translateX(1px); }
 html[data-right-panel-hidden="true"] #show-right-panel-btn:hover > svg,
 html[data-right-panel-hidden="true"] #show-right-panel-btn:focus-visible > svg { transform: translateX(-1px); }
-/* Widen: no glyph motion — the same arrows mean "narrow" once wide, so a
-   directional nudge would lie half the time. The tint alone says "button". */
+/* The two icon states point toward the action: outward to widen, inward
+   to narrow. The existing icon-swap supplies the state transition. */
+#wide-mode-btn .wide-arrow-left,
+#wide-mode-btn .wide-arrow-right { transition: transform 150ms ease; }
+#wide-mode-btn { --wide-arrow-direction: -1px; }
+#wide-mode-btn.wide-active { --wide-arrow-direction: 1px; }
+#wide-mode-btn:is(:hover, :focus-visible) .wide-arrow-left { transform: translateX(var(--wide-arrow-direction)); }
+#wide-mode-btn:is(:hover, :focus-visible) .wide-arrow-right { transform: translateX(calc(-1 * var(--wide-arrow-direction))); }
+@media (prefers-reduced-motion: reduce) {
+    #wide-mode-btn .wide-arrow-left,
+    #wide-mode-btn .wide-arrow-right { transition: none; transform: none !important; }
+}
 /* Their tooltips wait a beat, so a pass of the pointer says nothing. */
 .oa-panel-icon-btn[data-tooltip]:hover::after,
 .oa-panel-icon-btn[data-tooltip]:hover::before {
@@ -9087,7 +9119,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    they are; only the skin is unified here, so this block comes last.
    --------------------------------------------------------------------- */
 [data-tooltip]:hover::after,
-.chat-mode-html-tooltip {
+.chat-mode-html-tooltip,
+.sidebar-toggle-tooltip {
     width: max-content;
     max-width: 14rem;
     padding: 0.375rem 0.625rem;
@@ -9095,6 +9128,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     border-radius: 0.5rem;
     background: hsl(var(--color-popover));
     color: hsl(var(--color-foreground));
+    font-family: var(--font-sans);
     font-size: 0.75rem;
     font-weight: 400;
     line-height: 1.4;
@@ -9109,14 +9143,16 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    of the panels tooltips sit on (the gear, Billing), so the tooltip takes
    the next surface step up instead. */
 .dark [data-tooltip]:hover::after,
-.dark .chat-mode-html-tooltip {
+.dark .chat-mode-html-tooltip,
+.dark .sidebar-toggle-tooltip {
     background: hsl(var(--color-secondary));
     box-shadow:
         0 0 0 1px hsl(var(--color-foreground) / .1),
         0 4px 16px -4px rgb(0 0 0 / .5);
 }
 [data-tooltip]:hover::before,
-.chat-mode-html-tooltip::before { display: none !important; }
+.chat-mode-html-tooltip::before,
+.sidebar-toggle-tooltip::before { display: none !important; }
 /* Position: to the left of the element, centred on it. For controls at
    the edge of a clipping container (the toolbar's payment method marks):
    a tooltip below would be cut off, one beside never leaves the row. */
@@ -10005,6 +10041,8 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
         height: 100dvh;
         border-right-width: 1px;
     }
+    #sidebar .sidebar-main-content,
+    #sidebar .account-nav { width: 279px; min-width: 279px; }
     #show-sidebar-btn { display: flex !important; }
     .mobile-sidebar-backdrop.visible { display: block !important; }
     .sidebar-resize-handle { display: none; }

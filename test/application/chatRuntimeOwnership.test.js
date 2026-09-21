@@ -154,6 +154,63 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
+    test('wide mode updates the action label and icon immediately in both directions', () => {
+        const classes = new Set();
+        document.documentElement.classList = {
+            contains: name => classes.has(name),
+            toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }
+        };
+        const attrs = new Map();
+        const iconAttrs = new Map();
+        const app = appHarness();
+        app.elements.wideModeBtn = {
+            classList: { add() {}, remove() {}, toggle() {} },
+            setAttribute: (name, value) => attrs.set(name, value),
+            querySelector: () => ({ setAttribute: (name, value) => iconAttrs.set(name, value) })
+        };
+        app.isMobileView = () => false;
+        app.sessionUsesCouncilLayout = () => false;
+        for (const wide of [true, false, true]) {
+            app.applyWideMode(wide);
+            assert.equal(attrs.get('data-tooltip'), wide ? 'Narrow chat' : 'Widen chat');
+            assert.equal(attrs.get('aria-pressed'), String(wide));
+            assert.equal(iconAttrs.get('data-state'), wide ? 'b' : 'a');
+        }
+    });
+
+    test('sidebar retains the same available toggle through rapid open-close reversals', () => {
+        const app = appHarness();
+        const classes = new Set();
+        const attrs = new Map();
+        const label = { textContent: '' };
+        const button = {
+            setAttribute: (name, value) => attrs.set(name, value),
+            querySelector: () => label,
+            classList: { add() { assert.fail('Do not hide the persistent toggle'); }, remove() { assert.fail('Do not replace toggle visibility'); } }
+        };
+        app.elements.showSidebarBtn = button;
+        app.elements.sidebar = {
+            classList: { add: name => classes.add(name), remove: name => classes.delete(name) }
+        };
+        app.updateWideModeButtonVisibility = app.updateToolbarDivider = () => {};
+        document.documentElement.setAttribute = document.documentElement.removeAttribute = () => {};
+        try {
+            for (const mobile of [false, true]) {
+                app.isMobileView = () => mobile;
+                for (const open of [false, true, false, true]) {
+                    app[open ? 'showSidebar' : 'hideSidebar']({ persist: false, predictToolbar: false });
+                    assert.equal(app.elements.showSidebarBtn, button);
+                    assert.equal(attrs.get('aria-expanded'), String(open));
+                    assert.equal(label.textContent, open ? 'Collapse sidebar' : 'Expand sidebar');
+                    assert.equal(app.elements.sidebar.inert, !open);
+                    assert.equal(classes.has('mobile-visible'), mobile && open);
+                }
+            }
+        } finally {
+            clearTimeout(app.sidebarToggleButtonTimer);
+        }
+    });
+
     test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
         const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
         globalThis.marked = markedApi;

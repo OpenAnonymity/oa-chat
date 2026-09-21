@@ -379,6 +379,16 @@
                                 <path d="M14 4v16"/>
                             </svg>
                         </button>
+    <button id="show-sidebar-btn" type="button" class="sidebar-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none" aria-controls="sidebar" aria-label="Collapse sidebar" aria-expanded="true">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <path d="M10 4v16"/>
+        </svg>
+        <span class="sidebar-toggle-tooltip" role="tooltip">
+            <span data-sidebar-toggle-label>Collapse sidebar</span>
+            <span class="sidebar-toggle-shortcut" aria-hidden="true"><span>⌘</span><span>\</span></span>
+        </span>
+    </button>
     <!-- Mobile sidebar backdrop -->
     <div id="mobile-sidebar-backdrop" class="mobile-sidebar-backdrop"></div>
 
@@ -386,7 +396,7 @@
         <!-- Left Sidebar: Chat Sessions -->
         <aside id="sidebar" class="relative flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
             <div class="sidebar-main-content flex h-full w-full flex-col gap-2 p-2">
-                <div class="flex w-full items-center gap-1 pr-1">
+                <div class="sidebar-header-actions flex w-full items-center gap-1 pr-1">
                     <button id="new-chat-btn" class="btn-ghost-hover flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm h-9 rounded-md px-3 justify-start">
                         <span class="text-sm">New Chat</span>
                         <div class="flex items-center gap-0.5 ml-auto pointer-events-none text-muted-foreground text-xs">
@@ -398,19 +408,6 @@
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M4 6h16M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/>
                         </svg>
-                    </button>
-                    <button id="hide-sidebar-btn" class="sidebar-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0 -ml-0.5" aria-label="Collapse sidebar">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <rect x="4" y="4" width="16" height="16" rx="2"/>
-                            <path d="M10 4v16"/>
-                        </svg>
-                        <span class="sidebar-toggle-tooltip sidebar-toggle-tooltip-right" role="tooltip">
-                            <span>Collapse sidebar</span>
-                            <span class="sidebar-toggle-shortcut" aria-hidden="true">
-                                <span>⌘</span>
-                                <span>\</span>
-                            </span>
-                        </span>
                     </button>
                 </div>
 
@@ -528,27 +525,22 @@
                 <div id="chat-toolbar" class="chat-toolbar flex-shrink-0 flex flex-nowrap items-center justify-between px-2 pt-2 pb-1">
                     <!-- Left toolbar buttons -->
                     <div class="flex items-center gap-1">
-                        <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
-                        <button id="show-sidebar-btn" class="sidebar-toggle-btn hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand sidebar">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                    <path d="M10 4v16"/>
-                            </svg>
-                            <span class="sidebar-toggle-tooltip" role="tooltip">
-                                <span>Expand sidebar</span>
-                                <span class="sidebar-toggle-shortcut" aria-hidden="true">
-                                    <span>⌘</span>
-                                    <span>\</span>
-                                </span>
-                            </span>
-                        </button>
+                        <span class="left-sidebar-toggle-space" aria-hidden="true"></span>
 
                         <!-- Wide Mode Button -->
                         <button id="wide-mode-btn" class="oa-panel-icon-btn hidden inline-flex items-center justify-center h-9 w-9 cursor-pointer select-none" aria-label="Expand view" data-tooltip="Widen chat" data-tooltip-position="end">
-                            <svg class="h-5 w-5 theater-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                                <path d="M9 9l-3 3 3 3m6-6 3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
+                            <span class="t-icon-swap" data-wide-mode-icons data-state="a" aria-hidden="true">
+                                <svg class="t-icon h-5 w-5 theater-mode-icon" data-icon="a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path class="wide-arrow-left" d="M9 9l-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path class="wide-arrow-right" d="M15 9l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <svg class="t-icon h-5 w-5 theater-mode-icon" data-icon="b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path class="wide-arrow-left" d="M6 9l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path class="wide-arrow-right" d="M18 9l-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
                         </button>
                     </div>
 

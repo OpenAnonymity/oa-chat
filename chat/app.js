@@ -257,7 +257,6 @@ class ChatApp {
             shareBtnText: document.getElementById('share-btn-text'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
             sidebar: document.getElementById('sidebar'),
-            hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
             mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
@@ -10028,6 +10027,7 @@ class ChatApp {
         btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view');
         btn.setAttribute('data-tooltip', isWide ? 'Narrow chat' : 'Widen chat');
         btn.setAttribute('aria-pressed', String(isWide));
+        btn.querySelector('[data-wide-mode-icons]')?.setAttribute('data-state', isWide ? 'b' : 'a');
     }
 
     /**
@@ -10061,7 +10061,7 @@ class ChatApp {
 
     applyWideMode(isWide) {
         document.documentElement.classList.toggle('wide-mode', isWide);
-        this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
+        this.updateWideModeButtonVisibility();
     }
 
     /**
@@ -10140,6 +10140,12 @@ class ChatApp {
         } else {
             document.documentElement.removeAttribute('data-left-sidebar-hidden');
         }
+        const button = this.elements.showSidebarBtn;
+        const label = isHidden ? 'Expand sidebar' : 'Collapse sidebar';
+        button?.setAttribute('aria-expanded', String(!isHidden));
+        button?.setAttribute('aria-label', label);
+        const tooltipLabel = button?.querySelector('[data-sidebar-toggle-label]');
+        if (tooltipLabel) tooltipLabel.textContent = label;
     }
 
     setSidebarClosingAttribute(isClosing) {
@@ -10185,15 +10191,10 @@ class ChatApp {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
-        const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(true);
-        if (showBtn) {
-            showBtn.classList.add('hidden');
-            showBtn.classList.remove('flex');
-        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles
@@ -10202,13 +10203,9 @@ class ChatApp {
             sidebar.inert = true;
         }
         this.setSidebarHiddenAttribute(true);
-        if (showBtn) {
-            this.sidebarToggleButtonTimer = setTimeout(() => {
-                this.setSidebarClosingAttribute(false);
-                showBtn.classList.remove('hidden');
-                showBtn.classList.add('flex');
-            }, SIDEBAR_CLOSE_DURATION_MS);
-        }
+        this.sidebarToggleButtonTimer = setTimeout(() => {
+            this.setSidebarClosingAttribute(false);
+        }, SIDEBAR_CLOSE_DURATION_MS);
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
@@ -10231,7 +10228,6 @@ class ChatApp {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
-        const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
 
         clearTimeout(this.sidebarToggleButtonTimer);
@@ -10248,10 +10244,6 @@ class ChatApp {
             }
         }
         this.setSidebarHiddenAttribute(false);
-        if (showBtn) {
-            showBtn.classList.add('hidden');
-            showBtn.classList.remove('flex');
-        }
         // Show backdrop only on mobile
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
@@ -10395,16 +10387,10 @@ class ChatApp {
             });
         }
 
-        // Sidebar toggle buttons
-        if (this.elements.hideSidebarBtn) {
-            this.elements.hideSidebarBtn.addEventListener('click', () => {
-                this.hideSidebar();
-            });
-        }
-
+        // One fixed control opens and closes the sidebar without moving focus.
         if (this.elements.showSidebarBtn) {
             this.elements.showSidebarBtn.addEventListener('click', () => {
-                this.showSidebar();
+                this.toggleSidebar();
             });
         }
 
@@ -10423,7 +10409,7 @@ class ChatApp {
 
                 if (sidebar && sidebar.classList.contains('mobile-visible')) {
                     // Check if click is outside sidebar and not on the show button
-                    if (!sidebar.contains(e.target) && !showBtn.contains(e.target)) {
+                    if (!sidebar.contains(e.target) && !showBtn?.contains(e.target)) {
                         this.hideSidebar();
                     }
                 }

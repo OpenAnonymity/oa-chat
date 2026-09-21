@@ -1,3 +1,19 @@
+## 2026-09-21: Stable left sidebar toggle and stateful widen control
+
+- Left sidebar has one viewport-anchored button at the top-left, outside the
+  moving/inert sidebar. The header reserves its space; when collapsed or in
+  overlay mode the toolbar reserves the same target. Both directions use the
+  same button, preserving pointer position and keyboard focus during reversal.
+- Collapse/expand tooltip uses the shared tooltip typography/skin, retains the
+  shortcut, and opens toward the viewport interior. Labels and aria-expanded
+  update immediately for button, keyboard, programmatic and responsive changes.
+- Widen/narrow labels and pressed state now update directly when the preference
+  changes. Outward/inward chevrons crossfade with the existing Transitions.dev
+  icon swap; hover movement follows the action, with reduced-motion support.
+- At 768–1099px, sidebar contents match the 280px overlay instead of retaining
+  the narrower desktop width. Desktop resize preferences and phone widths stay
+  unchanged. No inference, storage, account or payment behavior changes.
+
 ## 2026-09-21: Preserve distinct formulas in long responses
 
 - Markdown math placeholders now terminate their numeric IDs, so restoring token
@@ -2682,9 +2698,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The shortcut calls the same `showSidebar()` / `hideSidebar()` paths as the
     toolbar buttons, preserving the existing desktop persistence and mobile
     overlay behavior.
-  - During the desktop close animation, `data-left-sidebar-closing` keeps the
-    main-toolbar expand button hidden until the sidebar width transition ends.
-  - The collapse and expand sidebar buttons use real tooltip markup, not
+  - Superseded on 2026-09-21: a single fixed toggle stays available during the
+    close animation. `data-left-sidebar-closing` only suppresses rail tooltips.
+  - The sidebar toggle uses real tooltip markup, not
     `[data-tooltip]`, so the shortcut can match the model-picker style with
     separate muted `⌘` and key glyphs.
   - The delete-history sidebar icon uses the shared `[data-tooltip]` hover
