@@ -1593,6 +1593,7 @@ class ChatApp {
      */
     processContentWithLatex(content) {
         // Store block-level and inline LaTeX to prevent markdown from breaking them
+        // Terminate numeric IDs: token 1 must never match the prefix of token 10.
         const placeholderNamespace = createMathPlaceholderNamespace(content);
         const blockLatexPlaceholders = [];
         const inlineLatexPlaceholders = [];
@@ -1601,21 +1602,21 @@ class ChatApp {
 
         // Extract block LaTeX \[...\] and replace with placeholders
         processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract block LaTeX $$...$$ and replace with placeholders
         processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract inline LaTeX \(...\) and replace with placeholders
         processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
             inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return placeholder;
         });
@@ -1624,14 +1625,14 @@ class ChatApp {
         // Protect valid pairs before Markdown can split or reinterpret them.
         processedContent = protectDollarMathForMarkdown(processedContent, {
             math: match => {
-                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}`;
+                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
                 inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
                 return placeholder;
             },
             // Marked consumes the slash in \$, so carry literal-dollar intent
             // through parsing with a non-math span.
             literalDollar: () => {
-                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}`;
+                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}END`;
                 literalDollarPlaceholders.push(placeholder);
                 return placeholder;
             }

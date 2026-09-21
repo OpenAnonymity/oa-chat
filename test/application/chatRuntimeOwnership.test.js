@@ -1,5 +1,6 @@
 import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import markedApi from '../../chat/vendor/marked/marked.min.js';
 
 function installBrowser() {
     const keys = ['window', 'location', 'localStorage', 'sessionStorage', 'document', 'fetch', 'requestAnimationFrame'];
@@ -152,6 +153,32 @@ describe('production ChatApp runtime ownership', () => {
         databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSession', 'getSessionMessages', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
+
+    test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
+        const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
+        globalThis.marked = markedApi;
+        const app = appHarness();
+        app.escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            for (const delimit of [value => `$${value}$`, value => `\\(${value}\\)`, value => `$$${value}$$`, value => `\\[${value}\\]`]) {
+                const expressions = Array.from({ length: 25 }, (_, index) => delimit(`${index}.123\\text{ CAD}`));
+                const html = app.processContentWithLatex(expressions.join('\n\n'));
+                for (const expression of expressions) {
+                    assert.equal(html.split(expression).length - 1, 1, `Preserve exactly one ${expression}`);
+                }
+                assert.doesNotMatch(html, /OAMATH/);
+            }
+            const escapedPrices = Array.from({ length: 25 }, (_, index) => `\\$${index}.50`);
+            const prices = app.processContentWithLatex(escapedPrices.join('; '));
+            for (let index = 0; index < 25; index += 1) {
+                assert.ok(prices.includes(`<span class="math-literal-dollar">$</span>${index}.50`));
+            }
+            assert.doesNotMatch(prices, /OAMATH/);
+        } finally {
+            if (previousMarked) Object.defineProperty(globalThis, 'marked', previousMarked);
+            else delete globalThis.marked;
+        }
+    });
 
     test('real streaming lifecycle updates sidebar activity independently for each chat', () => {
         const app = appHarness();

@@ -1,3 +1,14 @@
+## 2026-09-21: Preserve distinct formulas in long responses
+
+- Markdown math placeholders now terminate their numeric IDs, so restoring token
+  1 cannot consume tokens 10–19 (and similarly at higher counts). Previously a
+  long response could repeat an earlier formula with trailing index digits.
+- Applies to dollar and backslash inline/block math and escaped currency dollars.
+  The shared renderer fixes existing stored responses on rerender; message source,
+  inference, storage, and network behavior are unchanged.
+- Regression coverage exercises 25 expressions per delimiter family and 25
+  escaped dollars through the production Markdown processing method.
+
 ## 2026-09-21: Background response keeps its sidebar title glimmer
 
 - The existing title-generation glimmer now also lasts while an unselected chat
