@@ -1,3 +1,15 @@
+## 2026-09-21: Named payment selector
+
+- The chat toolbar now shows OA and zkAPI beside their existing marks, with larger 32px-high targets. Labels remain visible on phones. Existing hover explanations, keyboard focus, sliding selection, and locked-mode behavior are retained.
+
+## 2026-09-21: Wallet recovery controls and sidebar order
+
+- MetaMask waiting, submitted deposits, and active wallet work use a neutral spinner with visible status text in the System Panel. Unknown deposits use the same neutral row with a static dot, since no check is running. Error/expiry attention styling is retained.
+- Deposit recovery uses “Check payment status” as the main action and “Try again in MetaMask” as a secondary text button. The existing retry confirmation and SDK recovery/submission methods are unchanged; help toggles never submit wallet actions.
+- Journey labels distinguish submitted confirmation, an active deposit check, and an unknown result. The unknown state explains checking before retrying.
+- Funding accordions now share a gentler ease-in/out and matching 420ms opening/closing durations; the stable scroll gutter avoids text reflow when overflow appears. Existing deferred scrolling, cancellation, inert/ARIA state, and reduced-motion behavior are retained.
+- Sidebar order is fixed toggle, Delete history, New Chat. DOM order matches visual/tab order; the fixed toggle and existing delete confirmation remain unchanged.
+
 ## 2026-09-21: Approved zkAPI wallet walkthrough
 
 - Funding uses the approved single-dropdown numbered guide, full-row dividers,

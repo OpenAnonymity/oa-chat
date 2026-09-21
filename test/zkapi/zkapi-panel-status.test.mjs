@@ -91,9 +91,10 @@ test('concurrent wallet work keeps its badge while the separate card describes c
     const html = renderPanel({ activities, transition: { phase: 'waiting' } });
     assert.match(html, /<strong>Closing previous chat<\/strong>/);
     assert.match(html, /send automatically/);
-    // The badge spins while wallet work runs and keeps the words for
-    // assistive tech; the sentence itself is the toast over the chat bar.
-    assert.match(html, /class="zkapi-pill-spinner" role="img" aria-label="Adding funds"/);
+    // Wallet work keeps its spinner and visible text without a warning pill.
+    assert.match(html, /class="zkapi-wallet-status" role="status"/);
+    assert.match(html, /class="zkapi-pill-spinner" aria-hidden="true"/);
+    assert.match(html, />Adding funds<\/span>/);
     assert.doesNotMatch(html, /<strong>Adding funds<\/strong>/);
     const state = deriveZkapiUxState({ snapshot: snapshot({ activities }), transition: { phase: 'waiting' } });
     assert.equal(state.composerPrimary.phase, 'queued');
@@ -134,5 +135,30 @@ test('other payment phases retain funding, errors, withdrawal recovery, and pend
             assert.equal(state.composerPrimary.phase, 'proving');
             assert.equal(state.composerPrimary.blocksSend, true);
         }
+    }
+});
+
+
+test('persisted MetaMask prompts use visible neutral progress, including after reload', () => {
+    for (const config of [
+        { pending_deposit: { phase: 'awaiting_wallet', amount: 2_000_000 } },
+        { prepared_withdrawal: { phase: 'awaiting_wallet', mode: 'mutual' } }
+    ]) {
+        const html = renderPanel({ config, wallet: config.pending_deposit ? { note: null } : snapshot().wallet });
+        assert.match(html, /class="zkapi-wallet-status" role="status"/);
+        assert.match(html, />Waiting for MetaMask<\/span>/);
+        assert.doesNotMatch(html, /bg-amber-100/);
+    }
+});
+
+
+test('submitted and unknown deposits use neutral status lines, not warning pills', () => {
+    for (const [phase, label] of [['submitted', 'Deposit submitted'], ['ambiguous', 'Check deposit']]) {
+        const html = renderPanel({ config: { pending_deposit: { phase, amount: 2_000_000 } }, wallet: { note: null } });
+        assert.match(html, /class="zkapi-wallet-status" role="status"/);
+        assert.ok(html.includes(`>${label}</span>`));
+        assert.doesNotMatch(html, /bg-amber-100/);
+        assert.ok(html.includes(phase === 'submitted' ? 'zkapi-pill-spinner' : 'zkapi-wallet-status-dot'));
+        if (phase === 'ambiguous') assert.doesNotMatch(html, /zkapi-pill-spinner/);
     }
 });

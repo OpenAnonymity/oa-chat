@@ -687,7 +687,7 @@ export default class AccountModal {
                 const pendingDetail = pendingDeposit.phase === 'submitted' ? CONFIRMING_LINE
                     : pendingDeposit.phase === 'dropped_or_pending' ? 'No receipt yet. It may still be pending, or MetaMask may have dropped it.'
                     : pendingDeposit.phase === 'awaiting_wallet' ? 'MetaMask may still be open in this or another tab.'
-                    : 'MetaMask did not return a transaction ID. Check the vault before retrying.';
+                    : 'We couldn’t confirm whether your deposit went through. Check its status before trying again.';
                 const pendingJourney = this.busy && this.journeyKind === 'deposit'
                     ? this.currentJourney('deposit', { message: this.status })
                     : this.currentJourney('deposit', { persistedPhase: pendingDeposit.phase, failed: this.statusError && !this.busy });
@@ -699,10 +699,10 @@ export default class AccountModal {
                         </section>
                         ${this.renderJourney(pendingJourney, { detail: this.busy ? '' : pendingDetail })}
                         ${this.renderOutcome()}
-                        ${this.busy ? '' : `<button id="zkapi-check-deposit-btn" class="${pendingDeposit.phase === 'submitted' ? 'zkapi-quiet-button' : 'zkapi-primary-button'} w-full" type="button">${pendingDeposit.phase === 'submitted' ? 'Check now' : 'Check deposit'}</button>
+                        ${this.busy ? '' : `<button id="zkapi-check-deposit-btn" class="${pendingDeposit.phase === 'submitted' ? 'zkapi-quiet-button' : 'zkapi-primary-button'} w-full" type="button">Check payment status</button>
                         ${pendingDeposit.phase === 'dropped_or_pending' && pendingDeposit.replacement_available ? `<button id="zkapi-retry-dropped-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Replace transaction</button>` : ''}
                         ${pendingDeposit.phase === 'awaiting_wallet' ? `<button id="zkapi-recover-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
-                        ${pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Retry same deposit</button>` : ''}`}
+                        ${pendingDeposit.phase === 'ambiguous' ? `<button id="zkapi-retry-deposit-btn" class="zkapi-retry-link" type="button" ${this.busy ? 'disabled' : ''}>Try again in MetaMask</button>` : ''}`}
                         ${this.renderWithdrawalStatusLink()}
                     </div>`;
             }
@@ -862,7 +862,7 @@ export default class AccountModal {
             : droppedOrPending ? 'No receipt was found for the saved transaction. It may still be pending, or MetaMask may have dropped it. Check again, or resubmit the same withdrawal with its original nonce.'
             : submitted ? CONFIRMING_LINE
             : awaitingWallet ? 'MetaMask may still be open in this or another tab.'
-            : ambiguous ? 'MetaMask did not return a transaction ID. Check the vault before retrying.'
+            : ambiguous ? 'We couldn’t confirm whether your withdrawal went through. Check its status before trying again.'
             : clearanceReserved ? 'This balance already has a close authorization. Finish it in MetaMask, or set it aside and add a new balance.'
             : 'The proof is ready; no transaction has been submitted yet.';
         const primaryLabel = this.busy ? 'Waiting for MetaMask…'
@@ -994,13 +994,13 @@ export default class AccountModal {
         }, { kind: 'deposit', title: 'Cancelling deposit', phase: 'local', message: 'Discarding the saved deposit…', blocksSend: false }));
         this.overlay.querySelector('#zkapi-check-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             const result = await zkapiClient.recoverBrowserDeposit(report);
-            if (result?.status !== 'confirmed') this.setStatus('The deposit has not appeared on-chain yet.');
+            if (result?.status !== 'confirmed') this.setStatus('Your deposit is not confirmed yet. If MetaMask shows a pending transaction, wait for it to finish.');
         }, { kind: 'deposit', title: 'Checking deposit', phase: 'syncing', blocksSend: true }));
         this.overlay.querySelector('#zkapi-recover-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             await zkapiClient.recoverUnknownDeposit(report);
         }, { kind: 'deposit', title: 'Recovering wallet request', phase: 'syncing', blocksSend: true }));
         this.overlay.querySelector('#zkapi-retry-deposit-btn')?.addEventListener('click', () => {
-            if (!globalThis.confirm('Only retry if MetaMask is closed and Check deposit still finds no deposit. The exact same vault action will be retried.')) return;
+            if (!globalThis.confirm('Only try again if MetaMask is closed and Check payment status still finds no deposit. This asks MetaMask to submit the same saved deposit again.')) return;
             return this.run(async (report) => {
                 await zkapiClient.retryUnknownDeposit(report);
                 this.depositAmount = null;

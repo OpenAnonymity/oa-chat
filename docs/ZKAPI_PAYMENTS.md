@@ -103,7 +103,7 @@ its separate free test ETH/demo-token instructions; no real purchase is suggeste
 
 Account setup, billing explanation, and payment history use the installed
 Transitions.dev grid accordion and chevron hooks, with one guide open at a time.
-Open/close takes 420/320ms; text stays crisp. After expansion settles, the dialog
+Open/close takes 420ms in both directions; text stays crisp. After expansion settles, the dialog
 scrolls over 320ms only when needed to reveal content. Manual interaction,
 closing, and rerendering cancel deferred scroll work. Reduced motion skips all
 animation. History opens in place, preserving its existing action bindings.
@@ -146,3 +146,7 @@ boundaries independently, including installation without an OA checkout.
 Live browser checks should cover both payment methods, new and historical
 chats, model tier changes, settlement during a switch to Tickets, funding,
 withdrawal navigation, and layout. Mainnet UI checks require no transaction.
+
+## Recovery presentation (2026-09-21)
+
+Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.
