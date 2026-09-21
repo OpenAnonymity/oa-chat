@@ -1,3 +1,10 @@
+## 2026-09-21: Panel reflow and anchored sidebar tooltip
+
+- Desktop sidebar and system-panel visibility changes now capture the transcript bottom before changing layout, using the same cancellable anchor as widen/narrow. Overlay panels do not change transcript width and do not start anchoring.
+- Anchoring includes both panel transition durations and rechecks destination styles on the first animation frame. Combined panel/width changes keep the bottom visible through the longest animation; manual scroll and session changes still release the anchor.
+- The fixed left toggle uses the uncentered tooltip entrance animation. Its previous centered keyframes briefly put the tooltip off-screen before snapping to its left-aligned resting position.
+- New Chat remains before Delete history, keeping the frequent action first.
+
 ## 2026-09-21: Keep the transcript bottom visible through width changes
 
 - Widen/narrow captures whether the chat scroller is within 8px of the bottom

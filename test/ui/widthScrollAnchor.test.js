@@ -7,7 +7,7 @@ function fixture({ gap = 0, duration = '0.2s', delay = '0s' } = {}) {
     let sequence = 0, current = true;
     const view = {
         performance: { now: () => 0 },
-        getComputedStyle: () => ({ transitionDuration: duration, transitionDelay: delay }),
+        getComputedStyle: element => ({ transitionDuration: element.duration ?? duration, transitionDelay: delay }),
         requestAnimationFrame: fn => { const id = ++sequence; frames.set(id, fn); return id; },
         cancelAnimationFrame: id => frames.delete(id),
         setTimeout: (fn, wait) => { const id = ++sequence; timers.set(id, { fn, wait }); return id; },
@@ -18,7 +18,7 @@ function fixture({ gap = 0, duration = '0.2s', delay = '0s' } = {}) {
         style: { scrollBehavior: 'smooth', overflowAnchor: '' }, isConnected: true,
         addEventListener: (name, fn) => events.set(name, fn), removeEventListener: name => events.delete(name) };
     return { scroller, frames, timers, events, keys,
-        start: () => preserveBottomDuringWidthChange({ scroller, content: {}, isCurrent: () => current }),
+        start: (transitionElements = []) => preserveBottomDuringWidthChange({ scroller, content: {}, transitionElements, isCurrent: () => current }),
         changeSession: () => { current = false; },
         frame(time) { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(fn => fn(time)); }
     };
@@ -89,4 +89,31 @@ test('zero-duration transitions still settle and background-tab timeout releases
     g.scroller.scrollHeight = 3100; timer.fn();
     assert.equal(g.scroller.scrollTop, 2600);
     assert.equal(g.frames.size + g.timers.size + g.events.size + g.keys.size, 0);
+});
+
+
+test('panel reflow remains anchored beyond the shorter message width transition', () => {
+    const f = fixture();
+    f.start([{ duration: '400ms' }]);
+    f.scroller.scrollHeight = 2500; f.frame(240);
+    assert.equal(f.scroller.scrollTop, 2000);
+    assert.equal(f.scroller.style.overflowAnchor, 'none');
+    f.scroller.scrollHeight = 2700; f.frame(432);
+    assert.equal(f.scroller.scrollTop, 2200);
+    assert.equal(f.frames.size + f.timers.size, 0);
+});
+
+test('opening a panel uses the destination duration after classes change', () => {
+    const f = fixture();
+    const panel = { duration: '220ms' };
+    f.start([panel]);
+    panel.duration = '440ms';
+    f.frame(16);
+    assert.equal([...f.timers.values()][0].wait, 540);
+    f.scroller.scrollHeight = 2900; f.frame(300);
+    assert.equal(f.scroller.scrollTop, 2400);
+    assert.equal(f.scroller.style.overflowAnchor, 'none');
+    f.scroller.scrollHeight = 3100; f.frame(472);
+    assert.equal(f.scroller.scrollTop, 2600);
+    assert.equal(f.frames.size + f.timers.size, 0);
 });

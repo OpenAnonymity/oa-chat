@@ -327,7 +327,8 @@ const COMPONENT_APP_KEYS = new Set([
     'updateScrollButtonVisibility',
     'updateSessionTitle',
     'updateToastPosition',
-    'updateToolbarDivider'
+    'updateToolbarDivider',
+    'preserveChatBottomDuringWidthChange'
 ]);
 
 export function createComponentAppFacade(app, allowedKeys = COMPONENT_APP_KEYS, options = {}) {

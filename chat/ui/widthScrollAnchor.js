@@ -10,13 +10,16 @@ function transitionTime(style) {
 
 // Capture before changing width. Follow the bottom throughout CSS reflow, not
 // just for the first frame (widening clamps scrollTop; narrowing grows it again).
-export function preserveBottomDuringWidthChange({ scroller, content, isCurrent = () => true }) {
+export function preserveBottomDuringWidthChange({ scroller, content, transitionElements = [], isCurrent = () => true }) {
     const view = scroller?.ownerDocument?.defaultView;
     if (!view || !content || scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop > BOTTOM_TOLERANCE) {
         return () => {};
     }
 
-    const duration = transitionTime(view.getComputedStyle(content));
+    const elements = [content, ...transitionElements].filter(Boolean);
+    const layoutDuration = () => Math.max(...elements.map(element => transitionTime(view.getComputedStyle(element))));
+    let duration = layoutDuration();
+    let checkedNewState = false;
     const started = view.performance.now();
     const previousBehavior = scroller.style.scrollBehavior;
     const previousAnchor = scroller.style.overflowAnchor;
@@ -47,6 +50,17 @@ export function preserveBottomDuringWidthChange({ scroller, content, isCurrent =
         return true;
     };
     const tick = now => {
+        // Open and closed panels can have different timings. Read again after
+        // the caller applies its classes, and include other in-flight panels.
+        if (!stopped && !checkedNewState) {
+            checkedNewState = true;
+            const nextDuration = Math.max(duration, layoutDuration());
+            if (nextDuration > duration) {
+                duration = nextDuration;
+                view.clearTimeout(timer);
+                timer = view.setTimeout(finish, duration + 100);
+            }
+        }
         if (stopped || !pin()) return;
         // Allow the final layout frame, including a zero-duration transition.
         if (now - started >= duration + 32) stop();
@@ -54,8 +68,9 @@ export function preserveBottomDuringWidthChange({ scroller, content, isCurrent =
     };
     for (const event of ['wheel', 'touchstart', 'pointerdown']) scroller.addEventListener(event, stop, { passive: true });
     document.addEventListener('keydown', onKey);
+    const finish = () => { if (!stopped) { pin(); stop(); } };
     frame = view.requestAnimationFrame(tick);
     // Background tabs may suspend animation frames; do not leave a live lock.
-    timer = view.setTimeout(() => { if (!stopped) { pin(); stop(); } }, duration + 100);
+    timer = view.setTimeout(finish, duration + 100);
     return stop;
 }

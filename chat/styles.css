@@ -4425,6 +4425,8 @@ html[data-left-sidebar-hidden="true"] #show-sidebar-btn:focus-visible > svg { tr
         animation: tooltipBodyFadeIn 0.15s ease-out;
     }
 
+    #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    #show-sidebar-btn:focus-visible .sidebar-toggle-tooltip,
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip-right,
     .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right,
     .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right,

@@ -670,6 +670,10 @@ class RightPanel {
         const appContainer = document.getElementById('app');
         if (!panel) return;
 
+        if (this.isDesktop && this.lastAppliedVisibility !== this.isVisible) {
+            this.app?.preserveChatBottomDuringWidthChange?.();
+        }
+
         // Data attribute for CSS initial load protection
         if (this.isVisible) {
             document.documentElement.removeAttribute('data-right-panel-hidden');

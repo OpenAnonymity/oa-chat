@@ -10066,6 +10066,7 @@ class ChatApp {
         this.cancelWidthScrollAnchor = preserveBottomDuringWidthChange({
             scroller: this.elements.chatArea,
             content: this.elements.messagesContainer,
+            transitionElements: [this.elements.sidebar, document.getElementById('right-panel')],
             isCurrent: () => this.state.currentSessionId === sessionId
         });
     }
@@ -10208,6 +10209,10 @@ class ChatApp {
         const sidebar = this.elements.sidebar;
         const backdrop = this.elements.mobileSidebarBackdrop;
 
+        if (!this.isMobileView() && sidebar && !sidebar.classList.contains('sidebar-hidden')) {
+            this.preserveChatBottomDuringWidthChange();
+        }
+
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(true);
 
@@ -10244,6 +10249,10 @@ class ChatApp {
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (!this.isMobileView() && sidebar && sidebar.classList.contains('sidebar-hidden')) {
+            this.preserveChatBottomDuringWidthChange();
+        }
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(false);

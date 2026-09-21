@@ -36,7 +36,7 @@ const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
 const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
 const { default: RightPanel } = await import('../../chat/components/RightPanel.js');
-const { createModelPickerInterface } = await import('../../chat/ui/appInterface.js');
+const { createModelPickerInterface, createComponentAppFacade } = await import('../../chat/ui/appInterface.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
 
@@ -188,9 +188,11 @@ describe('production ChatApp runtime ownership', () => {
             querySelector: () => label,
             classList: { add() { assert.fail('Do not hide the persistent toggle'); }, remove() { assert.fail('Do not replace toggle visibility'); } }
         };
+        const captures = [];
+        app.preserveChatBottomDuringWidthChange = () => captures.push(classes.has('sidebar-hidden'));
         app.elements.showSidebarBtn = button;
         app.elements.sidebar = {
-            classList: { add: name => classes.add(name), remove: name => classes.delete(name) }
+            classList: { contains: name => classes.has(name), add: name => classes.add(name), remove: name => classes.delete(name) }
         };
         app.updateWideModeButtonVisibility = app.updateToolbarDivider = () => {};
         document.documentElement.setAttribute = document.documentElement.removeAttribute = () => {};
@@ -206,9 +208,31 @@ describe('production ChatApp runtime ownership', () => {
                     assert.equal(classes.has('mobile-visible'), mobile && open);
                 }
             }
+            assert.deepEqual(captures, [false, true, false, true], 'Capture before desktop width changes; ignore overlay changes');
         } finally {
             clearTimeout(app.sidebarToggleButtonTimer);
         }
+    });
+
+    test('right panel captures bottom through the component facade before desktop layout changes', () => {
+        const app = appHarness();
+        let hidden = false;
+        const captures = [];
+        app.preserveChatBottomDuringWidthChange = () => captures.push(hidden);
+        const element = { style: {} };
+        document.getElementById = id => id === 'right-panel' ? element : null;
+        document.documentElement.setAttribute = () => { hidden = true; };
+        document.documentElement.removeAttribute = () => { hidden = false; };
+        const panel = Object.assign(Object.create(RightPanel.prototype), {
+            app: createComponentAppFacade(app), isDesktop: true, isVisible: true, lastAppliedVisibility: true
+        });
+        panel.isVisible = false; panel.updatePanelVisibility();
+        panel.updatePanelVisibility(); // Rendering without a visibility change must not restart anchoring.
+        panel.isVisible = true; panel.updatePanelVisibility();
+        panel.isDesktop = false;
+        panel.isVisible = false; panel.updatePanelVisibility();
+        panel.isVisible = true; panel.updatePanelVisibility();
+        assert.deepEqual(captures, [false, true]);
     });
 
     test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
