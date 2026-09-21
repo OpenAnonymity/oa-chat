@@ -153,6 +153,29 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
+    test('real streaming lifecycle updates sidebar activity independently for each chat', () => {
+        const app = appHarness();
+        const updates = [];
+        app.pendingProgress = new Map();
+        app.elements.messagesContainer = { querySelectorAll: () => [] };
+        app.sidebar = { updateSessionActivity: id => updates.push([id, app.isSessionStreaming(id)]) };
+        app.flushPendingStorageRefresh = () => {};
+        app.updateScrollButtonVisibility = () => {};
+        try {
+            app.setSessionStreamingState('one', true);
+            app.setSessionStreamingState('two', true);
+            app.setSessionStreamingState('one', false);
+            assert.equal(app.isSessionStreaming('two'), true);
+            app.setSessionStreamingState('two', false);
+            assert.deepEqual(updates, [['one', true], ['two', true], ['one', false], ['two', false]]);
+            const size = app.sessionStreamingStates.size;
+            assert.equal(app.isSessionStreaming('missing'), false);
+            assert.equal(app.sessionStreamingStates.size, size);
+        } finally {
+            clearInterval(app.scrollButtonCheckInterval);
+        }
+    });
+
     test('switching stages settlement metadata and preserves transcript, draft and navigation', async () => {
         const app = backendHarness();
         const session = app.getCurrentSession();

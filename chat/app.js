@@ -4591,6 +4591,7 @@ class ChatApp {
         this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
+        this.sidebar?.updateSessionActivity?.();
         saveNavigationSelection(sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
@@ -5138,6 +5139,10 @@ class ChatApp {
         }
     }
 
+    isSessionStreaming(sessionId) {
+        return this.sessionStreamingStates.get(sessionId)?.isStreaming === true;
+    }
+
     setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
         if (!isStreaming) {
             this.pendingProgress.delete(sessionId);
@@ -5171,6 +5176,7 @@ class ChatApp {
 
         // Update UI when streaming state changes
         this.updateInputState();
+        this.sidebar?.updateSessionActivity?.(sessionId);
     }
 
     updateSessionStreamingPhase(sessionId, phase) {
@@ -5323,6 +5329,7 @@ class ChatApp {
         }
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        this.sidebar?.updateSessionActivity?.();
         void this.refreshModelsForSessionBackend();
         this.updateUrlWithSession(null);
         // Reset before the first asynchronous boundary. Later settings reads

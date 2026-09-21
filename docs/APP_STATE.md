@@ -1,3 +1,16 @@
+## 2026-09-21: Background response keeps its sidebar title glimmer
+
+- The existing title-generation glimmer now also lasts while an unselected chat
+  is responding. New Chat and conversation switches consult the same in-memory
+  stream state used for Send/Stop, including access preparation, Parallel, and
+  Council. Returning to the chat clears the background-response glimmer; any
+  existing title-generation work keeps its original indicator.
+- Start/finish/failure/cancellation update visible title classes in place,
+  preserving inline renames and virtual-list position. Newly rendered rows read
+  live state, so scrolling or filtering cannot revive a completed response.
+- No timer extends or cancels inference, no state is persisted or broadcast to
+  other browser tabs. Reduced motion uses a static emphasized title instead.
+
 ## 2026-09-20: Toolbar controls never float over transcript text
 
 - The floating toolbar now measures both control groups against the transcript's

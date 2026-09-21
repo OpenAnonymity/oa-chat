@@ -476,7 +476,8 @@ test('live UI facades render New Chat settlement state in sidebar and right pane
             sessionsById: new Map([[oldChat.id, oldChat]])
         },
         elements: {},
-        newChatSettlementState: null
+        newChatSettlementState: null,
+        isSessionStreaming: () => false
     };
     const productOptions = createZkapiUi({
         getTransition: () => app.newChatSettlementState,

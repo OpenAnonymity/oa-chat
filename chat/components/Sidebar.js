@@ -128,6 +128,32 @@ export default class Sidebar {
         this.updateScrollFade();
     }
 
+    getSessionTitleActivity(session) {
+        const responding = !this.deletingSessionIds.has(session.id)
+            && session.id !== this.app.state.currentSessionId
+            && this.app.isSessionStreaming?.(session.id) === true;
+        return {
+            responding,
+            generating: responding || Boolean(session.titleGenerationPending && session.titleSource === 'local')
+        };
+    }
+
+    // Patch the existing title nodes so completion cannot disrupt a rename,
+    // reset a glimmer on another row, or rebuild a virtualized session list.
+    updateSessionActivity(sessionId = null) {
+        const inputs = this.app.elements.sessionsList?.querySelectorAll('.session-title-input') || [];
+        for (const input of inputs) {
+            const id = input.dataset.sessionId;
+            if (sessionId && id !== sessionId) continue;
+            const session = this.app.state.sessionsById?.get(id);
+            if (!session) continue;
+            const { generating, responding } = this.getSessionTitleActivity(session);
+            input.classList.toggle('session-title-generating', generating);
+            if (responding) input.setAttribute('aria-description', 'Response in progress');
+            else input.removeAttribute('aria-description');
+        }
+    }
+
     /**
      * Builds HTML for a single session item.
      * @param {Object} session - Session object
@@ -140,7 +166,8 @@ export default class Sidebar {
         if (session.title === 'New Chat') {
             titleClasses.push('italic', 'text-muted-foreground');
         }
-        if (session.titleGenerationPending && session.titleSource === 'local') {
+        const { generating, responding } = this.getSessionTitleActivity(session);
+        if (generating) {
             titleClasses.push('session-title-generating');
         }
         const titleClass = titleClasses.join(' ');
@@ -187,7 +214,7 @@ export default class Sidebar {
             <div class="group relative flex h-9 items-center rounded-lg ${isActive ? 'chat-session active' : 'hover-highlight'} transition-colors pl-3 chat-session" data-session-id="${session.id}" data-deleting="${isDeleting}" aria-busy="${isDeleting}">
                 <a class="flex flex-1 items-center justify-between h-full min-w-0 text-foreground hover:text-foreground cursor-pointer">
                     <div class="flex min-w-0 flex-1 items-center">
-                        <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
+                        <input class="session-title-input w-full cursor-pointer truncate bg-transparent text-sm leading-5 focus:outline-none text-foreground ${titleClass}" placeholder="Untitled Chat" readonly ${responding ? 'aria-description="Response in progress"' : ''} data-session-id="${this.escapeHtmlAttribute(session.id)}" value="${this.escapeHtmlAttribute(session.title)}">
                         ${indicatorHtml}
                     </div>
                 </a>

@@ -1923,6 +1923,16 @@ a.quick-ask-source:focus-visible {
     animation: pendingResponseShimmer 1.9s ease-in-out infinite alternate !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .session-title-input.session-title-generating[readonly] {
+        animation: none !important;
+        background-image: none !important;
+        -webkit-text-fill-color: currentColor !important;
+        color: hsl(var(--color-foreground)) !important;
+        font-weight: 600;
+    }
+}
+
 .reasoning-trace:has(.agent-trace-content.hidden) {
     margin-bottom: -0.25rem;
 }
