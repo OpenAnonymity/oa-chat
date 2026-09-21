@@ -1,3 +1,19 @@
+## 2026-09-21: Approved zkAPI wallet walkthrough
+
+- Funding uses the approved single-dropdown numbered guide, full-row dividers,
+  shorter mainnet/resume copy, and a flowing private-billing explanation. The
+  mainnet and free Sepolia setup paths remain separate.
+- Shared `FundingDisclosures` keeps setup/billing/history mutually exclusive,
+  updates ARIA/inert state in place, and retains payment-history action bindings.
+  History content is rendered up front, inert when closed. Opening help never
+  triggers a wallet request or service refresh.
+- Reuses installed Transitions.dev accordion/modal CSS. Local accordion timing
+  is 420ms open/320ms close, followed by up to 320ms scrolling after final layout
+  is known. Manual input, close, or rerender disposes timers/listeners/frames.
+- Modal placement anchors the title near the top instead of recentering it as
+  the guide grows. Wallet refresh preserves guide expansion, focus and scroll.
+- See [zkAPI payments](ZKAPI_PAYMENTS.md) for flow and recovery boundaries.
+
 ## 2026-09-21: System-panel tooltip clears payment controls
 
 - The fixed right-panel toggle now uses the existing below/right-aligned tooltip placement, for both Open panel and Close panel. The former left-of-button placement overlapped the adjacent OA/zkAPI payment controls.

@@ -95,15 +95,26 @@ the balance help/history continue to explain the deployed contract behavior.
 
 ## Funding setup
 
-Funding onboarding shows MetaMask, USDC, and ETH prerequisites on mainnet,
-with an expandable beginner guide to installation and MetaMask's Buy flow.
-Both tokens must be on Ethereum Mainnet in the same account. The guide links
-to official MetaMask help, explains provider/region-dependent purchase options,
-and distinguishes chat funding from gas. Sepolia instead explains free test
-ETH and automatic demo-token minting. The former mainnet warning banner has
-been removed from the funding and welcome dialogs. The shared guide preserves
-its expansion, focus, and scroll position across wallet refreshes; the funding
-amount remains editable without refresh stealing focus in the `fund` view.
+Funding onboarding has one “Set up your wallet” disclosure with four visible
+numbered steps: install MetaMask, add USDC, add ETH for fees, and return to
+deposit. Both tokens must be on Ethereum Mainnet in the same account. Official
+MetaMask install/buy links remain alongside the relevant steps. Sepolia retains
+its separate free test ETH/demo-token instructions; no real purchase is suggested.
+
+Account setup, billing explanation, and payment history use the installed
+Transitions.dev grid accordion and chevron hooks, with one guide open at a time.
+Open/close takes 420/320ms; text stays crisp. After expansion settles, the dialog
+scrolls over 320ms only when needed to reveal content. Manual interaction,
+closing, and rerendering cancel deferred scroll work. Reduced motion skips all
+animation. History opens in place, preserving its existing action bindings.
+The dialog header stays vertically anchored while guides expand, and dividers
+span the full row. Existing showSurface/hideSurface handles modal entry/exit.
+
+The mainnet funding line now reads “USDC on Ethereum.” Saved deposits retain a
+short reminder to check MetaMask for a pending transaction before resuming.
+Cancellation and submitted/unknown transaction recovery states are unchanged.
+Guide expansion, keyboard focus, and scroll survive wallet refreshes, and the
+funding amount remains editable without refresh stealing focus in `fund` view.
 
 After an automatic Sepolia test-token mint, funding reads the token balance at
 the confirmed receipt block instead of the provider's potentially cached

@@ -1,3 +1,4 @@
+import { fundingDisclosure, attachFundingDisclosures, captureFundingDisclosureView, restoreFundingDisclosureView } from './FundingDisclosures.js';
 import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
@@ -122,6 +123,7 @@ export default class AccountModal {
         this.status = '';
         this.statusError = false;
         this.render();
+        this.overlay.classList.add('zkapi-funding-overlay');
         showSurface(this.overlay);
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'true');
         // Wallet work is not interruptible from here: while it runs the
@@ -143,6 +145,7 @@ export default class AccountModal {
     close() {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
+        this.disposeFundingDisclosures?.();
         this.outcome = null;
         hideSurface(this.overlay, { clear: true });
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'false');
@@ -410,14 +413,10 @@ export default class AccountModal {
         const open = records.filter(record => !['closed', 'closed_unconfirmed'].includes(record.phase));
         const toCheck = open.length + lateAttempts.length;
         const expanded = Boolean(this.historyOpen);
-        return `
-            <div class="zkapi-guide" data-state="${expanded ? 'open' : 'closed'}">
-                <button id="zkapi-withdrawal-status-btn" class="zkapi-guide-trigger" type="button" aria-expanded="${expanded ? 'true' : 'false'}" aria-controls="zkapi-payment-history">
-                    <span>Payment history</span>${toCheck ? `<span class="zkapi-guide-note">${toCheck} withdrawal${toCheck === 1 ? '' : 's'} to check</span>` : ''}
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-                </button>
-                <div id="zkapi-payment-history" class="zkapi-guide-body" ${expanded ? '' : 'hidden'}>${expanded ? this.renderWithdrawalRecords({ inline: true }) : ''}</div>
-            </div>`;
+        return fundingDisclosure({ key: 'history', id: 'zkapi-payment-history', triggerId: 'zkapi-withdrawal-status-btn',
+            label: `Payment history${toCheck ? `<span class="zkapi-guide-note">${toCheck} withdrawal${toCheck === 1 ? '' : 's'} to check</span>` : ''}`,
+            open: expanded, body: this.renderWithdrawalRecords({ inline: true })
+        });
     }
 
     withdrawalRecordLabel(record) {
@@ -719,7 +718,7 @@ export default class AccountModal {
             const mainnet = zkapiClient.isMainnetFunding;
             const demoMintEnabled = zkapiClient.config?.funding?.demo_mint_enabled;
             const helper = mainnet
-                ? 'USDC on Ethereum · ETH in the same account covers the fee'
+                ? 'USDC on Ethereum'
                 : demoMintEnabled
                     ? 'Sepolia testnet · demo billing tokens are provided when needed'
                     : 'Install MetaMask to get started';
@@ -731,19 +730,19 @@ export default class AccountModal {
                             <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit && !canceled ? 'Saved deposit' : 'Deposit'}</label>
                         </div>
                         <p class="zkapi-helper">${helper}</p>
-                        ${resumingDeposit && !canceled && !this.busy ? '<p class="zkapi-note">Saved in this browser. Check MetaMask for a pending transaction before resuming.</p>' : ''}
+                        ${resumingDeposit && !canceled && !this.busy ? '<p class="zkapi-note">Before resuming, check MetaMask for a pending transaction.</p>' : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
                             ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))
                             : `<div class="zkapi-actions">
                             ${this.busy
                                 ? this.renderProgress(this.status || 'Waiting for MetaMask…')
-                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${canceled ? 'Try again with MetaMask' : resumingDeposit ? 'Resume deposit with MetaMask' : 'Continue with MetaMask'}</button>`}
+                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${canceled ? 'Try again with MetaMask' : resumingDeposit ? 'Resume with MetaMask' : 'Continue with MetaMask'}</button>`}
                         </div>`}
                     </section>
                     <div class="zkapi-guides">
-                        ${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}
                         ${fundingSetupGuide({ mainnet, demoMintEnabled, open: fundingSetup?.open })}
+                        ${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}
                         ${this.renderWithdrawalStatusLink()}
                     </div>
                 </div>`;
@@ -926,6 +925,8 @@ export default class AccountModal {
         if (!this.overlay) return;
         if (this.outcome?.view && this.outcome.view !== this.view) this.outcome = null;
         if (this.view === 'withdraw' && this.shouldShowClaimedBalance()) this.view = 'balance';
+        this.disposeFundingDisclosures?.();
+        const disclosureView = captureFundingDisclosureView(this.overlay);
         const helpFocus = capturePrivateBalanceHelpFocus(this.overlay);
         const fundingSetup = captureFundingSetupView(this.overlay);
         const title = this.view === 'withdraw'
@@ -952,9 +953,14 @@ export default class AccountModal {
                 </div>
             </div>`;
 
+        this.disposeFundingDisclosures = attachFundingDisclosures(this.overlay, (key, open) => {
+            if (key === 'history') this.historyOpen = open;
+            else if (key !== 'setup') (this.privateBalanceHelpOpen ||= {})[key] = open;
+        });
         attachPrivateBalanceHelp(this.overlay, this);
         restorePrivateBalanceHelpFocus(this.overlay, helpFocus);
         restoreFundingSetupView(this.overlay, fundingSetup);
+        restoreFundingDisclosureView(this.overlay, disclosureView);
         this.overlay.querySelector('#zkapi-payment-close')?.addEventListener('click', () => this.close());
         const depositInput = this.overlay.querySelector('#zkapi-deposit-amount');
         // The figure grows with what is typed, like a number, not a field.
@@ -1036,12 +1042,6 @@ export default class AccountModal {
         this.overlay.querySelector('#zkapi-withdraw-view-btn')?.addEventListener('click', () => {
             this.view = 'withdraw';
             this.render();
-        });
-        this.overlay.querySelector('#zkapi-withdrawal-status-btn')?.addEventListener('click', () => {
-            // Opens in place, like Invoices in the Account dialog.
-            this.historyOpen = !this.historyOpen;
-            this.render();
-            this.overlay.querySelector('#zkapi-withdrawal-status-btn')?.focus?.({ preventScroll: true });
         });
         this.overlay.querySelector('#zkapi-back-balance-btn')?.addEventListener('click', () => {
             this.view = 'balance';

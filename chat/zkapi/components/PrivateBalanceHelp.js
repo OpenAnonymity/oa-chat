@@ -1,3 +1,4 @@
+import { fundingDisclosure } from './FundingDisclosures.js';
 import { setDisclosure } from '../../ui/uiMotion.js';
 const HELP = {
     billing: {
@@ -58,19 +59,14 @@ export function privateBalanceHelpContent(scope, kind, open = false) {
  *  above the deposit. Open state is the owner's, so re-renders keep it. */
 export function privateBalanceGuide(kind, open = false) {
     const help = HELP[kind];
-    return `<details data-zkapi-help-guide="${kind}" class="zkapi-guide zkapi-guide-details" ${open ? 'open' : ''}>
-        <summary class="zkapi-guide-trigger">${help.label}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
-        <div class="zkapi-guide-body"><p class="zkapi-guide-lead">${help.text}</p></div>
-    </details>`;
+    const text = kind === 'billing'
+        ? 'Your deposit funds a private prepaid balance that is charged only for verified usage, while your wallet address stays separate from the requests sent to models.'
+        : help.text;
+    return fundingDisclosure({ key: kind, label: help.label, open,
+        attributes: `data-zkapi-help-guide="${kind}"`, body: `<p class="zkapi-guide-lead">${text}</p>` });
 }
 
 export function attachPrivateBalanceHelp(root, owner) {
-    for (const guide of root?.querySelectorAll?.('[data-zkapi-help-guide]') || []) {
-        guide.addEventListener('toggle', () => {
-            const state = owner.privateBalanceHelpOpen ||= {};
-            state[guide.dataset.zkapiHelpGuide] = guide.open;
-        });
-    }
     if (!root?.querySelectorAll) return;
     for (const button of root.querySelectorAll('[data-zkapi-help]')) {
         button.addEventListener('click', () => {

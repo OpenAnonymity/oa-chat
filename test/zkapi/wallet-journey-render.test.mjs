@@ -109,8 +109,8 @@ test('a canceled deposit says so once: no "saved" caption or resume note beside 
         // Found after a reload: the saved plan, and how to pick it up.
         const saved = modal.renderBalance();
         assert.match(saved, /Saved deposit/);
-        assert.match(saved, /Saved in this browser\. Check MetaMask for a pending transaction before resuming\./);
-        assert.match(saved, /Resume deposit with MetaMask/);
+        assert.match(saved, /Before resuming, check MetaMask for a pending transaction\./);
+        assert.match(saved, /Resume with MetaMask/);
         assert.doesNotMatch(saved, /Canceled in MetaMask/);
 
         await modal.run(async report => { report('Confirm the deposit in MetaMask…'); throw Object.assign(new Error('User rejected the request.'), { code: 4001 }); }, { kind: 'deposit', title: 'Adding your balance' });
@@ -119,6 +119,6 @@ test('a canceled deposit says so once: no "saved" caption or resume note beside 
         assert.doesNotMatch(modal.rendered, /Saved deposit/);
         assert.doesNotMatch(modal.rendered, /Saved in this browser/);
         assert.match(modal.rendered, /Try again with MetaMask/);
-        assert.doesNotMatch(modal.rendered, /Resume deposit with MetaMask/);
+        assert.doesNotMatch(modal.rendered, /Resume with MetaMask/);
     } finally { Object.assign(zkapiClient, original); }
 });
