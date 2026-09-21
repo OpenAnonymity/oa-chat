@@ -1,3 +1,7 @@
+## 2026-09-21: System-panel tooltip clears payment controls
+
+- The fixed right-panel toggle now uses the existing below/right-aligned tooltip placement, for both Open panel and Close panel. The former left-of-button placement overlapped the adjacent OA/zkAPI payment controls.
+
 ## 2026-09-21: Panel reflow and anchored sidebar tooltip
 
 - Desktop sidebar and system-panel visibility changes now capture the transcript bottom before changing layout, using the same cancellable anchor as widen/narrow. Overlay panels do not change transcript width and do not start anchoring.
