@@ -1,3 +1,4 @@
+import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -137,10 +138,9 @@ const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 const SESSION_TITLE_MAX_LENGTH = 60;
 const SESSION_TITLE_FALLBACK_LENGTH = 50;
 
-// Layout constants for toolbar overlay prediction
+// Panel widths used when preparing the toolbar for layout changes
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
-const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
@@ -2223,51 +2223,13 @@ class ChatApp {
         }
     }
 
-    /**
-     * Updates the toolbar's floating state. Can predict final width with
-     * widthDelta without drawing a separator above the conversation.
-     * @param {number} widthDelta - Optional: predicted change in main area width (negative = narrower)
-     */
+    // Keep the toolbar opaque whenever its controls would cover the transcript.
     updateToolbarDivider(widthDelta = 0) {
-        const chatArea = this.elements.chatArea;
-        const toolbar = document.getElementById('chat-toolbar');
-        const messagesContainer = this.elements.messagesContainer;
-        if (!chatArea || !toolbar || !messagesContainer) return;
-
-        // Track prediction timing to avoid overriding during panel animations
-        const now = Date.now();
-
-        if (widthDelta !== 0) {
-            // This is a prediction call - record the timestamp
-            this._toolbarPredictionTime = now;
-        } else if (this._toolbarPredictionTime && (now - this._toolbarPredictionTime) < TOOLBAR_PREDICTION_GRACE_MS) {
-            // Non-prediction call within grace period - skip to avoid overriding
-            return;
-        }
-
-        // On mobile (< 768px), the toolbar never floats.
-        const isMobile = window.innerWidth < 768;
-
-        if (isMobile) {
-            toolbar.classList.remove('toolbar-floating');
-            return;
-        }
-
-        // Desktop: Check if content area overlaps with toolbar buttons
-        // Use widthDelta to predict final width (before animation completes)
-        const currentWidth = chatArea.clientWidth;
-        const mainWidth = currentWidth + widthDelta;
-        const actualContentWidth = messagesContainer.getBoundingClientRect().width;
-        const sideMargin = (mainWidth - actualContentWidth) / 2;
-        // Button area: ~80px (2×36px buttons + gaps + padding) - show-sidebar + wide-mode when sidebar hidden
-        // But messages-container has internal padding (px-6 = 24px on md+), so actual text is further inward
-        // With sideMargin=52 + internal padding=24, actual content at 76px - minimal overlap with 80px buttons
-        const buttonAreaWidth = 52;
-
-        // Wide screen: no overlap, make toolbar transparent (visual only, no layout change)
-        const isWideScreen = sideMargin >= buttonAreaWidth;
-        toolbar.classList.toggle('toolbar-wide', isWideScreen);
-
+        updateToolbarBackdrop({
+            toolbar: document.getElementById('chat-toolbar'),
+            messagesContainer: this.elements.messagesContainer,
+            widthDelta
+        });
     }
 
     /**
@@ -3033,11 +2995,19 @@ class ChatApp {
             this.scheduleScrollPositionSave();
         }, { passive: true });
 
-        // Set up resize listener for toolbar divider (content width changes)
-        // Debounced to avoid overriding predicted state during panel animations (300ms)
+        this._stopToolbarLayoutObserver?.();
+        this._stopToolbarLayoutObserver = watchToolbarLayout({
+            toolbar: document.getElementById('chat-toolbar'),
+            messagesContainer: this.elements.messagesContainer,
+            chatArea: this.elements.chatArea
+        });
+
+        // Backdrop protection updates immediately; secondary button visibility
+        // may settle after a resize without leaving controls over the transcript.
         let resizeDebounceTimer;
         let wasCompact = this.isMobileView();
         window.addEventListener('resize', () => {
+            this.updateToolbarDivider();
             const compact = this.isMobileView();
             if (compact !== wasCompact) {
                 wasCompact = compact;
@@ -10242,7 +10212,7 @@ class ChatApp {
             const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is closing, main area will be WIDER
             // Only affects width on desktop, on mobile sidebar overlays
-            // Grace period in updateToolbarDivider blocks intermediate updates during animation
+            // Cover before movement; measured gutters track each animation frame.
             this.updateToolbarDivider(this.isMobileView() ? 0 : sidebarWidth);
         } else {
             this.updateToolbarDivider();

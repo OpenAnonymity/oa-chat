@@ -1,3 +1,16 @@
+## 2026-09-20: Toolbar controls never float over transcript text
+
+- The floating toolbar now measures both control groups against the transcript's
+  inner edges, with 12px clearance. Share, payment-switch width, font changes,
+  chat width mode, and side-panel size all contribute to the actual threshold;
+  the old fixed 52px estimate missed the commercial controls.
+- ResizeObserver watches the groups and chat column, and window resize checks
+  immediately. Panel toggles cover the transcript before movement; observation
+  follows the actual animation instead of retaining a prediction for 350ms.
+- The opaque background applies immediately, including below 768px. Toolbar
+  position and transcript top padding stay fixed, so switching does not shift
+  the conversation. No inference, payment, or persisted preference changes.
+
 ## 2026-09-20: Ticket-code redemption survives leaving Billing or reloading
 
 - `TicketCodeRedeemer` persists each code's exact blinded batch, issuer key, and

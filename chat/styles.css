@@ -4424,8 +4424,8 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     min-height: 3rem; /* pt-2 (8px) + h-9 (36px) + pb-1 (4px) = 48px */
     z-index: 30;
     background-color: hsl(var(--color-background));
-    /* Fast background transition so overlay appears quickly when screen narrows. */
-    transition: min-height 0.2s ease, background-color 0.1s ease;
+    /* Apply the opaque backdrop immediately when controls reach the text. */
+    transition: min-height 0.2s ease;
     overflow: hidden; /* Prevent any content overflow */
 }
 

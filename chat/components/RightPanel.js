@@ -623,7 +623,7 @@ class RightPanel {
         this.updatePanelVisibility();
         // Predict final width: panel is opening, main area will be NARROWER
         // Only affects width while the panel is inline (>=1100px); the sheet overlays
-        // Grace period in updateToolbarDivider blocks intermediate updates during animation
+        // Cover the transcript before the panel moves; measured gutters track the animation.
         this.app?.updateToolbarDivider(this.isDesktop ? -RIGHT_PANEL_WIDTH : 0);
     }
 
