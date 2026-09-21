@@ -6,6 +6,18 @@ The web app runs entirely in the browser. Each session uses a fresh ephemeral ac
 
 For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](docs/CLI.md) provides a local streaming API with ticket and zkAPI access, browser funding, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
+The daemon also includes a [one-command installer](docs/CLI_PACKAGING.md#one-command-installation)
+for macOS and Linux. Once the first daemon release is published as latest:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/install.sh | bash
+```
+
+It installs the binaries and proving assets for your user. Follow its PATH
+guidance, then run `oa-chat init` and configure tickets or zkAPI access as
+described in the [CLI guide](docs/CLI.md). Daemon releases and public package
+repositories have not yet been published.
+
 ### Highlights
 - **Unlinkable inference**: Every session uses an ephemeral, blind-signature-backed access key. The inference provider sees anonymous requests with no way to identify the user behind them or link them across sessions.
 - **Standalone**: Pure ES modules loaded in the browser; no server required.

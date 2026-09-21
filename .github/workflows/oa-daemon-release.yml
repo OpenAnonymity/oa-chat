@@ -43,6 +43,8 @@ jobs:
       - name: Test Go daemon
         working-directory: daemon
         run: go test -race ./...
+      - name: Test shell installer
+        run: python3 daemon/scripts/test-install.py
       - name: Build native bundle and Linux packages
         shell: bash
         run: |
@@ -66,7 +68,7 @@ jobs:
         with:
           path: release
           merge-multiple: true
-      - name: Generate checksum-pinned Homebrew and AUR manifests
+      - name: Generate pinned installer, Homebrew, and AUR manifests
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#daemon-v}
@@ -76,5 +78,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/*.deb release/*.rpm release/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/*.deb release/*.rpm release/install.sh release/SHA256SUMS \
             --draft --verify-tag --title "OA Chat daemon ${GITHUB_REF_NAME#daemon-v}" --generate-notes
