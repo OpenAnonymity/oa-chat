@@ -1,3 +1,9 @@
+## 2026-09-21: Restore interrupted wallet dialogs
+
+- While an open wallet dialog runs an action, a tab-scoped sessionStorage marker records only its view and withdrawal mode. Reload restores that view even before a transaction exists; restoration consumes it, and completion or dismissal clears it. Ongoing transactions continue to restore from SDK records. Wallet secrets and recovery records remain exclusively SDK-owned. Restoration only opens and refreshes status, never reconnects MetaMask or submits a transaction.
+- Startup waits for SDK initialization, initial conversation restoration, and an eligible zkAPI chat before consuming restoration. In-flight USDC approvals also qualify, even when the surrounding deposit plan is still prepared. Manual navigation/dismissal wins. Restricted session storage falls back to SDK-persisted transaction restoration.
+- Funding copy says “Your deposit progress is saved in this browser.” Sidebar trash moves 4px closer to the fixed toggle without overlapping either 36px hit target.
+
 # Optional zkAPI payments
 
 OA Chat owns the payment-mode toolbar, balance/funding/history UI, model
@@ -95,15 +101,26 @@ the balance help/history continue to explain the deployed contract behavior.
 
 ## Funding setup
 
-Funding onboarding shows MetaMask, USDC, and ETH prerequisites on mainnet,
-with an expandable beginner guide to installation and MetaMask's Buy flow.
-Both tokens must be on Ethereum Mainnet in the same account. The guide links
-to official MetaMask help, explains provider/region-dependent purchase options,
-and distinguishes chat funding from gas. Sepolia instead explains free test
-ETH and automatic demo-token minting. The former mainnet warning banner has
-been removed from the funding and welcome dialogs. The shared guide preserves
-its expansion, focus, and scroll position across wallet refreshes; the funding
-amount remains editable without refresh stealing focus in the `fund` view.
+Funding onboarding has one “Set up your wallet” disclosure with four visible
+numbered steps: install MetaMask, add USDC, add ETH for fees, and return to
+deposit. Both tokens must be on Ethereum Mainnet in the same account. Official
+MetaMask install/buy links remain alongside the relevant steps. Sepolia retains
+its separate free test ETH/demo-token instructions; no real purchase is suggested.
+
+Account setup, billing explanation, and payment history use the installed
+Transitions.dev grid accordion and chevron hooks, with one guide open at a time.
+Open/close takes 420ms in both directions; text stays crisp. After expansion settles, the dialog
+scrolls over 320ms only when needed to reveal content. Manual interaction,
+closing, and rerendering cancel deferred scroll work. Reduced motion skips all
+animation. History opens in place, preserving its existing action bindings.
+The dialog header stays vertically anchored while guides expand, and dividers
+span the full row. Existing showSurface/hideSurface handles modal entry/exit.
+
+The mainnet funding line now reads “USDC on Ethereum.” Saved deposits retain a
+short reminder to check MetaMask for a pending transaction before resuming.
+Cancellation and submitted/unknown transaction recovery states are unchanged.
+Guide expansion, keyboard focus, and scroll survive wallet refreshes, and the
+funding amount remains editable without refresh stealing focus in `fund` view.
 
 After an automatic Sepolia test-token mint, funding reads the token balance at
 the confirmed receipt block instead of the provider's potentially cached
@@ -135,3 +152,7 @@ boundaries independently, including installation without an OA checkout.
 Live browser checks should cover both payment methods, new and historical
 chats, model tier changes, settlement during a switch to Tickets, funding,
 withdrawal navigation, and layout. Mainnet UI checks require no transaction.
+
+## Recovery presentation (2026-09-21)
+
+Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.

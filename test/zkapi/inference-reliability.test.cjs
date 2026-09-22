@@ -117,3 +117,20 @@ test('aggregate attachment and model context limits reject locally', async () =>
     await assert.rejects(api.streamCompletion([{files}],'test/model','test',()=>{}),{code:'INFERENCE_TOO_MANY_IMAGES'});
     assert.equal(acquired,false);
 });
+
+test('a stalled credit-error body is canceled when the shared request times out', async () => {
+    let canceled = false;
+    const body = new ReadableStream({
+        start(controller) { controller.enqueue(encoder.encode('{')); },
+        cancel() { canceled = true; }
+    });
+    const result = new Response(body, { status: 402 });
+    let calls = 0;
+    await assert.rejects(stream(apiFor(async () => { calls++; return result; })), {
+        code: 'INFERENCE_CONNECTION_TIMEOUT'
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(calls, 1, 'timeout must not retry the request');
+    assert.equal(canceled, true, 'both response branches must stop reading after timeout');
+    assert.equal(result.body.locked, false);
+});

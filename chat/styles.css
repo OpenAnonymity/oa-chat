@@ -1923,6 +1923,16 @@ a.quick-ask-source:focus-visible {
     animation: pendingResponseShimmer 1.9s ease-in-out infinite alternate !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+    .session-title-input.session-title-generating[readonly] {
+        animation: none !important;
+        background-image: none !important;
+        -webkit-text-fill-color: currentColor !important;
+        color: hsl(var(--color-foreground)) !important;
+        font-weight: 600;
+    }
+}
+
 .reasoning-trace:has(.agent-trace-content.hidden) {
     margin-bottom: -0.25rem;
 }
@@ -4308,10 +4318,6 @@ html[data-left-sidebar-hidden="true"] #sidebar {
     border-right-width: 0 !important;
 }
 
-html[data-left-sidebar-hidden="true"]:not([data-left-sidebar-closing="true"]) #show-sidebar-btn {
-    display: flex !important;
-}
-
 html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::after,
 html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     display: none !important;
@@ -4320,6 +4326,32 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 .sidebar-toggle-btn {
     position: relative;
 }
+
+/* Keep one target under the pointer while the rail opens/closes beneath it. */
+#show-sidebar-btn {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 41;
+    width: 36px;
+    height: 36px;
+}
+.sidebar-header-actions { padding-left: 36px; }
+.sidebar-header-actions #new-chat-btn { min-width: 0; }
+.sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
+.left-sidebar-toggle-space { display: none; width: 36px; flex-shrink: 0; }
+html[data-left-sidebar-hidden="true"] .left-sidebar-toggle-space { display: block; }
+@media (max-width: 1099px) {
+    .left-sidebar-toggle-space { display: block; }
+}
+#show-sidebar-btn .sidebar-toggle-tooltip {
+    left: 0;
+    transform: translateY(8px);
+}
+#show-sidebar-btn:hover > svg,
+#show-sidebar-btn:focus-visible > svg { transform: translateX(-1px); }
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn:hover > svg,
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn:focus-visible > svg { transform: translateX(1px); }
 
 .sidebar-toggle-tooltip {
     position: absolute;
@@ -4385,17 +4417,26 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 
 @media (hover: hover) and (pointer: fine) {
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
-    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip {
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:focus-visible:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
         opacity: 1;
         visibility: visible;
         animation: tooltipBodyFadeIn 0.15s ease-out;
     }
 
+    #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    #show-sidebar-btn:focus-visible .sidebar-toggle-tooltip,
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip-right,
-    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right {
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right,
+    .sidebar-filter-btn:focus-visible:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right {
         animation: tooltipBodyFadeInRight 0.15s ease-out;
     }
 }
+/* The filter control is centred by a transform; its tooltip must not inherit
+   that and lands 8px under the control, right-aligned like the collapse tooltip. */
+.sidebar-filter-btn .sidebar-toggle-tooltip { top: calc(100% + 2px); }
 
 .dark .sidebar-toggle-tooltip {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -4417,8 +4458,8 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     min-height: 3rem; /* pt-2 (8px) + h-9 (36px) + pb-1 (4px) = 48px */
     z-index: 30;
     background-color: hsl(var(--color-background));
-    /* Fast background transition so overlay appears quickly when screen narrows. */
-    transition: min-height 0.2s ease, background-color 0.1s ease;
+    /* Apply the opaque backdrop immediately when controls reach the text. */
+    transition: min-height 0.2s ease;
     overflow: hidden; /* Prevent any content overflow */
 }
 
@@ -4503,8 +4544,18 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
 #show-right-panel-btn:focus-visible > svg { transform: translateX(1px); }
 html[data-right-panel-hidden="true"] #show-right-panel-btn:hover > svg,
 html[data-right-panel-hidden="true"] #show-right-panel-btn:focus-visible > svg { transform: translateX(-1px); }
-/* Widen: no glyph motion — the same arrows mean "narrow" once wide, so a
-   directional nudge would lie half the time. The tint alone says "button". */
+/* The two icon states point toward the action: outward to widen, inward
+   to narrow. The existing icon-swap supplies the state transition. */
+#wide-mode-btn .wide-arrow-left,
+#wide-mode-btn .wide-arrow-right { transition: transform 150ms ease; }
+#wide-mode-btn { --wide-arrow-direction: -1px; }
+#wide-mode-btn.wide-active { --wide-arrow-direction: 1px; }
+#wide-mode-btn:is(:hover, :focus-visible) .wide-arrow-left { transform: translateX(var(--wide-arrow-direction)); }
+#wide-mode-btn:is(:hover, :focus-visible) .wide-arrow-right { transform: translateX(calc(-1 * var(--wide-arrow-direction))); }
+@media (prefers-reduced-motion: reduce) {
+    #wide-mode-btn .wide-arrow-left,
+    #wide-mode-btn .wide-arrow-right { transition: none; transform: none !important; }
+}
 /* Their tooltips wait a beat, so a pass of the pointer says nothing. */
 .oa-panel-icon-btn[data-tooltip]:hover::after,
 .oa-panel-icon-btn[data-tooltip]:hover::before {
@@ -4602,7 +4653,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     transition: opacity var(--system-panel-close-duration) var(--system-panel-close-ease);
 }
 
-@media (max-width: 767px) {
+@media (max-width: 1099px) {
     #right-panel {
         position: fixed !important;
         right: 0;
@@ -4628,7 +4679,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-@media (min-width: 768px) {
+@media (min-width: 1100px) {
     #right-panel {
         position: relative !important;
         transform: translateX(0);
@@ -9070,7 +9121,8 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    they are; only the skin is unified here, so this block comes last.
    --------------------------------------------------------------------- */
 [data-tooltip]:hover::after,
-.chat-mode-html-tooltip {
+.chat-mode-html-tooltip,
+.sidebar-toggle-tooltip {
     width: max-content;
     max-width: 14rem;
     padding: 0.375rem 0.625rem;
@@ -9078,6 +9130,7 @@ html[data-keyboard-nav] .settings-link:focus-visible {
     border-radius: 0.5rem;
     background: hsl(var(--color-popover));
     color: hsl(var(--color-foreground));
+    font-family: var(--font-sans);
     font-size: 0.75rem;
     font-weight: 400;
     line-height: 1.4;
@@ -9092,14 +9145,16 @@ html[data-keyboard-nav] .settings-link:focus-visible {
    of the panels tooltips sit on (the gear, Billing), so the tooltip takes
    the next surface step up instead. */
 .dark [data-tooltip]:hover::after,
-.dark .chat-mode-html-tooltip {
+.dark .chat-mode-html-tooltip,
+.dark .sidebar-toggle-tooltip {
     background: hsl(var(--color-secondary));
     box-shadow:
         0 0 0 1px hsl(var(--color-foreground) / .1),
         0 4px 16px -4px rgb(0 0 0 / .5);
 }
 [data-tooltip]:hover::before,
-.chat-mode-html-tooltip::before { display: none !important; }
+.chat-mode-html-tooltip::before,
+.sidebar-toggle-tooltip::before { display: none !important; }
 /* Position: to the left of the element, centred on it. For controls at
    the edge of a clipping container (the toolbar's payment method marks):
    a tooltip below would be cut off, one beside never leaves the row. */
@@ -9898,8 +9953,9 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 #chat-stage:has(#messages-container > .welcome-landing) {
     justify-content: center;
     justify-content: safe center;
-    gap: 28px;
-    padding-block: 20px;
+    align-items: stretch;
+    gap: 24px;
+    padding-block: 20px clamp(20px, 10dvh, 100px);
 }
 #chat-stage:has(#messages-container > .welcome-landing) #chat-area {
     flex: 0 1 auto;
@@ -9917,6 +9973,7 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
     position: relative;
     inset: auto;
     width: 100%;
+    min-width: 0;
     z-index: 20;
 }
 #chat-stage:has(#messages-container > .welcome-landing) #message-input {
@@ -9987,3 +10044,134 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
     border-radius: 0.375rem;
     font: inherit;
 }
+
+/* Shared available-width column for the landing and docked composer. */
+#chat-stage { width: 100%; min-width: 0; }
+#chat-composer { padding-inline: 24px; }
+#input-card { max-width: 680px; }
+#chat-stage:has(#messages-container > .welcome-landing) #messages-container {
+    width: 100%;
+    max-width: 728px;
+    margin-inline: auto;
+    padding-inline: 24px;
+}
+.composer-more-glyph { display: none !important; }
+#compact-composer-actions[hidden] { display: none; }
+
+/* Side panels overlay until the viewport can afford both rails and a chat. */
+@media (min-width: 768px) and (max-width: 1099px) {
+    #sidebar:not(.mobile-visible) {
+        position: fixed !important;
+        left: 0; top: 0;
+        width: 0 !important;
+        border-right-width: 0;
+        overflow: hidden !important;
+    }
+    #sidebar.mobile-visible {
+        position: fixed !important;
+        left: 0; top: 0;
+        z-index: 40;
+        width: 280px !important;
+        height: 100dvh;
+        border-right-width: 1px;
+    }
+    #sidebar .sidebar-main-content,
+    #sidebar .account-nav { width: 279px; min-width: 279px; }
+    #show-sidebar-btn { display: flex !important; }
+    .mobile-sidebar-backdrop.visible { display: block !important; }
+    .sidebar-resize-handle { display: none; }
+}
+@media (max-width: 1099px) {
+    .system-panel-toggle-space { width: 2.75rem; }
+}
+
+/* ResizeObserver uses the card width, including any open desktop sidebars. */
+html[data-composer-compact="true"] .composer-bottom-actions { gap: 4px; }
+html[data-composer-compact="true"] .model-shortcut,
+html[data-composer-compact="true"] #scrubber-shortcut-hint { display: none !important; }
+html[data-composer-compact="true"] #settings-btn > svg { display: none; }
+html[data-composer-compact="true"] #settings-btn > .composer-more-glyph {
+    display: block !important;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 1px;
+}
+html[data-composer-compact="true"] #model-picker-btn.composer-model-chip {
+    max-width: 100%;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-bottom-actions {
+    flex-wrap: wrap;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-left-actions {
+    flex: 1 0 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-model-chip,
+html[data-composer-compact="true"][data-composer-mode="parallel"] .council-inline-models {
+    width: 100%;
+    max-width: 100%;
+}
+#compact-composer-actions .chat-mode-toggle-container { width: auto; }
+#compact-composer-actions .chat-mode-toggle-btn { width: auto; padding-inline: 10px; }
+#compact-composer-actions .chat-mode-toggle-btn::after { content: attr(aria-label); font-size: 12px; }
+#compact-composer-actions .chat-mode-toggle-btn svg { display: none; }
+#compact-composer-actions #memory-context-toggle { width: 44px; height: 44px; }
+#compact-composer-actions .memory-context-tooltip { display: none; }
+#compact-scrub-btn { width: 100%; text-align: left; min-height: 44px; }
+
+@media (max-width: 767px) {
+    body { height: 100dvh; }
+    main { height: 100dvh !important; }
+    #chat-composer { padding-inline: 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    #chat-stage:has(#messages-container > .welcome-landing) {
+        gap: 20px;
+        padding-block: 16px clamp(24px, 12dvh, 96px);
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
+        width: 100% !important;
+        margin-inline: auto;
+    }
+    #input-card {
+        left: 16px !important;
+        right: 16px !important;
+        bottom: max(12px, env(safe-area-inset-bottom)) !important;
+    }
+    #message-input { font-size: 16px; }
+    #model-picker-btn.composer-model-chip,
+    .council-secondary-model-btn.composer-model-chip,
+    #composer-more-menu #file-upload-btn,
+    #composer-more-menu #settings-btn,
+    .composer-right-actions #send-btn,
+    #chat-toolbar button,
+    #show-right-panel-btn { min-width: 44px !important; min-height: 44px !important; height: 44px !important; }
+    #show-right-panel-btn { top: 4px; right: 8px; }
+    #chat-area { margin-bottom: 0 !important; }
+    #messages-container { padding-bottom: var(--composer-reserved-height, 160px) !important; }
+    html[data-composer-keyboard] main {
+        top: var(--composer-viewport-top) !important;
+        height: var(--composer-viewport-height) !important;
+        bottom: auto !important;
+    }
+    html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) {
+        justify-content: flex-end;
+        gap: 0;
+        padding-block: 0;
+    }
+    html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) #chat-area { display: none; }
+    html[data-composer-keyboard] #chat-stage:not(:has(#messages-container > .welcome-landing)) #input-card {
+        top: auto !important;
+        bottom: calc(100dvh - var(--composer-viewport-height) - var(--composer-viewport-top) + 12px) !important;
+    }
+    html[data-composer-keyboard] #message-input { max-height: min(160px, 25dvh) !important; }
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip { width: 100%; }
+@media (max-width: 767px) {
+    #compact-composer-actions .chat-mode-toggle-btn { min-height: 44px; }
+}
+
+@media (max-width: 767px) {
+    #compact-composer-actions .chat-mode-toggle-container { height: 48px; }
+}
+#compact-scrub-btn:disabled { opacity: .5; cursor: not-allowed; }

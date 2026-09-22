@@ -476,7 +476,8 @@ test('live UI facades render New Chat settlement state in sidebar and right pane
             sessionsById: new Map([[oldChat.id, oldChat]])
         },
         elements: {},
-        newChatSettlementState: null
+        newChatSettlementState: null,
+        isSessionStreaming: () => false
     };
     const productOptions = createZkapiUi({
         getTransition: () => app.newChatSettlementState,
@@ -835,10 +836,10 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
         // The caption says "Saved deposit"; one short note says why. No lede.
         assert.doesNotMatch(html, /zkapi-lede/);
         assert.match(html, /Saved deposit/);
-        assert.match(html, /Saved in this browser\. Check MetaMask for a pending transaction before resuming\./);
+        assert.match(html, /Before resuming, check MetaMask for a pending transaction\./);
         assert.match(html, /value="5" readonly/);
         assert.doesNotMatch(html, /value="99"/);
-        assert.match(html, /Resume deposit with MetaMask/);
+        assert.match(html, /Resume with MetaMask/);
     } finally {
         zkapiClient.wallet = originalWallet;
         zkapiClient.config = originalConfig;
@@ -1381,7 +1382,7 @@ test('balance panel keeps its billing ? ; the modal explains billing as a guide 
         // as a ? in the header with a card above the deposit.
         assert.doesNotMatch(modal.overlay.innerHTML, /zkapi-modal-billing-help-toggle/);
         assert.doesNotMatch(modal.overlay.innerHTML, /data-zkapi-help-content="billing"/);
-        assert.match(modal.overlay.innerHTML, /<details data-zkapi-help-guide="billing" class="zkapi-guide zkapi-guide-details" >/);
+        assert.match(modal.overlay.innerHTML, /data-funding-disclosure="billing" data-open="false"/);
         assert.match(modal.overlay.innerHTML, /How private billing works/);
         assert.match(modal.overlay.innerHTML, /data-zkapi-balance-expiry>[^<]+<\/span><button id="zkapi-modal-expiry-help-toggle"/);
         assert.doesNotMatch(modal.overlay.innerHTML, /data-zkapi-help-content="expiry" hidden/);

@@ -1,3 +1,4 @@
+import { attachFundingDisclosures } from './FundingDisclosures.js';
 import { showSurface, hideSurface } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
@@ -60,6 +61,7 @@ export default class WelcomePanel {
     close() {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
+        this.disposeFundingDisclosures?.();
         localStorage.setItem(DISMISSED_KEY, 'true');
         hideSurface(this.overlay, { clear: true });
         document.documentElement.setAttribute('data-welcome-hidden', 'true');
@@ -122,7 +124,7 @@ export default class WelcomePanel {
                     <p class="text-sm font-medium text-foreground">Private access, funded with MetaMask</p>
                     <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">OA Chat uses a private prepaid balance for access. Deposit once, then chat normally. Each chat reuses one bounded ephemeral key for its title, response, and follow-ups.</p>
                 </div>
-                <div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, open: fundingSetup?.open })}</div>
+                <div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, open: fundingSetup?.open, scope: 'welcome' })}</div>
                 <label class="mt-4 block">
                     <span class="text-xs font-medium text-foreground">Starting balance</span>
                     <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
@@ -164,12 +166,14 @@ export default class WelcomePanel {
 
     render() {
         if (!this.overlay) return;
+        this.disposeFundingDisclosures?.();
         const fundingSetup = captureFundingSetupView(this.overlay);
         this.overlay.innerHTML = this.step === 'redeeming'
             ? this.renderProgress()
             : this.step === 'success'
                 ? this.renderSuccess()
                 : this.renderWelcome(fundingSetup);
+        this.disposeFundingDisclosures = attachFundingDisclosures(this.overlay);
         restoreFundingSetupView(this.overlay, fundingSetup);
         this.overlay.querySelector('#welcome-fund-btn')?.addEventListener('click', () => this.fund());
         this.overlay.querySelector('#welcome-skip-btn')?.addEventListener('click', () => this.close());

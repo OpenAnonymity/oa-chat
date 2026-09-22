@@ -47,6 +47,11 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         assert.match(submitted, /Waiting for confirmation\. Usually under a minute; this updates on its own\./);
         assert.match(submitted, /id="zkapi-sync-withdrawal-btn" class="zkapi-quiet-button"[^>]*>Check now/, 'a submitted withdrawal resolves itself; the check is a quiet fallback');
 
+        zkapiClient.config = { prepared_withdrawal: { phase: 'ambiguous', mode: 'mutual' } };
+        const unknown = modalWith().renderWithdrawal();
+        assert.match(unknown, /whether your withdrawal went through/);
+        assert.doesNotMatch(unknown, /whether your deposit went through/);
+
         zkapiClient.config = { prepared_withdrawal: { phase: 'prepared', mode: 'mutual' } };
         const ready = modalWith().renderWithdrawal();
         assert.match(ready, /data-step="proof" data-state="complete"/);
@@ -71,11 +76,14 @@ test('a deposit in flight shows its steps under the figure; a persisted pending 
         assert.match(pending, /data-step="deposit" data-state="complete"/);
         assert.match(pending, /data-step="chain" data-state="active"/);
         assert.match(pending, /Waiting for confirmation\. Usually under a minute; this updates on its own\./);
-        assert.match(pending, /id="zkapi-check-deposit-btn" class="zkapi-quiet-button w-full"[^>]*>Check now/, 'a submitted deposit resolves itself; the check is a quiet fallback');
+        assert.match(pending, /id="zkapi-check-deposit-btn" class="zkapi-quiet-button w-full"[^>]*>Check payment status/, 'a submitted deposit resolves itself; the check is a quiet fallback');
 
         zkapiClient.config = { funding: {}, pending_deposit: { phase: 'ambiguous', amount: 4_000_000 } };
         const ambiguous = modalWith({}, { view: 'balance' }).renderBalance();
-        assert.match(ambiguous, /id="zkapi-check-deposit-btn" class="zkapi-primary-button w-full"[^>]*>Check deposit/, 'an unknown outcome still asks for a check');
+        assert.match(ambiguous, /id="zkapi-check-deposit-btn" class="zkapi-primary-button w-full"[^>]*>Check payment status/, 'an unknown outcome still asks for a check');
+        assert.match(ambiguous, /Deposit status unknown/);
+        assert.match(ambiguous, /id="zkapi-retry-deposit-btn" class="zkapi-retry-link"[^>]*>Try again in MetaMask/);
+        assert.match(ambiguous, /whether your deposit went through/);
     } finally { Object.assign(zkapiClient, original); }
 });
 
@@ -109,8 +117,8 @@ test('a canceled deposit says so once: no "saved" caption or resume note beside 
         // Found after a reload: the saved plan, and how to pick it up.
         const saved = modal.renderBalance();
         assert.match(saved, /Saved deposit/);
-        assert.match(saved, /Saved in this browser\. Check MetaMask for a pending transaction before resuming\./);
-        assert.match(saved, /Resume deposit with MetaMask/);
+        assert.match(saved, /Before resuming, check MetaMask for a pending transaction\./);
+        assert.match(saved, /Resume with MetaMask/);
         assert.doesNotMatch(saved, /Canceled in MetaMask/);
 
         await modal.run(async report => { report('Confirm the deposit in MetaMask…'); throw Object.assign(new Error('User rejected the request.'), { code: 4001 }); }, { kind: 'deposit', title: 'Adding your balance' });
@@ -119,6 +127,6 @@ test('a canceled deposit says so once: no "saved" caption or resume note beside 
         assert.doesNotMatch(modal.rendered, /Saved deposit/);
         assert.doesNotMatch(modal.rendered, /Saved in this browser/);
         assert.match(modal.rendered, /Try again with MetaMask/);
-        assert.doesNotMatch(modal.rendered, /Resume deposit with MetaMask/);
+        assert.doesNotMatch(modal.rendered, /Resume with MetaMask/);
     } finally { Object.assign(zkapiClient, original); }
 });

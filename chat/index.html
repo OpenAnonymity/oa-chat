@@ -59,7 +59,7 @@
         // Apply left sidebar state immediately to prevent flash
         (function () {
             try {
-                const isDesktop = window.innerWidth > 768;
+                const isDesktop = window.innerWidth >= 1100;
                 if (!isDesktop) return;
 
                 const savedState = localStorage.getItem('oa-left-sidebar-visible');
@@ -72,7 +72,7 @@
                 if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
                     const minWidth = 220;
                     const maxDragWidth = 420;
-                    const layoutMaxWidth = Math.max(minWidth, window.innerWidth - 240);
+                    const layoutMaxWidth = Math.max(minWidth, window.innerWidth - 848);
                     const maxWidth = Math.max(minWidth, Math.min(maxDragWidth, layoutMaxWidth));
                     const clampedWidth = Math.max(minWidth, Math.min(maxWidth, parsedWidth));
                     document.documentElement.style.setProperty('--oa-left-sidebar-width', `${clampedWidth}px`);
@@ -86,7 +86,7 @@
         // Apply right panel state immediately to prevent flash
         (function () {
             try {
-                const defaultOpen = window.innerWidth >= 1024;
+                const defaultOpen = window.innerWidth >= 1100;
                 const savedState = localStorage.getItem('oa-right-panel-visible');
                 const isVisible = savedState !== null ? savedState === 'true' : defaultOpen;
 
@@ -373,13 +373,22 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-background text-foreground h-screen overflow-hidden">
-    <button id="show-right-panel-btn" type="button" aria-controls="right-panel" aria-label="Open system panel" aria-expanded="false" data-tooltip="Open panel" data-tooltip-position="start" class="system-panel-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none">
+    <button id="show-right-panel-btn" type="button" aria-controls="right-panel" aria-label="Open system panel" aria-expanded="false" data-tooltip="Open panel" data-tooltip-position="right" class="system-panel-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
                                 <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
                                 <path d="M14 4v16"/>
                             </svg>
                         </button>
+    <button id="show-sidebar-btn" type="button" class="sidebar-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none" aria-controls="sidebar" aria-label="Collapse sidebar" aria-expanded="true">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <path d="M10 4v16"/>
+        </svg>
+        <span class="sidebar-toggle-tooltip" role="tooltip">
+            <span data-sidebar-toggle-label>Collapse sidebar</span>
+            <span class="sidebar-toggle-shortcut" aria-hidden="true"><span>⌘</span><span>\</span></span>
+        </span>
+    </button>
     <!-- Mobile sidebar backdrop -->
     <div id="mobile-sidebar-backdrop" class="mobile-sidebar-backdrop"></div>
 
@@ -387,32 +396,18 @@
         <!-- Left Sidebar: Chat Sessions -->
         <aside id="sidebar" class="relative flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
             <div class="sidebar-main-content flex h-full w-full flex-col gap-2 p-2">
-                <div class="flex w-full items-center gap-1 pr-1">
+                <div class="sidebar-header-actions flex w-full items-center gap-1 pr-1">
+                    <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history" data-tooltip="Delete chat history" data-tooltip-position="right">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 6h16M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/>
+                        </svg>
+                    </button>
                     <button id="new-chat-btn" class="btn-ghost-hover flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm h-9 rounded-md px-3 justify-start">
                         <span class="text-sm">New Chat</span>
                         <div class="flex items-center gap-0.5 ml-auto pointer-events-none text-muted-foreground text-xs">
                             <span class="opacity-60">⌘</span>
                             <span class="opacity-60">/</span>
                         </div>
-                    </button>
-                    <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history" data-tooltip="Delete chat history" data-tooltip-position="right">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M4 6h16M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/>
-                        </svg>
-                    </button>
-                    <button id="hide-sidebar-btn" class="sidebar-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0 -ml-0.5" aria-label="Collapse sidebar">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <rect x="4" y="4" width="16" height="16" rx="2"/>
-                            <path d="M4 4h6v16H4a2 2 0 01-2-2V6a2 2 0 012-2z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                            <path d="M10 4v16"/>
-                        </svg>
-                        <span class="sidebar-toggle-tooltip sidebar-toggle-tooltip-right" role="tooltip">
-                            <span>Collapse sidebar</span>
-                            <span class="sidebar-toggle-shortcut" aria-hidden="true">
-                                <span>⌘</span>
-                                <span>\</span>
-                            </span>
-                        </span>
                     </button>
                 </div>
 
@@ -445,6 +440,7 @@
                                     <path d="M6 12h12" />
                                     <path d="M10 19h4" />
                                 </svg>
+                                <span class="sidebar-toggle-tooltip sidebar-toggle-tooltip-right" role="tooltip"><span>Filter chats</span></span>
                             </button>
                             <div id="sidebar-filter-menu" class="sidebar-filter-menu hidden" role="menu" aria-label="Chat filters">
                                 <button class="sidebar-filter-toggle-row" type="button" data-session-star-filter-toggle aria-pressed="false">
@@ -529,28 +525,22 @@
                 <div id="chat-toolbar" class="chat-toolbar flex-shrink-0 flex flex-nowrap items-center justify-between px-2 pt-2 pb-1">
                     <!-- Left toolbar buttons -->
                     <div class="flex items-center gap-1">
-                        <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
-                        <button id="show-sidebar-btn" class="sidebar-toggle-btn hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand sidebar">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                <path d="M4 4h6v16H4a2 2 0 01-2-2V6a2 2 0 012-2z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                                <path d="M10 4v16"/>
-                            </svg>
-                            <span class="sidebar-toggle-tooltip" role="tooltip">
-                                <span>Expand sidebar</span>
-                                <span class="sidebar-toggle-shortcut" aria-hidden="true">
-                                    <span>⌘</span>
-                                    <span>\</span>
-                                </span>
-                            </span>
-                        </button>
+                        <span class="left-sidebar-toggle-space" aria-hidden="true"></span>
 
                         <!-- Wide Mode Button -->
                         <button id="wide-mode-btn" class="oa-panel-icon-btn hidden inline-flex items-center justify-center h-9 w-9 cursor-pointer select-none" aria-label="Expand view" data-tooltip="Widen chat" data-tooltip-position="end">
-                            <svg class="h-5 w-5 theater-mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                                <rect x="2" y="4" width="20" height="16" rx="2"/>
-                                <path d="M9 9l-3 3 3 3m6-6 3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
-                            </svg>
+                            <span class="t-icon-swap" data-wide-mode-icons data-state="a" aria-hidden="true">
+                                <svg class="t-icon h-5 w-5 theater-mode-icon" data-icon="a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path class="wide-arrow-left" d="M9 9l-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path class="wide-arrow-right" d="M15 9l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <svg class="t-icon h-5 w-5 theater-mode-icon" data-icon="b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path class="wide-arrow-left" d="M6 9l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path class="wide-arrow-right" d="M18 9l-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
                         </button>
                     </div>
 
@@ -696,17 +686,23 @@
 
                                         <!-- Settings Dropdown -->
                                         <div id="composer-settings-control" class="relative z-50">
-                                            <button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" data-tooltip="Settings" data-tooltip-position="top">
+                                            <button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" aria-controls="settings-menu" aria-expanded="false" data-tooltip="Settings" data-tooltip-position="top">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                                                 </svg>
-                                                <span>Settings</span>
+                                                <span class="composer-more-glyph" aria-hidden="true">···</span><span>Settings</span>
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
                                             <!-- Settings panel (hidden by default). Same ids, roles and
                                                  data-actions as before; only the layout and skin changed. -->
                                             <div id="settings-menu" class="hidden z-[100] settings-panel settings-menu-glass" role="group" aria-label="Settings">
+                                                <section id="compact-composer-actions" class="settings-section" hidden aria-label="Chat options">
+                                                    <h3 class="settings-section-title">Chat options</h3>
+                                                    <div class="settings-row"><span class="settings-row-label">Response mode</span><div id="compact-mode-slot"></div></div>
+                                                    <div class="settings-row"><span class="settings-row-label">Use memories in replies</span><div id="compact-memory-slot"></div></div>
+                                                    <button id="compact-scrub-btn" type="button" class="settings-row settings-link">Scrub prompt</button>
+                                                </section>
                                                 <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
 
                                                 <!-- Privacy -->

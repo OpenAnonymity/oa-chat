@@ -9,6 +9,9 @@ import networkProxy from './services/networkProxy.js';
 import { consumeSseBody } from './services/inference/sseStream.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
 import { validateInferenceInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
+
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
+import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
 import {
     cancelAndroidNativeInferenceJob,
     isAndroidNativeInferenceAvailable,
@@ -126,9 +129,17 @@ export class OpenRouterAPI {
     }
 
     prepareRequestBody(body, access) {
-        return this.options.prepareRequestBody
-            ? this.options.prepareRequestBody(body, { access, model: this.getModelBudgetMetadata(body.model) })
+        const model = this.getModelBudgetMetadata(body.model);
+        const boundedBody = applyOutputTokenLimit(body, model);
+        const callerLimit = boundedBody.max_tokens ?? boundedBody.max_completion_tokens;
+        // Let billing adapters calculate affordability while max_tokens is still
+        // absent. The SDK treats an explicit cap as an already-budgeted request.
+        const prepared = this.options.prepareRequestBody
+            ? this.options.prepareRequestBody({ ...body }, { access, model })
             : body;
+        // Composed billing adapters may reduce the allowance further, but may
+        // not raise the user's 30,000-token ceiling or a smaller caller limit.
+        return applyOutputTokenLimit(prepared, model, callerLimit);
     }
 
     prepareFetchOptions(access, init) {
@@ -140,10 +151,12 @@ export class OpenRouterAPI {
     }
 
     fetchWithRetry(access, url, init, config) {
-        return this.networkTransport.fetchWithRetry(url, this.prepareFetchOptions(access, init), {
-            ...config,
-            proxyConfig: access.proxyConfig || config?.proxyConfig
-        });
+        return fetchWithOpenRouterCreditRecovery(
+            this.networkTransport.fetchWithRetry.bind(this.networkTransport),
+            url, this.prepareFetchOptions(access, init), {
+                ...config,
+                proxyConfig: access.proxyConfig || config?.proxyConfig
+            });
     }
 
     fetchWithRetryJson(access, url, init, config) {
@@ -382,23 +395,6 @@ export class OpenRouterAPI {
         if (content && typeof content.content === 'string') return content.content;
         return '';
     }
-
-    // Get model-specific max_tokens (disabled - let OpenRouter use API key credits)
-    // getMaxTokensForModel(modelId) {
-    //     const baseModelId = typeof modelId === 'string' ? modelId.split(':')[0] : '';
-    //     // Check for Opus 4.1
-    //     if (baseModelId.includes('claude-opus-4.1')) {
-    //         return 13333;
-    //     }
-    //     // Check for GPT-5 Thinking (exclude chat variants)
-    //     if (
-    //         baseModelId.includes('gpt-5') &&
-    //         !baseModelId.endsWith('-chat')
-    //     ) {
-    //         return 120000;
-    //     }
-    //     return undefined; // Use API default for other models
-    // }
 
     // Fallback models if API fails
     getFallbackModels() {
@@ -1323,11 +1319,9 @@ export class OpenRouterAPI {
                 stream_options: { include_usage: true }
             };
 
-            // Add model-specific max_tokens if applicable (disabled - let OpenRouter use API key credits)
-            // const maxTokens = this.getMaxTokensForModel(effectiveModelId);
-            // if (maxTokens !== undefined) {
-            //     requestBody.max_tokens = maxTokens;
-            // }
+            // prepareRequestBody applies the 30,000-token generation ceiling.
+            // The HTTP transport can retry a budget rejection with a smaller
+            // allowance on this same credential before any stream is opened.
 
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
@@ -1467,6 +1461,7 @@ export class OpenRouterAPI {
                 const error = new Error(errorMessage);
                 error.status = response.status;
                 error.data = errorData;
+                if (response.status === 402) error.code = getCreditErrorCode(errorData);
                 throw error;
             }
 
@@ -1527,7 +1522,7 @@ export class OpenRouterAPI {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody
                     },
-                    error: streamError.message,
+                    error: { status: streamError.status, code: streamError.code },
                     isAborted: streamError.isCancelled === true // Flag user-initiated cancellation
                 });
             }

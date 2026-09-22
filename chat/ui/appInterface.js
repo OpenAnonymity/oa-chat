@@ -185,6 +185,7 @@ export function createSidebarInterface(app, options = {}) {
             return app.sessionSearchQuery;
         },
         getFilteredSessions: () => app.getFilteredSessions(),
+        isSessionStreaming: (sessionId) => app.isSessionStreaming(sessionId),
         toggleSessionStar: (sessionId) => app.toggleSessionStar(sessionId),
         deleteSession: (sessionId) => app.deleteSession(sessionId),
         switchSession: (sessionId) => app.switchSession(sessionId),
@@ -326,7 +327,8 @@ const COMPONENT_APP_KEYS = new Set([
     'updateScrollButtonVisibility',
     'updateSessionTitle',
     'updateToastPosition',
-    'updateToolbarDivider'
+    'updateToolbarDivider',
+    'preserveChatBottomDuringWidthChange'
 ]);
 
 export function createComponentAppFacade(app, allowedKeys = COMPONENT_APP_KEYS, options = {}) {

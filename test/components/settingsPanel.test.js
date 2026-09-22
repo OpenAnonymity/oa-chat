@@ -18,7 +18,7 @@ function settingsPanel(html) {
 
 test('the composer gear button is unchanged by the settings panel redesign', () => {
     const html = read('chat/index.html');
-    assert.match(html, /<button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" data-tooltip="Settings" data-tooltip-position="top">/);
+    assert.match(html, /<button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" aria-controls="settings-menu" aria-expanded="false" data-tooltip="Settings" data-tooltip-position="top">/);
     // Heroicons cog-6-tooth: the gear outline and its hub.
     assert.match(html, /id="settings-btn"[\s\S]{0,600}M10\.343 3\.94c\.09-\.542\.56-\.94 1\.11-\.94h1\.093/);
     assert.match(html, /id="settings-btn"[\s\S]{0,3000}M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z/);
@@ -37,9 +37,10 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
     const panel = settingsPanel(html);
     assert.match(panel, /class="hidden z-\[100\] settings-panel settings-menu-glass" role="group" aria-label="Settings"/);
     const titles = [...panel.matchAll(/class="settings-section-title">([^<]+)</g)].map(m => m[1]);
-    assert.deepEqual(titles, ['Appearance', 'Data controls', 'Privacy', 'Memory', 'Tools']);
+    assert.deepEqual(titles, ['Chat options', 'Appearance', 'Data controls', 'Privacy', 'Memory', 'Tools']);
     const labels = [...panel.matchAll(/settings-row-label"[^>]*>([^<]+)</g)].map(m => m[1]);
     assert.deepEqual(labels, [
+        'Response mode', 'Use memories in replies',
         'Layout', 'Font', 'Theme',
         'All', 'Chat history', 'ChatGPT', 'Memories',
         'Share feedback',

@@ -3,10 +3,18 @@ import {
     isVerifierResultApproved,
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
 } from '../services/inference/verifiedAccess.js';
+import { getCreditLimitSource, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
 
 export function isAccessCreditExhaustedError(error) {
     if (error?.status !== 402) return false;
     const responseData = error.data || error.responseData || null;
+    const source = getCreditLimitSource(responseData);
+    // Account-wide funding and in-flight holds cannot be repaired by spending
+    // another ticket. Nor is a key exhausted when a smaller output still fits.
+    if (source && source !== 'openrouter_key_limit') return false;
+    const affordability = parseOutputAffordability(responseData?.error?.message || error.message);
+    if (affordability?.affordable > 0) return false;
+    if (source === 'openrouter_key_limit') return true;
     const details = [
         error.message,
         responseData?.error?.message,

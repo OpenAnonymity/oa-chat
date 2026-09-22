@@ -1,3 +1,171 @@
+## 2026-09-21: Integrate inference reliability with current main
+
+- Merge preserves request deadlines, silence warnings, partial-response recovery, output-budget recovery, and the 30K generation cap alongside the current responsive layout and wallet UI. Both lifecycle regression groups are retained. Credit-error body inspection now obeys the same abort signal and cancels discarded response branches, including a stalled 402 before streaming begins.
+
+## 2026-09-21: Restore interrupted wallet dialogs
+
+- While an open wallet dialog runs an action, a tab-scoped sessionStorage marker records only its view and withdrawal mode. Reload restores that view even before a transaction exists; restoration consumes it, and completion or dismissal clears it. Ongoing transactions continue to restore from SDK records. Wallet secrets and recovery records remain exclusively SDK-owned. Restoration only opens and refreshes status, never reconnects MetaMask or submits a transaction.
+- Startup waits for SDK initialization, initial conversation restoration, and an eligible zkAPI chat before consuming restoration. In-flight USDC approvals also qualify, even when the surrounding deposit plan is still prepared. Manual navigation/dismissal wins. Restricted session storage falls back to SDK-persisted transaction restoration.
+- Funding copy says “Your deposit progress is saved in this browser.” Sidebar trash moves 4px closer to the fixed toggle without overlapping either 36px hit target.
+
+## 2026-09-21: Named payment selector
+
+- The chat toolbar now shows OA and zkAPI beside their existing marks, with larger 32px-high targets. Labels remain visible on phones. Existing hover explanations, keyboard focus, sliding selection, and locked-mode behavior are retained.
+
+## 2026-09-21: Wallet recovery controls and sidebar order
+
+- MetaMask waiting, submitted deposits, and active wallet work use a neutral spinner with visible status text in the System Panel. Unknown deposits use the same neutral row with a static dot, since no check is running. Error/expiry attention styling is retained.
+- Deposit recovery uses “Check payment status” as the main action and “Try again in MetaMask” as a secondary text button. The existing retry confirmation and SDK recovery/submission methods are unchanged; help toggles never submit wallet actions.
+- Journey labels distinguish submitted confirmation, an active deposit check, and an unknown result. The unknown state explains checking before retrying.
+- Funding accordions now share a gentler ease-in/out and matching 420ms opening/closing durations; the stable scroll gutter avoids text reflow when overflow appears. Existing deferred scrolling, cancellation, inert/ARIA state, and reduced-motion behavior are retained.
+- Sidebar order is fixed toggle, Delete history, New Chat. DOM order matches visual/tab order; the fixed toggle and existing delete confirmation remain unchanged.
+
+## 2026-09-21: Approved zkAPI wallet walkthrough
+
+- Funding uses the approved single-dropdown numbered guide, full-row dividers,
+  shorter mainnet/resume copy, and a flowing private-billing explanation. The
+  mainnet and free Sepolia setup paths remain separate.
+- Shared `FundingDisclosures` keeps setup/billing/history mutually exclusive,
+  updates ARIA/inert state in place, and retains payment-history action bindings.
+  History content is rendered up front, inert when closed. Opening help never
+  triggers a wallet request or service refresh.
+- Reuses installed Transitions.dev accordion/modal CSS. Local accordion timing
+  is 420ms open/320ms close, followed by up to 320ms scrolling after final layout
+  is known. Manual input, close, or rerender disposes timers/listeners/frames.
+- Modal placement anchors the title near the top instead of recentering it as
+  the guide grows. Wallet refresh preserves guide expansion, focus and scroll.
+- See [zkAPI payments](ZKAPI_PAYMENTS.md) for flow and recovery boundaries.
+
+## 2026-09-21: System-panel tooltip clears payment controls
+
+- The fixed right-panel toggle now uses the existing below/right-aligned tooltip placement, for both Open panel and Close panel. The former left-of-button placement overlapped the adjacent OA/zkAPI payment controls.
+
+## 2026-09-21: Panel reflow and anchored sidebar tooltip
+
+- Desktop sidebar and system-panel visibility changes now capture the transcript bottom before changing layout, using the same cancellable anchor as widen/narrow. Overlay panels do not change transcript width and do not start anchoring.
+- Anchoring includes both panel transition durations and rechecks destination styles on the first animation frame. Combined panel/width changes keep the bottom visible through the longest animation; manual scroll and session changes still release the anchor.
+- The fixed left toggle uses the uncentered tooltip entrance animation. Its previous centered keyframes briefly put the tooltip off-screen before snapping to its left-aligned resting position.
+- New Chat remains before Delete history, keeping the frequent action first.
+
+## 2026-09-21: Keep the transcript bottom visible through width changes
+
+- Widen/narrow captures whether the chat scroller is within 8px of the bottom
+  before reflow. It follows the bottom throughout the computed CSS transition,
+  preventing widening's scrollTop clamp from leaving the view higher up after
+  narrowing. Includes the collapsed Council/Parallel transcript width toggle.
+- Readers above the bottom are not moved to the end. Wheel, touch, pointer, or
+  scrolling keys immediately release the temporary anchor. Session changes and
+  rapid reversals cancel stale work; original scroll behavior is restored.
+- This is a brief layout adjustment, not a change to streaming auto-scroll,
+  persisted positions, messages, or inference. Zero-duration/reduced-motion
+  layouts settle without relying on a transitionend event.
+
+## 2026-09-21: Stable left sidebar toggle and stateful widen control
+
+- Left sidebar has one viewport-anchored button at the top-left, outside the
+  moving/inert sidebar. The header reserves its space; when collapsed or in
+  overlay mode the toolbar reserves the same target. Both directions use the
+  same button, preserving pointer position and keyboard focus during reversal.
+- Collapse/expand tooltip uses the shared tooltip typography/skin, retains the
+  shortcut, and opens toward the viewport interior. Labels and aria-expanded
+  update immediately for button, keyboard, programmatic and responsive changes.
+- Widen/narrow labels and pressed state now update directly when the preference
+  changes. Outward/inward chevrons crossfade with the existing Transitions.dev
+  icon swap; hover movement follows the action, with reduced-motion support.
+- At 768–1099px, sidebar contents match the 280px overlay instead of retaining
+  the narrower desktop width. Desktop resize preferences and phone widths stay
+  unchanged. No inference, storage, account or payment behavior changes.
+
+## 2026-09-21: Preserve distinct formulas in long responses
+
+- Markdown math placeholders now terminate their numeric IDs, so restoring token
+  1 cannot consume tokens 10–19 (and similarly at higher counts). Previously a
+  long response could repeat an earlier formula with trailing index digits.
+- Applies to dollar and backslash inline/block math and escaped currency dollars.
+  The shared renderer fixes existing stored responses on rerender; message source,
+  inference, storage, and network behavior are unchanged.
+- Regression coverage exercises 25 expressions per delimiter family and 25
+  escaped dollars through the production Markdown processing method.
+
+## 2026-09-21: Background response keeps its sidebar title glimmer
+
+- The existing title-generation glimmer now also lasts while an unselected chat
+  is responding. New Chat and conversation switches consult the same in-memory
+  stream state used for Send/Stop, including access preparation, Parallel, and
+  Council. Returning to the chat clears the background-response glimmer; any
+  existing title-generation work keeps its original indicator.
+- Start/finish/failure/cancellation update visible title classes in place,
+  preserving inline renames and virtual-list position. Newly rendered rows read
+  live state, so scrolling or filtering cannot revive a completed response.
+- No timer extends or cancels inference, no state is persisted or broadcast to
+  other browser tabs. Reduced motion uses a static emphasized title instead.
+
+## 2026-09-20: Toolbar controls never float over transcript text
+
+- The floating toolbar now measures both control groups against the transcript's
+  inner edges, with 12px clearance. Share, payment-switch width, font changes,
+  chat width mode, and side-panel size all contribute to the actual threshold;
+  the old fixed 52px estimate missed the commercial controls.
+- ResizeObserver watches the groups and chat column, and window resize checks
+  immediately. Panel toggles cover the transcript before movement; observation
+  follows the actual animation instead of retaining a prediction for 350ms.
+- The opaque background applies immediately, including below 768px. Toolbar
+  position and transcript top padding stay fixed, so switching does not shift
+  the conversation. No inference, payment, or persisted preference changes.
+
+## 2026-09-20: Ticket-code redemption survives leaving Billing or reloading
+
+- `TicketCodeRedeemer` persists each code's exact blinded batch, issuer key, and
+  serialized unblinding state in the browser-local `oa-ticket-code-recovery-v1`
+  IndexedDB before `/api/alpha-register` can consume it. Signed responses are
+  validated and saved before unblinding. Interrupted work replays the exact
+  batch or finishes locally from saved signatures; it never generates replacement
+  blinding secrets for a pending code.
+- Recovery is isolated by wallet owner (including anonymous), serialized by an
+  origin-wide Web Lock, and gated on verified/unlocked/synced account readiness.
+  The final wallet write requires durable persistence and the original account.
+  Successful recovery is deleted only after that commit. Definitively unusable
+  codes are retired; transient failures remain saved and do not block other
+  codes. Key rotation retains the bearer code while replacing stale blinding
+  state. Reimports use identical token bytes and treat durably removed or
+  invalidated tokens as settled without resurrecting them.
+- The commercial extension receives only pending count, progress, and final
+  wallet count. Opening Membership resumes saved work; a wallet-ready notification
+  retries an earlier readiness check. Closing the view never cancels issuance.
+  Reopening retains the same owner's progress/success. Account changes suppress
+  stale UI completion and preserve the original owner's recovery record.
+- Code and blinding secrets remain local bearer material; they are never synced
+  or sent to billing/account APIs. Issuance explicitly omits account cookies.
+  Clearing site data removes recovery. Existing codes lost before this journal
+  existed cannot be reconstructed; this change protects new redemptions.
+- The org's existing exact-batch replay implementation is required (present in
+  `oa-org-staging-release`). No production redemption was performed for testing.
+
+## 2026-09-19: Responsive landing and compact composer
+
+- Welcome and composer share the available chat column (680px composer cap),
+  with 24px desktop / 16px phone gutters and bounded space below the landing
+  group to place it slightly above center. The same input node docks on first send.
+- Both side panels overlay below 1100px. CSS, pre-hydration defaults, sidebar
+  interaction logic, and RightPanel use that boundary. Sidebar resize clamps
+  presentation while retaining the preferred desktop width; crossing the boundary
+  restores the saved desktop visibility without overwriting it.
+- A card ResizeObserver selects compact controls below 560px of actual composer
+  width. The original mode and memory nodes move into the existing Settings
+  popover (labelled More options); they retain their listeners/state. A Scrub
+  prompt button calls the same capability-checked scrubber path. Parallel model
+  selectors get a separate two-column row. Phone primary controls have 44px targets.
+- VisualViewport shrink greater than 120px while editing, without pinch zoom,
+  hides the empty welcome and docks the composer above the phone keyboard.
+  Focus-out and viewport resize/scroll update that layout. Short settings menus
+  can use the visible viewport rather than extending above it.
+- Transcript padding now measures the input card itself, including the additional
+  model row and draft growth; the fixed mobile card is outside its wrapper flow.
+- Local demo files are outside the application repository in `oa-responsive-demos`.
+  They exercise the actual chat modules but disable inference submission. The
+  keyboard demo simulates visual-viewport shrink; physical iOS/Android keyboard
+  behavior still needs a device check. Nothing has been pushed.
+
 ## 2026-09-17: System Panel icon buttons; submitted transactions resolve themselves
 
 - The widen, collapse and clear-timeline controls share `.oa-panel-icon-btn`:
@@ -2592,9 +2760,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The shortcut calls the same `showSidebar()` / `hideSidebar()` paths as the
     toolbar buttons, preserving the existing desktop persistence and mobile
     overlay behavior.
-  - During the desktop close animation, `data-left-sidebar-closing` keeps the
-    main-toolbar expand button hidden until the sidebar width transition ends.
-  - The collapse and expand sidebar buttons use real tooltip markup, not
+  - Superseded on 2026-09-21: a single fixed toggle stays available during the
+    close animation. `data-left-sidebar-closing` only suppresses rail tooltips.
+  - The sidebar toggle uses real tooltip markup, not
     `[data-tooltip]`, so the shortcut can match the model-picker style with
     separate muted `⌘` and key glyphs.
   - The delete-history sidebar icon uses the shared `[data-tooltip]` hover
@@ -3023,3 +3191,68 @@ response cleanup also covers an onStreamOpen callback that never settles.
 The parser requires completion evidence plus usable output; malformed/empty or
 truncated streams now fail instead of silently finalizing. Stream failures and
 permanent HTTP errors must not be retried automatically.
+
+## 2026-09-19: Recover OpenRouter output-budget rejections before rotating access
+
+- Normal browser streaming requests previously omitted `max_tokens` under the
+  incorrect assumption that OpenRouter would fit output to the key's credits.
+  A provider default (65,536 in the reported incident) can exceed the allowance
+  even when a useful answer is affordable. Broad 402 detection then spent a
+  fresh ticket without changing the rejected request.
+- `services/inference/openRouterCreditRecovery.js` retries a rejected HTTP 402
+  once on the same key with 90% of the explicitly reported affordable output,
+  respecting smaller product caps. Body preparation runs once so composed
+  products cannot overwrite the reduced cap. The user subsequently requested
+  a 30,000-token default ceiling, applied as described below.
+- Structured in-flight-budget errors wait for `Retry-After` (1s fallback), up to
+  two retries. A requested wait over 30s surfaces rather than being shortened.
+  Waits are abortable. No successful HTTP body or partial generation is replayed.
+- Access rotation excludes positive affordability, account-wide credit limits,
+  in-flight holds and unknown structured limit sources. Explicit key exhaustion
+  and legacy generic credit errors retain the existing single refresh policy.
+- Terminal activity errors now carry status and an allowlisted local credit
+  code, not provider text. This explains why the earlier timeline said only
+  `Request failed`: its privacy sanitizer discards strings, including the
+  provider message. Prompts, keys and raw error bodies remain excluded.
+- Coverage: browser streaming, including regeneration and Parallel/Council
+  through the shared adapter. Native Android transport and non-streaming helper
+  requests do not use this HTTP recovery wrapper. These remain follow-up work,
+  alongside production monitoring of station balance and admission failures.
+- Tests include the exact reported affordability rejection, repeated rejection,
+  cancellation, provider scope, exhausted-key classification, composed budgets,
+  and a production API streaming harness. No live credentials or ticket spending
+  are needed. Changes prepared against commercial chat revision `a38e534`;
+  deployment and live verification are separate from local validation.
+- Validation: production build succeeds; 843 core and 200 native tests pass,
+  including all 11 new regression tests. Six existing native streaming tests
+  fail attempting to load live model tiers; the same six failures reproduce
+  on unchanged `a38e534` in this environment. Independent final diff review
+  approved the change with no actionable findings.
+
+## 2026-09-19: Set a 30,000-token generation ceiling
+
+- At the user's request, shared request-body preparation now caps output at
+  exactly 30,000 tokens. This covers browser streams, strict completions and
+  Android native request bodies. Input history is not truncated. Reasoning
+  continues to count toward the provider's generation budget where applicable.
+- Smaller caller limits (including 24-token titles), catalog output limits and
+  composed billing limits win. Capture the caller limit, run billing policy on
+  the original body, then apply the ceiling. The actual SDK skips affordability
+  calculation when `max_tokens` is already set; applying the ceiling first
+  would raise a $1 key's 18,000-token budget to 30,000. A regression test uses
+  the real SDK adapter. The 402 recovery still reduces the result further if
+  the key cannot afford the request.
+- Fable 5.1's published standard rates checked on 2026-09-19 are $10/M input
+  and $50/M output. At these rates 65,536 output tokens cost $3.2768 and 30,000
+  cost $1.50, excluding input. Thus a fresh $5 key with a short input should
+  cover 65,536 output tokens; the reported 46,897 affordability does not by
+  itself establish why the first request failed. Its output value is $2.34485.
+  Actual key limit/usage, request input and error metadata are needed to tell
+  whether this was an input cost, issued-key cap, account balance or hold issue.
+  Sources: https://openrouter.ai/anthropic/claude-fable-5.1 and
+  https://platform.claude.com/docs/en/models/fable-5-1/overview.
+- Validation after the ceiling change: 846 core tests and 203 native tests pass;
+  the same six baseline native streaming failures remain. Production build
+  succeeds and independent re-review approves the real SDK budget integration.
+  The user confirmed the failed request's panel shows only HTTP 402 and generic
+  `Request failed`, so the incident's actual key balance remains unverified.

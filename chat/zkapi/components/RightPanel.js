@@ -234,9 +234,14 @@ export default class RightPanel extends SharedRightPanel {
                 : expired ? 'expired' : note
                     ? 'ready'
                     : 'not funded';
-        // While a step runs the pill is a spinner; the words go to the toast
-        // over the chat bar, where a sentence fits.
+        // Normal progress is a quiet line; warning pills are reserved for attention states.
         const badgeBusy = !claimed && !hasError && experience.primary.busy && experience.primary.tone !== 'error';
+        const walletWaiting = !claimed && !hasError && experience.primary.tone !== 'error'
+            && statusBadge === 'Waiting for MetaMask';
+        const depositStatus = !claimed && !hasError && experience.primary.tone !== 'error'
+            && experience.primary.phase === 'deposit-recovery';
+        const quietProgress = badgeBusy || walletWaiting || depositStatus;
+        const statusSpinning = badgeBusy || walletWaiting || (depositStatus && pendingDeposit?.phase === 'submitted');
 
         return `
             <div class="p-3">
@@ -246,8 +251,9 @@ export default class RightPanel extends SharedRightPanel {
                         <span class="text-xs font-medium">Private balance: <span class="font-semibold">${balance}</span></span>
                         ${privateBalanceHelpButton('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                     </div>
-                    <span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed || badgeBusy ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : actionableState || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : badgeBusy ? `<span class="zkapi-pill-spinner" role="img" aria-label="${this.escapeHtml(statusBadge)}"></span>` : this.escapeHtml(statusBadge)}</span>
+                    ${quietProgress ? '' : `<span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : actionableState || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : this.escapeHtml(statusBadge)}</span>`}
                 </div>
+                ${quietProgress ? `<div class="zkapi-wallet-status" role="status"><span class="${statusSpinning ? 'zkapi-pill-spinner' : 'zkapi-wallet-status-dot'}" aria-hidden="true"></span><span>${this.escapeHtml(statusBadge)}</span></div>` : ''}
                 ${privateBalanceHelpContent('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                 <div class="mt-3 h-1 overflow-hidden rounded-full bg-muted"><div class="zkapi-panel-bar-fill h-full rounded-full transition-all" style="width:${percent}%"></div></div>
                 <div class="mt-2 flex items-center justify-between text-[10px] text-muted-foreground"><span>${claimed ? 'Claimed after expiry' : `${used} used`}</span><span class="inline-flex items-center gap-1"><span ${note ? 'data-zkapi-note-expiry' : ''}>${note ? privateBalanceExpiryLabel(zkapiClient, note.expiry_ts) : pendingDeposit ? 'Deposit in progress' : 'Fund with MetaMask to chat'}</span>${note ? privateBalanceHelpButton('panel', 'expiry', this.privateBalanceHelpOpen?.expiry) : ''}</span></div>

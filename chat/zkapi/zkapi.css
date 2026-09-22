@@ -1592,12 +1592,16 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2rem;
-    padding: 0;
-    height: 1.625rem !important;
+    width: auto;
+    gap: 0.375rem;
+    padding: 0 0.625rem;
+    height: 2rem !important;
     min-height: 0 !important;
     border-radius: 0.5rem;
     line-height: 1;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
     color: hsl(var(--color-muted-foreground));
     transition: opacity 160ms cubic-bezier(.2, 0, 0, 1), background-color 160ms cubic-bezier(.2, 0, 0, 1);
 }
@@ -1611,6 +1615,12 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 }
 .payment-mode-control button[aria-pressed="true"] .payment-mode-mark,
 .payment-mode-control button:hover:not(:disabled) .payment-mode-mark { opacity: 1; }
+.payment-mode-control button:hover:not(:disabled) {
+    color: hsl(var(--color-foreground));
+}
+.payment-mode-control button[aria-pressed="false"]:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / .05);
+}
 .payment-mode-control button:focus-visible {
     outline: 2px solid hsl(var(--color-accent-primary));
     outline-offset: 2px;
@@ -1623,7 +1633,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
     right: calc(100% + 2rem + 4px + 0.5rem);
 }
 @media (max-width: 640px) {
-    .payment-mode-control button { width: 1.75rem; }
+    .payment-mode-control button { padding-inline: 0.5rem; }
     .payment-mode-toolbar #share-btn-text, .payment-mode-toolbar #wide-mode-btn { display: none; }
     .payment-mode-toolbar #share-btn { padding-inline: 6px; }
 }
@@ -1642,3 +1652,68 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 }
 .zkapi-text-button:hover:not(:disabled) { color: hsl(var(--color-foreground)); background: hsl(var(--color-foreground) / 0.05); }
 .zkapi-text-button:disabled { opacity: 0.5; cursor: default; }
+
+/* Approved wallet walkthrough: one disclosure, four readable steps. Reuse the
+   installed Transitions.dev grid/chevron and modal snippets with local timing. */
+.zkapi-funding-overlay {
+    align-items: flex-start !important;
+    padding-top: clamp(1rem, 10vh, 5rem) !important;
+}
+.zkapi-funding-overlay > .zkapi-dialog {
+    max-height: calc(100dvh - clamp(1rem, 10vh, 5rem) - 2rem);
+}
+.zkapi-dialog, .zkapi-welcome-dialog {
+    --acc-expand: 420ms;
+    --acc-collapse: 420ms;
+    --acc-chevron: 320ms;
+    --acc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --funding-scroll-duration: 320ms;
+    --modal-scale: 0.96;
+    --modal-scale-close: 0.96;
+}
+.zkapi-dialog-scroll { overflow-anchor: none; scrollbar-gutter: stable; overflow-x: hidden; scroll-behavior: auto; }
+.zkapi-welcome-dialog { overflow-anchor: none; scroll-behavior: auto; }
+.zkapi-guide.t-acc { position: relative; }
+.zkapi-guide.t-acc::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: calc(-1 * var(--zkapi-pad-x, 28px));
+    right: calc(-1 * var(--zkapi-pad-x, 28px));
+    height: 1px;
+    background: var(--zkapi-line, hsl(var(--color-border)));
+    pointer-events: none;
+}
+.zkapi-guide.t-acc .zkapi-guide-trigger {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 0;
+}
+.zkapi-guide-trigger > span:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.zkapi-guide.t-acc .t-acc-panel-inner { filter: none; }
+.zkapi-guide.t-acc .zkapi-guide-body { padding: 0.25rem 0 1.25rem; }
+.zkapi-guide-steps { gap: 1.375rem; margin: 0.125rem 0 0; line-height: 1.65; }
+.zkapi-guide-steps > li { padding-left: 2.25rem; }
+.zkapi-guide-steps > li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 0.625rem;
+    top: 1.875rem;
+    bottom: -0.9375rem;
+    width: 1px;
+    background: var(--zkapi-line, hsl(var(--color-border)));
+}
+.zkapi-guide-steps .zkapi-guide-step-title { margin-bottom: 0.3125rem; }
+.zkapi-guide-steps p { margin-bottom: 0.375rem; }
+.zkapi-guide-steps a { font-size: 0.8125rem; }
+
+/* Wallet progress is informational, not a warning or another action. */
+.zkapi-wallet-status { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; color: hsl(var(--color-muted-foreground)); font-size: 0.6875rem; line-height: 1.5; }
+.zkapi-wallet-status .zkapi-pill-spinner { flex-shrink: 0; }
+.zkapi-retry-link { align-self: center; border: 0; background: none; color: hsl(var(--color-muted-foreground)); font: inherit; font-size: 0.8125rem; padding: 0.5rem; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.zkapi-retry-link:hover { color: hsl(var(--color-foreground)); }
+.zkapi-retry-link:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.zkapi-wallet-status-dot { width: 0.375rem; height: 0.375rem; margin-inline: 0.125rem; border-radius: 50%; background: currentColor; opacity: 0.6; flex-shrink: 0; }

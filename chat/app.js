@@ -1,6 +1,9 @@
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
+
+import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
+import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -140,10 +143,9 @@ const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 const SESSION_TITLE_MAX_LENGTH = 60;
 const SESSION_TITLE_FALLBACK_LENGTH = 50;
 
-// Layout constants for toolbar overlay prediction
+// Panel widths used when preparing the toolbar for layout changes
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
-const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
@@ -260,7 +262,6 @@ class ChatApp {
             shareBtnText: document.getElementById('share-btn-text'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
             sidebar: document.getElementById('sidebar'),
-            hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
             mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
@@ -712,6 +713,11 @@ class ChatApp {
                     this.rightPanel.normalizeInvitationCode(code),
                     { throwOnError: true, onProgress }
                 ),
+                getPendingAccessCodeRedemption: () => this.services.tickets.getPendingCodeRedemption(),
+                resumeAccessCodeRedemption: async onProgress => {
+                    const result = await this.services.tickets.resumeCodeRedemption((message, percent) => onProgress?.({ message, percent }));
+                    return result ? Object.freeze({ ticketCount: this.services.tickets.getTicketCount(), pendingCount: result.pendingCount || 0 }) : null;
+                },
                 registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
             }),
             payments: Object.freeze({
@@ -1607,6 +1613,7 @@ class ChatApp {
      */
     processContentWithLatex(content) {
         // Store block-level and inline LaTeX to prevent markdown from breaking them
+        // Terminate numeric IDs: token 1 must never match the prefix of token 10.
         const placeholderNamespace = createMathPlaceholderNamespace(content);
         const blockLatexPlaceholders = [];
         const inlineLatexPlaceholders = [];
@@ -1615,21 +1622,21 @@ class ChatApp {
 
         // Extract block LaTeX \[...\] and replace with placeholders
         processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract block LaTeX $$...$$ and replace with placeholders
         processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract inline LaTeX \(...\) and replace with placeholders
         processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
             inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return placeholder;
         });
@@ -1638,14 +1645,14 @@ class ChatApp {
         // Protect valid pairs before Markdown can split or reinterpret them.
         processedContent = protectDollarMathForMarkdown(processedContent, {
             math: match => {
-                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}`;
+                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
                 inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
                 return placeholder;
             },
             // Marked consumes the slash in \$, so carry literal-dollar intent
             // through parsing with a non-math span.
             literalDollar: () => {
-                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}`;
+                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}END`;
                 literalDollarPlaceholders.push(placeholder);
                 return placeholder;
             }
@@ -2237,51 +2244,13 @@ class ChatApp {
         }
     }
 
-    /**
-     * Updates the toolbar's floating state. Can predict final width with
-     * widthDelta without drawing a separator above the conversation.
-     * @param {number} widthDelta - Optional: predicted change in main area width (negative = narrower)
-     */
+    // Keep the toolbar opaque whenever its controls would cover the transcript.
     updateToolbarDivider(widthDelta = 0) {
-        const chatArea = this.elements.chatArea;
-        const toolbar = document.getElementById('chat-toolbar');
-        const messagesContainer = this.elements.messagesContainer;
-        if (!chatArea || !toolbar || !messagesContainer) return;
-
-        // Track prediction timing to avoid overriding during panel animations
-        const now = Date.now();
-
-        if (widthDelta !== 0) {
-            // This is a prediction call - record the timestamp
-            this._toolbarPredictionTime = now;
-        } else if (this._toolbarPredictionTime && (now - this._toolbarPredictionTime) < TOOLBAR_PREDICTION_GRACE_MS) {
-            // Non-prediction call within grace period - skip to avoid overriding
-            return;
-        }
-
-        // On mobile (< 768px), the toolbar never floats.
-        const isMobile = window.innerWidth < 768;
-
-        if (isMobile) {
-            toolbar.classList.remove('toolbar-floating');
-            return;
-        }
-
-        // Desktop: Check if content area overlaps with toolbar buttons
-        // Use widthDelta to predict final width (before animation completes)
-        const currentWidth = chatArea.clientWidth;
-        const mainWidth = currentWidth + widthDelta;
-        const actualContentWidth = messagesContainer.getBoundingClientRect().width;
-        const sideMargin = (mainWidth - actualContentWidth) / 2;
-        // Button area: ~80px (2×36px buttons + gaps + padding) - show-sidebar + wide-mode when sidebar hidden
-        // But messages-container has internal padding (px-6 = 24px on md+), so actual text is further inward
-        // With sideMargin=52 + internal padding=24, actual content at 76px - minimal overlap with 80px buttons
-        const buttonAreaWidth = 52;
-
-        // Wide screen: no overlap, make toolbar transparent (visual only, no layout change)
-        const isWideScreen = sideMargin >= buttonAreaWidth;
-        toolbar.classList.toggle('toolbar-wide', isWideScreen);
-
+        updateToolbarBackdrop({
+            toolbar: document.getElementById('chat-toolbar'),
+            messagesContainer: this.elements.messagesContainer,
+            widthDelta
+        });
     }
 
     /**
@@ -3047,10 +3016,24 @@ class ChatApp {
             this.scheduleScrollPositionSave();
         }, { passive: true });
 
-        // Set up resize listener for toolbar divider (content width changes)
-        // Debounced to avoid overriding predicted state during panel animations (300ms)
+        this._stopToolbarLayoutObserver?.();
+        this._stopToolbarLayoutObserver = watchToolbarLayout({
+            toolbar: document.getElementById('chat-toolbar'),
+            messagesContainer: this.elements.messagesContainer,
+            chatArea: this.elements.chatArea
+        });
+
+        // Backdrop protection updates immediately; secondary button visibility
+        // may settle after a resize without leaving controls over the transcript.
         let resizeDebounceTimer;
+        let wasCompact = this.isMobileView();
         window.addEventListener('resize', () => {
+            this.updateToolbarDivider();
+            const compact = this.isMobileView();
+            if (compact !== wasCompact) {
+                wasCompact = compact;
+                void this.initSidebarVisibility();
+            }
             clearTimeout(resizeDebounceTimer);
             resizeDebounceTimer = setTimeout(() => {
                 this.updateWideModeButtonVisibility();
@@ -3089,6 +3072,7 @@ class ChatApp {
         // Check for session in URL (?s=sessionId)
         const finishInitialNavigation = () => {
             this.restoringInitialConversation = false;
+            this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
             if (!this.getCurrentSession()) this.renderMessages();
             this.handlePendingTicketCode();
         };
@@ -4289,9 +4273,10 @@ class ChatApp {
         // Create a ResizeObserver to watch for size changes
         const resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                const inputHeight = entry.contentRect.height;
-                // Add extra padding to ensure messages aren't covered
-                const paddingBottom = inputHeight + 16; // 16px extra for spacing
+                const inputHeight = entry.target.getBoundingClientRect().height;
+                // Measure the card itself: on phones it is fixed outside wrapper flow.
+                const paddingBottom = inputHeight + 32;
+                document.documentElement.style.setProperty('--composer-reserved-height', `${paddingBottom}px`);
                 this.elements.messagesContainer.style.paddingBottom = `${paddingBottom}px`;
 
                 // Auto-scroll to bottom using our reliable scroll helper
@@ -4299,7 +4284,7 @@ class ChatApp {
             }
         });
 
-        resizeObserver.observe(inputContainer);
+        resizeObserver.observe(this.elements.inputCard || inputContainer);
     }
 
     async loadModels() {
@@ -4628,6 +4613,7 @@ class ChatApp {
         this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
+        this.sidebar?.updateSessionActivity?.();
         saveNavigationSelection(sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
@@ -5175,6 +5161,10 @@ class ChatApp {
         }
     }
 
+    isSessionStreaming(sessionId) {
+        return this.sessionStreamingStates.get(sessionId)?.isStreaming === true;
+    }
+
     setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
         if (!isStreaming) {
             this.pendingProgress.delete(sessionId);
@@ -5212,6 +5202,7 @@ class ChatApp {
 
         // Update UI when streaming state changes
         this.updateInputState();
+        this.sidebar?.updateSessionActivity?.(sessionId);
     }
 
     updateSessionStreamingPhase(sessionId, phase) {
@@ -5364,6 +5355,7 @@ class ChatApp {
         }
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        this.sidebar?.updateSessionActivity?.();
         void this.refreshModelsForSessionBackend();
         this.updateUrlWithSession(null);
         // Reset before the first asynchronous boundary. Later settings reads
@@ -10062,6 +10054,7 @@ class ChatApp {
         btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view');
         btn.setAttribute('data-tooltip', isWide ? 'Narrow chat' : 'Widen chat');
         btn.setAttribute('aria-pressed', String(isWide));
+        btn.querySelector('[data-wide-mode-icons]')?.setAttribute('data-state', isWide ? 'b' : 'a');
     }
 
     /**
@@ -10093,9 +10086,23 @@ class ChatApp {
         }
     }
 
+    preserveChatBottomDuringWidthChange() {
+        this.cancelWidthScrollAnchor?.();
+        const sessionId = this.state.currentSessionId;
+        this.cancelWidthScrollAnchor = preserveBottomDuringWidthChange({
+            scroller: this.elements.chatArea,
+            content: this.elements.messagesContainer,
+            transitionElements: [this.elements.sidebar, document.getElementById('right-panel')],
+            isCurrent: () => this.state.currentSessionId === sessionId
+        });
+    }
+
     applyWideMode(isWide) {
+        if (document.documentElement.classList.contains('wide-mode') !== isWide) {
+            this.preserveChatBottomDuringWidthChange();
+        }
         document.documentElement.classList.toggle('wide-mode', isWide);
-        this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
+        this.updateWideModeButtonVisibility();
     }
 
     /**
@@ -10108,6 +10115,7 @@ class ChatApp {
             session?.hasCouncilTranscript
         );
         if (hasParallelLayoutHistory && !this.councilLayoutRequiresMultipleColumns(session)) {
+            this.preserveChatBottomDuringWidthChange();
             const isWide = document.documentElement.classList.contains('wide-mode') ||
                 this.sessionUsesCouncilLayout(session);
             if (isWide) {
@@ -10174,6 +10182,12 @@ class ChatApp {
         } else {
             document.documentElement.removeAttribute('data-left-sidebar-hidden');
         }
+        const button = this.elements.showSidebarBtn;
+        const label = isHidden ? 'Expand sidebar' : 'Collapse sidebar';
+        button?.setAttribute('aria-expanded', String(!isHidden));
+        button?.setAttribute('aria-label', label);
+        const tooltipLabel = button?.querySelector('[data-sidebar-toggle-label]');
+        if (tooltipLabel) tooltipLabel.textContent = label;
     }
 
     setSidebarClosingAttribute(isClosing) {
@@ -10219,29 +10233,25 @@ class ChatApp {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
-        const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (!this.isMobileView() && sidebar && !sidebar.classList.contains('sidebar-hidden')) {
+            this.preserveChatBottomDuringWidthChange();
+        }
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(true);
-        if (showBtn) {
-            showBtn.classList.add('hidden');
-            showBtn.classList.remove('flex');
-        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles
             sidebar.classList.add('sidebar-hidden');
             sidebar.classList.remove('mobile-visible');
+            sidebar.inert = true;
         }
         this.setSidebarHiddenAttribute(true);
-        if (showBtn) {
-            this.sidebarToggleButtonTimer = setTimeout(() => {
-                this.setSidebarClosingAttribute(false);
-                showBtn.classList.remove('hidden');
-                showBtn.classList.add('flex');
-            }, SIDEBAR_CLOSE_DURATION_MS);
-        }
+        this.sidebarToggleButtonTimer = setTimeout(() => {
+            this.setSidebarClosingAttribute(false);
+        }, SIDEBAR_CLOSE_DURATION_MS);
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
@@ -10253,7 +10263,7 @@ class ChatApp {
             const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is closing, main area will be WIDER
             // Only affects width on desktop, on mobile sidebar overlays
-            // Grace period in updateToolbarDivider blocks intermediate updates during animation
+            // Cover before movement; measured gutters track each animation frame.
             this.updateToolbarDivider(this.isMobileView() ? 0 : sidebarWidth);
         } else {
             this.updateToolbarDivider();
@@ -10264,8 +10274,11 @@ class ChatApp {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
-        const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (!this.isMobileView() && sidebar && sidebar.classList.contains('sidebar-hidden')) {
+            this.preserveChatBottomDuringWidthChange();
+        }
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(false);
@@ -10273,6 +10286,7 @@ class ChatApp {
         if (sidebar) {
             // Use CSS class instead of inline styles
             sidebar.classList.remove('sidebar-hidden');
+            sidebar.inert = false;
             if (this.isMobileView()) {
                 sidebar.classList.add('mobile-visible');
             } else {
@@ -10280,10 +10294,6 @@ class ChatApp {
             }
         }
         this.setSidebarHiddenAttribute(false);
-        if (showBtn) {
-            showBtn.classList.add('hidden');
-            showBtn.classList.remove('flex');
-        }
         // Show backdrop only on mobile
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
@@ -10303,7 +10313,7 @@ class ChatApp {
     }
 
     isMobileView() {
-        return window.innerWidth <= 768;
+        return window.innerWidth < 1100;
     }
 
     setupSidebarFilterControls() {
@@ -10427,16 +10437,10 @@ class ChatApp {
             });
         }
 
-        // Sidebar toggle buttons
-        if (this.elements.hideSidebarBtn) {
-            this.elements.hideSidebarBtn.addEventListener('click', () => {
-                this.hideSidebar();
-            });
-        }
-
+        // One fixed control opens and closes the sidebar without moving focus.
         if (this.elements.showSidebarBtn) {
             this.elements.showSidebarBtn.addEventListener('click', () => {
-                this.showSidebar();
+                this.toggleSidebar();
             });
         }
 
@@ -10455,7 +10459,7 @@ class ChatApp {
 
                 if (sidebar && sidebar.classList.contains('mobile-visible')) {
                     // Check if click is outside sidebar and not on the show button
-                    if (!sidebar.contains(e.target) && !showBtn.contains(e.target)) {
+                    if (!sidebar.contains(e.target) && !showBtn?.contains(e.target)) {
                         this.hideSidebar();
                     }
                 }

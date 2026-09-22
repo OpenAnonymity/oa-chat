@@ -1,5 +1,6 @@
 import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import markedApi from '../../chat/vendor/marked/marked.min.js';
 
 function installBrowser() {
     const keys = ['window', 'location', 'localStorage', 'sessionStorage', 'document', 'fetch', 'requestAnimationFrame'];
@@ -35,7 +36,7 @@ const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
 const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
 const { default: RightPanel } = await import('../../chat/components/RightPanel.js');
-const { createModelPickerInterface } = await import('../../chat/ui/appInterface.js');
+const { createModelPickerInterface, createComponentAppFacade } = await import('../../chat/ui/appInterface.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
 
@@ -182,6 +183,136 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(error.sessionId, 'one');
         assert.match(error.content, /timed out/);
         assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('wide mode updates the action label and icon immediately in both directions', () => {
+        const classes = new Set();
+        document.documentElement.classList = {
+            contains: name => classes.has(name),
+            toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }
+        };
+        const attrs = new Map();
+        const iconAttrs = new Map();
+        const app = appHarness();
+        app.elements.wideModeBtn = {
+            classList: { add() {}, remove() {}, toggle() {} },
+            setAttribute: (name, value) => attrs.set(name, value),
+            querySelector: () => ({ setAttribute: (name, value) => iconAttrs.set(name, value) })
+        };
+        app.isMobileView = () => false;
+        app.sessionUsesCouncilLayout = () => false;
+        for (const wide of [true, false, true]) {
+            app.applyWideMode(wide);
+            assert.equal(attrs.get('data-tooltip'), wide ? 'Narrow chat' : 'Widen chat');
+            assert.equal(attrs.get('aria-pressed'), String(wide));
+            assert.equal(iconAttrs.get('data-state'), wide ? 'b' : 'a');
+        }
+    });
+
+    test('sidebar retains the same available toggle through rapid open-close reversals', () => {
+        const app = appHarness();
+        const classes = new Set();
+        const attrs = new Map();
+        const label = { textContent: '' };
+        const button = {
+            setAttribute: (name, value) => attrs.set(name, value),
+            querySelector: () => label,
+            classList: { add() { assert.fail('Do not hide the persistent toggle'); }, remove() { assert.fail('Do not replace toggle visibility'); } }
+        };
+        const captures = [];
+        app.preserveChatBottomDuringWidthChange = () => captures.push(classes.has('sidebar-hidden'));
+        app.elements.showSidebarBtn = button;
+        app.elements.sidebar = {
+            classList: { contains: name => classes.has(name), add: name => classes.add(name), remove: name => classes.delete(name) }
+        };
+        app.updateWideModeButtonVisibility = app.updateToolbarDivider = () => {};
+        document.documentElement.setAttribute = document.documentElement.removeAttribute = () => {};
+        try {
+            for (const mobile of [false, true]) {
+                app.isMobileView = () => mobile;
+                for (const open of [false, true, false, true]) {
+                    app[open ? 'showSidebar' : 'hideSidebar']({ persist: false, predictToolbar: false });
+                    assert.equal(app.elements.showSidebarBtn, button);
+                    assert.equal(attrs.get('aria-expanded'), String(open));
+                    assert.equal(label.textContent, open ? 'Collapse sidebar' : 'Expand sidebar');
+                    assert.equal(app.elements.sidebar.inert, !open);
+                    assert.equal(classes.has('mobile-visible'), mobile && open);
+                }
+            }
+            assert.deepEqual(captures, [false, true, false, true], 'Capture before desktop width changes; ignore overlay changes');
+        } finally {
+            clearTimeout(app.sidebarToggleButtonTimer);
+        }
+    });
+
+    test('right panel captures bottom through the component facade before desktop layout changes', () => {
+        const app = appHarness();
+        let hidden = false;
+        const captures = [];
+        app.preserveChatBottomDuringWidthChange = () => captures.push(hidden);
+        const element = { style: {} };
+        document.getElementById = id => id === 'right-panel' ? element : null;
+        document.documentElement.setAttribute = () => { hidden = true; };
+        document.documentElement.removeAttribute = () => { hidden = false; };
+        const panel = Object.assign(Object.create(RightPanel.prototype), {
+            app: createComponentAppFacade(app), isDesktop: true, isVisible: true, lastAppliedVisibility: true
+        });
+        panel.isVisible = false; panel.updatePanelVisibility();
+        panel.updatePanelVisibility(); // Rendering without a visibility change must not restart anchoring.
+        panel.isVisible = true; panel.updatePanelVisibility();
+        panel.isDesktop = false;
+        panel.isVisible = false; panel.updatePanelVisibility();
+        panel.isVisible = true; panel.updatePanelVisibility();
+        assert.deepEqual(captures, [false, true]);
+    });
+
+    test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
+        const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
+        globalThis.marked = markedApi;
+        const app = appHarness();
+        app.escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            for (const delimit of [value => `$${value}$`, value => `\\(${value}\\)`, value => `$$${value}$$`, value => `\\[${value}\\]`]) {
+                const expressions = Array.from({ length: 25 }, (_, index) => delimit(`${index}.123\\text{ CAD}`));
+                const html = app.processContentWithLatex(expressions.join('\n\n'));
+                for (const expression of expressions) {
+                    assert.equal(html.split(expression).length - 1, 1, `Preserve exactly one ${expression}`);
+                }
+                assert.doesNotMatch(html, /OAMATH/);
+            }
+            const escapedPrices = Array.from({ length: 25 }, (_, index) => `\\$${index}.50`);
+            const prices = app.processContentWithLatex(escapedPrices.join('; '));
+            for (let index = 0; index < 25; index += 1) {
+                assert.ok(prices.includes(`<span class="math-literal-dollar">$</span>${index}.50`));
+            }
+            assert.doesNotMatch(prices, /OAMATH/);
+        } finally {
+            if (previousMarked) Object.defineProperty(globalThis, 'marked', previousMarked);
+            else delete globalThis.marked;
+        }
+    });
+
+    test('real streaming lifecycle updates sidebar activity independently for each chat', () => {
+        const app = appHarness();
+        const updates = [];
+        app.pendingProgress = new Map();
+        app.elements.messagesContainer = { querySelectorAll: () => [] };
+        app.sidebar = { updateSessionActivity: id => updates.push([id, app.isSessionStreaming(id)]) };
+        app.flushPendingStorageRefresh = () => {};
+        app.updateScrollButtonVisibility = () => {};
+        try {
+            app.setSessionStreamingState('one', true);
+            app.setSessionStreamingState('two', true);
+            app.setSessionStreamingState('one', false);
+            assert.equal(app.isSessionStreaming('two'), true);
+            app.setSessionStreamingState('two', false);
+            assert.deepEqual(updates, [['one', true], ['two', true], ['one', false], ['two', false]]);
+            const size = app.sessionStreamingStates.size;
+            assert.equal(app.isSessionStreaming('missing'), false);
+            assert.equal(app.sessionStreamingStates.size, size);
+        } finally {
+            clearInterval(app.scrollButtonCheckInterval);
+        }
     });
 
     test('switching stages settlement metadata and preserves transcript, draft and navigation', async () => {

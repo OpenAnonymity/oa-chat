@@ -14,7 +14,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             { id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' },
             { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
-            { id: 'chain', label: 'Wait for the chain', detail: 'Usually under a minute.' }
+            { id: 'chain', label: 'Waiting for confirmation', detail: 'Usually under a minute.' }
         ];
     }
     const escape = kind === 'escape';
@@ -27,8 +27,8 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
             : { id: 'wallet', label: 'Confirm the close in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
         escape
-            ? { id: 'chain', label: 'Wait for the chain', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
-            : { id: 'chain', label: 'Wait for the chain', detail: 'Usually under a minute.' }
+            ? { id: 'chain', label: 'Waiting for confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
+            : { id: 'chain', label: 'Waiting for confirmation', detail: 'Usually under a minute.' }
     ];
 }
 
@@ -39,7 +39,7 @@ export function classifyWalletStatus(kind, message = '') {
     const text = String(message || '');
     if (!text) return null;
     if (/returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
-    if (/submitted|waiting for confirmation|Checking submitted|checking confirmation/i.test(text)) return { step: 'chain', state: 'active' };
+    if (/submitted|waiting for confirmation|Checking submitted|checking confirmation|Checking (the private-vault deposit|payment status)/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
         if (/allowance|Approving/i.test(text)) return { step: 'approve', state: 'waiting' };
@@ -81,6 +81,16 @@ export function positionForPersistedPhase(kind, phase = '') {
  */
 export function walletJourney({ kind, message = '', persistedPhase = '', last = null, failed = false, ...options } = {}) {
     const steps = stepsFor(kind, options);
+    if (kind === 'deposit') {
+        const chain = steps.find(step => step.id === 'chain');
+        if (/Checking (the private-vault deposit|payment status)/i.test(message)) {
+            chain.label = 'Checking your deposit';
+            chain.detail = 'Looking for your saved deposit on Ethereum.';
+        } else if (['ambiguous', 'dropped_or_pending'].includes(persistedPhase)) {
+            chain.label = 'Deposit status unknown';
+            chain.detail = 'Check its status before trying again.';
+        }
+    }
     const position = classifyWalletStatus(kind, message) || last || positionForPersistedPhase(kind, persistedPhase) || { step: steps[0].id, state: 'active' };
     const index = position.step === 'done' ? steps.length : Math.max(0, steps.findIndex(step => step.id === position.step));
     const state = STATES.includes(position.state) ? position.state : 'active';
