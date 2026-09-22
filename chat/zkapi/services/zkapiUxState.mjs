@@ -81,7 +81,7 @@ function settlementState(transition) {
             phase: 'error',
             tone: 'error',
             title: 'Previous chat needs attention',
-            detail: transition.message || 'Unable to finish the previous chat. Try sending again to retry.',
+            detail: transition.message || 'Unable to finish the previous chat. Your recovery record is saved. Retry when the temporary-key service is available.',
             compact: 'Previous chat needs attention',
             busy: false,
             blocksSend: true
@@ -333,10 +333,13 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
     const settlementActivityState = activityState(settlementActivity);
     const walletActivityState = activityState(walletActivity);
     const transitionState = settlementState(transition);
+    const settlementNeedsAttention = transition?.phase === 'error';
     // Once the previous chat has finished, the next real access phase is the
     // useful thing to show. A stale "ready" handoff must not hide proof or key
     // creation work that has already started for the new conversation.
-    let primary = currentActivity && transition?.phase === 'ready'
+    let primary = settlementNeedsAttention
+        ? transitionState
+        : currentActivity && transition?.phase === 'ready'
         ? currentActivityState
         : currentActivity?.kind === 'access' && isRunningActivity(currentActivity)
         ? currentActivityState
@@ -433,7 +436,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
     // Concurrent private-payment work is routed to the surface where it is
     // actionable. A queued send owns the composer, while a MetaMask operation
     // owns the balance control; the activity panel can still show all work.
-    const composerPrimary = transition?.phase === 'waiting'
+    // The SDK may still own a request after the user stops waiting. Keep the
+    // terminal recovery state visible instead of reviving its old spinner.
+    const composerPrimary = settlementNeedsAttention || transition?.phase === 'waiting'
         ? transitionState
         : accessActivityState
             || withdrawalState
@@ -456,13 +461,11 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
         || accessActivityState
         || withdrawalState
         || primary;
-    // The System Panel only needs an extra card while the previous chat is
-    // closing. Keep the full states above for badges, pending responses and
-    // recovery, including when wallet activity runs alongside settlement.
-    const closingState = ['settling', 'waiting'].includes(transition?.phase)
+    // Retain the closure card on failure so recovery remains actionable.
+    const closingState = ['settling', 'waiting', 'error'].includes(transition?.phase)
         ? transitionState
         : settlementActivityState;
-    const closingPrimary = closingState ? {
+    const closingPrimary = settlementNeedsAttention ? transitionState : closingState ? {
         ...closingState,
         phase: 'closing',
         title: 'Closing previous chat',
@@ -484,13 +487,15 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
         balancePrimary,
         panelPrimary,
         closingPrimary,
+        settlementAction: settlementNeedsAttention ? 'retry'
+            : ['settling', 'waiting'].includes(transition?.phase) ? 'stop' : null,
         activities,
         runningActivities: running,
         currentActivity,
         recentError,
         note,
         showComposer,
-        journey: buildJourney(composerPrimary, transition, composerPrimary.activity || currentActivity),
+        journey: buildJourney(composerPrimary, transition, settlementNeedsAttention ? null : composerPrimary.activity || currentActivity),
         transition,
         sessionId
     };

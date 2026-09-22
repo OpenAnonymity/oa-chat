@@ -1,6 +1,7 @@
 import { fundingDisclosure, attachFundingDisclosures, captureFundingDisclosureView, restoreFundingDisclosureView } from './FundingDisclosures.js';
 import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import { settlePrivateAccess } from '../services/privateAccessSettlement.js';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
 import { explainZkapiError, isIndexerLag } from '../services/zkapiErrorCopy.mjs';
 import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
@@ -1100,6 +1101,7 @@ export default class AccountModal {
             if (withdrawButton) withdrawButton.disabled = !confirm.checked || this.busy;
         });
         withdrawButton?.addEventListener('click', () => this.run(async (report) => {
+            await settlePrivateAccess(report);
             const result = await zkapiClient.withdraw(this.withdrawMode, report);
             if (result.status === 'closed') this.view = 'balance';
             this.setStatus(result.status === 'closed'

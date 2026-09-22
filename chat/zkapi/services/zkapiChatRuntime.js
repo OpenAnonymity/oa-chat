@@ -5,6 +5,7 @@ import * as modelConfiguration from '../../services/modelConfig.js';
 import { createZkapiChatRuntimeCore } from './zkapiChatRuntimeCore.mjs';
 import { ensureModelTiersReady } from '../../publicModelTierApi.js';
 import { getModelBudget } from './zkapiModelBudget.mjs';
+import { settlePrivateAccess } from './privateAccessSettlement.js';
 
 /** Production defaults; the lifecycle core has no browser/wallet side effects. */
 export function createZkapiChatRuntime(options = {}) {
@@ -13,6 +14,7 @@ export function createZkapiChatRuntime(options = {}) {
         backend: zkapiBackend,
         createInferenceService,
         modelConfiguration,
+        settleAccess: settlePrivateAccess,
         resolveModelBudget: async (modelId, reasoningEnabled, signal) => {
             await ensureModelTiersReady({ signal });
             return getModelBudget(modelId, reasoningEnabled);

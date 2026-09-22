@@ -1,7 +1,7 @@
 import SharedRightPanel from '../../components/RightPanel.js';
 import { isIndexerLag, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
-import { getZkapiExperience, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
+import { attachZkapiSettlementActions, getZkapiExperience, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
 import { formatModelBudgetUsd, getModelBudget } from '../services/zkapiModelBudget.mjs';
 import { onModelTiersUpdate } from '../../publicModelTierApi.js';
 import { formatEstimatedCost, formatUsageTokens } from '../services/modelPricing.mjs';
@@ -310,6 +310,7 @@ export default class RightPanel extends SharedRightPanel {
     attachTopSectionEventListeners() {
         // Preserve OA's ephemeral-key, verifier, and network-proxy controls.
         super.attachTopSectionEventListeners();
+        attachZkapiSettlementActions(document.querySelector('#right-panel'), this.app);
         attachPrivateBalanceHelp(document.querySelector('#right-panel'), this);
         document.getElementById('zkapi-panel-fund')?.addEventListener('click', () => {
             window.dispatchEvent(new CustomEvent('zkapi-payment-required', {

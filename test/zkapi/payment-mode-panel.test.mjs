@@ -61,23 +61,32 @@ function panelFixture() {
     return { panel, session, setTransition: value => { transition = value; } };
 }
 
-test('ticket funding keeps its controls and shows a non-blocking notice only during closure', t => {
+test('ticket funding preserves controls and private closure recovery after failure', t => {
     t.mock.method(TicketRightPanel.prototype, 'generateFundingSectionHTML', function () {
         assert.equal(this.currentSession.inferenceBackend, 'openrouter');
         return '<div id="normal-ticket-controls">Tickets and invitation form</div>';
     });
     const { panel, setTransition } = panelFixture();
     for (const phase of ['settling', 'waiting', 'ready', 'error', null]) {
-        setTransition(phase ? { phase, message: 'Sensitive protocol diagnostic' } : null);
+        setTransition(phase ? { phase, message: 'Recovery record saved. <Try later>' } : null);
         const html = panel.generateFundingSectionHTML();
         assert.match(html, /id="normal-ticket-controls"/);
-        assert.match(html, /Closing previous chat/);
-        assert.match(html, /You can keep using Tickets\./);
+        if (['settling', 'waiting', 'error'].includes(phase)) {
+            assert.match(html, /You can keep using Tickets\./);
+            assert.match(html, new RegExp(`data-zkapi-settlement-action="${phase === 'error' ? 'retry' : 'stop'}"`));
+        }
+        if (phase === 'error') {
+            assert.match(html, /Previous chat needs attention/);
+            assert.match(html, /Recovery record saved\. &lt;Try later&gt;/);
+            assert.doesNotMatch(html, /zkapi-state-spinner/);
+        } else if (['settling', 'waiting'].includes(phase)) {
+            assert.match(html, /Closing previous chat/);
+        }
         assert.match(html, /role="status" aria-live="polite"/);
-        assert.doesNotMatch(html, /Ready for a new chat|Sending will wait|Sensitive protocol diagnostic/);
+        assert.doesNotMatch(html, /Ready for a new chat|Sending will wait|<Try later>/);
         const noticeTag = html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0];
         assert.ok(noticeTag);
-        assert.equal(/\bhidden\b/.test(noticeTag), !['settling', 'waiting'].includes(phase));
+        assert.equal(/\bhidden\b/.test(noticeTag), !['settling', 'waiting', 'error'].includes(phase));
     }
 });
 
@@ -85,9 +94,13 @@ test('settlement updates toggle only the keyed notice without remounting ticket 
     const { panel, setTransition } = panelFixture();
     let hidden = true;
     let hiddenWrites = 0;
+    let html = '';
+    let htmlWrites = 0;
     const notice = {
         get hidden() { return hidden; },
-        set hidden(value) { hidden = value; hiddenWrites += 1; }
+        set hidden(value) { hidden = value; hiddenWrites += 1; },
+        get innerHTML() { return html; },
+        set innerHTML(value) { html = value; htmlWrites += 1; }
     };
     t.mock.method(document, 'getElementById', id => {
         assert.equal(id, 'zkapi-ticket-closing-notice');
@@ -104,6 +117,7 @@ test('settlement updates toggle only the keyed notice without remounting ticket 
     panel.handleZkapiChange({ reason: 'clock' });
     panel.onRuntimePresentationChange();
     assert.equal(hiddenWrites, 1, 'Repeated progress preserves the existing notice and spinner');
+    assert.equal(htmlWrites, 1, 'Repeated progress preserves its recovery action');
 
     setTransition({ phase: 'ready' });
     panel.handleZkapiChange({ reason: 'activity-complete' });
@@ -111,7 +125,10 @@ test('settlement updates toggle only the keyed notice without remounting ticket 
     assert.equal(hiddenWrites, 2);
     setTransition({ phase: 'error' });
     panel.onRuntimePresentationChange();
-    assert.equal(hiddenWrites, 2, 'Failure adds no persistent error card');
+    assert.equal(hiddenWrites, 3, 'Failure restores the recovery card');
+    assert.equal(hidden, false);
+    assert.match(html, /data-zkapi-settlement-action="retry"/);
+    assert.doesNotMatch(html, /zkapi-state-spinner/);
 
     setTransition({ phase: 'waiting' });
     panel.onRuntimePresentationChange();

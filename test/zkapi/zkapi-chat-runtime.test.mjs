@@ -177,6 +177,107 @@ test('exhausted settlement retry deadline reports a recoverable error instead of
     assert.equal(h.calls.settlement, 1);
 });
 
+test('a hung settlement stops the visible wait without starting overlapping SDK mutations', async () => {
+    const held = deferred();
+    const h = harness({ settle: () => held.promise, runtime: { retirementTimeoutMs: 10 } });
+    await assert.rejects(h.runtime.prepareTurn({ sessionId: 'next' }), /could not finish in time/);
+    assert.equal(h.runtime.getTransition().phase, 'error');
+    assert.equal(h.runtime.getSessionStatus({ id: 'next' }), null);
+    await assert.rejects(h.runtime.retrySettlement(), /could not finish in time/);
+    assert.equal(h.calls.settlement, 1);
+    held.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.runtime.getTransition().phase, 'ready', 'late signed settlement completion remains visible');
+    await h.runtime.beforeDelete({ sessionIds: ['previous'] });
+});
+
+test('Stop waiting aborts recovery and releases queued sends while preserving an unresolved operation', async () => {
+    const held = deferred();
+    let recoverySignal;
+    let calls = 0;
+    const h = harness({ runtime: { settleAccess: async (_status, { signal }) => {
+        calls += 1;
+        recoverySignal = signal;
+        await held.promise;
+        if (signal.aborted) throw signal.reason;
+    } } });
+    const sending = h.runtime.prepareTurn({ sessionId: 'next' });
+    await new Promise(resolve => setImmediate(resolve));
+    h.runtime.stopSettlementWaiting();
+    await assert.rejects(sending, /Stopped waiting/);
+    assert.equal(recoverySignal.aborted, true);
+    assert.equal(h.runtime.getTransition().phase, 'error');
+    assert.equal(h.client.activeLease.session_id, 'previous');
+    await assert.rejects(h.runtime.retrySettlement(), /Stopped waiting/);
+    assert.equal(calls, 1);
+    held.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    await h.runtime.retrySettlement();
+    assert.equal(calls, 2);
+});
+
+test('the deadline includes draining previous chat work and prevents late settlement from starting', async () => {
+    const held = deferred();
+    const h = harness({ runtime: { retirementTimeoutMs: 10 } });
+    h.context.cancelSessionWork = () => held.promise;
+    await assert.rejects(h.runtime.prepareTurn({ sessionId: 'next' }), /could not finish in time/);
+    assert.equal(h.calls.settlement, 0);
+    held.resolve();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.calls.settlement, 0);
+    assert.equal(h.runtime.getTransition().phase, 'error');
+});
+
+test('deleting a failed first chat recovers its ownerless journal before releasing history', async () => {
+    const h = harness();
+    h.sessions.get('previous').inferenceBackend = 'zkapi';
+    h.client.activeLease = null;
+    h.client.getPendingLeaseOwner = async () => null;
+    h.client.hasPendingLease = async () => h.calls.settlement === 0;
+    await h.runtime.beforeDelete({ sessionIds: ['previous'] });
+    assert.equal(h.calls.settlement, 1);
+    assert.equal(h.runtime.getTransition().phase, 'ready');
+});
+
+test('deletion owner discovery has a deadline and Stop waiting before any visible key exists', async () => {
+    for (const stop of [false, true]) {
+        const held = deferred();
+        const h = harness({ runtime: { retirementTimeoutMs: stop ? 1000 : 10 } });
+        h.sessions.get('previous').inferenceBackend = 'zkapi';
+        h.client.activeLease = null;
+        h.client.getPendingLeaseOwner = () => held.promise;
+        const deletion = h.runtime.beforeDelete({ sessionIds: ['previous'] });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.runtime.getTransition().phase, 'settling');
+        if (stop) h.runtime.stopSettlementWaiting();
+        await assert.rejects(deletion, stop ? /Stopped waiting/ : /could not finish in time/);
+        assert.equal(h.runtime.getTransition().phase, 'error');
+        assert.equal(h.calls.settlement, 0);
+        held.resolve(null);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(h.calls.settlement, 0, 'late owner lookup cannot start canceled settlement');
+    }
+});
+
+test('concurrent deletion cannot mistake another candidate for the wallet owner during discovery', async () => {
+    const held = deferred();
+    const h = harness();
+    h.sessions.get('next').inferenceBackend = 'zkapi';
+    h.sessions.get('previous').inferenceBackend = 'zkapi';
+    h.client.getPendingLeaseOwner = () => held.promise;
+    const unrelated = h.runtime.beforeDelete({ sessionIds: ['next'] });
+    const secondUnrelated = h.runtime.beforeDelete({ sessionIds: ['unloaded-private-chat'] });
+    let ownerDeleted = false;
+    const owner = h.runtime.beforeDelete({ sessionIds: ['previous'] }).then(() => { ownerDeleted = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(ownerDeleted, false);
+    assert.equal(h.calls.settlement, 0);
+    held.resolve('previous');
+    await Promise.all([unrelated, secondUnrelated, owner]);
+    assert.equal(h.calls.settlement, 1);
+    assert.equal(h.client.activeLease, null);
+});
+
 test('delete waits for current key release and refuses pending recovery instead of losing its owner', async () => {
     const settlement = deferred();
     const h = harness({ settle: () => settlement.promise });
@@ -227,7 +328,7 @@ test('ticket-mode history retains protection for its hidden private recovery own
         h.client.getPendingLeaseOwner = async () => 'next';
         h.client.hasPendingLease = async () => true;
         await assert.rejects(h.runtime.beforeDelete({ sessionIds: ['next'] }), /still finishing/);
-        assert.equal(h.calls.settlement, 0, 'hidden recovery remains durable until explicitly settled');
+        assert.equal(h.calls.settlement, 1, 'deletion retries recovery but cannot discard an unresolved journal');
         h.client.getPendingLeaseOwner = async () => null;
         h.client.hasPendingLease = async () => false;
         await h.runtime.beforeDelete({ sessionIds: ['next'] });

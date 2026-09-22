@@ -1,5 +1,6 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
+import { zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 
 function escapeFallback(value) {
     return String(value ?? '')
@@ -72,6 +73,32 @@ function renderActivityRows(state, escapeHtml = escapeFallback, limit = 4) {
         </li>`).join('')}</ul>`;
 }
 
+function renderSettlementAction(state) {
+    const action = state.settlementAction;
+    if (!['stop', 'retry'].includes(action)) return '';
+    return `<button type="button" class="btn-ghost-hover rounded-md border border-border px-2 py-1 text-xs" data-zkapi-settlement-action="${action}" aria-label="${action === 'stop' ? 'Stop waiting for previous chat' : 'Retry finishing previous chat'}">${action === 'stop' ? 'Stop waiting' : 'Retry'}</button>`;
+}
+
+export function attachZkapiSettlementActions(element, app) {
+    const button = element?.querySelector?.('[data-zkapi-settlement-action]');
+    if (!button) return;
+    button.addEventListener('click', async () => {
+        if (button.disabled) return;
+        button.disabled = true;
+        try {
+            if (button.dataset.zkapiSettlementAction === 'stop') {
+                await app?.integration?.stopSettlementWaiting?.();
+            } else {
+                await app?.integration?.retrySettlement?.();
+            }
+        } catch (error) {
+            app?.showToast?.(zkapiErrorMessage(error, 'Unable to finish the previous chat. Your recovery record is saved.'), 'error');
+        } finally {
+            button.disabled = false;
+        }
+    });
+}
+
 function visualStateLabel(primary) {
     if (primary.tone === 'error') return 'Needs attention';
     if (primary.phase === 'queued') return 'Queued';
@@ -137,6 +164,7 @@ function renderLowTextPanel(state, escapeHtml = escapeFallback) {
             <div class="zkapi-panel-disclosure-body">
                 <strong>${escapeHtml(primary.title)}</strong>
                 <p>${escapeHtml(primary.detail)}</p>
+                ${renderSettlementAction(state)}
                 ${renderActivityRows(state, escapeHtml, 3)}
             </div>
         </details>`;
@@ -156,6 +184,7 @@ export function renderZkapiPanelExperience(state, escapeHtml = escapeFallback) {
                     <div><strong>${escapeHtml(primary.title)}</strong><p>${escapeHtml(primary.detail)}</p></div>
                 </div>
                 ${renderJourney(state, escapeHtml)}
+                ${renderSettlementAction(state)}
             </section>`;
     }
     if (proposal === 'activity') {
@@ -167,6 +196,7 @@ export function renderZkapiPanelExperience(state, escapeHtml = escapeFallback) {
                     ${state.runningActivities.length ? `<span class="zkapi-running-count">${state.runningActivities.length} active</span>` : ''}
                 </div>
                 ${renderActivityRows(state, escapeHtml)}
+                ${renderSettlementAction(state)}
             </section>`;
     }
     if (!state.showComposer && primary.tone !== 'error') return '';
@@ -176,6 +206,7 @@ export function renderZkapiPanelExperience(state, escapeHtml = escapeFallback) {
                 ${stateGlyph(primary)}
                 <div><strong>${escapeHtml(primary.title)}</strong><p>${escapeHtml(primary.detail)}</p></div>
             </div>
+            ${renderSettlementAction(state)}
         </section>`;
 }
 
@@ -226,7 +257,8 @@ export function renderZkapiComposerStatus(element, app, stateOverride = null) {
     if (!element) return;
     const state = stateOverride || getZkapiExperience(app);
     const primary = state.composerPrimary || state.primary;
-    const { proposal } = state;
+    // Ambient's decorative line has no height for interactive controls.
+    const proposal = state.proposal === 'ambient' && state.settlementAction ? 'relay' : state.proposal;
     mirrorPhaseToast(app, primary, state.balancePrimary || state.primary);
     if (['receipt', 'relay', 'ambient', 'capsule'].includes(proposal)
         && isPassiveLowTextState(primary)) {
@@ -252,6 +284,7 @@ export function renderZkapiComposerStatus(element, app, stateOverride = null) {
         primary.title,
         primary.detail,
         primary.compact,
+        state.settlementAction,
         visualStateLabel(primary),
         proposal === 'guided'
             ? state.journey.map(step => [step.id, step.label, step.state])
@@ -269,62 +302,61 @@ export function renderZkapiComposerStatus(element, app, stateOverride = null) {
     element.dataset.tone = primary.tone;
     element.dataset.phase = primary.phase;
     element.setAttribute('aria-busy', primary.busy ? 'true' : 'false');
+    let content;
     if (proposal === 'receipt') {
-        element.innerHTML = `
+        content = `
             <button type="button" class="zkapi-composer-relay zkapi-composer-receipt" data-zkapi-open-activity aria-label="${escapeFallback(visualStateLabel(primary))}. Open details">
                 ${stateGlyph(primary)}
                 <span>${escapeFallback(visualStateLabel(primary))}</span>
             </button>
             ${renderLowTextLiveStatus(primary)}`;
-        element.querySelector('[data-zkapi-open-activity]')?.addEventListener('click', () => showActivityPanel(app));
     } else if (proposal === 'relay') {
-        element.innerHTML = `
+        content = `
             <button type="button" class="zkapi-composer-relay" data-zkapi-open-activity aria-label="${escapeFallback(visualStateLabel(primary))}. Open details">
                 ${stateGlyph(primary)}
                 <span>${escapeFallback(visualStateLabel(primary))}</span>
                 <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9m-3-3 3 3-3 3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"/></svg>
             </button>
             ${renderLowTextLiveStatus(primary)}`;
-        element.querySelector('[data-zkapi-open-activity]')?.addEventListener('click', () => showActivityPanel(app));
     } else if (proposal === 'ambient') {
-        element.innerHTML = `
+        content = `
             <button type="button" class="zkapi-composer-ambient-button" data-zkapi-open-activity aria-label="${escapeFallback(visualStateLabel(primary))}. Open details">
                 ${stateGlyph(primary)}
             </button>
             ${renderLowTextLiveStatus(primary)}`;
-        element.querySelector('[data-zkapi-open-activity]')?.addEventListener('click', () => showActivityPanel(app));
     } else if (proposal === 'capsule') {
         const endpoints = capsuleEndpoints(primary);
-        element.innerHTML = `
+        content = `
             <button type="button" class="zkapi-composer-capsule" data-zkapi-open-activity aria-label="${escapeFallback(visualStateLabel(primary))}. Open details">
                 ${endpoints.origin}
                 ${stateGlyph(primary)}
                 ${endpoints.end}
             </button>
             ${renderLowTextLiveStatus(primary)}`;
-        element.querySelector('[data-zkapi-open-activity]')?.addEventListener('click', () => showActivityPanel(app));
     } else if (proposal === 'guided') {
-        element.innerHTML = `
+        content = `
             <div class="zkapi-composer-guided-heading">
                 ${stateGlyph(primary)}
                 <span><strong>${escapeFallback(primary.title)}</strong><small>${escapeFallback(primary.detail)}</small></span>
             </div>
             ${renderJourney(state, escapeFallback, true)}`;
     } else if (proposal === 'activity') {
-        element.innerHTML = `
+        content = `
             <div class="zkapi-composer-inline">
                 ${stateGlyph(primary)}
                 <span class="zkapi-composer-copy"><strong>${escapeFallback(primary.compact)}</strong><small>${escapeFallback(primary.detail)}</small></span>
                 <button type="button" data-zkapi-open-activity>View activity</button>
             </div>`;
-        element.querySelector('[data-zkapi-open-activity]')?.addEventListener('click', () => showActivityPanel(app));
     } else {
-        element.innerHTML = `
+        content = `
             <div class="zkapi-composer-inline">
                 ${stateGlyph(primary)}
                 <span class="zkapi-composer-copy"><strong>${escapeFallback(primary.compact)}</strong><small>${escapeFallback(primary.detail)}</small></span>
             </div>`;
     }
+    element.innerHTML = `${content}${renderSettlementAction(state)}`;
+    element.querySelector('[data-zkapi-open-activity]')?.addEventListener('click', () => showActivityPanel(app));
+    attachZkapiSettlementActions(element, app);
 }
 
 export function updateZkapiBalanceControl(button, app) {

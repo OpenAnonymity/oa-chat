@@ -1,6 +1,7 @@
 import zkapiAPI from '../../../api.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { DEFAULT_MODEL_ID, DEFAULT_MODEL_NAME } from '../../modelPricing.mjs';
+import { settlePrivateAccess } from '../../privateAccessSettlement.js';
 
 export function createZkapiBackend(api = zkapiAPI) {
     const zkapiBackend = {
@@ -115,7 +116,7 @@ export function createZkapiBackend(api = zkapiAPI) {
             }
             if (!session?.id) throw new Error('No active chat is available.');
             if (session.zkapiSettleBeforeAccess) {
-                await zkapiClient.settleActiveLease(undefined, { sessionId: session.id });
+                await settlePrivateAccess(undefined, { sessionId: session.id, signal });
                 delete session.zkapiSettleBeforeAccess;
             }
             const token = session.zkapiSessionId || session.apiKey || session.id;

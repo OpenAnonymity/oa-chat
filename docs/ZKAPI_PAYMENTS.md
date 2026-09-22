@@ -99,6 +99,30 @@ This source reorganization changes neither contract expiry nor withdrawal
 behavior. Private balance expiry does not automatically refund unused funds;
 the balance help/history continue to explain the deployed contract behavior.
 
+### Interrupted temporary-key issuance
+
+An issuer outage can leave a saved proof and a server lease in `provisioning`
+before the SDK has a key or chat owner. The pinned SDK only recovers active or
+finalized leases; repeatedly asking it to settle provisioning cannot progress.
+OA's `privateLeaseRecovery.mjs` compatibility adapter replays that exact saved
+request under the SDK wallet lock, verifies the returned key, retires it without
+exposing it to inference, and installs the SDK-verified signed receipt. It never
+clears a journal merely because a key was not returned. It also reconciles an
+ownerless active/finalized request left by interruption during this recovery.
+Move this behavior into the SDK when updating the dependency, retaining these
+regression tests.
+
+New Chat, deletion, renewal, and withdrawal share this recovery path. Settlement
+waits are bounded (30 seconds at the shared SDK boundary, 45 seconds including
+chat cleanup); the status exposes **Stop waiting** and **Retry**. Stopping a wait
+preserves the journal and any SDK mutation still holding the wallet lock. A
+second attempt cannot start overlapping work while that mutation is unfinished.
+Once the service returns, retrying reconciles the saved request so deletion and
+withdrawal can proceed. During an unresolved issuer outage they can still be
+blocked: the server has reserved the note's nullifier, and a client cannot safely
+assume that a missing response means no key was issued. No automatic refund or
+force-reset is performed.
+
 ## Funding setup
 
 Funding onboarding has one “Set up your wallet” disclosure with four visible

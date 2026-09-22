@@ -15,22 +15,25 @@ function abortError() {
 
 function waitFor(promise, signal) {
     if (!signal) return promise;
-    if (signal.aborted) return Promise.reject(abortError());
+    const cancellation = () => signal.reason?.name !== 'AbortError' && signal.reason
+        ? signal.reason : abortError();
+    if (signal.aborted) return Promise.reject(cancellation());
     return new Promise((resolve, reject) => {
-        const abort = () => reject(abortError());
+        const abort = () => reject(cancellation());
         signal.addEventListener('abort', abort, { once: true });
         promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
     });
 }
 
 /** OA owns the chat lifecycle; the SDK owns private keys, proofs and settlement. */
-export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
     if (!client || !backend || typeof createInferenceService !== 'function' || !modelConfiguration) {
         throw new Error('Private chat runtime dependencies are required.');
     }
     let context = null;
     let transition = null;
     let retirement = null;
+    let retirementController = null;
     let disposed = false;
     const previews = new Map();
     const queuedSessions = new Map();
@@ -66,55 +69,104 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
         publish();
     }
 
-    function startRetirement(sessionId, { cancelWork = true, expectedOwner = false } = {}) {
+    function startRetirement(sessionId, { cancelWork = true, expectedOwner = false, deletionScope } = {}) {
         if (retirement) return retirement;
-        const ownerId = expectedOwner ? sessionId : client.activeLease?.session_id || sessionId;
+        let ownerId = expectedOwner ? sessionId : client.activeLease?.session_id || sessionId;
         if (!ownerId) return Promise.resolve();
         setTransition({ phase: 'settling', sessionId: ownerId,
             title: context?.getSession(ownerId)?.title || 'Previous chat',
             message: 'Closing the previous chat key in the background.' });
         logSettlement('lease-settlement-start', 'Closing the previous chat key in the background.', ownerId);
+        const controller = new AbortController();
+        retirementController = controller;
+        const { signal } = controller;
+        const checkCanceled = () => { if (signal.aborted) throw signal.reason; };
+        const timer = setTimeout(() => controller.abort(new Error(
+            'Private access could not finish in time. Your recovery record is saved. Retry when the temporary-key service is available.'
+        )), retirementTimeoutMs);
         // Assign the promise before any await; a rapid Send sees this barrier.
         const job = Promise.resolve().then(async () => {
+            checkCanceled();
             if (cancelWork) await context?.cancelSessionWork(ownerId);
-            if (expectedOwner) {
+            checkCanceled();
+            if (expectedOwner || deletionScope !== undefined) {
                 // Hydration and owner discovery belong inside the registered
                 // barrier: a fast return to private mode must see them too.
                 await client.init();
+                checkCanceled();
+            }
+            if (deletionScope !== undefined) {
+                const owner = typeof client.getPendingLeaseOwner === 'function'
+                    ? await client.getPendingLeaseOwner() : client.activeLease?.session_id;
+                checkCanceled();
+                if (owner && deletionScope && !deletionScope.includes(owner)) return;
+                if (!client.activeLease && !await client.hasPendingLease()) return;
+                checkCanceled();
+                if (owner) {
+                    ownerId = owner;
+                    setTransition({ ...transition, sessionId: ownerId });
+                }
             }
             const deadline = Date.now() + retirementTimeoutMs;
             while (true) {
+                checkCanceled();
                 if (expectedOwner) {
                     const owner = typeof client.getPendingLeaseOwner === 'function'
                         ? await client.getPendingLeaseOwner() : client.activeLease?.session_id;
-                    if (owner !== ownerId) break;
+                    checkCanceled();
+                    // Failed issuance has a journal but no lease owner yet.
+                    // It still needs reconciliation before scoped retirement.
+                    if (owner && owner !== ownerId) break;
                 }
                 if (!expectedOwner && client.activeLease && client.activeLease.session_id !== ownerId) break;
                 try {
-                    await client.settleActiveLease(undefined, expectedOwner ? { sessionId: ownerId } : {});
+                    if (settleAccess) {
+                        await settleAccess(undefined, { sessionId: ownerId, signal, expectedOwner });
+                    } else {
+                        await client.settleActiveLease(undefined, expectedOwner ? { sessionId: ownerId } : {});
+                    }
                     break;
                 } catch (error) {
+                    checkCanceled();
                     const retryable = ['lease_requests_in_flight', 'lease_pending', 'lease_settlement_pending'].includes(error?.code)
                         || /still (?:settling|being finalized)/i.test(error?.message || '');
                     const retryAfter = Number(error?.data?.retry_after_seconds ?? error?.data?.error?.retry_after_seconds);
                     const delay = Number.isFinite(retryAfter) && retryAfter >= 0
                         ? Math.max(250, Math.ceil(retryAfter * 1000)) : 1000;
                     if (!retryable || Date.now() + delay > deadline) throw error;
-                    await retryDelay(delay);
+                    await waitFor(retryDelay(delay), signal);
                 }
             }
+            if (deletionScope !== undefined && await client.hasPendingLease()) {
+                checkCanceled();
+                const owner = typeof client.getPendingLeaseOwner === 'function'
+                    ? await client.getPendingLeaseOwner() : client.activeLease?.session_id;
+                checkCanceled();
+                if (!owner || !deletionScope || deletionScope.includes(owner)) {
+                    throw new Error('Private access is still finishing. Try again shortly.');
+                }
+            }
+        }).then(() => {
             setTransition({ phase: 'ready', sessionId: ownerId, message: 'Previous chat settled.' });
             logSettlement('lease-settlement-complete', 'Previous chat key settled. Remaining balance is available.', ownerId);
         });
-        retirement = job;
-        job.then(() => {
-            if (retirement === job) retirement = null;
-        }, error => {
-            if (retirement === job) retirement = null;
+        const waiting = waitFor(job, signal);
+        retirement = waiting;
+        waiting.catch(error => {
             setTransition({ phase: 'error', sessionId: ownerId, message: zkapiErrorMessage(error, 'Could not finish the previous chat.') });
             logSettlement('lease-settlement-error', 'Could not finish the previous chat. Retry to continue.', ownerId);
         });
-        return job;
+        // Stop the UI wait, never forget an SDK mutation still holding the
+        // wallet lock. Retry joins this attempt until its work actually exits.
+        const release = () => {
+            clearTimeout(timer);
+            if (retirement === waiting) {
+                retirement = null;
+                retirementController = null;
+            }
+        };
+        job.then(release, release);
+        return waiting;
     }
 
     async function recordUsage({ sessionId, requestId, usage, pricing = null, kind = 'response', final = true }) {
@@ -217,7 +269,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
         },
         async beforeDelete({ sessionIds, all = false }) {
             // Clearing history also removes sessions not loaded in memory.
-            const scopedIds = all ? null : sessionIds;
+            const scopedIds = all || !sessionIds ? null : sessionIds;
             const affects = sessionId => Boolean(sessionId)
                 && (!scopedIds || scopedIds.includes(sessionId));
             const needsPrivateCheck = session => !session || session.inferenceBackend === 'zkapi'
@@ -235,20 +287,26 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
 
             // The wallet snapshot may already be clear while settlement is
             // still publishing its durable result. Keep its owner recoverable.
-            if (retirement && affects(transition?.sessionId)) await retirement;
-            const active = client.activeLease;
-            if (active && affects(active.session_id)) {
-                await startRetirement(active.session_id, { expectedOwner: true });
-            }
-            // The durable journal can outlive the visible key, including after
-            // a reload into Tickets. Only its owner must wait; an unrelated
-            // private chat must not stop deletion of another conversation.
-            const pendingOwner = typeof client.getPendingLeaseOwner === 'function'
-                ? await client.getPendingLeaseOwner() : client.activeLease?.session_id;
-            if (pendingOwner && !affects(pendingOwner)) return;
-            if (await client.hasPendingLease()) throw new Error('Private access is still finishing. Try again shortly.');
+            // The displayed owner can still be a deletion candidate while
+            // durable owner discovery is waiting on the wallet lock. It is
+            // never evidence that a different deletion target is safe.
+            while (retirement) await retirement;
+            // Owner discovery also takes the wallet lock. Include every read
+            // and the final journal check in the cancellable deadline, even
+            // when failed issuance never produced a visible active key.
+            await startRetirement(scopedIds?.[0] || client.activeLease?.session_id || 'private-access-recovery', {
+                cancelWork: false, expectedOwner: true, deletionScope: scopedIds
+            });
         },
         getTransition: () => transition,
+        stopSettlementWaiting() {
+            retirementController?.abort(new Error(
+                'Stopped waiting for private access. Your recovery record is saved. Retry when the temporary-key service is available.'
+            ));
+        },
+        retrySettlement() {
+            return startRetirement(transition?.sessionId || client.activeLease?.session_id);
+        },
         retireSessionAccess(sessionId) {
             return startRetirement(sessionId, { cancelWork: false, expectedOwner: true });
         },

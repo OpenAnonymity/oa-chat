@@ -579,6 +579,34 @@ shell, not only isolated RightPanel previews, when changing header controls.
 
 # App State and Handoff
 
+## 2026-09-22: Recover zkAPI chats interrupted during key issuance
+
+- A failed first Send can retain an ownerless SDK proof journal while the server
+  lease remains `provisioning`. The pinned SDK's settlement does not advance
+  this status, and scoped settlement may return without touching the journal.
+  Do not use `activeLease === null` or a successful scoped call as proof that
+  the wallet is clear.
+- The host compatibility adapter replays only the original saved request under
+  the SDK wallet lock, verifies the recovered key, retires it without exposing
+  it to inference, and applies the SDK's signed receipt. Recovery preserves
+  other-chat/other-tab ownership and retains the journal on all failures.
+- New Chat, deletion, renewal and withdrawal share bounded settlement. Stop
+  waiting releases UI waiters and aborts recovery where supported; it does not
+  forget a still-running SDK mutation. Retry cannot overlap that work. Error
+  status and recovery controls remain visible even if the SDK's last activity
+  still says settling. Deletion now retries ownerless recovery too.
+- An issuer outage can still block deletion/withdrawal until the reserved
+  request is reconciled. Clearing browser storage or inventing zero usage would
+  risk losing funds; neither is part of this fix. See
+  [Interrupted temporary-key issuance](ZKAPI_PAYMENTS.md#interrupted-temporary-key-issuance).
+- Validation after rebasing onto current main: 886 core and 292 native payment
+  tests pass, including real pinned
+  SDK methods with simulated network/storage/proof boundaries. The zkAPI Sepolia
+  production build succeeds. Desktop/mobile browser checks exercise Stop waiting
+  and Retry with simulated settlement state; no live funded outage transaction
+  was performed. Adversarial review approved after bounding deletion discovery,
+  preserving daemon settlement, and serializing concurrent deletion scopes.
+
 This is the living handoff doc for the web app's current state. Use it to capture UI
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
