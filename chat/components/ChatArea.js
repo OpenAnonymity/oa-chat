@@ -1,4 +1,5 @@
 import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
+import { restoredResponseForDisplay } from '../ui/restoredResponse.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 import { syncScrollFade, syncAllScrollFades, watchScrollFade } from '../ui/scrollFade.js';
 /**
@@ -1887,14 +1888,7 @@ export default class ChatArea {
             options.isSessionStreaming = isSessionStreaming;
             options.pendingPhase = streamingPhase;
             options.pendingProgress = this.app.getSessionPendingProgress?.(session.id) || null;
-            // Normalize streaming state for messages loaded from DB.
-            // If streamingReasoning/streamingTokens are set AND session is NOT currently streaming,
-            // it means streaming was interrupted (e.g., browser closed, network error).
-            // Skip normalization if session is actively streaming to preserve the streaming UI state.
-            const shouldNormalize = !isSessionStreaming && (message.streamingReasoning || message.streamingTokens !== null);
-            const normalizedMessage = shouldNormalize
-                ? { ...message, streamingReasoning: false, streamingTokens: null }
-                : message;
+            const normalizedMessage = restoredResponseForDisplay(message, isSessionStreaming);
 
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 

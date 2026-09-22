@@ -2021,7 +2021,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const isMessageComplete = !message.streamingReasoning &&
         (message.streamingTokens === null || message.streamingTokens === undefined);
     const isSessionStreaming = options.isSessionStreaming || false;
-    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming) ? `
+    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming && !message.inferenceError) ? `
         <span class="text-xs text-muted-foreground opacity-70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
 

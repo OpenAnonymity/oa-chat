@@ -108,9 +108,10 @@ export function createPaymentModeUi(runtime) {
             privateBalance = new ZkapiAccountModal(app, {
                 triggerId: null,
                 overlayId: 'payment-balance-modal',
-                // Saved wallet progress reopens after a reload only while the
-                // current chat pays with zkAPI; a tickets chat never sees it.
-                canRestore: () => !app.restoringInitialConversation && runtime.getMode() === 'zkapi'
+                // Explicit same-tab dialog intent survives a restored OA chat.
+                // Without it, do not surface unrelated zkAPI work over OA.
+                canRestore: ({ hasSavedModal = false } = {}) => !app.restoringInitialConversation
+                    && (hasSavedModal || runtime.getMode() === 'zkapi')
             });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();

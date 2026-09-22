@@ -1,3 +1,14 @@
+## 2026-09-22: Keep an unresolved deposit dialog through repeated reloads
+
+- An open funding dialog retains its tab-scoped view marker while deposit/approval confirmation is unresolved, including after its JS action returns and after restoration. Closing it or resolving the deposit clears the marker. The marker contains only view/mode, never wallet credentials or transaction data.
+- After initial navigation finishes, explicit same-tab dialog intent may restore over an OA chat without switching its payment mode. Without that intent, SDK-persisted operations still only auto-open in zkAPI mode. Restoration only opens the dialog and refreshes status; no deposit, approval, wallet prompt, or inference request is submitted.
+
+## 2026-09-22: Reloaded response display and resumption boundary
+
+- Ordinary saved assistant streaming flags no longer leave an endless waiting indicator when this tab has no live request. A display-only copy clears the flags, preserves partial text/reasoning/images, and offers the existing manual Retry response action with an explicit new-request notice. Stored records remain untouched because another tab may still own the request. Live sessions and completed/legacy messages are unchanged.
+- Reload never automatically resends a prompt or acquires a replacement key. The direct provider stream has no reconnect path here; a returned access key is authorization, not a handle for retrieving the original response. True continuation after reload is not implemented. Existing key verification, proxy policy, SDK recovery/settlement, and manual retry access rules remain intact. The OA ticket redemption/response-loss gap described below also remains; stopping the browser cannot undo a redemption accepted by the server.
+- Parallel/Council and memory-agent workflows have their own render/state models; this change is limited to ordinary assistant response display.
+
 ## 2026-09-22: Clearer standard withdrawal steps
 
 - Preparation copy identifies the zkAPI server authorizing the withdrawal and the device creating its proof. The wallet step says “Confirm your withdrawal in MetaMask” and explains returning the remaining balance to the wallet. Deposit cancellations say “Deposit canceled.” in both funding screens; standard withdrawal cancellations say “Withdrawal canceled.” Escape recovery wording and all transaction behavior remain unchanged.

@@ -63,6 +63,53 @@ test('reload opens saved deposit progress once without resubmitting', async t =>
     assert.equal(f.modal.isOpen, false, 'background refresh must not undo dismissal');
 });
 
+test('an awaiting-wallet deposit keeps its dialog intent across repeated reloads', async t => {
+    const config = { pending_deposit: { phase: 'awaiting_wallet' } };
+    const first = setup(t, { config });
+    await first.load();
+    assert.equal(first.modal.isOpen, true);
+    first.notify();
+    const savedModal = JSON.parse(first.storage.get('oa-zkapi-running-modal'));
+    assert.equal(savedModal.view, 'fund');
+    const reloaded = setup(t, { config, savedModal });
+    await reloaded.load();
+    assert.equal(reloaded.modal.isOpen, true);
+    assert.equal(reloaded.storage.has('oa-zkapi-running-modal'), true);
+    reloaded.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    reloaded.modal.close();
+    assert.equal(reloaded.storage.has('oa-zkapi-running-modal'), false);
+    reloaded.notify();
+    assert.equal(reloaded.modal.isOpen, false);
+});
+
+test('a finished JS action retains dialog intent if the wallet outcome is unresolved', async t => {
+    const f = setup(t);
+    await f.load();
+    f.modal.open('fund');
+    await f.modal.run(async () => { zkapiClient.config.pending_deposit = { phase: 'awaiting_wallet' }; });
+    assert.equal(f.modal.busy, false);
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
+    zkapiClient.config.pending_deposit = null;
+    f.notify();
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), false, 'a resolved deposit clears intent');
+});
+
+test('explicit dialog intent is supplied to the shell after navigation is ready', async t => {
+    let navigationReady = false;
+    const f = setup(t, {
+        savedModal: { view: 'fund' },
+        config: { pending_deposit: { phase: 'awaiting_wallet' } },
+        canRestore: ({ hasSavedModal }) => navigationReady && hasSavedModal
+    });
+    await f.load();
+    assert.equal(f.modal.isOpen, false);
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
+    navigationReady = true;
+    f.modal.restorePendingOperation();
+    assert.equal(f.modal.isOpen, true);
+    f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+});
+
 for (const mode of ['mutual', 'escape']) {
     test(`reload opens saved ${mode} withdrawal in the right view`, async t => {
         const f = setup(t, { config: { prepared_withdrawal: { mode, phase: 'submitted' } }, note: { note_id: 7 } });

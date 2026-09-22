@@ -1,3 +1,7 @@
+## 2026-09-22: Repeated reloads during deposit confirmation
+
+- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. Explicit same-tab intent can restore after navigation to an OA chat; unrelated SDK records still respect the zkAPI-mode gate. Restoration never submits or retries transactions.
+
 ## 2026-09-21: Withdrawal reload and disclosure continuity
 
 - Deposit confirmation copy now reads “Confirm the deposit in MetaMask to add funds to your private balance.”

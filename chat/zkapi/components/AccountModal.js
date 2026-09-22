@@ -56,6 +56,7 @@ export default class AccountModal {
             if (detail?.reason === 'clock') return;
             this.updateTabIndicator();
             this.restorePendingOperation();
+            if (this.isOpen && !this.busy) this.rememberRunningModal(this.hasPendingDepositConfirmation());
             // An unfunded modal contains an editable amount. Rebuilding it on
             // background refreshes resets that value and steals input focus.
             // Mutating actions render once from run() after they complete.
@@ -126,6 +127,13 @@ export default class AccountModal {
         } catch { return null; }
     }
 
+    hasPendingDepositConfirmation() {
+        if (!['balance', 'fund'].includes(this.view) || zkapiClient.note) return false;
+        const plan = zkapiClient.config?.pending_deposit;
+        return IN_MOTION_PHASES.includes(plan?.phase)
+            || Boolean(plan?.approvals?.some(approval => IN_MOTION_PHASES.includes(approval?.phase)));
+    }
+
     // A reload loses the dialog, not the work: the SDK keeps reconciling the
     // saved deposit or withdrawal in the background. Once, after startup, put
     // the steps back where they were. Opening only refreshes status; a wallet
@@ -133,9 +141,9 @@ export default class AccountModal {
     // during startup, wins over restoration.
     restorePendingOperation() {
         if (!this.restorePendingOnInit || !this.restoreStateReady) return;
-        if (this.isOpen || this.busy || !this.canRestore()) return;
-        this.restorePendingOnInit = false;
         const saved = this.readRunningModal();
+        if (this.isOpen || this.busy || !this.canRestore({ hasSavedModal: Boolean(saved) })) return;
+        this.restorePendingOnInit = false;
         if (saved) {
             this.withdrawMode = saved.mode === 'escape' ? 'escape' : 'mutual';
             this.open(saved.view);
@@ -175,6 +183,9 @@ export default class AccountModal {
         if (!this.isOpen) this.returnFocusEl = document.activeElement;
         this.view = view;
         this.isOpen = true;
+        // Keep explicit tab intent across repeated reloads while confirmation
+        // is unresolved, even when there is no longer a running JS action.
+        this.rememberRunningModal(this.hasPendingDepositConfirmation());
         this.status = '';
         this.statusError = false;
         this.render();
@@ -423,7 +434,7 @@ export default class AccountModal {
             // safe retry/canceled state, so do not present it as an app error.
             this.outcome = { message: this.status, tone: confirmationPending || indexerLag || rejected ? 'info' : 'error', canceled: rejected };
         } finally {
-            this.rememberRunningModal(false);
+            this.rememberRunningModal(this.hasPendingDepositConfirmation());
             this.busy = false;
             this.backgroundProgress = null;
             // Ended: the steps are drawn from what is persisted from here on.
