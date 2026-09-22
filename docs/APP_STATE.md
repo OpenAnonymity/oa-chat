@@ -1,3 +1,7 @@
+## 2026-09-22: Explicit deposit and withdrawal confirmation copy
+
+- Deposit confirmation says “This transfer moves funds from your wallet into your zkAPI balance.” without naming a token. Deposit and withdrawal chain steps name Ethereum confirmation. Submitted deposits explain that the deposit awaits confirmation on Ethereum, without a timing promise. Submitted withdrawal notices explain that the withdrawal is awaiting confirmation on Ethereum, without promising a completion time. Escape recovery retains its separate safety-window explanation. No transaction or polling behavior changed.
+
 ## 2026-09-22: Search results remain in normal history
 
 - Reproduced with regression tests against the real ChatApp controller: search caches sessions outside the initial 80-row sidebar page. Previously ensureSessionLoaded and insertSessionIntoList mistook cache membership for sidebar membership, so clearing search hid an opened/updated old chat. loadMoreSessions also skipped cached-but-unlisted results.

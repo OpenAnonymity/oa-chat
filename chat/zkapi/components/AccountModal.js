@@ -26,7 +26,7 @@ const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
 const RUNNING_MODAL_KEY = 'oa-zkapi-running-modal';
 const RESTORABLE_VIEWS = ['balance', 'fund', 'withdraw', 'withdrawals'];
 const IN_MOTION_PHASES = ['submitted', 'awaiting_wallet', 'dropped_or_pending', 'ambiguous'];
-const CONFIRMING_LINE = 'Waiting for confirmation. Usually under a minute; this updates on its own.';
+const CONFIRMING_LINE = 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.';
 // Wallet work narrates in the dialog — the steps while it runs, one line
 // with the outcome when it ends. No toasts: with the dialog closed, the
 // right panel's activity rows carry the same words.
@@ -920,7 +920,7 @@ export default class AccountModal {
         if (preparedMode === 'escape') this.withdrawMode = 'escape';
         const notice = !prepared ? ''
             : droppedOrPending ? 'No receipt was found for the saved transaction. It may still be pending, or MetaMask may have dropped it. Check again, or resubmit the same withdrawal with its original nonce.'
-            : submitted ? CONFIRMING_LINE
+            : submitted ? 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.'
             : awaitingWallet ? 'Open MetaMask from your browser toolbar to check the request. If its window closed, use “Recover withdrawal” below.'
             : ambiguous ? 'We couldn’t confirm whether your withdrawal went through. Check its status before trying again.'
             : clearanceReserved ? 'This balance already has a close authorization. Finish it in MetaMask, or set it aside and add a new balance.'

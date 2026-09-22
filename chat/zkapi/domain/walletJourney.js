@@ -13,8 +13,8 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             { id: 'connect', label: 'Connect MetaMask' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             { id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' },
-            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Confirm the deposit in MetaMask to add funds to your private balance.' },
-            { id: 'chain', label: 'Waiting for confirmation', detail: 'Usually under a minute.' }
+            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'This transfer moves funds from your wallet into your zkAPI balance.' },
+            { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
     }
     const escape = kind === 'escape';
@@ -27,8 +27,8 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
             : { id: 'wallet', label: 'Confirm the close in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
         escape
-            ? { id: 'chain', label: 'Waiting for confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
-            : { id: 'chain', label: 'Waiting for confirmation', detail: 'Usually under a minute.' }
+            ? { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
+            : { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
     ];
 }
 

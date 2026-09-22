@@ -45,7 +45,8 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         zkapiClient.config = { prepared_withdrawal: { phase: 'submitted', mode: 'mutual', transaction_hash: '0xabc' } };
         const submitted = modalWith().renderWithdrawal();
         assert.match(submitted, /data-step="chain" data-state="active"/);
-        assert.match(submitted, /Waiting for confirmation\. Usually under a minute; this updates on its own\./);
+        assert.match(submitted, /Waiting for Ethereum confirmation/);
+        assert.match(submitted, /Your withdrawal has been submitted and is waiting to be confirmed on Ethereum\./);
         assert.match(submitted, /id="zkapi-sync-withdrawal-btn" class="zkapi-quiet-button"[^>]*>Check now/, 'a submitted withdrawal resolves itself; the check is a quiet fallback');
 
         zkapiClient.config = { prepared_withdrawal: { phase: 'ambiguous', mode: 'mutual' } };
@@ -76,7 +77,8 @@ test('a deposit in flight shows its steps under the figure; a persisted pending 
         const pending = modalWith({}, { view: 'balance' }).renderBalance();
         assert.match(pending, /data-step="deposit" data-state="complete"/);
         assert.match(pending, /data-step="chain" data-state="active"/);
-        assert.match(pending, /Waiting for confirmation\. Usually under a minute; this updates on its own\./);
+        assert.match(pending, /Waiting for Ethereum confirmation/);
+        assert.match(pending, /Your deposit has been submitted and is waiting to be confirmed on Ethereum\./);
         assert.match(pending, /id="zkapi-check-deposit-btn" class="zkapi-quiet-button w-full"[^>]*>Check payment status/, 'a submitted deposit resolves itself; the check is a quiet fallback');
 
         zkapiClient.config = { funding: {}, pending_deposit: { phase: 'ambiguous', amount: 4_000_000 } };

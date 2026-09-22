@@ -53,7 +53,7 @@ test('after a reload the persisted phase places the journey, and a failure marks
 test('deposit journey distinguishes unknown, checking, and submitted outcomes', () => {
     const chain = options => walletJourney({ kind: 'deposit', ...options }).steps.find(s => s.id === 'chain');
     assert.equal(chain({ persistedPhase: 'ambiguous' }).label, 'Deposit status unknown');
-    assert.equal(chain({ persistedPhase: 'submitted' }).label, 'Waiting for confirmation');
+    assert.equal(chain({ persistedPhase: 'submitted' }).label, 'Waiting for Ethereum confirmation');
     const checking = chain({ message: 'Checking the private-vault deposit…', last: { step: 'deposit', state: 'waiting' } });
     assert.equal(checking.label, 'Checking your deposit');
     assert.equal(checking.state, 'active');
