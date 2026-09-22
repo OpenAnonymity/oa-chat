@@ -1,3 +1,4 @@
+import { waitForSignal, discardResponseBody } from './reliability.js';
 /**
  * Consume an SSE response incrementally, matching OA Chat's browser transport.
  * `onLine` runs as soon as each complete line arrives; the response is never
@@ -6,7 +7,7 @@
  * Returning `false` from `onLine` marks a terminal SSE event and cancels the
  * reader without waiting for the server to close the HTTP response.
  */
-export async function consumeSseBody(body, onLine) {
+export async function consumeSseBody(body, onLine, { signal, onActivity } = {}) {
     if (!body?.getReader) {
         throw new Error('The inference response did not include a readable stream.');
     }
@@ -17,30 +18,27 @@ export async function consumeSseBody(body, onLine) {
 
     try {
         while (true) {
-            const { done, value } = await reader.read();
+            const { done, value } = await waitForSignal(reader.read(), signal);
             if (done) break;
 
+            if (value?.byteLength) onActivity?.();
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';
             for (const line of lines) {
-                if (await onLine(line.replace(/\r$/, '')) === false) {
-                    await reader.cancel('SSE stream reached its terminal event.');
+                if (await waitForSignal(onLine(line.replace(/\r$/, '')), signal) === false) {
+                    discardResponseBody(reader);
                     return;
                 }
             }
         }
 
         buffer += decoder.decode();
-        if (buffer && await onLine(buffer.replace(/\r$/, '')) === false) {
-            await reader.cancel('SSE stream reached its terminal event.');
+        if (buffer && await waitForSignal(onLine(buffer.replace(/\r$/, '')), signal) === false) {
+            discardResponseBody(reader);
         }
     } catch (error) {
-        try {
-            await reader.cancel(error);
-        } catch {
-            // Preserve the parser/handler failure that caused cancellation.
-        }
+        discardResponseBody(reader);
         throw error;
     } finally {
         reader.releaseLock?.();

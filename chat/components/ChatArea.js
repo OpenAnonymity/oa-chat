@@ -3243,7 +3243,7 @@ export default class ChatArea {
         if (!messageEl) return;
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
-        const forceFullRender = options.forceFullRender === true;
+        const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError);
         this.updateMessageModel(message);
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)

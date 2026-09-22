@@ -1539,7 +1539,9 @@ export default class CouncilController {
                     persistSnapshot();
                 },
                 this.app.reasoningEnabled,
-                this.app.reasoningEffort
+                this.app.reasoningEffort,
+                null,
+                health => this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, health, entry.name)
             );
         } catch (error) {
             if (laneState) {
@@ -1553,6 +1555,8 @@ export default class CouncilController {
             }
             persistSnapshot(true);
             throw error;
+        } finally {
+            this.app.setInferenceHealth?.(session.id, `${assistantMessage?.id}-${laneId}`, null);
         }
 
         const reportedModel = typeof tokenData.model === 'string' && tokenData.model.trim()

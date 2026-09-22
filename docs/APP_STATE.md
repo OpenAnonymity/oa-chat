@@ -2997,3 +2997,29 @@ and `inert`: `setDisclosure` now owns those states together. After changing shar
 motion adapters, run the entire native zkAPI suite, including
 `private-balance-help.test.mjs`, not only the wallet render tests. Vercel runs both
 the core and native suites from the pinned commercial checkout.
+
+## 2026-09-21: Inference silence and failure recovery
+
+The commercial checkout's shared chat code now implements the fixes from the
+[historical review](INFERENCE_RELIABILITY_REVIEW.md). See
+[Inference reliability](INFERENCE_RELIABILITY.md) for deadlines, limits and tests.
+Normal waiting/streaming UI is unchanged. A session-owned warning appears after
+45 seconds without transport activity, clears on activity or termination, and
+is restored correctly when navigating back to a still-silent request. Council
+lanes own separate warnings. Heartbeats reset silence, but not output deadlines.
+
+`inferenceError` is a separate persisted assistant-message field for interrupted
+partial answers; it is rendered with escaped text and the existing regenerate
+action. It is not included in model context. Keep partial text, reasoning and
+images when failing or stopping; clear pending flags in both cases. Errors must
+be saved to the originating session even if the user has navigated elsewhere.
+The reasoning render optimization must fall back to full rendering when an
+error notice is present. Stop remains ordinary cancellation, without an error.
+
+The stream watchdog races fetch, body reads and callbacks because not every
+relay honors AbortSignal. Cleanup must never await a potentially stuck cancel
+promise. HTTP error-body reads own their reader so timeout can cancel/unlock it;
+response cleanup also covers an onStreamOpen callback that never settles.
+The parser requires completion evidence plus usable output; malformed/empty or
+truncated streams now fail instead of silently finalizing. Stream failures and
+permanent HTTP errors must not be retried automatically.

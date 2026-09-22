@@ -9955,3 +9955,35 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
         inset: auto !important;
     }
 }
+
+/* Visible only during transport silence; the regular pending UI stays intact. */
+.inference-silence-warning {
+    margin: 0.75rem auto;
+    padding: 0.65rem 0.85rem;
+    max-width: 48rem;
+    border-inline-start: 2px solid light-dark(#946000, #e4b85b);
+    border-radius: 0 0.375rem 0.375rem 0;
+    background: light-dark(#fff9ec, #30291b);
+    color: light-dark(#704b0b, #ecd19a);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.inference-failure-warning {
+    padding: 0.65rem 0.85rem;
+    border-inline-start: 2px solid light-dark(#ae3440, #e79ca3);
+    border-radius: 0 0.375rem 0.375rem 0;
+    background: light-dark(#fff5f5, #342225);
+    color: light-dark(#8b2530, #f3c1c6);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.inference-retry-button {
+    display: inline-block;
+    padding: 0.4rem 0.65rem;
+    margin-top: 0.5rem;
+    border: 1px solid currentColor;
+    border-radius: 0.375rem;
+    font: inherit;
+}

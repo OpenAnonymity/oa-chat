@@ -206,7 +206,7 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.verification || null;
     },
-    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress) {
+    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
         return backend.streamCompletion(
@@ -222,7 +222,8 @@ const inferenceService = {
             onReasoningChunk,
             reasoningEnabled,
             reasoningEffort,
-            onAccessProgress
+            onAccessProgress,
+            onStreamHealth
         );
     },
     isTransportAccessReady(session) {

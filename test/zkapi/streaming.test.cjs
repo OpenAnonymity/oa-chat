@@ -32,6 +32,11 @@ async function loadOpenRouterApiForStreamingTest() {
         }
     });
 
+    const pricing = await import(pathToFileURL(path.join(__dirname, '../../chat/services/modelTiers.js')));
+    const previousFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json({ 'openai/gpt-5.6-sol': 1 });
+    try { await pricing.ensureModelTiersReady(); } finally { globalThis.fetch = previousFetch; }
+
     const { default: openRouterApi } = await import(pathToFileURL(path.join(__dirname, '../../chat/zkapi/api.js')));
     return { openRouterApi, zkapiClient: globalThis.zkapiClient };
 }
@@ -391,7 +396,7 @@ test('OpenRouter null usage cost remains unknown while an exact zero remains aut
                             total_tokens: 15,
                             cost: providerCost
                         },
-                        choices: [{ delta: {} }]
+                        choices: [{ delta: { content: 'An answer' } }]
                     })}\n` +
                     'data: [DONE]\n'
                 ));

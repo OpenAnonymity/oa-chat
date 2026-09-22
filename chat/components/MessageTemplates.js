@@ -2183,6 +2183,10 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
+                ${message.inferenceError ? `<div class="inference-failure-warning" role="status">
+                    <div>${escapeHtml(message.inferenceError)}</div>
+                    <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+                </div>` : ''}
                 ${memoryApprovalActions}
                 ${assistantActionsRow}
                 ${citationsBubble}

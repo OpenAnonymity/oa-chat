@@ -153,6 +153,37 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
+    test('silence warnings belong to their request and disappear on recovery or navigation', () => {
+        const app = appHarness();
+        let nodes = [];
+        const container = {querySelectorAll: () => [...nodes], appendChild(node) { nodes.push(node); }};
+        document.createElement = () => { const node = {dataset:{},setAttribute(){},remove(){nodes=nodes.filter(n=>n!==node);}}; return node; };
+        app.elements.messagesContainer = container;
+        const warning = { kind: 'silence', message: 'Taking longer than usual.' };
+        app.setInferenceHealth('one', 'a', warning);
+        assert.equal(nodes.length, 1);
+        app.setInferenceHealth('two', 'b', warning);
+        assert.equal(nodes.length, 1);
+        app.state.currentSessionId = 'two'; app.renderInferenceWarnings();
+        assert.equal(nodes[0].dataset.inferenceWarning, 'b');
+        app.setInferenceHealth('one', 'a', null);
+        assert.equal(nodes.length, 1);
+        app.setInferenceHealth('two', 'b', null);
+        assert.equal(nodes.length, 0);
+    });
+
+    test('a pre-output stream failure is persisted to its original background chat', async () => {
+        const { app, records } = streamHarness(async () => {
+            app.state.currentSessionId = 'two';
+            throw Object.assign(new Error('Response timed out'), { retryable: false, isStreamError: true });
+        });
+        await app.sendMessage();
+        const error = [...records.values()].find(m => m.role === 'assistant');
+        assert.equal(error.sessionId, 'one');
+        assert.match(error.content, /timed out/);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
     test('switching stages settlement metadata and preserves transcript, draft and navigation', async () => {
         const app = backendHarness();
         const session = app.getCurrentSession();
@@ -484,6 +515,7 @@ describe('production ChatApp runtime ownership', () => {
         const gate = deferred();
         let checkedSession;
         app.ensureDatabaseReady = () => gate.promise;
+        app.validateCapturedInput = async () => {};
         app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
         app.preflightTurnTicketBudget = async session => { checkedSession = session.id; return false; };
         const sending = app.sendMessage();
@@ -853,9 +885,9 @@ describe('production ChatApp runtime ownership', () => {
         const app = appHarness();
         const removed = [];
         app.pendingProgress = new Map([['one', { phase: 'working' }], ['two', { phase: 'working' }]]);
-        app.elements.messagesContainer = { querySelectorAll: () => ['one', 'two'].map(id => ({
-            dataset: { sessionId: id }, remove: () => removed.push(id)
-        })) };
+        app.elements.messagesContainer = { querySelectorAll: selector => selector === '.typing-indicator' ? ['one', 'two'].map(id => ({
+            dataset: { pendingSessionId: id }, remove: () => removed.push(id)
+        })) : [] };
         app.flushPendingStorageRefresh = () => {};
         app.setSessionStreamingState('one', false);
         assert.deepEqual(removed, ['one']);
@@ -1258,7 +1290,7 @@ describe('production ChatApp runtime ownership', () => {
                 assert.equal(assistant.streamingPhase, null);
                 assert.equal(assistant.isLocalOnly, false);
                 if (payload === 'image-cancel') assert.equal(assistant.images.length, 1);
-                else { assert.equal(assistant.content, 'Partial answer'); assert.equal(assistant.reasoning, 'Partial reasoning'); }
+                else { assert.equal(assistant.content, 'Partial answer'); assert.equal(assistant.reasoning, 'Partial reasoning'); assert.match(assistant.inferenceError, /Provider failed mid-stream/); }
                 assert.equal(app.regenerationJobs.size, 0);
                 assert.equal(app.sendSubmissionsInFlight.size, 0);
             });

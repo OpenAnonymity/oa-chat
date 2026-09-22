@@ -38,7 +38,8 @@ export function createZkapiBackend(api = zkapiAPI) {
             onReasoningChunk,
             reasoningEnabled,
             reasoningEffort,
-            onAccessProgress
+            onAccessProgress,
+            onStreamHealth
         ) => api.streamCompletion(
             messages,
             modelId,
@@ -52,7 +53,8 @@ export function createZkapiBackend(api = zkapiAPI) {
             onReasoningChunk,
             reasoningEnabled,
             reasoningEffort,
-            onAccessProgress
+            onAccessProgress,
+            onStreamHealth
         ),
 
         getAccessInfo(session) {

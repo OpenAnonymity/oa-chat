@@ -1,3 +1,6 @@
+import { isRetryableInferenceError } from './services/inference/reliability.js';
+import { validateInferenceInput } from './services/inference/inputLimits.js';
+import { renderInferenceWarnings } from './ui/inferenceWarning.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -1146,6 +1149,9 @@ class ChatApp {
         message.streamingPending = false;
         message.streamingPhase = null;
         message.isLocalOnly = !hasPartialOutput;
+        // Keep the error outside model context and outside the partial answer.
+        message.inferenceError = hasPartialOutput && fallback
+            ? fallback.replace(/\*\*/g, '').replace(/^⚠️\s*/, '') : null;
         return hasPartialOutput;
     }
 
@@ -1164,6 +1170,17 @@ class ChatApp {
         if (!modelName || modelName === message.model) return;
         message.model = modelName;
         if (this.isViewingSession(session.id)) this.chatArea?.updateMessageModel?.(message);
+    }
+
+    setInferenceHealth(sessionId, requestId, health, label = '') {
+        this.inferenceHealth ||= new Map();
+        if (health) this.inferenceHealth.set(requestId, { sessionId, health, label });
+        else this.inferenceHealth.delete(requestId);
+        this.renderInferenceWarnings();
+    }
+
+    renderInferenceWarnings() {
+        renderInferenceWarnings(this.elements?.messagesContainer, this.inferenceHealth, this.state.currentSessionId);
     }
 
     async streamCompletionWithRuntime(messages, modelId, session, onChunk, onTokenUpdate,
@@ -1221,12 +1238,14 @@ class ChatApp {
                     await onReasoningChunk?.(chunk);
                 },
                 reasoningEnabled, reasoningEffort,
-                progress => this.setSessionPendingProgress(session.id, progress));
+                progress => this.setSessionPendingProgress(session.id, progress),
+                health => this.setInferenceHealth(session.id, id, health));
             completed = true;
             latestUsage = result ? withUsagePricing(result) : latestUsage;
             // The later message-accounting write must keep this same snapshot.
             return result ? latestUsage : result;
         } finally {
+            this.setInferenceHealth(session.id, id, null);
             // A prompt-only estimate is published before connecting. A rejected
             // HTTP request (or canceled queued request) must not turn it into a
             // durable charge. Partial output and provider usage still count.
@@ -5159,8 +5178,12 @@ class ChatApp {
     setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
         if (!isStreaming) {
             this.pendingProgress.delete(sessionId);
+            for (const [id, entry] of this.inferenceHealth || []) {
+                if (entry.sessionId === sessionId) this.inferenceHealth.delete(id);
+            }
+            this.renderInferenceWarnings();
             for (const indicator of this.elements.messagesContainer.querySelectorAll('.typing-indicator')) {
-                if (indicator.dataset.sessionId === sessionId) indicator.remove();
+                if (indicator.dataset.pendingSessionId === sessionId || indicator.dataset.sessionId === sessionId) indicator.remove();
             }
         }
         const existingState = this.getSessionStreamingState(sessionId);
@@ -7302,7 +7325,7 @@ class ChatApp {
                 } else {
                     if (firstChunkReceived && streamingMessage) {
                         this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning,
-                            'Sorry, I encountered an error while processing your request.');
+                            `**Response interrupted:** ${error.message || 'Please retry.'}`);
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -7320,9 +7343,7 @@ class ChatApp {
                                 }
                             }
                         }
-                        if (this.isViewingSession(session.id)) {
-                            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true }, session);
-                        }
+                        await this.addMessage('assistant', `**Error:** ${error.message || 'The response failed. Please retry.'}`, { isLocalOnly: true }, session);
                     }
                 }
             }
@@ -7525,6 +7546,12 @@ class ChatApp {
         }
     }
 
+    async validateCapturedInput(session, submission, content) {
+        const history = await chatDB.getSessionMessages(session.id);
+        const model = this.getModelsForSession(session).find(entry => entry.name === submission.model || entry.id === submission.model) || {};
+        validateInferenceInput([...history.filter(message => !message.isLocalOnly), { role: 'user', content }], model, submission.files);
+    }
+
     async sendCapturedMessage(submission) {
         if (!await this.ensureDatabaseReady()) {
             return;
@@ -7590,6 +7617,9 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+
+        await this.validateCapturedInput(session, submission, content);
+        this.throwIfAborted(submission.controller.signal);
 
         // Memory and model access draw from the same wallet. Check the complete
         // turn before either path can consume a ticket, so Memory cannot spend
@@ -7808,17 +7838,7 @@ class ChatApp {
             let accessRefreshAttempted = false;
 
             // Helper to check if error is retryable (only before streaming starts)
-            const isRetryableError = (error) => {
-                if (error.isCancelled) return false;
-                // Gateway errors are retryable
-                if ([502, 503, 504].includes(error.status)) return true;
-                // Generic errors (no specific status or unrecognized) are retryable
-                const errorMsg = error.message || '';
-                const hasSpecificError = error.status === 401 || error.status === 402 ||
-                    errorMsg.includes('proxy') || errorMsg.includes('Proxy') ||
-                    errorMsg.includes('No API key');
-                return !hasSpecificError;
-            };
+            const isRetryableError = isRetryableInferenceError;
 
             retryLoop: while (retryCount <= MAX_RETRIES) {
             try {
@@ -8034,6 +8054,8 @@ class ChatApp {
                 await this.recordRuntimeUsage(session, streamingMessage, tokenData);
                 this.updateResponseModel(streamingMessage, tokenData.model,
                     modelIdForRequest, modelNameToUse, session);
+                streamingMessage.streamingPending = false;
+                streamingMessage.streamingPhase = null;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;
@@ -8177,8 +8199,9 @@ class ChatApp {
                     if (this.chatArea && this.isViewingSession(session.id)) {
                         await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     }
-                } else if (this.isViewingSession(session.id)) {
-                    if (typingId) this.removeTypingIndicator(typingId);
+                } else {
+                    if (typingId && this.isViewingSession(session.id)) this.removeTypingIndicator(typingId);
+                    // Persist failures even when the user is viewing another chat.
                     // Error before first chunk - message never added to UI, add new error message
                     await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true }, session);
                 }
@@ -9988,6 +10011,7 @@ class ChatApp {
         if (this.chatArea) {
             await this.chatArea.render();
         }
+        this.renderInferenceWarnings();
         this.updateWideModeButtonVisibility();
         // Recovery never holds up the transcript, and uses its captured owner
         // rather than whichever chat happens to be selected after the read.

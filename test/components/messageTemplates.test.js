@@ -51,6 +51,22 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+test('interrupted answers keep their content and show an escaped error with retry', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const message = {id:'partial-answer',role:'assistant',content:'Partial answer',model:'Test',timestamp:new Date().toISOString()};
+        const render = value => buildMessageHTML(value,{processContentWithLatex:escapeHtml,formatTime:()=>''},[],'Test');
+        assert.doesNotMatch(render(message), /inference-failure-warning/);
+        const html = render({...message,inferenceError:'Response interrupted <script>alert(1)</script>'});
+        assert.match(html, /Partial answer/);
+        assert.match(html, /Response interrupted &lt;script&gt;/);
+        assert.doesNotMatch(html, /<script>/);
+        assert.match(html, /regenerate-message-btn inference-retry-button/);
+        assert.match(html, /Retry response/);
+    } finally { restoreGlobals(); }
+});
+
 test('memory agent failures use the same compact status presentation as an empty retrieval', async () => {
     const restoreGlobals = installTemplateGlobals();
     const originalWarn = console.warn;
