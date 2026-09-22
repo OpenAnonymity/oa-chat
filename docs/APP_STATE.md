@@ -4,6 +4,18 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-22: First CLI prerelease preparation
+
+- The first daemon release is planned as a GitHub prerelease at the numeric
+  tag `daemon-v0.1.0`; publication is pending. Installation examples now use
+  `releases/download/daemon-v0.1.0/install.sh`, including the custom-prefix
+  example. They become available after the reviewed release assets publish.
+- GitHub's repository-wide `latest/download` URL excludes prereleases. An
+  exact-tag URL works for both stable releases and prereleases; no version
+  suffix or installer change is needed for the GitHub prerelease flag. Keep
+  `latest/download` as an optional future stable-release command and verify
+  publication before describing either URL as live.
+
 ## 2026-09-21: One-command CLI installer
 
 - `daemon/install.sh` installs checksum-verified native macOS/Linux AMD64 or
@@ -28,9 +40,10 @@ reading code alone.
   guidance; it does not register a second managed service.
 - CI exercises the installer with local release fixtures on Linux/macOS and
   before native release builds. Public installation remains gated on publishing
-  a reviewed daemon release and marking it latest; no daemon release, tap, or
-  AUR package has been published by this change. The latest-download URL is
-  repository-wide, while a `daemon-vVERSION/install.sh` URL stays version-pinned.
+  a reviewed daemon release; no daemon release, tap, or AUR package was published
+  by the installer implementation. An exact `daemon-vVERSION/install.sh` URL
+  stays version-pinned and supports prereleases. The latest-download URL is
+  repository-wide and requires a stable daemon release marked as latest.
 - Cleanup must inspect the committed `current` link before deleting a staged
   bundle: a signal can land between its atomic rename and the success flag.
   EXIT-trap state must outlive `main`'s locals, which Bash 5 unwinds on implicit

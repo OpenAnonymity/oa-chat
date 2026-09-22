@@ -11,11 +11,11 @@ file-storage, and image-generation endpoints are not implemented.
 
 ## Install with one command
 
-Once a daemon release is published as the repository's latest release, install
-the native binaries and proving assets with:
+The first prerelease, `daemon-v0.1.0`, is pending publication. Once it is
+published, install the native binaries and proving assets with:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
 ```
 
 This installs `oa-chat` and `oa-zkapi` under `~/.local/bin` on macOS 13+ or
@@ -38,10 +38,11 @@ For zkAPI access, use the [funding setup](#zkapi-and-funding) instead.
 [Installer options and upgrades](CLI_PACKAGING.md#one-command-installation)
 cover version pinning and custom installation directories.
 
-The installer and package metadata are prepared in this branch; daemon
-release artifacts, a Homebrew tap, and an AUR package have not yet been
-published. The command above becomes available when a maintainer publishes
-the first daemon release with its generated `install.sh` asset.
+The exact-tag installer URL works for stable releases and GitHub prereleases.
+GitHub's `latest/download` URL excludes prereleases, so use the command above
+for this preview. It becomes available when the first prerelease and its
+generated `install.sh` asset are published. A Homebrew tap and an AUR package
+have not yet been published.
 
 ## Build and run ticket mode
 

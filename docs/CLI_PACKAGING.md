@@ -23,11 +23,11 @@ retain their own transcripts under their own storage/privacy settings.
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. After a maintainer publishes a daemon release as the repository's latest
-release, users can install it with:
+AUR. The first prerelease, `daemon-v0.1.0`, is pending publication. Once it is
+published, users can install it with:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
 ```
 
 The published script is pinned to its own release version. It downloads the
@@ -55,14 +55,18 @@ shell startup files.
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
 ```
 
-For a reproducible installation, use the script attached to the exact release.
-For example, after `daemon-v0.1.0` has been published:
+An exact-tag URL works for either a stable release or a GitHub prerelease and
+keeps the installation version pinned. Prerelease status is GitHub release
+metadata; the tag and installer version remain `daemon-v0.1.0` and `0.1.0`.
+GitHub's `latest/download` URL excludes prereleases and is repository-wide.
+For a future stable daemon release explicitly marked as latest, this optional
+command follows that stable release:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/install.sh | bash
 ```
 
 `--version MAJOR.MINOR.PATCH` can override the script's pinned version;
@@ -99,11 +103,12 @@ The shell installer does not install the package's systemd unit, whose
 `ExecStart` uses `/usr/bin/oa-chat`; use foreground `oa-chat serve` or configure
 a user service with the chosen prefix and PATH.
 
-Availability: the installer is implemented, but daemon releases and public
-package repositories have not yet been published. GitHub's latest-release URL
-is repository-wide, so maintainers must mark a published daemon release with
-`install.sh` as latest before advertising that command. An exact daemon-tag
-URL remains usable independently of other release types in this repository.
+Availability: the installer is implemented, but the first daemon prerelease
+and public package repositories have not yet been published. Publishing the
+reviewed `daemon-v0.1.0` prerelease with its generated `install.sh` asset enables
+the exact-tag commands above; it does not enable `latest/download`. An exact
+daemon-tag URL remains usable independently of other release types in this
+repository.
 
 ## Homebrew
 
@@ -217,8 +222,10 @@ The [release workflow](../.github/workflows/oa-daemon-release.yml) builds a four
 attaches the generated `install.sh` alongside native archives, Linux packages,
 packaging metadata, and `SHA256SUMS`. The installer and formula URLs point to
 that exact tag. Publish the reviewed release before installing its generated
-installer or Homebrew/AUR manifests, and mark the daemon release as latest to
-enable the one-command URL above.
+installer or Homebrew/AUR manifests. The first release is planned as a GitHub
+prerelease at `daemon-v0.1.0`; its exact-tag installer URL works once published.
+Only a stable daemon release marked as latest enables the optional
+`latest/download` command.
 
 Run `python3 daemon/scripts/test-install.py` for deterministic installer tests
 against local release fixtures. The installer workflow runs these checks on
