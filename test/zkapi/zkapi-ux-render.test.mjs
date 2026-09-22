@@ -79,9 +79,11 @@ globalThis.zkapiWallet = {
 };
 
 const {
+    attachZkapiSettlementActions,
     renderZkapiComposerStatus,
     renderZkapiPanelExperience
 } = await import('../../chat/zkapi/components/ZkapiStateExperience.js');
+const { deriveZkapiUxState } = await import('../../chat/zkapi/services/zkapiUxState.mjs');
 const { createVanillaUiInterface } = await import('../../chat/ui/appInterface.js');
 const { default: Sidebar } = await import('../../chat/components/Sidebar.js');
 const { default: RightPanel } = await import('../../chat/zkapi/components/RightPanel.js');
@@ -95,6 +97,7 @@ const {
 } = await import('../../chat/components/MessageTemplates.js');
 const { processMessagesForApi } = await import('../../chat/domain/messageContent.js');
 const { createZkapiUi } = await import('../../chat/zkapi/ui/createZkapiUi.js');
+const { createPaymentModeUi } = await import('../../chat/zkapi/ui/createPaymentModeUi.js');
 const { ChatApp } = await import('../../chat/app.js');
 const { createModelPickerInterface } = await import('../../chat/ui/appInterface.js');
 configureMessageTemplateServices({ presentation: createZkapiUi({}).presentation });
@@ -258,6 +261,107 @@ function composerElement() {
         }
     };
 }
+
+test('composer and panel show Stop waiting then Retry for every settlement proposal', () => {
+    for (const proposal of ['quiet', 'guided', 'activity', 'receipt', 'relay', 'ambient', 'capsule']) {
+        const element = composerElement();
+        for (const phase of ['settling', 'error']) {
+            const state = deriveZkapiUxState({
+                snapshot: { config: { ux_proposal: proposal }, activities: [{
+                    kind: 'access', status: 'waiting', phase: 'waiting', title: 'Still requesting'
+                }] },
+                transition: { phase, message: 'Your recovery record is saved.' }
+            });
+            renderZkapiComposerStatus(element, null, state);
+            const panel = renderZkapiPanelExperience(state);
+            const action = phase === 'error' ? 'retry' : 'stop';
+            for (const html of [element.innerHTML, panel]) {
+                assert.match(html, new RegExp(`data-zkapi-settlement-action="${action}"`));
+                assert.match(html, phase === 'error' ? />Retry<\/button>/ : />Stop waiting<\/button>/);
+                if (phase === 'error') assert.doesNotMatch(html, /zkapi-state-spinner/);
+            }
+            if (phase === 'error') assert.equal(element.getAttribute('aria-busy'), 'false');
+            if (proposal === 'ambient') assert.match(element.className, /zkapi-composer-state--relay/);
+        }
+    }
+});
+
+test('settlement controls forward runtime actions, prevent duplicate retry, and surface failure', async () => {
+    let listener;
+    const button = { dataset: { zkapiSettlementAction: 'stop' }, disabled: false,
+        addEventListener: (_name, handler) => { listener = handler; } };
+    const element = { querySelector: () => button };
+    const calls = [];
+    let finishRetry;
+    const runtime = {
+        stopSettlementWaiting: () => { calls.push('stop'); },
+        retrySettlement: () => { calls.push('retry'); return new Promise((_resolve, reject) => { finishRetry = reject; }); }
+    };
+    const app = { integration: createZkapiUi(runtime).integration,
+        showToast: (...args) => calls.push(args) };
+    attachZkapiSettlementActions(element, app);
+    await listener();
+    assert.deepEqual(calls, ['stop']);
+    assert.equal(button.disabled, false);
+    button.dataset.zkapiSettlementAction = 'retry';
+    const pending = listener();
+    assert.equal(button.disabled, true);
+    await listener();
+    assert.deepEqual(calls, ['stop', 'retry']);
+    finishRetry(new Error('The temporary-key service is unavailable.'));
+    await pending;
+    assert.equal(button.disabled, false);
+    assert.equal(calls[2][1], 'error');
+});
+
+test('mixed payment shell renders recovery above the private composer and clears it for Tickets', t => {
+    const originalDocument = globalThis.document;
+    t.after(() => { globalThis.document = originalDocument; });
+    const nodes = new Map();
+    const node = () => ({
+        ...composerElement(),
+        classList: { add() {}, contains: () => true },
+        querySelector: () => null,
+        querySelectorAll: () => [],
+        addEventListener() {},
+        before(child) { if (child.id) nodes.set(child.id, child); }
+    });
+    for (const id of ['chat-toolbar', 'chat-toolbar-panel-space', 'account-modal']) nodes.set(id, node());
+    const actions = node();
+    globalThis.document = {
+        documentElement: { dataset: {} },
+        getElementById: id => nodes.get(id) || null,
+        createElement: node,
+        querySelector: selector => selector === '.composer-bottom-actions' ? actions : null,
+        body: { append: child => nodes.set(child.id, child) }
+    };
+    t.mock.method(zkapiClient, 'init', async () => {});
+    t.mock.method(zkapiClient, 'subscribe', () => () => {});
+    t.mock.method(zkapiClient, 'subscribeClock', () => () => {});
+    t.mock.method(zkapiClient, 'snapshot', () => ({ config: { ux_proposal: 'quiet' }, activities: [] }));
+    let mode = 'zkapi';
+    let transition = { phase: 'settling' };
+    const runtime = { getMode: () => mode, getTransition: () => transition,
+        isModeLocked: () => false, isSwitching: () => false };
+    const ui = createPaymentModeUi(runtime);
+    const app = { integration: ui.integration, services: {
+        account: { getState: () => ({}), subscribe: () => () => {} },
+        sync: { getStatus: () => ({}), subscribe: () => () => {} }
+    } };
+    ui.components.accountModal(app);
+    ui.mountShell();
+    const status = nodes.get('zkapi-composer-status');
+    assert.ok(status, 'the mixed shell must actually mount its private recovery control');
+    assert.match(status.innerHTML, /data-zkapi-settlement-action="stop"/);
+    transition = { phase: 'error', message: 'Your recovery record is saved.' };
+    ui.presentation.renderComposer();
+    assert.match(status.innerHTML, /data-zkapi-settlement-action="retry"/);
+    assert.equal(status.getAttribute('aria-busy'), 'false');
+    mode = 'tickets';
+    ui.presentation.renderComposer();
+    assert.equal(status.className, 'hidden');
+    assert.equal(status.innerHTML, '');
+});
 
 test('low-text proposal panels render compact summaries with detail collapsed', () => {
     for (const proposal of ['receipt', 'relay', 'ambient', 'capsule']) {

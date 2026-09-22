@@ -65,17 +65,26 @@ function renderPanel({ transition = null, ...overrides } = {}) {
     return panel.billingSectionHTML();
 }
 
-test('System Panel shows only the active previous-chat closure card', () => {
+test('System Panel keeps closure actionable while waiting and after failure', () => {
     for (const proposal of ZKAPI_UX_PROPOSALS) {
         for (const phase of ['settling', 'waiting']) {
             const html = renderPanel({ config: { ux_proposal: proposal }, transition: { phase } });
             assert.match(html, /zkapi-panel-experience/);
             assert.match(html, /<strong>Closing previous chat<\/strong>/);
+            assert.match(html, /data-zkapi-settlement-action="stop"/);
+            assert.match(html, />Stop waiting<\/button>/);
         }
         for (const phase of [null, 'ready', 'error']) {
             const html = renderPanel({ config: { ux_proposal: proposal },
                 transition: phase ? { phase, message: 'Please retry closing.' } : null });
-            assert.doesNotMatch(html, /zkapi-panel-experience|Ready for a new chat/);
+            if (phase === 'error') {
+                assert.match(html, /Previous chat needs attention/);
+                assert.match(html, /Please retry closing\./);
+                assert.match(html, /data-zkapi-settlement-action="retry"/);
+                assert.doesNotMatch(html, /zkapi-state-spinner|zkapi-pill-spinner/);
+            } else {
+                assert.doesNotMatch(html, /zkapi-panel-experience|Ready for a new chat/);
+            }
             assert.match(html, /Private balance:/);
             assert.match(html, /Estimated this chat/);
             assert.match(html, /id="zkapi-panel-fund"/);

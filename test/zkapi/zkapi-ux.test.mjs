@@ -55,6 +55,33 @@ test('a fast send becomes an explicit queue instead of a frozen composer', () =>
     assert.match(state.primary.detail, /send automatically/i);
 });
 
+test('a stopped or failed settlement keeps recovery visible over residual SDK work', () => {
+    const state = deriveZkapiUxState({
+        snapshot: fundedSnapshot({ activities: [
+            { kind: 'settlement', phase: 'usage', status: 'running', title: 'Closing previous chat' },
+            { kind: 'access', phase: 'waiting', status: 'waiting', title: 'Requesting a key' }
+        ] }),
+        transition: { phase: 'error', message: 'Stopped waiting for private access. Your recovery record is saved.' }
+    });
+    for (const primary of [state.primary, state.composerPrimary, state.balancePrimary, state.closingPrimary]) {
+        assert.equal(primary.phase, 'error');
+        assert.equal(primary.busy, false);
+        assert.equal(primary.tone, 'error');
+        assert.match(primary.detail, /recovery record is saved/);
+    }
+    assert.equal(state.settlementAction, 'retry');
+    assert.equal(state.journey[0].state, 'error');
+    assert.equal(state.showComposer, true);
+});
+
+test('settlement controls are scoped to an actionable runtime transition', () => {
+    for (const phase of ['settling', 'waiting', 'error', 'ready', null]) {
+        const state = deriveZkapiUxState({ snapshot: fundedSnapshot(), transition: phase ? { phase } : null });
+        assert.equal(state.settlementAction, phase === 'error' ? 'retry'
+            : ['settling', 'waiting'].includes(phase) ? 'stop' : null);
+    }
+});
+
 test('private-key creation exposes real proof, server, and verification phases', () => {
     const phases = [
         ['proving', 0],

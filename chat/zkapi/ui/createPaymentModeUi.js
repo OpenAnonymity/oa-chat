@@ -6,6 +6,7 @@ import ZkapiAccountModal from '../components/AccountModal.js';
 import PaymentModeRightPanel from '../components/PaymentModeRightPanel.js';
 import { createZkapiUi } from './createZkapiUi.js';
 import { applyZkapiModeClass } from '../services/zkapiModeClass.js';
+import { getZkapiExperience, renderZkapiComposerStatus } from '../components/ZkapiStateExperience.js';
 
 /** Keep the payment choice in the toolbar and funding in the System Panel. */
 export function createPaymentModeUi(runtime) {
@@ -13,6 +14,31 @@ export function createPaymentModeUi(runtime) {
     let app;
     let privateBalance;
     let modeControl;
+
+    function renderSettlementComposer() {
+        if (!app) return;
+        const showSettlement = runtime.getMode() === 'zkapi'
+            && ['settling', 'waiting', 'error'].includes(runtime.getTransition?.()?.phase);
+        let status = document.getElementById('zkapi-composer-status');
+        if (!status && showSettlement) {
+            const actions = document.querySelector('.composer-bottom-actions');
+            if (actions) {
+                status = document.createElement('div');
+                status.id = 'zkapi-composer-status';
+                status.setAttribute('aria-live', 'off');
+                actions.before(status);
+            }
+        }
+        if (!status) return;
+        const state = getZkapiExperience(app);
+        renderZkapiComposerStatus(status, app, {
+            ...state,
+            showComposer: showSettlement,
+            composerPrimary: showSettlement ? state.closingPrimary
+                : { ...state.composerPrimary, busy: false },
+            balancePrimary: { ...state.balancePrimary, busy: false }
+        });
+    }
 
     function renderControls() {
         if (!app || !modeControl) return;
@@ -30,6 +56,7 @@ export function createPaymentModeUi(runtime) {
         }
         slideTabs(modeControl, previous);
         privateBalance?.restorePendingOperation();
+        renderSettlementComposer();
     }
 
     return {

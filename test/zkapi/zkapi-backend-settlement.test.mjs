@@ -27,10 +27,13 @@ const session = (extra = {}) => ({
     currentEphemeralKeyId: 'chat-a', expiresAt: 9999999, ...extra
 });
 
-test.beforeEach(() => {
+test.beforeEach(t => {
     client.config = { active_lease: lease('chat-a') };
     client.wallet = { pending_request: true };
     client.activities = [];
+    client.browserMode = false;
+    t.mock.method(client, 'init', async () => {});
+    t.mock.method(client, 'hasPendingLease', async () => false);
 });
 
 test('clearing private access retains an owned retirement marker and changes no other chat credentials', () => {
@@ -59,7 +62,7 @@ test('access waits for owner-scoped retirement and clears its marker only after 
     const settlement = t.mock.method(client, 'settleActiveLease', async () => hold);
     let resolved = false;
     const access = backend.requestAccess({ session: owner }).then(value => { resolved = true; return value; });
-    await Promise.resolve();
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(resolved, false);
     assert.equal(owner.zkapiSettleBeforeAccess, true);
     assert.deepEqual(settlement.mock.calls[0].arguments, [undefined, { sessionId: 'chat-a' }]);

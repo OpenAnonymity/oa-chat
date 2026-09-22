@@ -1,5 +1,7 @@
 import TicketRightPanel from '../../components/RightPanel.js';
 import ZkapiRightPanel from './RightPanel.js';
+import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
+import { attachZkapiSettlementActions, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
 
 export default class PaymentModeRightPanel extends ZkapiRightPanel {
     isTicketMode() {
@@ -20,13 +22,8 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
     generateFundingSectionHTML() {
         return this.isTicketMode()
             ? `${TicketRightPanel.prototype.generateFundingSectionHTML.call(this)}
-                <div id="zkapi-ticket-closing-notice" class="px-3 pb-3" ${this.isClosingPreviousChat() ? '' : 'hidden'}>
-                    <section class="zkapi-panel-experience zkapi-panel-experience--quiet" role="status" aria-live="polite" aria-atomic="true">
-                        <div class="zkapi-panel-state-heading">
-                            <span class="zkapi-state-spinner" aria-hidden="true"></span>
-                            <div><strong>Closing previous chat</strong><p>You can keep using Tickets.</p></div>
-                        </div>
-                    </section>
+                <div id="zkapi-ticket-closing-notice" class="px-3 pb-3" role="status" aria-live="polite" aria-atomic="true" ${this.isClosingPreviousChat() ? '' : 'hidden'}>
+                    ${this.backgroundClosingNoticeHTML()}
                 </div>`
             : super.generateFundingSectionHTML();
     }
@@ -38,7 +35,21 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
     }
 
     isClosingPreviousChat() {
-        return ['settling', 'waiting'].includes(this.app.integration.getTransition?.()?.phase);
+        return ['settling', 'waiting', 'error'].includes(this.app.integration.getTransition?.()?.phase);
+    }
+
+    backgroundClosingNoticeHTML() {
+        const state = deriveZkapiUxState({ transition: this.app.integration.getTransition?.() });
+        if (!state.closingPrimary) return '';
+        return renderZkapiPanelExperience({
+            ...state,
+            panelPrimary: {
+                ...state.closingPrimary,
+                detail: state.closingPrimary.tone === 'error'
+                    ? `${state.closingPrimary.detail} You can keep using Tickets.`
+                    : 'You can keep using Tickets.'
+            }
+        });
     }
 
     updateBackgroundClosingNotice() {
@@ -48,6 +59,11 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
         if (!notice) return;
         const hidden = !this.isClosingPreviousChat();
         if (notice.hidden !== hidden) notice.hidden = hidden;
+        const html = this.backgroundClosingNoticeHTML();
+        if (notice.innerHTML !== html) {
+            notice.innerHTML = html;
+            attachZkapiSettlementActions(notice, this.app);
+        }
     }
 
     getMissingApiKeyStatus() {

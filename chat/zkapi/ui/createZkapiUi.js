@@ -17,6 +17,8 @@ export function createZkapiUi(runtime) {
     };
     const integration = {
         getTransition: () => runtime.getTransition?.() || null,
+        stopSettlementWaiting: () => runtime.stopSettlementWaiting?.(),
+        retrySettlement: () => runtime.retrySettlement?.(),
         getSessionUsageSummary: session => runtime.getSessionUsageSummary?.(session) || null
     };
     return {
