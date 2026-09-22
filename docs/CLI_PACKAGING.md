@@ -23,8 +23,9 @@ retain their own transcripts under their own storage/privacy settings.
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. The first prerelease, `daemon-v0.1.0`, is pending publication. Once it is
-published, users can install it with:
+AUR. Install the published
+[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0)
+with:
 
 ```sh
 curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
@@ -103,12 +104,11 @@ The shell installer does not install the package's systemd unit, whose
 `ExecStart` uses `/usr/bin/oa-chat`; use foreground `oa-chat serve` or configure
 a user service with the chosen prefix and PATH.
 
-Availability: the installer is implemented, but the first daemon prerelease
-and public package repositories have not yet been published. Publishing the
-reviewed `daemon-v0.1.0` prerelease with its generated `install.sh` asset enables
-the exact-tag commands above; it does not enable `latest/download`. An exact
-daemon-tag URL remains usable independently of other release types in this
-repository.
+Availability: `daemon-v0.1.0` was published as a GitHub prerelease on
+September 22, 2026, with its generated `install.sh` asset and native packages.
+The exact-tag commands above are available; `latest/download` excludes this
+prerelease. Public package repositories, including a Homebrew tap and an AUR
+package, have not yet been published.
 
 ## Homebrew
 
@@ -222,8 +222,8 @@ The [release workflow](../.github/workflows/oa-daemon-release.yml) builds a four
 attaches the generated `install.sh` alongside native archives, Linux packages,
 packaging metadata, and `SHA256SUMS`. The installer and formula URLs point to
 that exact tag. Publish the reviewed release before installing its generated
-installer or Homebrew/AUR manifests. The first release is planned as a GitHub
-prerelease at `daemon-v0.1.0`; its exact-tag installer URL works once published.
+installer or Homebrew/AUR manifests. The first release was published as a
+GitHub prerelease at `daemon-v0.1.0`; its exact-tag installer URL is available.
 Only a stable daemon release marked as latest enables the optional
 `latest/download` command.
 
@@ -254,6 +254,32 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
 
+## Published prerelease validation (2026-09-22)
+
+[`daemon-v0.1.0`](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0)
+was published at 14:41 UTC as a prerelease with 11 assets. The
+[native release run](https://github.com/OpenAnonymity/oa-chat/actions/runs/35740027874)
+passed Go tests, installer tests, native builds, and executable smoke checks
+on macOS and Linux for both AMD64 and ARM64, followed by release assembly.
+
+- GitHub's SHA-256 digests for the installer, archives, and packages matched
+  `SHA256SUMS`. Both macOS companions linked only system libraries; Linux
+  companion linkage matched the declared OpenSSL 3, libgcc, and glibc dependencies.
+- The public installer URL passed on macOS ARM64 using an isolated custom
+  prefix containing spaces. `oa-chat version` reported `0.1.0`, the companion's
+  help command worked, and all five proof assets were present under the
+  expected resolved symlink layout.
+- The documented public `curl | bash` command passed twice with `pipefail` as
+  an unprivileged user in a clean Ubuntu 24.04 ARM64 container, using the
+  default `~/.local` prefix. Version, companion help, and all five proof
+  assets passed. Reinstallation switched `current` to a new complete release
+  and retained the previous release. No daemon configuration or stale install
+  lock remained; the disposable container and image were removed afterward.
+
+These checks validate public download and installation. They do not fund a
+wallet, perform inference, or validate service startup; the separate records
+below cover earlier application and service checks.
+
 ## Installer validation (2026-09-21)
 
 All 18 installer tests passed on macOS with system Bash 3.2/BSD tools and on
@@ -263,8 +289,8 @@ checksum/archive failures, runtime rejection, upgrades, launcher conflicts,
 state preservation, failed activation, and interruption after activation.
 Bash syntax and ShellCheck passed. A fresh adversarial review approved the
 final implementation after fixes to interrupted/failed-install cleanup.
-These are installer and packaging checks with fixture executables; new native
-release binaries and live public download URLs were not built or tested.
+These September 21 checks used fixture executables; native release binaries
+and public download URLs were validated separately on September 22 above.
 
 ## Validation record (2026-09-10)
 
@@ -405,5 +431,7 @@ about 4½ minutes in the observed flow. For a configured daemon,
 checks authentication, model discovery, nonstream responses, and incremental
 SSE timing; it sends two inference requests using that environment's balance.
 Use `--stream-only` for one paid request on ZKAPI and allow settlement before
-repeating it. Mainnet funding, Linux service boot, and AUR installation remain
-unverified; release artifacts and package repositories have not been published.
+repeating it. As of this September 10 validation, mainnet funding, Linux service
+boot, and AUR installation were unverified, and release artifacts and package
+repositories had not been published. The September 22 prerelease publication
+and installer checks are recorded above.

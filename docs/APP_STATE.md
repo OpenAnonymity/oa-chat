@@ -4,17 +4,27 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
-## 2026-09-22: First CLI prerelease preparation
+## 2026-09-22: First CLI prerelease published and installation verified
 
-- The first daemon release is planned as a GitHub prerelease at the numeric
-  tag `daemon-v0.1.0`; publication is pending. Installation examples now use
-  `releases/download/daemon-v0.1.0/install.sh`, including the custom-prefix
-  example. They become available after the reviewed release assets publish.
+- [`daemon-v0.1.0`](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0)
+  was published at 14:41 UTC as a GitHub prerelease with 11 assets. The exact
+  `releases/download/daemon-v0.1.0/install.sh` command and custom-prefix example
+  are available. Homebrew tap and AUR publication remain separate, unfinished
+  release steps.
 - GitHub's repository-wide `latest/download` URL excludes prereleases. An
   exact-tag URL works for both stable releases and prereleases; no version
   suffix or installer change is needed for the GitHub prerelease flag. Keep
-  `latest/download` as an optional future stable-release command and verify
-  publication before describing either URL as live.
+  `latest/download` as an optional future stable-release command.
+- [Release CI](https://github.com/OpenAnonymity/oa-chat/actions/runs/35740027874)
+  passed Go/installer tests, native builds, executable smoke checks on all four
+  targets, and assembly. GitHub asset digests matched `SHA256SUMS`; native
+  library dependencies matched the documented platform requirements.
+- Public installation passed on macOS ARM64 with a custom prefix containing
+  spaces and on clean Ubuntu 24.04 ARM64 as an unprivileged user with the
+  default prefix. Both executables and all five proof assets passed. Linux
+  reinstallation retained the previous release, activated a complete new one,
+  and left no configuration or stale lock. See the
+  [dated validation record](CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
 
 ## 2026-09-21: One-command CLI installer
 
@@ -39,11 +49,11 @@ reading code alone.
   service workflows. The standalone installer prints PATH/foreground setup
   guidance; it does not register a second managed service.
 - CI exercises the installer with local release fixtures on Linux/macOS and
-  before native release builds. Public installation remains gated on publishing
-  a reviewed daemon release; no daemon release, tap, or AUR package was published
-  by the installer implementation. An exact `daemon-vVERSION/install.sh` URL
-  stays version-pinned and supports prereleases. The latest-download URL is
-  repository-wide and requires a stable daemon release marked as latest.
+  before native release builds. The September 21 implementation did not publish
+  a daemon release, tap, or AUR package; the September 22 release is recorded
+  above. An exact `daemon-vVERSION/install.sh` URL stays version-pinned and
+  supports prereleases. The latest-download URL is repository-wide and requires
+  a stable daemon release marked as latest.
 - Cleanup must inspect the committed `current` link before deleting a staged
   bundle: a signal can land between its atomic rename and the success flag.
   EXIT-trap state must outlive `main`'s locals, which Bash 5 unwinds on implicit

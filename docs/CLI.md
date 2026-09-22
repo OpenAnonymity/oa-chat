@@ -11,8 +11,8 @@ file-storage, and image-generation endpoints are not implemented.
 
 ## Install with one command
 
-The first prerelease, `daemon-v0.1.0`, is pending publication. Once it is
-published, install the native binaries and proving assets with:
+Install the native binaries and proving assets from the published
+[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0):
 
 ```sh
 curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
@@ -40,9 +40,9 @@ cover version pinning and custom installation directories.
 
 The exact-tag installer URL works for stable releases and GitHub prereleases.
 GitHub's `latest/download` URL excludes prereleases, so use the command above
-for this preview. It becomes available when the first prerelease and its
-generated `install.sh` asset are published. A Homebrew tap and an AUR package
-have not yet been published.
+for this preview. Public installation passed on macOS ARM64 and Ubuntu 24.04
+ARM64; see the [release validation record](CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
+A Homebrew tap and an AUR package have not yet been published.
 
 ## Build and run ticket mode
 
