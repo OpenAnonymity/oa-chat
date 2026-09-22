@@ -17,8 +17,8 @@ import {
 // header hairline. Sizing and colour live in zkapi.css (.zkapi-dialog).
 const MODAL_CLASSES = 'zkapi-dialog';
 // Closing the MetaMask prompt is the person's own decision, said once, in
-// the fewest words: no funds moved and the saved work is still there.
-const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
+// a short notice identifies the operation without asserting a fund outcome.
+const CANCELED_LINE = 'Canceled in MetaMask.';
 // A submitted transaction needs nothing from the person: the SDK checks
 // the chain every 15 s and on focus, and the dialog re-renders on change.
 // The check button stays as a quiet fallback for a slow indexer.
@@ -405,7 +405,9 @@ export default class AccountModal {
             // An indexer that has not caught up is a wait, not a fault.
             const indexerLag = isIndexerLag(error);
             explainZkapiError(error);
-            this.setStatus(rejected ? CANCELED_LINE : walletErrorMessage(error),
+            const canceledMessage = activityDetails?.kind === 'deposit' ? 'Deposit canceled.'
+                : activityDetails?.kind === 'withdraw' ? 'Withdrawal canceled.' : CANCELED_LINE;
+            this.setStatus(rejected ? canceledMessage : walletErrorMessage(error),
                 !rejected && !confirmationPending && !indexerLag);
             if (activityId) {
                 if (confirmationPending) zkapiClient.completeActivity(activityId, {

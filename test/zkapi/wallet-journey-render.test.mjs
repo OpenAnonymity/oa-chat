@@ -25,7 +25,8 @@ test('while a withdrawal runs, the form folds to its method and the steps follow
         assert.match(html, /data-step="proof" data-state="complete"/);
         assert.match(html, /data-step="wallet" data-state="waiting" aria-current="step"/);
         assert.match(html, /data-step="chain" data-state="upcoming"/);
-        assert.match(html, /One transaction\. Nothing moves before you confirm\./);
+        assert.match(html, /Confirm your withdrawal in MetaMask/);
+        assert.match(html, /Confirm the transaction to return your remaining balance to your wallet\./);
         assert.doesNotMatch(html, /zkapi-progress-text/);
     } finally { Object.assign(zkapiClient, original); }
 });
@@ -103,7 +104,7 @@ test('a canceled MetaMask prompt is said in the dialog, on the step it stopped a
         assert.deepEqual(toasts, []);
         assert.equal(modal.outcome.tone, 'info');
         assert.match(modal.rendered, /data-step="wallet" data-state="upcoming"/, 'nothing was submitted: the persisted phase is still prepared');
-        assert.match(modal.rendered, /Canceled in MetaMask\. Nothing moved\./);
+        assert.match(modal.rendered, /Withdrawal canceled\./);
         assert.match(modal.rendered, /id="zkapi-withdraw-btn"[^>]*>Continue in MetaMask/);
     } finally { Object.assign(zkapiClient, original); }
 });
@@ -122,11 +123,11 @@ test('a canceled deposit says so once: no "saved" caption or resume note beside 
         assert.match(saved, /Saved deposit/);
         assert.match(saved, /Before resuming, check MetaMask for a pending transaction\./);
         assert.match(saved, /Resume with MetaMask/);
-        assert.doesNotMatch(saved, /Canceled in MetaMask/);
+        assert.doesNotMatch(saved, /Deposit canceled/);
 
         await modal.run(async report => { report('Confirm the deposit in MetaMask…'); throw Object.assign(new Error('User rejected the request.'), { code: 4001 }); }, { kind: 'deposit', title: 'Adding your balance' });
         assert.equal(modal.outcome.canceled, true);
-        assert.match(modal.rendered, /Canceled in MetaMask\. Nothing moved\./);
+        assert.match(modal.rendered, /Deposit canceled\./);
         assert.doesNotMatch(modal.rendered, /Saved deposit/);
         assert.doesNotMatch(modal.rendered, /Saved in this browser/);
         assert.match(modal.rendered, /Try again with MetaMask/);

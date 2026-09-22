@@ -1,3 +1,7 @@
+## 2026-09-22: Clearer standard withdrawal steps
+
+- Preparation copy identifies the zkAPI server authorizing the withdrawal and the device creating its proof. The wallet step says “Confirm your withdrawal in MetaMask” and explains returning the remaining balance to the wallet. Deposit cancellations say “Deposit canceled.” in both funding screens; standard withdrawal cancellations say “Withdrawal canceled.” Escape recovery wording and all transaction behavior remain unchanged.
+
 ## 2026-09-22: Explicit deposit and withdrawal confirmation copy
 
 - Deposit confirmation says “This transfer moves funds from your wallet into your zkAPI balance.” without naming a token. Deposit and withdrawal chain steps name Ethereum confirmation. Submitted deposits explain that the deposit awaits confirmation on Ethereum, without a timing promise. Submitted withdrawal notices explain that the withdrawal is awaiting confirmation on Ethereum, without promising a completion time. Escape recovery retains its separate safety-window explanation. No transaction or polling behavior changed.

@@ -100,7 +100,7 @@ export default class WelcomePanel {
         } catch (error) {
             this.step = 'welcome';
             this.error = error?.code === 4001
-                ? 'Canceled in MetaMask. Nothing moved.'
+                ? 'Deposit canceled.'
                 : error.shortMessage || error.message || String(error);
             this.render();
         } finally {

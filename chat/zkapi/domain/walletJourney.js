@@ -22,10 +22,10 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
         ...(hasLease ? [{ id: 'settle', label: 'Settle the active chat key', detail: 'Finishes the open chat and confirms its usage.' }] : []),
         escape
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
-            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'Getting approval from zkAPI and creating a proof on your device.' },
+            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server is authorizing your withdrawal, and your device is creating the withdrawal proof.' },
         escape
             ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
-            : { id: 'wallet', label: 'Confirm the close in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
+            : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Confirm the transaction to return your remaining balance to your wallet.' },
         escape
             ? { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
             : { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
