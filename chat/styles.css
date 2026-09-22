@@ -4337,6 +4337,11 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     height: 36px;
 }
 .sidebar-header-actions { padding-left: 36px; }
+/* Bring the trash glyph toward the toggle without overlapping their hit areas. */
+.sidebar-header-actions #delete-history-btn {
+    justify-content: flex-start;
+    padding-left: 2px;
+}
 .sidebar-header-actions #new-chat-btn { min-width: 0; }
 .sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
 .left-sidebar-toggle-space { display: none; width: 36px; flex-shrink: 0; }

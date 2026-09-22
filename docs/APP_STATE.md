@@ -1,3 +1,7 @@
+## 2026-09-21: Tighter sidebar trash placement
+
+- The delete-history glyph sits 6px farther left within its existing 36px button. The adjacent fixed sidebar toggle keeps a separate hit target; New Chat stays in place.
+
 ## 2026-09-21: Integrate inference reliability with current main
 
 - Merge preserves request deadlines, silence warnings, partial-response recovery, output-budget recovery, and the 30K generation cap alongside the current responsive layout and wallet UI. Both lifecycle regression groups are retained. Credit-error body inspection now obeys the same abort signal and cancels discarded response branches, including a stalled 402 before streaming begins.
