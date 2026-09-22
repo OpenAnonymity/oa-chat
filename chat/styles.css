@@ -6002,6 +6002,21 @@ html {
     font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
 
+/* --- Position: below the trigger, extending toward the right --- */
+[data-tooltip-position="bottom-start"]:hover::after {
+    left: 0;
+    right: auto;
+    transform: translateY(8px);
+    animation: tooltipBodyFadeInRight 0.15s ease-out;
+}
+
+[data-tooltip-position="bottom-start"]:hover::before {
+    left: 12px;
+    right: auto;
+    transform: translateY(4px) rotate(45deg);
+    animation: tooltipArrowFadeInRight 0.15s ease-out;
+}
+
 /* --- Position: right-aligned (right panel elements) --- */
 [data-tooltip-position="right"]:hover::after {
     left: auto;

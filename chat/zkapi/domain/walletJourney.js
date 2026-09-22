@@ -13,7 +13,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             { id: 'connect', label: 'Connect MetaMask' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             { id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' },
-            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
+            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Confirm the deposit in MetaMask to add funds to your private balance.' },
             { id: 'chain', label: 'Waiting for confirmation', detail: 'Usually under a minute.' }
         ];
     }
@@ -22,7 +22,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
         ...(hasLease ? [{ id: 'settle', label: 'Settle the active chat key', detail: 'Finishes the open chat and confirms its usage.' }] : []),
         escape
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
-            : { id: 'proof', label: 'Request server clearance and generate the proof', detail: 'zkAPI co-signs the close; the proof is made on this device.' },
+            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'Getting approval from zkAPI and creating a proof on your device.' },
         escape
             ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
             : { id: 'wallet', label: 'Confirm the close in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },

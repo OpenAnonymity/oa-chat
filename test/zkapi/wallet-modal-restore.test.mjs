@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 
-function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, blockedStorage = false } = {}) {
-    const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal };
+function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, blockedStorage = false, withdrawals = [] } = {}) {
+    const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals };
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
     const classes = new Set(['hidden']);
@@ -29,7 +29,7 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
     t.mock.method(zkapiClient, 'subscribeClock', () => () => {});
     t.mock.method(zkapiClient, 'init', async () => {
         await loading;
-        Object.assign(zkapiClient, { config, wallet: { note }, withdrawal });
+        Object.assign(zkapiClient, { config, wallet: { note }, withdrawal, withdrawals });
         if (failInit) throw new Error('Refresh unavailable');
     });
     const refresh = t.mock.method(zkapiClient, 'refresh', async () => {});
@@ -80,11 +80,10 @@ test('an escape safety window (days of waiting) does not reopen on every reload'
     assert.equal(f.modal.isOpen, false);
 });
 
-test('a merely saved plan (prepared deposit, prepared withdrawal proof) does not reopen', async t => {
+test('a merely saved deposit plan does not reopen', async t => {
     for (const state of [
         { config: { pending_deposit: { phase: 'prepared' } } },
-        { config: { pending_deposit: { phase: 'retry_exact' } } },
-        { config: { prepared_withdrawal: { mode: 'mutual', phase: 'prepared' } }, note: { note_id: 7 } }
+        { config: { pending_deposit: { phase: 'retry_exact' } } }
     ]) {
         const f = setup(t, state);
         await f.load();
@@ -198,4 +197,67 @@ test('a deposit settled during initialization opens its result once and consumes
     assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
     f.notify();
     assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+});
+
+for (const phase of ['prepared', 'retry_exact', 'awaiting_wallet', 'submitted', 'ambiguous', 'dropped_or_pending']) {
+    test(`withdrawal reload restores ${phase} without a tab marker or resubmission`, async t => {
+        const f = setup(t, { config: { prepared_withdrawal: { phase, mode: 'mutual' } }, note: { note_id: 7 } });
+        await f.load();
+        assert.equal(f.modal.isOpen, true);
+        assert.equal(f.modal.view, 'withdraw');
+        f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    });
+}
+for (const phase of ['submitted_unconfirmed', 'finalizing', 'awaiting_wallet']) {
+    test(`reload restores background withdrawal ${phase} in history`, async t => {
+        const f = setup(t, { withdrawals: [{ recordId: 'old', phase }] });
+        await f.load();
+        assert.equal(f.modal.isOpen, true);
+        assert.equal(f.modal.view, 'withdrawals');
+        f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    });
+}
+for (const phase of ['closed', 'closed_unconfirmed', 'pending']) {
+    test(`background withdrawal ${phase} does not continually reopen`, async t => {
+        const f = setup(t, { withdrawals: [{ recordId: 'old', phase }] });
+        await f.load();
+        assert.equal(f.modal.isOpen, false);
+    });
+}
+test('background updates wait while a disclosure is animating', async t => {
+    const f = setup(t);
+    await f.load();
+    f.modal.open('balance');
+    const rendered = f.modal.render.mock.callCount();
+    f.modal.disclosureAnimating = true;
+    f.notify();
+    assert.equal(f.modal.render.mock.callCount(), rendered);
+    assert.equal(f.modal.disclosureRefreshPending, true);
+    f.modal.close();
+    assert.equal(f.modal.disclosureRefreshPending, false);
+});
+
+test('queued disclosure refresh preserves a deposit input focused during the animation', async t => {
+    const f = setup(t);
+    await f.load();
+    f.modal.open('fund');
+    f.modal.handleDisclosureMotion(true);
+    f.notify();
+    const rendered = f.modal.render.mock.callCount();
+    document.activeElement = { id: 'zkapi-deposit-amount' };
+    f.modal.handleDisclosureMotion(false);
+    assert.equal(f.modal.render.mock.callCount(), rendered);
+    assert.equal(f.modal.disclosureRefreshPending, true);
+    document.activeElement = null;
+    f.modal.handleDisclosureMotion(false);
+    assert.equal(f.modal.render.mock.callCount(), rendered + 1);
+    assert.equal(f.modal.disclosureRefreshPending, false);
+});
+
+test('an idle deposit plan does not hide a background withdrawal on reload', async t => {
+    const f = setup(t, { config: { pending_deposit: { phase: 'prepared' } }, withdrawals: [{ phase: 'submitted_unconfirmed' }] });
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.modal.view, 'withdrawals');
+    f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
 });

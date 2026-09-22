@@ -1,3 +1,23 @@
+## 2026-09-22: Search results remain in normal history
+
+- Reproduced with regression tests against the real ChatApp controller: search caches sessions outside the initial 80-row sidebar page. Previously ensureSessionLoaded and insertSessionIntoList mistook cache membership for sidebar membership, so clearing search hid an opened/updated old chat. loadMoreSessions also skipped cached-but-unlisted results.
+- Opening a cached session now inserts its existing object into the sidebar. Insertion and pagination deduplicate against the displayed session list, preserving the cached object and live edits. Search alone does not populate the entire normal sidebar. Tests cover opening/updating/clearing search, repeated opening, pagination, and stale database copies.
+- The trash tooltip uses bottom-start placement: below the trigger and extending rightward, with the existing uncentered entrance animation. No deletion behavior, inference, ticket redemption, or response recovery changes.
+
+## 2026-09-22: Correct Ethereum mark and reload findings
+
+- Further investigation (no recovery implementation): ticketStore.consumeTickets archives selected tickets after the redemption handler returns, but the org spends them before issuing the key. Reload can lose a successful redemption response before durable client access storage; acquireVerifiedAccess retries TICKET_USED with other tickets. Recovery must reconcile the original redemption rather than treating an unknown result as safe to spend again. The local org request_key endpoint rolls back known provisioning failures but does not expose replay of a successful key response. zkAPI separately owns lease recovery and aggregate-usage settlement; preserving a UI spinner cannot keep provider inference alive across reload. Resumable inference would require provider support or a privacy-reviewed durable execution service, not simply browser state restoration.
+- The client payment selector uses the exact six diamond paths/colors from the supplied EF color-light SVG, including its purple facet, in place of the previous embedded PNG.
+- Investigation only (not fixed): request ownership is in-memory and lost on full reload. ChatArea normalizes streamingReasoning/streamingTokens but leaves streamingPending/streamingPhase intact; MessageTemplates renders those saved placeholders even when no request is active. A subsequent change should reconcile orphaned messages to an interrupted/retry state and separately recover access state; do not treat a restored indicator as a resumed inference request.
+
+## 2026-09-21: Withdrawal reload and disclosure continuity
+
+- Deposit confirmation copy now reads “Confirm the deposit in MetaMask to add funds to your private balance.”
+
+- Restore prepared/retry-ready withdrawals as well as submitted/unknown ones, even after the transient tab marker has been consumed. Background submissions/finalizations open Payment history; completed records and long escape waiting periods stay quiet. Reopening only refreshes status and never resubmits a transaction.
+- The first mutual-close step now says “Prepare your withdrawal.” Recovery copy explains opening MetaMask from the browser toolbar and using the existing recovery/retry actions without another page reload. The injected provider has no documented focus-existing-confirmation method; no automatic transaction or permission requests were added.
+- Background wallet updates are coalesced while a guide/history arrow, panel, and follow-up scroll animate. Existing shared Transitions.dev timing and reduced-motion behavior remain; close/rerender clears deferred work.
+
 ## 2026-09-21: Tighter sidebar trash placement
 
 - The delete-history glyph sits 6px farther left within its existing 36px button. The adjacent fixed sidebar toggle keeps a separate hit target; New Chat stays in place.

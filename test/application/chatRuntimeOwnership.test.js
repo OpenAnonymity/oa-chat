@@ -150,9 +150,62 @@ describe('production ChatApp runtime ownership', () => {
     let databaseMethods;
     beforeEach(() => {
         restore = installBrowser();
-        databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSession', 'getSessionMessages', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
+        databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSession', 'getSessionMessages', 'getAllSessions', 'getSessionsPage', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
+
+    test('an old search result stays in the normal sidebar after opening and new activity', async () => {
+        const app = appHarness();
+        const today = Date.now();
+        const recent = Array.from({ length: 80 }, (_, i) => ({ id: `recent-${i}`, updatedAt: today - i, title: 'Recent', conversationSearchText: '' }));
+        const old = { id: 'old-search-hit', updatedAt: today - 7 * 86400000, title: 'Unique old chat', conversationSearchText: '' };
+        app.state.sessions = recent;
+        app.state.sessionsById = new Map(recent.map(s => [s.id, s]));
+        app.sessionSearchQuery = 'Unique';
+        app.sessionSearchRequestId = 0;
+        app.hasActiveSessionListCriteria = () => Boolean(app.sessionSearchQuery);
+        app.getSessionResultsKey = () => app.sessionSearchQuery;
+        app.getNormalizedSessionSearchQuery = () => app.sessionSearchQuery.toLowerCase();
+        app.sessionMatchesSidebarFilters = () => true;
+        app.sanitizePersistedSessionAccess = () => {};
+        app.normalizeSessionCouncilState = () => {};
+        app.migrateSessionsInBackground = () => {};
+        app.renderSessions = () => {};
+        chatDB.getAllSessions = async () => [...recent, old];
+        chatDB.getSession = async () => { throw new Error('A cached search result should not need another database read.'); };
+
+        await app.updateSessionSearchResults();
+        assert.ok(app.getFilteredSessions().some(s => s.id === old.id));
+        await app.ensureSessionLoaded(old.id);
+        old.updatedAt = today + 1000;
+        app.sessionSearchQuery = '';
+        await app.updateSessionSearchResults();
+        assert.equal(app.getFilteredSessions().filter(s => s.id === old.id).length, 1);
+        assert.equal(app.getFilteredSessions().find(s => s.id === old.id), old);
+        await app.ensureSessionLoaded(old.id);
+        assert.equal(app.state.sessions.filter(s => s.id === old.id).length, 1);
+    });
+
+    test('pagination includes search-cached sessions without duplicating opened chats or replacing live state', async () => {
+        const app = appHarness();
+        const opened = { id: 'opened', updatedAt: 300 };
+        const cached = { id: 'cached-only', updatedAt: 200, title: 'Live title' };
+        app.state.sessions = [opened];
+        app.state.sessionsById = new Map([[opened.id, opened], [cached.id, cached]]);
+        app.state.hasMoreSessions = true;
+        app.state.sessionsPageCursor = 'next';
+        app.hasActiveSessionListCriteria = () => false;
+        app.sanitizePersistedSessionAccess = () => {};
+        app.normalizeSessionCouncilState = () => {};
+        app.migrateSessionsInBackground = () => {};
+        app.renderSessions = () => {};
+        chatDB.getSessionsPage = async () => ({ sessions: [{ ...opened }, { ...cached, title: 'Stale title' }, { id: 'uncached', updatedAt: 100 }], nextCursor: null });
+        await app.loadMoreSessions();
+        assert.deepEqual(app.state.sessions.map(s => s.id), ['opened', 'cached-only', 'uncached']);
+        assert.equal(app.state.sessions[1], cached);
+        assert.equal(app.state.sessions[1].title, 'Live title');
+        assert.equal(app.state.hasMoreSessions, false);
+    });
 
     test('silence warnings belong to their request and disappear on recovery or navigation', () => {
         const app = appHarness();

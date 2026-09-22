@@ -53,10 +53,12 @@ export function revealFundingDisclosure(item, scroller) {
     return stop;
 }
 
-export function attachFundingDisclosures(root, onChange = () => {}) {
+export function attachFundingDisclosures(root, onChange = () => {}, onMotion = () => {}) {
     const items = [...(root?.querySelectorAll?.('[data-funding-disclosure]') || [])];
     let cancel = () => {};
     const handlers = [];
+    const view = root?.ownerDocument?.defaultView;
+    let motionTimer;
     const setOpen = (item, open) => {
         item.dataset.open = String(open);
         item.querySelector('.t-acc-head').setAttribute('aria-expanded', String(open));
@@ -68,15 +70,30 @@ export function attachFundingDisclosures(root, onChange = () => {}) {
         if (!button) continue;
         const click = () => {
             cancel();
+            view?.clearTimeout(motionTimer);
+            // Keep background wallet refreshes from replacing an animating
+            // history arrow/panel with a freshly rendered final state.
             const open = item.dataset.open !== 'true';
+            const scroller = root.querySelector('[data-funding-scroll]');
+            const duration = view ? Math.max(...items.flatMap(entry => [
+                motionDuration(entry, '--acc-expand', 420),
+                motionDuration(entry, '--acc-collapse', 420),
+                motionDuration(entry, '--acc-chevron', 320)
+            ])) : 0;
+            // Opening can scroll after expansion; let that finish before replacing DOM.
+            const settleDuration = duration + (duration > 0 && open && scroller
+                ? motionDuration(item, '--funding-scroll-duration', 320) + 50 : 0);
+            onMotion(settleDuration > 0);
+            if (settleDuration > 0) motionTimer = view.setTimeout(() => onMotion(false), settleDuration);
             for (const other of items) setOpen(other, other === item && open);
-            if (open) cancel = revealFundingDisclosure(item, root.querySelector('[data-funding-scroll]'));
+            if (open) cancel = revealFundingDisclosure(item, scroller);
         };
         button.addEventListener('click', click);
         handlers.push([button, click]);
     }
     return () => {
         cancel();
+        view?.clearTimeout(motionTimer);
         for (const [button, click] of handlers) button.removeEventListener('click', click);
     };
 }

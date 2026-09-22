@@ -37,7 +37,8 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         const html = modalWith().renderWithdrawal();
         assert.match(html, /data-step="proof" data-state="complete"/);
         assert.match(html, /data-step="wallet" data-state="waiting"/);
-        assert.match(html, /MetaMask may still be open in this or another tab\./);
+        assert.match(html, /Open MetaMask from your browser toolbar/);
+        assert.match(html, /Recover withdrawal/);
         assert.match(html, /id="zkapi-recover-withdrawal-btn"/);
         assert.match(html, /id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button"/);
 

@@ -58,10 +58,10 @@ export default class AccountModal {
             // An unfunded modal contains an editable amount. Rebuilding it on
             // background refreshes resets that value and steals input focus.
             // Mutating actions render once from run() after they complete.
-            const editingDeposit = ['balance', 'fund'].includes(this.view)
-                && !zkapiClient.note
-                && document.activeElement?.id === 'zkapi-deposit-amount';
-            if (this.isOpen && !this.busy && !editingDeposit) this.render();
+            if (this.canRefreshContent()) {
+                if (this.disclosureAnimating) this.disclosureRefreshPending = true;
+                else this.render();
+            }
         });
         this.clockUnsubscribe = zkapiClient.subscribeClock(({ now } = {}) => {
             this.handleZkapiClock(now);
@@ -78,6 +78,21 @@ export default class AccountModal {
         window.addEventListener('zkapi-payment-required', (event) => {
             this.open(event.detail?.view || 'fund');
         });
+    }
+
+    canRefreshContent() {
+        const editingDeposit = ['balance', 'fund'].includes(this.view)
+            && !zkapiClient.note
+            && document.activeElement?.id === 'zkapi-deposit-amount';
+        return this.isOpen && !this.busy && !editingDeposit;
+    }
+
+    handleDisclosureMotion(animating) {
+        this.disclosureAnimating = animating;
+        if (!animating && this.disclosureRefreshPending && this.canRefreshContent()) {
+            this.disclosureRefreshPending = false;
+            this.render();
+        }
     }
 
     attachTabListener() {
@@ -128,18 +143,23 @@ export default class AccountModal {
         // Only work that is actually in motion — a transaction sent, a
         // MetaMask prompt possibly still open, an outcome the chain has to
         // settle. A plan that is merely saved (prepared, the proof made) is
-        // not: it waits quietly until the person comes back for it.
+        // not: it waits quietly until the person comes back for it. Prepared
+        // withdrawals have already started closing a balance, so restore those too.
         const inMotion = phase => IN_MOTION_PHASES.includes(phase);
-        if (zkapiClient.config?.pending_deposit && !zkapiClient.note) {
-            const plan = zkapiClient.config.pending_deposit;
-            if (inMotion(plan.phase) || plan.approvals?.some(approval => inMotion(approval.phase))) this.open('fund');
-        } else if (inMotion(zkapiClient.config?.prepared_withdrawal?.phase)
-            || inMotion(zkapiClient.withdrawal?.phase)
+        const plan = zkapiClient.config?.pending_deposit;
+        if (!zkapiClient.note && (inMotion(plan?.phase)
+            || plan?.approvals?.some(approval => inMotion(approval.phase)))) {
+            this.open('fund');
+        } else if ([...IN_MOTION_PHASES, 'prepared', 'retry_exact'].includes(zkapiClient.config?.prepared_withdrawal?.phase)
+            || [...IN_MOTION_PHASES, 'prepared'].includes(zkapiClient.withdrawal?.phase)
             || zkapiClient.activeLateWithdrawal) {
             this.withdrawMode = (zkapiClient.config?.prepared_withdrawal?.mode
                 || zkapiClient.withdrawal?.mode || zkapiClient.activeLateWithdrawal?.mode) === 'escape'
                 ? 'escape' : 'mutual';
             this.open('withdraw');
+        } else if (zkapiClient.withdrawals?.some(record =>
+            ['submitted_unconfirmed', 'finalizing', 'awaiting_wallet'].includes(record.phase))) {
+            this.open('withdrawals');
         }
     }
 
@@ -181,6 +201,8 @@ export default class AccountModal {
         this.isOpen = false;
         this.rememberRunningModal(false);
         this.disposeFundingDisclosures?.();
+        this.disclosureAnimating = false;
+        this.disclosureRefreshPending = false;
         this.outcome = null;
         hideSurface(this.overlay, { clear: true });
         document.getElementById(this.triggerId)?.setAttribute('aria-expanded', 'false');
@@ -831,7 +853,7 @@ export default class AccountModal {
             return `<div class="zkapi-stack">
                 <p class="rounded-lg border border-border bg-muted/5 p-3 text-xs leading-relaxed text-muted-foreground">This balance was claimed after expiry. No refund was made. You can still check the earlier withdrawal request.</p>
                 <button id="zkapi-sync-withdrawal-btn" class="zkapi-primary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Check transaction</button>
-                ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
+                ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button w-full" type="button" ${this.busy ? 'disabled' : ''}>Recover withdrawal</button>` : ''}
                 <button id="zkapi-back-balance-btn" class="zkapi-quiet-button" type="button" ${this.busy ? 'disabled' : ''}>Back to balance</button>
             </div>`;
         }
@@ -898,7 +920,7 @@ export default class AccountModal {
         const notice = !prepared ? ''
             : droppedOrPending ? 'No receipt was found for the saved transaction. It may still be pending, or MetaMask may have dropped it. Check again, or resubmit the same withdrawal with its original nonce.'
             : submitted ? CONFIRMING_LINE
-            : awaitingWallet ? 'MetaMask may still be open in this or another tab.'
+            : awaitingWallet ? 'Open MetaMask from your browser toolbar to check the request. If its window closed, use “Recover withdrawal” below.'
             : ambiguous ? 'We couldn’t confirm whether your withdrawal went through. Check its status before trying again.'
             : clearanceReserved ? 'This balance already has a close authorization. Finish it in MetaMask, or set it aside and add a new balance.'
             : 'The proof is ready; no transaction has been submitted yet.';
@@ -949,8 +971,8 @@ export default class AccountModal {
                             ? `<button id="zkapi-sync-withdrawal-btn" class="${submitted ? 'zkapi-quiet-button' : 'zkapi-primary-button'}" type="button">${submitted ? 'Check now' : 'Check transaction'}</button>`
                             : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${showJourney ? '' : 'disabled'}>${showJourney ? 'Continue in MetaMask' : primaryLabel}</button>`}
                     ${droppedOrPending && prepared?.replacement_available ? `<button id="zkapi-retry-dropped-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Resubmit with original nonce</button>` : ''}
-                    ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>MetaMask prompt was closed</button>` : ''}
-                    ${ambiguous ? `<button id="zkapi-retry-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Retry transaction</button>` : ''}
+                    ${awaitingWallet ? `<button id="zkapi-recover-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Recover withdrawal</button>` : ''}
+                    ${ambiguous ? `<button id="zkapi-retry-withdrawal-btn" class="zkapi-secondary-button" type="button" ${this.busy ? 'disabled' : ''}>Try again in MetaMask</button>` : ''}
                     ${prepared && !submissionActive && !clearanceReserved ? '<button id="zkapi-cancel-withdrawal-btn" class="zkapi-secondary-button" type="button">Cancel withdrawal</button>' : ''}
                     ${prepared && !submissionActive && clearanceReserved ? '<button id="zkapi-park-withdrawal-btn" class="zkapi-secondary-button" type="button">Set aside and add a new balance</button>' : ''}
                     <button id="zkapi-back-balance-btn" class="zkapi-quiet-button" type="button" ${this.busy ? 'disabled' : ''}>Back to balance</button>
@@ -990,10 +1012,12 @@ export default class AccountModal {
                 </div>
             </div>`;
 
+        this.disclosureAnimating = false;
+        this.disclosureRefreshPending = false;
         this.disposeFundingDisclosures = attachFundingDisclosures(this.overlay, (key, open) => {
             if (key === 'history') this.historyOpen = open;
             else if (key !== 'setup') (this.privateBalanceHelpOpen ||= {})[key] = open;
-        });
+        }, animating => this.handleDisclosureMotion(animating));
         attachPrivateBalanceHelp(this.overlay, this);
         restorePrivateBalanceHelpFocus(this.overlay, helpFocus);
         restoreFundingSetupView(this.overlay, fundingSetup);

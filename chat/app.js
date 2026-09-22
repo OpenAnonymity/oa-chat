@@ -9436,7 +9436,9 @@ class ChatApp {
 
     insertSessionIntoList(session) {
         if (!session || !session.id) return;
-        if (this.state.sessionsById.has(session.id)) return;
+        if (this.state.sessions.some(item => item.id === session.id)) return;
+        // Search also populates the cache; cache membership is not sidebar membership.
+        session = this.state.sessionsById.get(session.id) || session;
         this.sanitizePersistedSessionAccess(session);
 
         this.normalizeSessionCouncilState(session);
@@ -9492,7 +9494,10 @@ class ChatApp {
                 SESSION_PAGE_SIZE,
                 this.state.sessionsPageCursor
             );
-            const newSessions = sessions.filter(session => !this.state.sessionsById.has(session.id));
+            const listedIds = new Set(this.state.sessions.map(session => session.id));
+            const newSessions = sessions
+                .filter(session => !listedIds.has(session.id))
+                .map(session => this.state.sessionsById.get(session.id) || session);
             this.migrateSessionsInBackground(newSessions);
             this.cacheSessions(newSessions);
             this.state.sessions.push(...newSessions);
@@ -9505,7 +9510,12 @@ class ChatApp {
     }
 
     async ensureSessionLoaded(sessionId) {
-        if (!sessionId || this.state.sessionsById.has(sessionId)) return;
+        if (!sessionId) return;
+        const cachedSession = this.state.sessionsById.get(sessionId);
+        if (cachedSession) {
+            this.insertSessionIntoList(cachedSession);
+            return;
+        }
         const session = await chatDB.getSession(sessionId);
         if (session) {
             this.migrateSessionsInBackground([session]);

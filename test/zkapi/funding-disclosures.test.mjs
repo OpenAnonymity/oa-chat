@@ -98,3 +98,40 @@ test('setup stays one disclosure and distinguishes mainnet from test tokens', ()
     assert.doesNotMatch(testnet, /How to buy in MetaMask/);
     assert.match(fundingDisclosure({ key: 'history', label: 'Payment history', body: 'History' }), /aria-expanded="false"/);
 });
+
+function motionFixture(options) {
+    const f = fixture(options);
+    const handlers = new Map();
+    const button = { setAttribute() {}, addEventListener: (name, fn) => handlers.set(name, fn), removeEventListener: name => handlers.delete(name) };
+    f.item.dataset = { fundingDisclosure: 'history', open: 'false' };
+    f.item.querySelector = selector => selector === '.t-acc-head' ? button : {};
+    f.root = { ownerDocument: f.item.ownerDocument, querySelectorAll: () => [f.item], querySelector: () => f.scroller };
+    f.click = () => handlers.get('click')();
+    return f;
+}
+
+test('history motion guards background renders through expansion and follow-up scroll', () => {
+    const f = motionFixture(), motion = [];
+    const dispose = attachFundingDisclosures(f.root, () => {}, active => motion.push(active));
+    f.click();
+    assert.deepEqual(motion, [true]);
+    assert.ok([...f.timers.values()].some(timer => timer.delay > 420 + 320));
+    // A second click cancels the opening hold and replaces it with the close hold.
+    f.click();
+    assert.equal(f.timers.size, 1);
+    assert.deepEqual(motion, [true, true]);
+    f.runTimer();
+    assert.deepEqual(motion, [true, true, false]);
+    f.click(); dispose(); f.runTimer();
+    assert.deepEqual(motion, [true, true, false, true]);
+    assert.equal(f.timers.size + f.frames.size + f.listeners.size, 0);
+});
+
+test('reduced motion does not defer background updates', () => {
+    const f = motionFixture({ reduced: true }), motion = [];
+    const dispose = attachFundingDisclosures(f.root, () => {}, active => motion.push(active));
+    f.click();
+    assert.deepEqual(motion, [false]);
+    assert.ok([...f.timers.values()].every(timer => timer.delay === 0));
+    dispose();
+});
