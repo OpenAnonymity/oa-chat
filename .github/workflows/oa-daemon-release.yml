@@ -43,6 +43,8 @@ jobs:
       - name: Test Go daemon
         working-directory: daemon
         run: go test -race ./...
+      - name: Test shell installer
+        run: python3 daemon/scripts/test-install.py
       - name: Build native bundle and Linux packages
         shell: bash
         run: |
@@ -50,6 +52,21 @@ jobs:
           export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
           daemon/scripts/prepare-zkapi.sh "$RUNNER_TEMP/oa-zkapi-source"
           daemon/scripts/build-native.sh "$version" "$RUNNER_TEMP/artifacts" "$RUNNER_TEMP/oa-zkapi-source"
+      - name: Check native archive executables and runtime libraries
+        shell: bash
+        run: |
+          version=${GITHUB_REF_NAME#daemon-v}
+          target=${{ matrix.target }}
+          smoke="$RUNNER_TEMP/oa-chat-smoke"
+          mkdir -p "$smoke"
+          tar -xzf "$RUNNER_TEMP/artifacts/oa-chat_${version}_${target/-/_}.tar.gz" -C "$smoke"
+          test "$("$smoke/oa-chat" version)" = "oa-chat $version"
+          "$smoke/oa-zkapi" --help >/dev/null
+          if [[ "$RUNNER_OS" = macOS ]]; then
+            otool -L "$smoke/oa-zkapi"
+          else
+            ldd "$smoke/oa-zkapi"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -66,7 +83,7 @@ jobs:
         with:
           path: release
           merge-multiple: true
-      - name: Generate checksum-pinned Homebrew and AUR manifests
+      - name: Generate pinned installer, Homebrew, and AUR manifests
         shell: bash
         run: |
           version=${GITHUB_REF_NAME#daemon-v}
@@ -76,5 +93,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/*.deb release/*.rpm release/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/*.deb release/*.rpm release/install.sh release/SHA256SUMS \
             --draft --verify-tag --title "OA Chat daemon ${GITHUB_REF_NAME#daemon-v}" --generate-notes

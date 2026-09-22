@@ -9,6 +9,41 @@ including SSE streaming, tool calls, multimodal messages, structured outputs,
 usage events, and reasoning fields. Responses, Assistants, embeddings,
 file-storage, and image-generation endpoints are not implemented.
 
+## Install with one command
+
+The first prerelease, `daemon-v0.1.0`, is pending publication. Once it is
+published, install the native binaries and proving assets with:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+```
+
+This installs `oa-chat` and `oa-zkapi` under `~/.local/bin` on macOS 13+ or
+Linux with glibc 2.39+, for AMD64 or ARM64. Follow the installer's PATH guidance
+if that directory is not on your PATH. Linux also requires OpenSSL 3, libgcc,
+and CA certificates. The installer checks the archive's SHA-256 checksum and
+both executables before activating the installation. Run it as your normal
+user; it does not need `sudo`, change your shell configuration, or start a
+service.
+
+Then initialize the daemon and import/redeem tickets before starting it:
+
+```sh
+oa-chat init
+oa-chat tickets redeem
+oa-chat serve
+```
+
+For zkAPI access, use the [funding setup](#zkapi-and-funding) instead.
+[Installer options and upgrades](CLI_PACKAGING.md#one-command-installation)
+cover version pinning and custom installation directories.
+
+The exact-tag installer URL works for stable releases and GitHub prereleases.
+GitHub's `latest/download` URL excludes prereleases, so use the command above
+for this preview. It becomes available when the first prerelease and its
+generated `install.sh` asset are published. A Homebrew tap and an AUR package
+have not yet been published.
+
 ## Build and run ticket mode
 
 ```sh
@@ -130,7 +165,8 @@ SIGTERM cancels active requests and stops the supervised companion. A process
 lock prevents two daemons sharing a config directory.
 
 `.github/workflows/oa-daemon-release.yml` builds native macOS/Linux ARM64 and
-AMD64 bundles, Debian/RPM packages, and checksum-pinned Homebrew/AUR metadata
+AMD64 bundles, Debian/RPM packages, a version-pinned shell installer, and
+checksum-pinned Homebrew/AUR metadata
 for `daemon-vMAJOR.MINOR.PATCH` tags. It creates a draft GitHub release.
 Publishing a tap, AUR package, or distribution repository is a separate
 release action; none has been published by this implementation.

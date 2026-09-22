@@ -53,6 +53,13 @@ for source, destination in (
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(rendered)
 
+installer_source = (repo / "daemon/install.sh").read_text()
+if installer_source.count("@@VERSION@@") != 1:
+    parser.error("daemon/install.sh must contain exactly one release-version placeholder")
+installer = artifacts / "install.sh"
+installer.write_text(installer_source.replace("@@VERSION@@", args.version))
+installer.chmod(0o755)
+
 with tempfile.TemporaryDirectory(prefix="oa-chat-manifests-") as temporary:
     for directory in ("homebrew", "aur"):
         shutil.copytree(artifacts / directory, Path(temporary) / directory)
@@ -66,4 +73,4 @@ for path in sorted(artifacts.rglob("*")):
     if path.is_file() and path.name != "SHA256SUMS":
         checksums.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(artifacts)}")
 (artifacts / "SHA256SUMS").write_text("\n".join(checksums) + "\n")
-print(f"Generated Homebrew, AUR, and SHA256SUMS files under {artifacts}")
+print(f"Generated installer, Homebrew, AUR, and SHA256SUMS files under {artifacts}")

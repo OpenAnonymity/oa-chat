@@ -20,6 +20,96 @@ wallet secret, or provider API key. The daemon accepts only loopback listeners.
 Client applications
 retain their own transcripts under their own storage/privacy settings.
 
+## One-command installation
+
+The shell installer uses the same native release archives as Homebrew and
+AUR. The first prerelease, `daemon-v0.1.0`, is pending publication. Once it is
+published, users can install it with:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+```
+
+The published script is pinned to its own release version. It downloads the
+matching archive and `SHA256SUMS` over HTTPS, verifies the archive before
+extracting it, and checks both binaries before activating the installation.
+The supported targets are macOS 13+ and Linux with glibc 2.39+, each on AMD64
+or ARM64. Linux requires OpenSSL 3, libgcc, and CA certificates; install missing
+runtime libraries with the distribution's package manager. Bash, `curl`,
+`tar`, and either `sha256sum` or `shasum` must be available. No compiler,
+Homebrew, Python, or root access is needed to run the installer.
+
+By default, launchers are installed in `~/.local/bin`. If needed, apply the
+PATH command printed by the installer to the current shell, then run:
+
+```sh
+oa-chat init
+oa-chat serve
+```
+
+Import/redeem tickets or follow the [zkAPI funding setup](CLI.md#zkapi-and-funding)
+before sending inference requests. The installer does not initialize a
+configuration, import tickets, fund a wallet, start a daemon/service, or edit
+shell startup files.
+
+To select another writable absolute prefix:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+```
+
+An exact-tag URL works for either a stable release or a GitHub prerelease and
+keeps the installation version pinned. Prerelease status is GitHub release
+metadata; the tag and installer version remain `daemon-v0.1.0` and `0.1.0`.
+GitHub's `latest/download` URL excludes prereleases and is repository-wide.
+For a future stable daemon release explicitly marked as latest, this optional
+command follows that stable release:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/install.sh | bash
+```
+
+`--version MAJOR.MINOR.PATCH` can override the script's pinned version;
+`--help` lists the options. The source file `daemon/install.sh` requires an
+explicit `--version` because its release placeholder is filled only by
+`assemble-release.py`.
+
+Stop a running daemon before upgrading, rerun the installation command with
+the same prefix, and restart the daemon afterward. An upgrade retains the
+previous release directory and activates a fully checked new directory by
+switching the managed `current` link. Existing configuration, tickets, and
+wallet balances remain in the separate private configuration directory.
+Launchers belonging to an unrelated installation are refused; use the existing
+package manager for a Homebrew/package upgrade or choose another prefix.
+
+The managed layout is:
+
+```text
+PREFIX/bin/oa-chat  -> PREFIX/lib/oa-chat/current/bin/oa-chat
+PREFIX/bin/oa-zkapi -> PREFIX/lib/oa-chat/current/bin/oa-zkapi
+PREFIX/lib/oa-chat/current -> releases/RELEASE_DIRECTORY
+PREFIX/lib/oa-chat/releases/RELEASE_DIRECTORY/
+  bin/oa-chat
+  bin/oa-zkapi
+  share/oa-chat/proof-setup/
+  share/oa-chat/build-info.json
+  share/oa-chat/third-party/
+```
+
+The companion resolves symlinks and finds proving assets relative to its real
+`bin` directory. Keep binaries and `share` together. Launcher links use the
+absolute prefix; reinstall with `--prefix` to change the installation location.
+The shell installer does not install the package's systemd unit, whose
+`ExecStart` uses `/usr/bin/oa-chat`; use foreground `oa-chat serve` or configure
+a user service with the chosen prefix and PATH.
+
+Availability: the installer is implemented, but the first daemon prerelease
+and public package repositories have not yet been published. Publishing the
+reviewed `daemon-v0.1.0` prerelease with its generated `install.sh` asset enables
+the exact-tag commands above; it does not enable `latest/download`. An exact
+daemon-tag URL remains usable independently of other release types in this
+repository.
+
 ## Homebrew
 
 Each release generates `homebrew/oa-chat.rb` with actual SHA-256 hashes for
@@ -108,7 +198,8 @@ daemon/scripts/build-native.sh 0.1.0 /tmp/oa-chat-release /tmp/oa-zkapi-source
 ```
 
 Run the native build on each of Linux/macOS and AMD64/ARM64, collect all four
-archives in one directory, then generate installable manifests:
+archives in one directory, then generate the pinned installer and installable
+manifests:
 
 ```sh
 python3 daemon/scripts/assemble-release.py 0.1.0 /tmp/oa-chat-release
@@ -127,9 +218,20 @@ and available notice/license texts are retained under
 submits an AUR package, or publishes a release.
 
 The [release workflow](../.github/workflows/oa-daemon-release.yml) builds a four-platform matrix from a
-`daemon-vMAJOR.MINOR.PATCH` tag and creates a **draft** GitHub release. Formula
-URLs point to that exact tag. Publish the reviewed release before installing
-its generated Homebrew/AUR manifests.
+`daemon-vMAJOR.MINOR.PATCH` tag and creates a **draft** GitHub release. It
+attaches the generated `install.sh` alongside native archives, Linux packages,
+packaging metadata, and `SHA256SUMS`. The installer and formula URLs point to
+that exact tag. Publish the reviewed release before installing its generated
+installer or Homebrew/AUR manifests. The first release is planned as a GitHub
+prerelease at `daemon-v0.1.0`; its exact-tag installer URL works once published.
+Only a stable daemon release marked as latest enables the optional
+`latest/download` command.
+
+Run `python3 daemon/scripts/test-install.py` for deterministic installer tests
+against local release fixtures. The installer workflow runs these checks on
+Linux and macOS; the release workflow also runs them before building native
+artifacts. These fixture checks do not publish releases or exercise funded
+inference.
 
 ## Open WebUI
 
@@ -151,6 +253,18 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Installer validation (2026-09-21)
+
+All 18 installer tests passed on macOS with system Bash 3.2/BSD tools and on
+Linux with Bash 5/GNU tools in a disposable, network-disabled ARM64 container.
+The fixtures cover all four platform selections, actual release assembly,
+checksum/archive failures, runtime rejection, upgrades, launcher conflicts,
+state preservation, failed activation, and interruption after activation.
+Bash syntax and ShellCheck passed. A fresh adversarial review approved the
+final implementation after fixes to interrupted/failed-install cleanup.
+These are installer and packaging checks with fixture executables; new native
+release binaries and live public download URLs were not built or tested.
 
 ## Validation record (2026-09-10)
 

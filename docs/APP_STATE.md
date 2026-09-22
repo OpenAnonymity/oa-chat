@@ -4,6 +4,51 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-22: First CLI prerelease preparation
+
+- The first daemon release is planned as a GitHub prerelease at the numeric
+  tag `daemon-v0.1.0`; publication is pending. Installation examples now use
+  `releases/download/daemon-v0.1.0/install.sh`, including the custom-prefix
+  example. They become available after the reviewed release assets publish.
+- GitHub's repository-wide `latest/download` URL excludes prereleases. An
+  exact-tag URL works for both stable releases and prereleases; no version
+  suffix or installer change is needed for the GitHub prerelease flag. Keep
+  `latest/download` as an optional future stable-release command and verify
+  publication before describing either URL as live.
+
+## 2026-09-21: One-command CLI installer
+
+- `daemon/install.sh` installs checksum-verified native macOS/Linux AMD64 or
+  ARM64 bundles into a user-owned prefix, defaulting to `~/.local`. It checks
+  the OS/runtime baseline and both executables before switching the active
+  release. It never initializes configuration, funds a wallet, changes shell
+  startup files, or starts a service. See [installation and upgrades](CLI_PACKAGING.md#one-command-installation).
+- Release assembly fills the script's single `@@VERSION@@` placeholder,
+  includes `install.sh` in `SHA256SUMS`, and attaches it to the draft daemon
+  release. The published script downloads its own exact version; it does not
+  resolve a second moving latest-release URL for the binaries. The source
+  script requires `--version` until release assembly fills the placeholder.
+- Launchers in `PREFIX/bin` point through `PREFIX/lib/oa-chat/current` to a
+  complete release containing `bin` and `share`. This layout is required:
+  `oa-zkapi` resolves symlinks before finding `../share/oa-chat/proof-setup`.
+  Updating retains the previous release directory and refuses unrelated
+  launchers. Stop/restart an active daemon around upgrades. Private config,
+  tickets, and wallet state stay outside the installation tree.
+- The package's systemd unit hardcodes `/usr/bin/oa-chat` and is not installed
+  by the user-prefix script. Homebrew and distro packages retain their own
+  service workflows. The standalone installer prints PATH/foreground setup
+  guidance; it does not register a second managed service.
+- CI exercises the installer with local release fixtures on Linux/macOS and
+  before native release builds. Public installation remains gated on publishing
+  a reviewed daemon release; no daemon release, tap, or AUR package was published
+  by the installer implementation. An exact `daemon-vVERSION/install.sh` URL
+  stays version-pinned and supports prereleases. The latest-download URL is
+  repository-wide and requires a stable daemon release marked as latest.
+- Cleanup must inspect the committed `current` link before deleting a staged
+  bundle: a signal can land between its atomic rename and the success flag.
+  EXIT-trap state must outlive `main`'s locals, which Bash 5 unwinds on implicit
+  command failure. Regression tests cover both boundaries on macOS and Linux.
+
 ## 2026-09-10: Funded Sepolia CLI streaming and settlement verified
 
 - The live flow now passes: MetaMask test-token mint/approval/deposit → private
