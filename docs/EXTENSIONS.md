@@ -313,3 +313,24 @@ switches, returning the runtime's promise. A host's ticket onboarding checks
 requires sign-in, the requirement holds only in Tickets mode: zkAPI needs no
 account, the Log in dialog can be closed there, and it offers "Use zkAPI
 instead" when it stands in for a Tickets account.
+
+### Shared host sign-in presentation
+
+`startChatApp({ signIn: { renderEntry } })` accepts a trusted, synchronous HTML
+renderer for the signed-out username entry. It receives a frozen display model:
+`username`, `busy`, `passkeySupported`, `error`, `canClose`, `canUseWallet`, and
+`hasSavedAccount`. It never receives account credentials, services, or chat data.
+Restoration, numeric-account recovery, passkey setup/unlock, and signed-in settings
+continue to use the core dialogs.
+
+The renderer must escape display strings, provide a labelled `role="dialog"`
+with `aria-modal="true"` and `tabindex="-1"`, and retain the control IDs
+`account-google-btn`, `account-username-input`, and `account-passkey-btn`.
+`close-account-modal` is allowed only when `canClose`; `account-wallet-entry-btn`
+is allowed only when `canUseWallet`. Disable account controls while busy or when
+passkeys are unsupported; wallet entry stays available without passkey support.
+The optional `account-forget-saved-btn` preserves saved-account mismatch recovery.
+Legal links use `.account-login-legal`. Core owns account handlers, the focus trap, and
+modal motion. Wallet entry is a host link to the existing zkAPI entry route; it
+does not directly request a wallet connection or submit a transaction. When busy,
+render that link without an href and with aria-disabled="true".

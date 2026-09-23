@@ -1841,6 +1841,18 @@ class AccountModal {
 
         const identifierMode = this.getIdentifierMode();
         const usesAccountId = identifierMode === 'accountId';
+        const renderEntry = this.app?.getSignInPolicy?.()?.renderEntry;
+        if (!usesAccountId && typeof renderEntry === 'function') {
+            return renderEntry(Object.freeze({
+                username: this.usernameInputValue || state.username || '',
+                busy: Boolean(isBusy),
+                passkeySupported: Boolean(passkeySupported),
+                error: state.error || '',
+                canClose: !this.mustStaySignedIn(),
+                canUseWallet: this.app?.hasPaymentModes?.() === true,
+                hasSavedAccount: hasSignedOutSavedAccount
+            }));
+        }
         const usernameValue = this.escapeHtml(this.usernameInputValue || state.username || '');
         const accountIdValue = this.escapeHtml(
             this.accountInputValue || formattedAccountId
@@ -2215,6 +2227,12 @@ class AccountModal {
         if (googleBtn) {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
         }
+
+        const entryForm = this.overlay?.querySelector?.('[data-auth-username-form]');
+        if (entryForm) entryForm.onsubmit = (event) => {
+            event.preventDefault();
+            this.handleAccountContinue();
+        };
 
         // Terms and Privacy remember this page, so their Back returns here
         // (a new tab opened off the link inherits the saved value).

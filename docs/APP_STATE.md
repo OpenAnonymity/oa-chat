@@ -3537,3 +3537,13 @@ permanent HTTP errors must not be retried automatically.
 - Access acquisition already awaits this save, so inference cannot advance through that path before the credential record commits. Verification requirements, ticket redemption, and server storage are unchanged.
 - Three mocked lifecycle regressions fail against the old implementation and pass with the commit barrier. They prove ordering and serialization of the key with its proof, not browser reload recovery. All 893 core and 312 zkAPI tests and the commercial production build pass; independent review approved the source change.
 - The user's report of a missing key after a prolonged response wait has not been reproduced. This narrow race is a confirmed persistence defect, not a confirmed complete explanation of that incident. Reload still cannot resume an existing provider stream; this change does not refund redeemed tickets or recover credentials whose response never reached the browser.
+
+### 2026-09-23 — host sign-in presentation
+
+The account modal can use `signIn.renderEntry` for its signed-out username view,
+including after logout. The commercial host shares its landing card there and
+adapts its colors to the chat theme. Core still owns authentication, recovery,
+focus and dismissal guards. The wallet link uses the existing landing entry route. The display callback receives
+only the fields documented in `EXTENSIONS.md`; no credential or inference state.
+Focused regressions cover logout, recovery bypass, host data boundaries, disabled
+controls, and the existing authentication handlers.

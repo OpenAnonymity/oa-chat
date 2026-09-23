@@ -366,7 +366,9 @@ class ChatApp {
         this.signInPolicy = Object.freeze({
             required: options.signIn?.required === true,
             termsUrl: typeof options.signIn?.termsUrl === 'string' ? options.signIn.termsUrl : '',
-            privacyUrl: typeof options.signIn?.privacyUrl === 'string' ? options.signIn.privacyUrl : ''
+            privacyUrl: typeof options.signIn?.privacyUrl === 'string' ? options.signIn.privacyUrl : '',
+            // Trusted host presentation only; account operations stay in AccountModal.
+            renderEntry: typeof options.signIn?.renderEntry === 'function' ? options.signIn.renderEntry : null
         });
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
