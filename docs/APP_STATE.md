@@ -5,6 +5,11 @@
 - The default relay failed TLS, so the test used a temporary remote Wisp helper through SSH with destination TLS intact. Test services were stopped and private recovery state retained outside the repo. The existing independent-request settlement wait remains; this does not validate the newer note-bound deployment, mainnet, browser UX, or a new release.
 - Ctrl+C during the local funding HTTP request previously reported an unavailable daemon. Cancellation now gives neutral same-command resumption guidance; read-only `fund` cancellation never suggests selecting `--amount`. Focused regression tests, the full Go race suite, vet/build and fresh review passed.
 
+## 2026-09-22: Clarify ephemeral-key help
+
+- Key help now identifies the request path: the device requests a key through OA, which obtains it from an issuing station. A new key is requested only when needed. Removed the multiple-queries sentence.
+- Replaced vague verifier “ownership and limits” with station provider-account ownership, signatures, and expiry. The verifier checks signed expiry but the inspected ownership endpoint does not establish a general spending-limit audit. “Shared keys” now explicitly means a key included with a shared chat; its existing expiry and credit are preserved. Copy only; no issuance, verification, sharing, or charging behavior changed.
+
 ## 2026-09-22: Keep an unresolved deposit dialog through repeated reloads
 
 - An open funding dialog retains its tab-scoped view marker while deposit/approval confirmation is unresolved, including after its JS action returns and after restoration. Closing it or resolving the deposit clears the marker. The marker contains only view/mode, never wallet credentials or transaction data.
