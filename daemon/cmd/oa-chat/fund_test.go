@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,8 +134,62 @@ func TestFundCancellationRetainsResumptionGuidance(t *testing.T) {
 	}))
 	defer s.Close()
 	err := runFunding(ctx, fundingTestConfig(s), []string{"--amount", "0.10"}, &bytes.Buffer{})
-	if err == nil || !(strings.Contains(err.Error(), "resume") || strings.Contains(err.Error(), "retry")) {
+	if !errors.Is(err, errFundingWaitStopped) {
 		t.Fatalf("cancellation lost recovery guidance: %v", err)
+	}
+}
+
+func TestFundCancellationDuringDepositRequestDoesNotReportServiceUnavailable(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(fundingTestStatus("ready"))
+			return
+		}
+		// The daemon has received the authorized request but has not replied.
+		// Cancellation only stops the CLI waiting; a transaction may exist.
+		_, _ = io.Copy(io.Discard, r.Body)
+		cancel()
+		<-r.Context().Done()
+	}))
+	defer s.Close()
+	err := runFunding(ctx, fundingTestConfig(s), []string{"--amount", "0.10"}, &bytes.Buffer{})
+	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "rerun the same command") {
+		t.Fatalf("in-flight cancellation lost accurate recovery guidance: %v", err)
+	}
+	if strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "transaction canceled") {
+		t.Fatalf("cancellation misreported the daemon or transaction state: %v", err)
+	}
+}
+
+func TestFundReadOnlyCancellationDoesNotSuggestAuthorizingDeposit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/admin/funding/address" {
+			t.Errorf("read-only funding lookup made an unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		cancel()
+		<-r.Context().Done()
+	}))
+	defer s.Close()
+	err := runFunding(ctx, fundingTestConfig(s), nil, &bytes.Buffer{})
+	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "rerun the same command") {
+		t.Fatalf("read-only cancellation lost resumption guidance: %v", err)
+	}
+	if strings.Contains(err.Error(), "--amount") || strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("read-only cancellation suggested spending or a service outage: %v", err)
+	}
+}
+
+func TestFundingUnavailableServiceKeepsConnectionFailureGuidance(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	c := fundingTestConfig(s)
+	s.Close()
+	_, err := requestFunding(context.Background(), c, http.MethodPost, "/admin/funding/deposit", map[string]uint64{"amount": 100000})
+	if err == nil || errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "local funding service unavailable") {
+		t.Fatalf("ordinary connection failure was misreported: %v", err)
 	}
 }
 

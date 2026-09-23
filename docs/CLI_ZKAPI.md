@@ -226,9 +226,57 @@ node --test internal/zkapi/funding-ui.test.mjs
 The initial local Go 1.26.5 vulnerability scan reported fixed standard-library
 issues; use Go 1.26.6 or a newer patched release for native builds.
 `govulncheck` with Go 1.26.6 reports no reachable vulnerabilities (one advisory
-in an unused required module). Signing uses pinned `go-ethereum` v1.17.5. This change has not sent live Ethereum
-transactions. Browser visual tooling was unavailable; script behavior was
-verified automatically. Existing live-chain evidence below remains historical.
+in an unused required module). Signing uses pinned `go-ethereum` v1.17.5.
+The subsequent live acceptance below verifies the local signer on Sepolia.
+The optional browser page has script coverage but was not visually tested.
+
+## Live address-funding acceptance (2026-09-22)
+
+The manual terminal flow passed on the pinned Sepolia deployment, with the
+final observations on September 23 UTC. See the
+[sanitized acceptance record](../daemon/packaging/validation/sepolia-address-funding.json).
+The Go daemon was built with Go 1.26.6. The published companion's two patch
+hashes matched this source, and all four proving/verifying assets matched the
+live deployment manifest. This tests the existing `d33l4w2z2nh4cg` deployment;
+the newer note-bound deployment uses different assets and was not substituted.
+
+- `fund` created a fresh address with no external wallet connection. A separate
+  test account minted and transferred exactly 0.100000 configured demo tokens
+  to it; existing test accounts supplied 0.009 Sepolia ETH. The CLI waited for
+  incoming funds and, after approval, correctly waited for additional gas funds.
+- The local signer sent exactly one approval and one
+  [deposit](https://sepolia.etherscan.io/tx/0x1a62f4d827a20db2876c2bb99a391d0572b82ed8b249564ec7c816493e656ee3).
+  The receipt created note 58 for 100000 microcredits. Credits stayed inactive
+  until the deposit's canonical block was finalized, then activated in full.
+- Stopping both the funding command and daemon before finality, restarting,
+  and rerunning the same command preserved the address, nonce, transaction hash
+  and signed bytes. A conflicting amount was rejected. Unauthenticated address
+  and catalog requests returned HTTP 401.
+- One `openai/gpt-4o-mini` inference request passed through the required OA
+  verified-lease path: HTTP 200, 40 content SSE events, first content at 6.595
+  seconds, and `[DONE]` at 6.874 seconds. These are observed test timings, not
+  latency guarantees. Exactly one durable key-handoff marker was created.
+- Automatic settlement charged 29 microcredits, leaving 99971 (0.099971 test
+  USDC). The pending flag cleared and the signed next state was saved. Another
+  daemon restart and the same funding command preserved that reduced balance;
+  the funding address still had exactly two outgoing transactions.
+
+The default public relay failed its TLS handshake. This acceptance used a
+temporary remote Wisp helper through loopback SSH forwarding, preserving
+destination TLS without direct fallback. The helper and daemon were stopped
+after validation; private funding/note state was retained outside the repository.
+This is not a successful default-relay availability check. The existing wait
+between independent leases remains; no mainnet, browser, withdrawal, or new
+native-release validation was performed.
+
+The run also exposed misleading Ctrl+C copy during an in-flight HTTP request.
+Cancellation now says to rerun the same command, including for read-only address
+lookups, without claiming the daemon or transaction stopped. GET/POST
+cancellation and actual connection failures have regression coverage; all Go
+race tests, vet and build passed, followed by a fresh review. The existing
+flush-and-cancel test is timing-dependent for the response-body cancellation
+branch; that narrow coverage limitation is accepted without adding a production
+test-only injection seam.
 
 ## Reproducible companion and verification
 

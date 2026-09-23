@@ -1,0 +1,207 @@
+{
+  "tested_at_utc": "2026-09-23T01:56:09.952077+00:00",
+  "scenario": "Fresh CLI-generated Ethereum address: manual incoming transfers, locally signed deposit, restart recovery, verified streamed inference and settlement",
+  "status": "pass",
+  "daemon_source_commit": "a376a9e53022179dec985a10e4eb4854fa8eb486",
+  "cli_followup": "Local cancellation-guidance fix in daemon/cmd/oa-chat/fund.go; no funding/signing behavior change",
+  "go_toolchain": "go1.26.6 darwin/arm64",
+  "companion_commit": "b89365f7050e376f55e489c4d60b623cf224a4d8",
+  "protocol_commit": "e4efda23e6d416ee132938e4e67924fb0f7d4fe2",
+  "companion_patch_matches_source": true,
+  "protocol_patch_matches_source": true,
+  "proof_assets_match_deployed_manifest": true,
+  "network": "sepolia",
+  "chain_id": 11155111,
+  "deployment": "https://d33l4w2z2nh4cg.cloudfront.net/config.json",
+  "token_address": "0x7773548bCb3Af5c4Ed1FCDBFE763855338C6822f",
+  "vault_address": "0x590Df9aBBfB21074016dAA486c771AE0aF729ee2",
+  "funding_address": "0xc56D71120aF68F5A65f572BD91516A39c2218C64",
+  "deposit_amount_units": 100000,
+  "token_decimals": 6,
+  "note_id": 58,
+  "external_wallet_connection": false,
+  "test_asset_setup": "Dedicated Sepolia acceptance account minted the configured demo token, then transferred it to the CLI address. Existing Sepolia test accounts supplied ETH for gas. No mainnet funds.",
+  "relay": {
+    "default_public_relay": "TLS handshake failed",
+    "test_transport": "Temporary allowlisted Wisp helper on owned remote host through loopback SSH forwarding; destination TLS preserved",
+    "direct_fallback": false
+  },
+  "transactions": {
+    "mint": {
+      "hash": "0xe911909530adfb2847590664064387a99fad473d72dfd2c0e93c589c6d03be49",
+      "status": 1,
+      "block_number": 11761737,
+      "gas_used": 50949,
+      "effective_gas_price_wei": 1104015257
+    },
+    "token-transfer": {
+      "hash": "0x9fee90768d910390500a7ea82f0a38d355b5e67f4281a786fae69089de115343",
+      "status": 1,
+      "block_number": 11761739,
+      "gas_used": 46426,
+      "effective_gas_price_wei": 1009777945
+    },
+    "eth-transfer": {
+      "hash": "0x5bc9a7d2990d0146bfb78b6beeb3b0599392366bfdc18500e1227831007d3249",
+      "status": 1,
+      "block_number": 11761741,
+      "gas_used": 21000,
+      "effective_gas_price_wei": 1073175048,
+      "value_wei": 2500000000000000
+    },
+    "eth-topup": {
+      "hash": "0xc184e14ea871602eddece6f55684b3ca8031d29f8f3f28ccd94cad593dfca0bc",
+      "status": 1,
+      "block_number": 11761746,
+      "gas_used": 21000,
+      "effective_gas_price_wei": 1014209158,
+      "value_wei": 6500000000000000
+    },
+    "approval": {
+      "hash": "0xe2c147d4d1808b806c795d999a8f133c56cbd637a96884d4c7f7675518a6eb4f",
+      "status": 1,
+      "block_number": 11761742,
+      "gas_used": 45921,
+      "effective_gas_price_wei": 1073175048
+    },
+    "deposit": {
+      "hash": "0x1a62f4d827a20db2876c2bb99a391d0572b82ed8b249564ec7c816493e656ee3",
+      "status": 1,
+      "block_number": 11761747,
+      "gas_used": 6753088,
+      "effective_gas_price_wei": 1058596753
+    }
+  },
+  "restart_before": {
+    "address": "0xc56D71120aF68F5A65f572BD91516A39c2218C64",
+    "phase": "deposit_pending",
+    "amount_units": 100000,
+    "pending": {
+      "kind": "deposit",
+      "hash": "0x1a62f4d827a20db2876c2bb99a391d0572b82ed8b249564ec7c816493e656ee3",
+      "nonce": 1,
+      "signed_bytes_sha256": "00fe406c0cc22bea6bc3344f88cbb2b704ec72829c9d2a1cf2018cc02721962e"
+    },
+    "history": [
+      {
+        "kind": "approval",
+        "hash": "0xe2c147d4d1808b806c795d999a8f133c56cbd637a96884d4c7f7675518a6eb4f",
+        "nonce": 0
+      }
+    ],
+    "file_mode": "0o600"
+  },
+  "restart_after": {
+    "address": "0xc56D71120aF68F5A65f572BD91516A39c2218C64",
+    "deposit_hash": "0x1a62f4d827a20db2876c2bb99a391d0572b82ed8b249564ec7c816493e656ee3",
+    "nonce": 1,
+    "signed_bytes_sha256": "00fe406c0cc22bea6bc3344f88cbb2b704ec72829c9d2a1cf2018cc02721962e",
+    "phase": "deposit_pending",
+    "observed_at_utc": "2026-09-23T01:51:00.179576+00:00"
+  },
+  "restart_checks": {
+    "address_unchanged": true,
+    "deposit_hash_unchanged": true,
+    "nonce_unchanged": true,
+    "signed_bytes_unchanged": true,
+    "approval_history_count": 1,
+    "checked_at_utc": "2026-09-23T01:44:00.011780+00:00"
+  },
+  "guards": {
+    "unauthenticated_address_http": 401,
+    "unauthenticated_catalog_http": 401,
+    "pending_amount_change_rejected": true,
+    "pending_transaction_unchanged": true
+  },
+  "cancellation": {
+    "cancellation_message": "oa-chat: stopped waiting; rerun the same command to resume saved progress",
+    "daemon_still_healthy": true,
+    "pending_signed_transaction_unchanged": true
+  },
+  "transaction_count": {
+    "address": "0xc56D71120aF68F5A65f572BD91516A39c2218C64",
+    "confirmed_transaction_count": 2,
+    "expected_approval_transactions": 1,
+    "expected_deposit_transactions": 1,
+    "observed_at_utc": "2026-09-23T01:54:00.925486+00:00"
+  },
+  "inference": {
+    "model": "openai/gpt-4o-mini",
+    "catalog": "pass",
+    "authentication": "pass",
+    "nonstream": "not_run",
+    "stream": "pass",
+    "stream_http_status": 200,
+    "done_marker_received": true,
+    "content_events": 40,
+    "first_content_seconds": 6.595,
+    "completion_seconds": 6.874,
+    "started_at_utc": "2026-09-23T01:56:52.818111+00:00"
+  },
+  "settlement": {
+    "observed_at_utc": "2026-09-23T02:01:55.115334+00:00",
+    "note_id": 58,
+    "private_balance_before_units": 100000,
+    "private_balance_after_units": 99971,
+    "charge_units": 29,
+    "pending_cleared": true,
+    "signed_next_state_present": true,
+    "is_genesis": false,
+    "durable_key_handoffs_total": 1,
+    "observation_method": "Read-only authenticated local wallet status and signed-state presence; no additional inference or lease request"
+  },
+  "finality": {
+    "checked_at_utc": "2026-09-23T01:58:06.374464+00:00",
+    "finalized_block_number": 11761753,
+    "finalized_block_hash": "0x2355f1a0612fc8a009203f937cd72a99034d6cd865ca23eb7b126b934776f43c",
+    "deposit_block_number": 11761747,
+    "deposit_block_hash": "0x67a2d5363143545473c2fab30bb69115401c756195c18d97b468ec499a3bb28e",
+    "canonical_receipt_matches": true
+  },
+  "activated_status": {
+    "api_base": "http://127.0.0.1:18873/v1",
+    "backend": "zkapi",
+    "companion_ready": true,
+    "funded": true,
+    "network": "sepolia",
+    "pending_settlement": false,
+    "private_balance": 100000,
+    "relay_required": true,
+    "service_running": true
+  },
+  "companion_policy": {
+    "chain_id": 11155111,
+    "mode": "direct_openrouter",
+    "require_oa_org_key_source": true,
+    "bridge_version": 1
+  },
+  "completed_at_utc": "2026-09-23T02:03:23.152796+00:00",
+  "post_settlement_restart": {
+    "private_balance_units": 99971,
+    "pending_settlement": false,
+    "repeating_same_fund_command_preserved_balance": true,
+    "same_signed_deposit_preserved": true,
+    "confirmed_sender_transaction_count": 2,
+    "durable_key_handoffs_total": 1
+  },
+  "validation": {
+    "go_race_suite": "pass",
+    "go_vet": "pass",
+    "go_build": "pass",
+    "cancellation_fix_fresh_review": "approved",
+    "response_body_cancellation_test_limit": "Existing flush-and-cancel coverage is timing-dependent; exact response-body branch coverage is not deterministic."
+  },
+  "scope_limits": [
+    "The default public relay failed its TLS handshake; this run used a temporary remote Wisp helper with destination TLS and no direct fallback.",
+    "The pinned legacy Sepolia deployment was tested, not the newer note-bound deployment.",
+    "One streamed inference request was sent; browser UX, mainnet, withdrawal and native-release publication were not tested.",
+    "Independent API requests still wait for the previous lease to settle."
+  ],
+  "cleanup": {
+    "daemon_stopped": true,
+    "companion_stopped": true,
+    "temporary_relay_and_ssh_forward_stopped": true,
+    "private_recovery_state_retained_and_backed_up_outside_repository": true,
+    "diagnostic_logs_and_temporary_local_api_token_removed": true
+  }
+}
