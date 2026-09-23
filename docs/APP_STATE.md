@@ -3327,3 +3327,14 @@ permanent HTTP errors must not be retried automatically.
   succeeds and independent re-review approves the real SDK budget integration.
   The user confirmed the failed request's panel shows only HTTP 402 and generic
   `Request failed`, so the incident's actual key balance remains unverified.
+## 2026-09-22: Smooth widen-button placement during sidebar motion
+
+- The left-toolbar spacer stays mounted and animates its width and compensating margin with the sidebar's existing open/close timing. Previously `display: none/block` introduced a 40px jump in the opposite direction before the sidebar moved. Shared timing variables now live at the root so both elements use the same curve.
+- Overlay layouts retain a fixed 36px spacer; reduced motion disables both sidebar and spacer transitions. Endpoint positions and the fixed sidebar toggle remain unchanged.
+
+## 2026-09-22: Wait for the session transaction before reporting access ready
+
+- `saveSession` now resolves and broadcasts `sessions-updated` only after the IndexedDB transaction completes. A successful `put` request alone can still be rolled back. Transaction errors and aborts reject the save, including an abort after put success.
+- Access acquisition already awaits this save, so inference cannot advance through that path before the credential record commits. Verification requirements, ticket redemption, and server storage are unchanged.
+- Three mocked lifecycle regressions fail against the old implementation and pass with the commit barrier. They prove ordering and serialization of the key with its proof, not browser reload recovery. All 893 core and 312 zkAPI tests and the commercial production build pass; independent review approved the source change.
+- The user's report of a missing key after a prolonged response wait has not been reproduced. This narrow race is a confirmed persistence defect, not a confirmed complete explanation of that incident. Reload still cannot resume an existing provider stream; this change does not refund redeemed tickets or recover credentials whose response never reached the browser.

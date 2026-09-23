@@ -4259,11 +4259,13 @@ body {
 }
 
 /* --- Sidebar Base & Hidden State --- */
-#sidebar {
+:root {
     --sidebar-open-duration: 280ms;
     --sidebar-close-duration: 220ms;
     --sidebar-open-ease: cubic-bezier(0.22, 1, 0.36, 1);
     --sidebar-close-ease: cubic-bezier(0.4, 0, 1, 1);
+}
+#sidebar {
     transition-property: width, border-right-width;
     transition-duration: var(--sidebar-open-duration), var(--sidebar-open-duration);
     transition-timing-function: var(--sidebar-open-ease), var(--sidebar-open-ease);
@@ -4344,10 +4346,27 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 }
 .sidebar-header-actions #new-chat-btn { min-width: 0; }
 .sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
-.left-sidebar-toggle-space { display: none; width: 36px; flex-shrink: 0; }
-html[data-left-sidebar-hidden="true"] .left-sidebar-toggle-space { display: block; }
+.left-sidebar-toggle-space {
+    /* Keep the flex item mounted so its 36px target + 4px gap do not
+       appear/disappear ahead of the sidebar's width animation. */
+    display: block;
+    width: 0;
+    margin-right: -4px;
+    flex-shrink: 0;
+    transition: width var(--sidebar-open-duration) var(--sidebar-open-ease),
+        margin-right var(--sidebar-open-duration) var(--sidebar-open-ease);
+}
+html[data-left-sidebar-hidden="true"] .left-sidebar-toggle-space {
+    width: 36px;
+    margin-right: 0;
+    transition-duration: var(--sidebar-close-duration);
+    transition-timing-function: var(--sidebar-close-ease);
+}
 @media (max-width: 1099px) {
-    .left-sidebar-toggle-space { display: block; }
+    .left-sidebar-toggle-space { width: 36px; margin-right: 0; transition: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #sidebar, .left-sidebar-toggle-space { transition: none !important; }
 }
 #show-sidebar-btn .sidebar-toggle-tooltip {
     left: 0;
