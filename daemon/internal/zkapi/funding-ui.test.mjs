@@ -4,313 +4,305 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const script = await readFile(new URL('./funding.js', import.meta.url), 'utf8');
-function fixture({changeChainDuringPath = false, changeChainDuringEstimate, changeAccountDuringEstimate, estimateErrorAt, estimateErrorData, estimateValues = ['0xb4df', '0x6d094d'], allowance = '0x' + '0'.repeat(64), allowanceError = false, changeChainDuringAllowance = false, changeAccountDuringAllowance = false, balance = '0x' + (1000000n).toString(16).padStart(64, '0'), balanceError = false, changeChainDuringBalance = false, changeAccountDuringBalance = false, expireAtPath = false, demoMintEnabled = false, chainID = 11155111, confirmedMintBalances = ['0x' + (100000n).toString(16).padStart(64, '0')], mintReverted = false, mintReorg = false} = {}) {
+const html = await readFile(new URL('./funding.html', import.meta.url), 'utf8');
+const address = '0x3333333333333333333333333333333333333333';
+const token = '0x2222222222222222222222222222222222222222';
+const hash = '0x' + 'a'.repeat(64);
+const tick = () => new Promise(resolve => setImmediate(resolve));
+
+function fixture({chainID = 11155111, demoMintEnabled = false, addressState = {}, deposits = [{phase: 'active'}], responses = {}, stored = {}, noCapability = false, privateBalance = null, storageUnavailable = false} = {}) {
     const fields = new Map();
     const field = id => {
-        if (!fields.has(id)) fields.set(id, {value: id === 'amount' ? '0.10' : '', disabled: false, textContent: '', events: {}, addEventListener(type, callback) { this.events[type] = callback; }});
+        if (!fields.has(id)) fields.set(id, {value: id === 'amount' ? '0.10' : '', disabled: false, readOnly: false, textContent: '', events: {}, addEventListener(type, callback) { this.events[type] = callback; }});
         return fields.get(id);
     };
-    const transactions = [];
-    const estimates = [];
-    const prompts = [];
+    const storage = new Map(Object.entries(stored));
     const requests = [];
-    const walletCalls = [];
-    const events = [];
-    const confirmedBalanceReads = [];
-    let chain = '0x' + chainID.toString(16);
-    let account = '0x3333333333333333333333333333333333333333';
+    const copies = [];
+    const events = {};
+    let depositIndex = 0;
+    let funded = privateBalance !== null;
+    const base = {address, chain_id: chainID, token_address: token, token_balance: '100000', eth_balance: '1000000000000000', phase: 'ready', ...addressState};
     const context = {
         document: {getElementById: field},
-        location: {hash: '#funding-capability'},
-        history: {replaceState() {}},
-        sessionStorage: {setItem() {}, getItem() { return ''; }},
+        location: {hash: noCapability ? '' : '#funding-capability'},
+        history: {replaceState(...args) { events.history = args; }},
+        sessionStorage: {
+            setItem(key, value) { if (storageUnavailable) throw new Error('Storage restricted'); storage.set(key, value); },
+            getItem(key) { if (storageUnavailable) throw new Error('Storage restricted'); return storage.get(key) || ''; },
+            removeItem(key) { if (storageUnavailable) throw new Error('Storage restricted'); storage.delete(key); }
+        },
         setTimeout: callback => setTimeout(callback, 0),
+        navigator: {clipboard: {writeText: async value => { copies.push(value); }}},
+        window: {addEventListener(type, callback) { events[type] = callback; }},
         fetch: async (url, options) => {
             requests.push({url, options});
-            const path = url.split('/').pop();
-            events.push('api:' + path);
+            const path = url.replace('/funding/api/', '');
             let result;
-            if (path === 'config') result = {chain_id: chainID, demo_mint_enabled: demoMintEnabled, token_address: '0x2222222222222222222222222222222222222222', contract_address: '0x1111111111111111111111111111111111111111'};
-            if (path === 'status') result = {has_note: false};
-            if (path === 'prepare') result = {amount: 100000, commitment: '0x1234', zero_path: Array(32).fill('0x0')};
-            if (path === 'path') {
-                if (expireAtPath) return {ok: false, status: 401, text: async () => JSON.stringify({error: 'unauthorized'})};
-                if (changeChainDuringPath) chain = '0x1';
-                result = {zero_path: Array(32).fill('0xa')};
+            if (responses[path]) {
+                const response = await responses[path](requests.filter(request => request.url === url).length, options, base);
+                if (response) return {ok: response.status === 200, status: response.status, text: async () => response.text ?? JSON.stringify(response.body)};
             }
-            if (path === 'confirm') result = {active: true};
+            if (path === 'config') result = {chain_id: chainID, demo_mint_enabled: demoMintEnabled, token_address: token, contract_address: '0x1111111111111111111111111111111111111111'};
+            else if (path === 'address') result = base;
+            else if (path === 'status') result = {has_note: funded, balance: privateBalance ?? 100000};
+            else if (path === 'address/deposit') {
+                result = {...base, amount: 100000, ...deposits[Math.min(depositIndex++, deposits.length - 1)]};
+                funded = result.phase === 'active';
+            } else if (path === 'confirm') { result = {active: true}; funded = true; }
+            else throw new Error('Unexpected endpoint: ' + path);
             return {ok: true, status: 200, text: async () => JSON.stringify(result)};
-        },
-        window: {ethereum: {request: async ({method, params}) => {
-            walletCalls.push({method, params: JSON.parse(JSON.stringify(params))});
-            events.push(method);
-            if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [account];
-            if (method === 'eth_chainId') return chain;
-            if (method === 'eth_call') {
-                if (params[0].data === '0x313ce567') return '0x6';
-                if (params[0].data.startsWith('0x70a08231')) {
-                    if (params[1] !== 'latest') {
-                        confirmedBalanceReads.push(params[1]);
-                        return confirmedMintBalances[Math.min(confirmedBalanceReads.length - 1, confirmedMintBalances.length - 1)];
-                    }
-                    if (balanceError) throw new Error('Cannot read token balance.');
-                    if (changeChainDuringBalance) chain = '0x1';
-                    if (changeAccountDuringBalance) account = '0x4444444444444444444444444444444444444444';
-                    return balance;
-                }
-                assert.ok(params[0].data.startsWith('0xdd62ed3e'), 'only decimals and allowance reads are expected');
-                if (changeChainDuringAllowance) chain = '0x1';
-                if (changeAccountDuringAllowance) account = '0x4444444444444444444444444444444444444444';
-                if (allowanceError) throw new Error('Cannot read token allowance.');
-                return allowance;
-            }
-            if (method === 'eth_getTransactionReceipt') return {status: mintReverted ? '0x0' : '0x1', blockNumber: '0x123', blockHash: '0x' + 'b'.repeat(64)};
-            if (method === 'eth_getBlockByNumber') return {hash: '0x' + (mintReorg ? 'c' : 'b').repeat(64)};
-            if (method === 'eth_estimateGas') {
-                estimates.push(JSON.parse(JSON.stringify(params[0])));
-                if (estimates.length === changeChainDuringEstimate) chain = '0x1';
-                if (estimates.length === changeAccountDuringEstimate) account = '0x4444444444444444444444444444444444444444';
-                if (estimates.length === estimateErrorAt) {
-                    const error = new Error('execution reverted: stale witness');
-                    error.data = estimateErrorData;
-                    throw error;
-                }
-                return estimateValues[estimates.length - 1];
-            }
-            if (method === 'eth_sendTransaction') {
-                transactions.push(params[0]);
-                prompts.push(field('status').textContent);
-                return '0x' + String(transactions.length).repeat(64);
-            }
-            throw new Error('Unexpected wallet method: ' + method);
-        }}}
-    };
-    vm.runInNewContext(script, context);
-    return {field, transactions, requests, estimates, prompts, walletCalls, events, confirmedBalanceReads};
-}
-
-test('funding preflights the exact allowance and refreshed deposit, bounds gas, and leaves fees to MetaMask', async () => {
-    const f = fixture();
-    await new Promise(resolve => setImmediate(resolve));
-    await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 2);
-    assert.equal(f.estimates.length, 2);
-    for (const transaction of f.transactions) assert.equal(transaction.chainId, '0xaa36a7');
-    for (let i = 0; i < f.transactions.length; i++) {
-        const {gas, ...call} = JSON.parse(JSON.stringify(f.transactions[i]));
-        assert.deepEqual(call, f.estimates[i], 'the submitted call must match its successful estimate');
-        assert.ok(BigInt(gas) <= 1n << 24n);
-        for (const fee of ['gasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas']) {
-            assert.equal(fee in f.transactions[i], false, 'the wallet must choose the fee');
         }
-    }
-    assert.equal(BigInt(f.transactions[0].gas), 105563n);
-    assert.equal(f.transactions[1].gas, '0x839b46');
-    assert.match(f.prompts[0], /Approve exactly 0\.100000 USDC/);
-    assert.match(f.prompts[0], /Estimated gas: 46,303 units; gas limit: 105,563 units/);
-    assert.match(f.prompts[1], /Approve the vault deposit/);
-    assert.match(f.prompts[1], /MetaMask shows the ETH fee/);
-    assert.equal(f.transactions[0].to, '0x2222222222222222222222222222222222222222');
-    assert.equal(f.transactions[0].data, '0x095ea7b3' + '1111111111111111111111111111111111111111'.padStart(64, '0') + (100000).toString(16).padStart(64, '0'));
-    assert.equal(f.transactions[1].data, '0xc588341c' + '1234'.padStart(64, '0') + (100000).toString(16).padStart(64, '0') + 'a'.padStart(64, '0').repeat(32));
-    assert.ok(f.events.indexOf('api:path') > f.events.indexOf('eth_getTransactionReceipt'), 'the shared Merkle witness must be refreshed after the allowance transaction confirms');
-    assert.ok(f.requests.every(({options}) => options.credentials === 'omit'));
+    };
+    // Accessing an injected provider would fail even in a browser that has one.
+    Object.defineProperty(context.window, 'ethereum', {get() { throw new Error('Ethereum provider must never be accessed'); }});
+    vm.runInNewContext(script, context);
+    return {field, requests, copies, events, storage, context, base};
+}
+const posts = fixture => fixture.requests.filter(({options}) => options.method === 'POST');
+
+test('load shows a receiving address and balances with no provider or mutation', async () => {
+    const f = fixture();
+    await tick();
+    assert.equal(f.field('address').textContent, address);
+    assert.match(f.field('received').textContent, /0\.100000 test billing tokens · 0\.001000000000000000 Sepolia ETH/);
+    assert.equal(f.field('fund').disabled, false);
+    assert.equal(posts(f).length, 0);
+    assert.ok(f.requests.every(({options}) => options.credentials === 'omit' && options.cache === 'no-store'));
+    assert.ok(f.requests.every(({options}) => options.headers.Authorization === 'Bearer funding-capability'));
+    assert.deepEqual(f.events.history, [null, '', '/funding']);
+    assert.doesNotMatch(script + html, /MetaMask|eth_sendTransaction|eth_requestAccounts|window\.ethereum|connect wallet/i);
+});
+
+test('Check funds and copy do not authorize transactions', async () => {
+    const f = fixture();
+    await tick();
+    f.base.token_balance = '999999999999999999999999';
+    await f.field('check').events.click();
+    await f.field('copy').events.click();
+    assert.equal(posts(f).length, 0);
+    assert.deepEqual(f.copies, [address]);
+    assert.match(f.field('received').textContent, /999999999999999999\.999999/);
+});
+
+test('explicit deposit progresses with one frozen amount through confirmation', async () => {
+    const f = fixture({deposits: [
+        {phase: 'approval_pending', message: 'Approval awaiting finality.'},
+        {phase: 'deposit_pending', transaction_hash: hash},
+        {phase: 'confirming'},
+        {phase: 'active'}
+    ]});
+    await tick();
+    f.field('amount').value = '0.123456';
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 4);
+    assert.ok(posts(f).every(({url, options}) => url.endsWith('/address/deposit') && JSON.parse(options.body).amount === 123456));
+    assert.match(f.field('status').textContent, /private balance is funded/);
+    assert.equal(f.field('fund').disabled, true);
+});
+
+for (const phase of ['waiting_funds', 'reverted', 'legacy_recovery', 'recovery_required', 'error', 'ready', 'unknown']) {
+    test(`deposit stops after ${phase} without automatically authorizing more work`, async () => {
+        const f = fixture({deposits: [{phase, message: 'Saved progress needs attention.'}]});
+        await tick();
+        await f.field('fund').events.click();
+        assert.equal(posts(f).length, 1);
+        assert.equal(f.field('status').textContent, 'Saved progress needs attention.');
+        assert.equal(f.field('amount').readOnly, true);
+    });
+}
+
+test('reload restores the saved amount and transaction without resuming POSTs', async () => {
+    const f = fixture({addressState: {amount: 987654, phase: 'deposit_pending', transaction_hash: hash, message: 'Waiting for Ethereum finality.'}});
+    await tick();
+    assert.equal(posts(f).length, 0);
+    assert.equal(f.field('amount').value, '0.987654');
+    assert.equal(f.field('amount').readOnly, true);
+    assert.match(f.field('transaction').textContent, new RegExp(hash));
+    assert.equal(f.field('fund').textContent, 'Continue saved deposit');
+    assert.equal(f.field('status').textContent, 'Waiting for Ethereum finality.');
+});
+
+for (const statusCode of [401, 403]) {
+    test(`authorization ${statusCode} stops deposit polling and keeps actions disabled`, async () => {
+        const f = fixture({responses: {'address/deposit': count => count === 1 ? {status: 200, body: {address, chain_id: 11155111, token_address: token, phase: 'approval_pending'}} : {status: statusCode, body: {error: 'unauthorized'}}}});
+        await tick();
+        await f.field('fund').events.click();
+        assert.equal(posts(f).length, 2);
+        assert.match(f.field('status').textContent, /no longer authorized.*oa-chat fund --browser/);
+        for (const id of ['fund', 'resume', 'check']) assert.equal(f.field(id).disabled, true);
+        assert.equal(f.storage.has('oa-funding-capability'), false);
+        await f.field('fund').events.click();
+        assert.equal(posts(f).length, 2);
+    });
+}
+
+test('interrupted POST never retries automatically', async () => {
+    const f = fixture({responses: {'address/deposit': () => { throw new Error('Connection lost'); }}});
+    await tick();
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 1);
+    assert.match(f.field('status').textContent, /Connection lost.*interrupted request may have submitted a transaction/);
+});
+
+test('a second click cannot overlap an active deposit and pagehide stops progression', async () => {
+    let release;
+    const f = fixture({responses: {'address/deposit': async () => {
+        await new Promise(resolve => { release = resolve; });
+        return {status: 200, body: {address, chain_id: 11155111, token_address: token, phase: 'approval_pending'}};
+    }}});
+    await tick();
+    const running = f.field('fund').events.click();
+    await tick();
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 1);
+    assert.equal(f.field('fund').disabled, true);
+    f.events.pagehide();
+    release();
+    await running;
+    assert.equal(posts(f).length, 1);
+});
+
+for (const value of ['0', '-1', '0.0000001', '1e3', '1000000.000001', '', '<script>']) {
+    test(`invalid amount ${JSON.stringify(value)} never reaches the signer`, async () => {
+        const f = fixture();
+        await tick();
+        f.field('amount').value = value;
+        await f.field('fund').events.click();
+        assert.equal(posts(f).length, 0);
+        assert.match(f.field('status').textContent, /Enter a/);
+    });
+}
+
+test('existing private balance blocks deposits and displays current rather than original amount', async () => {
+    const f = fixture({privateBalance: 98723});
+    await tick();
+    assert.equal(f.field('fund').disabled, true);
+    assert.match(f.field('balance').textContent, /0\.098723/);
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 0);
+});
+
+test('legacy transaction recovery is explicit and never starts a new deposit', async () => {
+    const f = fixture({stored: {'oa-funding-deposit-tx': hash}, addressState: {phase: 'legacy_recovery', amount: 100000}});
+    await tick();
+    assert.equal(f.field('tx').value, hash);
+    assert.equal(f.field('fund').disabled, true);
+    assert.equal(posts(f).length, 0);
+    await f.field('resume').events.click();
+    assert.equal(posts(f).length, 1);
+    assert.equal(posts(f)[0].url, '/funding/api/confirm');
+    assert.equal(JSON.parse(posts(f)[0].options.body).transaction_hash, hash);
     assert.match(f.field('status').textContent, /private balance is funded/);
 });
 
-for (const allowanceAmount of [100000n, 200000n]) {
-    test(`existing allowance of ${allowanceAmount} skips approval and still preflights the refreshed deposit`, async () => {
-        const f = fixture({allowance: '0x' + allowanceAmount.toString(16).padStart(64, '0'), estimateValues: ['0x6d094d']});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, 1);
-        assert.equal(f.estimates.length, 1);
-        assert.equal(f.transactions[0].data, '0xc588341c' + '1234'.padStart(64, '0') + (100000).toString(16).padStart(64, '0') + 'a'.padStart(64, '0').repeat(32));
-        assert.equal(f.transactions[0].gas, '0x839b46');
-        const {gas, ...call} = JSON.parse(JSON.stringify(f.transactions[0]));
-        assert.deepEqual(call, f.estimates[0]);
-        const allowanceRead = f.walletCalls.find(({method, params}) => method === 'eth_call' && params[0].data.startsWith('0xdd62ed3e'));
-        assert.deepEqual(allowanceRead.params, [{to: '0x2222222222222222222222222222222222222222', data: '0xdd62ed3e' + '3333333333333333333333333333333333333333'.padStart(64, '0') + '1111111111111111111111111111111111111111'.padStart(64, '0')}, 'latest']);
-        assert.equal(f.events.includes('eth_getTransactionReceipt'), false, 'no allowance transaction was sent');
-        assert.match(f.field('status').textContent, /private balance is funded/);
-    });
-}
-
-test('insufficient existing allowance submits exactly the requested amount', async () => {
-    const f = fixture({allowance: '0x' + (50000n).toString(16).padStart(64, '0')});
-    await new Promise(resolve => setImmediate(resolve));
-    await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 2);
-    assert.equal(f.transactions[0].data, '0x095ea7b3' + '1111111111111111111111111111111111111111'.padStart(64, '0') + (100000).toString(16).padStart(64, '0'));
+test('legacy confirmation stops immediately on expired authorization', async () => {
+    const f = fixture({responses: {confirm: () => ({status: 401, body: {error: 'not confirmed yet'}})}});
+    await tick();
+    f.field('tx').value = hash;
+    await f.field('resume').events.click();
+    assert.equal(posts(f).length, 1);
+    assert.equal(f.field('resume').disabled, true);
 });
 
-for (const [reason, options, message] of [
-    ['read failure', {allowanceError: true}, /Cannot read token allowance/],
-    ['invalid value', {allowance: '0x'}, /invalid token allowance/],
-    ['network change', {changeChainDuringAllowance: true}, /network changed/],
-    ['account change', {changeAccountDuringAllowance: true}, /account changed/]
+for (const [label, patch] of [
+    ['network', {chain_id: 1}],
+    ['token', {token_address: '0x4444444444444444444444444444444444444444'}],
+    ['address', {address: '<script>invalid</script>'}]
 ]) {
-    test(`allowance ${reason} prevents all transaction prompts`, async () => {
-        const f = fixture(options);
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, 0);
-        assert.equal(f.estimates.length, 0);
-        assert.match(f.field('status').textContent, message);
+    test(`a mismatched ${label} never enables deposits`, async () => {
+        const f = fixture({addressState: patch});
+        await tick();
+        assert.equal(f.field('fund').disabled, true);
+        assert.equal(posts(f).length, 0);
+        assert.match(f.field('status').textContent, /does not match/);
     });
 }
 
-test('session expiry after successful approval explains how to resume without repeating approval', async () => {
-    const f = fixture({expireAtPath: true});
-    await new Promise(resolve => setImmediate(resolve));
-    await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 1);
-    assert.match(f.field('status').textContent, /token allowance is ready.*session expired before the deposit was submitted.*existing approval will be reused/);
-    assert.equal(f.field('tx').value, '', 'an allowance hash must never appear as a deposit hash');
-    assert.equal(f.requests.filter(({url}) => url.endsWith('/prepare')).length, 1, 'expiry must not trigger an automatic retry');
+test('network failure on load permits a read-only check without enabling a deposit prematurely', async () => {
+    const f = fixture({responses: {status: count => count === 1 ? {status: 503, body: {error: 'Companion unavailable'}} : null}});
+    await tick();
+    assert.equal(f.field('fund').disabled, true);
+    assert.equal(f.field('check').disabled, false);
+    await f.field('check').events.click();
+    assert.equal(f.field('fund').disabled, false);
+    assert.equal(posts(f).length, 0);
 });
 
-test('network change during path refresh never submits deposit on another chain', async () => {
-    const f = fixture({changeChainDuringPath: true});
-    await new Promise(resolve => setImmediate(resolve));
-    await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 1, 'only the already approved allowance may be sent');
-    assert.match(f.field('status').textContent, /network changed/);
+test('network requirements distinguish mainnet from the exact Sepolia test token without claiming mint support', async () => {
+    const mainnet = fixture({chainID: 1, demoMintEnabled: true});
+    const sepolia = fixture({demoMintEnabled: true});
+    const exact = fixture();
+    await tick();
+    assert.match(mainnet.field('requirements').textContent, /Send USDC.*ETH.*Ethereum Mainnet/);
+    assert.doesNotMatch(mainnet.field('requirements').textContent, /mint/);
+    assert.match(sepolia.field('requirements').textContent, /test billing token and Sepolia ETH.*does not mint test tokens/);
+    assert.match(exact.field('requirements').textContent, /Other test USDC contracts will not work/);
 });
 
-for (const attempt of [1, 2]) {
-    const action = attempt === 1 ? 'approval' : 'deposit';
-    test(`${action} estimate failure never opens a transaction prompt`, async () => {
-        const f = fixture({estimateErrorAt: attempt});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, attempt - 1);
-        assert.match(f.field('status').textContent, new RegExp((attempt === 1 ? 'Token approval' : 'Vault deposit') + ' simulation failed.*This transaction was not submitted.*stale witness'));
-    });
-    test(`${action} gas above the transaction cap never opens a transaction prompt`, async () => {
-        const values = ['0xb4df', '0x6d094d'];
-        values[attempt - 1] = '0xf42400'; // 16M estimated + margin exceeds 2^24.
-        const f = fixture({estimateValues: values});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, attempt - 1);
-        assert.match(f.field('status').textContent, /exceeds Ethereum’s per-transaction gas limit.*Nothing was submitted/);
-    });
-    test(`${action} network change during gas estimation prevents submission`, async () => {
-        const f = fixture({changeChainDuringEstimate: attempt});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, attempt - 1);
-        assert.match(f.field('status').textContent, /network changed/);
-    });
-    test(`${action} account change during gas estimation prevents submission`, async () => {
-        const f = fixture({changeAccountDuringEstimate: attempt});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, attempt - 1);
-        assert.match(f.field('status').textContent, /account changed/);
-    });
-}
-
-for (const [reason, options, message] of [
-    ['insufficient balance', {balance: '0x' + (99999n).toString(16).padStart(64, '0')}, /needs at least 0\.100000 USDC/],
-    ['read failure', {balanceError: true}, /Cannot read token balance/],
-    ['invalid balance', {balance: '0x1'}, /invalid token balance/],
-    ['network change', {changeChainDuringBalance: true}, /network changed/],
-    ['account change', {changeAccountDuringBalance: true}, /account changed/]
-]) {
-    test(`token balance ${reason} prevents transaction prompts`, async () => {
-        const f = fixture(options);
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, 0);
-        assert.equal(f.estimates.length, 0);
-        assert.match(f.field('status').textContent, message);
-    });
-}
-
-test('funding displays the exact connected account, balance, and existing allowance', async () => {
-    const f = fixture({balance: '0x' + (100000n).toString(16).padStart(64, '0')});
-    await new Promise(resolve => setImmediate(resolve));
-    await f.field('fund').events.click();
-    assert.match(f.field('wallet-status').textContent, /Funding account: 0x3333333333333333333333333333333333333333/);
-    assert.match(f.field('wallet-status').textContent, /Wallet balance: 0\.100000 USDC\. Vault allowance: 0\.000000 USDC/);
-    assert.equal(f.transactions.length, 2, 'exactly sufficient balance may proceed');
+test('missing authorization never queries the daemon or enables actions', async () => {
+    const f = fixture({noCapability: true});
+    await tick();
+    assert.equal(f.requests.length, 0);
+    assert.equal(f.field('fund').disabled, true);
+    assert.match(f.field('status').textContent, /secure funding session/);
 });
 
-for (const invalid of ['0x0', '-0x1', '0x1.5', '0x', 'nonsense', null, true, 46303]) {
-    test(`invalid gas estimate ${JSON.stringify(invalid)} prevents submission`, async () => {
-        const f = fixture({estimateValues: [invalid]});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, 0);
-        assert.match(f.field('status').textContent, /invalid gas estimate.*Nothing was submitted/);
-    });
-}
+test('restricted session storage still supports an explicit fragment-authorized session', async () => {
+    const f = fixture({storageUnavailable: true});
+    await tick();
+    assert.equal(f.field('fund').disabled, false);
+    assert.equal(posts(f).length, 0);
+});
 
-test('Sepolia mints only the shortfall to the selected account before approval and deposit', async () => {
-    const f = fixture({demoMintEnabled: true, balance: '0x' + (40000n).toString(16).padStart(64, '0'), estimateValues: ['0xb4df', '0xb4df', '0x6d094d']});
-    await new Promise(resolve => setImmediate(resolve));
+
+test('a finalized reverted transaction stops and requires another explicit click to retry', async () => {
+    const f = fixture({deposits: [{phase: 'reverted', message: 'The transaction reverted. Retry explicitly.'}, {phase: 'active'}]});
+    await tick();
     await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 3);
-    assert.equal(f.transactions[0].to, '0x2222222222222222222222222222222222222222');
-    assert.equal(f.transactions[0].data, '0x40c10f19' + '3333333333333333333333333333333333333333'.padStart(64, '0') + (60000).toString(16).padStart(64, '0'));
-    assert.equal(BigInt(f.transactions[0].gas), 105563n);
-    assert.match(f.prompts[0], /Mint exactly 0\.060000 test USDC/);
-    assert.deepEqual(f.confirmedBalanceReads, ['0x123'], 'read the canonical mint block, not cached latest');
-    assert.ok(f.transactions[1].data.startsWith('0x095ea7b3'));
-    assert.ok(f.transactions[2].data.startsWith('0xc588341c'));
-    assert.ok(f.events.indexOf('api:path') > f.events.lastIndexOf('eth_getTransactionReceipt'));
+    assert.equal(posts(f).length, 1);
+    assert.equal(f.field('fund').disabled, false);
+    assert.equal(f.field('fund').textContent, 'Retry saved deposit');
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 2);
     assert.match(f.field('status').textContent, /private balance is funded/);
 });
 
-test('mint retries only receipt-block reads when wallet state lags and reuses sufficient allowance', async () => {
-    const zero = '0x' + '0'.repeat(64);
-    const enough = '0x' + (100000n).toString(16).padStart(64, '0');
-    const f = fixture({demoMintEnabled: true, balance: zero, allowance: enough, confirmedMintBalances: [zero, zero, enough]});
-    await new Promise(resolve => setImmediate(resolve));
-    await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 2);
-    assert.ok(f.transactions[0].data.startsWith('0x40c10f19'));
-    assert.ok(f.transactions[1].data.startsWith('0xc588341c'));
-    assert.deepEqual(f.confirmedBalanceReads, ['0x123', '0x123', '0x123']);
-    assert.equal(f.transactions.filter(tx => tx.data.startsWith('0x40c10f19')).length, 1);
+test('deposit consent states the network fee cap and public funding boundary', () => {
+    assert.match(html, /network fees, capped at 0\.02 ETH per transaction/);
+    assert.match(html, /Funding transfers and deposits are public Ethereum transactions; they are not anonymous/);
+    assert.match(html, /Back up your private OA Chat configuration directory before sending funds/);
 });
 
-for (const [label, options, message] of [
-    ['reverted receipt', {mintReverted: true}, /transaction reverted/],
-    ['changed receipt block', {mintReorg: true}, /mint block changed/],
-    ['persistently stale balance', {confirmedMintBalances: ['0x' + '0'.repeat(64)]}, /mint was confirmed.*No further transaction was submitted/]
-]) {
-    test(`mint ${label} never repeats mint or proceeds to another transaction`, async () => {
-        const f = fixture({demoMintEnabled: true, balance: '0x' + '0'.repeat(64), ...options});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, 1);
-        assert.ok(f.transactions[0].data.startsWith('0x40c10f19'));
-        assert.match(f.field('status').textContent, message);
-    });
-}
 
-for (const [label, options] of [
-    ['mainnet even with flag enabled', {chainID: 1, demoMintEnabled: true}],
-    ['Sepolia flag disabled', {demoMintEnabled: false}],
-    ['Sepolia non-boolean flag', {demoMintEnabled: 'true'}]
-]) {
-    test(`${label} never requests test-token minting`, async () => {
-        const f = fixture({balance: '0x' + '0'.repeat(64), ...options});
-        await new Promise(resolve => setImmediate(resolve));
-        await f.field('fund').events.click();
-        assert.equal(f.transactions.length, 0);
-        assert.match(f.field('status').textContent, /needs at least/);
-    });
-}
-
-test('nested simulation revert data displays only its four-byte selector', async () => {
-    const f = fixture({estimateErrorAt: 1, estimateErrorData: {originalError: {data: '0x607447de' + '1234'.repeat(16)}}});
-    await new Promise(resolve => setImmediate(resolve));
+test('active saved deposit with missing companion note cannot authorize a duplicate', async () => {
+    const f = fixture({addressState: {phase: 'active', amount: 100000}});
+    await tick();
+    assert.equal(f.field('fund').disabled, true);
+    assert.match(f.field('status').textContent, /private balance is unavailable.*do not send another deposit/);
     await f.field('fund').events.click();
-    assert.equal(f.transactions.length, 0);
-    assert.match(f.field('status').textContent, /Contract error: 0x607447de\./);
-    assert.doesNotMatch(f.field('status').textContent, /1234/);
+    assert.equal(posts(f).length, 0);
+});
+
+test('read-only confirmed closure can unlock an amount for a new deposit', async () => {
+    const f = fixture({addressState: {phase: 'active', amount: 100000}});
+    await tick();
+    assert.equal(f.field('amount').readOnly, true);
+    f.base.phase = 'ready';
+    delete f.base.amount;
+    await f.field('check').events.click();
+    assert.equal(f.field('amount').readOnly, false);
+    assert.equal(f.field('fund').disabled, false);
+    assert.equal(f.field('fund').textContent, 'Deposit into private balance');
+    assert.equal(posts(f).length, 0);
+});
+
+
+test('missing companion state requiring recovery keeps funding disabled after reload', async () => {
+    const f = fixture({addressState: {phase: 'recovery_required', amount: 100000, message: 'Restore the original companion state before continuing.'}});
+    await tick();
+    assert.equal(f.field('fund').disabled, true);
+    assert.equal(f.field('status').textContent, 'Restore the original companion state before continuing.');
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 0);
 });

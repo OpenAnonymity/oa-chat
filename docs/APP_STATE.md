@@ -4,6 +4,33 @@ This is the living handoff doc for the web app's current state. Use it to captur
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
 reading code alone.
 
+## 2026-09-22: CLI Ethereum funding without an external wallet
+
+- `oa-chat fund` now prints a daemon-owned funding address and public balances;
+  `fund --amount USDC` explicitly signs approval/deposit locally and waits for
+  activation. Mainnet remains default, Sepolia explicit. `--browser` is an
+  optional view of the same flow; `--no-open` retains the capability URL mode.
+  Neither address reads, service startup, nor page reload authorizes spending.
+- The local Ethereum key and signed-transaction journal belong under
+  `funding/<network>/address-funding.json`, distinct from private note recovery
+  in `pending-deposit.json` and companion state in `zkapi/<network>/`.
+  Back up the whole private config directory. Ambiguous broadcasts replay exact
+  signed bytes; a different amount or existing private note is never replaced.
+- Funding RPC uses the existing mandatory anonymous Wisp transport. Public
+  transfers/deposits remain public; no wallet/account identity, signing key,
+  or note secret is introduced into inference or the browser page.
+- Successful approvals may progress before finality, so history recovery must
+  replay the exact prior approval even when a crash/fee failure happened before
+  signing its successor. Failed receipts require finality before entering the
+  explicit-retry state. Retired finalized failures stay in nonce history with
+  a marker so they cannot be restored as unresolved approvals after restart.
+  A missing companion note after activation blocks further funding; it is not
+  proof that the old note was closed.
+- The published `daemon-v0.1.0` installer still installs the earlier MetaMask
+  implementation. Address funding needs a build of this revision and a future
+  native release. Existing Sepolia live validation below belongs to the older
+  implementation. See [CLI funding](CLI_ZKAPI.md) for recovery and limitations.
+
 ## 2026-09-22: First CLI prerelease published and installation verified
 
 - [`daemon-v0.1.0`](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0)

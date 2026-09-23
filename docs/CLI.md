@@ -112,11 +112,32 @@ oa-chat serve
 oa-chat fund
 ```
 
-The self-hosted funding page connects MetaMask and requests the token allowance
-and deposit approvals. Private-note secrets stay in the daemon; the browser
-receives only the commitment and transaction inputs. No seed phrase or wallet
-private key is requested. `fund --no-open` prints an expiring capability URL.
-Closing the page preserves pending deposit recovery.
+`fund` prints a persistent Ethereum address and its public USDC/ETH balances.
+Send USDC and ETH for gas to that address on the displayed network, then run:
+
+```sh
+oa-chat fund --amount 0.10
+```
+
+Choose the amount of USDC to turn into private inference credits. This command
+waits for incoming funds, signs the approval and vault deposit locally, and
+waits for the confirmed deposit to activate. Ctrl+C stops waiting; rerunning
+the same command resumes the saved transaction. Keep the same `--config-dir`
+when using a nondefault directory. Starting the service or running plain
+`fund` never submits a transaction.
+
+No browser extension, wallet connection, seed phrase, or imported private key
+is required. The daemon creates a signing key and keeps it in its owner-only
+configuration directory. Back up the entire directory, including `funding/`
+and `zkapi/`; that backup controls public funds and private credits.
+Public address balances are not private inference credits until deposited.
+
+`fund --browser` opens an optional local page showing the same address and
+controls; `fund --no-open` prints its expiring capability URL. Reloading the
+page only checks status. Its explicit deposit button authorizes local signing;
+no signing key enters the page. See [funding, recovery, and limitations](CLI_ZKAPI.md).
+The published `daemon-v0.1.0` binary predates this change; build this revision to
+use address funding until an updated native release is published.
 
 Ethereum mainnet is the default. Sepolia requires an explicit selection:
 

@@ -64,6 +64,16 @@ HTTPS. A disconnected relay, wrong station/key binding, or unverified access
 fails closed. See the CLI documentation for deployed-service prerequisites
 and the zkAPI settlement constraint.
 
+The CLI's Ethereum address-funding route generates an Ethereum signing key
+locally and retains it in an owner-only file alongside its private recovery
+state. No external wallet connection or OA account identity is required.
+Funding address balances, incoming transfers, approvals, and vault deposits
+are public Ethereum activity visible to the configured RPC (accessed through
+Wisp) and chain observers. They are not made anonymous by removing a wallet
+connection. The signing key and private-note secret never enter the optional
+browser page, account synchronization, or inference requests. Backups of the
+private configuration directory control both public funds and private notes.
+
 ### 1. Ticket issuance (blind signatures)
 
 See blog post [Section 1: Blind Signatures](https://openanonymity.ai/blog/unlinkable-inference/#1-blind-signatures)

@@ -92,36 +92,7 @@ func run(args []string) error {
 	case "status":
 		return status(ctx, dir, c)
 	case "fund":
-		flags := flag.NewFlagSet("fund", flag.ContinueOnError)
-		noOpen := flags.Bool("no-open", false, "print browser funding URL without opening it")
-		if err := flags.Parse(args[1:]); err != nil {
-			return err
-		}
-		if flags.NArg() != 0 {
-			return errors.New("unexpected fund arguments")
-		}
-		if c.Backend != "zkapi" {
-			return errors.New("fund requires the zkapi backend")
-		}
-		data, err := localRequest(ctx, c, "POST", "/admin/fund")
-		if err != nil {
-			return err
-		}
-		var result struct {
-			URL string `json:"url"`
-		}
-		if json.Unmarshal(data, &result) != nil || !strings.HasPrefix(result.URL, "http://"+c.Listen+"/funding#") {
-			return errors.New("invalid local funding URL")
-		}
-		if *noOpen {
-			fmt.Println(result.URL)
-			return nil
-		}
-		if err := openBrowser(result.URL); err != nil {
-			return errors.New("could not open browser; use oa-chat fund --no-open")
-		}
-		fmt.Printf("Opened %s funding in your browser. Approve the deposit in MetaMask.\n", c.ZKAPI.Network)
-		return nil
+		return runFunding(ctx, c, args[1:], os.Stdout)
 	case "tickets":
 		return tickets(ctx, dir, c, args[1:])
 	default:
@@ -141,7 +112,10 @@ func help() {
   api-key                Print the local key to configure your client
   tickets import FILE|-  Import OA exported ticket JSON
   tickets redeem [--code-file FILE]  Read shared invite code from stdin/file
-  fund [--no-open]        Open the MetaMask private-balance funding flow
+  fund                   Show your Ethereum funding address and balances
+  fund --amount USDC     Wait for funds and deposit that amount locally
+  fund --browser         Open the optional address funding page
+  fund --no-open         Print the optional funding page URL
   version
 
 OpenAI base URL: http://127.0.0.1:8787/v1
@@ -306,19 +280,11 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 	if err != nil {
 		return err
 	}
-	api.Admin = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path == "/admin/fund" && r.Method == "POST" && funding != nil {
-			url, err := funding.NewSession()
-			if err != nil {
-				http.Error(w, `{"error":{"message":"funding session unavailable"}}`, 503)
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"url": url})
-			return
-		}
-		http.Error(w, `{"error":{"message":"unknown management endpoint"}}`, 404)
-	})
+	if funding != nil {
+		// server.API enforces local bearer authentication and rejects browser
+		// origins before dispatching these management operations.
+		api.Admin = http.HandlerFunc(funding.ServeAdminHTTP)
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/", api)
 	if funding != nil {

@@ -97,6 +97,9 @@ func (h *FundingHandler) NewSession() (string, error) {
 }
 
 func (h *FundingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+	defer cancel()
+	r = r.WithContext(ctx)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -132,6 +135,15 @@ func (h *FundingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var result any
 	var err error
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/address":
+		result, err = h.addressLocked(r.Context())
+	case r.Method == http.MethodPost && r.URL.Path == "/funding/api/address/deposit":
+		var body struct {
+			Amount uint64 `json:"amount"`
+		}
+		if err = decodeJSON(r.Body, &body); err == nil {
+			result, err = h.fundAddressLocked(r.Context(), body.Amount)
+		}
 	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/config":
 		result, err = h.config(r.Context())
 	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/path":
@@ -374,6 +386,9 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := h.confirmAddressFinality(ctx, config, tx); err != nil {
+		return nil, err
+	}
 	raw, err := os.ReadFile(h.statePath)
 	if err != nil {
 		return nil, errors.New("no pending deposit to confirm")
@@ -522,7 +537,7 @@ func validateReceipt(receipt ethReceipt, record depositRecord) (uint32, uint64, 
 }
 
 // Deposit witnesses describe the current shared tree, not private wallet
-// material. Refresh after MetaMask approval so other deposits do not leave a
+// material. Refresh after token approval so other deposits do not leave a
 // restored preparation permanently stuck with an obsolete empty-leaf path.
 func (h *FundingHandler) depositPath(ctx context.Context) (any, error) {
 	if err := h.client.Check(ctx); err != nil {

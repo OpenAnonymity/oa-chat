@@ -18,74 +18,52 @@ manifests are the existing deployment URLs:
 - Sepolia: <https://d33l4w2z2nh4cg.cloudfront.net/config.json>
 
 Both use their configured six-decimal ERC-20 billing token, not native ETH for
-credits. ETH pays gas. The browser labels mainnet as real USDC and Sepolia as
-test USDC, verifies token decimals, and requests the exact selected network.
+credits. ETH pays gas. The daemon verifies token decimals and the selected
+network. Sepolia address funding requires the configured test-token transfer;
+it does not automatically mint test tokens.
 
-Run `oa-chat fund` while the daemon is running. The CLI requests a short-lived
-local funding capability and opens the default browser. The page follows the
-existing OA Chat MetaMask sequence: prepare a private note, approve the exact
-ERC-20 amount, call `deposit(bytes32,uint128,uint256[32])`, and confirm the
-on-chain `NoteDeposited` event. The empty-leaf Merkle witness is refreshed
-after token approval so other deposits during the wallet interaction do not
-permanently strand a prepared note. It uses the wallet's EIP-1193 API without CDN
-scripts, wallet private-key forms, or third-party analytics. No wallet
-transaction is initiated merely by starting the service or opening the page.
-The user connects MetaMask and approves the transactions in the wallet.
+Run `oa-chat fund` while the daemon is running. It creates a local Ethereum
+signing key once and prints its address, network, token contract and balances.
+No external wallet, browser, Foundry installation, private-key input, or wallet
+connection is needed. The key is internal client state; this does not remove
+Ethereum's need for a signer or ETH for gas.
 
-The page reads the connected account's billing-token balance and vault
-allowance before requesting transactions. It reuses a sufficient allowance,
-including an approval completed before a local funding session expired, and
-refreshes the Merkle witness before the deposit. Reopening an expired session
-requires a fresh `oa-chat fund` URL and a reload before checking the saved
-deposit hash; loading the configuration must succeed before browser recovery
-state is restored.
+Send the displayed billing token (mainnet USDC, or the configured Sepolia test
+token) and ETH on the displayed network to that same address. A transfer to the
+vault itself does not fund a private note. Only the configured token counts;
+tokens on another network do not become credits.
 
-Before either approval or deposit, the page simulates the exact transaction
-with `eth_estimateGas` and supplies an explicit gas limit: 120% of the estimate
-plus 50,000 gas, matching the working OA web SDK. It rejects failed simulations,
-invalid estimates, or limits above Ethereum's 16,777,216 per-transaction cap
-before requesting a signature. The chain and account are checked again after
-the asynchronous estimate. MetaMask still chooses the fee rate; the local
-page displays the estimate and limit in gas units, not ETH.
+Run `oa-chat fund --amount 0.10` to authorize a 0.10-USDC private deposit. The
+amount parser uses exact integer microcredits, accepts at most six decimal
+places, and rejects zero/negative amounts and amounts over 1,000,000 USDC.
+The command waits for funds and advances approval, deposit and activation;
+Ctrl+C stops waiting without deleting state. Repeat the same command and
+`--config-dir` to recover. Amounts cannot change while an attempt is saved.
 
-This fixes the September 10 failure where the original raw `eth_sendTransaction`
-request omitted gas and MetaMask submitted a 21,000,000-gas limit. Infura rejected
-that request before broadcast because it exceeded the
-[EIP-7825 cap](https://eips.ethereum.org/EIPS/eip-7825). That rejection itself
-does not consume on-chain gas. The same approval calldata simulated successfully
-on Sepolia at 46,303 gas using a nonzero test sender; the real wallet's estimate
-may differ. MetaMask's internal reason for choosing 21 million was not observed.
-The reference is `sdk/services/zkapiGas.mjs` and `sendContractTransaction` in
-the working SDK at commit `06e3ee9b03afad6def268958716ae863bd75a2b0`.
-With the corrected daemon running, the actual connected MetaMask wallet
-returned a 26,363-gas approval estimate, and the local page displayed an
-81,635-gas limit before wallet confirmation. See the
-[live preflight record](../daemon/packaging/validation/sepolia-gas-preflight.json).
-That record captures the earlier gas preflight; the successful funded flow and
-settlement are recorded below.
+The optional `fund --browser` page uses the same local signer. `--no-open`
+continues to print a short-lived page URL. Opening/reloading/checking the page
+and reading the address do not submit transactions. The deposit button is the
+explicit authorization. The page never needs `window.ethereum` and never
+receives the signing key or private-note secret.
 
-The default displayed amount is 0.10 USDC. A token balance and gas are required.
-The September 10 follow-up confirmed the connected wallet's exact 0.10-token
-allowance but a zero billing-token balance. The deposit therefore failed
-simulation before submission. The working web SDK automatically mints missing
-demo tokens on its Sepolia deployment; the first CLI implementation omitted
-that step. A token allowance alone is not a funded private note.
+The daemon reuses a sufficient token allowance or approves only the selected
+amount, refreshes the vault's empty-leaf Merkle witness, and signs the exact
+`deposit(bytes32,uint128,uint256[32])` call. Network and token-decimal checks,
+gas simulation, gas/fee limits, and receipt checks fail closed. Signed bytes,
+hash and nonce are saved durably **before** broadcast. Ambiguous submission
+replays those same bytes, rather than allocating another nonce. Confirmation
+must bind the vault event to the saved private-note commitment and amount.
+Deposit activation waits for Ethereum's finalized block,
+[typically around 15 minutes](https://ethereum.org/roadmap/single-slot-finality)
+after mining; an unsupported finality response does not activate
+credits. Approval can progress from a canonical mined receipt. Gas limits use
+120% of the estimate plus 50,000 units, bounded by 16,777,216 units; legacy
+EIP-155 transaction fees are capped at 300 gwei and 0.02 ETH per transaction.
+These fees are additional to the token deposit amount.
 
-The corrected flow mints only the missing amount when the deployment explicitly
-enables demo minting and the selected chain is Sepolia (11155111). Both the Go
-configuration response and browser enforce this restriction. Mainnet never
-mints demo tokens. The mint uses the same transaction simulation and gas limit
-as approval/deposit, requires MetaMask confirmation, and verifies the balance
-at the receipt's canonical block before proceeding. Delayed RPC reads retry
-only reads, never another mint. A sufficient existing allowance is reused.
-The user completed the corrected Sepolia mint and deposit flow. The mint
-preflight estimated 51,353 gas and supplied a 111,623-gas limit. After the
-foreground test daemon stopped during a wallet handoff, restoring the same
-state under a persistent launchd job reused the existing 0.10-token balance
-and allowance. The deposit estimated 6,814,110 gas and supplied an 8,226,932-gas
-limit; its successful vault event activated the private note after the wrapped
-receipt fix described below. A foreground tool session must not host a daemon
-across a wallet handoff; use its normal service manager or a persistent test job.
+Address funding is a source change after `daemon-v0.1.0`; that published release
+still uses MetaMask. Historical funded Sepolia checks below describe that
+older flow, not live validation of the new local signer.
 
 ## Privacy boundaries
 
@@ -101,10 +79,11 @@ route, including reset, health, and its upstream funding UI.
 Every companion HTTP path, including manifest discovery, indexer reads, ZK
 proof submission, lease issuance, and verifier submission, uses the daemon's
 mandatory authenticated loopback CONNECT proxy. That proxy carries the
-companion's destination TLS inside Wisp. Inference and public deposit-receipt
-reads use the Go Wisp HTTP client. There is no direct transport fallback.
-MetaMask and its RPC service see the public wallet/deposit activity, as in the
-existing browser funding flow.
+companion's destination TLS inside Wisp. Inference and all funding RPC calls
+use the Go Wisp HTTP client. There is no direct transport fallback. The configured RPC and public chain can observe the
+funding address, incoming transfers, approval, and deposit. Generating the
+address locally does not make public funding anonymous; the private-note proof
+and ephemeral inference-key boundaries remain unchanged.
 
 The companion requires `direct_openrouter` and `require_oa_org_key_source`.
 Before any key leaves the companion, the independently configured verifier
@@ -192,9 +171,16 @@ production relay was not changed and there was no direct-transport fallback.
 
 The Go recovery record is under `funding/<network>/pending-deposit.json` in the
 private configuration directory. It survives a browser close, service restart,
-and an ambiguous on-chain response. Resume with the deposit transaction hash
-from MetaMask. A mistyped pending hash can be replaced by a receipt that matches
-the private note; a mined reverted or unrelated transaction clears its retry
+and an ambiguous on-chain response. The local signer also retains its key and
+signed transaction journal in `funding/<network>/address-funding.json`. Resume
+with the same `fund --amount` command. Back up the complete private config
+directory before sending funds; neither OA nor the sender can recover a lost
+local key. Never copy its secrets into support logs.
+
+Legacy browser-funded deposits can still be confirmed with their saved
+transaction hash in the optional funding page. A legacy pending record is
+never silently replaced with a new local-signer deposit. A mistyped pending
+hash can be replaced by a receipt that matches the private note; a mined reverted or unrelated transaction clears its retry
 hint without deleting the secret.
 
 Confirmation retries never reinitialize an already active note to its original
@@ -203,11 +189,46 @@ balance. Activated recovery records are retained and are archived with a
 is prepared. Keep both the companion wallet directory and these recovery
 records private and backed up.
 
+The address-funding journal retains one authorized deposit. A finalized revert
+can be retried explicitly with the same note secret and refreshed witness;
+ambiguous transactions always retain their original signed bytes and nonce.
+An activated journal whose companion note is missing requires recovery, not a
+second deposit. This version does not provide a public-asset sweep command or
+private-note withdrawal/refill workflow. Excess public USDC and ETH remain
+controlled by the saved Ethereum key; preserve the full backup for recovery.
+
 The current upstream wallet has one active note. Deposits do not increase an
 active note in place. The Go funding page therefore refuses to overwrite an
 active note. Withdrawing/closing an old note currently requires the upstream
 zkAPI tooling; the Go daemon does not yet expose a withdrawal command. Preserve
 its wallet state when changing to a separate funded state directory.
+
+## Address-funding verification (2026-09-22)
+
+The current change is covered by mocked JSON-RPC/companion integration tests:
+address persistence and file permissions, wrong-chain/token checks, exact
+signed calldata, approval/deposit ambiguity, restart and nonce rollback,
+canonical/finalized receipt checks, reorg recovery, explicit reverted retries,
+concurrent callers, and missing-note refusal. CLI tests exercise integer
+amount parsing, read-only address display, explicit deposits and cancellation;
+37 browser-script tests cover address-only loading, explicit authorization,
+recovery, session expiry and balances without any injected wallet provider.
+
+Run from `daemon/` with a patched Go toolchain:
+
+```sh
+GOTOOLCHAIN=go1.26.6 go test -race ./...
+GOTOOLCHAIN=go1.26.6 go vet ./...
+GOTOOLCHAIN=go1.26.6 go build ./cmd/oa-chat
+node --test internal/zkapi/funding-ui.test.mjs
+```
+
+The initial local Go 1.26.5 vulnerability scan reported fixed standard-library
+issues; use Go 1.26.6 or a newer patched release for native builds.
+`govulncheck` with Go 1.26.6 reports no reachable vulnerabilities (one advisory
+in an unused required module). Signing uses pinned `go-ethereum` v1.17.5. This change has not sent live Ethereum
+transactions. Browser visual tooling was unavailable; script behavior was
+verified automatically. Existing live-chain evidence below remains historical.
 
 ## Reproducible companion and verification
 

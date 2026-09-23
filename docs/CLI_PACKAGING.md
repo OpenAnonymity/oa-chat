@@ -184,8 +184,11 @@ The Go API daemon owns incoming API requests and streaming responses.
 The companion and `share/oa-chat/proof-setup` are included in every native
 archive. Linux packages install them as `/usr/bin/oa-zkapi` and
 `/usr/share/oa-chat/proof-setup`. Homebrew installs them under its formula
-prefix. Funding opens the browser so the user approves MetaMask transactions;
-service startup never submits a wallet transaction. User-facing configuration
+prefix. Address funding runs in the terminal with an optional local browser
+page. The Go daemon generates its own local signing key; no external wallet
+is required. Only an explicit deposit command/action signs transactions;
+service startup and address checks never submit one. The published 0.1.0
+release predates this behavior and still uses MetaMask. User-facing configuration
 uses Ethereum mainnet; Sepolia must be selected explicitly for testing.
 
 ## Building a release
