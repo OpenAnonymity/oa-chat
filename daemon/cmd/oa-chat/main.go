@@ -93,6 +93,8 @@ func run(args []string) error {
 		return status(ctx, dir, c)
 	case "fund":
 		return runFunding(ctx, c, args[1:], os.Stdout)
+	case "withdraw":
+		return runWithdrawal(ctx, c, args[1:], os.Stdout)
 	case "tickets":
 		return tickets(ctx, dir, c, args[1:])
 	default:
@@ -116,6 +118,9 @@ func help() {
   fund --amount USDC     Wait for funds and deposit that amount locally
   fund --browser         Open the optional address funding page
   fund --no-open         Print the optional funding page URL
+  withdraw               Show private-balance withdrawal status
+  withdraw --to ADDRESS  Close the private balance and send it to ADDRESS
+  withdraw --to ADDRESS --confirm TX_HASH  Confirm a matching withdrawal after a revert
   version
 
 OpenAI base URL: http://127.0.0.1:8787/v1
@@ -173,6 +178,9 @@ func (z zkInference) Complete(ctx context.Context, body json.RawMessage) (*http.
 		case http.StatusPaymentRequired:
 			return nil, &server.BackendError{Status: 402, Code: "funding_required", Message: "The private balance needs funding. Run oa-chat fund."}
 		case http.StatusConflict:
+			if remote.Code == "withdrawal_pending" || remote.Code == "withdrawal_conflict" {
+				return nil, &server.BackendError{Status: 409, Code: "withdrawal_pending", Message: "The private balance is reserved for withdrawal. Run oa-chat withdraw to check status and resume with the saved destination."}
+			}
 			return nil, &server.BackendError{Status: 409, Code: "settlement_pending", Message: "The previous anonymous lease is settling. Retry after settlement; a provider key is never reused across API requests."}
 		}
 	}
@@ -282,7 +290,9 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 	}
 	if funding != nil {
 		// server.API enforces local bearer authentication and rejects browser
-		// origins before dispatching these management operations.
+		// origins before dispatching these management operations. Withdrawals
+		// additionally require the owner-only credential, never the inference key alone.
+		api.ManagementToken = c.ManagementToken
 		api.Admin = http.HandlerFunc(funding.ServeAdminHTTP)
 	}
 	mux := http.NewServeMux()

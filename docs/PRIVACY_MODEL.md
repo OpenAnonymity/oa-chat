@@ -69,7 +69,10 @@ and the zkAPI settlement constraint.
 The CLI's Ethereum address-funding route generates an Ethereum signing key
 locally and retains it in an owner-only file alongside its private recovery
 state. No external wallet connection or OA account identity is required.
-Funding address balances, incoming transfers, approvals, and vault deposits
+Withdrawal management uses a separate owner-only local credential; the
+inference API key shared with a UI cannot authorize a withdrawal destination.
+Funding address balances, incoming transfers, approvals, vault deposits, and
+withdrawal amounts and destinations
 are public Ethereum activity visible to the configured RPC (accessed through
 Wisp) and chain observers. They are not made anonymous by removing a wallet
 connection. The signing key and private-note secret never enter the optional
