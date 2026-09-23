@@ -12,7 +12,8 @@
                 const storageKey = 'oa-theme-preference';
                 const stored = localStorage.getItem(storageKey);
                 const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-                const preference = stored === 'light' || stored === 'dark' ? stored : 'system';
+                // 'purple' was a light-family preference before zkAPI got its own poles; it now means light.
+                const preference = stored === 'light' || stored === 'purple' ? 'light' : stored === 'dark' ? 'dark' : 'system';
                 const effectiveTheme = preference === 'dark' || (preference === 'system' && prefersDark) ? 'dark' : 'light';
                 const root = document.documentElement;
 
@@ -26,16 +27,39 @@
                     root.classList.add('theme-light');
                     root.classList.remove('dark', 'theme-dark');
                 }
+                // zkAPI is a colour axis of its own: the same Light/Dark choice
+                // resolves to EF purple by day and indigo night. The default
+                // payment mode paints the first frame; the current chat's mode
+                // takes over once the app mounts.
+                root.classList.toggle('zkapi-mode', localStorage.getItem('oa-payment-mode') === 'zkapi');
             } catch (error) {
                 console.warn('Unable to apply stored theme preference before hydration:', error);
             }
         })();
     </script>
     <script>
+        // Track input modality before anything can take focus. The app focuses
+        // elements itself (dialog open, focus restore after close, picker
+        // search) and browsers report that as :focus-visible until the next
+        // pointer interaction, so focus rings key off html[data-keyboard-nav]
+        // instead: set after a focus-moving key, cleared on pointer input.
+        (function () {
+            const root = document.documentElement;
+            const NAVIGATION_KEYS = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End']);
+            const clear = () => root.removeAttribute('data-keyboard-nav');
+            window.addEventListener('keydown', event => {
+                if (NAVIGATION_KEYS.has(event.key)) root.setAttribute('data-keyboard-nav', '');
+            }, true);
+            window.addEventListener('pointerdown', clear, true);
+            window.addEventListener('mousedown', clear, true);
+            window.addEventListener('touchstart', clear, { capture: true, passive: true });
+        })();
+    </script>
+    <script>
         // Apply left sidebar state immediately to prevent flash
         (function () {
             try {
-                const isDesktop = window.innerWidth > 768;
+                const isDesktop = window.innerWidth >= 1100;
                 if (!isDesktop) return;
 
                 const savedState = localStorage.getItem('oa-left-sidebar-visible');
@@ -48,7 +72,7 @@
                 if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
                     const minWidth = 220;
                     const maxDragWidth = 420;
-                    const layoutMaxWidth = Math.max(minWidth, window.innerWidth - 240);
+                    const layoutMaxWidth = Math.max(minWidth, window.innerWidth - 848);
                     const maxWidth = Math.max(minWidth, Math.min(maxDragWidth, layoutMaxWidth));
                     const clampedWidth = Math.max(minWidth, Math.min(maxWidth, parsedWidth));
                     document.documentElement.style.setProperty('--oa-left-sidebar-width', `${clampedWidth}px`);
@@ -62,9 +86,9 @@
         // Apply right panel state immediately to prevent flash
         (function () {
             try {
-                const isDesktop = window.innerWidth >= 1024;
+                const defaultOpen = window.innerWidth >= 1100;
                 const savedState = localStorage.getItem('oa-right-panel-visible');
-                const isVisible = savedState !== null ? savedState === 'true' : isDesktop;
+                const isVisible = savedState !== null ? savedState === 'true' : defaultOpen;
 
                 if (!isVisible) {
                     document.documentElement.setAttribute('data-right-panel-hidden', 'true');
@@ -133,6 +157,77 @@
             }
         })();
     </script>
+    <script>
+        // An authentication hand-off (?auth=google / ?auth=username) or a ticket
+        // link arrives from a page whose button was already spinning. Paint the
+        // same dimmed backdrop and spinner before any stylesheet or script
+        // loads, so the wait reads as one continuous state until the account
+        // dialog (or the app itself) takes over and clears data-auth-arriving.
+        (function () {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const intent = params.get('auth');
+                if (intent === 'google' || intent === 'username' || params.has('tickets')) {
+                    document.documentElement.setAttribute('data-auth-arriving', '');
+                }
+                // A sign-in hand-off ends in a passkey sheet. Say so from the
+                // first frame — the same two lines the account dialog draws
+                // behind the sheet (AccountModal.renderWaitingLayer), naming
+                // the username when the hand-off carries one — so the wait
+                // reads as one state from the landing page to the sheet.
+                if (intent === 'google' || intent === 'username') {
+                    const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+                    const username = intent === 'username'
+                        ? String(fragment.get('username') || '').normalize('NFKC').trim().toLowerCase()
+                        : '';
+                    // The layer itself is at the end of <body>; the script right
+                    // after it fills in the line from this attribute.
+                    document.documentElement.setAttribute('data-auth-caption', username);
+                }
+            } catch (error) {
+                console.warn('Unable to read the authentication hand-off:', error);
+            }
+        })();
+    </script>
+    <style>
+        /* Matches #account-modal (bg-black/60 + blur) and .account-unlock-waiting-spinner. */
+        #auth-arrival { display: none; }
+        html[data-auth-arriving] #auth-arrival {
+            position: fixed;
+            inset: 0;
+            z-index: 49;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+            padding: 1.5rem;
+            text-align: center;
+            background: rgb(0 0 0 / 0.6);
+            -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+            font-family: system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        /* Matches .account-unlock-waiting-title / -note, so the dialog's own
+           caption replaces this one without moving. Hidden unless the
+           hand-off is a sign-in (data-auth-caption). */
+        #auth-arrival > p { display: none; margin: 0; max-width: 28rem; color: rgb(255 255 255 / 0.88); }
+        html[data-auth-caption] #auth-arrival > p { display: block; }
+        #auth-arrival-title { font-size: 0.9375rem; font-weight: 500; line-height: 1.4; text-wrap: balance; overflow-wrap: anywhere; }
+        #auth-arrival > span {
+            width: 1.25rem;
+            height: 1.25rem;
+            border: 2px solid rgb(255 255 255 / 0.7);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: auth-arrival-spin 0.7s linear infinite;
+        }
+        @keyframes auth-arrival-spin { to { transform: rotate(360deg); } }
+        @media (prefers-reduced-motion: reduce) {
+            #auth-arrival > span { animation-duration: 1.4s; }
+        }
+    </style>
     <!-- Preload critical resources for faster loading -->
 
     <link rel="dns-prefetch" href="https://openrouter.ai">
@@ -278,6 +373,22 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body class="bg-background text-foreground h-screen overflow-hidden">
+    <button id="show-right-panel-btn" type="button" aria-controls="right-panel" aria-label="Open system panel" aria-expanded="false" data-tooltip="Open panel" data-tooltip-position="right" class="system-panel-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                                <path d="M14 4v16"/>
+                            </svg>
+                        </button>
+    <button id="show-sidebar-btn" type="button" class="sidebar-toggle-btn oa-panel-icon-btn inline-flex items-center justify-center cursor-pointer select-none" aria-controls="sidebar" aria-label="Collapse sidebar" aria-expanded="true">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <path d="M10 4v16"/>
+        </svg>
+        <span class="sidebar-toggle-tooltip" role="tooltip">
+            <span data-sidebar-toggle-label>Collapse sidebar</span>
+            <span class="sidebar-toggle-shortcut" aria-hidden="true"><span>⌘</span><span>\</span></span>
+        </span>
+    </button>
     <!-- Mobile sidebar backdrop -->
     <div id="mobile-sidebar-backdrop" class="mobile-sidebar-backdrop"></div>
 
@@ -285,32 +396,18 @@
         <!-- Left Sidebar: Chat Sessions -->
         <aside id="sidebar" class="relative flex-shrink-0 flex flex-col bg-background border-r border-border h-full min-h-0 overflow-hidden transition-[width,border-width] duration-300 ease-in-out w-64">
             <div class="sidebar-main-content flex h-full w-full flex-col gap-2 p-2">
-                <div class="flex w-full items-center gap-1 pr-1">
+                <div class="sidebar-header-actions flex w-full items-center gap-1 pr-1">
+                    <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history" data-tooltip="Delete chat history" data-tooltip-position="bottom-start">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 6h16M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/>
+                        </svg>
+                    </button>
                     <button id="new-chat-btn" class="btn-ghost-hover flex-1 inline-flex items-center whitespace-nowrap transition-colors focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 gap-2 bg-card border border-border text-foreground shadow-sm h-9 rounded-md px-3 justify-start">
                         <span class="text-sm">New Chat</span>
                         <div class="flex items-center gap-0.5 ml-auto pointer-events-none text-muted-foreground text-xs">
                             <span class="opacity-60">⌘</span>
                             <span class="opacity-60">/</span>
                         </div>
-                    </button>
-                    <button id="delete-history-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0" aria-label="Delete all local chat history" data-tooltip="Delete chat history" data-tooltip-position="right">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                        </svg>
-                    </button>
-                    <button id="hide-sidebar-btn" class="sidebar-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 flex-shrink-0 -ml-0.5" aria-label="Collapse sidebar">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                            <rect x="4" y="4" width="16" height="16" rx="2"/>
-                            <path d="M4 4h6v16H4a2 2 0 01-2-2V6a2 2 0 012-2z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                            <path d="M10 4v16"/>
-                        </svg>
-                        <span class="sidebar-toggle-tooltip sidebar-toggle-tooltip-right" role="tooltip">
-                            <span>Collapse sidebar</span>
-                            <span class="sidebar-toggle-shortcut" aria-hidden="true">
-                                <span>⌘</span>
-                                <span>\</span>
-                            </span>
-                        </span>
                     </button>
                 </div>
 
@@ -343,6 +440,7 @@
                                     <path d="M6 12h12" />
                                     <path d="M10 19h4" />
                                 </svg>
+                                <span class="sidebar-toggle-tooltip sidebar-toggle-tooltip-right" role="tooltip"><span>Filter chats</span></span>
                             </button>
                             <div id="sidebar-filter-menu" class="sidebar-filter-menu hidden" role="menu" aria-label="Chat filters">
                                 <button class="sidebar-filter-toggle-row" type="button" data-session-star-filter-toggle aria-pressed="false">
@@ -396,9 +494,8 @@
                         </span>
                         <span id="account-identity-label" class="account-identity-label"></span>
                         <span id="account-bootstrap-status" class="account-bootstrap-status" role="status" aria-live="polite">Restoring account</span>
-                        <svg class="account-control-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                        <svg class="account-control-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m6 9 6 6 6-6" />
                         </svg>
                     </button>
                 </div>
@@ -428,27 +525,22 @@
                 <div id="chat-toolbar" class="chat-toolbar flex-shrink-0 flex flex-nowrap items-center justify-between px-2 pt-2 pb-1">
                     <!-- Left toolbar buttons -->
                     <div class="flex items-center gap-1">
-                        <!-- Show Sidebar Button (hidden by default, shown when sidebar is hidden) -->
-                        <button id="show-sidebar-btn" class="sidebar-toggle-btn hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand sidebar">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                <path d="M4 4h6v16H4a2 2 0 01-2-2V6a2 2 0 012-2z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                                <path d="M10 4v16"/>
-                            </svg>
-                            <span class="sidebar-toggle-tooltip" role="tooltip">
-                                <span>Expand sidebar</span>
-                                <span class="sidebar-toggle-shortcut" aria-hidden="true">
-                                    <span>⌘</span>
-                                    <span>\</span>
-                                </span>
-                            </span>
-                        </button>
+                        <span class="left-sidebar-toggle-space" aria-hidden="true"></span>
 
                         <!-- Wide Mode Button -->
-                        <button id="wide-mode-btn" class="hidden inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none" aria-label="Expand view">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
-                            </svg>
+                        <button id="wide-mode-btn" class="oa-panel-icon-btn hidden inline-flex items-center justify-center h-9 w-9 cursor-pointer select-none" aria-label="Expand view" data-tooltip="Widen chat" data-tooltip-position="end">
+                            <span class="t-icon-swap" data-wide-mode-icons data-state="a" aria-hidden="true">
+                                <svg class="t-icon h-5 w-5 theater-mode-icon" data-icon="a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path class="wide-arrow-left" d="M9 9l-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path class="wide-arrow-right" d="M15 9l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                                <svg class="t-icon h-5 w-5 theater-mode-icon" data-icon="b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path class="wide-arrow-left" d="M6 9l3 3-3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path class="wide-arrow-right" d="M18 9l-3 3 3 3" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
                         </button>
                     </div>
 
@@ -463,13 +555,7 @@
                         </button>
 
                         <!-- Show Right Panel Button -->
-                        <button id="show-right-panel-btn" class="system-panel-toggle-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
-                                <rect x="4" y="4" width="16" height="16" rx="2"/>
-                                <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                                <path d="M14 4v16"/>
-                            </svg>
-                        </button>
+                        <span id="chat-toolbar-panel-space" class="system-panel-toggle-space" aria-hidden="true"></span>
                     </div>
                 </div>
                 <!-- Status Indicator Dot (Always visible) -->
@@ -482,15 +568,15 @@
                 </div>
                 -->
 
-                <div class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
+                <div id="chat-stage" class="flex flex-1 flex-col min-w-0 min-h-0 max-h-full">
                     <!-- Chat Messages Area -->
                     <div id="chat-area" class="flex-1 min-h-0 w-full overflow-y-scroll">
                         <div id="messages-container" class="w-full mx-auto flex flex-col items-center gap-6 px-2 sm:px-4 md:px-6 pt-4 pb-32">
                         </div>
                     </div>
 
-                    <!-- Input Area - always visible at bottom with consistent padding -->
-                    <div class="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-1 flex-shrink-0">
+                    <!-- The same composer centers in empty chats and docks after the first message. -->
+                    <div id="chat-composer" class="absolute bottom-0 left-0 right-0 px-2 pb-2 pt-1 flex-shrink-0">
                         <div id="input-card" class="rounded-lg p-1.5 border w-full max-w-[42rem] mx-auto flex-shrink-0 shadow-lg relative" style="isolation: isolate;">
                                 <!-- Drop Zone Overlay -->
                                 <div id="drop-zone-overlay" class="hidden absolute inset-0 z-[60] rounded-lg border-2 border-dashed border-primary/30 bg-card flex items-center justify-center pointer-events-none transition-all duration-200">
@@ -600,219 +686,189 @@
 
                                         <!-- Settings Dropdown -->
                                         <div id="composer-settings-control" class="relative z-50">
-                                            <button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" data-tooltip="Settings" data-tooltip-position="top">
+                                            <button id="settings-btn" class="composer-more-menu-item" role="menuitem" aria-label="Settings" aria-controls="settings-menu" aria-expanded="false" data-tooltip="Settings" data-tooltip-position="top">
                                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.559.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.398.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.272-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
                                                     <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                                                 </svg>
-                                                <span>Settings</span>
+                                                <span class="composer-more-glyph" aria-hidden="true">···</span><span>Settings</span>
                                             </button>
                                             <!-- Settings Dropdown Menu (hidden by default) -->
-                                            <div id="settings-menu" class="hidden z-[100] rounded-lg border shadow-xl p-2 min-w-[220px] settings-menu-glass">
-                                                <a href="https://forms.gle/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="w-full text-left px-3 py-2 text-sm text-popover-foreground hover-highlight hover:text-accent-foreground rounded-md transition-colors flex items-center justify-between">
-                                                    <span>Share Feedback</span>
-                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
-                                                    </svg>
-                                                </a>
+                                            <!-- Settings panel (hidden by default). Same ids, roles and
+                                                 data-actions as before; only the layout and skin changed. -->
+                                            <div id="settings-menu" class="hidden z-[100] settings-panel settings-menu-glass" role="group" aria-label="Settings">
+                                                <section id="compact-composer-actions" class="settings-section" hidden aria-label="Chat options">
+                                                    <h3 class="settings-section-title">Chat options</h3>
+                                                    <div class="settings-row"><span class="settings-row-label">Response mode</span><div id="compact-mode-slot"></div></div>
+                                                    <div class="settings-row"><span class="settings-row-label">Use memories in replies</span><div id="compact-memory-slot"></div></div>
+                                                    <button id="compact-scrub-btn" type="button" class="settings-row settings-link">Scrub prompt</button>
+                                                </section>
+                                                <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
 
-                                                <!-- Data Controls Section (modular - can be moved elsewhere) -->
-                                                <div id="data-management-section" class="mt-2 border-t border-border pt-2">
-                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Data Controls</p>
-                                                    <!-- All Data row -->
-                                                    <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">All</span>
-                                                        <button data-action="export-all-data" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
-                                                        <button data-action="import-data" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                <!-- Privacy -->
+                                                <section class="settings-section" aria-labelledby="settings-appearance-title">
+                                                        <h3 id="settings-appearance-title" class="settings-section-title">Appearance</h3>
+                                                        <div class="settings-row">
+                                                            <span class="settings-row-label" id="flat-mode-label">Layout</span>
+                                                            <div id="flat-mode-toggle" class="display-toggle-container settings-segmented" role="radiogroup" aria-labelledby="flat-mode-label">
+                                                                <div class="display-toggle-indicator"></div>
+                                                                <button type="button" class="display-toggle-btn settings-segment" data-mode="flat" aria-checked="true" title="Document">Document</button>
+                                                                <button type="button" class="display-toggle-btn settings-segment" data-mode="bubble" aria-checked="false" title="Bubbles">Bubbles</button>
+                                                            </div>
+                                                        </div>
+                                                        <div class="settings-row">
+                                                            <span class="settings-row-label" id="font-mode-label">Font</span>
+                                                            <div id="font-mode-toggle" class="display-toggle-container settings-segmented" role="radiogroup" aria-labelledby="font-mode-label">
+                                                                <div class="display-toggle-indicator"></div>
+                                                                <button type="button" class="display-toggle-btn settings-segment settings-segment-icon" data-font="sans" aria-checked="true" aria-label="Sans-serif" title="Sans-serif"><span style="font-family: system-ui, sans-serif;">Aa</span></button>
+                                                                <button type="button" class="display-toggle-btn settings-segment settings-segment-icon" data-font="serif" aria-checked="false" aria-label="Serif" title="Serif"><span style="font-family: 'PT Serif', Georgia, serif;">Aa</span></button>
+                                                            </div>
+                                                        </div>
+                                                        <div class="settings-row">
+                                                            <span class="settings-row-label" id="theme-label">Theme</span>
+                                                            <div id="theme-toggle" class="theme-toggle-container settings-segmented" role="radiogroup" aria-labelledby="theme-label" data-theme="system">
+                                                                <div class="theme-toggle-indicator"></div>
+                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="system" aria-checked="false" aria-label="System" title="System">
+                                                                    <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
+                                                                    </svg>
+                                                                </button>
+                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="light" aria-checked="false" aria-label="Light" title="Light">
+                                                                    <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
+                                                                    </svg>
+                                                                </button>
+                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="dark" aria-checked="false" aria-label="Dark" title="Dark">
+                                                                    <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
+                                                                    </svg>
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        <p id="theme-effective-label" class="settings-note" hidden></p>
+                                                    </section>
+                                                <section id="data-management-section" class="settings-section" aria-labelledby="settings-data-title">
+                                                    <h3 id="settings-data-title" class="settings-section-title">Data controls</h3>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label">All</span>
+                                                        <div class="settings-row-control settings-button-pair">
+                                                            <button type="button" data-action="export-all-data" class="settings-text-action" data-tooltip="Downloads a file with your chats and settings">Export</button>
+                                                            <button type="button" data-action="import-data" class="settings-text-action" data-tooltip="Restore chats and settings from an oa-chat file">Import</button>
+                                                        </div>
                                                     </div>
-                                                    <!-- Chats row -->
-                                                    <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Chat History</span>
-                                                        <button data-action="export-chats" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
-                                                        <button data-action="import-history" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label">Chat history</span>
+                                                        <div class="settings-row-control settings-button-pair">
+                                                            <button type="button" data-action="export-chats" class="settings-text-action" data-tooltip="Downloads a file with your chats">Export</button>
+                                                            <button type="button" data-action="import-history" class="settings-text-action" data-tooltip="Bring in chats from ChatGPT or an oa-chat file">Import</button>
+                                                        </div>
                                                     </div>
-                                                    <!-- Tickets row -->
-                                                    <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Tickets</span>
-                                                        <button data-action="import-tickets" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label">ChatGPT</span>
+                                                        <div class="settings-row-control settings-button-pair">
+                                                            <button type="button" data-action="import-history" class="settings-text-action" data-tooltip="Bring in chat history from ChatGPT">Import</button>
+                                                        </div>
                                                     </div>
-                                                    <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">ChatGPT</span>
-                                                        <button data-action="import-history" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import from ChatGPT</button>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label">Memories</span>
+                                                        <div class="settings-row-control settings-button-pair">
+                                                            <button type="button" data-action="export-memory" class="settings-text-action" data-tooltip="Downloads a file with what oa-chat remembers about you">Export</button>
+                                                            <button type="button" data-action="import-memory" class="settings-text-action" data-tooltip="Add memories from a portable memory file">Import</button>
+                                                        </div>
                                                     </div>
-                                                    <!-- Hidden file inputs -->
+                                                    <!-- Hidden file inputs; ChatInput binds their change handlers by id. -->
                                                     <input type="file" id="global-import-input" accept="application/json,.json" class="hidden" />
-                                                    <input type="file" id="tickets-import-input" accept="application/json,.json" class="hidden" />
                                                     <input type="file" id="memory-import-input" accept=".json,application/json" class="hidden" />
-                                                </div>
-
-                                                <!-- Scrubber Section -->
-                                                <div id="scrubber-settings-section" class="mt-2 border-t border-border pt-2">
-                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Privacy</p>
-                                                    <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Scrubber</span>
-                                                        <select id="scrubber-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
-                                                            <option value="" disabled selected>Loading…</option>
-                                                        </select>
+                                                </section>
+                                                <section class="settings-section settings-section-feedback" aria-label="Feedback">
+                                                    <a href="https://forms.gle/HEmvxnJpN1jQC7CfA" target="_blank" rel="noopener noreferrer" class="settings-row settings-link">
+                                                            <span class="settings-row-label">Share feedback</span>
+                                                            <svg class="settings-link-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path>
+                                                            </svg>
+                                                        </a>
+                                                </section>
+                                                <section id="scrubber-settings-section" class="settings-section" aria-labelledby="settings-privacy-title">
+                                                    <div class="settings-heading-with-info"><h3 id="settings-privacy-title" class="settings-section-title">Privacy</h3>
+                                                        <button type="button" class="settings-info-button" aria-label="About Privacy" aria-expanded="false" data-info-toggle data-info-tooltip="Press Tab-Tab to redact personal information for one ticket."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.6" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11v6" stroke-width="1.8" stroke-linecap="round"/></svg></button>
                                                     </div>
-                                                </div>
+                                                    <div class="settings-row">
+                                                        <label id="scrubber-model-label" class="settings-row-label" for="scrubber-model-select">Scrubber model</label>
+                                                        <div class="settings-row-control settings-select settings-select-help" role="group" aria-labelledby="scrubber-model-label">
+                                                            <select id="scrubber-model-select">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                            <span id="scrubber-model-unavailable" class="settings-select-tooltip" role="tooltip" hidden></span>
+                                                        </div>
+                                                    </div>
+                                                </section>
 
-                                                <!-- Memory Section -->
-                                                <div id="memory-settings-section" class="mt-2 border-t border-border pt-2">
-                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Memory</p>
-                                                    <div class="px-3 py-1.5 flex items-center justify-between gap-2">
-                                                        <span class="text-xs font-medium text-popover-foreground">Memory feature</span>
-                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="true" class="switch-toggle switch-toggle-sm switch-active" data-tooltip="Enable memory mode and background memory extraction" data-tooltip-position="left">
+                                                <!-- Memory -->
+                                                <section id="memory-settings-section" class="settings-section" aria-labelledby="settings-memory-title">
+                                                    <div class="settings-heading-with-info"><h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
+                                                        <button type="button" class="settings-info-button" aria-label="About Memory" aria-expanded="false" data-info-toggle data-info-tooltip="Use and save memories from your chats for one ticket."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.6" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11v6" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="memory-feature-label">Save memories</span>
+                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-feature-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Save useful details from your chats." data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
                                                     </div>
-                                                    <div class="mt-1">
-                                                        <div class="px-3 py-1.5 flex items-center justify-between gap-3">
-                                                            <span class="text-xs text-muted-foreground leading-tight min-w-0 flex-1">Always attach retrieval</span>
-                                                            <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive shrink-0" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
-                                                                <span class="switch-toggle-indicator"></span>
-                                                            </button>
-                                                        </div>
-                                                        <div class="px-3 py-1 flex items-center gap-2">
-                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">Model</span>
-                                                            <select id="memory-agent-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="memory-auto-include-label">Always attach retrieval</span>
+                                                        <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-auto-include-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <label class="settings-row-label" for="memory-agent-model-select">Memory model</label>
+                                                        <div class="settings-row-control settings-select">
+                                                            <select id="memory-agent-model-select">
                                                                 <option value="" disabled selected>Loading…</option>
                                                             </select>
                                                         </div>
-                                                        <div class="px-3 py-1 flex items-center gap-2">
-                                                            <span class="text-xs text-muted-foreground w-12 shrink-0">Data</span>
-                                                            <button data-action="export-memory" data-memory-requires-feature data-enabled-title="Export memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Export</button>
-                                                            <button data-action="import-memory" data-memory-requires-feature data-enabled-title="Import memories" class="flex-1 px-2 py-1 text-[11px] text-popover-foreground hover-highlight rounded transition-colors border border-border text-center">Import</button>
-                                                        </div>
                                                     </div>
-                                                </div>
+                                                </section>
 
-                                                <!-- Parallel Section -->
-                                                <div id="parallel-settings-section" class="mt-2 border-t border-border pt-2">
-                                                    <p class="px-3 pb-1 text-xs font-light tracking-wide text-muted-foreground">Parallel</p>
-                                                    <div class="px-3 py-1.5 flex items-center justify-between gap-2">
-                                                        <span class="text-xs text-muted-foreground">Council review</span>
-                                                        <button id="council-review-toggle" type="button" role="switch" aria-checked="false" class="switch-toggle switch-toggle-sm switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
+                                                <!-- Tools -->
+                                                <section id="parallel-settings-section" class="settings-section" aria-labelledby="settings-tools-title">
+                                                    <h3 id="settings-tools-title" class="settings-section-title">Tools</h3>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="search-setting-label">Web search</span>
+                                                        <button id="search-setting-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="search-setting-label" class="switch-toggle settings-switch switch-active" data-tooltip="Let the model search the web for current information" data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
                                                     </div>
-                                                    <div id="council-review-model-row" class="px-3 py-1 flex items-center gap-2 hidden">
-                                                        <span class="text-xs text-muted-foreground w-12 shrink-0">Council</span>
-                                                        <select id="council-review-model-select" class="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-popover-foreground focus:outline-none focus:ring-1 focus:ring-ring truncate">
-                                                            <option value="" disabled selected>Loading…</option>
-                                                        </select>
-                                                        <select id="multi-model-synthesis-select" class="hidden" aria-hidden="true" tabindex="-1">
-                                                            <option value="" disabled selected>Loading…</option>
-                                                        </select>
+                                                    <div class="settings-row" id="council-review-row">
+                                                        <span class="settings-row-label" id="council-review-label">Council review</span>
+                                                        <button id="council-review-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="council-review-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
+                                                            <span class="switch-toggle-indicator"></span>
+                                                        </button>
                                                     </div>
-                                                </div>
-
-                                                <!-- Reasoning toggle section -->
-                                                <div class="border-t border-border pt-2 mt-2">
-                                                    <p class="px-3 pb-2 text-xs font-light tracking-wide text-muted-foreground">Thinking Effort</p>
-                                                    <!-- <div class="px-3 py-1 flex items-center gap-2">
-                                                        <span class="text-xs text-muted-foreground shrink-0">Thinking effort</span>
-                                                    </div> -->
-                                                    <div class="px-3 pb-1">
-                                                        <div id="reasoning-effort-toggle" class="theme-toggle-container reasoning-effort-toggle" role="radiogroup" aria-label="Reasoning effort selection" aria-disabled="false" data-effort="medium">
+                                                    <div id="council-review-model-row" class="settings-row is-disabled">
+                                                        <label class="settings-row-label" for="council-review-model-select">Council model</label>
+                                                        <div class="settings-row-control settings-select">
+                                                            <select id="council-review-model-select">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                            <select id="multi-model-synthesis-select" class="hidden" aria-hidden="true" tabindex="-1">
+                                                                <option value="" disabled selected>Loading…</option>
+                                                            </select>
+                                                        </div>
+                                                    </div>
+                                                    <div class="settings-row">
+                                                        <span class="settings-row-label" id="reasoning-effort-label">Effort</span>
+                                                        <div id="reasoning-effort-toggle" class="theme-toggle-container reasoning-effort-toggle settings-segmented" role="radiogroup" aria-labelledby="reasoning-effort-label" aria-disabled="false" data-effort="medium">
                                                             <div class="theme-toggle-indicator"></div>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">
-                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
-                                                                    <path d="M3 16.5V12.5" />
-                                                                    <path d="M7.7 16.5V10" class="effort-muted" />
-                                                                    <path d="M12.3 16.5V7.5" class="effort-muted" />
-                                                                    <path d="M17 16.5V5" class="effort-muted" />
-                                                                </svg>
-                                                            </button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">
-                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
-                                                                    <path d="M3 16.5V12.5" />
-                                                                    <path d="M7.7 16.5V10" />
-                                                                    <path d="M12.3 16.5V7.5" class="effort-muted" />
-                                                                    <path d="M17 16.5V5" class="effort-muted" />
-                                                                </svg>
-                                                            </button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">
-                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
-                                                                    <path d="M3 16.5V12.5" />
-                                                                    <path d="M7.7 16.5V10" />
-                                                                    <path d="M12.3 16.5V7.5" />
-                                                                    <path d="M17 16.5V5" class="effort-muted" />
-                                                                </svg>
-                                                            </button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Heavy effort" title="Heavy effort">
-                                                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="w-4 h-4">
-                                                                    <path d="M3 16.5V12.5" />
-                                                                    <path d="M7.7 16.5V10" />
-                                                                    <path d="M12.3 16.5V7.5" />
-                                                                    <path d="M17 16.5V5" />
-                                                                </svg>
-                                                            </button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">Low</button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">Medium</button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">High</button>
+                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Max effort" title="Max effort">Max</button>
                                                         </div>
                                                     </div>
-                                                </div>
+                                                </section>
 
-                                                <!-- Display section with flat mode and font toggles -->
-                                                <div class="mt-2 border-t border-border pt-2">
-                                                    <p class="px-3 pb-1.5 text-xs font-light tracking-wide text-muted-foreground">Display</p>
-                                                    <div class="px-3 pb-2 flex justify-center gap-4">
-                                                        <div id="flat-mode-toggle" class="display-toggle-container display-toggle-compact" role="radiogroup" aria-label="Display mode">
-                                                            <div class="display-toggle-indicator"></div>
-                                                            <!-- Flat mode: text lines without bubble -->
-                                                            <button type="button" class="display-toggle-btn" data-mode="flat" aria-checked="true" title="Flat mode">
-                                                                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                                                    <path stroke-linecap="round" d="M4 7h16M4 12h12M4 17h14"/>
-                                                                </svg>
-                                                            </button>
-                                                            <!-- Bubble mode: text lines inside chat bubble -->
-                                                            <button type="button" class="display-toggle-btn" data-mode="bubble" aria-checked="false" title="Bubble mode">
-                                                                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z"/>
-                                                                </svg>
-                                                            </button>
-                                                        </div>
-                                                        <div id="font-mode-toggle" class="display-toggle-container display-toggle-compact" role="radiogroup" aria-label="Font style">
-                                                            <div class="display-toggle-indicator"></div>
-                                                            <!-- Sans-serif font -->
-                                                            <button type="button" class="display-toggle-btn" data-font="sans" aria-checked="true" title="Sans-serif">
-                                                                <span class="text-sm font-medium" style="font-family: system-ui, sans-serif;">Aa</span>
-                                                            </button>
-                                                            <!-- Serif font -->
-                                                            <button type="button" class="display-toggle-btn" data-font="serif" aria-checked="false" title="Serif">
-                                                                <span class="text-sm font-medium" style="font-family: 'PT Serif', Georgia, serif;">Aa</span>
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                <div class="border-t border-border pt-2">
-                                                    <p class="px-3 pb-1.5 text-xs font-light tracking-wide text-muted-foreground">Theme</p>
-                                                    <div class="px-3 pb-1">
-                                                        <div id="theme-toggle" class="theme-toggle-container" role="radiogroup" aria-label="Theme selection" data-theme="system">
-                                                            <div class="theme-toggle-indicator"></div>
-                                                            <!-- Light theme -->
-                                                            <button type="button" class="theme-toggle-btn" data-theme-option="light" aria-checked="false" title="Light">
-                                                                <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
-                                                                </svg>
-                                                            </button>
-                                                            <!-- Dark theme -->
-                                                            <button type="button" class="theme-toggle-btn" data-theme-option="dark" aria-checked="false" title="Dark">
-                                                                <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
-                                                                </svg>
-                                                            </button>
-                                                            <!-- System theme -->
-                                                            <button type="button" class="theme-toggle-btn" data-theme-option="system" aria-checked="false" title="System">
-                                                                <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
-                                                                </svg>
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                    <p id="theme-effective-label" class="px-3 text-[11px] text-muted-foreground/80"></p>
-                                                </div>
-                                                <div id="composer-settings-actions" class="composer-settings-actions"></div>
+                                                <section id="composer-settings-actions" class="settings-section settings-section-foot composer-settings-actions"></section>
                                             </div>
                                         </div>
 
@@ -826,12 +882,12 @@
                                         </button>
                                             </div>
                                         </div>
-                                        <button id="memory-context-toggle" type="button" role="switch" aria-label="Auto-attach relevant memory" aria-checked="false" class="memory-context-toggle inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 cursor-pointer select-none" data-tooltip-position="top">
+                                        <button id="memory-context-toggle" type="button" role="switch" aria-label="Use memories in replies" aria-checked="false" class="memory-context-toggle inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 cursor-pointer select-none" data-tooltip-position="top">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
                                             </svg>
                                             <span class="chat-mode-html-tooltip memory-context-tooltip">
-                                                <span data-memory-tooltip-text>Auto-attach relevant context</span>
+                                                <span data-memory-tooltip-text>Use memories in replies</span>
                                                 <span class="memory-context-tooltip-detail" data-memory-tooltip-detail>
                                                     <span>Double-click to open memory</span>
                                                     <span data-memory-tooltip-beta class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
@@ -871,6 +927,7 @@
             </main>
 
             <!-- Right Panel: Ticket System -->
+            <div id="right-panel-scrim" class="right-panel-scrim" aria-hidden="true"></div>
             <aside id="right-panel" class="right-panel-desktop fixed lg:relative right-0 top-0 h-full bg-background border-l border-border shadow-lg z-40 lg:flex-shrink-0 flex flex-col">
                 <div id="right-panel-content" class="h-full flex flex-col">
                     <!-- Content will be rendered by RightPanel.js -->
@@ -929,7 +986,61 @@
     <div id="verify-key-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
 
     <!-- Account Modal -->
+    <div id="auth-arrival" role="status" aria-label="Signing you in"><span aria-hidden="true"></span><p id="auth-arrival-title"></p></div>
+    <script>
+        // The line AccountModal.renderWaitingLayer draws; set here, before
+        // the module scripts run, so it is on screen with the first paint.
+        (function () {
+            const root = document.documentElement;
+            if (!root.hasAttribute('data-auth-caption')) return;
+            document.getElementById('auth-arrival-title').textContent =
+                'The Open Anonymity Project uses a passkey to secure your account.';
+        })();
+    </script>
     <div id="account-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"></div>
+
+    <!-- Account: what you set once and leave (data, appearance, feedback, log out, delete). The gear keeps what changes between prompts; Billing is the host's. -->
+    <div id="settings-dialog" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" tabindex="-1" class="settings-dialog settings-panel">
+            <header class="settings-dialog-head">
+                <h2 id="settings-dialog-title" class="account-dialog-title">Account</h2>
+                <button id="close-settings-dialog" class="text-muted-foreground hover:text-foreground transition-colors p-1 -mr-1 rounded-lg hover:bg-accent" type="button" aria-label="Close account">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </header>
+
+            <section class="settings-section" aria-label="Log out or delete">
+                <div class="settings-row">
+                    <span class="settings-row-label">Log out</span>
+                    <div class="settings-row-control">
+                        <button type="button" data-action="log-out" class="settings-button">Log out</button>
+                    </div>
+                </div>
+                <div class="settings-row">
+                    <span class="settings-row-label">Delete your account</span>
+                    <div class="settings-row-control">
+                        <button type="button" data-action="delete-account" class="settings-button settings-button-danger">Delete</button>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+    <template id="settings-delete-account-template">
+        <div role="dialog" aria-modal="true" aria-labelledby="delete-account-title" tabindex="-1" class="w-full max-w-md rounded-2xl border border-border bg-background shadow-2xl">
+            <div class="p-6">
+                <p id="delete-account-title" class="text-base font-semibold text-foreground">Are you sure you want to delete your account?</p>
+                <p id="delete-account-description" class="text-sm text-muted-foreground mt-1">After deleting, all of your information will be lost: your account, username, passkeys and synced data, your membership, and the chat history, memories and any tickets on this device. This cannot be undone.</p>
+                <label for="delete-account-input" class="settings-confirm-label">Type <span class="settings-confirm-word">DELETE</span> to confirm</label>
+                <input id="delete-account-input" type="text" data-delete-account="input" class="settings-confirm-input" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" aria-describedby="delete-account-description">
+                <div class="settings-confirm-actions">
+                    <button type="button" data-delete-account="cancel" class="settings-button">Cancel</button>
+                    <button type="button" data-delete-account="confirm" class="settings-button settings-button-danger" disabled>Delete account</button>
+                </div>
+            </div>
+        </div>
+    </template>
 
     <div data-oa-extension-slot="modalLayer" hidden></div>
 
@@ -943,7 +1054,7 @@
     <div id="model-picker-modal" class="hidden fixed inset-0 w-full h-full bg-black/50 flex items-center justify-center z-50">
         <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
             <!-- Search Input -->
-            <div class="flex items-center border-b border-border px-3" cmdk-input-wrapper="">
+            <div class="model-picker-search flex items-center border-b border-border px-3" cmdk-input-wrapper="">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0">
                     <path fill-rule="evenodd" d="M10.5 3.75a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5ZM2.25 10.5a8.25 8.25 0 1 1 14.59 5.28l4.69 4.69a.75.75 0 1 1-1.06 1.06l-4.69-4.69A8.25 8.25 0 0 1 2.25 10.5Z" clip-rule="evenodd"></path>
                 </svg>
@@ -966,14 +1077,36 @@
         </div>
     </div>
 
+    <!-- A bundle that fails to load (a 404 the browser cached during a
+         deploy, a dropped connection) is fetched once more under a fresh
+         URL, which bypasses every cache in the path. If that fails too, the
+         loading placeholder says so instead of spinning forever. -->
+    <script>
+        window.__oaRetryBundle = function (failed) {
+            var tries = Number(failed.getAttribute('data-retry') || 0);
+            if (tries >= 1) {
+                var loader = document.querySelector('#sessions-skeleton .loader-text');
+                if (loader) loader.innerHTML = '<span>oa-chat could not load.</span><span><a href="">Reload the page</a></span>';
+                document.querySelector('#sessions-skeleton .loader-bar')?.remove();
+                return;
+            }
+            var retry = document.createElement('script');
+            retry.type = 'module';
+            retry.src = failed.src + (failed.src.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now();
+            retry.setAttribute('data-retry', String(tries + 1));
+            retry.onerror = function () { window.__oaRetryBundle(retry); };
+            failed.parentNode.insertBefore(retry, failed.nextSibling);
+        };
+    </script>
+
     <!-- Prerender landing content early (skip if restoring a session) -->
     <!-- BUNDLE:PRELUDE -->
-    <script type="module" src="prelude.js?v=dev"></script>
+    <script type="module" src="prelude.js?v=dev" onerror="window.__oaRetryBundle(this)"></script>
     <!-- /BUNDLE:PRELUDE -->
 
     <!-- Single entry point - app bootstraps -->
     <!-- BUNDLE:APP -->
-    <script type="module" src="standalone.js?v=extensions-v2"></script>
+    <script type="module" src="standalone.js?v=extensions-v2" onerror="window.__oaRetryBundle(this)"></script>
     <!-- /BUNDLE:APP -->
 </body>
 </html>

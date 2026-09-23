@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ShareModals Component
  * Handles all share-related modal UI (create, import, update, revoke)
@@ -375,7 +376,7 @@ class ShareModals {
             this._restoreMainInput = null;
         }
         if (this.currentModal) {
-            this.currentModal.remove();
+            hideSurface(this.currentModal, { remove: true });
             this.currentModal = null;
         }
     }
@@ -388,6 +389,7 @@ class ShareModals {
         modal.className = `fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm fade-in ${className}`;
         this.currentModal = modal;
         document.body.appendChild(modal);
+        queueMicrotask(() => { if (this.currentModal === modal) showSurface(modal); });
 
         // Prevent main input from stealing focus while modal is open
         const mainInput = document.getElementById('message-input');
@@ -1135,7 +1137,7 @@ class ShareModals {
 
                     ${hasApiKey ? `
                         <label class="flex items-center gap-2.5 mb-4 cursor-pointer select-none">
-                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-primary">
+                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-ring">
                             <div>
                                 <span class="text-sm text-foreground">Include this session's API key</span>
                                 <p class="text-xs text-muted-foreground">Recipients can borrow your key and continue chatting</p>
@@ -1429,7 +1431,7 @@ class ShareModals {
 
                     ${hasApiKey ? `
                         <label class="flex items-center gap-2.5 mb-4 ${isApiKeyExpired ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} select-none">
-                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-primary" ${isApiKeyExpired ? 'disabled' : ''}>
+                            <input type="checkbox" class="api-metadata-checkbox w-4 h-4 rounded border-border text-primary focus:ring-ring" ${isApiKeyExpired ? 'disabled' : ''}>
                             <div>
                                 <span class="text-sm text-foreground">Include this session's API key</span>
                                 <p class="text-xs text-muted-foreground">

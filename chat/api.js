@@ -7,6 +7,11 @@
 // ephemeral key with no way to identify the user behind it.
 import networkProxy from './services/networkProxy.js';
 import { consumeSseBody } from './services/inference/sseStream.js';
+import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
+import { validateInferenceInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
+
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
+import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
 import {
     cancelAndroidNativeInferenceJob,
     isAndroidNativeInferenceAvailable,
@@ -19,6 +24,7 @@ import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
+import { paragraphBreakBefore } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
 const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
@@ -123,9 +129,17 @@ export class OpenRouterAPI {
     }
 
     prepareRequestBody(body, access) {
-        return this.options.prepareRequestBody
-            ? this.options.prepareRequestBody(body, { access, model: this.getModelBudgetMetadata(body.model) })
+        const model = this.getModelBudgetMetadata(body.model);
+        const boundedBody = applyOutputTokenLimit(body, model);
+        const callerLimit = boundedBody.max_tokens ?? boundedBody.max_completion_tokens;
+        // Let billing adapters calculate affordability while max_tokens is still
+        // absent. The SDK treats an explicit cap as an already-budgeted request.
+        const prepared = this.options.prepareRequestBody
+            ? this.options.prepareRequestBody({ ...body }, { access, model })
             : body;
+        // Composed billing adapters may reduce the allowance further, but may
+        // not raise the user's 30,000-token ceiling or a smaller caller limit.
+        return applyOutputTokenLimit(prepared, model, callerLimit);
     }
 
     prepareFetchOptions(access, init) {
@@ -137,10 +151,12 @@ export class OpenRouterAPI {
     }
 
     fetchWithRetry(access, url, init, config) {
-        return this.networkTransport.fetchWithRetry(url, this.prepareFetchOptions(access, init), {
-            ...config,
-            proxyConfig: access.proxyConfig || config?.proxyConfig
-        });
+        return fetchWithOpenRouterCreditRecovery(
+            this.networkTransport.fetchWithRetry.bind(this.networkTransport),
+            url, this.prepareFetchOptions(access, init), {
+                ...config,
+                proxyConfig: access.proxyConfig || config?.proxyConfig
+            });
     }
 
     fetchWithRetryJson(access, url, init, config) {
@@ -152,27 +168,39 @@ export class OpenRouterAPI {
 
     getModelBudgetMetadata(modelId) {
         const baseId = String(modelId || '').split(':')[0];
-        return this.getCachedModels().find(model => model.id === baseId) || null;
+        const models = this.getCachedModels();
+        return models.find(model => model.id === modelId)
+            || models.find(model => model.id === baseId) || null;
     }
 
     sendCompletionStrict(messages, modelId, token, options = {}) {
-        return this.withRequestAccess(token, options, request =>
-            request._sendCompletionStrict(messages, modelId, token, options));
+        const requestOptions = { ...options, modelId, reasoningEnabled: options.reasoningEnabled ?? true };
+        return this.withRequestAccess(token, requestOptions, request =>
+            request._sendCompletionStrict(messages, modelId, token, requestOptions));
     }
 
     generateSessionTitle(prompt, token, options = {}) {
         if (!this.extractTextContent(prompt).trim()) return Promise.resolve('');
-        return this.withRequestAccess(token, options, request =>
-            request._generateSessionTitle(prompt, token, options));
+        const requestOptions = {
+            ...options,
+            modelId: options.modelId || this.options.titleModelId || TITLE_SUMMARY_MODEL_ID,
+            reasoningEnabled: options.reasoningEnabled ?? true
+        };
+        return this.withRequestAccess(token, requestOptions, request =>
+            request._generateSessionTitle(prompt, token, requestOptions));
     }
 
-    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null) {
+    streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null) {
+        try { validateInferenceInput(messages, this.getModelBudgetMetadata(modelId), files); }
+        catch (error) { return Promise.reject(error); }
         return this.withRequestAccess(token, {
             signal: abortController?.signal,
-            onProgress: onAccessProgress
+            onProgress: onAccessProgress,
+            modelId,
+            reasoningEnabled
         }, request => request._streamCompletion(messages, modelId, token, onChunk,
             onTokenUpdate, files, searchEnabled, abortController, onStreamOpen,
-            onReasoningChunk, reasoningEnabled, reasoningEffort));
+            onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth));
     }
 
     // Get API key - only use ticket-based key
@@ -367,23 +395,6 @@ export class OpenRouterAPI {
         if (content && typeof content.content === 'string') return content.content;
         return '';
     }
-
-    // Get model-specific max_tokens (disabled - let OpenRouter use API key credits)
-    // getMaxTokensForModel(modelId) {
-    //     const baseModelId = typeof modelId === 'string' ? modelId.split(':')[0] : '';
-    //     // Check for Opus 4.1
-    //     if (baseModelId.includes('claude-opus-4.1')) {
-    //         return 13333;
-    //     }
-    //     // Check for GPT-5 Thinking (exclude chat variants)
-    //     if (
-    //         baseModelId.includes('gpt-5') &&
-    //         !baseModelId.endsWith('-chat')
-    //     ) {
-    //         return 120000;
-    //     }
-    //     return undefined; // Use API default for other models
-    // }
 
     // Fallback models if API fails
     getFallbackModels() {
@@ -637,7 +648,7 @@ export class OpenRouterAPI {
     }
 
     // Stream chat completion with support for multimodal content, web search, and reasoning traces
-    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null) {
+    async _streamCompletion(messages, modelId, sessionId, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null) {
 
         // Handle web search - append :online suffix if enabled
         let effectiveModelId = modelId;
@@ -687,7 +698,12 @@ export class OpenRouterAPI {
         const access = this._requestAccess;
         const url = `${access.baseUrl}/chat/completions`;
         const headers = access.headers;
+        let watchdog = null;
+        let responseBody = null;
+        let sawTerminal = false;
+        let sawAnswer = false;
         const throwIfStreamAborted = () => {
+            watchdog?.signal.throwIfAborted();
             if (!abortController?.signal?.aborted) return;
             const error = new DOMException('The operation was aborted.', 'AbortError');
             error.isCancelled = true;
@@ -699,12 +715,18 @@ export class OpenRouterAPI {
         let completionTokens = 0;
         let reportedCost = null;
         let modelUsed = effectiveModelId;
-        const modelPricing = this.getModelBudgetMetadata(effectiveModelId)?.pricing
+        let modelPricing = this.getModelBudgetMetadata(effectiveModelId)?.pricing
             || null;
         let accumulatedContent = '';
         let accumulatedReasoning = '';
         let completionFinishReason = null;
         let hasReceivedFirstToken = false;
+        // Which stream the last delta belonged to. When a model interleaves
+        // (think, answer a line, call a tool, think again, answer), each
+        // resumed segment starts on a new paragraph, so a heading that
+        // follows a sentence is still a heading and two thoughts do not run
+        // together as one.
+        let lastDeltaKind = null;
         let citations = []; // Track citations for web search results
         const annotationsMap = new Map(); // Track annotations with deduplication by URL
         let estimatedReasoningTokens = 0; // Track reasoning tokens for cumulative display
@@ -913,20 +935,31 @@ export class OpenRouterAPI {
                 return;
             }
 
-            if (!line.startsWith('data: ')) {
+            if (!line.startsWith('data:')) {
                 return;
             }
 
-            const data = line.slice(6);
-            if (data === '[DONE]') return false;
+            const data = line.slice(5).trim();
+            if (!data) return;
+            if (data === '[DONE]') { sawTerminal = true; return false; }
 
             let parsed;
             try {
                 parsed = JSON.parse(data);
             } catch (error) {
-                console.error('Error parsing SSE chunk:', error, 'Raw line:', line);
-                return;
+                throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an unreadable response. Any partial answer has been kept. Please retry.');
             }
+
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an invalid response. Please retry.');
+            }
+            if (parsed.type === 'response.failed' || parsed.type === 'response.incomplete') {
+                throw inferenceError('INFERENCE_INCOMPLETE', 'The provider could not complete the response. Any partial answer has been kept. Please retry.');
+            }
+            if (parsed.type === 'response.completed') sawTerminal = true;
+            const progressDelta = parsed.choices?.[0]?.delta;
+            if (progressDelta?.content || progressDelta?.reasoning || progressDelta?.reasoning_details?.length
+                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) watchdog?.output();
 
             // A router may identify the selected model in a role-only event.
             // Publish it before any output/usage from the same event, without
@@ -934,6 +967,9 @@ export class OpenRouterAPI {
             const reportedModel = typeof parsed.model === 'string' ? parsed.model.trim() : '';
             if (reportedModel && reportedModel !== modelUsed) {
                 modelUsed = reportedModel;
+                // Router prices describe the request selector, not the model
+                // that answered. Unknown response models have no local rate.
+                modelPricing = this.getModelBudgetMetadata(modelUsed)?.pricing || null;
                 if (onTokenUpdate) {
                     await onTokenUpdate({
                         totalTokens,
@@ -1008,12 +1044,16 @@ export class OpenRouterAPI {
                     parsed.reasoning_delta ||
                     (parsed.choices?.[0]?.delta?.reasoning)) {
 
-                    const reasoningContent = parsed.delta ||
+                    let reasoningContent = parsed.delta ||
                                            parsed.reasoning_delta ||
                                            parsed.choices?.[0]?.delta?.reasoning || '';
 
                     if (reasoningContent && onReasoningChunk) {
                         hasReceivedFirstToken = true;
+                        if (lastDeltaKind === 'content') {
+                            reasoningContent = paragraphBreakBefore(reasoningContent, accumulatedReasoning);
+                        }
+                        lastDeltaKind = 'reasoning';
                         accumulatedReasoning += reasoningContent;
 
                         // Buffer reasoning chunks to reduce UI updates
@@ -1062,6 +1102,7 @@ export class OpenRouterAPI {
                     const error = new Error(errorMessage);
                     error.code = parsed.error.code;
                     error.isStreamError = true;
+                    error.retryable = false;
                     error.hasReceivedTokens = hasReceivedFirstToken;
 
                     // Any provider error event is terminal. Continuing would turn a
@@ -1073,6 +1114,8 @@ export class OpenRouterAPI {
                 if (parsed.type === 'response.output_text.delta') {
                     const contentDelta = parsed.delta || '';
                     if (contentDelta) {
+                        if (typeof contentDelta !== 'string') throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent invalid answer content. Please retry.');
+                        sawAnswer ||= contentDelta.trim().length > 0;
                         await flushReasoningBuffer();
                         hasReceivedFirstToken = true;
                         accumulatedContent += contentDelta;
@@ -1098,11 +1141,17 @@ export class OpenRouterAPI {
                 }
 
                 const delta = parsed.choices?.[0]?.delta;
-                const content = delta?.content;
+                let content = delta?.content;
 
                 if (content) {
                     await flushReasoningBuffer();
+                    if (typeof content !== 'string') throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent invalid answer content. Please retry.');
+                    sawAnswer ||= content.trim().length > 0;
                     hasReceivedFirstToken = true;
+                    if (lastDeltaKind === 'reasoning') {
+                        content = paragraphBreakBefore(content, accumulatedContent);
+                    }
+                    lastDeltaKind = 'content';
                     accumulatedContent += content;
                     await onChunk(content);
                     throwIfStreamAborted();
@@ -1124,7 +1173,8 @@ export class OpenRouterAPI {
                 }
 
                 // Check for images in the delta (standard OpenRouter format)
-                if (delta?.images) {
+                if (delta?.images?.length) {
+                    sawAnswer = true;
                     hasReceivedFirstToken = true;
                     await onChunk(null, { images: delta.images });
                     throwIfStreamAborted();
@@ -1134,6 +1184,7 @@ export class OpenRouterAPI {
                 if (delta?.reasoning_details) {
                     const imageDetails = delta.reasoning_details.filter(detail => this.isReasoningDetailImage(detail));
                     if (imageDetails.length > 0) {
+                        sawAnswer = true;
                         hasReceivedFirstToken = true;
                         const images = imageDetails.map(detail => ({
                             type: 'image_url',
@@ -1146,6 +1197,7 @@ export class OpenRouterAPI {
 
                 // Check for finish reason
                 const finishReason = parsed.choices?.[0]?.finish_reason;
+                if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response. Please retry.');
                 if (finishReason) {
                     completionFinishReason = finishReason;
                 }
@@ -1185,6 +1237,7 @@ export class OpenRouterAPI {
                     }
                 }
 
+            if (parsed.type === 'response.completed') return false;
         };
 
         const finalizeStreamResult = async () => {
@@ -1192,6 +1245,13 @@ export class OpenRouterAPI {
             // Flush any remaining reasoning buffer
             await flushReasoningBuffer();
             throwIfStreamAborted();
+
+            if (!sawTerminal && !completionFinishReason) {
+                throw inferenceError('INFERENCE_TRUNCATED', 'The response ended before completion was confirmed. Any partial answer has been kept. Please retry.');
+            }
+            if (!sawAnswer) {
+                throw inferenceError('INFERENCE_EMPTY', 'The provider finished without an answer. Please retry or choose another model.');
+            }
 
             // Parse citations - prefer annotations over content parsing
             if (searchEnabled) {
@@ -1259,11 +1319,9 @@ export class OpenRouterAPI {
                 stream_options: { include_usage: true }
             };
 
-            // Add model-specific max_tokens if applicable (disabled - let OpenRouter use API key credits)
-            // const maxTokens = this.getMaxTokensForModel(effectiveModelId);
-            // if (maxTokens !== undefined) {
-            //     requestBody.max_tokens = maxTokens;
-            // }
+            // prepareRequestBody applies the 30,000-token generation ceiling.
+            // The HTTP transport can retry a budget rejection with a smaller
+            // allowance on this same credential before any stream is opened.
 
             // Add PDF plugin configuration if PDFs are present
             // Default to mistral-ocr as per OpenRouter documentation
@@ -1278,10 +1336,14 @@ export class OpenRouterAPI {
                 requestBody.reasoning = reasoningPayload;
             }
 
+            validateInferenceInput(messagesWithSystem, this.getModelBudgetMetadata(effectiveModelId));
+            const serializedBody = JSON.stringify(requestBody);
+            validateSerializedInferenceBody(serializedBody);
+            watchdog = createInferenceWatchdog({ signal: abortController?.signal, onHealth: onStreamHealth, timing: this.options.inferenceTiming });
             const fetchOptions = {
                 method: 'POST',
                 headers: headers,
-                body: JSON.stringify(requestBody)
+                body: serializedBody
             };
             if (abortController?.signal?.aborted) {
                 const error = new DOMException('The operation was aborted.', 'AbortError');
@@ -1308,13 +1370,14 @@ export class OpenRouterAPI {
                     }
                 };
 
-                abortController?.signal?.addEventListener('abort', cancelFromAbort, { once: true });
+                watchdog.signal.addEventListener('abort', cancelFromAbort, { once: true });
 
                 try {
                     while (!terminal) {
+                        throwIfStreamAborted();
                         const { events } = pollAndroidNativeInferenceJob(jobId, afterSequence);
                         if (events.length === 0) {
-                            await new Promise(resolve => setTimeout(resolve, 75));
+                            await watchdog.wait(new Promise(resolve => setTimeout(resolve, 75)));
                             continue;
                         }
 
@@ -1324,8 +1387,9 @@ export class OpenRouterAPI {
                             if (event.type === 'stream-open') {
                                 if (!streamOpened) {
                                     streamOpened = true;
+                                    watchdog.opened();
                                     if (typeof onStreamOpen === 'function') {
-                                        await onStreamOpen();
+                                        await watchdog.wait(onStreamOpen());
                                     }
                                     logStreamingRequest(event.status || 200, 'android-native');
                                 }
@@ -1333,7 +1397,8 @@ export class OpenRouterAPI {
                             }
 
                             if (event.type === 'sse-line' && typeof event.line === 'string') {
-                                if (await processSseLine(event.line) === false) {
+                                watchdog.activity();
+                                if (await watchdog.wait(processSseLine(event.line)) === false) {
                                     terminal = true;
                                 }
                                 continue;
@@ -1363,56 +1428,64 @@ export class OpenRouterAPI {
                         }
                     }
                 } finally {
-                    abortController?.signal?.removeEventListener('abort', cancelFromAbort);
+                    watchdog.signal.removeEventListener('abort', cancelFromAbort);
+                    cancelFromAbort();
                 }
 
-                return await finalizeStreamResult();
+                return await watchdog.wait(finalizeStreamResult());
             }
 
-            // Retry only the initial connection, not mid-stream
-            // Once streaming starts, errors should surface to user
-            // No timeout - provider manages timeouts; streams can take long
-            const response = await this.fetchWithRetry(
+            // The outer send policy owns retries. A watchdog also races transports
+            // that do not reliably implement AbortSignal (including relay reads).
+            const pendingResponse = this.fetchWithRetry(
                 access,
                 url,
                 fetchOptions,
                 {
                     context: 'Inference stream',
-                    maxAttempts: 3,
-                    timeoutMs: 0,  // No timeout - let OpenRouter manage
-                    signal: abortController?.signal
+                    maxAttempts: 1,
+                    timeoutMs: 0, // watchdog owns connection + body deadlines
+                    signal: watchdog.signal
                 }
             );
 
+            pendingResponse.then(response => { if (watchdog.signal.aborted) discardResponseBody(response.body); }, () => {});
+            const response = await watchdog.wait(pendingResponse);
+            responseBody = response.body;
+            watchdog.opened();
+
             // Handle pre-stream errors
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
+                const errorData = await readInferenceErrorBody(response, watchdog.signal);
                 const errorMessage = errorData.error?.message || `HTTP error! status: ${response.status}`;
                 const error = new Error(errorMessage);
                 error.status = response.status;
                 error.data = errorData;
+                if (response.status === 402) error.code = getCreditErrorCode(errorData);
                 throw error;
             }
 
             if (typeof onStreamOpen === 'function') {
-                await onStreamOpen();
+                await watchdog.wait(onStreamOpen());
             }
 
             logStreamingRequest(response.status, 'web');
 
-            await consumeSseBody(response.body, processSseLine);
+            await watchdog.wait(consumeSseBody(response.body, processSseLine, {
+                signal: watchdog.signal, onActivity: () => watchdog.activity()
+            }));
 
-            return await finalizeStreamResult();
+            return await watchdog.wait(finalizeStreamResult());
         } catch (error) {
             // Flush any remaining reasoning buffer before handling error
             try {
-                await flushReasoningBuffer();
+                await (watchdog ? watchdog.wait(flushReasoningBuffer()) : flushReasoningBuffer());
             } catch {
                 // Preserve the primary stream failure. A reasoning callback failure
                 // is already the primary error when it originates from a flush.
             }
 
-            let streamError = error;
+            let streamError = watchdog?.signal.aborted ? watchdog.signal.reason : error;
             if (!(streamError instanceof Error)) {
                 const originalError = streamError;
                 const message = typeof originalError === 'string'
@@ -1449,12 +1522,16 @@ export class OpenRouterAPI {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody
                     },
-                    error: streamError.message,
+                    error: { status: streamError.status, code: streamError.code },
                     isAborted: streamError.isCancelled === true // Flag user-initiated cancellation
                 });
             }
 
             throw streamError;
+        } finally {
+            if (reasoningBufferTimer) clearTimeout(reasoningBufferTimer);
+            discardResponseBody(responseBody);
+            watchdog?.dispose();
         }
     }
 

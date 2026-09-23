@@ -53,7 +53,7 @@ const openRouterBackend = {
     sendCompletion: (messages, modelId, token) => openRouterAPI.sendCompletion(messages, modelId, token),
     sendCompletionStrict: (messages, modelId, token, options) => openRouterAPI.sendCompletionStrict(messages, modelId, token, options),
     generateSessionTitle: (prompt, token, options) => openRouterAPI.generateSessionTitle(prompt, token, options),
-    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort) =>
+    streamCompletion: (messages, modelId, token, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth) =>
         openRouterAPI.streamCompletion(
             messages,
             modelId,
@@ -66,7 +66,9 @@ const openRouterBackend = {
             onStreamOpen,
             onReasoningChunk,
             reasoningEnabled,
-            reasoningEffort
+            reasoningEffort,
+            onAccessProgress,
+            onStreamHealth
         ),
     getAccessInfo(session) {
         if (!session) return null;

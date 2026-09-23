@@ -1,5 +1,15 @@
+import { isRetryableInferenceError } from './services/inference/reliability.js';
+import { validateInferenceInput } from './services/inference/inputLimits.js';
+import { renderInferenceWarnings } from './ui/inferenceWarning.js';
+
+import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
+import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
+import { installToggleMotion } from './ui/toggleMotion.js';
+import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
+import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
 // Main application logic
 import themeManager from './services/themeManager.js';
+import { snapshotAccessTrace, upsertAccessStage } from './domain/accessTrace.js';
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
@@ -17,6 +27,7 @@ import {
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
 import ticketClient from './services/ticketClient.js';
+import ticketStore from './services/ticketStore.js';
 import scrubberService from './services/scrubberService.js';
 import {
     augmentQuery as runMemoryAugmentQuery,
@@ -31,6 +42,7 @@ import {
 } from './services/memoryBridge.js';
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
+import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
 import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -115,6 +127,7 @@ import {
     areCouncilConfigsEqual
 } from './domain/councilConfig.js';
 import VanillaChatUi from './ui/vanilla/VanillaChatUi.js';
+import { hasOpenModalDialog } from './ui/modalLayer.js';
 
 const SESSION_PAGE_SIZE = 80;
 const SESSION_SEARCH_LIMIT = 300;
@@ -130,10 +143,9 @@ const UPDATE_CHECK_INITIAL_DELAY_MS = 45 * 1000;
 const SESSION_TITLE_MAX_LENGTH = 60;
 const SESSION_TITLE_FALLBACK_LENGTH = 50;
 
-// Layout constants for toolbar overlay prediction
+// Panel widths used when preparing the toolbar for layout changes
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
-const TOOLBAR_PREDICTION_GRACE_MS = 350; // Grace period to respect predicted state during animations
 const SIDEBAR_CLOSE_DURATION_MS = 220;
 
 // Used to upgrade users who were implicitly on the prior default.
@@ -157,7 +169,6 @@ function emitDesktopEvent(name, detail = {}) {
         // No-op: desktop hooks should never break web behavior.
     }
 }
-const SESSION_STORAGE_KEY = 'oa-current-session'; // Tab-scoped session persistence
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
     body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see mixed and unlinkable traffic.',
@@ -173,6 +184,8 @@ const DELETE_HISTORY_COPY = {
  */
 class ChatApp {
     constructor(options = {}) {
+        watchDisclosures(document.body);
+        installToggleMotion(document.body);
         // Product integrations supply behavior; the shared controller owns the
         // chat lifecycle. Missing integrations retain the standalone defaults.
         this.runtime = options.runtime || {};
@@ -180,6 +193,10 @@ class ChatApp {
         this.inferenceService = this.runtime.inferenceService || inferenceService;
         this.uiOptions = options.ui || {};
         this.pendingProgress = new Map();
+        // The last security presentation each session showed while preparing
+        // access; the streaming message takes it so the steps stay with the
+        // response instead of vanishing when the first token arrives.
+        this.accessTraces = new Map();
         this.sendSubmissionsInFlight = new Map();
         this.titleGenerationJobs = new Map();
         this.quickAskJobs = new Map();
@@ -245,7 +262,6 @@ class ChatApp {
             shareBtnText: document.getElementById('share-btn-text'),
             wideModeBtn: document.getElementById('wide-mode-btn'),
             sidebar: document.getElementById('sidebar'),
-            hideSidebarBtn: document.getElementById('hide-sidebar-btn'),
             showSidebarBtn: document.getElementById('show-sidebar-btn'),
             mobileSidebarBackdrop: document.getElementById('mobile-sidebar-backdrop'),
             sessionsScrollArea: document.getElementById('sessions-scroll-area'),
@@ -265,7 +281,7 @@ class ChatApp {
         };
 
         this.searchEnabled = true;
-        this.memoryFeatureEnabled = true;
+        this.memoryFeatureEnabled = false;
         this.memoryMode = false;
         this.memoryAutoInclude = false;
         this.memoryAgentModel = DEFAULT_MEMORY_AGENT_MODEL;
@@ -295,6 +311,7 @@ class ChatApp {
         this.chatInput = null;
         this.modelPicker = null;
         this.memoryEditor = null;
+        this.settingsDialog = null;
         this.sessionStreamingStates = new Map(); // Track streaming state per session
         this.accessAcquisitionInFlight = new Map(); // backend/session/model -> shared access acquisition
         this.sessionScrollPositions = new Map(); // Track scrollTop per session in-memory
@@ -309,6 +326,7 @@ class ChatApp {
         this.scrubberPending = null;
         this.memoryApprovalRequests = new Map();
         this.memoryExtractionInFlight = new Set();
+        this.featureOperations = new Set();
         this.memoryExtractionAbortControllers = new Map();
         this.memoryAugmentAbortControllers = new Set();
         this.memoryWorkGeneration = 0;
@@ -342,11 +360,24 @@ class ChatApp {
         });
         this.extensions = Array.isArray(options.extensions) ? options.extensions : [];
         this.welcomePanelEnabled = options.welcomePanel !== false;
+        // A host may make sign-in a condition of using the page (the Log in
+        // dialog cannot be closed while signed out) and name the legal pages
+        // the dialog links to.
+        this.signInPolicy = Object.freeze({
+            required: options.signIn?.required === true,
+            termsUrl: typeof options.signIn?.termsUrl === 'string' ? options.signIn.termsUrl : '',
+            privacyUrl: typeof options.signIn?.privacyUrl === 'string' ? options.signIn.privacyUrl : ''
+        });
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
         this.ticketShortageHandler = null;
         this.firstAccountReadyHandlers = new Set();
+        this.loggedOutHandlers = new Set();
+        // Hosts that key onboarding off the payment method (the ticket
+        // Welcome stays on the Tickets side) hear about changes here.
+        this.paymentModeListeners = new Set();
+        this.announcedPaymentMode = null;
 
         // Link preview state
         this.linkPreviewCard = document.getElementById('link-preview-card');
@@ -428,6 +459,8 @@ class ChatApp {
         if (!response.ok || typeof data.public_key !== 'string' || !data.public_key) {
             const error = new Error('Unable to load the OA ticket issuer public key.');
             error.code = 'TICKET_ISSUER_UNAVAILABLE';
+            error.status = response.status;
+            error.retryAfter = response.headers?.get?.('Retry-After') || null;
             throw error;
         }
         const computedKeyId = await ticketPublicKeyId(data.public_key);
@@ -478,14 +511,19 @@ class ChatApp {
         };
     }
 
+    /**
+     * Tell the host's shortage handler (if any). It answers `{ retry: true }`
+     * when it reloaded the wallet (automatic reloads on) and the send should
+     * be tried again; anything else means the request stays unsent.
+     */
     async notifyTicketShortage(budget) {
-        if (typeof this.ticketShortageHandler !== 'function') return false;
+        if (typeof this.ticketShortageHandler !== 'function') return { retry: false };
         try {
-            await this.ticketShortageHandler(toExtensionTicketShortage(budget));
-            return true;
+            const result = await this.ticketShortageHandler(toExtensionTicketShortage(budget));
+            return { retry: result?.retry === true };
         } catch (error) {
             console.warn('Ticket shortage handler failed:', error);
-            return false;
+            return { retry: false };
         }
     }
 
@@ -503,6 +541,97 @@ class ChatApp {
                 console.warn('First-account routing handler failed:', error);
             }
         }
+    }
+
+    getSignInPolicy() {
+        return this.signInPolicy;
+    }
+
+    /** 'tickets' or 'zkapi'; 'tickets' on a build without payment modes. */
+    getPaymentMode(session = undefined) {
+        if (typeof this.runtime?.getMode !== 'function') return 'tickets';
+        try {
+            return this.runtime.getMode(session) === 'zkapi' ? 'zkapi' : 'tickets';
+        } catch {
+            return 'tickets';
+        }
+    }
+
+    hasPaymentModes() {
+        return typeof this.runtime?.changeMode === 'function';
+    }
+
+    async changePaymentMode(mode) {
+        if (!this.hasPaymentModes()) throw new Error('This build has one payment mode.');
+        await this.runtime.changeMode(mode);
+        this.announcePaymentMode();
+    }
+
+    subscribePaymentMode(listener) {
+        if (typeof listener !== 'function') return () => {};
+        (this.paymentModeListeners ||= new Set()).add(listener);
+        return () => this.paymentModeListeners.delete(listener);
+    }
+
+    /** Tells listeners when the current chat's payment mode differs from the
+     *  last one announced — a method switch or a switch to a chat that pays
+     *  the other way. Cheap to call on every presentation refresh. */
+    announcePaymentMode() {
+        const mode = this.getPaymentMode();
+        if (mode === this.announcedPaymentMode) return;
+        this.announcedPaymentMode = mode;
+        this.paymentModeListeners?.forEach(listener => {
+            try { listener(mode); } catch (error) { console.warn('Payment mode listener failed:', error); }
+        });
+    }
+
+    /**
+     * Sign-in is a Tickets requirement, not a page requirement: zkAPI pays
+     * from a private balance and needs no account. So the policy applies
+     * only while the payment mode is Tickets.
+     */
+    signInRequiredNow() {
+        return this.signInPolicy.required === true && this.getPaymentMode() !== 'zkapi';
+    }
+
+    /**
+     * On a host that requires sign-in, a page that loads without an unlocked
+     * account (a refresh after Log out, a new tab, a mode that needs an
+     * account) gets the Log in or sign up dialog at once, rather than a
+     * landing page: that page is for a first visit only.
+     */
+    async openSignInIfRequired() {
+        if (!this.signInRequiredNow() || !this.accountModal) return false;
+        // Conversation links are readable without signing in. This only skips
+        // the automatic startup dialog; sending still uses the normal preflight.
+        if (new URLSearchParams(window.location.search).get('s')?.trim()) return false;
+        const state = await accountService.waitForAuthBootstrap();
+        if (state?.accountId && state.status === 'unlocked') return false;
+        this.accountModal.open?.();
+        return true;
+    }
+
+    registerLoggedOutHandler(handler) {
+        if (typeof handler !== 'function') return () => {};
+        this.loggedOutHandlers.add(handler);
+        return () => this.loggedOutHandlers.delete(handler);
+    }
+
+    /**
+     * The person chose Log out and the account is gone from this device.
+     * Returns true when a handler is taking the page away (so the caller
+     * can hold its current frame rather than redraw a signed-out one).
+     */
+    notifyLoggedOut() {
+        let leaving = false;
+        for (const handler of [...this.loggedOutHandlers]) {
+            try {
+                if (handler() === true) leaving = true;
+            } catch (error) {
+                console.warn('Logged-out routing handler failed:', error);
+            }
+        }
+        return leaving;
     }
 
     createExtensionContext() {
@@ -524,6 +653,19 @@ class ChatApp {
                 requestPublic: (path, init) => this.requestExtensionPublicApi(path, init)
             }),
             tickets: Object.freeze({
+                refreshSnapshot: async ({ signal } = {}) => {
+                    const before = getAccountSnapshot();
+                    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+                    await ticketStore.refreshForAccount(before.accountId || null, { signal });
+                    const after = getAccountSnapshot();
+                    if (signal?.aborted || after.accountId !== before.accountId) {
+                        throw new DOMException('Account changed', 'AbortError');
+                    }
+                    return toExtensionTicketSnapshot(
+                        this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
+                            { ticketCount: 0, maxShareCount: 0, busy: false }, after
+                    );
+                },
                 getPendingEntitlementClaim,
                 prepareEntitlementBatch,
                 publishPreparedTicketUpdate,
@@ -571,16 +713,35 @@ class ChatApp {
                     this.rightPanel.normalizeInvitationCode(code),
                     { throwOnError: true, onProgress }
                 ),
+                getPendingAccessCodeRedemption: () => this.services.tickets.getPendingCodeRedemption(),
+                resumeAccessCodeRedemption: async onProgress => {
+                    const result = await this.services.tickets.resumeCodeRedemption((message, percent) => onProgress?.({ message, percent }));
+                    return result ? Object.freeze({ ticketCount: this.services.tickets.getTicketCount(), pendingCount: result.pendingCount || 0 }) : null;
+                },
                 registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
             }),
+            payments: Object.freeze({
+                // 'tickets' or 'zkapi'. Hosts use it to keep ticket
+                // onboarding (the Welcome offers) on the Tickets side.
+                getMode: () => this.getPaymentMode(),
+                available: () => this.hasPaymentModes(),
+                setMode: mode => this.changePaymentMode(mode),
+                // Called with the new mode whenever the current chat's
+                // payment mode changes; returns an unsubscribe.
+                subscribe: listener => this.subscribePaymentMode(listener)
+            }),
             ui: Object.freeze({
+                persistNavigationForReturn: () => { saveNavigationSelection(this.state.currentSessionId); },
                 openAccount: () => this.accountModal?.open?.(),
+                openDeleteAccount: () => this.settingsDialog?.openDeleteAccount?.(),
                 closeWelcome: () => this.welcomePanel?.close?.(),
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
                 ensureTicketStatusVisible: () => this.rightPanel?.show?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
+                getAccountIdentityLabel: () => this.accountModal?.getAccountIdentityLabel?.() || '',
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
+                registerLoggedOut: handler => this.registerLoggedOutHandler(handler),
                 showToast: (...args) => this.showToast(...args)
             })
         });
@@ -631,8 +792,8 @@ class ChatApp {
         this.sessionMutationReservations.set(sessionId, reservations);
         if (exclusive) {
             this.exclusiveSessionMutationOwners.set(sessionId, token);
-            this.updateInputState();
         }
+        this.updateInputState();
         return token;
     }
 
@@ -642,9 +803,9 @@ class ChatApp {
         reservations.delete(token);
         if (this.exclusiveSessionMutationOwners.get(sessionId) === token) {
             this.exclusiveSessionMutationOwners.delete(sessionId);
-            this.updateInputState();
         }
         if (reservations.size === 0) this.sessionMutationReservations.delete(sessionId);
+        this.updateInputState();
     }
 
     async acknowledgeSessionMutationBusy(sessionId) {
@@ -678,8 +839,10 @@ class ChatApp {
             getSession: id => this.state.sessionsById.get(id) || null,
             getMessages: id => chatDB.getSessionMessages(id),
             saveSession: session => chatDB.saveSession(session),
-            getModels: () => this.state.models,
+            getModels: (sessionId = this.state.currentSessionId) => this.getModelsForSession(this.state.sessionsById.get(sessionId)),
             getStreamingState: id => this.getSessionStreamingState(id),
+            isSessionBusy: (id = this.state.currentSessionId) => this.isSessionBusy(id),
+            changeSessionBackend: (backendId, options) => this.changeSessionBackend(backendId, options),
             setProgress: (id, progress) => this.setSessionPendingProgress(id, progress),
             openFunding: () => this.accountModal?.openFunding?.(),
             showToast: (...args) => this.showToast(...args),
@@ -692,11 +855,176 @@ class ChatApp {
                 if (!usageOnly) {
                     this.renderSessions();
                     this.rightPanel?.onRuntimePresentationChange?.();
+                    this.updateInputState();
                 }
                 this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
+                this.announcePaymentMode();
             },
             cancelSessionWork: id => this.cancelSessionWork(id)
         });
+    }
+
+    usesTicketAccess(session) {
+        return typeof this.runtime.usesTicketAccess === 'function'
+            ? this.runtime.usesTicketAccess(session) === true
+            : this.features.tickets;
+    }
+
+    supportsFeature(feature, session = this.getCurrentSession()) {
+        if (this.features?.[feature] === false) return false;
+        return typeof this.runtime?.supportsFeature !== 'function'
+            || this.runtime.supportsFeature(feature, session) !== false;
+    }
+
+    getFeatureUnavailableReason(feature, session = this.getCurrentSession()) {
+        if (this.supportsFeature(feature, session)) return '';
+        return this.runtime?.getFeatureUnavailableReason?.(feature, session)
+            || 'This feature is unavailable for this chat.';
+    }
+
+    beginFeatureOperation(feature, session = this.getCurrentSession(), { allowResponseMutation = false } = {}) {
+        if (!this.supportsFeature(feature, session) || this.historyDeletionInProgress || this.isDeletingAllChats
+            || this.sessionSwitchInFlight || (session?.id && (this.isSessionDeleted(session.id)
+                || this.isSessionBackendChanging(session.id)
+                || (!allowResponseMutation && this.exclusiveSessionMutationOwners.has(session.id))))) return null;
+        const controller = new AbortController();
+        const operation = { feature, session: session || { inferenceBackend: this.inferenceService?.getDefaultBackendId?.() },
+            sessionId: session?.id || null, controller, signal: controller.signal };
+        operation.setSession = value => this.bindFeatureOperation(operation, value);
+        operation.release = () => this.finishFeatureOperation(operation);
+        this.featureOperations ||= new Set();
+        this.featureOperations.add(operation);
+        this.updateInputState();
+        return operation;
+    }
+
+    bindFeatureOperation(operation, session) {
+        if (!this.featureOperations?.has(operation) || operation.signal.aborted || !session?.id
+            || !this.supportsFeature(operation.feature, session) || this.isSessionDeleted(session.id)
+            || this.exclusiveSessionMutationOwners.has(session.id)) return false;
+        operation.sessionId = session.id;
+        operation.session = session;
+        this.updateInputState();
+        return true;
+    }
+
+    finishFeatureOperation(operation) {
+        this.featureOperations?.delete(operation);
+        this.updateInputState();
+    }
+
+    async updateMemoryProcessedAt(sessionId, timestamp = Date.now()) {
+        if (!sessionId || this.isSessionDeleted(sessionId)) return false;
+        const reservation = this.beginSessionMutation(sessionId);
+        if (!reservation) return false;
+        try {
+            // History is paged: backfill can complete a chat outside the sidebar cache.
+            // Read its latest record while the reservation excludes backend changes.
+            const storedSession = this.state.sessionsById.get(sessionId) || await chatDB.getSession(sessionId);
+            const session = this.state.sessionsById.get(sessionId) || storedSession;
+            if (!session || this.isSessionDeleted(sessionId)) return false;
+            session.memoryProcessedAt = timestamp;
+            await chatDB.saveSession(session);
+            return true;
+        } finally {
+            this.endSessionMutation(sessionId, reservation);
+        }
+    }
+
+    isSessionBusy(sessionId = this.state.currentSessionId) {
+        return Boolean(this.sessionSwitchInFlight || this.historyDeletionInProgress
+            || this.isDeletingAllChats || this.isSessionDeleted(sessionId)
+            || [...(this.featureOperations || [])].some(operation => operation.sessionId === sessionId || !operation.sessionId)
+            || this.getPendingSend(sessionId)
+            || this.exclusiveSessionMutationOwners.has(sessionId)
+            || this.sessionMutationReservations.get(sessionId)?.size
+            || this.getSessionStreamingState(sessionId).isStreaming
+            || this.titleGenerationJobs.has(sessionId) || this.quickAskJobs.has(sessionId)
+            || this.regenerationJobs.has(sessionId)
+            || [...this.accessAcquisitionInFlight.values()].some(entry => entry.sessionId === sessionId)
+            || [...(this.messageFilePreparationSessions || new Map()).values()].includes(sessionId));
+    }
+
+    isSessionBackendChanging(sessionId) {
+        return this.exclusiveSessionMutationOwners.get(sessionId)?.backendChange === true;
+    }
+
+    async changeSessionBackend(backendId, { sessionId = this.state.currentSessionId } = {}) {
+        if (!this.inferenceService.hasBackend(backendId)) throw new Error('This payment mode is unavailable.');
+        if (this.sessionSwitchInFlight || this.historyDeletionInProgress || this.isDeletingAllChats) {
+            throw new Error('Wait for the current chat action to finish before changing payment mode.');
+        }
+        if (!sessionId) {
+            if (this.getPendingSend(null) || this.featureOperations?.size) throw new Error('Wait for the message to finish sending before changing payment mode.');
+            this.inferenceService.setDefaultBackendId(backendId);
+            await this.refreshBackendPresentation(null);
+            this.askToSignInForBackend(backendId);
+            return { sessionId: null, backendId };
+        }
+        const session = this.state.sessionsById.get(sessionId);
+        if (!session || this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+        const previousBackendId = this.inferenceService.ensureSessionBackend(session);
+        if (previousBackendId === backendId) return { sessionId, backendId };
+        const reservation = this.beginSessionMutation(sessionId, { exclusive: true });
+        if (!reservation) throw new Error('Wait for the current chat action to finish before changing payment mode.');
+        reservation.backendChange = true;
+        try {
+            // The exclusive owner stops new Send, Quick Ask, title and access
+            // jobs while previously captured auxiliary work drains. Delete
+            // waits for this reservation before removing the transcript.
+            await this.cancelSessionWork(sessionId);
+            if (this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+            const stagedSession = structuredClone(session);
+            await this.runtime.beforeBackendChange?.({ session: stagedSession, previousBackendId, backendId });
+            if (this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+            this.inferenceService.clearAccessInfo(stagedSession);
+            delete stagedSession.lastVerifierSubmitKeyProof;
+            stagedSession.currentEphemeralKeyId = null;
+            delete stagedSession.councilAccess;
+            if (stagedSession.shareInfo?.apiKeyShared) stagedSession.shareInfo.apiKeyShared = false;
+            stagedSession.inferenceBackend = backendId;
+            // Nothing in the live session changes until its durable write
+            // succeeds, including metadata edited by the settlement hook.
+            await chatDB.saveSession(stagedSession);
+            for (const key of Object.keys(session)) {
+                if (!Object.hasOwn(stagedSession, key)) delete session[key];
+            }
+            Object.assign(session, stagedSession);
+            this.clearMemoryApiOverrideContent(sessionId);
+            await this.refreshBackendPresentation(session);
+            this.askToSignInForBackend(backendId);
+            return { sessionId, backendId };
+        } finally {
+            this.endSessionMutation(sessionId, reservation);
+        }
+    }
+
+    /**
+     * Switching a signed-out chat to Tickets asks for the account Tickets
+     * needs. The dialog offers "Use zkAPI instead", which undoes the switch.
+     */
+    askToSignInForBackend(backendId) {
+        if (backendId === 'zkapi' || !this.signInPolicy.required) return;
+        if (accountService.getState()?.accountId) return;
+        this.accountModal?.open?.();
+    }
+
+    async refreshBackendPresentation(session) {
+        if (this.state.currentSessionId !== (session?.id || null)) return;
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
+        this.renderCurrentModel();
+        this.updateShareButtonUI();
+        this.rightPanel?.onSessionChange?.(session);
+        this.uiOptions.presentation?.renderComposer?.(session);
+        this.announcePaymentMode();
+        try { await this.initVerifier(session); }
+        catch (error) { console.warn('Could not initialize the selected access verifier:', error); }
+        await this.refreshModelsForSessionBackend({ force: true });
+        if (this.state.currentSessionId !== (session?.id || null)) return;
+        this.renderCurrentModel();
+        this.modelPicker?.renderModels?.();
+        this.rightPanel?.onRuntimePresentationChange?.();
+        this.uiOptions.presentation?.renderComposer?.(session);
     }
 
     getSessionPendingProgress(sessionId) {
@@ -707,6 +1035,17 @@ class ChatApp {
         if (!sessionId) return;
         if (progress) this.pendingProgress.set(sessionId, progress);
         else this.pendingProgress.delete(sessionId);
+        if (progress) {
+            const trace = snapshotAccessTrace(
+                this.uiOptions?.presentation?.getPendingPresentation?.('preparing-access', progress)
+            );
+            if (trace) {
+                const stages = (this.accessTraces ||= new Map()).get(sessionId) || [];
+                // The streaming message holds this same array, so stages that
+                // arrive after it exists (access follows settlement) land on it.
+                this.accessTraces.set(sessionId, upsertAccessStage(stages, trace));
+            }
+        }
         if (!this.isViewingSession(sessionId)) return;
         const streamState = this.getSessionStreamingState(sessionId);
         if (progress && streamState.isStreaming) streamState.phase = 'preparing-access';
@@ -716,8 +1055,17 @@ class ChatApp {
         }
     }
 
+    /** The access trace recorded for this session's current turn, once. */
+    /** The stages recorded for this session's current turn — the array
+     *  itself, so later stages keep landing on the message that took it.
+     *  Rendering completes them once the response has started. */
+    takeAccessTrace(sessionId) {
+        return this.accessTraces?.get(sessionId) || null;
+    }
+
     async prepareRuntimeTurn(session, signal) {
         this.throwIfAborted(signal);
+        this.accessTraces?.delete(session.id);
         try {
             await this.runtime.prepareTurn?.({
                 sessionId: session.id,
@@ -736,6 +1084,9 @@ class ChatApp {
 
     async cancelSessionWork(sessionId, { timeoutMs = 15000, waitForMutations = false } = {}) {
         const abortOwnedWork = () => {
+            for (const operation of this.featureOperations || []) {
+                if (!sessionId || !operation.sessionId || operation.sessionId === sessionId) operation.controller.abort();
+            }
             for (const entry of this.sendSubmissionsInFlight.values()) {
                 if (!sessionId || entry.sessionId === sessionId) entry.controller.abort();
             }
@@ -766,7 +1117,8 @@ class ChatApp {
                 || [...this.accessAcquisitionInFlight.values()].some(entry => !sessionId || entry.sessionId === sessionId)
                 || (waitForMutations && [...this.sessionMutationReservations].some(([id, entries]) => entries.size && (!sessionId || id === sessionId)))
                 || [...(this.messageFilePreparationSessions || new Map()).values()].some(id => !sessionId || id === sessionId);
-            if (!active) return;
+            const featureWork = [...(this.featureOperations || [])].some(operation => !sessionId || !operation.sessionId || operation.sessionId === sessionId);
+            if (!active && !featureWork) return;
             if (Date.now() - started > timeoutMs) throw new Error('The previous response is still stopping. Try again shortly.');
             await new Promise(resolve => setTimeout(resolve, 25));
         } while (true);
@@ -803,6 +1155,9 @@ class ChatApp {
         message.streamingPending = false;
         message.streamingPhase = null;
         message.isLocalOnly = !hasPartialOutput;
+        // Keep the error outside model context and outside the partial answer.
+        message.inferenceError = hasPartialOutput && fallback
+            ? fallback.replace(/\*\*/g, '').replace(/^⚠️\s*/, '') : null;
         return hasPartialOutput;
     }
 
@@ -813,7 +1168,7 @@ class ChatApp {
 
     updateResponseModel(message, reportedModel, requestedModelId, requestedModelName, session) {
         const modelName = resolveResponseModelName(reportedModel, {
-            models: this.state.models,
+            models: this.getModelsForSession(session),
             requestedModelId,
             requestedModelName,
             getDisplayName: (id, fallback) => this.inferenceService.getDisplayName(id, fallback, session)
@@ -823,12 +1178,41 @@ class ChatApp {
         if (this.isViewingSession(session.id)) this.chatArea?.updateMessageModel?.(message);
     }
 
+    setInferenceHealth(sessionId, requestId, health, label = '') {
+        this.inferenceHealth ||= new Map();
+        if (health) this.inferenceHealth.set(requestId, { sessionId, health, label });
+        else this.inferenceHealth.delete(requestId);
+        this.renderInferenceWarnings();
+    }
+
+    renderInferenceWarnings() {
+        renderInferenceWarnings(this.elements?.messagesContainer, this.inferenceHealth, this.state.currentSessionId);
+    }
+
     async streamCompletionWithRuntime(messages, modelId, session, onChunk, onTokenUpdate,
         files, searchEnabled, controller, onStreamOpen, onReasoningChunk,
         reasoningEnabled, reasoningEffort, requestId = null, kind = 'response') {
         const id = requestId || this.generateId();
-        const pricing = this.state.models.find(model => model.id === modelId)?.pricing || null;
+        const models = this.getModelsForSession(session);
         let latestUsage = null;
+        let responseModel = modelId;
+        let responsePricing;
+        const withUsagePricing = usage => {
+            const modelIdForUsage = usage?.model || responseModel;
+            const catalogModel = models.find(model => model.id === modelIdForUsage)
+                || models.find(model => model.id === modelIdForUsage.split(':')[0]);
+            const previousPricing = responseModel === modelIdForUsage ? responsePricing : undefined;
+            responseModel = modelIdForUsage;
+            // Keep metadata even before the first counted usage snapshot.
+            // Explicit null means the backend has no price for this model.
+            responsePricing = usage?.pricing !== undefined ? usage.pricing
+                : previousPricing !== undefined ? previousPricing : catalogModel?.pricing || null;
+            return {
+                ...usage,
+                model: responseModel,
+                pricing: responsePricing
+            };
+        };
         let completed = false;
         let receivedOutput = false;
         let receivedProviderUsage = false;
@@ -839,36 +1223,56 @@ class ChatApp {
                     await onChunk?.(chunk, imageData);
                 }, async usage => {
                     if (usage?.modelOnly) {
-                        if (latestUsage) latestUsage = { ...latestUsage, model: usage.model };
+                        const metadata = withUsagePricing(usage);
+                        if (latestUsage) latestUsage = {
+                            ...latestUsage, model: metadata.model, pricing: metadata.pricing
+                        };
                         await onTokenUpdate?.(usage);
+                        // Reprice the same preview without treating metadata as
+                        // output or replacing the last token counts/provider cost.
+                        if (latestUsage) await this.tryRecordRuntimeUsage({ sessionId: session.id,
+                            requestId: id, usage: latestUsage, kind, final: false });
                         return;
                     }
-                    latestUsage = usage;
+                    latestUsage = withUsagePricing(usage);
                     if (usage?.isStreaming === false || usage?.estimated === false) receivedProviderUsage = true;
                     await onTokenUpdate?.(usage);
                     await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
-                        usage: { ...usage, model: usage?.model || modelId }, pricing, kind, final: false });
+                        usage: latestUsage, kind, final: false });
                 }, files, searchEnabled, controller, onStreamOpen, async chunk => {
                     if (chunk) receivedOutput = true;
                     await onReasoningChunk?.(chunk);
                 },
                 reasoningEnabled, reasoningEffort,
-                progress => this.setSessionPendingProgress(session.id, progress));
+                progress => this.setSessionPendingProgress(session.id, progress),
+                health => this.setInferenceHealth(session.id, id, health));
             completed = true;
-            latestUsage = result || latestUsage;
-            return result;
+            latestUsage = result ? withUsagePricing(result) : latestUsage;
+            // The later message-accounting write must keep this same snapshot.
+            return result ? latestUsage : result;
         } finally {
+            this.setInferenceHealth(session.id, id, null);
             // A prompt-only estimate is published before connecting. A rejected
             // HTTP request (or canceled queued request) must not turn it into a
             // durable charge. Partial output and provider usage still count.
             if (latestUsage && (completed || receivedOutput || receivedProviderUsage)) {
                 await this.tryRecordRuntimeUsage({ sessionId: session.id,
-                    requestId: id, usage: { ...latestUsage, model: latestUsage.model || modelId }, pricing, kind });
+                    requestId: id, usage: latestUsage, kind });
             } else {
                 try { await this.runtime.discardUsagePreview?.({ sessionId: session.id, requestId: id }); }
                 catch (error) { console.warn('Could not clear the local usage preview:', error?.message || 'Storage unavailable'); }
             }
         }
+    }
+
+    /** Whether an extension has mounted a node matching `selector` into `name`. */
+    hasExtensionSlotNode(name, selector) {
+        return this.extensionSlots.hasMatchingNode(name, selector);
+    }
+
+    /** Notify `listener` whenever the nodes mounted into `name` change. */
+    subscribeExtensionSlot(name, listener) {
+        return this.extensionSlots.subscribe(name, listener);
     }
 
     detectInitialLinkContext() {
@@ -897,21 +1301,28 @@ class ChatApp {
         return fallbackModel?.name || this.inferenceService.getDefaultModelName(session);
     }
 
-    getDisabledModelSet() {
-        return new Set(this.modelConfiguration.getDisabledModels());
+    getDisabledModelSet(session = this.getCurrentSession()) {
+        return new Set(this.modelConfiguration.getDisabledModels(session));
     }
 
-    filterDisabledModels(models) {
-        return filterDisabledModelsValue(models, this.getDisabledModelSet());
+    filterDisabledModels(models, session = this.getCurrentSession()) {
+        return filterDisabledModelsValue(models, this.getDisabledModelSet(session));
+    }
+
+    getModelsForSession(session) {
+        const backendId = session?.inferenceBackend || this.inferenceService?.getDefaultBackendId?.();
+        if (!this.state.modelsBackendId || this.state.modelsBackendId === backendId) return this.state.models;
+        return this.modelCatalogsByBackend?.get(backendId)
+            || this.inferenceService.getCachedModels?.(session) || [];
     }
 
     getFallbackModelEntry(session) {
         const usePinnedDefaults = !session?.inferenceBackend ||
             session.inferenceBackend === this.inferenceService.getDefaultBackendId();
         return getFallbackModelEntryValue(
-            this.state.models,
+            this.getModelsForSession(session),
             this.inferenceService.getDefaultModelId(session),
-            usePinnedDefaults ? this.modelConfiguration.getPinnedModels() : []
+            usePinnedDefaults ? this.modelConfiguration.getPinnedModels(session) : []
         );
     }
 
@@ -927,6 +1338,7 @@ class ChatApp {
         }
 
         this.state.models = filteredModels;
+        if (this.state.modelsBackendId) this.modelCatalogsByBackend?.set(this.state.modelsBackendId, filteredModels);
         this.state.modelsVersion += 1;
 
         if (this.modelPicker) {
@@ -1201,6 +1613,7 @@ class ChatApp {
      */
     processContentWithLatex(content) {
         // Store block-level and inline LaTeX to prevent markdown from breaking them
+        // Terminate numeric IDs: token 1 must never match the prefix of token 10.
         const placeholderNamespace = createMathPlaceholderNamespace(content);
         const blockLatexPlaceholders = [];
         const inlineLatexPlaceholders = [];
@@ -1209,21 +1622,21 @@ class ChatApp {
 
         // Extract block LaTeX \[...\] and replace with placeholders
         processedContent = processedContent.replace(/\\\[([\s\S]*?)\\\]/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract block LaTeX $$...$$ and replace with placeholders
         processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
         });
 
         // Extract inline LaTeX \(...\) and replace with placeholders
         processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
-            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}`;
+            const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
             inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return placeholder;
         });
@@ -1232,14 +1645,14 @@ class ChatApp {
         // Protect valid pairs before Markdown can split or reinterpret them.
         processedContent = protectDollarMathForMarkdown(processedContent, {
             math: match => {
-                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}`;
+                const placeholder = `${placeholderNamespace}INLINE${inlineLatexPlaceholders.length}END`;
                 inlineLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
                 return placeholder;
             },
             // Marked consumes the slash in \$, so carry literal-dollar intent
             // through parsing with a non-math span.
             literalDollar: () => {
-                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}`;
+                const placeholder = `${placeholderNamespace}LITERAL${literalDollarPlaceholders.length}END`;
                 literalDollarPlaceholders.push(placeholder);
                 return placeholder;
             }
@@ -1831,51 +2244,13 @@ class ChatApp {
         }
     }
 
-    /**
-     * Updates the toolbar's floating state. Can predict final width with
-     * widthDelta without drawing a separator above the conversation.
-     * @param {number} widthDelta - Optional: predicted change in main area width (negative = narrower)
-     */
+    // Keep the toolbar opaque whenever its controls would cover the transcript.
     updateToolbarDivider(widthDelta = 0) {
-        const chatArea = this.elements.chatArea;
-        const toolbar = document.getElementById('chat-toolbar');
-        const messagesContainer = this.elements.messagesContainer;
-        if (!chatArea || !toolbar || !messagesContainer) return;
-
-        // Track prediction timing to avoid overriding during panel animations
-        const now = Date.now();
-
-        if (widthDelta !== 0) {
-            // This is a prediction call - record the timestamp
-            this._toolbarPredictionTime = now;
-        } else if (this._toolbarPredictionTime && (now - this._toolbarPredictionTime) < TOOLBAR_PREDICTION_GRACE_MS) {
-            // Non-prediction call within grace period - skip to avoid overriding
-            return;
-        }
-
-        // On mobile (< 768px), the toolbar never floats.
-        const isMobile = window.innerWidth < 768;
-
-        if (isMobile) {
-            toolbar.classList.remove('toolbar-floating');
-            return;
-        }
-
-        // Desktop: Check if content area overlaps with toolbar buttons
-        // Use widthDelta to predict final width (before animation completes)
-        const currentWidth = chatArea.clientWidth;
-        const mainWidth = currentWidth + widthDelta;
-        const actualContentWidth = messagesContainer.getBoundingClientRect().width;
-        const sideMargin = (mainWidth - actualContentWidth) / 2;
-        // Button area: ~80px (2×36px buttons + gaps + padding) - show-sidebar + wide-mode when sidebar hidden
-        // But messages-container has internal padding (px-6 = 24px on md+), so actual text is further inward
-        // With sideMargin=52 + internal padding=24, actual content at 76px - minimal overlap with 80px buttons
-        const buttonAreaWidth = 52;
-
-        // Wide screen: no overlap, make toolbar transparent (visual only, no layout change)
-        const isWideScreen = sideMargin >= buttonAreaWidth;
-        toolbar.classList.toggle('toolbar-wide', isWideScreen);
-
+        updateToolbarBackdrop({
+            toolbar: document.getElementById('chat-toolbar'),
+            messagesContainer: this.elements.messagesContainer,
+            widthDelta
+        });
     }
 
     /**
@@ -2189,6 +2564,7 @@ class ChatApp {
      * Initializes the application: loads data, sets up components, and renders initial state.
      */
     async init() {
+        this.restoringInitialConversation = isConversationRestorePending({ search: window.location.search });
         // Configure marked.js renderer for code blocks (with syntax highlighting + copy button)
         this.configureMarkedRenderer();
 
@@ -2267,7 +2643,8 @@ class ChatApp {
         void this.extensionHost.mountAll(this.extensions, this.createExtensionContext());
 
         // Render core shell immediately so non-sidebar UI is never blank on startup.
-        this.chatArea.renderEmptyStateImmediate();
+        this.elements.messagesContainer.dataset.chatBootstrapped = 'true';
+        if (!this.restoringInitialConversation) this.chatArea.renderEmptyStateImmediate();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
         this.chatInput.updateReasoningToggleUI();
@@ -2317,14 +2694,22 @@ class ChatApp {
         }
 
         try {
-            if (this.features.accounts) await routeAuthenticationIntent({
+            const route = this.features.accounts ? await routeAuthenticationIntent({
                 accountService,
                 accountModal: this.accountModal,
+                changePaymentMode: this.hasPaymentModes() ? mode => this.changePaymentMode(mode) : null,
+                getPaymentMode: () => this.getPaymentMode(),
                 locationImpl: window.location,
                 historyImpl: window.history
-            });
+            }) : null;
+            if (this.features.accounts && !route?.handled) await this.openSignInIfRequired();
         } catch (error) {
             console.warn('Initial account route could not be completed:', error);
+        } finally {
+            // Whatever the route decided, the early arrival spinner from
+            // index.html must not outlive it (the dialog clears it itself on open).
+            document.documentElement?.removeAttribute?.('data-auth-arriving');
+            document.documentElement?.removeAttribute?.('data-auth-caption');
         }
 
         // Initialize preference-backed layout only after account context exists.
@@ -2463,13 +2848,15 @@ class ChatApp {
         ]);
 
         // Restore session from sessionStorage as early as possible for chat area hydration.
-        const savedSessionId = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (savedSessionId) {
-            await this.ensureSessionLoaded(savedSessionId);
-            if (this.state.sessionsById.has(savedSessionId)) {
-                this.state.currentSessionId = savedSessionId;
+        const selection = await restoreNavigationSelection({
+            search: window.location.search,
+            loadSession: async sessionId => {
+                await this.ensureSessionLoaded(sessionId);
+                return this.state.sessionsById.has(sessionId);
             }
-        }
+        });
+        if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
+        if (!new URLSearchParams(window.location.search).has('s')) this.restoringInitialConversation = false;
 
         const [
             storedModelPreference,
@@ -2539,6 +2926,7 @@ class ChatApp {
         // This cache is display-only: request-time selection continues to use
         // state.models after the active backend's live catalog has loaded.
         this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(this.getCurrentSession());
+        void this.refreshModelsForSessionBackend();
 
         // Render local data immediately (session from sessionStorage + model/settings from DB).
         this.renderMessages();
@@ -2628,10 +3016,24 @@ class ChatApp {
             this.scheduleScrollPositionSave();
         }, { passive: true });
 
-        // Set up resize listener for toolbar divider (content width changes)
-        // Debounced to avoid overriding predicted state during panel animations (300ms)
+        this._stopToolbarLayoutObserver?.();
+        this._stopToolbarLayoutObserver = watchToolbarLayout({
+            toolbar: document.getElementById('chat-toolbar'),
+            messagesContainer: this.elements.messagesContainer,
+            chatArea: this.elements.chatArea
+        });
+
+        // Backdrop protection updates immediately; secondary button visibility
+        // may settle after a resize without leaving controls over the transcript.
         let resizeDebounceTimer;
+        let wasCompact = this.isMobileView();
         window.addEventListener('resize', () => {
+            this.updateToolbarDivider();
+            const compact = this.isMobileView();
+            if (compact !== wasCompact) {
+                wasCompact = compact;
+                void this.initSidebarVisibility();
+            }
             clearTimeout(resizeDebounceTimer);
             resizeDebounceTimer = setTimeout(() => {
                 this.updateWideModeButtonVisibility();
@@ -2668,11 +3070,20 @@ class ChatApp {
         this.captureTicketCodeFromUrl();
 
         // Check for session in URL (?s=sessionId)
+        const finishInitialNavigation = () => {
+            this.restoringInitialConversation = false;
+            this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
+            if (!this.getCurrentSession()) this.renderMessages();
+            this.handlePendingTicketCode();
+        };
         const sessionCheck = this.checkForUrlSession();
         if (sessionCheck && typeof sessionCheck.then === 'function') {
-            sessionCheck.finally(() => this.handlePendingTicketCode());
+            sessionCheck.then(finishInitialNavigation, error => {
+                console.warn('Initial conversation could not be restored:', error);
+                finishInitialNavigation();
+            });
         } else {
-            this.handlePendingTicketCode();
+            finishInitialNavigation();
         }
 
         // Start update checks for new app versions
@@ -2989,7 +3400,7 @@ class ChatApp {
         if (payload.sharedAccess?.token) {
             const backendId = payload.sharedAccess.backendId ||
                 payload.session?.inferenceBackend ||
-                this.inferenceService.getDefaultBackendId();
+                this.inferenceService.getLegacyBackendId(payload.session);
             return { ...payload.sharedAccess, backendId };
         }
         if (payload.sharedApiKey?.key) {
@@ -3010,7 +3421,7 @@ class ChatApp {
         // No access data to verify
         if (!sharedAccess?.token) return null;
 
-        const backendId = sharedAccess.backendId || this.inferenceService.getDefaultBackendId();
+        const backendId = sharedAccess.backendId || this.inferenceService.getLegacyBackendId();
         const backend = this.inferenceService.getBackend(backendId);
         const verifier = backend?.verification;
 
@@ -3139,7 +3550,7 @@ class ChatApp {
             existingSession.title = payload.session.title || existingSession.title;
             existingSession.model = payload.session.model;
             existingSession.searchEnabled = payload.session.searchEnabled ?? true;
-            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || this.inferenceService.getDefaultBackendId();
+            existingSession.inferenceBackend = payload.session.inferenceBackend || existingSession.inferenceBackend || this.inferenceService.getLegacyBackendId(payload.session);
             existingSession.responseMode = normalizeResponseMode(payload.session.responseMode);
             existingSession.councilConfig = normalizeCouncilConfig(payload.session.councilConfig, existingSession.model);
             existingSession.updatedAt = Date.now();
@@ -3151,7 +3562,7 @@ class ChatApp {
             // Apply the already-resolved shared access if present.
             if (sharedAccess?.token) {
                 if (verifiedAccess) {
-                    const backendId = verifiedAccess.backendId || this.inferenceService.getDefaultBackendId();
+                    const backendId = verifiedAccess.backendId || this.inferenceService.getLegacyBackendId();
                     const sessionAccess = this.inferenceService.sharedAccessToSessionAccess(backendId, verifiedAccess);
                     existingSession.inferenceBackend = backendId;
                     if (sessionAccess) {
@@ -3170,7 +3581,7 @@ class ChatApp {
                 this.saveChatbarStateForSession(this.state.currentSessionId);
             }
             this.state.currentSessionId = existingSession.id;
-            sessionStorage.setItem(SESSION_STORAGE_KEY, existingSession.id);
+            saveNavigationSelection(existingSession.id);
             await chatDB.saveSetting('currentSessionId', existingSession.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -3303,7 +3714,7 @@ class ChatApp {
                 this.saveChatbarStateForSession(this.state.currentSessionId);
             }
             this.state.currentSessionId = session.id;
-            sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+            saveNavigationSelection(session.id);
             await chatDB.saveSetting('currentSessionId', session.id);
 
             this.updateUrlWithSession(normalizedShareId);
@@ -3490,16 +3901,7 @@ class ChatApp {
     }
 
     updateToastPosition() {
-        const toast = document.getElementById('app-toast');
-        if (!toast) return;
-
-        const inputCard = document.getElementById('input-card');
-        if (inputCard) {
-            const rect = inputCard.getBoundingClientRect();
-            // Position above input card with 16px gap
-            const bottomSpace = window.innerHeight - rect.top + 16;
-            toast.style.bottom = `${bottomSpace}px`;
-        }
+        positionAppToast(document.getElementById('app-toast'), { document, window });
     }
 
     isWelcomeWorkflowActive() {
@@ -3513,7 +3915,7 @@ class ChatApp {
      * @param {string} type - 'success' or 'error'
      * @param {number} durationMs - Time to auto-dismiss in milliseconds
      */
-    showToast(message, type = 'success', durationMs = 3000) {
+    showToast(message, type = 'success', durationMs = 3000, { position = 'composer' } = {}) {
         if (this.isWelcomeWorkflowActive()) {
             return;
         }
@@ -3522,22 +3924,28 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
+        toast.dataset.position = position;
+        toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
         const bgColor = type === 'error' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-foreground';
-        // Removed fixed bottom-36, will be set by updateToastPosition
-        toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} animate-in fade-in slide-in-from-bottom-4`;
+        // Position independently of the composer's arrival animation.
+        toast.className = `fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 ${bgColor} `;
         toast.textContent = message;
         document.body.appendChild(toast);
+        showSurface(toast, 'toast');
 
-        this.updateToastPosition();
+        watchToastPosition(toast, { document, window });
 
         this._toastTimeout = setTimeout(() => {
-            toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
-            setTimeout(() => toast.remove(), 150);
+            stopToastPositioning(toast);
+            hideSurface(toast, { remove: true });
         }, durationMs);
     }
 
     clearToast() {
-        document.getElementById('app-toast')?.remove();
+        const previous = document.getElementById('app-toast');
+        if (previous) stopToastPositioning(previous);
+        previous?.removeAttribute('id');
+        hideSurface(previous, { remove: true });
         clearTimeout(this._toastTimeout);
         this._toastTimeout = null;
     }
@@ -3574,7 +3982,7 @@ class ChatApp {
         const toast = document.createElement('div');
         toast.id = 'app-toast';
         // Use same styling as showToast for consistency
-        toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground animate-in fade-in slide-in-from-bottom-4 flex items-center gap-2';
+        toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground  flex items-center gap-2';
 
         const spinner = document.createElement('span');
         spinner.className = 'link-preview-spinner';
@@ -3584,12 +3992,13 @@ class ChatApp {
         toast.appendChild(spinner);
         toast.appendChild(text);
         document.body.appendChild(toast);
+        showSurface(toast, 'toast');
 
-        this.updateToastPosition();
+        watchToastPosition(toast, { document, window });
 
         return () => {
-            toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
-            setTimeout(() => toast.remove(), 150);
+            stopToastPositioning(toast);
+            hideSurface(toast, { remove: true });
         };
     }
 
@@ -3644,6 +4053,7 @@ class ChatApp {
         toast.appendChild(refreshBtn);
         toast.appendChild(dismissBtn);
         document.body.appendChild(toast);
+        showSurface(toast, 'toast');
         this.updateToastVisible = true;
     }
 
@@ -3734,7 +4144,9 @@ class ChatApp {
     }
 
     clearUpdateToast() {
-        document.getElementById('app-update-toast')?.remove();
+        const previous = document.getElementById('app-update-toast');
+        previous?.removeAttribute('id');
+        hideSurface(previous, { remove: true });
         this.updateToastVisible = false;
     }
 
@@ -3813,14 +4225,25 @@ class ChatApp {
     /**
      * Initialize the verifier service for station verification
      */
-    async initVerifier() {
-        const verifier = this.inferenceService.getVerificationAdapter();
+    async initVerifier(session) {
+        if (session === undefined && this.inferenceService.getBackends) {
+            // A paid new-chat default must not skip cached verifier trust for
+            // ticket sessions restored later during this same startup.
+            for (const backend of this.inferenceService.getBackends()) {
+                await this.initVerifier({ inferenceBackend: backend.id });
+            }
+            return;
+        }
+        const verifier = this.inferenceService.getVerificationAdapter(session);
         if (!verifier?.supports) {
             return;
         }
+        this.initializedVerifiers ||= new Set();
+        if (this.initializedVerifiers.has(verifier)) return;
 
         // Initialize verifier (loads cached broadcast data)
         await verifier.init();
+        this.initializedVerifiers.add(verifier);
 
         // Set up banned warning callback - show warning and clear API key when station gets banned
         verifier.setBannedWarningCallback(async ({ stationId, reason, bannedAt, session }) => {
@@ -3850,9 +4273,10 @@ class ChatApp {
         // Create a ResizeObserver to watch for size changes
         const resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
-                const inputHeight = entry.contentRect.height;
-                // Add extra padding to ensure messages aren't covered
-                const paddingBottom = inputHeight + 16; // 16px extra for spacing
+                const inputHeight = entry.target.getBoundingClientRect().height;
+                // Measure the card itself: on phones it is fixed outside wrapper flow.
+                const paddingBottom = inputHeight + 32;
+                document.documentElement.style.setProperty('--composer-reserved-height', `${paddingBottom}px`);
                 this.elements.messagesContainer.style.paddingBottom = `${paddingBottom}px`;
 
                 // Auto-scroll to bottom using our reliable scroll helper
@@ -3860,10 +4284,15 @@ class ChatApp {
             }
         });
 
-        resizeObserver.observe(inputContainer);
+        resizeObserver.observe(this.elements.inputCard || inputContainer);
     }
 
     async loadModels() {
+        const session = this.getCurrentSession();
+        const sessionId = this.state.currentSessionId;
+        const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
+        const request = {};
+        this.modelsLoadRequest = request;
         this.state.modelsLoading = true;
 
         // Tag model fetches with current session if available
@@ -3872,14 +4301,45 @@ class ChatApp {
         }
 
         try {
-            const fetchedModels = await this.inferenceService.fetchModels(this.getCurrentSession());
-            this.state.models = this.filterDisabledModels(fetchedModels);
+            const fetchedModels = await this.inferenceService.fetchModels(session);
+            const models = this.filterDisabledModels(fetchedModels, session);
+            this.modelCatalogsByBackend ||= new Map();
+            this.modelCatalogsByBackend.set(backendId, models);
+            const selectedSession = this.getCurrentSession();
+            if (this.modelsLoadRequest !== request || this.state.currentSessionId !== sessionId
+                || (selectedSession?.inferenceBackend || this.inferenceService.getDefaultBackendId()) !== backendId) return;
+            this.state.models = models;
+            this.state.modelsBackendId = backendId;
         } catch (error) {
             console.error('Failed to load models:', error);
             // Fallback models are already set in API
+        } finally {
+            if (this.modelsLoadRequest === request) {
+                this.state.modelsVersion += 1;
+                this.state.modelsLoading = false;
+            }
         }
+    }
+
+    async refreshModelsForSessionBackend({ force = false } = {}) {
+        if (!this.inferenceService?.fetchModels || !this.inferenceService?.getDefaultBackendId) return;
+        const session = this.getCurrentSession();
+        const sessionId = session?.id || null;
+        const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
+        if (!force && this.state.modelsBackendId === backendId) return;
+        // Replace the previous backend's available models synchronously, before
+        // opening the composer or picker for the newly selected session.
+        this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
+        this.modelCatalogsByBackend ||= new Map();
+        if (this.state.modelsBackendId) this.modelCatalogsByBackend.set(this.state.modelsBackendId, this.state.models);
+        this.state.models = this.modelCatalogsByBackend.get(backendId)
+            || this.filterDisabledModels(this.cachedModelDisplayMetadata || [], session);
+        this.state.modelsBackendId = backendId;
         this.state.modelsVersion += 1;
-        this.state.modelsLoading = false;
+        await this.loadModels();
+        if (this.state.currentSessionId !== sessionId || this.state.modelsBackendId !== backendId) return;
+        this.renderCurrentModel();
+        this.modelPicker?.renderModels?.();
     }
 
     /**
@@ -3906,7 +4366,7 @@ class ChatApp {
             }
 
             if (!session.inferenceBackend) {
-                session.inferenceBackend = this.inferenceService.getDefaultBackendId();
+                this.inferenceService.ensureSessionBackend(session);
                 needsSave = true;
             }
 
@@ -3980,10 +4440,10 @@ class ChatApp {
      * @param {string|null} modelIdOrName
      * @returns {string|null}
      */
-    normalizeModelName(modelIdOrName) {
+    normalizeModelName(modelIdOrName, session = this.getCurrentSession()) {
         return normalizeModelNameValue(modelIdOrName, {
             getStandardizedModelDisplayName,
-            getDisplayName: (modelId, fallback) => this.inferenceService.getDisplayName(modelId, fallback, this.getCurrentSession())
+            getDisplayName: (modelId, fallback) => this.inferenceService.getDisplayName(modelId, fallback, session)
         });
     }
 
@@ -4029,6 +4489,7 @@ class ChatApp {
      */
     async createSession(title = 'New Chat', options = {}) {
         const navigationGeneration = this.sessionNavigationGeneration;
+        const backendId = options.inferenceBackend || this.inferenceService.getDefaultBackendId();
         if (!await this.ensureDatabaseReady()) {
             return null;
         }
@@ -4063,7 +4524,7 @@ class ChatApp {
             model: modelNameForNewSession,
             responseMode: usePendingCouncilMode ? RESPONSE_MODE_COUNCIL : RESPONSE_MODE_SINGLE,
             councilConfig: pendingCouncilConfig || buildDefaultCouncilConfig(modelNameForNewSession),
-            inferenceBackend: this.inferenceService.getDefaultBackendId(),
+            inferenceBackend: backendId,
             apiKey: null,
             apiKeyInfo: null,
             expiresAt: null,
@@ -4088,7 +4549,7 @@ class ChatApp {
 
         await chatDB.saveSession(session);
         if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(session.id)) return session;
-        sessionStorage.setItem(SESSION_STORAGE_KEY, session.id);
+        saveNavigationSelection(session.id);
         await chatDB.saveSetting('currentSessionId', session.id);
         if (navigationGeneration !== this.sessionNavigationGeneration || !this.isViewingSession(session.id)) return session;
 
@@ -4152,12 +4613,14 @@ class ChatApp {
         this.editDrafts.clear();
 
         this.state.currentSessionId = sessionId;
-        sessionStorage.setItem(SESSION_STORAGE_KEY, sessionId);
+        this.sidebar?.updateSessionActivity?.();
+        saveNavigationSelection(sessionId);
         chatDB.saveSetting('currentSessionId', sessionId);
 
         // Keep current search state (global setting)
         const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
         this.cachedModelDisplayMetadata = this.inferenceService.getCachedModels(session);
+        void this.refreshModelsForSessionBackend();
         if (session) {
             this.chatInput.updateSearchToggleUI();
         }
@@ -4247,7 +4710,7 @@ class ChatApp {
     }
 
     isCouncilModeActive(session = this.getCurrentSession()) {
-        if (!this.features.council) return false;
+        if (!this.supportsFeature('council', session)) return false;
         if (!COUNCIL_MODE_FEATURE_FLAG || !session) {
             return false;
         }
@@ -4353,7 +4816,7 @@ class ChatApp {
 
     async setCouncilModeForCurrentSession(options = {}) {
         const session = this.getCurrentSession();
-        if (!session) return null;
+        if (!session || !this.supportsFeature('council', session)) return null;
 
         const fallbackModelName = this.normalizeModelName(session.model)
             || session.model
@@ -4528,12 +4991,16 @@ class ChatApp {
     async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
         modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
-
+        let models = this.getModelsForSession(session);
         await ensureModelTiersReady({ signal });
 
-        if (!Array.isArray(this.state.models) || this.state.models.length === 0) {
+        if (models.length === 0) {
             try {
-                await this.loadModels();
+                const fetchedModels = await this.inferenceService.fetchModels(session);
+                this.modelCatalogsByBackend ||= new Map();
+                models = this.filterDisabledModels(fetchedModels, session);
+                this.modelCatalogsByBackend.set(session.inferenceBackend, models);
+                if (!this.state.modelsBackendId || this.state.modelsBackendId === session.inferenceBackend) this.state.models = models;
             } catch (error) {
                 console.warn('Unable to load models for ticket preflight:', error);
                 return { tickets: 0, label: 'the selected model' };
@@ -4574,11 +5041,11 @@ class ChatApp {
             return { tickets: 0, label: session.model || 'the selected model' };
         }
 
-        const modelName = this.normalizeModelName(requestedModelName || session.model)
+        const modelName = this.normalizeModelName(requestedModelName || session.model, session)
             || requestedModelName || session.model
             || this.inferenceService.getDefaultModelName(session);
-        const modelEntry = this.state.models.find(model => model.name === modelName)
-            || this.state.models.find(model => model.id === modelName)
+        const modelEntry = models.find(model => model.name === modelName)
+            || models.find(model => model.id === modelName)
             || this.getFallbackModelEntry(session);
 
         return {
@@ -4588,13 +5055,24 @@ class ChatApp {
     }
 
     async preflightTurnTicketBudget(session, content, options = {}) {
-        if (!this.features.tickets) {
+        // Signed out on a host that requires sign-in: the answer is the Log
+        // in dialog, not a ticket shortage (which would open the Welcome
+        // offers over a page that cannot buy anything).
+        if (this.signInRequiredNow() && !accountService.getState()?.accountId) {
+            this.accountModal?.open?.();
+            return false;
+        }
+        if (!this.usesTicketAccess(session)) {
             // An alternate access runtime must authorize its own path. Never
             // fabricate ticket balances or silently fall back to ticket access.
             if (typeof this.runtime.checkCanSend !== 'function') {
                 throw new Error('This chat access integration is not configured.');
             }
-            return this.runtime.checkCanSend({ sessionId: session?.id, signal: options.signal });
+            const modelName = options.modelName || session?.model;
+            const model = this.getModelsForSession(session).find(entry => entry.id === modelName || entry.name === modelName)
+                || this.getFallbackModelEntry(session);
+            return this.runtime.checkCanSend({ sessionId: session?.id, session, signal: options.signal,
+                modelId: model?.id, reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled });
         }
         const memoryTickets = (options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
             && (options.memoryMode ?? this.memoryMode)
@@ -4637,9 +5115,15 @@ class ChatApp {
             return false;
         }
 
+        // With automatic reloads on, the host reloads the wallet now and the
+        // budget is checked once more with the new balance; the request is
+        // still unsent, so nothing can be paid for twice.
+        if (!options.afterReload) {
+            const { retry } = await this.notifyTicketShortage(budget);
+            if (retry) return this.preflightTurnTicketBudget(session, content, { ...options, afterReload: true });
+        }
         this.showToast(budget.message, 'error', 7000);
         this.floatingPanel?.showMessage?.(budget.message, 'error', 7000);
-        await this.notifyTicketShortage(budget);
         return false;
     }
 
@@ -4677,11 +5161,19 @@ class ChatApp {
         }
     }
 
+    isSessionStreaming(sessionId) {
+        return this.sessionStreamingStates.get(sessionId)?.isStreaming === true;
+    }
+
     setSessionStreamingState(sessionId, isStreaming, abortController = null, phase = 'requesting-key') {
         if (!isStreaming) {
             this.pendingProgress.delete(sessionId);
+            for (const [id, entry] of this.inferenceHealth || []) {
+                if (entry.sessionId === sessionId) this.inferenceHealth.delete(id);
+            }
+            this.renderInferenceWarnings();
             for (const indicator of this.elements.messagesContainer.querySelectorAll('.typing-indicator')) {
-                if (indicator.dataset.sessionId === sessionId) indicator.remove();
+                if (indicator.dataset.pendingSessionId === sessionId || indicator.dataset.sessionId === sessionId) indicator.remove();
             }
         }
         const existingState = this.getSessionStreamingState(sessionId);
@@ -4710,6 +5202,7 @@ class ChatApp {
 
         // Update UI when streaming state changes
         this.updateInputState();
+        this.sidebar?.updateSessionActivity?.(sessionId);
     }
 
     updateSessionStreamingPhase(sessionId, phase) {
@@ -4791,10 +5284,13 @@ class ChatApp {
     async handleNewChatRequest(options = {}) {
         this.sessionNavigationGeneration += 1;
         const previousSession = this.getCurrentSession();
+        const shouldCancel = typeof this.runtime.shouldCancelOnNewChat === 'function'
+            ? this.runtime.shouldCancelOnNewChat({ session: previousSession }) === true
+            : Boolean(this.runtime.onNewChat);
         // Notify synchronously so the integration establishes its access
         // barrier before the next Send. Background work never delays typing.
         this.runtime.onNewChat?.({ sessionId: previousSession?.id || null });
-        if (this.runtime.onNewChat) {
+        if (shouldCancel) {
             this.sendSubmissionsInFlight.get('__new_chat__')?.controller.abort();
             if (previousSession?.id) void this.cancelSessionWork(previousSession.id).catch(error => {
                 this.showToast(error.message, 'error');
@@ -4859,11 +5355,14 @@ class ChatApp {
         }
         this.saveCurrentSessionScrollPosition();
         this.state.currentSessionId = null;
+        this.sidebar?.updateSessionActivity?.();
+        void this.refreshModelsForSessionBackend();
         this.updateUrlWithSession(null);
         // Reset before the first asynchronous boundary. Later settings reads
         // must not erase a draft typed into the immediately available composer.
         this.resetMessageInputLayout({ resetScroll: true });
         this.applyChatbarState(null);
+        saveNavigationSelection(null);
 
         if (immediate && this.chatArea?.renderEmptyStateImmediate) {
             this.chatArea.renderEmptyStateImmediate();
@@ -4931,15 +5430,21 @@ class ChatApp {
         const { titleSource = 'manual', titleGenerationPending = false, titleSearchText = null } = options;
         const session = this.state.sessions.find(s => s.id === sessionId);
         if (session) {
-            session.title = title;
-            session.titleSource = titleSource;
-            session.titleGenerationPending = Boolean(titleGenerationPending);
-            if (typeof titleSearchText === 'string') {
-                session.titleSearchText = titleSearchText;
+            const reservation = this.beginSessionMutation(sessionId);
+            if (!reservation) { await this.acknowledgeSessionMutationBusy(sessionId); return false; }
+            try {
+                session.title = title;
+                session.titleSource = titleSource;
+                session.titleGenerationPending = Boolean(titleGenerationPending);
+                if (typeof titleSearchText === 'string') {
+                    session.titleSearchText = titleSearchText;
+                }
+                session.updatedAt = Date.now();
+                await chatDB.saveSession(session);
+                this.renderSessions();
+            } finally {
+                this.endSessionMutation(sessionId, reservation);
             }
-            session.updatedAt = Date.now();
-            await chatDB.saveSession(session);
-            this.renderSessions();
         }
     }
 
@@ -5018,15 +5523,17 @@ class ChatApp {
     }
 
     async generateSessionTitleIfNeeded(sessionId, userMessageId, options = {}) {
-        if (this.deletingSessionIds.has(sessionId)) return;
+        if (this.isSessionDeleted(sessionId) || this.isSessionBackendChanging(sessionId)) return;
         const previous = this.titleGenerationJobs.get(sessionId);
         if (previous) return previous.promise;
         const job = { controller: new AbortController(), promise: null };
         this.titleGenerationJobs.set(sessionId, job);
+        this.updateInputState();
         job.promise = this.generateSessionTitleForJob(sessionId, userMessageId, {
             ...options, signal: job.controller.signal
         }).finally(() => {
             if (this.titleGenerationJobs.get(sessionId) === job) this.titleGenerationJobs.delete(sessionId);
+            this.updateInputState();
         });
         return job.promise;
     }
@@ -5059,6 +5566,10 @@ class ChatApp {
             const generated = await this.inferenceService.generateSessionTitle(accessSession, prompt, {
                 timeoutMs: 10000,
                 signal: options.signal,
+                accessModelId: this.getModelsForSession(accessSession).find(model =>
+                    model.id === firstUserMessage.model || model.name === firstUserMessage.model)?.id
+                    || (firstUserMessage.model?.includes('/') ? firstUserMessage.model : undefined),
+                reasoningEnabled: firstUserMessage.reasoningEnabled,
                 onUsage: usage => this.tryRecordRuntimeUsage({ sessionId, requestId: `title-${userMessageId}`, usage, kind: 'title' })
             });
             const title = this.cleanGeneratedSessionTitle(generated);
@@ -5199,7 +5710,7 @@ class ChatApp {
     }
 
     triggerPostTurnMemoryExtraction(session) {
-        if (!this.memoryFeatureEnabled) return;
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session)) return;
         if (!session?.id) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
@@ -5207,7 +5718,7 @@ class ChatApp {
     }
 
     async runPostTurnMemoryExtraction(session) {
-        if (!this.memoryFeatureEnabled) {
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session)) {
             return { status: 'disabled', writeCalls: 0 };
         }
         const memoryRunGeneration = this.memoryWorkGeneration;
@@ -5218,8 +5729,10 @@ class ChatApp {
             return { status: 'skipped', writeCalls: 0 };
         }
 
+        const featureOperation = this.beginFeatureOperation('memory', session, { allowResponseMutation: true });
+        if (!featureOperation) return { status: 'disabled', writeCalls: 0 };
         this.memoryExtractionInFlight.add(session.id);
-        const abortController = new AbortController();
+        const abortController = featureOperation.controller;
         this.memoryExtractionAbortControllers.set(session.id, abortController);
         try {
             const messages = await chatDB.getSessionMessages(session.id);
@@ -5227,7 +5740,7 @@ class ChatApp {
             if (normalizedMessages.length < 2) {
                 return { status: 'skipped', writeCalls: 0 };
             }
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return { status: 'disabled', writeCalls: 0 };
             }
 
@@ -5235,7 +5748,7 @@ class ChatApp {
             const memoryKey = await ensureMemoryKey(session, ticketClient, {
                 signal: abortController.signal
             });
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 invalidateMemoryKey(session);
                 try {
                     await chatDB.saveSession(session);
@@ -5259,7 +5772,7 @@ class ChatApp {
                     signal: abortController.signal
                 }
             });
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return { status: 'disabled', writeCalls: 0 };
             }
 
@@ -5270,7 +5783,7 @@ class ChatApp {
 
             return result || { status: 'processed', writeCalls: 0 };
         } catch (error) {
-            if (this.isCancelledError(error, abortController.signal) && !this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (this.isCancelledError(error, abortController.signal) && !this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return { status: 'disabled', writeCalls: 0 };
             }
             if (isMemoryAuthError(error)) {
@@ -5283,6 +5796,7 @@ class ChatApp {
             }
             throw error;
         } finally {
+            this.finishFeatureOperation(featureOperation);
             this.memoryExtractionInFlight.delete(session.id);
             if (this.memoryExtractionAbortControllers.get(session.id) === abortController) {
                 this.memoryExtractionAbortControllers.delete(session.id);
@@ -5290,7 +5804,7 @@ class ChatApp {
         }
     }
 
-    waitForMemoryApproval(messageId, signal = null) {
+    waitForMemoryApproval(messageId, signal = null, sessionId = this.state.currentSessionId) {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
                 if (signal && abortHandler) {
@@ -5314,6 +5828,7 @@ class ChatApp {
             }
 
             this.memoryApprovalRequests.set(messageId, {
+                sessionId,
                 resolve: (decision) => {
                     cleanup();
                     resolve(decision);
@@ -5331,8 +5846,9 @@ class ChatApp {
         await chatDB.saveSetting('memoryAutoInclude', this.memoryAutoInclude);
     }
 
-    isMemoryFeatureActive(generation = this.memoryWorkGeneration) {
-        return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration;
+    isMemoryFeatureActive(generation = this.memoryWorkGeneration, session = this.getCurrentSession()) {
+        return this.memoryFeatureEnabled !== false && generation === this.memoryWorkGeneration
+            && this.supportsFeature('memory', session);
     }
 
     clearMemoryApiOverrideContent(sessionId = this.state?.currentSessionId) {
@@ -5341,7 +5857,7 @@ class ChatApp {
 
     setMemoryApiOverrideContent(content, generation = this.memoryWorkGeneration, sessionId = this.state?.currentSessionId) {
         if (!sessionId) return false;
-        if (!this.isMemoryFeatureActive(generation)) {
+        if (!this.isMemoryFeatureActive(generation, this.state?.sessionsById?.get(sessionId) || null)) {
             this.clearMemoryApiOverrideContent(sessionId);
             return false;
         }
@@ -5359,7 +5875,7 @@ class ChatApp {
     getMemoryApiOverrideEntry(sessionId = this.state?.currentSessionId) {
         const entry = sessionId ? this.memoryApiOverrides?.get(sessionId) : null;
         if (!entry) return null;
-        if (!this.isMemoryFeatureActive(entry.generation)) {
+        if (!this.isMemoryFeatureActive(entry.generation, this.state?.sessionsById?.get(sessionId) || null)) {
             this.clearMemoryApiOverrideContent(sessionId);
             return null;
         }
@@ -5462,13 +5978,12 @@ class ChatApp {
     }
 
     async handleMemoryApprovalDecision(messageId, decision) {
-        if (!this.memoryFeatureEnabled) {
-            const request = this.memoryApprovalRequests.get(messageId);
-            if (request?.resolve) {
-                request.resolve({ approved: false, alwaysInclude: false });
-            } else {
-                await this.resolveStaleMemoryApproval(messageId, false, false);
-            }
+        const pendingRequest = this.memoryApprovalRequests.get(messageId);
+        const owner = pendingRequest?.sessionId
+            ? this.state.sessionsById.get(pendingRequest.sessionId) : this.getCurrentSession();
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', owner)) {
+            if (pendingRequest?.resolve) pendingRequest.resolve({ approved: false, alwaysInclude: false });
+            this.showToast?.(this.getFeatureUnavailableReason('memory', owner) || 'Memory is off in settings.', 'info');
             return;
         }
 
@@ -5488,14 +6003,15 @@ class ChatApp {
         }
 
         // Stale flow: page reloaded while approval was pending — resolve directly
-        await this.resolveStaleMemoryApproval(messageId, approved, alwaysInclude);
+        await this.resolveStaleMemoryApproval(messageId, approved, alwaysInclude, owner);
     }
 
-    async resolveStaleMemoryApproval(messageId, approved, alwaysInclude) {
+    async resolveStaleMemoryApproval(messageId, approved, alwaysInclude, session = this.getCurrentSession()) {
         const memoryRunGeneration = this.memoryWorkGeneration;
-        const session = this.getCurrentSession();
-        if (!session) return;
-
+        if (!session || !this.supportsFeature('memory', session)) return;
+        const operation = this.beginFeatureOperation('memory', session);
+        if (!operation) return;
+        try {
         const messages = await chatDB.getSessionMessages(session.id);
         const msg = messages.find(m => m.id === messageId);
         if (!msg?.ciPromptDraft) return;
@@ -5507,7 +6023,7 @@ class ChatApp {
             const rawPrompt = (typeof draft.editedFullPrompt === 'string' && draft.editedFullPrompt.trim())
                 ? draft.editedFullPrompt : draft.fullPrompt;
             const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session) || !recordedContext) {
                 this.clearMemoryApiOverrideContent(session.id);
                 msg.content = 'Memory is off in settings. Sending without personal context.';
                 msg.memoryApprovalPrompt = null;
@@ -5539,7 +6055,10 @@ class ChatApp {
         }
 
         await this.persistLocalAssistantStatus(msg);
-        await this.regenerateResponse({ skipMemoryAugment: true, sessionId: session.id });
+        if (!operation.signal.aborted) await this.regenerateResponse({ skipMemoryAugment: true, sessionId: session.id });
+        } finally {
+            this.finishFeatureOperation(operation);
+        }
     }
 
     async removeLocalOnlyMessagesAfter(sessionId, messageId) {
@@ -5662,8 +6181,8 @@ class ChatApp {
     }
 
     async recordApprovedMemoryContext(session, draft, generation = null) {
-        if (!session || !draft) return false;
-        if (generation !== null && !this.isMemoryFeatureActive(generation)) return false;
+        if (!session || !draft || !this.supportsFeature('memory', session)) return false;
+        if (generation !== null && !this.isMemoryFeatureActive(generation, session)) return false;
         const sourceEntry = draft.memoryContextEntry || null;
         if (!sourceEntry) return true;
 
@@ -5690,7 +6209,7 @@ class ChatApp {
             entries: nextEntries
         };
         await chatDB.saveSession(session);
-        if (generation !== null && !this.isMemoryFeatureActive(generation)) {
+        if (generation !== null && !this.isMemoryFeatureActive(generation, session)) {
             session.memoryRetrievedContext = {
                 version: 1,
                 entries: existingEntries
@@ -5736,7 +6255,7 @@ class ChatApp {
     async runMemoryAugmentFlow(query, userMessage, session, options = {}) {
         // Captured per-turn mode cannot be changed by later composer edits.
         // Globally disabling Memory still stops in-flight work for privacy.
-        if (!this.memoryFeatureEnabled || !(options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
+        if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session) || !(options.memoryFeatureEnabled ?? this.memoryFeatureEnabled)
             || !(options.memoryMode ?? this.memoryMode) || !userMessage || !session) return null;
         if (!query || !query.trim()) return null;
 
@@ -5880,14 +6399,14 @@ class ChatApp {
         };
 
         try {
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
             const previousMemoryKey = session.memoryKey || null;
             const memoryKey = await ensureMemoryKey(session, ticketClient, {
                 signal: memorySignal
             });
-            if (memorySignal.aborted || !this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (memorySignal.aborted || !this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 if (session.memoryKey && session.memoryKey !== previousMemoryKey) {
                     invalidateMemoryKey(session);
                 }
@@ -5941,7 +6460,7 @@ class ChatApp {
 
             await flushTraceRefresh();
             this.throwIfAborted(memorySignal);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
 
@@ -5979,7 +6498,7 @@ class ChatApp {
                     ? this.buildReusedMemoryApiPrompt(query, previouslyRetrievedContext)
                     : '';
                 if (reusedPrompt) {
-                    if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                    if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                         return await markMemoryDisabled();
                     }
                     this.setMemoryApiOverrideContent(stripMemoryPromptUserData(reusedPrompt), memoryRunGeneration, session.id);
@@ -5990,7 +6509,7 @@ class ChatApp {
                 retrievalMessage.memoryApprovalPrompt = null;
                 retrievalMessage.ciPromptDraft = null;
                 await this.persistLocalAssistantStatus(retrievalMessage);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                     return await markMemoryDisabled();
                 }
                 return null;
@@ -6022,7 +6541,7 @@ class ChatApp {
             };
             await this.persistLocalAssistantStatus(retrievalMessage);
 
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
 
@@ -6031,7 +6550,7 @@ class ChatApp {
                 draft.status = 'approved';
                 draft.model = this.normalizeModelName(session.model) || session.model || draft.model;
                 const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session) || !recordedContext) {
                     return await markMemoryDisabled();
                 }
                 this.setMemoryApiOverrideContent(stripMemoryPromptUserData(draft.fullPrompt), memoryRunGeneration, session.id);
@@ -6048,15 +6567,15 @@ class ChatApp {
                     autoIncluded: true
                 };
                 await this.persistLocalAssistantStatus(retrievalMessage);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                     return await markMemoryDisabled();
                 }
                 return draft;
             }
 
-            const approval = await this.waitForMemoryApproval(retrievalMessage.id, memorySignal);
+            const approval = await this.waitForMemoryApproval(retrievalMessage.id, memorySignal, session.id);
             this.throwIfAborted(memorySignal);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
 
@@ -6076,7 +6595,7 @@ class ChatApp {
                     ? draft.editedFullPrompt
                     : draft.fullPrompt;
                 const recordedContext = await this.recordApprovedMemoryContext(session, draft, memoryRunGeneration);
-                if (!this.isMemoryFeatureActive(memoryRunGeneration) || !recordedContext) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session) || !recordedContext) {
                     return await markMemoryDisabled();
                 }
                 this.setMemoryApiOverrideContent(stripMemoryPromptUserData(rawPrompt), memoryRunGeneration, session.id);
@@ -6100,7 +6619,7 @@ class ChatApp {
             }
 
             await this.persistLocalAssistantStatus(retrievalMessage);
-            if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+            if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                 return await markMemoryDisabled();
             }
             return draft;
@@ -6116,7 +6635,7 @@ class ChatApp {
             }
 
             if (isExplicitMemoryRetrievalCancellation(error, memorySignal)) {
-                if (!this.isMemoryFeatureActive(memoryRunGeneration)) {
+                if (!this.isMemoryFeatureActive(memoryRunGeneration, session)) {
                     return await markMemoryDisabled();
                 }
                 retrievalMessage.content = 'Memory retrieval cancelled.';
@@ -6486,7 +7005,7 @@ class ChatApp {
             let modelNameToUse = retryModelName;
 
             let selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
+                ? this.getModelsForSession(session).find(m => m.name === modelNameToUse)
                 : null;
 
             if (!selectedModelEntry) {
@@ -6557,7 +7076,8 @@ class ChatApp {
                     streamingReasoning: false,
                     streamingPending: true, // Indicates waiting for first chunk
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
-                    scrubber: scrubberMetadata
+                    scrubber: scrubberMetadata,
+                    accessTrace: this.takeAccessTrace(session.id)
                 };
 
                 // Save placeholder immediately so switching sessions back can find it
@@ -6576,6 +7096,7 @@ class ChatApp {
                 let lastSaveLength = 0;
                 const SAVE_INTERVAL_CHARS = 100;
                 let reasoningStartTime = null;
+                let reasoningEndTime = null;
 
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
@@ -6615,7 +7136,20 @@ class ChatApp {
                         }
 
                         // Handle subsequent chunks
-                        if (chunk) streamedContent += chunk;
+                        if (chunk) {
+                            streamedContent += chunk;
+                            // First content after reasoning: the thinking is over, settle its trace.
+                            if (!reasoningEndTime && reasoningStartTime && streamedReasoning.length > 0) {
+                                reasoningEndTime = Date.now();
+                                if (this.chatArea && this.isViewingSession(session.id)) {
+                                    this.chatArea.settleReasoningDisplay(
+                                        streamingMessageId,
+                                        streamedReasoning,
+                                        reasoningEndTime - reasoningStartTime
+                                    );
+                                }
+                            }
+                        }
 
                         // Handle image data
                         if (imageData && imageData.images) {
@@ -6673,6 +7207,8 @@ class ChatApp {
                             }
                         } else {
                             streamedReasoning += reasoningChunk;
+                            // Thinking after an answer segment (tools): the trace settles again at the next content.
+                            reasoningEndTime = null;
                             streamingMessage.reasoning = streamedReasoning;
                             // Save reasoning frequently so session switch can restore state
                             await chatDB.saveMessage(streamingMessage);
@@ -6708,8 +7244,7 @@ class ChatApp {
 
                 // Calculate reasoning duration if reasoning was used
                 if (streamingMessage.reasoning && reasoningStartTime) {
-                    const reasoningEndTime = Date.now();
-                    streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                    streamingMessage.reasoningDuration = (reasoningEndTime || Date.now()) - reasoningStartTime;
                 }
 
                 await chatDB.saveMessage(streamingMessage);
@@ -6782,7 +7317,7 @@ class ChatApp {
                 } else {
                     if (firstChunkReceived && streamingMessage) {
                         this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning,
-                            'Sorry, I encountered an error while processing your request.');
+                            `**Response interrupted:** ${error.message || 'Please retry.'}`);
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -6800,9 +7335,7 @@ class ChatApp {
                                 }
                             }
                         }
-                        if (this.isViewingSession(session.id)) {
-                            await this.addMessage('assistant', 'Sorry, I encountered an error while processing your request.', { isLocalOnly: true }, session);
-                        }
+                        await this.addMessage('assistant', `**Error:** ${error.message || 'The response failed. Please retry.'}`, { isLocalOnly: true }, session);
                     }
                 }
             }
@@ -6819,8 +7352,17 @@ class ChatApp {
     }
 
     async regenerateCouncilLane(messageId, laneId, options = {}) {
-        let session = this.getCurrentSession();
+        const session = this.getCurrentSession();
         if (!session || !messageId || !laneId) return;
+        if (!this.supportsFeature('council', session)) {
+            this.showToast?.(this.getFeatureUnavailableReason('council', session), 'info');
+            return;
+        }
+        const operation = this.beginFeatureOperation('council', session);
+        if (!operation) return;
+        const mutation = this.beginSessionMutation(session.id, { exclusive: true });
+        if (!mutation) { this.finishFeatureOperation(operation); return; }
+        try {
         if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
 
         if (session.importedFrom) {
@@ -6834,6 +7376,7 @@ class ChatApp {
         this.chatArea?.closeQuickAskWindow?.();
 
         const messages = await chatDB.getSessionMessages(session.id);
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
         const messageIndex = messages.findIndex(m => m.id === messageId);
         if (messageIndex === -1) return;
 
@@ -6853,8 +7396,9 @@ class ChatApp {
             ? ''
             : this.getMessageTextContent(userMessage.content).trim();
         if (!await this.preflightTurnTicketBudget(session, regenerationContent, {
-            councilStageEntry: stageEntry
+            councilStageEntry: stageEntry, signal: operation.signal
         })) return;
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
 
         const messagesToDelete = messages.slice(messageIndex + 1);
         for (const msg of messagesToDelete) {
@@ -6866,7 +7410,7 @@ class ChatApp {
             await this.chatArea.render();
         }
 
-        const abortController = new AbortController();
+        const abortController = operation.controller;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
         this.isAutoScrollPaused = true;
@@ -6932,8 +7476,12 @@ class ChatApp {
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
             });
+        }
+        } finally {
+            this.endSessionMutation(session.id, mutation);
+            this.finishFeatureOperation(operation);
         }
     }
 
@@ -6942,6 +7490,8 @@ class ChatApp {
      * Handles API key acquisition, model selection, and streaming updates.
      */
     async sendMessage(options = {}) {
+        // A dialog owns the page; never send from the composer behind it.
+        if (hasOpenModalDialog()) return;
         if (this.sessionSwitchInFlight) return;
         const sessionId = options.sessionId || this.state.currentSessionId;
         if (this.isDeletingAllChats || this.historyDeletionInProgress || this.isSessionDeleted(sessionId)) return;
@@ -6955,6 +7505,8 @@ class ChatApp {
         if (!rawContent.trim() && !files.length) return;
         const submission = {
             sessionId,
+            inferenceBackend: this.state.sessionsById.get(sessionId)?.inferenceBackend
+                || this.inferenceService?.getDefaultBackendId?.(),
             generation: this.sessionNavigationGeneration,
             controller: new AbortController(),
             rawContent,
@@ -6963,7 +7515,8 @@ class ChatApp {
             reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
             reasoningEffort: options.reasoningEffort ?? this.reasoningEffort,
             memoryMode: options.memoryMode ?? this.memoryMode,
-            memoryFeatureEnabled: options.memoryFeatureEnabled ?? this.memoryFeatureEnabled,
+            memoryFeatureEnabled: this.supportsFeature('memory', this.state.sessionsById.get(sessionId) || null)
+                && (options.memoryFeatureEnabled ?? this.memoryFeatureEnabled),
             scrubberPending: this.scrubberPending,
             model: options.modelName || this.state.sessionsById.get(sessionId)?.model || this.state.pendingModelName,
             consumeComposer: options.consumeComposer !== false,
@@ -6985,6 +7538,12 @@ class ChatApp {
         }
     }
 
+    async validateCapturedInput(session, submission, content) {
+        const history = await chatDB.getSessionMessages(session.id);
+        const model = this.getModelsForSession(session).find(entry => entry.name === submission.model || entry.id === submission.model) || {};
+        validateInferenceInput([...history.filter(message => !message.isLocalOnly), { role: 'user', content }], model, submission.files);
+    }
+
     async sendCapturedMessage(submission) {
         if (!await this.ensureDatabaseReady()) {
             return;
@@ -7003,6 +7562,7 @@ class ChatApp {
             if (submission.generation !== this.sessionNavigationGeneration) return;
             const created = await this.createSession('New Chat', {
                 model: submission.model,
+                inferenceBackend: submission.inferenceBackend,
                 signal: submission.controller.signal,
                 onCreated: session => { submission.sessionId = session.id; }
             });
@@ -7049,6 +7609,9 @@ class ChatApp {
         // Check if current session is already streaming
         const streamingState = this.getSessionStreamingState(session.id);
         if (streamingState.isStreaming) return;
+
+        await this.validateCapturedInput(session, submission, content);
+        this.throwIfAborted(submission.controller.signal);
 
         // Memory and model access draw from the same wallet. Check the complete
         // turn before either path can consume a ticket, so Memory cannot spend
@@ -7224,14 +7787,14 @@ class ChatApp {
                 window.networkLogger.setCurrentSession(session.id);
             }
 
-            let modelNameToUse = this.normalizeModelName(submission.model || session.model);
+            let modelNameToUse = this.normalizeModelName(submission.model || session.model, session);
             if (!submission.model && modelNameToUse !== session.model) {
                 session.model = modelNameToUse;
                 await chatDB.saveSession(session);
             }
 
             let selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
+                ? this.getModelsForSession(session).find(m => m.name === modelNameToUse)
                 : null;
 
             if (!selectedModelEntry) {
@@ -7267,17 +7830,7 @@ class ChatApp {
             let accessRefreshAttempted = false;
 
             // Helper to check if error is retryable (only before streaming starts)
-            const isRetryableError = (error) => {
-                if (error.isCancelled) return false;
-                // Gateway errors are retryable
-                if ([502, 503, 504].includes(error.status)) return true;
-                // Generic errors (no specific status or unrecognized) are retryable
-                const errorMsg = error.message || '';
-                const hasSpecificError = error.status === 401 || error.status === 402 ||
-                    errorMsg.includes('proxy') || errorMsg.includes('Proxy') ||
-                    errorMsg.includes('No API key');
-                return !hasSpecificError;
-            };
+            const isRetryableError = isRetryableInferenceError;
 
             retryLoop: while (retryCount <= MAX_RETRIES) {
             try {
@@ -7316,7 +7869,8 @@ class ChatApp {
                     streamingReasoning: false,
                     streamingPending: true,
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
-                    scrubber: scrubberMetadata
+                    scrubber: scrubberMetadata,
+                    accessTrace: this.takeAccessTrace(session.id)
                 };
 
                 // Track progress for periodic saves
@@ -7360,10 +7914,11 @@ class ChatApp {
                                     reasoningEndTime = Date.now();
                                     const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
-                                    // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                    // Settle the trace now: the answer has begun, so the thinking is over.
                                     if (this.chatArea && this.isViewingSession(session.id)) {
-                                        this.chatArea.updateReasoningSubtitleToDuration(
+                                        this.chatArea.settleReasoningDisplay(
                                             streamingMessageId,
+                                            streamedReasoning,
                                             reasoningDuration
                                         );
                                     }
@@ -7397,10 +7952,11 @@ class ChatApp {
                                 reasoningEndTime = Date.now();
                                 const reasoningDuration = reasoningEndTime - reasoningStartTime;
 
-                                // Update the reasoning subtitle to show duration immediately (only if viewing this session)
+                                // Settle the trace now: the answer has begun, so the thinking is over.
                                 if (this.chatArea && this.isViewingSession(session.id)) {
-                                    this.chatArea.updateReasoningSubtitleToDuration(
+                                    this.chatArea.settleReasoningDisplay(
                                         streamingMessageId,
+                                        streamedReasoning,
                                         reasoningDuration
                                     );
                                 }
@@ -7462,6 +8018,8 @@ class ChatApp {
                             }
                         } else {
                             streamedReasoning += reasoningChunk;
+                            // Thinking after an answer segment (tools): the trace settles again at the next content.
+                            firstContentChunk = true;
                             streamingMessage.reasoning = streamedReasoning;
                         }
 
@@ -7488,6 +8046,8 @@ class ChatApp {
                 await this.recordRuntimeUsage(session, streamingMessage, tokenData);
                 this.updateResponseModel(streamingMessage, tokenData.model,
                     modelIdForRequest, modelNameToUse, session);
+                streamingMessage.streamingPending = false;
+                streamingMessage.streamingPhase = null;
                 streamingMessage.streamingTokens = null; // Clear streaming tokens after completion
                 streamingMessage.streamingReasoning = false; // Clear streaming reasoning flag
                 streamingMessage.citations = tokenData.citations || null;
@@ -7631,8 +8191,9 @@ class ChatApp {
                     if (this.chatArea && this.isViewingSession(session.id)) {
                         await this.chatArea.finalizeStreamingMessage(streamingMessage);
                     }
-                } else if (this.isViewingSession(session.id)) {
-                    if (typingId) this.removeTypingIndicator(typingId);
+                } else {
+                    if (typingId && this.isViewingSession(session.id)) this.removeTypingIndicator(typingId);
+                    // Persist failures even when the user is viewing another chat.
                     // Error before first chunk - message never added to UI, add new error message
                     await this.addMessage('assistant', userFriendlyMessage, { isLocalOnly: true }, session);
                 }
@@ -7696,10 +8257,10 @@ class ChatApp {
         return isGpt && isInstant;
     }
 
-    getQuickAskPinnedInstantModel(defaults = {}) {
+    getQuickAskPinnedInstantModel(defaults = {}, session = this.getCurrentSession()) {
         const pinnedModelIds = Array.isArray(defaults.pinnedModels) ? defaults.pinnedModels : [];
         for (const modelId of pinnedModelIds) {
-            const model = this.state.models.find(entry => entry.id === modelId);
+            const model = this.getModelsForSession(session).find(entry => entry.id === modelId);
             if (!model) continue;
             const modelName = this.normalizeModelName(model.name || model.id) || model.name || model.id;
             const modelNameFromId = this.normalizeModelName(modelId) || modelName;
@@ -7715,9 +8276,9 @@ class ChatApp {
     }
 
     async resolveModelForQuickAsk(session) {
-        const defaults = this.modelConfiguration.getDefaultModelConfig();
+        const defaults = this.modelConfiguration.getDefaultModelConfig(session);
         const defaultModelId = defaults.defaultModelId || this.inferenceService.getDefaultModelId(session);
-        const instantModel = this.getQuickAskPinnedInstantModel(defaults);
+        const instantModel = this.getQuickAskPinnedInstantModel(defaults, session);
         let modelNameToUse = instantModel?.modelName ||
             this.normalizeModelName(defaults.defaultModelName || defaultModelId) ||
             defaults.defaultModelName ||
@@ -7725,12 +8286,12 @@ class ChatApp {
 
         let selectedModelEntry = instantModel?.model ||
             (defaultModelId
-                ? this.state.models.find(m => m.id === defaultModelId)
+                ? this.getModelsForSession(session).find(m => m.id === defaultModelId)
                 : null);
 
         if (!selectedModelEntry) {
             selectedModelEntry = modelNameToUse
-                ? this.state.models.find(m => m.name === modelNameToUse)
+                ? this.getModelsForSession(session).find(m => m.name === modelNameToUse)
                 : null;
         }
 
@@ -7900,17 +8461,20 @@ class ChatApp {
 
     async inlineQuickAsk(selectionText, options = {}) {
         const sessionId = this.state.currentSessionId;
-        if (!sessionId || this.deletingSessionIds.has(sessionId)) throw new Error('This chat is unavailable.');
+        if (!sessionId || this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
+        if (this.exclusiveSessionMutationOwners.has(sessionId)) throw new Error('Wait for the current chat action to finish before using Quick Ask.');
         const job = { controller: options.abortController || new AbortController() };
         let jobs = this.quickAskJobs.get(sessionId);
         if (!jobs) this.quickAskJobs.set(sessionId, jobs = new Set());
         jobs.add(job);
+        this.updateInputState();
         try {
             return await this.performInlineQuickAsk(selectionText, { ...options,
                 abortController: job.controller, sessionId });
         } finally {
             jobs.delete(job);
             if (!jobs.size) this.quickAskJobs.delete(sessionId);
+            this.updateInputState();
         }
     }
 
@@ -8139,7 +8703,7 @@ class ChatApp {
             editParallelEnabled,
             editPrimaryModelName,
             editSecondaryModelName,
-            memoryFeatureEnabled: this.memoryFeatureEnabled !== false
+            memoryFeatureEnabled: this.memoryFeatureEnabled !== false && this.supportsFeature('memory', session)
         };
     }
 
@@ -8636,7 +9200,7 @@ class ChatApp {
             // Clear edit state only while this action still owns navigation.
             this.editingMessageId = null;
             this.editDrafts.clear();
-            sessionStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+            saveNavigationSelection(newSessionId);
             this.updateUrlWithSession(newSessionId);
 
             if (this.sidebar) this.sidebar.scrollToTop();
@@ -8661,7 +9225,7 @@ class ChatApp {
         for (const id of ids) this.deletingSessionIds.add(id);
         try {
             await this.cancelSessionWork(null, { waitForMutations: true });
-            await this.runtime.beforeDelete?.({ sessionIds: ids });
+            await this.runtime.beforeDelete?.({ sessionIds: ids, all: true });
             await this.deleteAllIdleChats();
             for (const id of ids) this.deletedSessionIds.add(id);
         } finally {
@@ -8688,6 +9252,7 @@ class ChatApp {
         this.state.sessions = [];
         this.state.sessionsById = new Map();
         this.state.currentSessionId = null;
+        saveNavigationSelection(null);
 
         if (typeof chatDB.clearAllChats === 'function') {
             await chatDB.clearAllChats();
@@ -8750,7 +9315,7 @@ class ChatApp {
         if (!modal) return;
 
         this.deleteHistoryReturnFocusEl = document.activeElement;
-        modal.classList.remove('hidden');
+        showSurface(modal);
 
         requestAnimationFrame(() => {
             this.elements.deleteHistoryConfirmBtn?.focus();
@@ -8761,7 +9326,7 @@ class ChatApp {
         const modal = this.elements.deleteHistoryModal;
         if (!modal) return;
 
-        modal.classList.add('hidden');
+        hideSurface(modal);
 
         if (this.deleteHistoryReturnFocusEl && typeof this.deleteHistoryReturnFocusEl.focus === 'function') {
             this.deleteHistoryReturnFocusEl.focus();
@@ -8871,7 +9436,9 @@ class ChatApp {
 
     insertSessionIntoList(session) {
         if (!session || !session.id) return;
-        if (this.state.sessionsById.has(session.id)) return;
+        if (this.state.sessions.some(item => item.id === session.id)) return;
+        // Search also populates the cache; cache membership is not sidebar membership.
+        session = this.state.sessionsById.get(session.id) || session;
         this.sanitizePersistedSessionAccess(session);
 
         this.normalizeSessionCouncilState(session);
@@ -8927,7 +9494,10 @@ class ChatApp {
                 SESSION_PAGE_SIZE,
                 this.state.sessionsPageCursor
             );
-            const newSessions = sessions.filter(session => !this.state.sessionsById.has(session.id));
+            const listedIds = new Set(this.state.sessions.map(session => session.id));
+            const newSessions = sessions
+                .filter(session => !listedIds.has(session.id))
+                .map(session => this.state.sessionsById.get(session.id) || session);
             this.migrateSessionsInBackground(newSessions);
             this.cacheSessions(newSessions);
             this.state.sessions.push(...newSessions);
@@ -8940,7 +9510,12 @@ class ChatApp {
     }
 
     async ensureSessionLoaded(sessionId) {
-        if (!sessionId || this.state.sessionsById.has(sessionId)) return;
+        if (!sessionId) return;
+        const cachedSession = this.state.sessionsById.get(sessionId);
+        if (cachedSession) {
+            this.insertSessionIntoList(cachedSession);
+            return;
+        }
         const session = await chatDB.getSession(sessionId);
         if (session) {
             this.migrateSessionsInBackground([session]);
@@ -9110,23 +9685,29 @@ class ChatApp {
 
     async toggleSessionStar(sessionId) {
         if (!sessionId) return;
-        await this.ensureSessionLoaded(sessionId);
-        const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
-        if (!session) return;
+        const reservation = this.beginSessionMutation(sessionId);
+        if (!reservation) { await this.acknowledgeSessionMutationBusy(sessionId); return false; }
+        try {
+            await this.ensureSessionLoaded(sessionId);
+            const session = this.state.sessionsById.get(sessionId) || this.state.sessions.find(s => s.id === sessionId);
+            if (!session) return;
 
-        const nextStarred = !session.starred;
-        session.starred = nextStarred;
-        if (nextStarred) {
-            session.starredAt = Date.now();
-        } else {
-            delete session.starredAt;
-        }
+            const nextStarred = !session.starred;
+            session.starred = nextStarred;
+            if (nextStarred) {
+                session.starredAt = Date.now();
+            } else {
+                delete session.starredAt;
+            }
 
-        await chatDB.saveSession(session);
-        this.resetSessionSearchResults();
-        this.renderSessions();
-        if (this.hasActiveSessionListCriteria()) {
-            void this.updateSessionSearchResults();
+            await chatDB.saveSession(session);
+            this.resetSessionSearchResults();
+            this.renderSessions();
+            if (this.hasActiveSessionListCriteria()) {
+                void this.updateSessionSearchResults();
+            }
+        } finally {
+            this.endSessionMutation(sessionId, reservation);
         }
     }
 
@@ -9202,14 +9783,14 @@ class ChatApp {
     openSidebarFilterMenu() {
         const menu = this.elements.sidebarFilterMenu;
         if (!menu) return;
-        menu.classList.remove('hidden');
+        showSurface(menu, 'dropdown');
         this.updateSidebarFilterUI();
     }
 
     closeSidebarFilterMenu() {
         const menu = this.elements.sidebarFilterMenu;
         if (!menu) return;
-        menu.classList.add('hidden');
+        hideSurface(menu);
         this.updateSidebarFilterUI();
     }
 
@@ -9401,7 +9982,9 @@ class ChatApp {
         this.chatInput?.refreshMultiModelSettingsUI?.();
         this.chatArea?.updateEditModelPickerButton?.();
         this.chatInput?.updateMemoryToggleUI?.();
+        this.chatInput?.refreshFeatureAvailability?.();
         this.updateCouncilLayoutMode();
+        this.rightPanel?.onModelSelectionChange?.();
     }
 
     updateCouncilLayoutMode(session = this.getCurrentSession(), messages = null) {
@@ -9409,7 +9992,7 @@ class ChatApp {
         const isCouncilLayoutMode = this.sessionUsesCouncilLayout(session, messages);
         const isCouncilModeEnabled = session
             ? this.isCouncilModeActive(session)
-            : this.pendingCouncilConfig?.enabled === true;
+            : this.supportsFeature('council', null) && this.pendingCouncilConfig?.enabled === true;
         const storedOutputMode = session?.councilConfig?.outputMode
             || this.pendingCouncilConfig?.outputMode
             || COUNCIL_OUTPUT_PARALLEL;
@@ -9430,6 +10013,7 @@ class ChatApp {
         if (this.chatArea) {
             await this.chatArea.render();
         }
+        this.renderInferenceWarnings();
         this.updateWideModeButtonVisibility();
         // Recovery never holds up the transcript, and uses its captured owner
         // rather than whichever chat happens to be selected after the read.
@@ -9456,7 +10040,6 @@ class ChatApp {
         if (!btn) return;
 
         const hasSession = !!this.getCurrentSession();
-        const sidebarHidden = this.elements.sidebar?.classList.contains('sidebar-hidden');
         const isMobile = this.isMobileView();
         const session = this.getCurrentSession();
         const usesParallelLayout = this.sessionUsesCouncilLayout(session);
@@ -9467,21 +10050,21 @@ class ChatApp {
         if (hasSession && !isMobile && !parallelRequiresWide) {
             btn.classList.remove('hidden');
             btn.classList.add('flex');
-            // When sidebar hidden: show-sidebar-btn at left-4, wide-mode at left-14
-            // When sidebar visible: wide-mode at left-4
-            if (sidebarHidden) {
-                btn.classList.remove('left-4');
-                btn.classList.add('left-14');
-            } else {
-                btn.classList.remove('left-14');
-                btn.classList.add('left-4');
-            }
+            // The toolbar's flex row places it: first, or after the
+            // show-sidebar control when that is shown. (It once carried
+            // left-4 / left-14 offsets from an absolute layout; those became
+            // live again the moment the button got a tooltip, which makes it
+            // position: relative, and pushed it up to 56px off its slot.)
+            btn.classList.remove('left-4', 'left-14');
         } else {
             btn.classList.add('hidden');
             btn.classList.remove('flex');
         }
         btn.classList.toggle('wide-active', isWide);
         btn.setAttribute('aria-label', isWide ? 'Collapse view' : 'Expand view');
+        btn.setAttribute('data-tooltip', isWide ? 'Narrow chat' : 'Widen chat');
+        btn.setAttribute('aria-pressed', String(isWide));
+        btn.querySelector('[data-wide-mode-icons]')?.setAttribute('data-state', isWide ? 'b' : 'a');
     }
 
     /**
@@ -9513,9 +10096,23 @@ class ChatApp {
         }
     }
 
+    preserveChatBottomDuringWidthChange() {
+        this.cancelWidthScrollAnchor?.();
+        const sessionId = this.state.currentSessionId;
+        this.cancelWidthScrollAnchor = preserveBottomDuringWidthChange({
+            scroller: this.elements.chatArea,
+            content: this.elements.messagesContainer,
+            transitionElements: [this.elements.sidebar, document.getElementById('right-panel')],
+            isCurrent: () => this.state.currentSessionId === sessionId
+        });
+    }
+
     applyWideMode(isWide) {
+        if (document.documentElement.classList.contains('wide-mode') !== isWide) {
+            this.preserveChatBottomDuringWidthChange();
+        }
         document.documentElement.classList.toggle('wide-mode', isWide);
-        this.elements.wideModeBtn?.classList.toggle('wide-active', isWide);
+        this.updateWideModeButtonVisibility();
     }
 
     /**
@@ -9528,6 +10125,7 @@ class ChatApp {
             session?.hasCouncilTranscript
         );
         if (hasParallelLayoutHistory && !this.councilLayoutRequiresMultipleColumns(session)) {
+            this.preserveChatBottomDuringWidthChange();
             const isWide = document.documentElement.classList.contains('wide-mode') ||
                 this.sessionUsesCouncilLayout(session);
             if (isWide) {
@@ -9594,6 +10192,12 @@ class ChatApp {
         } else {
             document.documentElement.removeAttribute('data-left-sidebar-hidden');
         }
+        const button = this.elements.showSidebarBtn;
+        const label = isHidden ? 'Expand sidebar' : 'Collapse sidebar';
+        button?.setAttribute('aria-expanded', String(!isHidden));
+        button?.setAttribute('aria-label', label);
+        const tooltipLabel = button?.querySelector('[data-sidebar-toggle-label]');
+        if (tooltipLabel) tooltipLabel.textContent = label;
     }
 
     setSidebarClosingAttribute(isClosing) {
@@ -9639,29 +10243,25 @@ class ChatApp {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
-        const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (!this.isMobileView() && sidebar && !sidebar.classList.contains('sidebar-hidden')) {
+            this.preserveChatBottomDuringWidthChange();
+        }
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(true);
-        if (showBtn) {
-            showBtn.classList.add('hidden');
-            showBtn.classList.remove('flex');
-        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles
             sidebar.classList.add('sidebar-hidden');
             sidebar.classList.remove('mobile-visible');
+            sidebar.inert = true;
         }
         this.setSidebarHiddenAttribute(true);
-        if (showBtn) {
-            this.sidebarToggleButtonTimer = setTimeout(() => {
-                this.setSidebarClosingAttribute(false);
-                showBtn.classList.remove('hidden');
-                showBtn.classList.add('flex');
-            }, SIDEBAR_CLOSE_DURATION_MS);
-        }
+        this.sidebarToggleButtonTimer = setTimeout(() => {
+            this.setSidebarClosingAttribute(false);
+        }, SIDEBAR_CLOSE_DURATION_MS);
         if (backdrop) {
             backdrop.classList.remove('visible');
         }
@@ -9673,7 +10273,7 @@ class ChatApp {
             const sidebarWidth = this.getCurrentSidebarWidth();
             // Predict final width: sidebar is closing, main area will be WIDER
             // Only affects width on desktop, on mobile sidebar overlays
-            // Grace period in updateToolbarDivider blocks intermediate updates during animation
+            // Cover before movement; measured gutters track each animation frame.
             this.updateToolbarDivider(this.isMobileView() ? 0 : sidebarWidth);
         } else {
             this.updateToolbarDivider();
@@ -9684,8 +10284,11 @@ class ChatApp {
         const shouldPersist = options.persist ?? !this.isMobileView();
         const shouldPredictToolbar = options.predictToolbar !== false;
         const sidebar = this.elements.sidebar;
-        const showBtn = this.elements.showSidebarBtn;
         const backdrop = this.elements.mobileSidebarBackdrop;
+
+        if (!this.isMobileView() && sidebar && sidebar.classList.contains('sidebar-hidden')) {
+            this.preserveChatBottomDuringWidthChange();
+        }
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(false);
@@ -9693,6 +10296,7 @@ class ChatApp {
         if (sidebar) {
             // Use CSS class instead of inline styles
             sidebar.classList.remove('sidebar-hidden');
+            sidebar.inert = false;
             if (this.isMobileView()) {
                 sidebar.classList.add('mobile-visible');
             } else {
@@ -9700,10 +10304,6 @@ class ChatApp {
             }
         }
         this.setSidebarHiddenAttribute(false);
-        if (showBtn) {
-            showBtn.classList.add('hidden');
-            showBtn.classList.remove('flex');
-        }
         // Show backdrop only on mobile
         if (backdrop && this.isMobileView()) {
             backdrop.classList.add('visible');
@@ -9723,7 +10323,7 @@ class ChatApp {
     }
 
     isMobileView() {
-        return window.innerWidth <= 768;
+        return window.innerWidth < 1100;
     }
 
     setupSidebarFilterControls() {
@@ -9847,16 +10447,10 @@ class ChatApp {
             });
         }
 
-        // Sidebar toggle buttons
-        if (this.elements.hideSidebarBtn) {
-            this.elements.hideSidebarBtn.addEventListener('click', () => {
-                this.hideSidebar();
-            });
-        }
-
+        // One fixed control opens and closes the sidebar without moving focus.
         if (this.elements.showSidebarBtn) {
             this.elements.showSidebarBtn.addEventListener('click', () => {
-                this.showSidebar();
+                this.toggleSidebar();
             });
         }
 
@@ -9875,7 +10469,7 @@ class ChatApp {
 
                 if (sidebar && sidebar.classList.contains('mobile-visible')) {
                     // Check if click is outside sidebar and not on the show button
-                    if (!sidebar.contains(e.target) && !showBtn.contains(e.target)) {
+                    if (!sidebar.contains(e.target) && !showBtn?.contains(e.target)) {
                         this.hideSidebar();
                     }
                 }
@@ -9960,7 +10554,7 @@ class ChatApp {
             // Cmd/Ctrl + J for the second Parallel model picker
             if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
                 const session = this.getCurrentSession();
-                const pendingCouncilEnabled = this.pendingCouncilConfig?.enabled === true;
+                const pendingCouncilEnabled = this.supportsFeature('council', session) && this.pendingCouncilConfig?.enabled === true;
                 if (this.modelPicker && (this.isCouncilModeActive(session) || pendingCouncilEnabled)) {
                     e.preventDefault();
                     this.modelPicker.toggle({ selectionMode: 'council-secondary' });
@@ -9975,10 +10569,10 @@ class ChatApp {
                     : this.pendingCouncilConfig?.enabled === true && this.pendingCouncilConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
                 const isSettingsOpen = this.elements.settingsMenu
                     && !this.elements.settingsMenu.classList.contains('hidden');
-                if (this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {
+                if (this.supportsFeature('council', session) && this.modelPicker && (isCouncilReviewEnabled || isSettingsOpen)) {
                     e.preventDefault();
                     if (isSettingsOpen) {
-                        this.elements.settingsMenu.classList.add('hidden');
+                        hideSurface(this.elements.settingsMenu);
                         this.elements.settingsBtn?.classList.remove('tooltip-disabled');
                     }
                     this.modelPicker.toggle({ selectionMode: 'council-synthesis' });
@@ -9994,8 +10588,8 @@ class ChatApp {
             // Cmd/Ctrl + Shift + M for memory editor
             if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'm' || e.key === 'M')) {
                 e.preventDefault();
-                if (this.memoryFeatureEnabled === false) {
-                    this.showToast?.('Memory is off in settings.', 'info', 3000);
+                if (this.memoryFeatureEnabled === false || !this.supportsFeature('memory')) {
+                    this.showToast?.(this.getFeatureUnavailableReason('memory') || 'Memory is off in settings.', 'info', 3000);
                     return;
                 }
                 if (this.memoryEditor) {
@@ -10042,10 +10636,10 @@ class ChatApp {
             // Escape to close settings menu and session menus
             if (e.key === 'Escape') {
                 if (!this.elements.settingsMenu.classList.contains('hidden')) {
-                    this.elements.settingsMenu.classList.add('hidden');
+                    hideSurface(this.elements.settingsMenu);
                 }
                 document.querySelectorAll('.session-menu').forEach(menu => {
-                    menu.classList.add('hidden');
+                    hideSurface(menu);
                 });
             }
 
@@ -10095,7 +10689,9 @@ class ChatApp {
                 activeElement.isContentEditable
             );
 
-            // Send message on Enter if no input is focused and there's unsent text
+            // Send message on Enter if no input is focused and there's unsent text.
+            // Never from behind a dialog (Log in, Account, Welcome): the page
+            // the message would go to is not the one the person is looking at.
             if (e.key === 'Enter' &&
                 !isInputFocused &&
                 !e.shiftKey &&
@@ -10103,7 +10699,8 @@ class ChatApp {
                 !e.ctrlKey &&
                 !e.altKey &&
                 !this.elements.sendBtn.disabled &&
-                this.elements.modelPickerModal.classList.contains('hidden')) {
+                this.elements.modelPickerModal.classList.contains('hidden') &&
+                !hasOpenModalDialog()) {
                 e.preventDefault();
                 if (this.isCurrentSessionStreaming()) {
                     this.stopCurrentSessionStreaming();
@@ -10120,13 +10717,15 @@ class ChatApp {
             // - Key is a printable character
             // - Model picker is closed
             // - No share modal is open
+            // - No dialog is up (typing belongs to the dialog, not the page behind it)
             if (!isInputFocused &&
                 !e.metaKey &&
                 !e.ctrlKey &&
                 !e.altKey &&
                 e.key.length === 1 &&
                 this.elements.modelPickerModal.classList.contains('hidden') &&
-                !this.ui.shareModals.currentModal) {
+                !this.ui.shareModals.currentModal &&
+                !hasOpenModalDialog()) {
                 this.elements.messageInput.focus();
             }
         });
@@ -10414,6 +11013,8 @@ class ChatApp {
     focusMessageInput({ force = false } = {}) {
         const input = this.elements.messageInput;
         if (!input || input.disabled) return;
+        // Startup autofocus must not steal focus from an authentication intent.
+        if (this.accountModal?.isOpen) return;
 
         const active = document.activeElement;
         if (!force && active && active !== document.body && active !== document.documentElement && active !== input) {
@@ -10497,6 +11098,7 @@ class ChatApp {
                 this.elements.messageInput.placeholder = "Ask anything";
             }
         }
+        this.uiOptions?.presentation?.renderComposer?.(this.getCurrentSession());
     }
 
     async handleFileUpload(files) {
@@ -10772,7 +11374,7 @@ Your API key has been cleared. A new key from a different station will be obtain
     getAccessAcquisitionKey(session, modelNameOverride = null, modelIdOverride = null) {
         const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
         const modelKey = modelIdOverride ||
-            this.normalizeModelName(modelNameOverride || session?.model) ||
+            this.normalizeModelName(modelNameOverride || session?.model, session) ||
             modelNameOverride ||
             session?.model ||
             this.inferenceService.getDefaultModelName(session) ||
@@ -10851,8 +11453,8 @@ Your API key has been cleared. A new key from a different station will be obtain
 
     async acquireAndSetAccess(session, options = {}) {
         this.throwIfAborted(options.signal || null);
-        if (this.features.tickets) await ensureModelTiersReady({ signal: options.signal || null });
-        this.throwIfAborted(options.signal || null);
+        if (this.isSessionDeleted(session.id) || this.isSessionBackendChanging(session.id)) throw this.createCancelledError();
+        const models = this.getModelsForSession(session);
         const key = this.getAccessAcquisitionKey(session, options.modelNameOverride, options.modelIdOverride);
         let entry = this.accessAcquisitionInFlight.get(key);
 
@@ -10867,41 +11469,45 @@ Your API key has been cleared. A new key from a different station will be obtain
                 abortTimer: null,
                 promise: null
             };
-            entry.promise = acquireSessionAccess({
-                acquireAccess: this.runtime.acquireAccess,
-                session,
-                models: this.state.models,
-                reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
-                inferenceService: this.inferenceService,
-                ticketClient,
-                chatDB,
-                getTicketCost,
-                getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
-                modelIdOverride: options.modelIdOverride,
-                modelNameOverride: options.modelNameOverride,
-                signal: controller.signal,
-                ticketsRequiredOverride: options.ticketsRequiredOverride,
-                ticketRequirementLabel: options.ticketRequirementLabel,
-                onTicketUsed: () => {
-                    this.showToast('Ticket already used, trying next available');
-                },
-                onNetworkSession: (sessionId) => {
-                    if (window.networkLogger) {
-                        window.networkLogger.setCurrentSession(sessionId);
+            entry.promise = (async () => {
+                if (this.usesTicketAccess(session)) await ensureModelTiersReady({ signal: controller.signal });
+                this.throwIfAborted(controller.signal);
+                return acquireSessionAccess({
+                    acquireAccess: this.runtime.acquireAccess,
+                    session,
+                    models,
+                    reasoningEnabled: options.reasoningEnabled ?? this.reasoningEnabled,
+                    inferenceService: this.inferenceService,
+                    ticketClient,
+                    chatDB,
+                    getTicketCost,
+                    getFallbackModelEntry: (targetSession) => this.getFallbackModelEntry(targetSession),
+                    modelIdOverride: options.modelIdOverride,
+                    modelNameOverride: options.modelNameOverride,
+                    signal: controller.signal,
+                    ticketsRequiredOverride: options.ticketsRequiredOverride,
+                    ticketRequirementLabel: options.ticketRequirementLabel,
+                    onTicketUsed: () => {
+                        this.showToast('Ticket already used, trying next available');
+                    },
+                    onNetworkSession: (sessionId) => {
+                        if (window.networkLogger) {
+                            window.networkLogger.setCurrentSession(sessionId);
+                        }
+                    },
+                    onAccessRequestError: (error) => {
+                        console.error('Failed to automatically acquire API access:', error);
+                    },
+                    onVerificationWarning: (...args) => {
+                        console.warn(...args);
+                    },
+                    onSessionChanged: (changedSession) => {
+                        if (this.rightPanel && this.isViewingSession(changedSession.id)) {
+                            this.rightPanel.onSessionChange(changedSession);
+                        }
                     }
-                },
-                onAccessRequestError: (error) => {
-                    console.error('Failed to automatically acquire API access:', error);
-                },
-                onVerificationWarning: (...args) => {
-                    console.warn(...args);
-                },
-                onSessionChanged: (changedSession) => {
-                    if (this.rightPanel && this.isViewingSession(changedSession.id)) {
-                        this.rightPanel.onSessionChange(changedSession);
-                    }
-                }
-            }).finally(() => {
+                });
+            })().finally(() => {
                 if (entry.abortTimer) {
                     clearTimeout(entry.abortTimer);
                     entry.abortTimer = null;
@@ -10909,8 +11515,10 @@ Your API key has been cleared. A new key from a different station will be obtain
                 if (this.accessAcquisitionInFlight.get(key) === entry) {
                     this.accessAcquisitionInFlight.delete(key);
                 }
+                this.updateInputState();
             });
             this.accessAcquisitionInFlight.set(key, entry);
+            this.updateInputState();
         }
 
         return this.waitForAccessAcquisition(entry, options);
@@ -11035,7 +11643,12 @@ Your API key has been cleared. A new key from a different station will be obtain
             return;
         }
 
-        // No cached version - need to call API
+        // No cached version - confidential inference needs this session's capability.
+        const featureOperation = this.beginFeatureOperation('scrubber', session);
+        if (!featureOperation) {
+            this.showToast(this.getFeatureUnavailableReason('scrubber', session) || 'Wait for the current chat action to finish.', 'info');
+            return;
+        }
         const stopLoading = this.showLoadingToast('Restoring PII...');
         try {
             const responseText = message.content || message.scrubber.redactedResponse || '';
@@ -11083,6 +11696,7 @@ Your API key has been cleared. A new key from a different station will be obtain
             console.warn('Scrubber restore failed:', error);
             this.showToast('Restore failed', 'error');
         } finally {
+            this.finishFeatureOperation(featureOperation);
             if (typeof stopLoading === 'function') {
                 stopLoading();
             }
@@ -11102,9 +11716,11 @@ Your API key has been cleared. A new key from a different station will be obtain
         // Skip if no response content
         if (!message.content) return;
 
+        const session = this.state.sessionsById.get(message.sessionId);
+        if (!session || !this.supportsFeature('scrubber', session)) return;
+        const featureOperation = this.beginFeatureOperation('scrubber', session, { allowResponseMutation: true });
+        if (!featureOperation) return;
         try {
-            const session = this.getCurrentSession();
-            if (!session) return;
 
             const messages = await chatDB.getSessionMessages(session.id);
             const messageIndex = messages.findIndex(msg => msg.id === message.id);
@@ -11145,6 +11761,8 @@ Your API key has been cleared. A new key from a different station will be obtain
         } catch (error) {
             // Silently fail - this is just a background optimization
             console.warn('[Scrubber] Pre-cache failed:', error);
+        } finally {
+            this.finishFeatureOperation(featureOperation);
         }
     }
 }

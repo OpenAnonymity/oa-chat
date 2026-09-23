@@ -1,3 +1,7 @@
+import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
+import { restoredResponseForDisplay } from '../ui/restoredResponse.js';
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
+import { syncScrollFade, syncAllScrollFades, watchScrollFade } from '../ui/scrollFade.js';
 /**
  * ChatArea Component
  * Manages the main chat messages area including rendering messages,
@@ -20,6 +24,11 @@ export default class ChatArea {
         this.app = app;
         // Buffer for debounced reasoning updates during streaming
         this.reasoningBuffer = { content: '', timeout: null, messageId: null };
+        // Reasoning ids whose trace was settled when the answer began, with
+        // the settled length: a debounce tail (same length) is ignored so the
+        // panel stays settled; genuinely new thinking (longer, after a tool
+        // call) reopens it and continues from where the settled text ended.
+        this.settledReasoningIds = new Map();
         this.councilReasoningStreams = new Map();
         // Typewriter state for gradual content reveal
         this.typewriter = {
@@ -32,6 +41,8 @@ export default class ChatArea {
         };
         // Track if user has scrolled up in reasoning content (pauses auto-scroll)
         this.reasoningAutoScrollPaused = false;
+        // Reasoning boxes fade the edge that hides more (see ui/scrollFade.js).
+        if (typeof document !== 'undefined') watchScrollFade(document, '.reasoning-content');
         // Pending animation frame for debounced auto-grow
         this.pendingAutoGrowFrame = null;
         // Pointer-down copy is used for streaming code blocks because token updates
@@ -409,7 +420,10 @@ export default class ChatArea {
             }
         });
 
-        window.addEventListener('resize', () => this.hideQuickAskPopover());
+        window.addEventListener('resize', () => {
+            this.hideQuickAskPopover();
+            this.syncQuickAskWindowToScroll();
+        });
         this.app.elements.chatArea?.addEventListener('scroll', () => {
             this.hideQuickAskPopover();
             this.syncQuickAskWindowToScroll();
@@ -545,6 +559,7 @@ export default class ChatArea {
         const panel = this.ensureQuickAskWindow();
         if (this.quickAsk.activeKey && this.quickAsk.activeKey === key) {
             panel.classList.remove('hidden');
+            showSurface(panel);
             panel.setAttribute('aria-hidden', 'false');
             this.positionQuickAskWindow(panel, this.quickAsk.selectionRect);
             this.updateQuickAskLayerState();
@@ -559,6 +574,7 @@ export default class ChatArea {
         this.quickAsk.activeKey = key;
 
         panel.classList.remove('hidden');
+            showSurface(panel);
         panel.setAttribute('aria-hidden', 'false');
         this.updateQuickAskLayerState();
         panel.querySelector('.quick-ask-user-bubble').textContent = this.quickAsk.question;
@@ -585,7 +601,7 @@ export default class ChatArea {
         panel.setAttribute('aria-label', 'Inline quick ask');
         panel.setAttribute('aria-hidden', 'true');
         panel.innerHTML = `
-            <div class="quick-ask-mini-chat" tabindex="-1">
+            <div class="quick-ask-mini-chat" tabindex="0" aria-label="Scrollable Ask answer">
                 <div class="quick-ask-turn quick-ask-turn-user">
                     <div class="quick-ask-user-bubble message-user py-3 px-4 font-normal max-w-full"></div>
                 </div>
@@ -626,49 +642,52 @@ export default class ChatArea {
         const panelRect = panel.getBoundingClientRect();
         const width = panelRect.width || Math.min(520, window.innerWidth - (margin * 2));
         const height = panelRect.height || 360;
+        const viewportHeight = window.innerHeight;
+        const fitToViewport = (left, edge, side, visibility = '') => {
+            const above = side === 'above';
+            const fittedEdge = Math.max(margin, Math.min(edge, viewportHeight - margin));
+            Object.assign(panel.style, {
+                left: `${Math.max(margin, Math.min(left, window.innerWidth - width - margin))}px`,
+                top: above ? 'auto' : `${fittedEdge}px`,
+                bottom: above ? `${viewportHeight - fittedEdge}px` : 'auto',
+                visibility
+            });
+            // Fix the edge nearest the selection. Above panels grow upward;
+            // below panels grow downward, without switching sides mid-response.
+            panel.style.setProperty('--quick-ask-available-height',
+                `${Math.max(0, above ? fittedEdge - margin : viewportHeight - fittedEdge - margin)}px`);
+        };
 
         if (options.preserveAnchor && this.quickAsk.windowAnchor) {
-            const anchoredLeft = (chatAreaRect?.left || 0) + this.quickAsk.windowAnchor.left - scrollLeft;
-            const anchoredTop = (chatAreaRect?.top || 0) + this.quickAsk.windowAnchor.top - scrollTop;
+            const anchor = this.quickAsk.windowAnchor;
+            const anchoredLeft = (chatAreaRect?.left || 0) + anchor.left - scrollLeft;
+            const anchoredEdge = (chatAreaRect?.top || 0) + anchor.top - scrollTop;
+            const anchoredTop = anchor.side === 'above' ? anchoredEdge - height : anchoredEdge;
             const isInChatViewport = !chatAreaRect ||
                 (anchoredTop + height > chatAreaRect.top && anchoredTop < chatAreaRect.bottom);
 
-            Object.assign(panel.style, {
-                left: `${anchoredLeft}px`,
-                top: `${anchoredTop}px`,
-                visibility: isInChatViewport ? '' : 'hidden'
-            });
+            fitToViewport(anchoredLeft, anchoredEdge, anchor.side, isInChatViewport ? '' : 'hidden');
             return;
         }
 
         const sourceRect = rect || {
             left: window.innerWidth / 2,
-            right: window.innerWidth / 2,
-            top: window.innerHeight / 3,
-            bottom: window.innerHeight / 3,
-            width: 0,
-            height: 0
+            top: viewportHeight / 3,
+            bottom: viewportHeight / 3,
+            width: 0
         };
         const centerX = sourceRect.left + ((sourceRect.width || 0) / 2);
-        const left = Math.min(
-            Math.max(margin, centerX - (width / 2)),
-            window.innerWidth - width - margin
-        );
-        const belowTop = sourceRect.bottom + margin;
-        const aboveTop = sourceRect.top - height - margin;
-        const top = belowTop + height <= window.innerHeight - margin
-            ? belowTop
-            : Math.max(margin, aboveTop);
-        const clampedTop = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
-
-        Object.assign(panel.style, {
-            left: `${left}px`,
-            top: `${clampedTop}px`,
-            visibility: ''
-        });
+        const left = centerX - (width / 2);
+        const belowSpace = viewportHeight - sourceRect.bottom - margin * 2;
+        const aboveSpace = sourceRect.top - margin * 2;
+        // Choose using room for the answer, not the tiny initial loading row.
+        const side = belowSpace < 320 && aboveSpace > belowSpace ? 'above' : 'below';
+        const edge = side === 'above' ? sourceRect.top - margin : sourceRect.bottom + margin;
+        fitToViewport(left, edge, side);
         this.quickAsk.windowAnchor = {
             left: left - (chatAreaRect?.left || 0) + scrollLeft,
-            top: clampedTop - (chatAreaRect?.top || 0) + scrollTop
+            top: edge - (chatAreaRect?.top || 0) + scrollTop,
+            side
         };
     }
 
@@ -737,6 +756,9 @@ export default class ChatArea {
         const answerEl = this.quickAsk.window?.querySelector('.quick-ask-answer');
         if (!answerEl) return;
         const assistantBubble = answerEl.closest('.quick-ask-assistant-bubble');
+        const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
+        const followAnswer = miniChat &&
+            miniChat.scrollHeight - miniChat.clientHeight - miniChat.scrollTop <= 24;
 
         if (options.pending && !content) {
             assistantBubble?.classList.add('quick-ask-assistant-pending');
@@ -752,10 +774,7 @@ export default class ChatArea {
         this.updateQuickAskStatus(content ? '' : options.status);
         answerEl.innerHTML = this.app.processContentWithLatex(content || '');
         renderMathContent(answerEl);
-        const miniChat = this.quickAsk.window?.querySelector('.quick-ask-mini-chat');
-        if (miniChat) {
-            miniChat.scrollTop = miniChat.scrollHeight;
-        }
+        if (followAnswer) miniChat.scrollTop = miniChat.scrollHeight;
     }
 
     updateQuickAskReasoning(reasoning, options = {}) {
@@ -832,7 +851,7 @@ export default class ChatArea {
             this.quickAsk.requestInFlight = false;
         }
         if (this.quickAsk.window) {
-            this.quickAsk.window.classList.add('hidden');
+            hideSurface(this.quickAsk.window);
             this.quickAsk.window.setAttribute('aria-hidden', 'true');
             this.updateQuickAskLayerState();
         }
@@ -889,6 +908,8 @@ export default class ChatArea {
      * Desktop hooks can call this to avoid intermediate flashes.
      */
     renderEmptyStateImmediate() {
+        this.app.restoringInitialConversation = false;
+        cancelChatArrival(this.app.elements.messagesContainer);
         const messagesContainer = this.app.elements.messagesContainer;
         if (!messagesContainer) return;
         messagesContainer.innerHTML = buildEmptyState();
@@ -1772,6 +1793,7 @@ export default class ChatArea {
     async render() {
         // Increment render generation - used to cancel stale renders during rapid session switching
         const currentGeneration = ++this.renderGeneration;
+        cancelChatArrival(this.app.elements.messagesContainer);
         const session = this.app.getCurrentSession();
         const sessionId = session?.id || '';
         const messagesContainer = this.app.elements.messagesContainer;
@@ -1798,6 +1820,7 @@ export default class ChatArea {
         const hasEmptyState = messagesContainer.querySelector('.welcome-landing') !== null;
 
         if (!session) {
+            if (this.app.restoringInitialConversation) return;
             if (!hasEmptyState) {
                 messagesContainer.innerHTML = buildEmptyState();
             }
@@ -1865,14 +1888,7 @@ export default class ChatArea {
             options.isSessionStreaming = isSessionStreaming;
             options.pendingPhase = streamingPhase;
             options.pendingProgress = this.app.getSessionPendingProgress?.(session.id) || null;
-            // Normalize streaming state for messages loaded from DB.
-            // If streamingReasoning/streamingTokens are set AND session is NOT currently streaming,
-            // it means streaming was interrupted (e.g., browser closed, network error).
-            // Skip normalization if session is actively streaming to preserve the streaming UI state.
-            const shouldNormalize = !isSessionStreaming && (message.streamingReasoning || message.streamingTokens !== null);
-            const normalizedMessage = shouldNormalize
-                ? { ...message, streamingReasoning: false, streamingTokens: null }
-                : message;
+            const normalizedMessage = restoredResponseForDisplay(message, isSessionStreaming);
 
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 
@@ -2016,6 +2032,7 @@ export default class ChatArea {
         if (this.app.editingMessageId) {
             this.initializeEditForm();
         }
+        syncAllScrollFades(messagesContainer, '.reasoning-body[data-open="true"] > .reasoning-content');
     }
 
     /**
@@ -2366,6 +2383,12 @@ export default class ChatArea {
 
     updateCouncilLaneReasoning(messageId, laneId, reasoning) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
+        if (this.settledReasoningIds.has(reasoningId)) {
+            const settledLength = this.settledReasoningIds.get(reasoningId);
+            if ((reasoning?.length || 0) <= settledLength) return;
+            this.settledReasoningIds.delete(reasoningId);
+            this.getCouncilReasoningStreamState(reasoningId).displayedLength = settledLength;
+        }
         this.ensureCouncilLaneReasoningTrace(messageId, laneId);
         const state = this.getCouncilReasoningStreamState(reasoningId);
         state.content = reasoning || '';
@@ -2458,6 +2481,7 @@ export default class ChatArea {
         if (!state.autoScrollPaused) {
             reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
         }
+        syncScrollFade(reasoningContentEl);
         this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
@@ -2502,6 +2526,12 @@ export default class ChatArea {
     updateCouncilLaneReasoningSubtitleToDuration(messageId, laneId, reasoningDuration) {
         const reasoningId = this.getCouncilLaneReasoningId(messageId, laneId);
         this.updateReasoningSubtitleToDuration(reasoningId, reasoningDuration);
+    }
+
+    /** Same as settleReasoningDisplay, for one council lane. */
+    settleCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
+        this.settledReasoningIds.set(this.getCouncilLaneReasoningId(messageId, laneId), reasoning?.length || 0);
+        this.finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration);
     }
 
     finalizeCouncilLaneReasoning(messageId, laneId, reasoning, reasoningDuration) {
@@ -2560,6 +2590,14 @@ export default class ChatArea {
      * @param {string} reasoning - The reasoning content
      */
     updateStreamingReasoning(messageId, reasoning) {
+        if (this.settledReasoningIds.has(messageId)) {
+            const settledLength = this.settledReasoningIds.get(messageId);
+            if ((reasoning?.length || 0) <= settledLength) return;
+            this.settledReasoningIds.delete(messageId);
+            this.typewriter.messageId = messageId;
+            this.typewriter.displayedLength = settledLength;
+            document.getElementById(`reasoning-content-${messageId}`)?.classList.add('streaming');
+        }
         // Always update buffer immediately (non-blocking)
         this.reasoningBuffer.content = reasoning;
         this.reasoningBuffer.messageId = messageId;
@@ -2737,6 +2775,7 @@ export default class ChatArea {
             if (!this.reasoningAutoScrollPaused) {
                 reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
             }
+            syncScrollFade(reasoningContentEl);
             return;
         }
 
@@ -2752,6 +2791,7 @@ export default class ChatArea {
         if (!this.reasoningAutoScrollPaused) {
             reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
         }
+        syncScrollFade(reasoningContentEl);
 
         // Update scroll button visibility
         this.app.updateActivePromptScrollSpacer();
@@ -2875,6 +2915,20 @@ export default class ChatArea {
             }
             return `Thought for ${minutes}m ${remainingSeconds}s`;
         }
+    }
+
+    /**
+     * The first content chunk proves the model is done thinking. Settle the
+     * trace right then: show all of it, drop the "Thinking..." indicator and
+     * put the duration in the header. Reasoning chunks that trickle in after
+     * this (debounce tails) are ignored for the message.
+     * @param {string} messageId - The message ID
+     * @param {string} reasoning - The full reasoning content
+     * @param {number} reasoningDuration - Duration in milliseconds
+     */
+    settleReasoningDisplay(messageId, reasoning, reasoningDuration) {
+        this.settledReasoningIds.set(messageId, reasoning?.length || 0);
+        this.finalizeReasoningDisplay(messageId, reasoning, reasoningDuration);
     }
 
     /**
@@ -3025,6 +3079,7 @@ export default class ChatArea {
         // Check if we need to clear the empty state
         const emptyState = messagesContainer.querySelector('.text-center.text-muted-foreground');
         if (emptyState) {
+            leaveChatArrival(messagesContainer, { animate: message.role === 'user' });
             messagesContainer.innerHTML = '';
         }
 
@@ -3173,11 +3228,16 @@ export default class ChatArea {
      * @param {boolean} options.forceFullRender - Rebuild all message chrome even if reasoning is finalized
      */
     async finalizeStreamingMessage(message, options = {}) {
+        if (message?.id) {
+            for (const id of [...this.settledReasoningIds.keys()]) {
+                if (id === message.id || id.startsWith(`${message.id}-`)) this.settledReasoningIds.delete(id);
+            }
+        }
         const messageEl = document.querySelector(`[data-message-id="${message.id}"]`);
         if (!messageEl) return;
 
         const promptSlideAnchor = this.app.captureActivePromptScrollAnchor?.({ primeRunway: true });
-        const forceFullRender = options.forceFullRender === true;
+        const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError);
         this.updateMessageModel(message);
 
         // Check if reasoning trace is already finalized (subtitle shows duration, not streaming)
@@ -3199,17 +3259,28 @@ export default class ChatArea {
                 renderMathContent(contentEl);
             }
 
-            // Setup citation carousel if citations were added
-            if (message.citations && message.citations.length > 0) {
-                this.setupCitationCarouselScroll();
-            }
+            // The message was appended while it was still thinking, so its
+            // action row is the empty placeholder. Swap in the real row
+            // (Copy, Regenerate, …) from a fresh render of the finished message.
+            const actionsSettled = this.replaceAssistantActionsRow(messageEl, message);
 
-            // Update message navigation to reflect final content (fixes preview + indicator height)
-            if (this.app.messageNavigation) {
-                this.app.messageNavigation.update();
+            if (actionsSettled) {
+                // Setup citation carousel if citations were added
+                if (message.citations && message.citations.length > 0) {
+                    this.setupCitationCarouselScroll();
+                }
+
+                // Update message navigation to reflect final content (fixes preview + indicator height)
+                if (this.app.messageNavigation) {
+                    this.app.messageNavigation.update();
+                }
+                this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
+                return;
             }
-            this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
-            return;
+            // The targeted swap could not produce the action row (the live
+            // element's anchors no longer line up with a fresh render). A
+            // finished answer without Copy is worse than a re-render: fall
+            // through to the full replacement.
         }
 
         // Full replacement for messages without finalized reasoning
@@ -3235,6 +3306,37 @@ export default class ChatArea {
             this.app.messageNavigation.update();
         }
         this.app.restoreActivePromptScrollAnchor?.(promptSlideAnchor);
+    }
+
+    /**
+     * Replaces the message's action row with the one a fresh render of the
+     * finished message would have. Only the row changes; the reasoning trace
+     * and content stay untouched.
+     */
+    /**
+     * @returns {boolean} true when the live element ends up with the action
+     * row a fresh render of the finished message would have (or the fresh
+     * render has none either); false when the swap could not be made.
+     */
+    replaceAssistantActionsRow(messageEl, message) {
+        const currentRows = [...messageEl.querySelectorAll('.assistant-actions-anchor')];
+        const session = this.app.getCurrentSession();
+        const helpers = {
+            processContentWithLatex: this.app.processContentWithLatex.bind(this.app),
+            formatTime: this.app.formatTime.bind(this.app)
+        };
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = window.buildMessageHTML(message, helpers, this.app.state.models, session?.model);
+        const freshRows = [...tempDiv.querySelectorAll('.assistant-actions-anchor')];
+        const freshHasRow = freshRows.some(row => row.classList.contains('assistant-actions-row'));
+        if (currentRows.some(row => row.classList.contains('assistant-actions-placeholder'))) {
+            currentRows.forEach((row, index) => {
+                const fresh = freshRows[index];
+                if (row.classList.contains('assistant-actions-placeholder') && fresh) row.replaceWith(fresh);
+            });
+        }
+        const liveHasRow = Boolean(messageEl.querySelector('.assistant-actions-row'));
+        return liveHasRow || !freshHasRow;
     }
 
     /**

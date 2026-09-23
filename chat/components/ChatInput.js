@@ -1,9 +1,12 @@
+import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ChatInput Component
  * Manages the chat input area including textarea auto-resize,
  * send button state, search toggle UI, and settings dropdown.
  */
 
+import { setupInfoTooltips } from './InfoTooltips.js';
 import themeManager from '../services/themeManager.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { exportAllData, exportChats } from '../services/globalExport.js';
@@ -37,8 +40,13 @@ import {
 } from '../domain/modelSelection.js';
 
 const MESSAGE_INPUT_MAX_HEIGHT_PX = 300;
+
+/** Blank lines at either end of a paste are never wanted; inner text is. */
+export function trimPastedText(text) {
+    return String(text).replace(/\r\n?/g, '\n').replace(/^(?:[ \t]*\n)+/, '').replace(/(?:\n[ \t]*)+$/, '');
+}
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
-const SETTINGS_MENU_WIDTH_PX = 260;
+const SETTINGS_MENU_WIDTH_PX = 340;
 
 export default class ChatInput {
     /**
@@ -50,6 +58,7 @@ export default class ChatInput {
             lastTabAt: 0,
             timer: null,
             isRunning: false,
+            draftRevision: 0,
             ctrlHeld: false,
             ctrlPinned: false
         };
@@ -91,6 +100,44 @@ export default class ChatInput {
         this.scrubberUndoState = null;
     }
 
+    refreshFeatureAvailability() {
+        const compactScrub = document.getElementById('compact-scrub-btn');
+        if (compactScrub) {
+            compactScrub.disabled = !this.supportsFeature('scrubber');
+            compactScrub.title = compactScrub.disabled ? this.getFeatureUnavailableReason('scrubber') : '';
+        }
+        this.updateMemoryToggleUI();
+        this.refreshMultiModelSettingsUI();
+        this.refreshMemorySettingsUI();
+        this.app.memoryEditor?.handleFeatureAvailabilityChanged?.();
+    }
+
+    supportsFeature(feature, session = this.app.getCurrentSession?.() || null) {
+        return this.app.features?.[feature] !== false
+            && this.app.supportsFeature?.(feature, session) !== false;
+    }
+
+    getFeatureUnavailableReason(feature) {
+        return this.app.getFeatureUnavailableReason?.(feature)
+            || 'This feature is unavailable in the current payment mode.';
+    }
+
+    requireFeature(feature) {
+        if (this.supportsFeature(feature)) return true;
+        this.app.showToast?.(this.getFeatureUnavailableReason(feature), 'info', 4000);
+        return false;
+    }
+
+    isMemoryAvailable() {
+        return this.supportsFeature('memory') && this.app.memoryFeatureEnabled !== false;
+    }
+
+    getMemoryUnavailableReason() {
+        return this.supportsFeature('memory')
+            ? 'Memory is off in settings.'
+            : this.getFeatureUnavailableReason('memory');
+    }
+
     getComposerToolElements() {
         return {
             toolsContainer: document.getElementById('composer-more-menu'),
@@ -113,7 +160,11 @@ export default class ChatInput {
         if (!toolsContainer || !fileAction || !settingsControl || !settingsActions || !searchToggle) return;
 
         toolsContainer.append(fileAction, settingsControl);
+        // Web search is a switch in the panel's Tools section now; the old
+        // On/Off row is kept in the DOM (its state logic lives on it) but
+        // no longer shown at the foot of the panel.
         settingsActions.append(searchToggle);
+        searchToggle.hidden = true;
     }
 
     applyComposerLayout() {
@@ -133,28 +184,44 @@ export default class ChatInput {
     }
 
 
+    resizeMessageInput() {
+        const input = this.app.elements.messageInput;
+        this.app.resetMessageInputLayout();
+        const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
+        const expandedMax = Math.floor(window.innerHeight * 0.55);
+        const maxHeight = isExpanded ? Math.max(MESSAGE_INPUT_MAX_HEIGHT_PX, expandedMax) : MESSAGE_INPUT_MAX_HEIGHT_PX;
+        // When expanded, also consider diff preview's scroll height for proper sizing
+        let contentHeight = input.scrollHeight;
+        if (isExpanded && this.app.elements.scrubberPreviewDiff) {
+            const diffHeight = this.app.elements.scrubberPreviewDiff.scrollHeight;
+            if (diffHeight > 0) {
+                contentHeight = Math.max(contentHeight, diffHeight);
+            }
+        }
+        input.style.maxHeight = `${maxHeight}px`;
+        input.style.height = Math.min(contentHeight, maxHeight) + 'px';
+        this.syncScrubberPreviewHeight();
+    }
+
     /**
      * Sets up all event listeners for the input area controls.
      */
     setupEventListeners() {
+        setupInfoTooltips(this.app.elements.settingsMenu);
+        this.responsiveComposerCleanup?.();
+        this.responsiveComposerCleanup = setupResponsiveComposer({
+            input: this.app.elements.messageInput,
+            onScrub: () => {
+                hideSurface(this.app.elements.settingsMenu);
+                this.app.elements.settingsBtn.setAttribute('aria-expanded', 'false');
+                void this.runScrubberShortcut();
+            }
+        });
+        this.app.elements.messageInput.addEventListener('paste', event => this.handleTextPaste(event));
         // Auto-resize textarea and clear file undo stack on text input
         this.app.elements.messageInput.addEventListener('input', () => {
-            const input = this.app.elements.messageInput;
-            this.app.resetMessageInputLayout();
-            const isExpanded = this.app.elements.inputCard?.classList.contains('scrubber-preview-expanded');
-            const expandedMax = Math.floor(window.innerHeight * 0.55);
-            const maxHeight = isExpanded ? Math.max(MESSAGE_INPUT_MAX_HEIGHT_PX, expandedMax) : MESSAGE_INPUT_MAX_HEIGHT_PX;
-            // When expanded, also consider diff preview's scroll height for proper sizing
-            let contentHeight = input.scrollHeight;
-            if (isExpanded && this.app.elements.scrubberPreviewDiff) {
-                const diffHeight = this.app.elements.scrubberPreviewDiff.scrollHeight;
-                if (diffHeight > 0) {
-                    contentHeight = Math.max(contentHeight, diffHeight);
-                }
-            }
-            input.style.maxHeight = `${maxHeight}px`;
-            input.style.height = Math.min(contentHeight, maxHeight) + 'px';
-            this.syncScrubberPreviewHeight();
+            this.scrubberState.draftRevision += 1;
+            this.resizeMessageInput();
             this.app.updateInputState();
             // Clear file undo stack - text input should take undo precedence
             this.app.fileUndoStack = [];
@@ -216,6 +283,7 @@ export default class ChatInput {
             if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
                 return;
             }
+            if (!this.supportsFeature('scrubber')) return;
             e.preventDefault();
             this.handleScrubberTabKeydown();
         });
@@ -298,26 +366,40 @@ export default class ChatInput {
             this.hideScrubberPreview();
         });
 
-        // Search toggle functionality
-        this.app.elements.searchToggle.addEventListener('click', async () => {
+        // Search toggle functionality — the composer's own control and the
+        // Tools switch in the settings panel flip the same state.
+        const toggleSearch = async () => {
             this.app.searchEnabled = !this.app.searchEnabled;
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
             await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
-        });
+        };
+        this.app.elements.searchToggle.addEventListener('click', toggleSearch);
+        const searchSettingToggle = document.getElementById('search-setting-toggle');
+        if (searchSettingToggle) {
+            searchSettingToggle.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                await toggleSearch();
+            });
+        }
 
         if (this.app.elements.memoryToggle) {
             this.app.elements.memoryToggle.addEventListener('click', async (e) => {
                 const button = e.target.closest('.chat-mode-toggle-btn');
-                if (!button) return;
+                if (!button || button.disabled) return;
 
                 const mode = button.dataset.modeOption || 'chat';
                 const isParallel = mode === 'parallel';
+                // Chat remains the selected no-op in runtimes without Parallel.
+                if (!this.supportsFeature('council') && !isParallel) return;
+                if (!this.requireFeature('council')) return;
                 const container = this.app.elements.memoryToggle;
                 container.classList.add('sliding');
                 setTimeout(() => container.classList.remove('sliding'), 250);
 
+                // An explicit mode choice: review no longer owns the mode.
+                this.parallelEnteredByReview?.delete(this.app.getCurrentSession()?.id || 'pending');
                 if (isParallel) {
                     await this.setCouncilModeFromComposer(true);
                 } else {
@@ -362,26 +444,40 @@ export default class ChatInput {
             const menu = this.app.elements.settingsMenu;
             const btn = this.app.elements.settingsBtn;
             const isHidden = menu.classList.contains('hidden');
+            btn.setAttribute('aria-expanded', String(isHidden));
 
             if (isHidden) {
                 const btnRect = btn.getBoundingClientRect();
                 // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
                 document.body.appendChild(menu);
-                menu.classList.remove('hidden');
+                showSurface(menu, 'dropdown');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
-                // Position relative to settings button
-                menu.style.left = `${btnRect.left}px`;
-                menu.style.bottom = `${window.innerHeight - btnRect.top + 8}px`;
-                menu.style.width = `${SETTINGS_MENU_WIDTH_PX}px`;
-                menu.style.minWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
-                menu.style.maxWidth = `${SETTINGS_MENU_WIDTH_PX}px`;
+                // Centre the panel over the gear button, clamped so it never
+                // leaves the viewport, and scroll instead of growing past the top.
+                const viewportMargin = 12;
+                const viewport = window.visualViewport;
+                const viewTop = viewport?.offsetTop || 0;
+                const viewHeight = viewport?.height || window.innerHeight;
+                const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
+                const centred = btnRect.left + btnRect.width / 2 - width / 2;
+                const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
+                const availableAbove = btnRect.top - viewTop - viewportMargin - 8;
+                const bottom = window.innerHeight - btnRect.top + 8;
+                menu.style.left = `${left}px`;
+                menu.style.bottom = availableAbove >= 220 ? `${bottom}px` : 'auto';
+                menu.style.top = availableAbove >= 220 ? 'auto' : `${viewTop + viewportMargin}px`;
+                menu.style.width = `${width}px`;
+                menu.style.minWidth = `${width}px`;
+                menu.style.maxWidth = `${width}px`;
+                menu.style.maxHeight = `${availableAbove >= 220 ? availableAbove : viewHeight - viewportMargin * 2}px`;
+                menu.style.overflowY = 'auto';
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
                 this.refreshMultiModelSettingsUI();
             } else {
-                menu.classList.add('hidden');
+                hideSurface(menu);
                 btn.classList.remove('tooltip-disabled');
             }
         });
@@ -476,6 +572,7 @@ export default class ChatInput {
             modeSelect.addEventListener('click', (event) => event.stopPropagation());
             modeSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (!this.requireFeature('council')) return;
                 const session = this.app.getCurrentSession();
                 const members = this.getMultiModelMembersForSelection();
                 const synthesisModel = this.getCouncilSynthesisModelForSelection();
@@ -517,6 +614,7 @@ export default class ChatInput {
             synthesisSelect.addEventListener('click', (event) => event.stopPropagation());
             synthesisSelect.addEventListener('change', async (event) => {
                 event.stopPropagation();
+                if (!this.requireFeature('council')) return;
                 if (this.councilReviewModelSelect) {
                     this.councilReviewModelSelect.value = event.target.value;
                 }
@@ -590,7 +688,7 @@ export default class ChatInput {
                     this.handleImportMemory();
                     return; // Don't close menu until file is selected
                 }
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
             }
         });
 
@@ -637,7 +735,7 @@ export default class ChatInput {
         //     if (session) {
         //         await this.app.data.deleteSessionMessages(session.id);
         //         this.app.renderMessages();
-        //         this.app.elements.settingsMenu.classList.add('hidden');
+        //         hideSurface(this.app.elements.settingsMenu);
         //     }
         // });
 
@@ -653,12 +751,12 @@ export default class ChatInput {
         // Note: Toggle controls inside the menu use stopPropagation() to prevent this from firing
         document.addEventListener('click', () => {
             if (!this.app.elements.settingsMenu.classList.contains('hidden')) {
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
                 this.app.elements.settingsBtn.classList.remove('tooltip-disabled');
             }
             // Also close session menus
             document.querySelectorAll('.session-menu').forEach(menu => {
-                menu.classList.add('hidden');
+                hideSurface(menu);
             });
         });
 
@@ -690,6 +788,10 @@ export default class ChatInput {
     }
 
     handleScrubberTabKeydown() {
+        if (!this.requireFeature('scrubber')) {
+            this.resetScrubberTabShortcutState();
+            return;
+        }
         if (!this.isMessageInputFocused()) {
             this.resetScrubberTabShortcutState();
             return;
@@ -761,6 +863,31 @@ export default class ChatInput {
         this.updateScrubberPreviewHint();
     }
 
+    /**
+     * Pasted text arrives with whatever a page or message bubble wrapped it
+     * in — most often a run of trailing newlines, which the composer would
+     * grow to hold as empty lines. Trim blank lines at both ends; keep the
+     * inside exactly as copied. Files and rich clipboards are handled by the
+     * document-level paste handler, which lets plain text through natively.
+     */
+    handleTextPaste(event) {
+        const clipboard = event.clipboardData;
+        if (!clipboard || Array.from(clipboard.items || []).some(item => item.kind === 'file')) return;
+        const raw = clipboard.getData('text/plain');
+        if (!raw) return;
+        const text = trimPastedText(raw);
+        if (text === raw) return;
+        event.preventDefault();
+        const input = event.currentTarget;
+        // execCommand keeps the browser's own undo history for the paste.
+        const inserted = typeof document.execCommand === 'function'
+            && document.execCommand('insertText', false, text);
+        if (!inserted) {
+            input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
     resizeInputForExpandedPreview() {
         const input = this.app.elements.messageInput;
         const diffPreview = this.app.elements.scrubberPreviewDiff;
@@ -798,84 +925,83 @@ export default class ChatInput {
     }
 
     async runScrubberShortcut() {
-        if (this.app.features?.scrubber === false) return;
-        const text = this.app.elements.messageInput.value || '';
+        if (!this.requireFeature('scrubber') || this.scrubberState.isRunning) return;
+        const input = this.app.elements.messageInput;
+        const text = input.value || '';
         if (!text.trim()) {
             this.app.showToast('Nothing to scrub', 'error');
             return;
         }
 
+        let session = this.app.getCurrentSession();
+        const navigationGeneration = this.app.sessionNavigationGeneration;
+        const draftRevision = this.scrubberState.draftRevision;
+        const original = this.app.scrubberPending?.original || text;
+        const operation = this.app.beginFeatureOperation('scrubber', session);
+        if (!operation) {
+            this.app.showToast?.('Wait for the current chat action to finish before scrubbing.', 'info');
+            return;
+        }
         const modeLabel = scrubberService.getModeLabel ? scrubberService.getModeLabel() : 'confidential model';
         const stopToast = this.app.showLoadingToast?.(`Scrubbing input query with ${modeLabel}`);
-        if (this.app.elements.inputCard) {
-            this.app.elements.inputCard.classList.add('scrubbing');
-        }
+        this.app.elements.inputCard?.classList.add('scrubbing');
         this.scrubberState.isRunning = true;
+        const ownsDraft = () => this.app.sessionNavigationGeneration === navigationGeneration
+            && this.app.getCurrentSession()?.id === session?.id
+            && this.scrubberState.draftRevision === draftRevision
+            && input.value === text;
         try {
-            let currentSession = this.app.getCurrentSession();
-            if (!currentSession && typeof this.app.createSession === 'function') {
-                await this.app.createSession();
-                currentSession = this.app.getCurrentSession();
+            if (!session) {
+                let bound = false;
+                await this.app.createSession('New Chat', {
+                    onCreated: created => {
+                        session = created;
+                        bound = this.app.bindFeatureOperation(operation, created);
+                    }
+                });
+                if (!session) return;
+                if (!bound) {
+                    this.app.showToast?.(this.getFeatureUnavailableReason('scrubber'), 'info', 4000);
+                    return;
+                }
             }
-            if (!currentSession) {
-                throw new Error('No session available for scrubber key.');
+            if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
+            // The confidential service does not support aborting its transport.
+            // Keep the reservation through its actual completion, and discard
+            // a late result when its captured chat or draft no longer owns it.
+            const result = await scrubberService.redactPrompt(text, session, {
+                onTicketSpent: count => this.app.showToast?.(`${count} ticket${count === 1 ? '' : 's'} used for scrubbing`, 'info', 4000)
+            });
+            if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
+            if (!result?.success || !result.text) {
+                this.app.showToast(result?.error || 'Scrubber failed', 'error');
+                return;
             }
-            const result = await scrubberService.redactPrompt(text, currentSession);
-            if (result?.success && result.text) {
-                const hasChanges = text.trim() !== result.text.trim();
 
-                this.app.elements.messageInput.value = result.text;
-                this.app.elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
-                // Scroll to top and place cursor at the beginning
-                this.app.elements.messageInput.scrollTop = 0;
-                this.app.elements.messageInput.setSelectionRange(0, 0);
-
-                if (hasChanges) {
-                    const existingOriginal = this.app.scrubberPending?.original;
-                    this.app.scrubberPending = {
-                        original: existingOriginal || text,
-                        redacted: result.text,
-                        timestamp: Date.now()
-                    };
-                    this.app.showToast('PII removed', 'success');
-                } else {
-                    this.app.scrubberPending = null;
-                    this.app.showToast('No PII detected', 'success');
-                }
-
-                this.updateScrubberHintVisibility();
-                this.updateScrubberPreviewHintVisibility();
-
-                if (typeof stopToast === 'function') {
-                    stopToast();
-                }
-                if (this.app.elements.inputCard) {
-                    this.app.elements.inputCard.classList.remove('scrubbing');
-                }
-                this.scrubberDiffState.previewRendered = false;
-            } else {
-                if (typeof stopToast === 'function') {
-                    stopToast();
-                }
-                if (this.app.elements.inputCard) {
-                    this.app.elements.inputCard.classList.remove('scrubbing');
-                }
-                const errorMsg = result?.error || 'Scrubber failed';
-                this.app.showToast(errorMsg, 'error');
-            }
+            const hasChanges = text.trim() !== result.text.trim();
+            input.value = result.text;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.scrollTop = 0;
+            input.setSelectionRange(0, 0);
+            this.app.scrubberPending = hasChanges ? {
+                original,
+                redacted: result.text,
+                timestamp: Date.now()
+            } : null;
+            this.app.showToast(hasChanges ? 'PII removed' : 'No PII detected', 'success');
+            this.updateScrubberHintVisibility();
+            this.updateScrubberPreviewHintVisibility();
+            this.scrubberDiffState.previewRendered = false;
         } catch (error) {
-            console.error('Scrubber shortcut failed:', error);
-            if (typeof stopToast === 'function') {
-                stopToast();
+            if (ownsDraft() && !operation.signal.aborted) {
+                console.error('Scrubber shortcut failed:', error);
+                this.app.showToast(error?.message || 'Scrubber failed', 'error');
             }
-            if (this.app.elements.inputCard) {
-                this.app.elements.inputCard.classList.remove('scrubbing');
-            }
-            // Show specific error message if available
-            const errorMsg = error?.message || 'Scrubber failed';
-            this.app.showToast(errorMsg, 'error');
         } finally {
+            stopToast?.();
+            this.app.elements.inputCard?.classList.remove('scrubbing');
             this.scrubberState.isRunning = false;
+            this.app.finishFeatureOperation(operation);
         }
     }
     showScrubberPreview(options = {}) {
@@ -1569,10 +1695,19 @@ export default class ChatInput {
         const input = this.app.elements.messageInput;
         if (!hint || !input) return;
 
+        if (this.scrubberHintHtml === undefined) this.scrubberHintHtml = hint.innerHTML;
+        const supported = this.supportsFeature('scrubber');
+        if (supported && hint.dataset.featureUnavailable === 'true') {
+            hint.innerHTML = this.scrubberHintHtml;
+        } else if (!supported && hint.dataset.featureUnavailable !== 'true') {
+            hint.textContent = '';
+        }
+        hint.dataset.featureUnavailable = String(!supported);
+        hint.title = '';
         const len = (input.value || '').length;
         // Hide hint completely after scrubbing (when tooltip can show)
         const hasPending = this.app.scrubberPending?.redacted === input.value;
-        if (hasPending) {
+        if (!supported || hasPending) {
             hint.classList.add('hint-hidden');
             hint.classList.remove('faded');
             input.classList.remove('hint-visible');
@@ -1616,10 +1751,16 @@ export default class ChatInput {
             inputValue === pending.redacted &&
             pending.original.trim() !== pending.redacted.trim();
 
+        const wasPending = this.app.elements.inputCard.classList.contains('has-scrubber-pending');
         if (hasMeaningfulDiff) {
             this.app.elements.inputCard.classList.add('has-scrubber-pending');
         } else {
             this.app.elements.inputCard.classList.remove('has-scrubber-pending');
+        }
+        // Hint padding changes wrapping after a scrub, without a new input event.
+        if (wasPending !== Boolean(hasMeaningfulDiff) && this.app.elements.messageInput) {
+            this.resizeMessageInput();
+            this.app.updateToastPosition?.();
         }
     }
 
@@ -1713,6 +1854,7 @@ export default class ChatInput {
         if (scrubberSelect) {
             scrubberSelect.addEventListener('click', (event) => event.stopPropagation());
             scrubberSelect.addEventListener('change', async (event) => {
+                if (!this.requireFeature('scrubber')) return;
                 const modelId = event.target.value;
                 if (modelId) {
                     await scrubberService.setSelectedModel(modelId);
@@ -1726,6 +1868,7 @@ export default class ChatInput {
         if (memoryAgentSelect) {
             memoryAgentSelect.addEventListener('click', (event) => event.stopPropagation());
             memoryAgentSelect.addEventListener('change', async (event) => {
+                if (!this.isMemoryAvailable()) return;
                 const modelId = event.target.value;
                 if (modelId) {
                     await this.app.setMemoryAgentModel(modelId);
@@ -1743,6 +1886,7 @@ export default class ChatInput {
 
         toggle.addEventListener('click', async (event) => {
             event.stopPropagation();
+            if (!this.requireFeature('memory')) return;
             const nextValue = this.app.memoryFeatureEnabled === false;
             await this.app.setMemoryFeatureEnabled(nextValue);
             this.refreshMemorySettingsUI();
@@ -1804,7 +1948,7 @@ export default class ChatInput {
 
         toggle.addEventListener('click', async (event) => {
             event.stopPropagation();
-            if (this.app.memoryFeatureEnabled === false) {
+            if (!this.isMemoryAvailable()) {
                 this.refreshMemorySettingsUI();
                 return;
             }
@@ -1819,18 +1963,40 @@ export default class ChatInput {
         toggle.setAttribute('aria-checked', enabled ? 'true' : 'false');
         toggle.classList.toggle('switch-active', enabled);
         toggle.classList.toggle('switch-inactive', !enabled);
-        toggle.title = enabled ? enabledTitle : disabledTitle;
-        toggle.dataset.tooltip = enabled ? enabledTitle : disabledTitle;
+        // The row label names the switch and aria-checked carries its state;
+        // a native title on top of that showed two tooltips at once. The
+        // bubble says what the switch does (the markup's description, kept
+        // on first sight), not its state, which the switch already shows.
+        toggle.removeAttribute('title');
+        if (!toggle.dataset.description && toggle.dataset.tooltip) toggle.dataset.description = toggle.dataset.tooltip;
+        toggle.dataset.tooltip = toggle.dataset.description || (enabled ? enabledTitle : disabledTitle);
+    }
+
+    /** Dims a gear row and puts the reason in its switch's bubble while the
+     *  feature is out in this payment mode; restores the description after. */
+    markSwitchAvailability(toggle, available, reason) {
+        if (!toggle) return;
+        toggle.closest?.('.settings-row')?.classList?.toggle?.('is-disabled', !available);
+        toggle.dataset.featureUnavailable = String(!available);
+        if (!available) toggle.dataset.tooltip = reason;
     }
 
     refreshMemorySettingsUI() {
-        const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
+        const memorySupported = this.supportsFeature('memory');
+        const memoryFeatureEnabled = this.isMemoryAvailable();
+        const memoryUnavailableReason = this.getMemoryUnavailableReason();
+        const featureToggle = document.getElementById('memory-feature-toggle');
         this.updateSwitchToggleUI(
-            document.getElementById('memory-feature-toggle'),
-            memoryFeatureEnabled,
-            'Memory feature is on',
-            'Memory feature is off'
+            featureToggle,
+            this.app.memoryFeatureEnabled !== false,
+            'Save memories is on',
+            'Save memories is off'
         );
+        if (featureToggle) {
+            featureToggle.disabled = !memorySupported;
+            featureToggle.setAttribute('aria-disabled', String(!memorySupported));
+            this.markSwitchAvailability(featureToggle, memorySupported, memoryUnavailableReason);
+        }
 
         const memoryAutoIncludeToggle = document.getElementById('memory-auto-include-toggle');
         const effectiveMemoryAutoInclude = memoryFeatureEnabled && this.app.memoryAutoInclude;
@@ -1838,14 +2004,35 @@ export default class ChatInput {
             memoryAutoIncludeToggle,
             effectiveMemoryAutoInclude,
             'Always attach retrieval is on',
-            memoryFeatureEnabled ? 'Always attach retrieval is off' : 'Memory is off in settings'
+            memoryFeatureEnabled ? 'Always attach retrieval is off' : memoryUnavailableReason
         );
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
             memoryAutoIncludeToggle.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
+            this.markSwitchAvailability(memoryAutoIncludeToggle, memoryFeatureEnabled, memoryUnavailableReason);
         }
 
         if (this.scrubberModelSelect) {
+            const scrubberSupported = this.supportsFeature('scrubber');
+            this.scrubberModelSelect.disabled = !scrubberSupported;
+            this.scrubberModelSelect.setAttribute('aria-disabled', String(!scrubberSupported));
+            this.scrubberModelSelect.title = scrubberSupported
+                ? 'Privacy scrubber model'
+                : '';
+            const control = this.scrubberModelSelect.closest?.('.settings-select-help');
+            const tooltip = control?.querySelector?.('.settings-select-tooltip');
+            if (control && tooltip) {
+                control.dataset.featureUnavailable = String(!scrubberSupported);
+                tooltip.hidden = scrubberSupported;
+                tooltip.textContent = scrubberSupported ? '' : this.getFeatureUnavailableReason('scrubber');
+                if (scrubberSupported) {
+                    control.removeAttribute('tabindex');
+                    control.removeAttribute('aria-describedby');
+                } else {
+                    control.setAttribute('tabindex', '0');
+                    control.setAttribute('aria-describedby', tooltip.id);
+                }
+            }
             const selectedScrubberModel = scrubberService.getSelectedModel();
             if (selectedScrubberModel) {
                 this.scrubberModelSelect.value = selectedScrubberModel;
@@ -1859,7 +2046,8 @@ export default class ChatInput {
             this.memoryAgentModelSelect.disabled = !memoryFeatureEnabled;
             this.memoryAgentModelSelect.title = memoryFeatureEnabled
                 ? 'Memory agent model'
-                : 'Memory is off in settings';
+                : memoryUnavailableReason;
+            this.memoryAgentModelSelect.closest?.('.settings-row')?.classList?.toggle?.('is-disabled', !memoryFeatureEnabled);
         }
 
         document.querySelectorAll('[data-memory-requires-feature]').forEach((element) => {
@@ -1867,8 +2055,9 @@ export default class ChatInput {
             element.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             element.title = memoryFeatureEnabled
                 ? (element.dataset.enabledTitle || '')
-                : 'Memory is off in settings';
+                : memoryUnavailableReason;
         });
+        this.updateScrubberHintVisibility();
     }
 
     /**
@@ -1995,17 +2184,24 @@ export default class ChatInput {
         if (stateLabel) {
             stateLabel.textContent = this.app.searchEnabled ? 'On' : 'Off';
         }
+        const settingToggle = document.getElementById('search-setting-toggle');
+        if (settingToggle) {
+            settingToggle.setAttribute('aria-checked', this.app.searchEnabled ? 'true' : 'false');
+            settingToggle.classList.toggle('switch-active', this.app.searchEnabled);
+            settingToggle.classList.toggle('switch-inactive', !this.app.searchEnabled);
+        }
     }
 
     closeSettingsMenu() {
         const menu = this.app.elements.settingsMenu;
         const button = this.app.elements.settingsBtn;
         if (!menu) return;
-        menu.classList.add('hidden');
+        hideSurface(menu);
         button?.classList.remove('tooltip-disabled');
     }
 
     async setMemoryContextEnabled(enabled) {
+        if (!this.requireFeature('memory')) return;
         if (enabled === true && this.app.memoryFeatureEnabled === false) {
             this.app.memoryMode = false;
             this.updateMemoryToggleUI();
@@ -2018,9 +2214,9 @@ export default class ChatInput {
     }
 
     async openMemoryContextPanel() {
-        if (this.app.memoryFeatureEnabled === false) {
+        if (!this.isMemoryAvailable()) {
             this.updateMemoryToggleUI();
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
         await this.setMemoryContextEnabled(true);
@@ -2031,9 +2227,9 @@ export default class ChatInput {
         event.preventDefault();
         event.stopPropagation();
 
-        if (this.app.memoryFeatureEnabled === false) {
+        if (!this.isMemoryAvailable()) {
             this.updateMemoryToggleUI();
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
 
@@ -2053,13 +2249,14 @@ export default class ChatInput {
         const container = this.app.elements.memoryToggle;
         if (!container) return;
 
-        const memoryFeatureEnabled = this.app.memoryFeatureEnabled !== false;
+        const memoryFeatureEnabled = this.isMemoryAvailable();
+        const councilSupported = this.supportsFeature('council');
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
         const isCouncilEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const mode = this.setComposerModeDataset(isCouncilEnabled);
+        const mode = this.setComposerModeDataset(councilSupported && isCouncilEnabled);
         const isFirstRender = container.style.visibility === 'hidden';
         if (isFirstRender) {
             const indicator = container.querySelector('.chat-mode-toggle-indicator');
@@ -2075,30 +2272,35 @@ export default class ChatInput {
 
         container.querySelectorAll('.chat-mode-toggle-btn').forEach((button) => {
             button.setAttribute('aria-checked', String(button.dataset.modeOption === mode));
-            button.setAttribute('aria-disabled', 'false');
-            button.tabIndex = 0;
+            const isParallel = button.dataset.modeOption === 'parallel';
+            button.disabled = !councilSupported && isParallel;
+            button.setAttribute('aria-disabled', String(button.disabled));
+            button.dataset.tooltip = button.disabled
+                ? this.getFeatureUnavailableReason('council')
+                : (isParallel ? 'Parallel' : 'Chat');
+            // The app tooltip says it; a native title would say it twice.
+            button.removeAttribute('title');
+            button.tabIndex = button.disabled ? -1 : 0;
         });
 
         const memoryButton = this.app.elements.memoryContextToggle;
         if (memoryButton) {
             const memoryEnabled = memoryFeatureEnabled && this.app.memoryMode === true;
             memoryButton.setAttribute('aria-checked', String(memoryEnabled));
+            memoryButton.disabled = !memoryFeatureEnabled;
             memoryButton.setAttribute('aria-disabled', String(!memoryFeatureEnabled));
             memoryButton.classList.toggle('memory-active', memoryEnabled);
             memoryButton.classList.toggle('memory-disabled', !memoryFeatureEnabled);
-            memoryButton.title = memoryFeatureEnabled
-                ? (memoryEnabled
-                    ? 'Auto-attach memory is on. Double-click to open memory.'
-                    : 'Auto-attach memory is off. Double-click to open memory.')
-                : 'Memory is off in settings.';
+            // The button carries its own hover card; no native title on top of it.
+            memoryButton.removeAttribute('title');
 
             const tooltipText = memoryButton.querySelector('[data-memory-tooltip-text]');
             const tooltipDetail = memoryButton.querySelector('[data-memory-tooltip-detail]');
             const tooltipBeta = memoryButton.querySelector('[data-memory-tooltip-beta]');
             if (tooltipText) {
                 tooltipText.textContent = memoryFeatureEnabled
-                    ? 'Auto-attach relevant context'
-                    : 'Memory is off in settings';
+                    ? 'Use memories in replies'
+                    : this.getMemoryUnavailableReason();
             }
             if (tooltipDetail) {
                 tooltipDetail.classList.toggle('hidden', !memoryFeatureEnabled);
@@ -2110,6 +2312,7 @@ export default class ChatInput {
     }
 
     async setCouncilModeFromComposer(enabled, options = {}) {
+        if (!this.requireFeature('council')) return;
         const members = this.getMultiModelMembersForSelection({ preferControlSelection: false });
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled
@@ -2178,13 +2381,26 @@ export default class ChatInput {
         await Promise.all(settingsWrites);
     }
 
+    /**
+     * Council review needs Parallel, so turning it on from Chat switches the
+     * conversation into Parallel. That switch is remembered per conversation:
+     * turning review off again returns to Chat, while a conversation that was
+     * already in Parallel stays there. Choosing a mode on the composer's own
+     * toggle clears the memory, since that is the person's explicit choice.
+     */
     async setCouncilReviewEnabledFromSettings(enabled) {
+        if (!this.requireFeature('council')) return;
         const session = this.app.getCurrentSession();
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
         const currentlyMultiModelEnabled = session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
             : pendingCouncilConfig?.enabled === true;
-        const nextMultiModelEnabled = enabled || currentlyMultiModelEnabled;
+        const scope = session?.id || 'pending';
+        this.parallelEnteredByReview ||= new Set();
+        if (enabled && !currentlyMultiModelEnabled) this.parallelEnteredByReview.add(scope);
+        const leaveParallelToo = !enabled && this.parallelEnteredByReview.has(scope);
+        if (!enabled) this.parallelEnteredByReview.delete(scope);
+        const nextMultiModelEnabled = enabled || (currentlyMultiModelEnabled && !leaveParallelToo);
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
         const outputMode = enabled ? COUNCIL_OUTPUT_SYNTHESIS : COUNCIL_OUTPUT_PARALLEL;
@@ -2194,9 +2410,10 @@ export default class ChatInput {
             synthesisModel,
             outputMode,
             // Enabling Council review from Chat is also an explicit switch
-            // into multi-model mode. Changes within Parallel do not rewrite a
-            // newer Chat/Parallel preference chosen in another tab.
-            persistMode: enabled && !currentlyMultiModelEnabled
+            // into multi-model mode, and turning it off again is the switch
+            // back. Changes within Parallel do not rewrite a newer
+            // Chat/Parallel preference chosen in another tab.
+            persistMode: (enabled && !currentlyMultiModelEnabled) || leaveParallelToo
         });
 
         if (!session) {
@@ -2223,6 +2440,7 @@ export default class ChatInput {
     }
 
     async persistCouncilSelectionFromControls() {
+        if (!this.requireFeature('council')) return;
         const session = this.app.getCurrentSession();
         const members = this.getMultiModelMembersForSelection();
         const synthesisModel = this.getCouncilSynthesisModelForSelection();
@@ -2292,7 +2510,7 @@ export default class ChatInput {
 
     closeSettingsMenu() {
         if (!this.app.elements.settingsMenu) return;
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
         this.app.elements.settingsBtn?.classList.remove('tooltip-disabled');
     }
 
@@ -2484,9 +2702,10 @@ export default class ChatInput {
         const synthesisSelect = document.getElementById('multi-model-synthesis-select');
 
         const pendingCouncilConfig = this.app.getPendingCouncilConfig?.();
-        const isEnabled = session
+        const councilSupported = this.supportsFeature('council');
+        const isEnabled = councilSupported && (session
             ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
-            : pendingCouncilConfig?.enabled === true;
+            : pendingCouncilConfig?.enabled === true);
         this.setComposerModeDataset(isEnabled);
         if (inlineContainer) {
             inlineContainer.classList.toggle('hidden', !isEnabled);
@@ -2623,13 +2842,30 @@ export default class ChatInput {
             councilReviewToggle.setAttribute('aria-checked', String(isCouncilReviewEnabled));
             councilReviewToggle.classList.toggle('switch-active', isCouncilReviewEnabled);
             councilReviewToggle.classList.toggle('switch-inactive', !isCouncilReviewEnabled);
-            councilReviewToggle.title = isCouncilReviewEnabled
-                ? 'Council review is on'
-                : 'Council review is off';
+            // The bubble describes the switch; aria-checked carries its state.
+            councilReviewToggle.removeAttribute('title');
         }
 
         if (councilReviewModelRow) {
-            councilReviewModelRow.classList.toggle('hidden', !isCouncilReviewEnabled);
+            // The row is always there, dimmed while review is off: turning the
+            // switch on must not grow the panel under the pointer.
+            councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled || !councilSupported);
+        }
+
+        // In zkAPI mode the Council rows dim and the switch's bubble says
+        // why, so a greyed switch never reads as "off" when it is "not here".
+        const councilReviewRow = document.getElementById('council-review-row');
+        if (councilReviewRow) councilReviewRow.classList.toggle('is-disabled', !councilSupported);
+        if (councilReviewToggle) {
+            if (councilSupported) {
+                if (councilReviewToggle.dataset.availableTooltip) {
+                    councilReviewToggle.dataset.tooltip = councilReviewToggle.dataset.availableTooltip;
+                    delete councilReviewToggle.dataset.availableTooltip;
+                }
+            } else if (!councilReviewToggle.dataset.availableTooltip) {
+                councilReviewToggle.dataset.availableTooltip = councilReviewToggle.dataset.tooltip || '';
+                councilReviewToggle.dataset.tooltip = this.getFeatureUnavailableReason('council');
+            }
         }
 
         if (councilReviewModelSelect) {
@@ -2672,6 +2908,23 @@ export default class ChatInput {
                 synthesisSelect.innerHTML = renderSynthesisOptions();
             }
         }
+        for (const control of [select, inlineSelect, modeSelect, councilReviewToggle,
+            councilReviewModelSelect, synthesisInlineSelect, synthesisSelect]) {
+            if (!control) continue;
+            if (control === councilReviewToggle || control === modeSelect) control.disabled = false;
+            if (!councilSupported) {
+                if (control.dataset.featureUnavailable !== 'true') control.dataset.availableTitle = control.title || '';
+                control.disabled = true;
+                control.title = this.getFeatureUnavailableReason('council');
+            } else if (control.dataset.featureUnavailable === 'true') {
+                control.title = control.dataset.availableTitle || '';
+                delete control.dataset.availableTitle;
+            }
+            control.dataset.featureUnavailable = String(!councilSupported);
+            control.setAttribute('aria-disabled', String(control.disabled));
+        }
+        // The switch has an app bubble; a native title would say it twice.
+        if (councilReviewToggle && !councilSupported) councilReviewToggle.removeAttribute('title');
     }
 
     escapeOptionValue(value) {
@@ -2766,7 +3019,7 @@ export default class ChatInput {
         if (assistantMessages.length === 0) {
             alert('No assistant responses to copy');
             if (buttonElement) {
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
             }
             return;
         }
@@ -2783,14 +3036,14 @@ export default class ChatInput {
                 buttonElement.textContent = '✓ Copied!';
                 setTimeout(() => {
                     buttonElement.textContent = originalText;
-                    this.app.elements.settingsMenu.classList.add('hidden');
+                    hideSurface(this.app.elements.settingsMenu);
                 }, 1500);
             }
         } catch (err) {
             console.error('Failed to copy markdown:', err);
             alert('Failed to copy to clipboard');
             if (buttonElement) {
-                this.app.elements.settingsMenu.classList.add('hidden');
+                hideSurface(this.app.elements.settingsMenu);
             }
         }
     }
@@ -2840,12 +3093,12 @@ export default class ChatInput {
         if (input) {
             input.click();
         }
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
     }
 
     async handleExportMemory() {
-        if (this.app.memoryFeatureEnabled === false) {
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+        if (!this.supportsFeature('memory')) {
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
         if (!this.app.memoryEditor?.exportMemories) {
@@ -2856,15 +3109,15 @@ export default class ChatInput {
     }
 
     handleImportMemory() {
-        if (this.app.memoryFeatureEnabled === false) {
-            this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+        if (!this.supportsFeature('memory')) {
+            this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
             return;
         }
         const input = document.getElementById('memory-import-input');
         if (input) {
             input.click();
         }
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
     }
 
     async applyImportedRuntimePreferences(appliedPreferences = []) {
@@ -2874,7 +3127,7 @@ export default class ChatInput {
         if (applied.has('memoryFeatureEnabled') || applied.has('memoryMode')) {
             const storedMemoryFeatureEnabled = await this.app.data.getSetting('memoryFeatureEnabled');
             const storedMemoryMode = await this.app.data.getSetting('memoryMode');
-            await this.app.setMemoryFeatureEnabled(storedMemoryFeatureEnabled !== false, { persist: false });
+            await this.app.setMemoryFeatureEnabled(storedMemoryFeatureEnabled === true, { persist: false });
             this.app.memoryMode = this.app.memoryFeatureEnabled !== false && storedMemoryMode === true;
             this.updateMemoryToggleUI();
         }
@@ -2935,7 +3188,7 @@ export default class ChatInput {
         if (input) {
             input.click();
         }
-        this.app.elements.settingsMenu.classList.add('hidden');
+        hideSurface(this.app.elements.settingsMenu);
     }
 
     /**
@@ -2977,8 +3230,8 @@ export default class ChatInput {
 
     async processMemoryImportFile(file) {
         try {
-            if (this.app.memoryFeatureEnabled === false) {
-                this.app.showToast?.('Memory is off in settings.', 'info', 3000);
+            if (!this.supportsFeature('memory')) {
+                this.app.showToast?.(this.getMemoryUnavailableReason(), 'info', 3000);
                 return;
             }
             if (!this.app.memoryEditor?.importMemoryFile) {

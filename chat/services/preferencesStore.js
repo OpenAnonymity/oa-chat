@@ -176,7 +176,7 @@ class PreferencesStore {
             {
                 key: PREF_KEYS.theme,
                 storageKey: LOCAL_STORAGE_KEYS.theme,
-                parse: (value) => (value === 'light' || value === 'dark' || value === 'system') ? value : null
+                parse: (value) => (value === 'light' || value === 'dark' || value === 'system') ? value : value === 'purple' ? 'light' : null
             },
             {
                 key: PREF_KEYS.wideMode,

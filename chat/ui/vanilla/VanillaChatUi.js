@@ -8,6 +8,7 @@ import ChatHistoryImportModal from '../../components/ChatHistoryImportModal.js';
 import AccountModal from '../../components/AccountModal.js';
 import MemoryEditor from '../../components/MemoryEditor.js';
 import WelcomePanel from '../../components/WelcomePanel.js';
+import SettingsDialog from '../../components/SettingsDialog.js';
 import ThanksPanel from '../../components/ThanksPanel.js';
 import InPageFind from '../../components/InPageFind.js';
 import shareModals from '../../components/ShareModals.js';
@@ -64,6 +65,7 @@ export default class VanillaChatUi {
             modelPicker: new ModelPicker(this.interfaces.modelPicker),
             chatHistoryImportModal: new ChatHistoryImportModal(componentApp),
             accountModal: createComponent('accountModal', AccountModal),
+            settingsDialog: new SettingsDialog(componentApp),
             memoryEditor: new MemoryEditor(componentApp),
             welcomePanel: createComponent('welcomePanel', WelcomePanel),
             thanksPanel: new ThanksPanel(componentApp),

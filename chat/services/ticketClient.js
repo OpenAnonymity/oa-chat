@@ -31,9 +31,12 @@ import privacyPassProvider from './privacyPass.js';
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import ticketStore from './ticketStore.js';
+import ticketCodeRecoveryStore from './ticketCodeRecoveryStore.js';
+import syncService from './encryptedSyncService.js';
+import accountService from './accountService.js';
+import { TicketCodeRedeemer } from '../application/ticketCodeRedeemer.js';
 import { ORG_API_BASE } from './orgEndpoints.js';
 import {
-    buildTicketIssuanceRequest,
     getStructuredTicketError
 } from '../domain/ticketKeys.js';
 
@@ -523,275 +526,59 @@ class TicketClient {
         );
     }
 
-    async alphaRegister(invitationCode, progressCallback) {
-        console.log('=== Starting alphaRegister ===');
-
-        // Yield to browser rendering pipeline so rAF-driven progress bar can paint
-        const yieldToUI = () => new Promise(resolve => setTimeout(resolve, 0));
-
-        try {
-            if (progressCallback) progressCallback('Validating ticket code...', 1);
-
-            if (!invitationCode || invitationCode.length !== 24) {
-                throw new Error('Invalid ticket code format (must be 24 characters)');
-            }
-
-            const suffix = invitationCode.slice(20, 24);
-            const ticketCount = parseInt(suffix, 16);
-
-            if (isNaN(ticketCount) || ticketCount === 0) {
-                throw new Error('Invalid ticket code: unable to determine ticket count');
-            }
-
-            if (progressCallback) progressCallback('Initializing Privacy Pass...', 2);
-
-            const hasProvider = await this.ppExtension.checkAvailability();
-
-            if (!hasProvider) {
-                throw new Error('Privacy Pass is not available. Please check your configuration.');
-            }
-
-            if (progressCallback) progressCallback('Getting issuer public key...', 3);
-            await yieldToUI();
-
-            // Public key consistency: this endpoint is publicly accessible and
-            // unauthenticated. Any user (or third party) can call it at any time
-            // to record the current public key and compare it against the key used
-            // in their own ticket issuance -- or against keys observed by others.
-            // Since these verification calls are made independently and at
-            // unpredictable times, the org cannot serve per-user keys without
-            // detection. Future: automated transparency log for key consistency.
-            let publicKey;
-            let publicKeyId;
-            try {
-                const { data: keyData } = await networkProxy.fetchWithRetryJson(
-                    `${ORG_API_BASE}/api/ticket/issue/public-key`,
-                    { cache: 'no-store', credentials: 'omit' },
-                    { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
-                );
-                publicKey = keyData.public_key;
-
-                if (!publicKey) {
-                    throw new Error('Station did not return public key');
-                }
-                publicKeyId = await this.ppExtension.getPublicKeyId(publicKey);
-                if (keyData.key_id && keyData.key_id !== publicKeyId) {
-                    throw new Error('Station returned inconsistent ticket key metadata');
-                }
-            } catch (error) {
-                throw new Error(`Failed to get public key: ${error.message}`);
-            }
-
-            if (progressCallback) progressCallback(`Blinding ${ticketCount} tickets...`, 5);
-            await yieldToUI();
-
-            const challenge = await this.ppExtension.createChallenge("oa-station", ["oa-station-api"]);
-
-            const indexedBlindedRequests = [];
-            const clientStates = [];
-
-            // Yield every N tickets so the browser can paint progress updates
-            const blindYieldInterval = Math.max(1, Math.min(8, Math.floor(ticketCount / 50)));
-
-            for (let i = 0; i < ticketCount; i++) {
-                const result = await this.ppExtension.createSingleTokenRequest(publicKey, challenge);
-                const { blindedRequest, state } = result;
-                indexedBlindedRequests.push([i, blindedRequest]);
-                clientStates.push([i, state]);
-
-                if (progressCallback) {
-                    const progressPct = 5 + Math.round(((i + 1) / ticketCount) * 60);
-                    progressCallback(`Blinding tickets... (${i + 1}/${ticketCount})`, progressPct);
-                }
-
-                if (i % blindYieldInterval === 0) await yieldToUI();
-            }
-
-            // Log blinded tickets creation
-            networkLogger.logRequest({
-                type: 'local',
-                method: 'LOCAL',
-                status: 200,
-                action: 'tickets-blind',
-                response: {
-                    ticket_count: ticketCount,
-                    blinded_requests_created: indexedBlindedRequests.length
-                }
-            });
-
-            if (progressCallback) progressCallback('Sending blinded tickets to server for signing...', 65);
-            await yieldToUI();
-
-            // Unlinkability: the org receives the credential and blinded requests here.
-            // It knows "credential X -> N blinded requests" but only ever sees the
-            // blinded form. At redemption (/api/request_key), the org will see finalized
-            // (unblinded) tickets for the first time -- cryptographically unlinkable to
-            // these blinded requests. Even with complete records, the org cannot correlate
-            // issuance to redemption. This is the core guarantee of blind signatures.
-            const registerUrl = `${ORG_API_BASE}/api/alpha-register`;
-            const registerBody = buildTicketIssuanceRequest(
-                invitationCode,
-                indexedBlindedRequests,
-                publicKeyId
-            );
-
-            let signData;
-            try {
-                const { response: signResponse, data } = await networkProxy.fetchWithRetryJson(
-                    registerUrl,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(registerBody)
-                    },
-                    {
-                        context: 'Alpha register',
-                        // Exact blinded batches are replay-safe on the org;
-                        // retrying recovers a response lost after atomic commit.
-                        maxAttempts: 3,
-                        timeoutMs: Math.max(120000, ticketCount * 50)
+    getCodeRedeemer() {
+        if (!this.codeRedeemer) {
+            this.codeRedeemer = new TicketCodeRedeemer({
+                pendingStore: ticketCodeRecoveryStore,
+                privacyPass: this.ppExtension,
+                ticketStore: this.ticketStore,
+                getAccountScope: async () => {
+                    const account = accountService.getState();
+                    if (!account.isReady || (account.accountId && (
+                        !account.sessionVerified || account.status !== 'unlocked' ||
+                        !account.accountScopeReady || !account.ticketSyncReady
+                    ))) throw new Error('Wait for your ticket wallet to finish opening, then retry redemption.');
+                    return syncService.assertAccountDataAccess();
+                },
+                fetchIssuer: async () => {
+                    const { data } = await networkProxy.fetchWithRetryJson(
+                        `${ORG_API_BASE}/api/ticket/issue/public-key`,
+                        { cache: 'no-store', credentials: 'omit' },
+                        { context: 'Public key', maxAttempts: 3, timeoutMs: 10000 }
+                    );
+                    if (!data?.public_key) throw new Error('Station did not return public key');
+                    return data;
+                },
+                submit: async (body, count) => {
+                    const { response, data } = await networkProxy.fetchWithRetryJson(
+                        `${ORG_API_BASE}/api/alpha-register`,
+                        { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+                        { context: 'Alpha register', maxAttempts: 3, timeoutMs: Math.max(120000, count * 50) }
+                    );
+                    if (!response.ok) {
+                        const parsed = getStructuredTicketError(data, 'Unable to redeem this ticket code.');
+                        const error = new Error(parsed.message);
+                        error.code = parsed.code;
+                        error.status = response.status;
+                        throw error;
                     }
-                );
-
-                signData = data;
-
-                // Log the request
-                networkLogger.logRequest({
-                    type: 'ticket',
-                    method: 'POST',
-                    url: registerUrl,
-                    status: signResponse.status,
-                    request: {
-                        headers: { 'Content-Type': 'application/json' },
-                        body: { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
-                    },
-                    response: signData
-                });
-
-                if (!signResponse.ok) {
-                    const parsed = getStructuredTicketError(
-                        signData,
-                        'Server error during registration'
-                    );
-                    const error = new Error(
-                        parsed.code === 'TICKET_KEY_CHANGED'
-                            ? 'The org rotated its ticket signing key before redemption. Your invite was not consumed; please try again.'
-                            : parsed.message
-                    );
-                    error.code = parsed.code || undefined;
-                    error.status = signResponse.status;
-                    error.data = signData;
-                    throw error;
-                }
-            } catch (error) {
-                // Log failed request
-                networkLogger.logRequest({
-                    type: 'ticket',
-                    method: 'POST',
-                    url: registerUrl,
-                    status: 0,
-                    request: {
-                        headers: { 'Content-Type': 'application/json' },
-                        body: { credential: '***', blinded_requests: `${indexedBlindedRequests.length} tickets` }
-                    },
-                    error: error.message
-                });
-                throw error;
-            }
-
-            if (progressCallback) progressCallback('Signed tickets received...', 67);
-
-            const indexedSignedResponses = signData.signed_responses;
-
-            if (signData.key_id && signData.key_id !== publicKeyId) {
-                throw new Error('Ticket signing key changed during invite redemption. Please retry.');
-            }
-
-            if (!indexedSignedResponses || indexedSignedResponses.length === 0) {
-                throw new Error('Station did not return signed responses');
-            }
-
-            // Log receipt of signed tickets
-            networkLogger.logRequest({
-                type: 'local',
-                method: 'LOCAL',
-                status: 200,
-                action: 'tickets-signed',
-                response: {
-                    signed_tickets_received: indexedSignedResponses.length
+                    return data;
                 }
             });
-
-            const responseMap = {};
-            indexedSignedResponses.forEach(([idx, signedResp]) => {
-                responseMap[idx] = signedResp;
-            });
-
-            if (progressCallback) progressCallback('Unblinding tickets...', 67);
-            await yieldToUI();
-
-            const tickets = [];
-
-            // Yield every N tickets so the browser can paint progress updates
-            const unblindYieldInterval = Math.max(1, Math.min(8, Math.floor(clientStates.length / 50)));
-
-            for (let i = 0; i < clientStates.length; i++) {
-                const [idx, state] = clientStates[i];
-
-                if (!(idx in responseMap)) {
-                    throw new Error(`Missing signed response for ticket index ${idx}`);
-                }
-
-                const signedResponse = responseMap[idx];
-                const blindedRequest = indexedBlindedRequests[idx][1];
-
-                const finalizedTicket = await this.ppExtension.finalizeToken(signedResponse, state);
-
-                tickets.push({
-                    blinded_request: blindedRequest,
-                    signed_response: signedResponse,
-                    finalized_ticket: finalizedTicket,
-                    ticket_key_id: publicKeyId,
-                    created_at: new Date().toISOString(),
-                });
-
-                if (progressCallback) {
-                    const progressPct = 67 + Math.round(((i + 1) / clientStates.length) * 30);
-                    progressCallback(`Unblinding tickets... (${i + 1}/${clientStates.length})`, progressPct);
-                }
-
-                if (i % unblindYieldInterval === 0) await yieldToUI();
-            }
-
-            if (progressCallback) progressCallback('Saving tickets...', 97);
-
-            // Log ticket unblinding completion
-            networkLogger.logRequest({
-                type: 'local',
-                method: 'LOCAL',
-                status: 200,
-                action: 'tickets-unblind',
-                response: {
-                    tickets_finalized: tickets.length,
-                    tickets_ready: tickets.length
-                }
-            });
-
-            await this.ticketStore.addTickets(tickets);
-
-            if (progressCallback) progressCallback('Code redeemed!', 100);
-
-            return {
-                success: true,
-                tickets_issued: tickets.length,
-                credential: invitationCode,
-                expires_at: signData.expires_at,
-            };
-
-        } catch (error) {
-            console.error('Alpha register error:', error);
-            throw error;
         }
+        return this.codeRedeemer;
+    }
+
+    alphaRegister(invitationCode, progressCallback) {
+        return this.getCodeRedeemer().run(invitationCode, progressCallback);
+    }
+
+    getPendingCodeRedemption() {
+        return this.getCodeRedeemer().getPending();
+    }
+
+    resumeCodeRedemption(progressCallback) {
+        return this.getCodeRedeemer().run(null, progressCallback);
     }
 
     /**

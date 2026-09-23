@@ -10,7 +10,7 @@ test('buildBaseSharePayload preserves safe memory retrieval failure metadata', (
         updatedAt: '2026-07-02T00:00:01.000Z'
     }, [{
         role: 'assistant',
-        content: 'Memory context was not added this time. Sending without it.',
+        content: 'No added memory. Sending original prompt.',
         timestamp: '2026-07-02T00:00:01.000Z',
         model: 'memory agent',
         isLocalOnly: true,

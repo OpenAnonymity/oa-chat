@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * Welcome Panel Component
  * First-run welcome modal for new users, invite code redemption, and account creation prompt.
@@ -105,7 +106,7 @@ class WelcomePanel {
         this.animateOnNextRender = true;
 
         this.render();
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
         document.documentElement.removeAttribute('data-welcome-hidden');
         this.app?.clearToast?.();
         this.app?.clearUpdateToast?.();
@@ -148,8 +149,7 @@ class WelcomePanel {
         this._dismissEmailCodePopup();
         this.smoothProgress.stop();
 
-        this.overlay.classList.add('hidden');
-        this.overlay.innerHTML = '';
+        hideSurface(this.overlay, { clear: true });
         document.documentElement.setAttribute('data-welcome-hidden', 'true');
         this.overlay.style.alignItems = '';
         this.overlay.style.paddingTop = '';

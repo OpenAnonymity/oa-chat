@@ -1,5 +1,6 @@
 import test, { describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import markedApi from '../../chat/vendor/marked/marked.min.js';
 
 function installBrowser() {
     const keys = ['window', 'location', 'localStorage', 'sessionStorage', 'document', 'fetch', 'requestAnimationFrame'];
@@ -33,6 +34,9 @@ preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
 const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
+const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
+const { default: RightPanel } = await import('../../chat/components/RightPanel.js');
+const { createModelPickerInterface, createComponentAppFacade } = await import('../../chat/ui/appInterface.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
 
@@ -45,6 +49,7 @@ function deferred() {
 function appHarness() {
     return Object.assign(Object.create(ChatApp.prototype), {
         runtime: {},
+        signInPolicy: { required: false },
         state: { currentSessionId: 'one', pendingModelName: 'Model one', models: [], sessions: [],
             sessionsById: new Map([['one', { id: 'one', model: 'Model one' }], ['two', { id: 'two' }]]) },
         elements: { messageInput: { value: 'Original prompt', focus() {} } },
@@ -123,14 +128,516 @@ function streamHarness(stream) {
     return { app, records };
 }
 
+function backendHarness() {
+    const app = appHarness();
+    app.features = { tickets: true };
+    app.uiOptions = {};
+    app.inferenceService = createInferenceService({ backends: ['ticket', 'paid'].map(id => ({
+        id,
+        getAccessToken: session => session.apiKey,
+        setAccessInfo: (session, info) => { session.apiKey = info.token; },
+        clearAccessInfo: session => { session.apiKey = null; session.apiKeyInfo = null; session.expiresAt = null; }
+    })) });
+    app.state.sessionsById.get('one').inferenceBackend = 'paid';
+    app.state.sessionsById.get('two').inferenceBackend = 'ticket';
+    app.refreshBackendPresentation = async () => {};
+    app.normalizeModelName = value => value;
+    return app;
+}
+
 describe('production ChatApp runtime ownership', () => {
     let restore;
     let databaseMethods;
     beforeEach(() => {
         restore = installBrowser();
-        databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSessionMessages', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
+        databaseMethods = Object.fromEntries(['saveMessage', 'deleteMessage', 'getSession', 'getSessionMessages', 'getAllSessions', 'getSessionsPage', 'saveSession', 'saveSessionWithMessages', 'getSetting', 'saveSetting'].map(name => [name, chatDB[name]]));
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
+
+    test('an old search result stays in the normal sidebar after opening and new activity', async () => {
+        const app = appHarness();
+        const today = Date.now();
+        const recent = Array.from({ length: 80 }, (_, i) => ({ id: `recent-${i}`, updatedAt: today - i, title: 'Recent', conversationSearchText: '' }));
+        const old = { id: 'old-search-hit', updatedAt: today - 7 * 86400000, title: 'Unique old chat', conversationSearchText: '' };
+        app.state.sessions = recent;
+        app.state.sessionsById = new Map(recent.map(s => [s.id, s]));
+        app.sessionSearchQuery = 'Unique';
+        app.sessionSearchRequestId = 0;
+        app.hasActiveSessionListCriteria = () => Boolean(app.sessionSearchQuery);
+        app.getSessionResultsKey = () => app.sessionSearchQuery;
+        app.getNormalizedSessionSearchQuery = () => app.sessionSearchQuery.toLowerCase();
+        app.sessionMatchesSidebarFilters = () => true;
+        app.sanitizePersistedSessionAccess = () => {};
+        app.normalizeSessionCouncilState = () => {};
+        app.migrateSessionsInBackground = () => {};
+        app.renderSessions = () => {};
+        chatDB.getAllSessions = async () => [...recent, old];
+        chatDB.getSession = async () => { throw new Error('A cached search result should not need another database read.'); };
+
+        await app.updateSessionSearchResults();
+        assert.ok(app.getFilteredSessions().some(s => s.id === old.id));
+        await app.ensureSessionLoaded(old.id);
+        old.updatedAt = today + 1000;
+        app.sessionSearchQuery = '';
+        await app.updateSessionSearchResults();
+        assert.equal(app.getFilteredSessions().filter(s => s.id === old.id).length, 1);
+        assert.equal(app.getFilteredSessions().find(s => s.id === old.id), old);
+        await app.ensureSessionLoaded(old.id);
+        assert.equal(app.state.sessions.filter(s => s.id === old.id).length, 1);
+    });
+
+    test('pagination includes search-cached sessions without duplicating opened chats or replacing live state', async () => {
+        const app = appHarness();
+        const opened = { id: 'opened', updatedAt: 300 };
+        const cached = { id: 'cached-only', updatedAt: 200, title: 'Live title' };
+        app.state.sessions = [opened];
+        app.state.sessionsById = new Map([[opened.id, opened], [cached.id, cached]]);
+        app.state.hasMoreSessions = true;
+        app.state.sessionsPageCursor = 'next';
+        app.hasActiveSessionListCriteria = () => false;
+        app.sanitizePersistedSessionAccess = () => {};
+        app.normalizeSessionCouncilState = () => {};
+        app.migrateSessionsInBackground = () => {};
+        app.renderSessions = () => {};
+        chatDB.getSessionsPage = async () => ({ sessions: [{ ...opened }, { ...cached, title: 'Stale title' }, { id: 'uncached', updatedAt: 100 }], nextCursor: null });
+        await app.loadMoreSessions();
+        assert.deepEqual(app.state.sessions.map(s => s.id), ['opened', 'cached-only', 'uncached']);
+        assert.equal(app.state.sessions[1], cached);
+        assert.equal(app.state.sessions[1].title, 'Live title');
+        assert.equal(app.state.hasMoreSessions, false);
+    });
+
+    test('silence warnings belong to their request and disappear on recovery or navigation', () => {
+        const app = appHarness();
+        let nodes = [];
+        const container = {querySelectorAll: () => [...nodes], appendChild(node) { nodes.push(node); }};
+        document.createElement = () => { const node = {dataset:{},setAttribute(){},remove(){nodes=nodes.filter(n=>n!==node);}}; return node; };
+        app.elements.messagesContainer = container;
+        const warning = { kind: 'silence', message: 'Taking longer than usual.' };
+        app.setInferenceHealth('one', 'a', warning);
+        assert.equal(nodes.length, 1);
+        app.setInferenceHealth('two', 'b', warning);
+        assert.equal(nodes.length, 1);
+        app.state.currentSessionId = 'two'; app.renderInferenceWarnings();
+        assert.equal(nodes[0].dataset.inferenceWarning, 'b');
+        app.setInferenceHealth('one', 'a', null);
+        assert.equal(nodes.length, 1);
+        app.setInferenceHealth('two', 'b', null);
+        assert.equal(nodes.length, 0);
+    });
+
+    test('a pre-output stream failure is persisted to its original background chat', async () => {
+        const { app, records } = streamHarness(async () => {
+            app.state.currentSessionId = 'two';
+            throw Object.assign(new Error('Response timed out'), { retryable: false, isStreamError: true });
+        });
+        await app.sendMessage();
+        const error = [...records.values()].find(m => m.role === 'assistant');
+        assert.equal(error.sessionId, 'one');
+        assert.match(error.content, /timed out/);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('wide mode updates the action label and icon immediately in both directions', () => {
+        const classes = new Set();
+        document.documentElement.classList = {
+            contains: name => classes.has(name),
+            toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }
+        };
+        const attrs = new Map();
+        const iconAttrs = new Map();
+        const app = appHarness();
+        app.elements.wideModeBtn = {
+            classList: { add() {}, remove() {}, toggle() {} },
+            setAttribute: (name, value) => attrs.set(name, value),
+            querySelector: () => ({ setAttribute: (name, value) => iconAttrs.set(name, value) })
+        };
+        app.isMobileView = () => false;
+        app.sessionUsesCouncilLayout = () => false;
+        for (const wide of [true, false, true]) {
+            app.applyWideMode(wide);
+            assert.equal(attrs.get('data-tooltip'), wide ? 'Narrow chat' : 'Widen chat');
+            assert.equal(attrs.get('aria-pressed'), String(wide));
+            assert.equal(iconAttrs.get('data-state'), wide ? 'b' : 'a');
+        }
+    });
+
+    test('sidebar retains the same available toggle through rapid open-close reversals', () => {
+        const app = appHarness();
+        const classes = new Set();
+        const attrs = new Map();
+        const label = { textContent: '' };
+        const button = {
+            setAttribute: (name, value) => attrs.set(name, value),
+            querySelector: () => label,
+            classList: { add() { assert.fail('Do not hide the persistent toggle'); }, remove() { assert.fail('Do not replace toggle visibility'); } }
+        };
+        const captures = [];
+        app.preserveChatBottomDuringWidthChange = () => captures.push(classes.has('sidebar-hidden'));
+        app.elements.showSidebarBtn = button;
+        app.elements.sidebar = {
+            classList: { contains: name => classes.has(name), add: name => classes.add(name), remove: name => classes.delete(name) }
+        };
+        app.updateWideModeButtonVisibility = app.updateToolbarDivider = () => {};
+        document.documentElement.setAttribute = document.documentElement.removeAttribute = () => {};
+        try {
+            for (const mobile of [false, true]) {
+                app.isMobileView = () => mobile;
+                for (const open of [false, true, false, true]) {
+                    app[open ? 'showSidebar' : 'hideSidebar']({ persist: false, predictToolbar: false });
+                    assert.equal(app.elements.showSidebarBtn, button);
+                    assert.equal(attrs.get('aria-expanded'), String(open));
+                    assert.equal(label.textContent, open ? 'Collapse sidebar' : 'Expand sidebar');
+                    assert.equal(app.elements.sidebar.inert, !open);
+                    assert.equal(classes.has('mobile-visible'), mobile && open);
+                }
+            }
+            assert.deepEqual(captures, [false, true, false, true], 'Capture before desktop width changes; ignore overlay changes');
+        } finally {
+            clearTimeout(app.sidebarToggleButtonTimer);
+        }
+    });
+
+    test('right panel captures bottom through the component facade before desktop layout changes', () => {
+        const app = appHarness();
+        let hidden = false;
+        const captures = [];
+        app.preserveChatBottomDuringWidthChange = () => captures.push(hidden);
+        const element = { style: {} };
+        document.getElementById = id => id === 'right-panel' ? element : null;
+        document.documentElement.setAttribute = () => { hidden = true; };
+        document.documentElement.removeAttribute = () => { hidden = false; };
+        const panel = Object.assign(Object.create(RightPanel.prototype), {
+            app: createComponentAppFacade(app), isDesktop: true, isVisible: true, lastAppliedVisibility: true
+        });
+        panel.isVisible = false; panel.updatePanelVisibility();
+        panel.updatePanelVisibility(); // Rendering without a visibility change must not restart anchoring.
+        panel.isVisible = true; panel.updatePanelVisibility();
+        panel.isDesktop = false;
+        panel.isVisible = false; panel.updatePanelVisibility();
+        panel.isVisible = true; panel.updatePanelVisibility();
+        assert.deepEqual(captures, [false, true]);
+    });
+
+    test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
+        const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
+        globalThis.marked = markedApi;
+        const app = appHarness();
+        app.escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            for (const delimit of [value => `$${value}$`, value => `\\(${value}\\)`, value => `$$${value}$$`, value => `\\[${value}\\]`]) {
+                const expressions = Array.from({ length: 25 }, (_, index) => delimit(`${index}.123\\text{ CAD}`));
+                const html = app.processContentWithLatex(expressions.join('\n\n'));
+                for (const expression of expressions) {
+                    assert.equal(html.split(expression).length - 1, 1, `Preserve exactly one ${expression}`);
+                }
+                assert.doesNotMatch(html, /OAMATH/);
+            }
+            const escapedPrices = Array.from({ length: 25 }, (_, index) => `\\$${index}.50`);
+            const prices = app.processContentWithLatex(escapedPrices.join('; '));
+            for (let index = 0; index < 25; index += 1) {
+                assert.ok(prices.includes(`<span class="math-literal-dollar">$</span>${index}.50`));
+            }
+            assert.doesNotMatch(prices, /OAMATH/);
+        } finally {
+            if (previousMarked) Object.defineProperty(globalThis, 'marked', previousMarked);
+            else delete globalThis.marked;
+        }
+    });
+
+    test('real streaming lifecycle updates sidebar activity independently for each chat', () => {
+        const app = appHarness();
+        const updates = [];
+        app.pendingProgress = new Map();
+        app.elements.messagesContainer = { querySelectorAll: () => [] };
+        app.sidebar = { updateSessionActivity: id => updates.push([id, app.isSessionStreaming(id)]) };
+        app.flushPendingStorageRefresh = () => {};
+        app.updateScrollButtonVisibility = () => {};
+        try {
+            app.setSessionStreamingState('one', true);
+            app.setSessionStreamingState('two', true);
+            app.setSessionStreamingState('one', false);
+            assert.equal(app.isSessionStreaming('two'), true);
+            app.setSessionStreamingState('two', false);
+            assert.deepEqual(updates, [['one', true], ['two', true], ['one', false], ['two', false]]);
+            const size = app.sessionStreamingStates.size;
+            assert.equal(app.isSessionStreaming('missing'), false);
+            assert.equal(app.sessionStreamingStates.size, size);
+        } finally {
+            clearInterval(app.scrollButtonCheckInterval);
+        }
+    });
+
+    test('switching stages settlement metadata and preserves transcript, draft and navigation', async () => {
+        const app = backendHarness();
+        const session = app.getCurrentSession();
+        Object.assign(session, { zkapiSessionId: 'lease', apiKey: 'old', councilAccess: { primary: { apiKey: 'old' } },
+            shareInfo: { apiKeyShared: true } });
+        const settlement = deferred();
+        let staged;
+        let persisted;
+        app.runtime.beforeBackendChange = async args => {
+            staged = args.session;
+            assert.equal(args.previousBackendId, 'paid');
+            assert.equal(args.backendId, 'ticket');
+            delete staged.zkapiSessionId;
+            await settlement.promise;
+        };
+        chatDB.saveSession = async record => { persisted = structuredClone(record); };
+        const switching = app.changeSessionBackend('ticket');
+        await Promise.resolve();
+        assert.notEqual(staged, session);
+        assert.equal(session.zkapiSessionId, 'lease');
+        assert.equal(app.isSessionBusy('one'), true);
+        let sent = false;
+        app.sendCapturedMessage = async () => { sent = true; };
+        await app.sendMessage();
+        assert.equal(sent, false);
+        await assert.rejects(app.inlineQuickAsk('selection'), /current chat action/);
+        await assert.rejects(app.acquireAndSetAccess(session), /cancelled/);
+        await app.generateSessionTitleIfNeeded('one', 'prompt');
+        assert.equal(app.titleGenerationJobs.size, 0);
+        await assert.rejects(app.changeSessionBackend('ticket'), /current chat action/);
+        app.state.currentSessionId = 'two';
+        app.elements.messageInput.value = 'Draft in chat two';
+        settlement.resolve();
+        await switching;
+        assert.equal(session.inferenceBackend, 'ticket');
+        assert.equal(persisted.zkapiSessionId, undefined);
+        assert.equal(session.zkapiSessionId, undefined);
+        assert.equal(session.councilAccess, undefined);
+        assert.equal(session.shareInfo.apiKeyShared, false);
+        assert.equal(session.apiKey, null);
+        assert.equal(app.state.currentSessionId, 'two');
+        assert.equal(app.elements.messageInput.value, 'Draft in chat two');
+        assert.equal(app.isSessionBusy('one'), false);
+    });
+
+    test('failed settlement or storage retains the original backend and its recovery metadata', async () => {
+        for (const failure of ['hook', 'storage']) {
+            const app = backendHarness();
+            const session = app.getCurrentSession();
+            Object.assign(session, { zkapiSessionId: 'recoverable', apiKey: 'old' });
+            const snapshot = structuredClone(session);
+            app.runtime.beforeBackendChange = async ({ session: staged }) => {
+                delete staged.zkapiSessionId;
+                if (failure === 'hook') throw new Error('settlement failed');
+            };
+            chatDB.saveSession = async () => { throw new Error('storage failed'); };
+            await assert.rejects(app.changeSessionBackend('ticket'), /failed/);
+            assert.deepEqual(session, snapshot);
+            assert.equal(app.isSessionBusy('one'), false);
+        }
+    });
+
+    test('switch drains a captured Quick Ask before settlement and Delete waits for its reservation', async () => {
+        const app = backendHarness();
+        const controller = new AbortController();
+        app.quickAskJobs.set('one', new Set([{ controller }]));
+        controller.signal.addEventListener('abort', () => app.quickAskJobs.delete('one'));
+        const settlement = deferred();
+        let entered = false;
+        app.runtime.beforeBackendChange = async () => { entered = true; await settlement.promise; };
+        let saves = 0;
+        chatDB.saveSession = async () => { saves++; };
+        const switching = app.changeSessionBackend('ticket');
+        await Promise.resolve();
+        assert.equal(controller.signal.aborted, true);
+        assert.equal(entered, true);
+        let deleted = false;
+        app.deleteIdleSession = async () => { deleted = true; };
+        const deleting = app.deleteSession('one');
+        assert.equal(deleted, false);
+        settlement.resolve();
+        await assert.rejects(switching, /unavailable/);
+        assert.equal(await deleting, true);
+        assert.equal(deleted, true);
+        assert.equal(saves, 0);
+    });
+
+    test('empty composer default is captured by Send before database or preference delays', async () => {
+        const app = backendHarness();
+        app.state.currentSessionId = null;
+        await app.changeSessionBackend('paid');
+        assert.equal(app.state.sessionsById.get('two').inferenceBackend, 'ticket');
+        const gate = deferred();
+        let captured;
+        app.sendCapturedMessage = async submission => { captured = submission; await gate.promise; };
+        const sending = app.sendMessage();
+        await assert.rejects(app.changeSessionBackend('ticket'), /finish sending/);
+        app.inferenceService.setDefaultBackendId('ticket');
+        assert.equal(captured.inferenceBackend, 'paid');
+        gate.resolve();
+        await sending;
+    });
+
+    test('per-session ticket policy keeps paid access off the ticket pricing and redemption path', async () => {
+        const app = backendHarness();
+        app.runtime.usesTicketAccess = session => session.inferenceBackend === 'ticket';
+        const paid = app.getCurrentSession();
+        assert.equal(app.usesTicketAccess(paid), false);
+        assert.equal(app.usesTicketAccess(app.state.sessionsById.get('two')), true);
+        let checked;
+        app.runtime.checkCanSend = async args => { checked = args.session; return true; };
+        assert.equal(await app.preflightTurnTicketBudget(paid, 'prompt'), true);
+        assert.equal(checked, paid);
+        app.runtime.acquireAccess = async () => ({ token: 'paid-key' });
+        chatDB.saveSession = async () => {};
+        assert.equal(await app.acquireAndSetAccess(paid), 'paid-key');
+        assert.equal(paid.inferenceBackend, 'paid');
+        delete app.runtime.checkCanSend;
+        await assert.rejects(app.preflightTurnTicketBudget(paid, 'prompt'), /not configured/);
+    });
+
+    test('model refresh cannot replace the catalog after navigation to another backend', async () => {
+        const app = backendHarness();
+        const gate = deferred();
+        app.inferenceService.fetchModels = () => gate.promise;
+        app.filterDisabledModels = models => models;
+        app.state.models = [{ id: 'current' }];
+        const refresh = app.loadModels();
+        app.state.currentSessionId = 'two';
+        gate.resolve([{ id: 'stale-paid-model' }]);
+        await refresh;
+        assert.deepEqual(app.state.models, [{ id: 'current' }]);
+        assert.equal(app.state.modelsLoading, false);
+    });
+
+    test('all configured verifier caches initialize even when paid is the new-chat default', async () => {
+        const app = backendHarness();
+        const calls = [];
+        const verifier = { supports: true, init: async () => { calls.push('init'); },
+            setBannedWarningCallback() {}, startBroadcastCheck() { calls.push('broadcast'); } };
+        app.inferenceService.getBackend('ticket').verification = verifier;
+        app.inferenceService.setDefaultBackendId('paid');
+        await app.initVerifier();
+        await app.initVerifier({ inferenceBackend: 'ticket' });
+        assert.deepEqual(calls, ['init', 'broadcast']);
+    });
+
+    test('ticket key request reserves its captured session across animations and navigation', async t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const app = backendHarness();
+        const session = app.getCurrentSession();
+        session.inferenceBackend = 'ticket';
+        const panel = Object.assign(Object.create(RightPanel.prototype), {
+            app, currentSession: session, currentTicket: {},
+            renderTopSectionOnly() {}, loadNextTicket() {}, startExpirationTimer() {}, updateStatusIndicator() {}
+        });
+        app.services = { inference: app.inferenceService };
+        let acquired;
+        app.acquireAndSetAccess = async target => { acquired = target; target.apiKey = 'new-ticket-key'; };
+        const requesting = panel.handleRequestApiKey();
+        assert.equal(app.isSessionBusy('one'), true);
+        await assert.rejects(app.changeSessionBackend('paid'), /current chat action/);
+        app.state.currentSessionId = 'two';
+        panel.currentSession = app.getCurrentSession();
+        panel.apiKey = 'chat-two-key';
+        t.mock.timers.tick(500);
+        await Promise.resolve();
+        t.mock.timers.tick(1000);
+        await requesting;
+        assert.equal(acquired, session);
+        assert.equal(session.apiKey, 'new-ticket-key');
+        assert.equal(panel.apiKey, 'chat-two-key');
+        assert.equal(app.isSessionBusy('one'), false);
+    });
+
+    test('backend navigation immediately replaces the prior model catalog while fetching current data', async () => {
+        const app = backendHarness();
+        app.state.modelsBackendId = 'paid';
+        app.state.models = [{ id: 'paid-model' }];
+        app.state.currentSessionId = 'two';
+        const fresh = deferred();
+        app.inferenceService.getBackend('ticket').getCachedModels = () => [{ id: 'ticket-cached' }];
+        app.inferenceService.getBackend('ticket').fetchModels = () => fresh.promise;
+        app.filterDisabledModels = models => models;
+        app.renderCurrentModel = () => {};
+        const refreshing = app.refreshModelsForSessionBackend();
+        assert.deepEqual(app.state.models, [{ id: 'ticket-cached' }]);
+        assert.equal(app.state.modelsBackendId, 'ticket');
+        fresh.resolve([{ id: 'ticket-fresh' }]);
+        await refreshing;
+        assert.deepEqual(app.state.models, [{ id: 'ticket-fresh' }]);
+    });
+
+    test('backend settlement serializes rename, star and model changes without overwriting metadata', async () => {
+        const app = backendHarness();
+        const session = app.getCurrentSession();
+        Object.assign(session, { title: 'Original title', starred: true });
+        app.state.sessions = [session];
+        app.acknowledgeSessionMutationBusy = async () => {};
+        const settlement = deferred();
+        app.runtime.beforeBackendChange = () => settlement.promise;
+        chatDB.saveSession = async () => {};
+        const switching = app.changeSessionBackend('ticket');
+        await Promise.resolve();
+        assert.equal(await app.updateSessionTitle('one', 'Concurrent title'), false);
+        assert.equal(await app.toggleSessionStar('one'), false);
+        const picker = createModelPickerInterface(app, { chatDBImpl: {
+            saveSetting: () => assert.fail('A blocked model change must not persist preferences'),
+            saveSession: () => assert.fail('A blocked model change must not overwrite the session')
+        } });
+        assert.equal((await picker.actions.selectModel('Concurrent model')).busy, true);
+        settlement.resolve();
+        await switching;
+        assert.equal(session.title, 'Original title');
+        assert.equal(session.starred, true);
+        assert.equal(session.model, 'Model one');
+    });
+
+    test('a deferred key acquisition and response retain their backend model after navigation', async () => {
+        let streamed;
+        const { app } = streamHarness(async (...args) => { streamed = args; return { totalTokens: 1 }; });
+        const session = app.getCurrentSession();
+        session.inferenceBackend = 'ticket';
+        app.features = { tickets: false };
+        app.state.modelsBackendId = 'ticket';
+        app.modelCatalogsByBackend = new Map([['ticket', app.state.models]]);
+        app.state.sessionsById.get('two').inferenceBackend = 'paid';
+        app.inferenceService.getDefaultBackendId = () => 'ticket';
+        app.inferenceService.getAccessToken = target => target.apiKey || null;
+        app.inferenceService.setAccessInfo = (target, info) => { target.apiKey = info.token; };
+        app.inferenceService.getCachedModels = () => [];
+        const entered = deferred();
+        const acquisition = deferred();
+        let accessModels;
+        app.runtime.acquireAccess = async ({ models }) => {
+            accessModels = models;
+            entered.resolve();
+            await acquisition.promise;
+            return { token: 'ticket-key' };
+        };
+        const sending = app.sendMessage();
+        await entered.promise;
+        app.state.currentSessionId = 'two';
+        app.state.modelsBackendId = 'paid';
+        app.state.models = [{ id: 'paid-model', name: 'Paid model' }];
+        acquisition.resolve();
+        await sending;
+        assert.equal(accessModels[0].id, 'accepted-model');
+        assert.equal(streamed[1], 'accepted-model');
+        assert.equal(streamed[2], session);
+        assert.equal(session.model, 'Accepted model');
+    });
+
+    test('a dual runtime can preserve ticket streaming on New Chat while retiring paid work', async () => {
+        const app = backendHarness();
+        const canceled = [];
+        const notified = [];
+        app.runtime.onNewChat = ({ sessionId }) => notified.push(sessionId);
+        app.runtime.shouldCancelOnNewChat = ({ session }) => session?.inferenceBackend === 'paid';
+        app.cancelSessionWork = async id => canceled.push(id);
+        app.clearCurrentSession = async () => {};
+        app.isMobileView = () => false;
+        app.state.currentSessionId = 'two';
+        await app.handleNewChatRequest();
+        assert.deepEqual(canceled, []);
+        app.state.currentSessionId = 'one';
+        await app.handleNewChatRequest();
+        assert.deepEqual(canceled, ['one']);
+        assert.deepEqual(notified, ['two', 'one']);
+    });
 
     test('composer announcements reuse one screen-reader-only status node', () => {
         const nodes = [];
@@ -192,6 +699,7 @@ describe('production ChatApp runtime ownership', () => {
         const gate = deferred();
         let checkedSession;
         app.ensureDatabaseReady = () => gate.promise;
+        app.validateCapturedInput = async () => {};
         app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
         app.preflightTurnTicketBudget = async session => { checkedSession = session.id; return false; };
         const sending = app.sendMessage();
@@ -561,9 +1069,9 @@ describe('production ChatApp runtime ownership', () => {
         const app = appHarness();
         const removed = [];
         app.pendingProgress = new Map([['one', { phase: 'working' }], ['two', { phase: 'working' }]]);
-        app.elements.messagesContainer = { querySelectorAll: () => ['one', 'two'].map(id => ({
-            dataset: { sessionId: id }, remove: () => removed.push(id)
-        })) };
+        app.elements.messagesContainer = { querySelectorAll: selector => selector === '.typing-indicator' ? ['one', 'two'].map(id => ({
+            dataset: { pendingSessionId: id }, remove: () => removed.push(id)
+        })) : [] };
         app.flushPendingStorageRefresh = () => {};
         app.setSessionStreamingState('one', false);
         assert.deepEqual(removed, ['one']);
@@ -612,16 +1120,23 @@ describe('production ChatApp runtime ownership', () => {
         const result = { completionTokens: 5, promptTokens: 10 };
         app.runtime.recordUsage = async options => { if (options.final !== false) throw new Error('Storage temporarily unavailable'); };
         app.inferenceService = { streamCompletion: async (...args) => { await args[4](result); return result; } };
-        assert.equal(await app.streamCompletionWithRuntime([], 'model', { id: 'one' }, () => {}, () => {},
-            [], false, new AbortController(), null, null, true, 'high', 'message'), result);
+        assert.deepEqual(await app.streamCompletionWithRuntime([], 'model', { id: 'one' }, () => {}, () => {},
+            [], false, new AbortController(), null, null, true, 'high', 'message'),
+        { ...result, model: 'model', pricing: null });
     });
 
-    test('response model metadata reaches the controller without creating or resetting token usage', async () => {
+    test('late response model metadata reprices the same request without resetting tokens or provider cost', async () => {
         const app = appHarness();
         const usageRecords = [];
         const tokenUpdates = [];
-        const initialUsage = { promptTokens: 20, completionTokens: 7, estimated: true, isStreaming: true };
-        const modelUpdate = { model: 'anthropic/routed-model', modelOnly: true };
+        const routerPricing = { prompt: '0.001', completion: '0.002' };
+        const routedPricing = { prompt: '0.000003', completion: '0.000015' };
+        const initialUsage = { promptTokens: 20, completionTokens: 7, cost: 0, pricing: routerPricing,
+            model: 'openrouter/auto', estimated: false, isStreaming: false };
+        // Metadata is not a new usage sample. Its empty counters/cost must not
+        // erase the provider's preceding sample when cancellation follows it.
+        const modelUpdate = { model: 'anthropic/routed-model', pricing: routedPricing,
+            promptTokens: 0, completionTokens: 0, cost: null, modelOnly: true, estimated: true, isStreaming: true };
         const cancellation = Object.assign(new Error('Canceled by user'), { isCancelled: true });
         app.runtime.recordUsage = async options => usageRecords.push(options);
         app.inferenceService = { streamCompletion: async (...args) => {
@@ -635,13 +1150,137 @@ describe('production ChatApp runtime ownership', () => {
             update => tokenUpdates.push(update), [], false, new AbortController(), null, null,
             true, 'high', 'routed-request'), error => error === cancellation);
 
-        assert.deepEqual(tokenUpdates, [initialUsage, modelUpdate]);
-        assert.equal(usageRecords.length, 2, 'model metadata must not create another usage record');
-        assert.equal(usageRecords[0].final, false);
-        assert.equal(usageRecords[1].usage.model, 'anthropic/routed-model');
-        assert.equal(usageRecords[1].usage.promptTokens, 20);
-        assert.equal(usageRecords[1].usage.completionTokens, 7);
-        assert.equal(usageRecords[1].usage.modelOnly, undefined);
+        assert.equal(tokenUpdates.length, 2);
+        assert.equal(tokenUpdates[1].model, modelUpdate.model);
+        assert.equal(tokenUpdates[1].modelOnly, true);
+        assert.equal(usageRecords.length, 3, 'model metadata replaces the live preview before final persistence');
+        assert.deepEqual(usageRecords.map(record => record.requestId), Array(3).fill('routed-request'));
+        assert.deepEqual(usageRecords.map(record => record.final === false), [true, true, false]);
+        for (const record of usageRecords.slice(1)) {
+            assert.equal(record.usage.model, 'anthropic/routed-model');
+            assert.equal(record.usage.promptTokens, 20);
+            assert.equal(record.usage.completionTokens, 7);
+            assert.equal(record.usage.cost, 0);
+            assert.equal(record.usage.modelOnly, undefined);
+            assert.deepEqual(record.usage.pricing, routedPricing);
+            assert.notDeepEqual(record.pricing, routerPricing, 'the requested model must not override response pricing');
+        }
+    });
+
+    test('router model metadata alone never creates a usage preview or durable charge', async () => {
+        const app = appHarness();
+        const records = [];
+        const discarded = [];
+        const failure = new Error('Provider unavailable');
+        app.runtime.recordUsage = async record => records.push(record);
+        app.runtime.discardUsagePreview = record => discarded.push(record);
+        app.inferenceService = { streamCompletion: async (...args) => {
+            await args[4]({ model: 'provider/routed', modelOnly: true,
+                pricing: { prompt: '0.000003', completion: '0.000015' } });
+            throw failure;
+        } };
+        await assert.rejects(app.streamCompletionWithRuntime([], 'openrouter/auto', { id: 'one' }, null, null,
+            [], false, new AbortController(), null, null, true, 'high', 'metadata-only'), error => error === failure);
+        assert.deepEqual(records, []);
+        assert.deepEqual(discarded, [{ sessionId: 'one', requestId: 'metadata-only' }]);
+    });
+
+    test('final usage without model metadata retains the observed routed model and pricing', async () => {
+        const app = appHarness();
+        const records = [];
+        const routedPricing = { prompt: '0.000003', completion: '0.000015' };
+        app.state.models = [
+            { id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } },
+            { id: 'provider/routed', pricing: { prompt: '0.000002', completion: '0.000006' } }
+        ];
+        app.runtime.recordUsage = async record => records.push(record);
+        app.inferenceService = { streamCompletion: async (...args) => {
+            await args[4]({ model: 'provider/routed', pricing: routedPricing, modelOnly: true });
+            assert.equal(records.length, 0, 'attribution alone does not create an estimate');
+            await args[3]('Answer');
+            return { promptTokens: 20, completionTokens: 7 };
+        } };
+        const result = await app.streamCompletionWithRuntime([], 'openrouter/auto', { id: 'one' }, null, null,
+            [], false, new AbortController(), null, null, true, 'high', 'metadata-then-result');
+        assert.equal(result.model, 'provider/routed');
+        assert.deepEqual(result.pricing, routedPricing);
+        assert.equal(records.length, 1);
+        assert.deepEqual(records[0].usage.pricing, routedPricing);
+    });
+
+    test('routed accounting uses the owning catalog after navigation and preserves the exact variant', async () => {
+        for (const [reportedModel, expectedPricing] of [
+            ['provider/routed:batch', { prompt: '0.000001', completion: '0.000003' }],
+            ['provider/routed:online', { prompt: '0.000002', completion: '0.000006' }]
+        ]) {
+            const app = appHarness();
+            const records = [];
+            const session = { id: 'one', inferenceBackend: 'paid', model: 'Auto Router' };
+            const ownCatalog = [
+                { id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } },
+                { id: 'provider/routed', pricing: { prompt: '0.000002', completion: '0.000006' } },
+                { id: 'provider/routed:batch', pricing: { prompt: '0.000001', completion: '0.000003' } }
+            ];
+            app.state.models = ownCatalog;
+            app.state.modelsBackendId = 'paid';
+            app.modelCatalogsByBackend = new Map([['paid', ownCatalog]]);
+            app.runtime.recordUsage = async record => records.push(record);
+            app.inferenceService = { streamCompletion: async (...args) => {
+                app.state.currentSessionId = 'two';
+                app.state.modelsBackendId = 'other';
+                app.state.models = [{ id: reportedModel, pricing: { prompt: '9', completion: '9' } }];
+                const usage = { model: reportedModel, promptTokens: 20, completionTokens: 7, isStreaming: false };
+                await args[4](usage);
+                return usage;
+            } };
+            const result = await app.streamCompletionWithRuntime([], 'openrouter/auto', session, null, null,
+                [], false, new AbortController(), null, null, true, 'high', 'routed-owner');
+            await app.recordRuntimeUsage(session, { id: 'routed-owner', model: 'Routed model' }, result);
+            assert.equal(records.length, 3, 'preview, final ledger, and saved message accounting all run');
+            for (const record of records) {
+                assert.equal(record.sessionId, 'one');
+                assert.equal(record.usage.model, reportedModel);
+                assert.deepEqual(record.usage.pricing, expectedPricing);
+            }
+            assert.equal(session.model, 'Auto Router');
+        }
+    });
+
+    test('explicit response pricing and unavailable pricing survive both final accounting writes', async () => {
+        const catalogPricing = { prompt: '0.001', completion: '0.002' };
+        const responsePricing = { prompt: '0.000003', completion: '0.000015' };
+        for (const [model, pricing] of [
+            ['provider/routed', responsePricing],
+            ['provider/routed', null],
+            ['provider/unknown', undefined]
+        ]) {
+            for (const cost of [0, 0.017]) {
+                const app = appHarness();
+                const session = { id: 'one' };
+                const records = [];
+                app.state.models = [
+                    { id: 'openrouter/auto', pricing: catalogPricing },
+                    { id: 'provider/routed', pricing: catalogPricing }
+                ];
+                app.runtime.recordUsage = async record => records.push(record);
+                const usage = { model, promptTokens: 20, completionTokens: 7, cost, isStreaming: false };
+                if (pricing !== undefined) usage.pricing = pricing;
+                app.inferenceService = { streamCompletion: async (...args) => {
+                    await args[4](usage);
+                    return usage;
+                } };
+                const result = await app.streamCompletionWithRuntime([], 'openrouter/auto', session, null, null,
+                    [], false, new AbortController(), null, null, true, 'high', 'routed-final');
+                await app.recordRuntimeUsage(session, { id: 'routed-final', model: 'Routed model' }, result);
+                for (const record of records) {
+                    assert.deepEqual(record.usage.pricing, pricing ?? null);
+                    assert.equal(record.usage.cost, cost);
+                    assert.equal(record.usage.promptTokens, 20);
+                    assert.equal(record.usage.completionTokens, 7);
+                    assert.notDeepEqual(record.pricing, catalogPricing);
+                }
+            }
+        }
     });
 
     for (const action of ['send', 'regenerate']) {
@@ -835,7 +1474,7 @@ describe('production ChatApp runtime ownership', () => {
                 assert.equal(assistant.streamingPhase, null);
                 assert.equal(assistant.isLocalOnly, false);
                 if (payload === 'image-cancel') assert.equal(assistant.images.length, 1);
-                else { assert.equal(assistant.content, 'Partial answer'); assert.equal(assistant.reasoning, 'Partial reasoning'); }
+                else { assert.equal(assistant.content, 'Partial answer'); assert.equal(assistant.reasoning, 'Partial reasoning'); assert.match(assistant.inferenceError, /Provider failed mid-stream/); }
                 assert.equal(app.regenerationJobs.size, 0);
                 assert.equal(app.sendSubmissionsInFlight.size, 0);
             });
@@ -937,4 +1576,182 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(updates.filter(update => update.final !== false).length, 1);
         assert.equal(updates.at(-1).usage.cost, 0.001);
     });
+
+    test('runtime capabilities follow the captured session without changing preferences or Parallel history', async () => {
+        const app = backendHarness();
+        app.features = { memory: true, scrubber: true, council: true };
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        app.runtime.getFeatureUnavailableReason = () => 'Switch to Tickets.';
+        const paid = app.state.sessionsById.get('one');
+        const ticket = app.state.sessionsById.get('two');
+        app.memoryMode = true;
+        paid.responseMode = 'council';
+        paid.councilConfig = { enabled: true, members: ['Model one', 'Model two'] };
+        assert.equal(app.supportsFeature('memory', paid), false);
+        assert.equal(app.supportsFeature('memory', ticket), true);
+        assert.equal(app.getFeatureUnavailableReason('scrubber', paid), 'Switch to Tickets.');
+        assert.equal(app.isCouncilModeActive(paid), false);
+        assert.equal(app.memoryMode, true);
+        assert.equal(paid.councilConfig.enabled, true);
+        assert.equal(app.messageUsesCouncilLayout({ council: { enabled: true } }), true);
+        let read = false;
+        chatDB.getSessionMessages = async () => { read = true; return []; };
+        assert.deepEqual(await app.runPostTurnMemoryExtraction(paid), { status: 'disabled', writeCalls: 0 });
+        assert.equal(read, false, 'a paid response cannot start confidential memory work');
+        app.memoryExtractionInFlight = new Set();
+        app.memoryExtractionAbortControllers = new Map();
+        app.normalizeMessagesForMemory = messages => messages;
+        await app.runPostTurnMemoryExtraction(ticket);
+        assert.equal(read, true, 'a captured ticket owner remains available while viewing a paid chat');
+    });
+
+    test('confidential operations block switches until fully drained and reject paid or changing owners', async () => {
+        const app = backendHarness();
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        const ticket = app.state.sessionsById.get('two');
+        const operation = app.beginFeatureOperation('scrubber', ticket);
+        assert.ok(operation);
+        assert.equal(app.isSessionBusy(ticket.id), true);
+        assert.equal(app.beginFeatureOperation('scrubber', app.getCurrentSession()), null);
+        let drained = false;
+        const wait = app.cancelSessionWork(ticket.id).then(() => { drained = true; });
+        await Promise.resolve();
+        assert.equal(operation.signal.aborted, true);
+        assert.equal(drained, false, 'aborting cannot release an uncancelable provider request');
+        app.finishFeatureOperation(operation);
+        await wait;
+        assert.equal(drained, true);
+        const reservation = app.beginSessionMutation(ticket.id, { exclusive: true });
+        assert.equal(app.beginFeatureOperation('memory', ticket), null, 'new confidential work cannot enter an exclusive timeline mutation');
+        reservation.backendChange = true;
+        assert.equal(app.beginFeatureOperation('memory', ticket), null);
+        app.endSessionMutation(ticket.id, reservation);
+    });
+
+    test('an empty-draft feature operation captures its backend and binds the created session', async () => {
+        const app = backendHarness();
+        app.state.currentSessionId = null;
+        app.inferenceService.setDefaultBackendId('ticket');
+        app.runtime.supportsFeature = (feature, session) => (session?.inferenceBackend || app.inferenceService.getDefaultBackendId()) === 'ticket';
+        const operation = app.beginFeatureOperation('memory', null);
+        assert.equal(operation.session.inferenceBackend, 'ticket');
+        await assert.rejects(app.changeSessionBackend('paid'), /finish sending/);
+        assert.equal(operation.setSession(app.state.sessionsById.get('one')), false);
+        assert.equal(operation.setSession(app.state.sessionsById.get('two')), true);
+        assert.equal(operation.sessionId, 'two');
+        operation.release();
+        assert.equal(app.featureOperations.size, 0);
+    });
+
+    test('Memory overrides remain owner-scoped and cannot enter a paid request after a mode change', () => {
+        const app = backendHarness();
+        app.memoryWorkGeneration = 1;
+        app.memoryApiOverrides = new Map();
+        app.clearMemoryApiOverrideContent = ChatApp.prototype.clearMemoryApiOverrideContent;
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        assert.equal(app.setMemoryApiOverrideContent('private', 1, 'one'), false);
+        assert.equal(app.setMemoryApiOverrideContent('approved ticket context', 1, 'two'), true);
+        assert.equal(app.getMemoryApiOverrideContent('two'), 'approved ticket context');
+        app.state.sessionsById.get('two').inferenceBackend = 'paid';
+        assert.equal(app.getMemoryApiOverrideContent('two'), null);
+    });
+
+    test('backfill markers merge the live session and cannot recreate deleted or switching chats', async () => {
+        const app = backendHarness();
+        const live = app.state.sessionsById.get('one');
+        live.zkapiSessionId = 'current-lease';
+        const writes = [];
+        chatDB.saveSession = async session => writes.push(structuredClone(session));
+        assert.equal(await app.updateMemoryProcessedAt('one', 123), true);
+        assert.equal(writes[0].zkapiSessionId, 'current-lease');
+        assert.equal(writes[0].inferenceBackend, 'paid');
+        const reservation = app.beginSessionMutation('one', { exclusive: true });
+        assert.equal(await app.updateMemoryProcessedAt('one', 456), false);
+        app.endSessionMutation('one', reservation);
+        app.deletedSessionIds.add('one');
+        assert.equal(await app.updateMemoryProcessedAt('one', 789), false);
+        assert.equal(writes.length, 1);
+    });
+
+    test('uncached scrubber restoration is unavailable on paid history while cached restoration stays local', async () => {
+        const app = backendHarness();
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        const message = { id: 'answer', sessionId: 'one', role: 'assistant', content: 'redacted',
+            scrubber: { canRestore: true, redactedResponse: 'redacted' } };
+        chatDB.getSessionMessages = async () => [message];
+        let saved = 0;
+        chatDB.saveMessage = async () => { saved += 1; };
+        app.scrubberService = { restoreResponse: () => { throw new Error('Must not request confidential inference'); } };
+        await app.toggleScrubberRestore('answer');
+        await app.preCacheScrubberRestore(message);
+        assert.equal(saved, 0);
+        message.scrubber.restoredResponse = 'cached original';
+        await app.toggleScrubberRestore('answer');
+        assert.equal(message.content, 'cached original');
+        assert.equal(saved, 1);
+    });
+
+
+    test('backfill markers update uncached history from its latest record without loading the sidebar', async () => {
+        const app = backendHarness();
+        const read = deferred();
+        chatDB.getSession = async id => { assert.equal(id, 'older'); return read.promise; };
+        let persisted;
+        chatDB.saveSession = async record => { persisted = structuredClone(record); };
+        const writing = app.updateMemoryProcessedAt('older', 4321);
+        assert.equal(app.beginSessionMutation('older', { exclusive: true }), null);
+        read.resolve({ id: 'older', inferenceBackend: 'paid', zkapiSessionId: 'latest-lease' });
+        assert.equal(await writing, true);
+        assert.deepEqual(persisted, { id: 'older', inferenceBackend: 'paid', zkapiSessionId: 'latest-lease', memoryProcessedAt: 4321 });
+        assert.equal(app.state.sessionsById.has('older'), false);
+    });
+
+
+    test('historical Parallel lane regeneration cannot request access or mutate paid history', async () => {
+        const app = backendHarness();
+        app.runtime.supportsFeature = (feature, session) => session?.inferenceBackend !== 'paid';
+        let touched = false;
+        app.reserveAccessAcquisitionHandoff = () => { touched = true; };
+        app.councilController = { runRegenerateLaneTurn: () => { touched = true; } };
+        chatDB.getSessionMessages = async () => { touched = true; return []; };
+        chatDB.deleteMessage = async () => { touched = true; };
+        await app.regenerateCouncilLane('old-parallel-answer', 'primary');
+        assert.equal(touched, false);
+    });
+
+});
+
+
+test('shared conversation arrival skips startup sign-in but still requires sign-in to send', async () => {
+    const restore = installBrowser();
+    const { default: accountService } = await import('../../chat/services/accountService.js');
+    const originalWait = accountService.waitForAuthBootstrap;
+    const originalState = accountService.getState;
+    let opened = 0;
+    try {
+        accountService.waitForAuthBootstrap = async () => ({ accountId: null });
+        accountService.getState = () => ({ accountId: null });
+        const app = Object.create(ChatApp.prototype);
+        app.signInPolicy = { required: true };
+        app.getPaymentMode = () => 'tickets';
+        app.accountModal = { open() { opened += 1; } };
+        for (const search of ['?s=01m24-vns1h-1jeze-svet6e', '?s=shared&view=read']) {
+            window.location.search = search;
+            assert.equal(await app.openSignInIfRequired(), false);
+        }
+        assert.equal(opened, 0);
+        assert.equal(app.signInRequiredNow(), true);
+        // This must stop before any wallet, model, or inference work.
+        assert.equal(await app.preflightTurnTicketBudget({}, 'Continue this conversation'), false);
+        assert.equal(opened, 1);
+        for (const search of ['', '?s=', '?s=%20', '?subject=shared']) {
+            window.location.search = search;
+            assert.equal(await app.openSignInIfRequired(), true);
+        }
+        assert.equal(opened, 5);
+    } finally {
+        accountService.waitForAuthBootstrap = originalWait;
+        accountService.getState = originalState;
+        restore();
+    }
 });

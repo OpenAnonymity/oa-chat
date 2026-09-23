@@ -128,20 +128,29 @@ export function createModelPickerInterface(app, options = {}) {
             async selectModel(modelName) {
                 const normalizedModelName = app.normalizeModelName(modelName);
                 const session = app.getCurrentSession();
-
-                await db.saveSetting('selectedModel', normalizedModelName);
-
-                if (!session) {
-                    app.state.pendingModelName = normalizedModelName;
-                    app.applyPersistedParallelPendingConfig?.(normalizedModelName);
-                    app.renderCurrentModel();
-                    return { session: null, modelName: normalizedModelName };
+                const reservation = session ? app.beginSessionMutation?.(session.id) : null;
+                if (session && app.beginSessionMutation && !reservation) {
+                    await app.acknowledgeSessionMutationBusy?.(session.id);
+                    return { session, modelName: session.model, busy: true };
                 }
+                try {
 
-                session.model = normalizedModelName;
-                await db.saveSession(session);
-                app.renderCurrentModel();
-                return { session, modelName: normalizedModelName };
+                    await db.saveSetting('selectedModel', normalizedModelName);
+
+                    if (!session) {
+                        app.state.pendingModelName = normalizedModelName;
+                        app.applyPersistedParallelPendingConfig?.(normalizedModelName);
+                        app.renderCurrentModel();
+                        return { session: null, modelName: normalizedModelName };
+                    }
+
+                    session.model = normalizedModelName;
+                    await db.saveSession(session);
+                    app.renderCurrentModel();
+                    return { session, modelName: normalizedModelName };
+                } finally {
+                    if (reservation) app.endSessionMutation(session.id, reservation);
+                }
             },
             async selectCouncilSecondaryModel(modelName) {
                 const normalizedModelName = app.normalizeModelName(modelName);
@@ -176,6 +185,7 @@ export function createSidebarInterface(app, options = {}) {
             return app.sessionSearchQuery;
         },
         getFilteredSessions: () => app.getFilteredSessions(),
+        isSessionStreaming: (sessionId) => app.isSessionStreaming(sessionId),
         toggleSessionStar: (sessionId) => app.toggleSessionStar(sessionId),
         deleteSession: (sessionId) => app.deleteSession(sessionId),
         switchSession: (sessionId) => app.switchSession(sessionId),
@@ -196,6 +206,13 @@ const COMPONENT_APP_KEYS = new Set([
     'acquireAndSetAccess',
     'acknowledgeSessionMutationBusy',
     'beginSessionMutation',
+    'beginFeatureOperation',
+    'bindFeatureOperation',
+    'finishFeatureOperation',
+    'supportsFeature',
+    'getFeatureUnavailableReason',
+    'sessionNavigationGeneration',
+    'updateMemoryProcessedAt',
     'endSessionMutation',
     'isSessionDeleted',
     'stopSessionStreamingAndWait',
@@ -209,6 +226,7 @@ const COMPONENT_APP_KEYS = new Set([
     'createSession',
     'captureActivePromptScrollAnchor',
     'data',
+    'deleteAllChats',
     'deleteCurrentSessionShare',
     'deleteSession',
     'detachStalePromptSlideUpEffect',
@@ -235,6 +253,11 @@ const COMPONENT_APP_KEYS = new Set([
     'getPromptSlideUpMessageIdForSession',
     'getPendingCouncilConfig',
     'getSessionListEmptyText',
+    'getSignInPolicy',
+    'getPaymentMode',
+    'signInRequiredNow',
+    'hasPaymentModes',
+    'changePaymentMode',
     'handleMemoryApprovalDecision',
     'handleEditFileUpload',
     'hasActiveSessionListCriteria',
@@ -254,6 +277,13 @@ const COMPONENT_APP_KEYS = new Set([
     'processContentWithLatex',
     'pruneMemoryRetrievedContextFromMessage',
     'refreshExtensionSlot',
+    'hasExtensionSlotNode',
+    'subscribeExtensionSlot',
+    // Account routing seams: anything AccountModal calls on `this.app` has to
+    // be listed here or the call is silently dropped by the facade.
+    'notifyFirstAccountReady',
+    'notifyLoggedOut',
+    'showSidebar',
     'reasoningEffort',
     'reasoningEnabled',
     'regenerateCouncilLane',
@@ -261,6 +291,7 @@ const COMPONENT_APP_KEYS = new Set([
     'reloadSessions',
     'renderMessages',
     'resetMessageInputLayout',
+    'restoringInitialConversation',
     'restoreSessionScrollPosition',
     'restoreActivePromptScrollAnchor',
     'restorePromptSlideUpEffectForSession',
@@ -281,6 +312,7 @@ const COMPONENT_APP_KEYS = new Set([
     'shareCurrentSession',
     'shouldAutoScrollChat',
     'showLoadingToast',
+    'settingsDialog',
     'showToast',
     'state',
     'stopCurrentSessionStreaming',
@@ -295,7 +327,8 @@ const COMPONENT_APP_KEYS = new Set([
     'updateScrollButtonVisibility',
     'updateSessionTitle',
     'updateToastPosition',
-    'updateToolbarDivider'
+    'updateToolbarDivider',
+    'preserveChatBottomDuringWidthChange'
 ]);
 
 export function createComponentAppFacade(app, allowedKeys = COMPONENT_APP_KEYS, options = {}) {

@@ -4,6 +4,7 @@ import ticketClient from './ticketClient.js';
 import {
     ALLOWED_CONFIDENTIAL_MODELS,
     DEFAULT_SCRUBBER_MODEL,
+    isAllowedConfidentialModel,
     isSlowConfidentialModel
 } from './confidentialModelConfig.js';
 
@@ -316,7 +317,7 @@ class ScrubberService {
      * Keys are stored on the session object and persisted via chatDB.
      * @param {Object} session - The current chat session object
      */
-    async ensureApiKey(session) {
+    async ensureApiKey(session, { onTicketSpent } = {}) {
         if (!session) {
             throw new Error('No session available for scrubber key.');
         }
@@ -330,6 +331,8 @@ class ScrubberService {
             const keyData = await this.requestConfidentialKey();
             session.scrubberKey = keyData.key;
             session.scrubberKeyInfo = keyData;
+            // UI feedback must never turn successful issuance into a failed request.
+            try { onTicketSpent?.(CONFIDENTIAL_KEY_TICKETS_REQUIRED); } catch { /* Non-critical UI feedback. */ }
             await chatDB.saveSession(session);
             await this.ensureBackend(keyData.key);
             return keyData.key;
@@ -346,10 +349,11 @@ class ScrubberService {
                     await chatDB.init();
                 }
                 const stored = await chatDB.getSetting(SCRUBBER_MODEL_SETTING_KEY);
-                if (stored) {
-                    this.selectedModel = stored;
-                    return stored;
+                if (isAllowedConfidentialModel(stored)) {
+                    this.selectedModel = String(stored).trim();
+                    return this.selectedModel;
                 }
+                if (stored) await chatDB.saveSetting(SCRUBBER_MODEL_SETTING_KEY, DEFAULT_SCRUBBER_MODEL);
             }
         } catch (error) {
             console.warn('Failed to load scrubber model preference:', error);
@@ -359,7 +363,7 @@ class ScrubberService {
     }
 
     async setSelectedModel(modelId) {
-        this.selectedModel = modelId || DEFAULT_SCRUBBER_MODEL;
+        this.selectedModel = isAllowedConfidentialModel(modelId) ? String(modelId).trim() : DEFAULT_SCRUBBER_MODEL;
         if (typeof chatDB !== 'undefined') {
             try {
                 if (!chatDB.db && typeof chatDB.init === 'function') {
@@ -373,7 +377,7 @@ class ScrubberService {
     }
 
     getSelectedModel() {
-        return this.selectedModel || DEFAULT_SCRUBBER_MODEL;
+        return isAllowedConfidentialModel(this.selectedModel) ? String(this.selectedModel).trim() : DEFAULT_SCRUBBER_MODEL;
     }
 
     getModeLabel() {
@@ -430,12 +434,12 @@ class ScrubberService {
         return updated;
     }
 
-    async redactPrompt(text, session) {
+    async redactPrompt(text, session, options = {}) {
         const inputText = typeof text === 'string' ? text : '';
         if (!inputText.trim()) {
             return { success: false, text: '' };
         }
-        await this.ensureApiKey(session);
+        await this.ensureApiKey(session, options);
 
         const request = buildResponsesRequest({
             model: this.getSelectedModel(),

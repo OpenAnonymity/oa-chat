@@ -6,14 +6,16 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
+import { citationIconHtml } from '../services/citationIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
+import { syncScrollFade } from '../ui/scrollFade.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
-import { normalizeMemoryRetrievalFailureReason } from '../services/memoryRetrievalError.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
-import { buildDetailedPendingIndicator } from './PendingIndicator.js';
+import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
+import { keptAccessStages } from '../domain/accessTrace.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -281,8 +283,10 @@ function buildAgentTrace(trace, messageId, isStreaming = false) {
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
             </button>
-            <div class="agent-trace-content reasoning-content text-xs text-muted-foreground overflow-auto ${isExpanded ? '' : 'hidden'}" id="${contentId}">
+            <div class="reasoning-body" data-open="${isExpanded ? 'true' : 'false'}">
+            <div class="agent-trace-content reasoning-content text-xs text-muted-foreground overflow-auto" id="${contentId}">
                 ${stepHtml}
+            </div>
             </div>
         </div>
     `;
@@ -928,7 +932,7 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
  * @param {number} reasoningDuration - Duration in milliseconds (optional)
  * @returns {string} HTML string or empty string
  */
-function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration) {
+function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration, accessTrace = null) {
     if (!reasoning && !isStreaming) return '';
 
     const reasoningId = `reasoning-${messageId}`;
@@ -938,7 +942,6 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
 
     // Check in-memory cache for expanded state (persists across session switches, not page reloads)
     const isExpanded = reasoningExpandedState.has(messageId);
-    const contentVisibilityClass = isExpanded ? '' : 'hidden';
     const chevronRotation = isExpanded ? 'style="transform: rotate(180deg)"' : '';
 
     // Trim whitespace and process content appropriately
@@ -966,6 +969,9 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
     } else {
         reasoningHtml = processContent ? processContent(trimmedReasoning) : trimmedReasoning;
     }
+    // The private-access steps that secured this request open the same
+    // stream as the thinking: one disclosure, steps first.
+    reasoningHtml = buildKeptAccessTraceInline(accessTrace) + reasoningHtml;
 
     // Generate subtitle - show timing for completed reasoning, or compute from content during streaming
     // When switching back to a streaming session, compute subtitle from available reasoning content
@@ -1011,7 +1017,9 @@ function buildReasoningTrace(reasoning, messageId, isStreaming = false, processC
                     <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
                 </svg>
             </button>
-            <div class="reasoning-content ${contentStreamingClass} ${contentVisibilityClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
+            <div class="reasoning-body" data-open="${isExpanded ? 'true' : 'false'}">
+            <div class="reasoning-content ${contentStreamingClass} text-xs text-muted-foreground overflow-auto max-h-96" id="${contentId}">${reasoningHtml}</div>
+            </div>
         </div>
     `;
 }
@@ -1226,11 +1234,10 @@ function buildCitationsToggleButton(citations, messageId) {
     }
 
     const faviconsHtml = uniqueDomains.map((domain, i) => {
-        const marker = domain.charAt(0).toUpperCase() || '•';
         return `<span class="citations-toggle-favicon"
             title="${escapeHtmlAttribute(domain)}"
             aria-hidden="true"
-            style="z-index: ${uniqueDomains.length - i};">${escapeHtml(marker)}</span>`;
+            style="z-index: ${uniqueDomains.length - i};">${citationIconHtml(`https://${domain}`)}</span>`;
     }).join('');
 
     return `
@@ -1321,7 +1328,7 @@ function buildCitationsSection(citations, messageId) {
                title="${escapeHtmlAttribute(citation.url)}">
                 <div class="citation-card-header">
                     <div class="citation-favicon-fallback" style="display: flex;" aria-hidden="true">
-                        ${displayIndex}
+                        ${citationIconHtml(citation.url)}
                     </div>
                     <span class="citation-domain">${escapeHtml(domain)}</span>
                 </div>
@@ -1914,13 +1921,22 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         });
     }
 
+    // The private-access steps that secured this request stay with the
+    // message: inside its thinking disclosure when there is one, as their
+    // own disclosure when the model showed no thinking.
+    const hasReasoningStream = Boolean((message.reasoning || '').trim()) || Boolean(message.streamingReasoning);
+    // Once the response has started every stage is finished, whatever step
+    // its last report was on.
+    const accessStages = keptAccessStages(message.accessTrace, !message.streamingPending);
+    const accessTraceBubble = hasReasoningStream ? '' : buildKeptAccessTrace(accessStages, message.id);
     // Build reasoning trace if present
-    const reasoningBubble = buildReasoningTrace(
+    const reasoningBubble = accessTraceBubble + buildReasoningTrace(
         message.reasoning,
         message.id,
         message.streamingReasoning || false,
         processContentWithLatex,
-        message.reasoningDuration
+        message.reasoningDuration,
+        accessStages
     );
     const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
     const agentTraceBubble = hasAgentTrace
@@ -1981,18 +1997,6 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </div>
         </div>
     ` : '';
-    const memoryRetrievalFailure = isMemoryAgent
-        ? normalizeMemoryRetrievalFailureReason(message.memoryRetrievalFailure)
-        : null;
-    const memoryFailureDetail = memoryRetrievalFailure?.title && memoryRetrievalFailure?.detail
-        ? `
-        <div class="memory-failure-detail mx-2 -mt-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            <span class="font-medium text-foreground">Note:</span>
-            <span class="font-medium text-foreground">${escapeHtml(memoryRetrievalFailure.title)}.</span>
-        </div>
-    `
-        : '';
-
     // Build imported thumbnails (small horizontal row before text)
     const thumbnailsBubble = buildImportedThumbnails(message.images);
 
@@ -2017,7 +2021,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const isMessageComplete = !message.streamingReasoning &&
         (message.streamingTokens === null || message.streamingTokens === undefined);
     const isSessionStreaming = options.isSessionStreaming || false;
-    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming) ? `
+    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming && !message.inferenceError) ? `
         <span class="text-xs text-muted-foreground opacity-70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
 
@@ -2178,8 +2182,11 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${agentTraceBubble}
                 ${thumbnailsBubble}
                 ${textBubble}
-                ${memoryFailureDetail}
                 ${imageBubble}
+                ${message.inferenceError ? `<div class="inference-failure-warning" role="status">
+                    <div>${escapeHtml(message.inferenceError)}</div>
+                    <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+                </div>` : ''}
                 ${memoryApprovalActions}
                 ${assistantActionsRow}
                 ${citationsBubble}
@@ -2418,22 +2425,34 @@ if (typeof window !== 'undefined') {
     window.MessageTemplates.enhanceInlineLinks = enhanceInlineLinks;
     window.buildMessageHTML = buildMessageHTML; // Make buildMessageHTML globally available
 
+    // A trace opens and closes by height (grid rows 0fr ↔ 1fr on its body),
+    // a transition rather than a display flip, so a second press mid-way
+    // reverses from wherever it is. The fade edge is re-synced once the
+    // box has its final height. Returns whether the trace is now opening.
+    function openTraceBody(contentEl) {
+        const body = contentEl.closest('.reasoning-body');
+        const opening = body ? body.dataset.open !== 'true' : false;
+        if (!body) return opening;
+        body.dataset.open = String(opening);
+        if (opening) {
+            syncScrollFade(contentEl);
+            body.addEventListener('transitionend', event => {
+                if (event.target === body && event.propertyName === 'grid-template-rows') syncScrollFade(contentEl);
+            }, { once: true });
+        }
+        return opening;
+    }
+
     // Global function to toggle reasoning trace visibility
     window.toggleReasoning = function(messageId) {
         const contentEl = document.getElementById(`reasoning-content-${messageId}`);
         const chevronEl = document.querySelector(`#reasoning-toggle-${messageId} .reasoning-chevron`);
 
         if (contentEl && chevronEl) {
-            const isHidden = contentEl.classList.contains('hidden');
-            if (isHidden) {
-                contentEl.classList.remove('hidden');
-                chevronEl.style.transform = 'rotate(180deg)';
-                reasoningExpandedState.add(messageId);
-            } else {
-                contentEl.classList.add('hidden');
-                chevronEl.style.transform = 'rotate(0deg)';
-                reasoningExpandedState.delete(messageId);
-            }
+            const opening = openTraceBody(contentEl);
+            chevronEl.style.transform = opening ? 'rotate(180deg)' : 'rotate(0deg)';
+            if (opening) reasoningExpandedState.add(messageId);
+            else reasoningExpandedState.delete(messageId);
 
             // Update scroll button visibility after content change
             if (window.app && window.app.updateScrollButtonVisibility) {
@@ -2447,15 +2466,9 @@ if (typeof window !== 'undefined') {
         const chevronEl = document.querySelector(`#agent-trace-toggle-${messageId} .reasoning-chevron`);
 
         if (contentEl && chevronEl) {
-            const isHidden = contentEl.classList.contains('hidden');
-            if (isHidden) {
-                contentEl.classList.remove('hidden');
-                chevronEl.style.transform = 'rotate(180deg)';
-            } else {
-                contentEl.classList.add('hidden');
-                chevronEl.style.transform = '';
-            }
-            preferencesStore.savePreference(PREF_KEYS.agentTraceExpanded, isHidden);
+            const opening = openTraceBody(contentEl);
+            chevronEl.style.transform = opening ? 'rotate(180deg)' : '';
+            preferencesStore.savePreference(PREF_KEYS.agentTraceExpanded, opening);
         }
     };
 }

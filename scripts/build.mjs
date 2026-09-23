@@ -1,9 +1,11 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
+import { buildZkapiAssets, resolveZkapiNetwork, zkapiBuildPlugins, zkapiBuildProvenance } from './zkapiBuild.mjs';
 import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
@@ -36,6 +38,7 @@ const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
+const zkapiNetwork = resolveZkapiNetwork();
 const configuredWebAuthnRelayUrl = resolveBuildWebAuthnRelayUrl();
 const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
 if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
@@ -105,7 +108,7 @@ const toPosixPath = (value) => value.split(path.sep).join('/');
 
 const replaceBundleBlock = (html, name, scriptPath) => {
     const blockRegex = new RegExp(`<!--\\s*BUNDLE:${name}\\s*-->[\\s\\S]*?<!--\\s*\\/BUNDLE:${name}\\s*-->`);
-    const tag = `<!-- BUNDLE:${name} -->\n    <script type="module" src="${scriptPath}"></script>\n    <!-- /BUNDLE:${name} -->`;
+    const tag = `<!-- BUNDLE:${name} -->\n    <script type="module" src="${scriptPath}" onerror="window.__oaRetryBundle(this)"></script>\n    <!-- /BUNDLE:${name} -->`;
     if (!blockRegex.test(html)) {
         throw new Error(`Missing BUNDLE:${name} block in index.html`);
     }
@@ -210,6 +213,7 @@ const build = async () => {
 
     const result = await esbuild.build({
         entryPoints,
+        plugins: zkapiBuildPlugins(zkapiNetwork),
         bundle: true,
         splitting: true,
         format: 'esm',
@@ -232,6 +236,7 @@ const build = async () => {
         },
         define: {
             '__DEV__': 'false',
+            '__OA_ZKAPI_NETWORK__': JSON.stringify(zkapiNetwork),
             '__OA_ORG_SAME_ORIGIN__': JSON.stringify(sameOriginOrg),
             '__OA_PRODUCTION_ORG_ORIGIN__': JSON.stringify(
                 sameOriginOrg
@@ -282,6 +287,14 @@ const build = async () => {
     if (appCssPath) {
         html = html.replace('</head>', `    <link rel="stylesheet" href="${appCssPath}">\n</head>`);
     }
+    const sdkAssets = await buildZkapiAssets({ network: zkapiNetwork, outDir, repoRoot, build: esbuild.build });
+    if (zkapiNetwork) {
+        // Same fixed path each build, so version it by content: a stale cached
+        // sheet otherwise survives a release and the new markup wears old styles.
+        const zkapiCss = await fs.readFile(path.join(repoRoot, 'chat/zkapi/zkapi.css'));
+        const zkapiCssVersion = createHash('sha256').update(zkapiCss).digest('hex').slice(0, 8);
+        html = html.replace('</head>', `    <link rel="stylesheet" href="zkapi/zkapi.css?v=${zkapiCssVersion}">\n</head>`);
+    }
 
     if (sameOriginOrg) {
         const executableModuleSources = [...html.matchAll(
@@ -298,6 +311,13 @@ const build = async () => {
     }
 
     const appHash = appOutput[0].match(/-([a-z0-9]+)\.js$/i)?.[1];
+    // Core styles are copied, not part of the JS bundle hash. Version their
+    // content separately so CSS-only releases do not reuse a cached URL.
+    const stylesHash = createHash('sha256')
+        .update(await fs.readFile(path.join(outDir, 'styles.css')))
+        .digest('hex').slice(0, 16);
+    html = html.replace(/(<link\b[^>]*\bhref=")styles\.css(")/g,
+        `$1styles.css?v=${stylesHash}$2`);
     html = versionStaticAssetRefs(html, appHash);
 
     await fs.writeFile(indexPath, html, 'utf8');
@@ -335,6 +355,7 @@ const build = async () => {
 
     // Extract content hash from esbuild output filename for update checking
     if (appHash) {
+        const zkapi = await zkapiBuildProvenance({ network: zkapiNetwork, repoRoot, outDir, sdkAssets });
         await fs.writeFile(
             path.join(outDir, 'build.json'),
             JSON.stringify({
@@ -344,7 +365,8 @@ const build = async () => {
                     ? 'same-origin'
                     : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN,
                 webauthnRelayUrl: configuredWebAuthnRelayUrl,
-                verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai'
+                verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai',
+                ...(zkapi ? { zkapi } : {})
             }, null, 2)
         );
     }

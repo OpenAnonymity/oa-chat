@@ -13,26 +13,34 @@ const builtinBackends = [
 export function createInferenceService(options = {}) {
     const configuredBackends = options.backends || builtinBackends;
     const backends = new Map(configuredBackends.map(backend => [backend.id, backend]));
-    const DEFAULT_BACKEND_ID = options.defaultBackendId || configuredBackends[0]?.id;
-    if (!DEFAULT_BACKEND_ID || !backends.has(DEFAULT_BACKEND_ID)) {
+    let defaultBackendId = options.defaultBackendId || configuredBackends[0]?.id;
+    const legacyBackendId = options.legacyBackendId || defaultBackendId;
+    if (!defaultBackendId || !backends.has(defaultBackendId)) {
         throw new Error('A registered default inference backend is required.');
     }
     if (backends.size !== configuredBackends.length) {
         throw new Error('Inference backend IDs must be unique.');
     }
+    if (!backends.has(legacyBackendId)) throw new Error('A registered legacy inference backend is required.');
 
     function getBackend(backendId) {
-        if (backendId && backends.has(backendId)) {
-            return backends.get(backendId);
-        }
-        return backends.get(DEFAULT_BACKEND_ID);
+        const selectedId = backendId || defaultBackendId;
+        if (!backends.has(selectedId)) throw new Error(`Unknown inference backend: ${selectedId}`);
+        return backends.get(selectedId);
+    }
+
+    function getLegacyBackendId(session) {
+        const resolvedId = options.resolveLegacyBackendId?.(session) || legacyBackendId;
+        getBackend(resolvedId);
+        return resolvedId;
     }
 
     function ensureSessionBackend(session) {
-        if (!session) return DEFAULT_BACKEND_ID;
+        if (!session) return defaultBackendId;
         if (!session.inferenceBackend) {
-            session.inferenceBackend = DEFAULT_BACKEND_ID;
+            session.inferenceBackend = getLegacyBackendId(session);
         }
+        getBackend(session.inferenceBackend);
         return session.inferenceBackend;
     }
 
@@ -46,7 +54,7 @@ export function createInferenceService(options = {}) {
     }
 
     function getBackendForSession(session) {
-        const backendId = session?.inferenceBackend;
+        const backendId = session ? ensureSessionBackend(session) : defaultBackendId;
         const backend = getBackend(backendId);
         registerBackendTransportHints(backend);
         return backend;
@@ -87,9 +95,18 @@ export function createInferenceService(options = {}) {
 const inferenceService = {
     getBackend,
     getBackendForSession,
+    getBackends: () => [...backends.values()],
     ensureSessionBackend,
+    getLegacyBackendId,
+    hasBackend: backendId => backends.has(backendId),
     getDefaultBackendId() {
-        return DEFAULT_BACKEND_ID;
+        return defaultBackendId;
+    },
+    setDefaultBackendId(backendId) {
+        if (!backends.has(backendId)) throw new Error(`Unknown inference backend: ${backendId}`);
+        defaultBackendId = backendId;
+        registerBackendTransportHints(getBackend(backendId));
+        return backendId;
     },
     getDefaultModelId(session) {
         const backend = getBackendForSession(session);
@@ -133,7 +150,22 @@ const inferenceService = {
         if (typeof backend.generateSessionTitle !== 'function') return '';
         const token = backend.getAccessToken(session);
         if (!token) return '';
-        return backend.generateSessionTitle(prompt, token, options);
+        // Titles use a cheap helper model, but share the initiating chat's
+        // access budget. Capture it before acquisition can await or the UI can
+        // select a different model; modelId continues to select the title model.
+        const models = typeof backend.getCachedModels === 'function' ? backend.getCachedModels() : [];
+        const sessionModel = session?.model;
+        const accessModelId = options.accessModelId
+            || models.find(model => model.id === sessionModel)?.id
+            || models.find(model => model.name === sessionModel)?.id
+            || sessionModel
+            || getBackendDefaultModelConfig(backend).defaultModelId
+            || backend.defaultModelId;
+        return backend.generateSessionTitle(prompt, token, {
+            ...options,
+            accessModelId,
+            reasoningEnabled: options.reasoningEnabled ?? session?.reasoningEnabled ?? true
+        });
     },
     getAccessInfo(session) {
         return getBackendForSession(session).getAccessInfo(session);
@@ -174,7 +206,7 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         return backend.verification || null;
     },
-    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress) {
+    streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
         return backend.streamCompletion(
@@ -190,7 +222,8 @@ const inferenceService = {
             onReasoningChunk,
             reasoningEnabled,
             reasoningEffort,
-            onAccessProgress
+            onAccessProgress,
+            onStreamHealth
         );
     },
     isTransportAccessReady(session) {
@@ -226,7 +259,7 @@ const inferenceService = {
         }
         return null;
     },
-    legacySharedApiKeyToSharedAccess(sharedApiKey, backendId = DEFAULT_BACKEND_ID) {
+    legacySharedApiKeyToSharedAccess(sharedApiKey, backendId = legacyBackendId) {
         const backend = getBackend(backendId);
         if (typeof backend.legacySharedApiKeyToSharedAccess === 'function') {
             return backend.legacySharedApiKeyToSharedAccess(sharedApiKey);

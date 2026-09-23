@@ -1,5 +1,8 @@
 // Generic preparation presentation. Product-specific phase names, copy and
 // progress calculations belong to the composition, not the chat renderer.
+import { snapshotAccessTrace } from '../domain/accessTrace.js';
+export { snapshotAccessTrace };
+
 const expandedTraces = new Set();
 
 function escape(value) {
@@ -15,6 +18,53 @@ if (typeof window !== 'undefined') {
         if (details.open) expandedTraces.add(id);
         else expandedTraces.delete(id);
     };
+}
+
+/** The trace after the fact: the same disclosure the pending message showed,
+ *  kept above the response's thinking so what secured the request stays in
+ *  its thought trace. Collapsed by default; open state is remembered per
+ *  message for the page's lifetime like the pending one. */
+function keptAccessSteps(trace) {
+    return trace.steps.map((step, index) => {
+        const state = ['active', 'waiting', 'complete', 'error', 'canceled', 'upcoming'].includes(step.state) ? step.state : 'upcoming';
+        return `<li class="pending-security-step" data-step-id="${escape(step.id)}" data-state="${state}" aria-label="${escape(step.label)}, ${state}">
+            <span class="pending-security-step-marker" aria-hidden="true">${state === 'complete' ? '✓' : index + 1}</span>
+            <span class="pending-security-step-label">${escape(step.label)}</span>
+        </li>`;
+    }).join('');
+}
+
+function keptStageBlock(trace) {
+    return `<div class="kept-access-stage" data-progress-phase="${escape(trace.phase)}">
+        <strong class="pending-security-category">${escape(trace.summary || trace.category)}</strong>
+        <ol class="pending-security-steps" aria-label="${escape(trace.category)}">${keptAccessSteps(trace)}</ol>
+        ${trace.note ? `<p class="pending-security-note">${escape(trace.note)}</p>` : ''}
+    </div>`;
+}
+
+/** The kept stages inside the thinking disclosure, in order, then the
+ *  thinking — one stream, one toggle. */
+export function buildKeptAccessTraceInline(stages) {
+    const list = Array.isArray(stages) ? stages : stages ? [stages] : [];
+    if (!list.length) return '';
+    return `<div class="kept-access-inline">${list.map(keptStageBlock).join('')}</div>`;
+}
+
+export function buildKeptAccessTrace(stages, messageId) {
+    const list = Array.isArray(stages) ? stages : stages ? [stages] : [];
+    if (!list.length) return '';
+    const trace = list[list.length - 1];
+    const traceId = `access-${messageId}`;
+    return `<div class="pending-response-line kept-access-trace" data-progress-phase="${escape(trace.phase)}">
+        <details class="pending-security-trace" data-pending-security-trace-id="${escape(traceId)}" ontoggle="window.rememberPendingSecurityTrace?.(this)"${expandedTraces.has(traceId) ? ' open' : ''}>
+            <summary class="pending-security-summary" aria-label="${escape(trace.summary)}">
+                <svg class="pending-security-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 5 .8 2.9a4.5 4.5 0 0 0 3.1 3.1L16 12l-3.1.8a4.5 4.5 0 0 0-3.1 3.1L9 19l-.8-3.1a4.5 4.5 0 0 0-3.1-3.1L2 12l3.1-.8a4.5 4.5 0 0 0 3.1-3.1L9 5Zm9-3 .5 2L21 5l-2.5 1-.5 2-.5-2L15 5l2.5-1 .5-2Z"/></svg>
+                <span class="pending-response-label">${escape(trace.summary)}</span>
+                <svg class="pending-security-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 6.5 2.5 2.5 2.5-2.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/></svg>
+            </summary>
+            <div class="pending-security-content">${list.map(keptStageBlock).join('')}</div>
+        </details>
+    </div>`;
 }
 
 export function buildDetailedPendingIndicator(presentation, { phase, traceId = '' } = {}) {
@@ -44,7 +94,6 @@ export function buildDetailedPendingIndicator(presentation, { phase, traceId = '
             </div>
         </details>
         <div class="pending-response-simple${showDetails ? ' hidden' : ''}">
-            <span class="pending-response-dots" aria-hidden="true"><i></i><i></i><i></i></span>
             <span class="pending-response-label pending-response-streaming">${escape(presentation.current)}</span>
         </div>
     </div>`;

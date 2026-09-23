@@ -34,7 +34,15 @@ async function collectTests(dir) {
     return files;
 }
 
-const testFiles = await collectTests(testsRoot);
+const paymentTestsRoot = path.join(testsRoot, 'zkapi');
+const testFiles = (await collectTests(testsRoot)).filter(file => !file.startsWith(`${paymentTestsRoot}${path.sep}`));
+const paymentTestFiles = await fs.readdir(paymentTestsRoot).then(entries => entries
+    .filter(name => /\.test\.(?:mjs|cjs)$/.test(name))
+    .sort()
+    .map(name => path.join(paymentTestsRoot, name))).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+});
 if (testFiles.length === 0) {
     console.log('No unit tests found.');
     process.exit(0);
@@ -77,5 +85,13 @@ child.on('exit', async (code, signal) => {
         console.error(`Unit tests terminated by signal ${signal}`);
         process.exit(1);
     }
-    process.exit(code ?? 1);
+    if (code !== 0 || !paymentTestFiles.length) process.exit(code ?? 1);
+    // The native payment tests retain their source-relative fixtures and SDK
+    // package resolution. Run them in isolated processes so their browser
+    // shims cannot replace the legacy suite's shared globals.
+    const payments = spawn(process.execPath, [
+        '--test', '--test-force-exit', '--test-concurrency=1', ...paymentTestFiles
+    ], { stdio: 'inherit', cwd: repoRoot });
+    payments.on('error', error => { console.error(error); process.exit(1); });
+    payments.on('exit', (paymentCode, paymentSignal) => process.exit(paymentSignal ? 1 : paymentCode ?? 1));
 });

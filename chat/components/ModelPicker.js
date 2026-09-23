@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ModelPicker Component
  * Manages the model selection modal including search, filtering,
@@ -119,7 +120,7 @@ export default class ModelPicker {
     open(options = {}) {
         this.selectionMode = options.selectionMode || options.mode || 'primary';
         const modal = this.app.elements.modelPickerModal;
-        modal.classList.remove('hidden');
+        showSurface(modal);
         modal.dataset.selectionMode = this.selectionMode;
         if (this.app.elements.modelSearch) {
             this.app.elements.modelSearch.placeholder = this.isSecondarySelectionMode()
@@ -146,7 +147,7 @@ export default class ModelPicker {
     close() {
         // Save scroll position before hiding (from the scroll container, not inner list)
         this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
-        this.app.elements.modelPickerModal.classList.add('hidden');
+        hideSurface(this.app.elements.modelPickerModal);
         delete this.app.elements.modelPickerModal.dataset.selectionMode;
         // Clear search
         this.app.elements.modelSearch.value = '';
@@ -407,12 +408,15 @@ export default class ModelPicker {
 
         // The default product prices in tickets. Compositions can supply plain
         // pricing copy without replacing model selection or its shared markup.
-        const pricing = this.app.presentation?.getModelPricing?.(model) || null;
+        const pricing = this.app.presentation?.getModelPricing?.(model, { reasoningEnabled }) || null;
         const escapePricing = value => String(value || '').replace(/[&<>"']/g, character => ({
             '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
         }[character]));
-        const ticketBadge = pricing ? '' : `
-            <span class="text-xs px-2 py-1 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[34px] inline-flex items-center justify-center gap-1.5" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">
+        const badgeClassName = 'text-xs px-2 py-1 rounded bg-muted text-muted-foreground font-medium flex-shrink-0 min-w-[34px] inline-flex items-center justify-center gap-1.5';
+        const paymentBadge = pricing ? (pricing.balanceBadgeLabel ? `
+            <span data-model-balance-badge class="${badgeClassName}" title="${escapePricing(pricing.balanceBadgeTooltip)}" aria-label="${escapePricing(pricing.balanceBadgeTooltip)}">${escapePricing(pricing.balanceBadgeLabel)}</span>
+        ` : '') : `
+            <span class="${badgeClassName}" title="${ticketCost} ticket${ticketCost > 1 ? 's' : ''}">
                 <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"></path>
                 </svg>
@@ -431,7 +435,7 @@ export default class ModelPicker {
                         ${pricing ? `<div class="mt-0.5 truncate text-[10px] text-muted-foreground" title="${escapePricing(pricing.description)}">${escapePricing(pricing.label)}</div>` : ''}
                     </div>
                     ${checkmarkSlot}
-                    ${ticketBadge}
+                    ${paymentBadge}
                 </div>
             </div>
         `;

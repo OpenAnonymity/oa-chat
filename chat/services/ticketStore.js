@@ -8,6 +8,7 @@ import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
 import { PREF_KEYS } from './preferencesStore.js';
 import { withAccountDataLock } from './accountDataLock.js';
+import { requestQueuedLock } from '../application/queuedLock.js';
 import {
     createTicketTombstones,
     filterTicketsByTombstones,
@@ -181,10 +182,13 @@ export class TicketStore {
                 }
             }
             return handler();
-        });
+        }, options);
         if (typeof navigator !== 'undefined' &&
             navigator.locks &&
             typeof navigator.locks.request === 'function') {
+            if (options.boundedQueue) {
+                return requestQueuedLock(navigator.locks, LOCK_NAME, options.signal, runWithAccountLock, options);
+            }
             return navigator.locks.request(
                 LOCK_NAME,
                 { mode: 'exclusive' },
@@ -202,6 +206,22 @@ export class TicketStore {
             () => true,
             { expectedAccountId: expectedAccountId || null }
         );
+    }
+
+    async refreshForAccount(expectedAccountId, { signal, ...queueOptions } = {}) {
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        // The public extension seam is installed after wallet initialization.
+        // Do not wait behind an unbounded initialization lock a second time.
+        await this.ensureDbReady();
+        return this.withLock(async () => {
+            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+            await this.loadFromDatabase({ emitUpdate: false, skipBroadcast: true, skipSync: true });
+            const current = await syncService.assertAccountDataAccess();
+            if (signal?.aborted || (current || null) !== (expectedAccountId || null)) {
+                throw new DOMException('Account changed', 'AbortError');
+            }
+            this.emitUpdate();
+        }, { ...queueOptions, boundedQueue: true, signal, expectedAccountId: expectedAccountId || null });
     }
 
     async handleAccountScopeChange(
@@ -709,7 +729,16 @@ export class TicketStore {
                         .map(ticket => ticket?.finalized_ticket)
                         .filter(Boolean)
                 );
-                if (!tickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
+                // A resumed issuance can race a later transfer, deletion, or
+                // global key invalidation after its original wallet commit.
+                // Durable removal markers settle those tokens without reviving them.
+                const requiredTickets = options.allowPreviouslyRemoved === true
+                    ? await filterTicketsByTombstones(
+                        filterTicketsByInvalidatedKeyIds(tickets, confirmed.invalidatedKeyIds),
+                        confirmed.tombstones
+                    )
+                    : tickets;
+                if (!requiredTickets.every(ticket => confirmedValues.has(ticket.finalized_ticket))) {
                     throw new Error('The local ticket database did not round-trip every prepared ticket.');
                 }
                 this.tickets = confirmed.active;

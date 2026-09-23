@@ -1138,7 +1138,7 @@ test('sendLaneCompletion streams content and reasoning into the selected lane', 
         chatArea: {
             updateCouncilLaneContent: (...args) => uiCalls.push(['content', ...args]),
             updateCouncilLaneReasoning: (...args) => uiCalls.push(['reasoning', ...args]),
-            updateCouncilLaneReasoningSubtitleToDuration: (...args) => uiCalls.push(['duration', ...args]),
+            settleCouncilLaneReasoning: (...args) => uiCalls.push(['settle', ...args]),
             finalizeCouncilLaneReasoning: (...args) => uiCalls.push(['finalize', ...args])
         }
     });
@@ -1218,7 +1218,7 @@ test('simultaneous streamed lanes use separate UI targets', async () => {
         chatArea: {
             updateCouncilLaneContent: (messageId, laneId, content) => contentTargets.push({ messageId, laneId, content }),
             updateCouncilLaneReasoning: (messageId, laneId, reasoning) => reasoningTargets.push({ messageId, laneId, reasoning }),
-            updateCouncilLaneReasoningSubtitleToDuration: () => {},
+            settleCouncilLaneReasoning: () => {},
             finalizeCouncilLaneReasoning: () => {}
         }
     });

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { restoredResponseForDisplay } from '../../chat/ui/restoredResponse.js';
 
 function installTemplateGlobals() {
     const originalDocument = globalThis.document;
@@ -51,7 +52,81 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-test('memory agent failure messages render safe retrieval failure reason', async () => {
+test('a saved pending response is displayed as disconnected without changing stored state or starting work', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        for (const phase of ['requesting-key', 'waiting-response']) {
+            const saved = Object.freeze({ id: 'saved', sessionId: 'chat', role: 'assistant',
+                content: '', model: 'Test', timestamp: 1, streamingPending: true,
+                streamingPhase: phase, streamingTokens: 0,
+                accessTrace: Object.freeze({ category: 'Private access', steps: Object.freeze([
+                    Object.freeze({id:'verify',label:'Verify private key',state:'active'})
+                ]) }) });
+            const display = restoredResponseForDisplay(saved, false);
+            const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
+            assert.doesNotMatch(html, /data-streaming-pending="true"/);
+            assert.match(html, /no longer connected/);
+            assert.match(html, /Retrying sends a new request/);
+            assert.match(html, /Retry response/);
+            assert.doesNotMatch(html, /Model provider returned no response/);
+            assert.doesNotMatch(html, /Private access secured|Verify private key/);
+            assert.equal(saved.accessTrace.steps[0].state, 'active');
+            assert.equal(saved.streamingPending, true, 'another tab may still own the stored response');
+            assert.equal(saved.streamingPhase, phase);
+            assert.equal(saved.inferenceError, undefined, 'notice must never enter saved history or model context');
+            assert.equal(display.content, saved.content);
+        }
+    } finally { restoreGlobals(); }
+});
+
+test('restored partial output is retained while live and completed messages stay unchanged', () => {
+    const images = [{ url: 'data:image/png;base64,example' }];
+    const saved = Object.freeze({ role: 'assistant', content: 'Partial answer', reasoning: 'Partial reasoning',
+        images, streamingReasoning: true, streamingTokens: 4 });
+    const display = restoredResponseForDisplay(saved, false);
+    assert.equal(display.content, saved.content);
+    assert.equal(display.reasoning, saved.reasoning);
+    assert.equal(display.images, images);
+    assert.equal(display.streamingReasoning, false);
+    assert.equal(display.streamingTokens, null);
+    assert.equal(restoredResponseForDisplay(saved, true), saved, 'switching between live chats must not interrupt them');
+    for (const message of [
+        { role: 'assistant', content: 'Older complete answer' },
+        { role: 'assistant', content: 'Complete answer', streamingPending: false, streamingReasoning: false, streamingTokens: null },
+        { role: 'user', content: 'Prompt left before a key returned' }
+    ]) assert.equal(restoredResponseForDisplay(message, false), message);
+    const withError = { ...saved, inferenceError: 'Original provider error' };
+    assert.equal(restoredResponseForDisplay(withError, false).inferenceError, withError.inferenceError);
+    const completedTrace = { category: 'Private access', steps: [{state:'complete'}] };
+    assert.deepEqual(restoredResponseForDisplay({...saved,accessTrace:completedTrace}, false).accessTrace, [completedTrace]);
+    for (const accessTrace of [null, {steps:'bad'}, {steps:[null]}, {steps:[]}, [null]]) {
+        assert.deepEqual(restoredResponseForDisplay({...saved,accessTrace}, false).accessTrace, []);
+    }
+    for (const workflow of [{council:{enabled:true}}, {model:'Memory Agent'}, {isLocalOnly:true}]) {
+        const specialized = { ...saved, ...workflow };
+        assert.equal(restoredResponseForDisplay(specialized, false).inferenceError, undefined,
+            'specialized workflows must not acquire a generic inference retry control');
+    }
+});
+
+test('interrupted answers keep their content and show an escaped error with retry', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const message = {id:'partial-answer',role:'assistant',content:'Partial answer',model:'Test',timestamp:new Date().toISOString()};
+        const render = value => buildMessageHTML(value,{processContentWithLatex:escapeHtml,formatTime:()=>''},[],'Test');
+        assert.doesNotMatch(render(message), /inference-failure-warning/);
+        const html = render({...message,inferenceError:'Response interrupted <script>alert(1)</script>'});
+        assert.match(html, /Partial answer/);
+        assert.match(html, /Response interrupted &lt;script&gt;/);
+        assert.doesNotMatch(html, /<script>/);
+        assert.match(html, /regenerate-message-btn inference-retry-button/);
+        assert.match(html, /Retry response/);
+    } finally { restoreGlobals(); }
+});
+
+test('memory agent failures use the same compact status presentation as an empty retrieval', async () => {
     const restoreGlobals = installTemplateGlobals();
     const originalWarn = console.warn;
     const originalError = console.error;
@@ -66,7 +141,7 @@ test('memory agent failure messages render safe retrieval failure reason', async
             role: 'assistant',
             model: 'memory agent',
             timestamp: new Date('2026-07-02T08:15:12Z').toISOString(),
-            content: 'Memory context was not added this time. Sending without it.',
+            content: 'No added memory. Sending original prompt.',
             isLocalOnly: true,
             memoryRetrievalFailure: {
                 kind: 'network',
@@ -78,9 +153,8 @@ test('memory agent failure messages render safe retrieval failure reason', async
             formatTime: () => '18:15:12'
         }, [], 'memory agent');
 
-        assert.match(html, /Memory context was not added this time\. Sending without it\./);
-        assert.match(html, /Note:/);
-        assert.match(html, /Connection issue\./);
+        assert.match(html, /No added memory\. Sending original prompt\./);
+        assert.doesNotMatch(html, /memory-failure-detail|Note:|Connection issue/);
         assert.doesNotMatch(html, /confidential memory service|Check your connection|script|img|api_key=secret|<script>|<img>/);
     } finally {
         await new Promise((resolve) => setTimeout(resolve, 0));

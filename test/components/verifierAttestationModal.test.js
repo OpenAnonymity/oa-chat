@@ -25,5 +25,5 @@ test('verified access retains the normal attestation presentation', () => {
 
     assert.equal(presentation.localLoopbackBypass, false);
     assert.equal(presentation.summaryTone, 'success');
-    assert.equal(presentation.summaryTitle, 'Key issuance chain verified');
+    assert.equal(presentation.summaryTitle, 'Key issuance verification');
 });

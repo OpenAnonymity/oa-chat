@@ -1,3 +1,4 @@
+import { discardResponseBody } from './inference/reliability.js';
 /**
  * Fetch Retry Utility
  * Industry-standard retry mechanism with exponential backoff and jitter.
@@ -177,6 +178,7 @@ export async function fetchRetry(url, init = {}, config = {}) {
 
                 // Check if we should retry
                 if (attempt < maxAttempts - 1) {
+                    discardResponseBody(response.body);
                     const retryAfterMs = parseRetryAfter(response);
                     const delay = getDelay(attempt, baseDelayMs, maxDelayMs, retryAfterMs);
 

@@ -1,0 +1,194 @@
+## 2026-09-22: Repeated reloads during deposit confirmation
+
+- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. Explicit same-tab intent can restore after navigation to an OA chat; unrelated SDK records still respect the zkAPI-mode gate. Restoration never submits or retries transactions.
+
+## 2026-09-21: Withdrawal reload and disclosure continuity
+
+- Deposit confirmation copy now reads “Confirm the deposit in MetaMask to add funds to your private balance.”
+
+- Restore prepared/retry-ready withdrawals as well as submitted/unknown ones, even after the transient tab marker has been consumed. Background submissions/finalizations open Payment history; completed records and long escape waiting periods stay quiet. Reopening only refreshes status and never resubmits a transaction.
+- The first mutual-close step now says “Prepare your withdrawal.” Recovery copy explains opening MetaMask from the browser toolbar and using the existing recovery/retry actions without another page reload. The injected provider has no documented focus-existing-confirmation method; no automatic transaction or permission requests were added.
+- Background wallet updates are coalesced while a guide/history arrow, panel, and follow-up scroll animate. Existing shared Transitions.dev timing and reduced-motion behavior remain; close/rerender clears deferred work.
+
+## 2026-09-21: Restore interrupted wallet dialogs
+
+- While an open wallet dialog runs an action, a tab-scoped sessionStorage marker records only its view and withdrawal mode. Reload restores that view even before a transaction exists; restoration consumes it, and completion or dismissal clears it. Ongoing transactions continue to restore from SDK records. Wallet secrets and recovery records remain exclusively SDK-owned. Restoration only opens and refreshes status, never reconnects MetaMask or submits a transaction.
+- Startup waits for SDK initialization, initial conversation restoration, and an eligible zkAPI chat before consuming restoration. In-flight USDC approvals also qualify, even when the surrounding deposit plan is still prepared. Manual navigation/dismissal wins. Restricted session storage falls back to SDK-persisted transaction restoration.
+- Funding copy says “Your deposit progress is saved in this browser.” Sidebar trash moves 4px closer to the fixed toggle without overlapping either 36px hit target.
+
+# Optional zkAPI payments
+
+OA Chat owns the payment-mode toolbar, balance/funding/history UI, model
+pricing, and chat runtime adapter. It consumes the independently installable
+`@openanonymity/zkapi-browser-sdk` at the exact Git revision recorded by
+`package.json` and `package-lock.json`. The SDK owns wallet storage, proofs,
+key issuance/settlement, and withdrawals. The dependency direction is OA Chat
+to zkAPI; the SDK has no OA Chat submodule or UI dependency.
+
+## Build
+
+The default `npm run build` retains Tickets only. To enable both methods:
+
+```sh
+OA_ZKAPI_NETWORK=sepolia npm run build
+OA_ZKAPI_NETWORK=mainnet npm run build
+```
+
+The network is an explicit build setting, independent of the OA organization.
+Unknown settings fail the build. SDK assets are emitted under `dist/zkapi/`;
+the app remains at `/`. Disabled builds do not import the SDK or emit its
+wallet/proof assets. WASM/proving keys and trusted network configuration are
+provided by the pinned SDK, checked during build and proof loading, and do
+not require a setup ceremony or Rust installation on the host.
+
+For the staging OA organization through same-origin Vercel rewrites:
+
+```sh
+OA_ORG_SAME_ORIGIN=true OA_ZKAPI_NETWORK=sepolia npm run build
+OA_DEPLOYMENT_ORG_ORIGIN=https://org-staging.openanonymity.ai \
+  OA_ZKAPI_NETWORK=sepolia node scripts/generate-zkapi-vercel-config.mjs vercel.generated.json
+```
+
+Select `mainnet` in both commands for the existing mainnet vault. The generator
+keeps real verifier checks enabled. Supply the appropriate
+`OA_WEBAUTHN_RELAY_URL` for an account-enabled deployment. Deployment operators
+must keep frontend/auth return origins allowed by the chosen OA organization.
+The generated config routes anonymous zkAPI protocol traffic separately from
+the OA account/ticket endpoints. Mainnet funding uses real USDC and ETH.
+
+`build.json` records the OA revision, SDK version and immutable revision,
+network, protocol/artifact provenance, and emitted file hashes. Hidden files and
+source maps are removed before hashing so the manifest describes files that
+static hosts actually serve. Pin updates
+must change the package dependency and lock together; floating SDK branch
+references and local workspace dependencies are rejected by enabled builds.
+
+## Application integration
+
+The standalone entry uses `startChatApp()` from `chat/publicApi.js`, which
+loads the native payment adapter only in a zkAPI-enabled build. It returns a
+promise for the app. Existing synchronous `createChatApp()` retains its
+original contract. A downstream app can use `startChatApp({ extensions, ... })`
+without importing the SDK or implementing payment UI. `payments: false` or
+`payments: { zkapi: false }` disables the native payment adapter; an explicitly
+supplied custom runtime also retains ownership of its own payment policy.
+
+The adapter preserves one OA proxy instance and one SDK wallet. Configuration
+is supplied before initialization, using fixed host asset URLs. URL query
+parameters cannot silently select a daemon or change the pinned network.
+Anonymous protocol/configuration/manifest/daemon requests omit account cookies,
+including calls through a same-origin reverse proxy and fallback transport.
+The SDK never receives account identity, ticket contents, or chat messages.
+Model inference stays in OA's provider adapter with the ephemeral credential.
+
+The System Panel keeps the shared Ephemeral Access Key, expiry, renewal,
+issuing-station, attestation, and proxy controls in both payment modes. The
+funding renderer declares key embedding through
+`fundingSectionIncludesAccessKey()`: the Commercial Tickets layout embeds it
+below the ticket summary, while zkAPI balance funding leaves it to the shared
+top section. The host's Membership action alone must not suppress private-key
+controls. This UI composition does not expose the SDK's provider credential;
+existing access masking and private chat-binding semantics remain unchanged.
+
+## Persistence and behavior
+
+Both payment methods use OA's existing chat database and model catalog. Mode
+changes affect how the next key is acquired. A historical chat can change
+methods without moving or replacing its transcript. Ticket access stays usable
+while the prior private key settles in the background. The model list shows
+ticket counts or compact minimum-balance badges and per-token prices.
+
+Deleting a plain Tickets chat does not initialize or query the private wallet.
+Private chat deletion checks its own pending key, including recovery markers
+retained after a switch to Tickets. Delete-all explicitly checks the whole
+wallet, including private owners that are not in the loaded sidebar page.
+
+Private notes retain the SDK's original browser database, journal, Web Locks,
+and BroadcastChannel names. Wallet secrets are separate from chat storage and
+account synchronization. A new origin has separate browser storage: trial
+history, tickets, and private balances do not automatically transfer there.
+This source reorganization changes neither contract expiry nor withdrawal
+behavior. Private balance expiry does not automatically refund unused funds;
+the balance help/history continue to explain the deployed contract behavior.
+
+### Interrupted temporary-key issuance
+
+An issuer outage can leave a saved proof and a server lease in `provisioning`
+before the SDK has a key or chat owner. The pinned SDK only recovers active or
+finalized leases; repeatedly asking it to settle provisioning cannot progress.
+OA's `privateLeaseRecovery.mjs` compatibility adapter replays that exact saved
+request under the SDK wallet lock, verifies the returned key, retires it without
+exposing it to inference, and installs the SDK-verified signed receipt. It never
+clears a journal merely because a key was not returned. It also reconciles an
+ownerless active/finalized request left by interruption during this recovery.
+Move this behavior into the SDK when updating the dependency, retaining these
+regression tests.
+
+New Chat, deletion, renewal, and withdrawal share this recovery path. Settlement
+waits are bounded (30 seconds at the shared SDK boundary, 45 seconds including
+chat cleanup); the status exposes **Stop waiting** and **Retry**. Stopping a wait
+preserves the journal and any SDK mutation still holding the wallet lock. A
+second attempt cannot start overlapping work while that mutation is unfinished.
+Once the service returns, retrying reconciles the saved request so deletion and
+withdrawal can proceed. During an unresolved issuer outage they can still be
+blocked: the server has reserved the note's nullifier, and a client cannot safely
+assume that a missing response means no key was issued. No automatic refund or
+force-reset is performed.
+
+## Funding setup
+
+Funding onboarding has one “Set up your wallet” disclosure with four visible
+numbered steps: install MetaMask, add USDC, add ETH for fees, and return to
+deposit. Both tokens must be on Ethereum Mainnet in the same account. Official
+MetaMask install/buy links remain alongside the relevant steps. Sepolia retains
+its separate free test ETH/demo-token instructions; no real purchase is suggested.
+
+Account setup, billing explanation, and payment history use the installed
+Transitions.dev grid accordion and chevron hooks, with one guide open at a time.
+Open/close takes 420ms in both directions; text stays crisp. After expansion settles, the dialog
+scrolls over 320ms only when needed to reveal content. Manual interaction,
+closing, and rerendering cancel deferred scroll work. Reduced motion skips all
+animation. History opens in place, preserving its existing action bindings.
+The dialog header stays vertically anchored while guides expand, and dividers
+span the full row. Existing showSurface/hideSurface handles modal entry/exit.
+
+The mainnet funding line now reads “USDC on Ethereum.” Saved deposits retain a
+short reminder to check MetaMask for a pending transaction before resuming.
+Cancellation and submitted/unknown transaction recovery states are unchanged.
+Guide expansion, keyboard focus, and scroll survive wallet refreshes, and the
+funding amount remains editable without refresh stealing focus in `fund` view.
+
+After an automatic Sepolia test-token mint, funding reads the token balance at
+the confirmed receipt block instead of the provider's potentially cached
+`latest` state. The SDK checks the canonical block hash and selected network
+on both sides of the read and bounds read-only retries. A delayed read does not
+send another mint. Mainnet deposits and withdrawals retain their existing
+transaction paths, durable recovery, and on-chain/indexer root checks.
+
+A saved deposit can still have a pending token approval in MetaMask, including
+after approval confirmation polling times out. The recovery notice preserves
+the saved amount/private note and asks the user to check pending transactions
+before resuming; it does not infer that nothing was submitted from a prepared
+deposit alone.
+
+Sources for the onboarding copy:
+
+- [Install MetaMask](https://support.metamask.io/start/getting-started-with-metamask)
+- [Buy crypto in MetaMask](https://support.metamask.io/manage-crypto/move-crypto/buy/how-to-buy-crypto-in-metamask)
+- [Sepolia faucets](https://ethereum.org/en/developers/docs/networks/#sepolia)
+
+## Verification
+
+Run `npm test` for the existing OA suite and the native payment adapter tests.
+The SDK integration passed 744 OA tests and 164 native payment tests. The exact
+dependency and lockfile also passed a fresh `npm ci` without Git/npm credentials
+and with SSH disabled; the public GitHub package requires no private checkout.
+The SDK repository tests its own wallet, recovery, transport, and proof-asset
+boundaries independently, including installation without an OA checkout.
+Live browser checks should cover both payment methods, new and historical
+chats, model tier changes, settlement during a switch to Tickets, funding,
+withdrawal navigation, and layout. Mainnet UI checks require no transaction.
+
+## Recovery presentation (2026-09-21)
+
+Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.

@@ -23,7 +23,9 @@
     --font-librecaslon: "Libre Caslon Text", 'New York', Georgia, serif;
     --font-ptserif: 'PT Serif', 'New York', Georgia, serif;
 
-    --font-sans: 'SF Pro Text', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    /* Keep the platform UI family first so larger headings can use its
+       display-optimized face instead of pinning every size to SF Pro Text. */
+    --font-sans: system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
     --font-serif: var(--font-sourceserif);
     --font-mono: 'SF Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 
@@ -43,6 +45,7 @@
     /* Accent color (active toggles, primary highlights) */
     --color-accent-primary: var(--blue-500);
     --color-accent-primary-foreground: 0 0% 100%;
+    --color-focus-ring: var(--blue-500);
 
     /* Frosted glass effect - adjust opacity (0-1) and blur (px) */
     --glass-opacity: 0.82;
@@ -124,10 +127,127 @@
     --color-ring: 0 0% 80%;
 }
 
+/* ============================================
+   zkAPI: its own colour axis (html.zkapi-mode, set from the payment mode).
+   The Light / Dark choice is shared with OA and means the same thing; what
+   changes is the pair it resolves to. Light is EF purple (#627EEA ~ hsl(228
+   76% 65%)): lavender ground, a deeper sidebar tint, a near-white card,
+   indigo text. Dark is its complement — the same hue at the other end of
+   lightness, not the wheel opposite — so the two read as one brand in two
+   lights. Only the colour tokens change; every light/dark rule still applies.
+   ============================================ */
+html.zkapi-mode.theme-light {
+    --color-hover: 232 50% 92%;
+
+    --slate-1: hsl(232, 60%, 98%);
+    --slate-2: hsl(232, 55%, 96.5%);
+    --slate-3: hsl(232, 50%, 94%);
+    --slate-4: hsl(232, 45%, 92%);
+    --slate-200: hsl(232, 35%, 86%);
+    --slate-800: hsl(232, 40%, 20%);
+    --slate-6: hsl(232, 25%, 80%);
+
+    --color-accent-primary: 228 76% 65%;
+    --color-focus-ring: 228 76% 65%;
+
+    --color-background: 232 60% 96%;
+    --color-foreground: 232 45% 14%;
+    --color-card: 232 65% 97.5%;
+    --color-card-foreground: 232 45% 14%;
+    --color-popover: 232 65% 97.5%;
+    --color-popover-foreground: 232 45% 14%;
+    --color-primary: 228 70% 55%;
+    --color-primary-foreground: 0 0% 100%;
+    --color-secondary: 232 50% 92%;
+    --color-secondary-foreground: 232 45% 14%;
+    --color-muted: 232 50% 92%;
+    --color-muted-foreground: 232 22% 44%;
+    --color-accent: 232 50% 92%;
+    --color-accent-foreground: 232 45% 14%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 0 0% 95%;
+    --color-border: 232 35% 86%;
+    --color-input: 232 35% 86%;
+    --color-ring: 228 76% 65%;
+
+    --code-block-bg: hsl(232, 40%, 93.5%);
+    --code-block-header: hsl(232, 38%, 90.5%);
+    --code-block-border: hsl(232, 35%, 87%);
+}
+
+/* Night: the purple's complement — the same family at the other end of
+   lightness. Lifted off black (ground L 0.25), a violet cast rather than a
+   painted indigo (surface chroma 0.024, hue 290), text pulled back from
+   white so it does not glare, and the accent lighter and quieter so it
+   holds on the dark ground. Source values are OKLCH; these are their HSL. */
+html.zkapi-mode.dark {
+    --color-hover: 247 14% 21%;
+
+    --slate-1: hsl(247, 18%, 11.5%);
+    --slate-2: hsl(247, 18%, 13%);
+    --slate-3: hsl(247, 16%, 15.9%);
+    --slate-4: hsl(247, 15%, 18.4%);
+    --slate-200: hsl(247, 14%, 21.6%);
+    --slate-800: hsl(245, 18%, 84%);
+    --slate-6: hsl(247, 12%, 30.2%);
+
+    --color-accent-primary: 238 93% 83.2%;
+    --color-focus-ring: 238 93% 83.2%;
+
+    --color-background: 247 17% 15%;
+    --color-foreground: 245 10% 87.9%;
+    --color-card: 247 19% 13.6%;
+    --color-card-foreground: 245 10% 87.9%;
+    --color-popover: 247 19% 13.6%;
+    --color-popover-foreground: 245 10% 87.9%;
+    --color-primary: 238 93% 83.2%;
+    --color-primary-foreground: 247 19% 13.6%;
+    --color-secondary: 247 15% 20.1%;
+    --color-secondary-foreground: 245 10% 87.9%;
+    --color-muted: 247 15% 20.1%;
+    --color-muted-foreground: 246 12% 65.2%;
+    --color-accent: 247 15% 20.1%;
+    --color-accent-foreground: 245 10% 87.9%;
+    --color-destructive: 0 62.8% 30.6%;
+    --color-destructive-foreground: 0 0% 95%;
+    --color-border: 247 15% 27.3%;
+    --color-input: 247 15% 27.3%;
+    --color-ring: 238 93% 83.2%;
+
+    --code-block-bg: hsl(247, 20%, 12.1%);
+    --code-block-header: hsl(247, 17%, 15%);
+    --code-block-border: hsl(247, 16%, 19.7%);
+}
+/* In zkAPI's colours the gear's switches take the pole's accent. */
+html.zkapi-mode .settings-panel { --settings-accent: hsl(var(--color-accent-primary)); }
+
 :root,
 .dark {
     --tw-ring-offset-color: hsl(var(--color-background));
-    --tw-ring-color: hsl(var(--color-ring));
+    --tw-ring-color: hsl(var(--color-focus-ring));
+}
+
+/* Focus rings are keyboard-only. The app moves focus itself (dialog open,
+   restore after close, model search) and browsers report that as
+   :focus-visible until the next pointer interaction, which lit rings on
+   load, unlock and picker open. An inline script in index.html sets
+   html[data-keyboard-nav] after Tab/arrow keys and clears it on pointer
+   input; every ring keys off that. Low specificity (:where) so Tailwind
+   ring utilities and component rules still win. */
+:where(html[data-keyboard-nav] :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]:not([tabindex="-1"]))):focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+/* The quiet half is deliberately specific: a component's own
+   `.x:focus-visible { outline: ... }` must not light a ring on programmatic
+   focus (re-render focus restore after a click) when nothing else would. */
+html:not([data-keyboard-nav]) :is(a[href], button, input, select, textarea, summary, [role="button"], [tabindex]):focus-visible {
+    outline: none;
+}
+/* Tailwind ring utilities draw with box-shadow; same keyboard-only rule. */
+html:not([data-keyboard-nav]) [class*="focus-visible:ring"]:focus-visible {
+    --tw-ring-shadow: 0 0 #0000;
+    --tw-ring-offset-shadow: 0 0 #0000;
 }
 
 /* Global font application */
@@ -174,8 +294,8 @@ code, pre, kbd, .font-mono {
 }
 
 .in-page-find:focus-within {
-    border-color: hsl(var(--color-ring) / 0.55);
-    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-ring) / 0.12);
+    border-color: hsl(var(--color-focus-ring) / 0.55);
+    box-shadow: 0 10px 30px hsl(0 0% 0% / 0.16), 0 0 0 2px hsl(var(--color-focus-ring) / 0.12);
 }
 
 .in-page-find__search-icon {
@@ -234,8 +354,8 @@ code, pre, kbd, .font-mono {
     outline: none;
 }
 
-.in-page-find__button:focus-visible {
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.3);
+html[data-keyboard-nav] .in-page-find__button:focus-visible {
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.3);
 }
 
 .in-page-find__button:disabled {
@@ -927,7 +1047,7 @@ html.switching-theme *::after {
     position: fixed;
     z-index: 45;
     width: min(520px, calc(100vw - 32px));
-    max-height: min(520px, calc(100vh - 32px));
+    max-height: min(520px, calc(100vh - 32px), var(--quick-ask-available-height, 100vh));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -946,6 +1066,7 @@ body.quick-ask-layer-active #input-card.scrubber-preview-expanded {
 }
 
 .quick-ask-mini-chat {
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 0.85rem;
@@ -1054,7 +1175,7 @@ a.quick-ask-source:focus-visible {
 @media (max-width: 640px) {
     .quick-ask-window {
         width: min(520px, calc(100vw - 24px));
-        max-height: min(64vh, 460px);
+        max-height: min(64vh, 460px, var(--quick-ask-available-height, 100vh));
     }
 }
 
@@ -1328,8 +1449,45 @@ a.quick-ask-source:focus-visible {
 }
 
 /* Add spacing after reasoning content only when expanded */
-.reasoning-trace:has(.reasoning-content:not(.hidden)) {
+.reasoning-trace:has(.reasoning-body[data-open="true"]) {
     margin-bottom: 0.5rem;
+}
+
+/* Opening and closing a trace is a height transition (grid rows 0fr ↔ 1fr),
+   so a second press mid-way reverses from where it is. The words settle in a
+   beat behind the height — they drift down 4px, from blurred to sharp — and
+   leave about 20% faster than they arrive. The chevron turns on the same
+   curve. Reduced motion keeps the state change and drops the travel. */
+.reasoning-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 190ms cubic-bezier(.2, 0, 0, 1);
+}
+.reasoning-body[data-open="true"] { grid-template-rows: 1fr; transition-duration: 240ms; }
+.reasoning-body > .reasoning-content {
+    min-height: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+    filter: blur(1px);
+    transition: opacity 150ms ease, transform 190ms cubic-bezier(.2, 0, 0, 1), filter 150ms ease;
+}
+/* Closed, the box is also out of the tab order: visibility flips at the end
+   of the close and at the start of the open. */
+.reasoning-body:not([data-open="true"]) > .reasoning-content {
+    overflow: hidden; pointer-events: none; visibility: hidden;
+    transition: opacity 150ms ease, transform 190ms cubic-bezier(.2, 0, 0, 1), filter 150ms ease, visibility 0s linear 190ms;
+}
+.reasoning-body[data-open="true"] > .reasoning-content {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    visibility: visible;
+    transition: opacity 200ms ease 40ms, transform 240ms cubic-bezier(.2, 0, 0, 1) 40ms, filter 200ms ease 40ms, visibility 0s;
+}
+.reasoning-chevron { transition: transform 240ms cubic-bezier(.2, 0, 0, 1) !important; }
+@media (prefers-reduced-motion: reduce) {
+    .reasoning-body, .reasoning-body > .reasoning-content, .reasoning-chevron { transition: none !important; }
+    .reasoning-body > .reasoning-content { transform: none; filter: none; }
 }
 
 /*
@@ -1416,13 +1574,34 @@ a.quick-ask-source:focus-visible {
     animation: reasoningShimmer var(--shimmer-duration) ease-in-out infinite !important;
 }
 
+/* The thought's body wears the same left rule as the pending trace it
+   continues from, so the two read as one stream. */
 .reasoning-content {
-    padding: 0.25rem 0 0 0;
+    padding: 0.35rem 0 0.25rem 0.65rem;
     margin-left: 1.75rem;
+    border-left: 1px solid hsl(var(--color-border) / 0.7);
     line-height: 1.4;
     white-space: normal; /* avoid rendering inter-element newlines as extra lines */
     word-wrap: break-word;
     opacity: 0.85;
+}
+
+/* A trace that hides more content ends in a soft edge, not a cut. The mask
+   exists only on the edge that hides something (data-scroll-fade, set from
+   the scroll position), so a short trace keeps its last line whole. The
+   left rule fades with the text, so the box has no hard corner either. */
+.reasoning-content { --reasoning-fade: 28px; }
+.reasoning-content[data-scroll-fade="bottom"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--reasoning-fade)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--reasoning-fade)), transparent);
+}
+.reasoning-content[data-scroll-fade="top"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade));
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade));
+}
+.reasoning-content[data-scroll-fade="both"] {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade), #000 calc(100% - var(--reasoning-fade)), transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--reasoning-fade), #000 calc(100% - var(--reasoning-fade)), transparent);
 }
 
 /* Streaming uses div wrappers for each line to enable vertical spacing */
@@ -1458,7 +1637,10 @@ a.quick-ask-source:focus-visible {
     opacity: 1; /* Override parent's 0.85 opacity to match bold subtitles */
 }
 
-.pending-response-simple,
+.pending-response-simple {
+    min-width: 0;
+}
+
 .pending-security-summary {
     display: flex;
     align-items: center;
@@ -1475,6 +1657,26 @@ a.quick-ask-source:focus-visible {
     min-width: 0;
     margin: 0;
 }
+/* The trace kept on a finished message sits where the thinking toggle
+   sits — same left edge, no pending offset — and reads at rest, not
+   shimmering. */
+.kept-access-trace {
+    display: block;
+    margin-left: 0;
+    padding: 0.25rem 0.5rem 0;
+    transform: none;
+}
+.kept-access-trace .pending-security-summary .pending-response-label { color: hsl(var(--color-muted-foreground)); }
+/* Inside the thinking disclosure: the steps lead, a hairline, then the thought. */
+.reasoning-content .kept-access-inline { margin: 0 0 0.625rem; padding: 0 0 0.625rem; border-bottom: 1px solid hsl(var(--color-foreground) / 0.08); }
+/* Inside the thought the step lists keep their own shape; the reasoning
+   body's markdown list styling does not apply to them. */
+.reasoning-content .kept-access-inline .pending-security-steps { display: grid; gap: 0.28rem; margin: 0; padding: 0; list-style: none; }
+.reasoning-content .kept-access-inline .pending-security-step { margin: 0; padding: 0; font-size: 0.75rem; }
+.reasoning-content .kept-access-inline .pending-security-note { margin: 0.4rem 0 0; }
+.reasoning-content .kept-access-inline .pending-security-category { display: block; margin-bottom: 0.375rem; }
+.kept-access-stage + .kept-access-stage { margin-top: 0.625rem; }
+.reasoning-content .kept-access-inline .pending-security-note { margin-top: 0.375rem; }
 
 .pending-security-summary {
     width: fit-content;
@@ -1719,6 +1921,16 @@ a.quick-ask-source:focus-visible {
     -webkit-text-fill-color: transparent !important;
     color: transparent !important;
     animation: pendingResponseShimmer 1.9s ease-in-out infinite alternate !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .session-title-input.session-title-generating[readonly] {
+        animation: none !important;
+        background-image: none !important;
+        -webkit-text-fill-color: currentColor !important;
+        color: hsl(var(--color-foreground)) !important;
+        font-weight: 600;
+    }
 }
 
 .reasoning-trace:has(.agent-trace-content.hidden) {
@@ -2867,6 +3079,17 @@ a.quick-ask-source:focus-visible {
 }
 
 /* Match loading toast spinner to scrubbing blue border glow palette */
+/* The app toast: one line of 13px, tight padding, a 10px radius. Wallet
+   progress and feature notices all pass through it, so it stays small. */
+#app-toast {
+    max-width: min(24rem, calc(100vw - 2rem));
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.625rem;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    text-wrap: pretty;
+    font-variant-numeric: tabular-nums;
+}
 #app-toast .link-preview-spinner {
     border-color: rgba(59, 130, 246, 0.35);
     border-top-color: rgba(96, 165, 250, 0.95);
@@ -3248,6 +3471,29 @@ textarea:focus {
     position: relative;
     display: flex;
     align-items: center;
+}
+
+/* The picker intentionally focuses search as it opens. A full input outline
+   therefore reads as a selected black box even after pointer activation.
+   Keep the active field clear with a quiet accent underline instead. */
+.model-picker-search:has(> #model-search:focus) {
+    box-shadow: none;
+}
+
+html[data-keyboard-nav] .model-picker-search:has(> #model-search:focus-visible) {
+    box-shadow: inset 0 -2px 0 hsl(var(--color-focus-ring));
+}
+
+#model-search:focus,
+#model-search:focus-visible {
+    outline: none;
+}
+
+@media (forced-colors: active) {
+    html[data-keyboard-nav] #model-search:focus-visible {
+        outline: 2px solid Highlight;
+        outline-offset: -2px;
+    }
 }
 
 /* Chat area styling */
@@ -3973,12 +4219,13 @@ html.flat-mode.dark .file-attachment-icon .text-destructive {
    Breakpoints (mobile-first):
    - Base: < 640px  (mobile)
    - sm:  >= 640px  (tablet)
+   - md:  >= 768px  (large tablet)
    - lg:  >= 1024px (desktop)
 
    Behavior:
-   - Mobile:  Sidebar overlay, Right panel overlay, input buttons collapsed
-   - Tablet:  Sidebar toggleable, Right panel overlay
-   - Desktop: Both panels can be inline
+   - Mobile:  Sidebar overlay, System panel sheet over the chat, input buttons collapsed
+   - Tablet:  Sidebar overlay, System panel sheet
+   - md+:     Both panels inline (the System panel opens by default only from lg)
    ============================================ */
 
 /* --- Core Layout Constraints --- */
@@ -4012,11 +4259,13 @@ body {
 }
 
 /* --- Sidebar Base & Hidden State --- */
-#sidebar {
+:root {
     --sidebar-open-duration: 280ms;
     --sidebar-close-duration: 220ms;
     --sidebar-open-ease: cubic-bezier(0.22, 1, 0.36, 1);
     --sidebar-close-ease: cubic-bezier(0.4, 0, 1, 1);
+}
+#sidebar {
     transition-property: width, border-right-width;
     transition-duration: var(--sidebar-open-duration), var(--sidebar-open-duration);
     transition-timing-function: var(--sidebar-open-ease), var(--sidebar-open-ease);
@@ -4071,10 +4320,6 @@ html[data-left-sidebar-hidden="true"] #sidebar {
     border-right-width: 0 !important;
 }
 
-html[data-left-sidebar-hidden="true"]:not([data-left-sidebar-closing="true"]) #show-sidebar-btn {
-    display: flex !important;
-}
-
 html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::after,
 html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     display: none !important;
@@ -4083,6 +4328,54 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 .sidebar-toggle-btn {
     position: relative;
 }
+
+/* Keep one target under the pointer while the rail opens/closes beneath it. */
+#show-sidebar-btn {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 41;
+    width: 36px;
+    height: 36px;
+}
+.sidebar-header-actions { padding-left: 36px; }
+/* Bring the trash glyph toward the toggle without overlapping their hit areas. */
+.sidebar-header-actions #delete-history-btn {
+    justify-content: flex-start;
+    padding-left: 2px;
+}
+.sidebar-header-actions #new-chat-btn { min-width: 0; }
+.sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
+.left-sidebar-toggle-space {
+    /* Keep the flex item mounted so its 36px target + 4px gap do not
+       appear/disappear ahead of the sidebar's width animation. */
+    display: block;
+    width: 0;
+    margin-right: -4px;
+    flex-shrink: 0;
+    transition: width var(--sidebar-open-duration) var(--sidebar-open-ease),
+        margin-right var(--sidebar-open-duration) var(--sidebar-open-ease);
+}
+html[data-left-sidebar-hidden="true"] .left-sidebar-toggle-space {
+    width: 36px;
+    margin-right: 0;
+    transition-duration: var(--sidebar-close-duration);
+    transition-timing-function: var(--sidebar-close-ease);
+}
+@media (max-width: 1099px) {
+    .left-sidebar-toggle-space { width: 36px; margin-right: 0; transition: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #sidebar, .left-sidebar-toggle-space { transition: none !important; }
+}
+#show-sidebar-btn .sidebar-toggle-tooltip {
+    left: 0;
+    transform: translateY(8px);
+}
+#show-sidebar-btn:hover > svg,
+#show-sidebar-btn:focus-visible > svg { transform: translateX(-1px); }
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn:hover > svg,
+html[data-left-sidebar-hidden="true"] #show-sidebar-btn:focus-visible > svg { transform: translateX(1px); }
 
 .sidebar-toggle-tooltip {
     position: absolute;
@@ -4148,17 +4441,26 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
 
 @media (hover: hover) and (pointer: fine) {
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
-    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip {
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:focus-visible:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
         opacity: 1;
         visibility: visible;
         animation: tooltipBodyFadeIn 0.15s ease-out;
     }
 
+    #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    #show-sidebar-btn:focus-visible .sidebar-toggle-tooltip,
     .sidebar-toggle-btn:hover .sidebar-toggle-tooltip-right,
-    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right {
+    .sidebar-toggle-btn:focus-visible .sidebar-toggle-tooltip-right,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right,
+    .sidebar-filter-btn:focus-visible:not([aria-expanded="true"]) .sidebar-toggle-tooltip-right {
         animation: tooltipBodyFadeInRight 0.15s ease-out;
     }
 }
+/* The filter control is centred by a transform; its tooltip must not inherit
+   that and lands 8px under the control, right-aligned like the collapse tooltip. */
+.sidebar-filter-btn .sidebar-toggle-tooltip { top: calc(100% + 2px); }
 
 .dark .sidebar-toggle-tooltip {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -4180,8 +4482,8 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     min-height: 3rem; /* pt-2 (8px) + h-9 (36px) + pb-1 (4px) = 48px */
     z-index: 30;
     background-color: hsl(var(--color-background));
-    /* Fast background transition so overlay appears quickly when screen narrows. */
-    transition: min-height 0.2s ease, background-color 0.1s ease;
+    /* Apply the opaque backdrop immediately when controls reach the text. */
+    transition: min-height 0.2s ease;
     overflow: hidden; /* Prevent any content overflow */
 }
 
@@ -4211,36 +4513,86 @@ html[data-left-sidebar-closing="true"] #sidebar .sidebar-toggle-tooltip {
     pointer-events: auto; /* But buttons remain clickable */
 }
 
-/* Keep toolbar button geometry stable even when right-panel toggle is hidden */
+/* One persistent viewport-anchored control for opening and closing. */
 #show-right-panel-btn {
+    position: fixed;
+    /* Centred on the 49px header's text line: (49 - 28) / 2, rounded down
+       so the glyph's optical weight (its filled right pane) sits level. */
+    top: 10px;
+    right: 12px;
+    z-index: 50;
+    width: 28px;
+    height: 28px;
     display: inline-flex;
-    width: 0;
-    min-width: 0;
-    max-width: 0;
-    padding-left: 0;
-    padding-right: 0;
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    overflow: hidden;
-    transition: width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-        max-width 0.26s cubic-bezier(0.4, 0, 0.2, 1),
-        opacity 0.2s ease,
-        visibility 0s linear 0.26s;
 }
+.oa-system-panel-header { padding-right: 3rem; }
 
-#show-right-panel-btn.system-panel-toggle-visible,
-html[data-right-panel-hidden="true"] #show-right-panel-btn {
-    width: 2.25rem;
-    min-width: 2.25rem;
-    max-width: 2.25rem;
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-    transition-delay: 0s;
+/* System Panel icon buttons — the widen, collapse and clear controls share
+   one rule: the app's icon convention (a 24px outline glyph drawn at 20px
+   with a 1.5 stroke, straight geometry like the panel glyphs — the trash
+   is drawn to match, not borrowed from a rounder set), muted until hovered, a soft
+   tint behind it, and a 1px nudge that says which way the control acts.
+   The clear control is destructive and rare: it earns its red only on
+   hover. Glyph sizes live on the SVGs themselves (h-5 / h-4). */
+.oa-panel-icon-btn {
+    border-radius: 0.375rem; /* rounded-md, like the toolbar buttons beside it */
+    color: hsl(var(--color-muted-foreground));
+    transition: color 150ms ease, background-color 150ms ease;
 }
-
-/* Show right panel button on mobile too (panel is overlay on narrow screens). */
+.oa-panel-icon-btn > svg {
+    overflow: visible;
+    transition: transform 150ms ease;
+}
+.oa-panel-icon-btn > svg path,
+.oa-panel-icon-btn > svg rect {
+    transition: transform 150ms ease;
+}
+.oa-panel-icon-btn:hover,
+.oa-panel-icon-btn:focus-visible {
+    color: hsl(var(--color-foreground));
+    background-color: hsl(var(--color-hover));
+}
+.oa-panel-icon-btn--destructive:hover,
+.oa-panel-icon-btn--destructive:focus-visible {
+    color: hsl(var(--color-destructive));
+}
+.oa-panel-icon-btn:active > svg {
+    transform: scale(0.94);
+    transition-duration: 80ms;
+}
+/* Inside a text row: a 28px target in the row's original 24px of height. */
+.oa-panel-icon-btn--tight { margin-block: -2px; }
+/* Collapse: the panel leaves to the right, so the glyph leans that way;
+   with the panel closed the same control opens it, and leans back in. */
+#show-right-panel-btn:hover > svg,
+#show-right-panel-btn:focus-visible > svg { transform: translateX(1px); }
+html[data-right-panel-hidden="true"] #show-right-panel-btn:hover > svg,
+html[data-right-panel-hidden="true"] #show-right-panel-btn:focus-visible > svg { transform: translateX(-1px); }
+/* The two icon states point toward the action: outward to widen, inward
+   to narrow. The existing icon-swap supplies the state transition. */
+#wide-mode-btn .wide-arrow-left,
+#wide-mode-btn .wide-arrow-right { transition: transform 150ms ease; }
+#wide-mode-btn { --wide-arrow-direction: -1px; }
+#wide-mode-btn.wide-active { --wide-arrow-direction: 1px; }
+#wide-mode-btn:is(:hover, :focus-visible) .wide-arrow-left { transform: translateX(var(--wide-arrow-direction)); }
+#wide-mode-btn:is(:hover, :focus-visible) .wide-arrow-right { transform: translateX(calc(-1 * var(--wide-arrow-direction))); }
+@media (prefers-reduced-motion: reduce) {
+    #wide-mode-btn .wide-arrow-left,
+    #wide-mode-btn .wide-arrow-right { transition: none; transform: none !important; }
+}
+/* Their tooltips wait a beat, so a pass of the pointer says nothing. */
+.oa-panel-icon-btn[data-tooltip]:hover::after,
+.oa-panel-icon-btn[data-tooltip]:hover::before {
+    animation-delay: 350ms;
+    animation-fill-mode: both;
+}
+@media (prefers-reduced-motion: reduce) {
+    .oa-panel-icon-btn > svg,
+    .oa-panel-icon-btn > svg path,
+    .oa-panel-icon-btn > svg rect { transition: none; transform: none !important; }
+}
+.system-panel-toggle-space { width: 0; }
+html[data-right-panel-hidden="true"] .system-panel-toggle-space { width: 2.75rem; }
 
 /* --- Mobile Sidebar Backdrop --- */
 .mobile-sidebar-backdrop {
@@ -4276,6 +4628,22 @@ html[data-right-panel-hidden="true"] #show-right-panel-btn {
     transition-timing-function: var(--system-panel-open-ease), var(--system-panel-open-ease), var(--system-panel-open-ease);
 }
 
+/* Keep compact typography with 12px breathing room on either side of the
+   divider, including when ticket help or preparation is expanded. */
+.oa-right-panel-ticket-summary {
+    position: relative;
+}
+
+.system-panel-divider {
+    position: absolute;
+    right: -12px;
+    bottom: -12px;
+    left: -12px;
+    height: 1px;
+    background: hsl(var(--color-border));
+    pointer-events: none;
+}
+
 #right-panel-content {
     width: var(--system-panel-width);
     min-width: var(--system-panel-width);
@@ -4297,12 +4665,31 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     transition-timing-function: var(--system-panel-close-ease);
 }
 
-@media (max-width: 1023px) {
+/* The sheet's scrim. Only the phone range shows it; inline layouts keep the
+   element inert. It fades a beat faster than the panel it belongs to. */
+.right-panel-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgb(0 0 0 / 0.32);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--system-panel-close-duration) var(--system-panel-close-ease);
+}
+
+@media (max-width: 1099px) {
     #right-panel {
         position: fixed !important;
         right: 0;
         top: 0;
         transform: translateX(0);
+    }
+
+    html:not([data-right-panel-hidden="true"]) .right-panel-scrim {
+        opacity: 1;
+        pointer-events: auto;
+        transition-duration: var(--system-panel-open-duration);
+        transition-timing-function: var(--system-panel-open-ease);
     }
 
     html[data-right-panel-hidden="true"] #right-panel {
@@ -4316,7 +4703,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 1100px) {
     #right-panel {
         position: relative !important;
         transform: translateX(0);
@@ -4581,7 +4968,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-/* --- Large Tablet: 768px to 1023px (sidebar inline, right panel overlay) --- */
+/* --- Large Tablet: 768px to 1023px (sidebar inline, right panel inline) --- */
 @media (min-width: 768px) and (max-width: 1023px) {
     #sidebar:not(.sidebar-hidden) {
         width: var(--oa-left-sidebar-width, 220px);
@@ -4651,8 +5038,8 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     }
 }
 
-/* Desktop: adjust for inline right panel */
-@media (min-width: 1024px) {
+/* Inline right panel: keep the navigation beside the chat, not under the panel */
+@media (min-width: 768px) {
     .right-panel-open .message-navigation {
         right: calc(12px + 288px);
     }
@@ -4874,9 +5261,9 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 }
 
 [data-memory-requires-feature]:disabled {
-    opacity: 0.45;
     cursor: not-allowed;
 }
+[data-memory-requires-feature]:disabled > * { opacity: 0.45; }
 
 [data-memory-requires-feature]:disabled:hover {
     color: hsl(var(--color-muted-foreground));
@@ -4906,7 +5293,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
 }
 
 .switch-toggle.switch-active {
-    background-color: #3b82f6; /* bg-blue-500 */
+    background-color: #0a84ff; /* the same blue as the settings panel and Account switches */
 }
 
 .switch-toggle.switch-toggle-sm {
@@ -4921,7 +5308,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     height: 12px;
 }
 
-.switch-toggle.switch-toggle-sm.switch-active .switch-toggle-indicator {
+.switch-toggle.switch-toggle-sm.switch-active:not(.t-toggle) .switch-toggle-indicator {
     transform: translateX(12px);
 }
 
@@ -5141,9 +5528,9 @@ html[data-composer-mode="chat"] #model-picker-btn.composer-model-chip {
 }
 
 .council-secondary-model-btn:disabled {
-    opacity: 0.55;
     pointer-events: none;
 }
+.council-secondary-model-btn:disabled > * { opacity: 0.55; }
 
 html.council-layout-mode #model-picker-btn,
 html.council-layout-mode .council-secondary-model-btn {
@@ -5294,10 +5681,13 @@ html.council-synthesis-layout-mode .council-secondary-model-btn .model-name-cont
     box-shadow: inset 0 0 0 1px hsl(var(--color-foreground) / 0.15);
 }
 
+/* A control that is out dims its icon, not itself and not its tooltip:
+   the memory tooltip is an HTML child of the button, so it must be left
+   out of the dimming to stay a normal bubble. */
 .memory-context-toggle.memory-disabled {
-    opacity: 0.55;
     cursor: not-allowed;
 }
+.memory-context-toggle.memory-disabled > :not(.chat-mode-html-tooltip) { opacity: 0.55; }
 
 .memory-context-toggle.memory-disabled:hover {
     color: hsl(var(--color-muted-foreground));
@@ -5631,6 +6021,21 @@ html {
     font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
 }
 
+/* --- Position: below the trigger, extending toward the right --- */
+[data-tooltip-position="bottom-start"]:hover::after {
+    left: 0;
+    right: auto;
+    transform: translateY(8px);
+    animation: tooltipBodyFadeInRight 0.15s ease-out;
+}
+
+[data-tooltip-position="bottom-start"]:hover::before {
+    left: 12px;
+    right: auto;
+    transform: translateY(4px) rotate(45deg);
+    animation: tooltipArrowFadeInRight 0.15s ease-out;
+}
+
 /* --- Position: right-aligned (right panel elements) --- */
 [data-tooltip-position="right"]:hover::after {
     left: auto;
@@ -5782,8 +6187,8 @@ html {
 
 /* Shared focus style for textareas and inputs - clean, subtle, no heavy ring */
 .input-focus-clean:focus {
-    border-color: hsl(var(--color-ring) / 0.6);
-    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
     outline: none;
 }
 
@@ -5805,8 +6210,8 @@ html {
 
 /* Right panel invitation code: highlight the full input+button shell */
 .invitation-code-input-shell:focus-within {
-    border-color: hsl(var(--color-ring) / 0.6);
-    box-shadow: 0 0 0 1px hsl(var(--color-ring) / 0.4);
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
 }
 
 /* Shared subtle hover effect for secondary buttons */
@@ -5827,7 +6232,7 @@ html {
 }
 
 .sidebar-main-content {
-    padding-bottom: 4.25rem !important;
+    padding-bottom: 3.5rem !important;
 }
 
 .account-nav {
@@ -5836,7 +6241,7 @@ html {
     bottom: 0;
     left: 0;
     z-index: 30;
-    padding: 0.375rem 0.75rem;
+    padding: 0;
     border-top: 1px solid hsl(var(--color-border));
     background: hsl(var(--color-background) / 0.96);
     backdrop-filter: blur(12px);
@@ -5856,14 +6261,15 @@ html {
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
+    /* Restore the previous 49px footer: 48px trigger plus its top divider. */
     min-height: 3rem;
-    padding: 0.25rem;
-    border: 1px solid transparent;
-    border-radius: 0.5rem;
+    padding: 0.25rem 1rem;
+    border: 0;
+    border-radius: 0;
     background: transparent;
     color: hsl(var(--color-foreground));
     text-align: left;
-    transition: background-color 0.14s ease-out, border-color 0.14s ease-out, transform 0.1s ease-out;
+    transition: background-color 0.14s ease-out;
 }
 
 .account-bootstrap-status {
@@ -5884,13 +6290,30 @@ html {
 }
 
 .account-tab-btn:active:not(:disabled) {
-    transform: scale(0.985);
+    /* A pressed row must stay edge-to-edge, just like its hover surface. */
+    background-color: hsl(var(--color-foreground) / 0.14);
 }
 
-.account-tab-btn:focus-visible,
-.account-menu-item:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+.account-tab-btn:focus-visible {
+    /* Never frame the full row; keyboard focus outlines the avatar below.
+       Focus restored after login/unlock is programmatic and stays quiet. */
+    outline: none;
+}
+
+html[data-keyboard-nav] .account-tab-btn:focus-visible .account-tab-avatar {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+html[data-keyboard-nav] .account-menu-item:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
+}
+
+@media (forced-colors: active) {
+    html[data-keyboard-nav] .account-tab-btn:focus-visible .account-tab-avatar {
+        outline: 2px solid Highlight;
+    }
 }
 
 .account-tab-avatar {
@@ -5899,8 +6322,8 @@ html {
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
-    width: 2.25rem;
-    height: 2.25rem;
+    width: 1.75rem;
+    height: 1.75rem;
     border: 1px solid hsl(var(--color-border));
     border-radius: 9999px;
     background: hsl(var(--color-muted) / 0.7);
@@ -5908,8 +6331,8 @@ html {
 }
 
 .account-tab-avatar > svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: 1rem;
+    height: 1rem;
 }
 
 .account-identity-label {
@@ -5927,11 +6350,21 @@ html {
     height: 1.25rem;
     flex: 0 0 auto;
     color: hsl(var(--color-muted-foreground));
-    transition: color 0.15s ease, transform 0.15s ease;
+    transform-origin: center;
+    transition:
+        color 150ms cubic-bezier(.2, 0, 0, 1),
+        transform 240ms cubic-bezier(.2, 0, 0, 1);
 }
 
 .account-tab-btn[aria-expanded="true"] .account-control-icon {
     color: hsl(var(--color-foreground));
+    transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-control-icon {
+        transition: none;
+    }
 }
 
 .account-tab-btn[aria-expanded="true"] {
@@ -5978,6 +6411,12 @@ html {
     display: none;
 }
 
+/* The core Account item hides itself when an extension mounts the account
+   surface; the class's display must not override [hidden]. */
+.account-menu-item[hidden] {
+    display: none;
+}
+
 .account-menu-item {
     display: flex;
     align-items: center;
@@ -6001,7 +6440,7 @@ html {
 }
 
 .account-menu-item:hover,
-.account-menu-item:focus-visible {
+html[data-keyboard-nav] .account-menu-item:focus-visible {
     background: hsl(var(--color-foreground) / 0.1);
 }
 
@@ -6135,9 +6574,9 @@ html {
     transform: scale(0.985);
 }
 
-.account-compact-row:focus-visible,
-.account-compact-copy-id:focus-visible {
-    outline: 2px solid hsl(var(--color-ring));
+html[data-keyboard-nav] .account-compact-row:focus-visible,
+html[data-keyboard-nav] .account-compact-copy-id:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
     outline-offset: 1px;
 }
 
@@ -6153,8 +6592,315 @@ html {
     gap: 0.5rem;
 }
 
-.account-compact-row-label > svg,
-.account-compact-chevron {
+/* Passkey unlock card (OAuth keyring unlock / setup / legacy paths).
+   Concentric radii: 24px card = 20px content radius + 4px, pill is 999px. */
+.account-unlock-card {
+    box-sizing: border-box;
+    position: relative;
+    width: min(calc(100% - 2rem), 26.25rem);
+    margin: 0 1rem;
+    padding: 2.5rem 2.25rem 2.25rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    border-radius: 1.5rem;
+    background: hsl(var(--color-card));
+    color: hsl(var(--color-foreground));
+    text-align: center;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / 0.05),
+        0 24px 48px -16px hsl(var(--color-foreground) / 0.3);
+}
+
+.dark .account-unlock-card {
+    box-shadow:
+        0 0 0 1px hsl(0 0% 100% / 0.08),
+        0 24px 48px -16px hsl(0 0% 0% / 0.6);
+}
+
+.account-unlock-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.625rem;
+}
+
+.account-unlock-close,
+.account-unlock-signout {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    border: 0;
+    border-radius: 0.75rem;
+    background: transparent;
+    color: hsl(var(--color-muted-foreground));
+    cursor: pointer;
+}
+
+.account-unlock-close {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+}
+
+.account-unlock-signout {
+    padding: 0 0.75rem;
+    font: inherit;
+    font-size: 0.8125rem;
+}
+
+.account-unlock-close:hover,
+.account-unlock-signout:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / 0.04);
+    color: hsl(var(--color-foreground));
+}
+
+html[data-keyboard-nav] .account-unlock-close:focus-visible,
+html[data-keyboard-nav] .account-unlock-signout:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+.account-unlock-signout:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.account-unlock-title {
+    margin: 0;
+    font-size: 1.625rem;
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+}
+
+/* While the automatic prompt is up, the OS passkey sheet is the interface:
+   the untitled card stays mounted for focus and the status text, but is not
+   drawn — only a small spinner on the dimmed page says something is
+   happening. The card fades in only if the prompt fails (Try again). */
+.account-unlock-card-untitled[data-waiting="true"] {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+
+.account-unlock-waiting {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 1.5rem;
+    pointer-events: none;
+    text-align: center;
+}
+
+.account-unlock-waiting-spinner {
+    width: 1.25rem;
+    height: 1.25rem;
+    border-width: 2px;
+    border-color: rgb(255 255 255 / .7);
+    border-top-color: transparent;
+}
+
+/* Behind every passkey wait — returning unlock, first-time setup, the
+   username lookup, the Google hand-off: one line saying a passkey comes
+   next, one on why. It is the whole page until the OS sheet opens, so it
+   sits in the centre like the spinner; once the sheet is up it has been
+   read. index.html paints the same two lines before any script runs for a
+   sign-in hand-off, so the caption is on screen from the first frame and
+   the dialog's copy takes over without entering again. */
+.account-unlock-waiting-title {
+    margin: 0;
+    max-width: 28rem;
+    color: rgb(255 255 255 / .88);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.4;
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+}
+
+/* The username, for assistive technology only: the person has just typed it. */
+.account-unlock-waiting-name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.account-unlock-waiting-enter {
+    animation: account-unlock-caption-in 220ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+
+@keyframes account-unlock-caption-in {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+.account-unlock-card-untitled {
+    transition: opacity 160ms ease;
+}
+
+.account-unlock-card-untitled .account-unlock-copy {
+    /* No heading: the body carries the card. Give it a touch more presence
+       and room so the close button never crowds the first line. */
+    padding-top: .25rem;
+}
+
+.account-unlock-card-untitled .account-unlock-body {
+    font-size: 1rem;
+    color: hsl(var(--color-foreground) / .82);
+}
+
+.account-unlock-body {
+    margin: 0;
+    max-width: 21.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: hsl(var(--color-muted-foreground));
+    text-wrap: balance;
+}
+
+.account-unlock-account-id {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+}
+
+.account-unlock-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+}
+
+.account-unlock-btn {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    height: 2.75rem;
+    min-width: 7.5rem;
+    padding: 0 1.75rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 999px;
+    background: hsl(var(--color-card));
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.1s ease-out;
+}
+
+.account-unlock-btn:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / 0.03);
+    border-color: hsl(var(--color-muted-foreground) / 0.5);
+}
+
+.account-unlock-btn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+html[data-keyboard-nav] .account-unlock-btn:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+.account-unlock-btn:disabled {
+    color: hsl(var(--color-muted-foreground));
+    cursor: default;
+}
+
+.dark .account-unlock-btn {
+    border-color: hsl(0 0% 100% / 0.18);
+    background: transparent;
+}
+
+.dark .account-unlock-btn:hover:not(:disabled) {
+    background: hsl(0 0% 100% / 0.06);
+    border-color: hsl(0 0% 100% / 0.3);
+}
+
+.account-unlock-spinner {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex: 0 0 auto;
+    border: 2px solid hsl(var(--color-muted-foreground) / 0.45);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+/* A failure on a titled card reads in the card's own voice — same size and
+   colour as the body — not as a red warning. */
+.account-unlock-alert {
+    margin: 0;
+    max-width: 21.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: hsl(var(--color-muted-foreground));
+    text-wrap: balance;
+}
+
+.account-unlock-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 2.75rem;
+    padding: 0 1rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    text-align: center;
+}
+
+.account-unlock-input::placeholder {
+    color: hsl(var(--color-muted-foreground) / 0.6);
+}
+
+html[data-keyboard-nav] .account-unlock-input:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-unlock-btn {
+        transition-duration: 0s;
+    }
+    .account-unlock-spinner {
+        animation-duration: 1.4s;
+    }
+    .account-unlock-waiting-enter {
+        animation: none;
+    }
+}
+
+.account-compact-row-label > svg {
     width: 1rem;
     height: 1rem;
     flex: 0 0 auto;
@@ -6162,11 +6908,15 @@ html {
 }
 
 .account-compact-chevron {
-    transition: transform 0.15s ease-out;
+    width: 1.125rem;
+    height: 1.125rem;
+    flex: 0 0 auto;
+    color: hsl(var(--color-muted-foreground));
+    transition: transform 240ms cubic-bezier(.2, 0, 0, 1);
 }
 
 .account-compact-row[aria-expanded="true"] .account-compact-chevron {
-    transform: rotate(90deg);
+    transform: rotate(180deg);
 }
 
 .account-compact-dot {
@@ -6191,15 +6941,34 @@ html {
 
 .account-compact-detail {
     display: grid;
-    gap: 0.35rem;
-    padding: 0.125rem 0.5rem 0.75rem;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    visibility: hidden;
     color: hsl(var(--color-muted-foreground));
     font-size: 0.75rem;
     line-height: 1.5;
+    transition:
+        grid-template-rows 240ms cubic-bezier(.2, 0, 0, 1),
+        opacity 160ms cubic-bezier(.2, 0, 0, 1),
+        visibility 0s 240ms;
 }
 
-.account-compact-detail[hidden] {
-    display: none;
+.account-compact-detail[data-open="true"] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    visibility: visible;
+    transition-delay: 0s;
+}
+
+.account-compact-detail-clip {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.account-compact-detail-content {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.125rem 0.5rem 0.75rem;
 }
 
 .account-compact-detail p {
@@ -6245,7 +7014,8 @@ html {
 
 @media (prefers-reduced-motion: reduce) {
     .account-compact-row,
-    .account-compact-chevron {
+    .account-compact-chevron,
+    .account-compact-detail {
         transition: none;
     }
 }
@@ -6544,9 +7314,9 @@ html {
     background-color: hsl(var(--color-hover));
 }
 
-.update-toast button:focus-visible {
+html[data-keyboard-nav] .update-toast button:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.5);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.5);
 }
 
 .update-toast--stacked {
@@ -6590,6 +7360,325 @@ html {
     }
 
     .update-toast {
+        animation: none;
+    }
+}
+
+/* Shared title scale for Account, Log in, and recovery dialogs. */
+.account-dialog-title {
+    margin: 0;
+    font-size: 1.375rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    color: hsl(var(--color-foreground));
+    text-wrap: balance;
+}
+
+/* Compact username login card. Keep this separate from Google encryption
+   unlock, saved legacy login, the landing page, and shared modal headers. */
+.account-login-dialog {
+    width: calc(100% - 2rem);
+    max-width: 22.5rem;
+    padding: 2rem;
+    border-radius: 1.5rem;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* "By continuing, you agree to our Terms and Privacy Policy" under the form. */
+.account-login-legal {
+    margin: 1.25rem 0 0;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    text-align: center;
+    text-wrap: balance;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.account-login-legal > a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: hsl(var(--color-muted-foreground) / .5);
+}
+
+.account-login-legal > a:hover {
+    color: hsl(var(--color-foreground));
+}
+
+.account-login-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.account-login-heading > h2 {
+    text-align: left;
+}
+
+.account-login-heading > button {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+}
+
+.account-login-heading > button > svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.account-login-dialog #account-google-btn {
+    height: 3rem;
+    border-radius: 0.75rem;
+    gap: 0.625rem;
+    font-size: 0.9375rem;
+    font-weight: 400;
+    line-height: 1.25;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.account-login-dialog #account-google-btn > svg {
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
+}
+
+.account-login-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.8125rem;
+    line-height: 1rem;
+}
+
+.account-login-divider::before,
+.account-login-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: hsl(var(--color-border));
+}
+
+.account-login-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    height: 3rem;
+    overflow: hidden;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.75rem;
+    background: hsl(var(--color-background));
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.account-login-input {
+    min-width: 0;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+}
+
+.account-login-input {
+    padding: 0 1rem;
+    font-size: 1rem; /* Prevent mobile Safari's input-focus zoom. */
+    outline: 0;
+}
+
+.account-login-input::placeholder {
+    color: hsl(var(--color-muted-foreground));
+    opacity: 1;
+}
+
+.account-login-input:is(:autofill, :-webkit-autofill) {
+    -webkit-text-fill-color: hsl(var(--color-foreground));
+    caret-color: hsl(var(--color-foreground));
+    box-shadow: inset 0 0 0 1000px hsl(var(--color-background));
+}
+
+.account-login-control:focus-within {
+    border-color: hsl(var(--color-border));
+    box-shadow: none;
+}
+
+html[data-keyboard-nav] .account-login-control:focus-within {
+    border-color: hsl(var(--color-focus-ring) / 0.7);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.45);
+}
+
+/* Same control as the landing card: the username step's button is the one
+   filled control in the dialog — ink at all times, lifting on hover — with
+   the label optically centred between an empty cell and the arrow. */
+.account-login-submit {
+    display: grid;
+    grid-template-columns: 1.125rem minmax(0, 1fr) 1.125rem;
+    align-items: center;
+    width: 100%;
+    height: 3rem;
+    margin-top: 0.625rem;
+    padding: 0 1rem;
+    border: 1px solid #000;
+    border-radius: 0.75rem;
+    background: #000;
+    color: #fff;
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.25;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.account-login-submit-label {
+    text-align: center;
+    white-space: nowrap;
+}
+
+.account-login-submit-indicator {
+    display: grid;
+    place-items: center;
+}
+
+html[data-keyboard-nav] .account-login-submit:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+
+.account-login-submit:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.account-login-submit[aria-busy="true"] {
+    opacity: 0.7;
+    cursor: progress;
+}
+
+.dark .account-login-submit {
+    border-color: hsl(0 0% 100% / 0.92);
+    background: hsl(0 0% 100% / 0.92);
+    color: hsl(222.2 84% 4.9%);
+}
+
+.account-login-arrow {
+    width: 1.125rem;
+    height: 1.125rem;
+}
+
+.account-login-spinner {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+/* Match the Account Unlock button's restrained white-button hover. The
+   username input and arrow are one control, so their shell responds as one. */
+@media (hover: hover) and (pointer: fine) {
+    .account-login-dialog #account-google-btn:hover:not(:disabled),
+    .account-login-dialog .account-login-control:not(:focus-within):hover {
+        background-color: hsl(var(--color-foreground) / 0.03) !important;
+        border-color: hsl(var(--color-muted-foreground) / 0.5) !important;
+    }
+
+    .account-login-dialog .account-login-control:not(:focus-within):hover .account-login-input:is(:autofill, :-webkit-autofill) {
+        box-shadow:
+            inset 0 0 0 1000px hsl(var(--color-foreground) / 0.03),
+            inset 0 0 0 1000px hsl(var(--color-background));
+    }
+
+    .account-login-submit:hover:not(:disabled) {
+        border-color: #262626;
+        background: #262626;
+    }
+
+    .dark .account-login-dialog #account-google-btn:hover:not(:disabled),
+    .dark .account-login-dialog .account-login-control:not(:focus-within):hover {
+        background-color: hsl(0 0% 100% / 0.06) !important;
+        border-color: hsl(0 0% 100% / 0.3) !important;
+    }
+
+    .dark .account-login-dialog .account-login-control:not(:focus-within):hover .account-login-input:is(:autofill, :-webkit-autofill) {
+        box-shadow:
+            inset 0 0 0 1000px hsl(0 0% 100% / 0.06),
+            inset 0 0 0 1000px hsl(var(--color-background));
+    }
+
+    .dark .account-login-submit:hover:not(:disabled) {
+        border-color: hsl(0 0% 100% / 0.8);
+        background: hsl(0 0% 100% / 0.8);
+    }
+}
+
+@media (max-width: 400px) {
+    .account-login-dialog {
+        padding: 1.5rem;
+    }
+}
+
+/* Shared close control for account dialogs: 32px hit area, 10px radius,
+   same as the Billing & Plan close button. */
+#close-account-modal {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    place-items: center;
+    margin: 0 -0.375rem 0 0;
+    border-radius: 0.625rem;
+}
+#close-account-modal > svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Dark mode: interactive edges in the login card need more contrast than
+   the 25%-lightness border token gives on the 12% card. Matches the
+   Welcome back button (18% / 30% on hover). */
+.dark .account-login-control {
+    border-color: hsl(0 0% 100% / 0.18);
+}
+/* !important only because the global .border-border utility above is itself
+   !important; the button carries that class. */
+.dark .account-login-dialog #account-google-btn {
+    border-color: hsl(0 0% 100% / 0.18) !important;
+}
+
+/* Under 720px every account dialog is a bottom sheet, like Billing & Plan. */
+@media (max-width: 720px) {
+    #account-modal {
+        align-items: flex-end;
+        padding: 0;
+    }
+    #account-modal > [role="dialog"] {
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        border-radius: 1.5rem 1.5rem 0 0;
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+    }
+    #account-modal > .account-login-dialog,
+    #account-modal > .account-unlock-card {
+        padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
+    }
+    #account-modal > .account-unlock-card {
+        padding-top: 2rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .account-login-spinner {
         animation: none;
     }
 }
@@ -6671,9 +7760,9 @@ html {
     background: hsl(var(--color-hover));
 }
 
-.split-result-icon-btn:focus-visible {
+html[data-keyboard-nav] .split-result-icon-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .split-result-share {
@@ -6701,9 +7790,9 @@ html {
     background: hsl(var(--color-accent) / 0.7);
 }
 
-.split-result-share-link:focus-visible {
+html[data-keyboard-nav] .split-result-share-link:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 .split-result-share-copy-btn {
@@ -6728,9 +7817,9 @@ html {
     background: hsl(var(--color-primary) / 0.12);
 }
 
-.split-result-share-copy-btn:focus-visible {
+html[data-keyboard-nav] .split-result-share-copy-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px hsl(var(--color-ring) / 0.45);
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.45);
 }
 
 @media (max-width: 400px) {
@@ -6968,6 +8057,12 @@ div:has(> #input-card.scrubber-preview-expanded) {
 
 #message-input:not(.hint-visible) {
     padding-right: 64px !important;
+}
+
+/* Keep rewritten text and its diff clear of the wider preview/edit hint. */
+#input-card.has-scrubber-pending #message-input,
+#input-card.has-scrubber-pending .scrubber-preview-diff {
+    padding-right: 150px !important;
 }
 
 /* Anchor scrubber hints to initial input center */
@@ -7323,8 +8418,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
 /* Focus state when input is focused */
 .pin-input-container:focus-within .pin-box:not(.filled):first-of-type,
 .pin-input-container:focus-within .pin-box.active {
-    border-color: hsl(var(--color-primary));
-    box-shadow: 0 0 0 2px hsl(var(--color-primary) / 0.2);
+    border-color: hsl(var(--color-focus-ring));
+    box-shadow: 0 0 0 2px hsl(var(--color-focus-ring) / 0.2);
 }
 
 .toggle-pin-visibility {
@@ -7531,3 +8626,1591 @@ div:has(> #input-card.scrubber-preview-expanded) {
     display: block;
     white-space: nowrap;
 }
+
+/* ----------------------------------------
+   Settings panel (composer gear)
+   One grammar for every row: label left, control right, all controls on one
+   right edge. Sections are separated by full-width hairlines and a small-caps
+   title. Compact on purpose: it hangs off the composer, so it must not be
+   taller than the menu it replaced — rows are 2rem, controls 1.75rem.
+   The ids, roles and data-actions inside are the ones ChatInput.js drives;
+   only the skin lives here.
+   ---------------------------------------- */
+
+.settings-panel {
+    --settings-row-h: 2rem;
+    --settings-control-h: 1.75rem;
+    --settings-line: hsl(var(--color-foreground) / 0.08);
+    --settings-control-border: hsl(var(--color-foreground) / 0.14);
+    --settings-control-border-hover: hsl(var(--color-foreground) / 0.26);
+    --settings-segment-bg: hsl(var(--color-foreground) / 0.06);
+    --settings-segment-on: hsl(var(--color-card));
+    --settings-accent: #0a84ff;
+    padding: 0;
+    border: 1px solid hsl(var(--color-border) / 0.7);
+    border-radius: 1rem;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / 0.04),
+        0 16px 48px -16px rgb(0 0 0 / 0.35);
+    color: hsl(var(--color-popover-foreground));
+    font-size: 0.75rem;
+    line-height: 1.3;
+    text-align: left;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+.dark .settings-panel {
+    --settings-segment-on: hsl(var(--color-foreground) / 0.14);
+    box-shadow:
+        0 0 0 1px hsl(0 0% 100% / 0.06),
+        0 24px 60px -20px rgb(0 0 0 / 0.7);
+}
+
+.settings-section {
+    padding: 0.625rem 1.125rem 0.75rem;
+    border-bottom: 1px solid var(--settings-line);
+}
+.settings-section:last-child { border-bottom: 0; }
+.settings-section-foot { padding-top: 0.375rem; padding-bottom: 0.5rem; }
+
+.settings-section-title {
+    margin: 0 0 0.25rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: hsl(var(--color-muted-foreground));
+}
+
+.settings-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: var(--settings-row-h);
+}
+.settings-row.hidden { display: none; }
+
+.settings-row-label {
+    font-size: 0.8125rem;
+    color: hsl(var(--color-foreground) / 0.9);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.settings-row-control {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+/* Outline buttons: Export / Import */
+.settings-button {
+    box-sizing: border-box;
+    height: var(--settings-control-h);
+    min-width: 4.25rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease, transform 0.1s ease-out;
+}
+.settings-button:hover:not(:disabled) {
+    background: hsl(var(--color-foreground) / 0.04);
+    border-color: var(--settings-control-border-hover);
+}
+.settings-button:active:not(:disabled) { transform: scale(0.98); }
+
+/* Selects: same outline as the buttons, a chevron drawn by the wrapper. */
+.settings-select { position: relative; }
+.settings-select select {
+    box-sizing: border-box;
+    appearance: none;
+    -webkit-appearance: none;
+    height: var(--settings-control-h);
+    width: 10.5rem;
+    max-width: 100%;
+    padding: 0 1.75rem 0 0.625rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background-color 0.12s ease;
+}
+.settings-select select:hover {
+    background: hsl(var(--color-foreground) / 0.04);
+    border-color: var(--settings-control-border-hover);
+}
+.settings-select select:focus { outline: none; }
+html[data-keyboard-nav] .settings-select select:focus-visible,
+html[data-keyboard-nav] .settings-button:focus-visible,
+html[data-keyboard-nav] .settings-switch:focus-visible,
+html[data-keyboard-nav] .settings-segment:focus-visible,
+html[data-keyboard-nav] .settings-link:focus-visible {
+    outline: 2px solid hsl(var(--color-focus-ring));
+    outline-offset: 2px;
+}
+.settings-select::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 0.7rem;
+    width: 0.375rem;
+    height: 0.375rem;
+    border-right: 1.5px solid hsl(var(--color-muted-foreground));
+    border-bottom: 1.5px solid hsl(var(--color-muted-foreground));
+    transform: translateY(-65%) rotate(45deg);
+    pointer-events: none;
+}
+.dark .settings-select select option { background: hsl(var(--color-popover)); }
+
+/* Switches: the blue iOS-style toggle from the design, at panel scale. The
+   row label already says what each one is, so no hover tooltip here — inside
+   a scrolling panel it was clipped and forced a horizontal scrollbar. */
+.settings-panel [data-tooltip]:hover::after,
+.settings-panel [data-tooltip]:hover::before { display: none; }
+.settings-panel .settings-switch {
+    width: 2.25rem;
+    height: 1.25rem;
+    border: 0;
+    padding: 0;
+    flex: 0 0 auto;
+    transition: background-color 0.15s ease;
+}
+.settings-panel .settings-switch .switch-toggle-indicator {
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.16);
+    transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1);
+}
+.settings-panel .settings-switch.switch-active .switch-toggle-indicator { transform: translateX(16px); }
+.settings-panel .settings-switch.switch-active { background-color: var(--settings-accent); }
+.settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.18); }
+.dark .settings-panel .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.22); }
+
+/* Export / Import in the gear: text actions at the gear's 13px, not the
+   Account dialog's 15px. */
+#settings-menu .settings-text-action {
+    height: var(--settings-control-h);
+    padding: 0 0.5rem;
+    font-size: 0.8125rem;
+}
+#settings-menu .settings-button-pair { gap: 0.125rem; margin-right: -0.5rem; }
+#settings-menu .settings-link-icon { width: 0.875rem; height: 0.875rem; }
+
+/* Segmented controls: thinking effort, layout, font, theme. The selected
+   segment is a raised pill; no sliding indicator (its offsets assumed the
+   old fixed-width buttons). */
+.settings-panel .settings-segmented {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 0.5rem;
+    background: var(--settings-segment-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+.settings-panel .settings-segmented .theme-toggle-indicator,
+.settings-panel .settings-segmented .display-toggle-indicator { display: none; }
+.settings-panel .settings-segmented .settings-segment {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 1.5rem;
+    padding: 0 0.625rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: transparent;
+    box-shadow: none;
+    color: hsl(var(--color-muted-foreground));
+    font: inherit;
+    font-size: 0.75rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+.settings-panel .settings-segmented .settings-segment:hover { color: hsl(var(--color-foreground)); }
+.settings-panel .settings-segmented .settings-segment[aria-checked="true"] {
+    background: var(--settings-segment-on);
+    color: hsl(var(--color-foreground));
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+.settings-panel .settings-segmented .settings-segment-icon { width: 2rem; padding: 0; }
+.settings-panel .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
+.settings-panel .settings-segmented .settings-segment-icon span { font-size: 0.8125rem; font-weight: 500; }
+.settings-panel .reasoning-effort-toggle.is-disabled { opacity: 0.55; }
+/* A row that is out in this payment mode dims — but not as one opacity on
+   the row, because the switch's bubble is drawn by the switch (::after) and
+   would fade with it. The label and controls dim; the switch dims its own
+   track and knob by colour, so the bubble it shows stays a normal bubble. */
+.settings-panel .settings-row.is-disabled > :not(.settings-switch) { opacity: 0.55; }
+.settings-panel .settings-row.is-disabled select { cursor: default; }
+.settings-panel .settings-row.is-disabled .settings-switch.switch-inactive { background-color: hsl(var(--color-foreground) / 0.1); }
+.settings-panel .settings-row.is-disabled .settings-switch.switch-active { background-color: color-mix(in srgb, var(--settings-accent) 55%, transparent); }
+.settings-panel .settings-row.is-disabled .settings-switch .switch-toggle-indicator { opacity: 0.55; }
+/* A switch that is out in this payment mode still takes the pointer, so
+   its bubble says why, the same as the Parallel icon in the composer. */
+.settings-panel .settings-row.is-disabled .settings-switch:disabled {
+    opacity: 1;
+    pointer-events: auto;
+    cursor: default;
+}
+
+/* Share feedback: a row that is a link. */
+.settings-link {
+    /* A row that is a link: it lights up as one, edge to edge, on hover. */
+    margin: 0 -0.5rem;
+    padding: 0 0.5rem;
+    border-radius: 0.5rem;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 160ms cubic-bezier(.2, 0, 0, 1);
+}
+.settings-link:hover { background: hsl(var(--color-foreground) / 0.05); }
+.settings-link:hover .settings-row-label { color: hsl(var(--color-foreground)); }
+.settings-link-icon {
+    width: 1rem;
+    height: 1rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 160ms cubic-bezier(.2, 0, 0, 1);
+}
+.settings-link:hover .settings-link-icon { color: hsl(var(--color-foreground)); }
+
+.settings-note { margin: 0; font-size: 0.6875rem; color: hsl(var(--color-muted-foreground)); }
+.settings-note[hidden] { display: none; }
+
+/* The slot holds the hidden Web search row; with nothing visible in it
+   the section is gone: no divider, no gap. */
+.settings-panel .composer-settings-actions:not(:has(> :not([hidden]))) { display: none; }
+.settings-panel .settings-section:has(+ .composer-settings-actions:not(:has(> :not([hidden])))) { border-bottom: 0; }
+
+/* The Account dialog: the gear's row grammar, one step up from the gear's
+   compact sizes and one step down from where Billing used to be, so the
+   two dialogs (a menu row apart) share one scale: 14px rows, 32px controls,
+   14px sentence-case section titles. The gear keeps its compact sizes. */
+.settings-dialog {
+    --settings-row-h: 2.25rem;
+    --settings-control-h: 2rem;
+    position: relative;
+    isolation: isolate;
+    width: 100%;
+    max-width: 32rem;
+    background: hsl(var(--color-card));
+    border-radius: 1.5rem;
+    padding: 0.5rem 0 0.375rem;
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    font-size: 0.875rem;
+}
+.settings-dialog-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.125rem 1.5rem 0.625rem;
+}
+.settings-dialog-head > h2 { margin: 0; }
+.settings-dialog-head > button { display: grid; place-items: center; width: 2rem; height: 2rem; flex-shrink: 0; }
+.settings-dialog .settings-section { padding: 1rem 1.75rem 1.125rem; }
+.settings-dialog .settings-section-title {
+    margin: 0 0 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+    color: hsl(var(--color-foreground));
+}
+.settings-dialog .settings-row { min-height: var(--settings-row-h); gap: 1rem; }
+.settings-dialog .settings-row-label { font-size: 0.875rem; }
+.settings-dialog .settings-button { padding: 0 0.875rem; border-radius: 0.625rem; font-size: 0.875rem; }
+.settings-dialog .settings-segmented { border-radius: 0.625rem; }
+/* Export / Import are text actions: no border or fill at rest, a soft tint
+   on hover. The padding is folded back with a negative margin so the last
+   word still ends on the control column's right edge. */
+.settings-dialog .settings-button-pair { gap: 0.125rem; margin-right: -0.625rem; }
+.settings-text-action {
+    display: inline-flex;
+    align-items: center;
+    height: var(--settings-control-h);
+    padding: 0 0.625rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground) / 0.78);
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 400;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: color 120ms ease, background-color 120ms ease;
+}
+.settings-text-action:hover:not(:disabled) { color: hsl(var(--color-foreground)); background: hsl(var(--color-foreground) / 0.05); }
+.settings-text-action:disabled { opacity: 0.45; cursor: default; }
+/* Each Export / Import carries a one-line tooltip: exports say a file will
+   download, imports say which file they take. The buttons sit at the card's
+   right edge, so the tooltip hangs from its right corner and grows leftward
+   instead of running into the scroll edge. */
+/* Same tooltip as Billing's Share / Import: a small card above the action,
+   right-aligned to it, wrapping text, no arrow. A switch that is out in
+   this payment mode gets the same bubble, saying why. */
+.settings-panel .settings-text-action[data-tooltip]:hover::after,
+.settings-panel .settings-switch[data-tooltip]:hover::after,
+.settings-panel .settings-select-tooltip {
+    display: block;
+    top: auto;
+    bottom: calc(100% + 0.625rem);
+    left: auto;
+    right: 0;
+    width: max-content;
+    max-width: 14rem;
+    padding: 0.375rem 0.625rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: hsl(var(--color-popover));
+    color: hsl(var(--color-foreground));
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.4;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .06),
+        0 4px 16px -4px rgb(0 0 0 / .18);
+    transform: translateY(0);
+    animation: settingsTipIn 140ms ease;
+}
+.settings-panel .settings-text-action[data-tooltip]:hover::before,
+.settings-panel .settings-switch[data-tooltip]:hover::before { display: none; }
+/* The bubble sits on the panel, which is popover-coloured: in the dark it
+   takes the next surface step so it reads as a card, not floating text. */
+.dark .settings-panel .settings-text-action[data-tooltip]:hover::after,
+.dark .settings-panel .settings-switch[data-tooltip]:hover::after,
+.dark .settings-panel .settings-select-tooltip { background: hsl(var(--color-secondary)); }
+.settings-select-tooltip { position: absolute; z-index: 60; visibility: hidden; pointer-events: none; }
+.settings-select-tooltip[hidden] { display: none !important; }
+.settings-select-help:hover .settings-select-tooltip,
+.settings-select-help:focus-visible .settings-select-tooltip { visibility: visible; }
+.settings-select-help[data-feature-unavailable="true"] { cursor: not-allowed; }
+.settings-select-help[data-feature-unavailable="true"] select { pointer-events: none; }
+@keyframes settingsTipIn {
+    from { opacity: 0; transform: translateY(0.25rem); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+    to   { opacity: 1; transform: translateY(4px) rotate(45deg); }
+}
+.settings-dialog .settings-segmented .settings-segment { height: calc(var(--settings-control-h) - 0.25rem); font-size: 0.8125rem; padding: 0 0.75rem; }
+.settings-dialog .settings-segmented .settings-segment-icon { width: 2.25rem; }
+.settings-dialog .settings-segmented .settings-segment-icon svg { width: 1rem; height: 1rem; }
+.settings-dialog .settings-segmented .settings-segment-icon span { font-size: 0.875rem; }
+.settings-dialog .settings-link-icon { width: 1rem; height: 1rem; }
+/* Import chat history: the Account dialog's skin, reached from it. */
+.import-head { justify-content: flex-start; gap: 0.5rem; }
+.import-head > h2 { flex: 1; min-width: 0; }
+.import-head .import-back { margin-left: -0.375rem; }
+.import-soon { font-size: 0.875rem; color: hsl(var(--color-muted-foreground)); }
+.import-howto { margin-top: 0.5rem; }
+.import-howto summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2rem;
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: color 120ms ease;
+}
+.import-howto summary::-webkit-details-marker { display: none; }
+.import-howto summary::before {
+    content: '';
+    width: 0.375rem;
+    height: 0.375rem;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 150ms ease;
+    margin-right: 0.125rem;
+}
+.import-howto[open] summary::before { transform: rotate(45deg); }
+.import-howto summary:hover { color: hsl(var(--color-foreground)); }
+.import-howto ol { margin: 0.125rem 0 0.25rem; padding-left: 1.125rem; font-size: 0.8125rem; line-height: 1.5; color: hsl(var(--color-muted-foreground)); }
+.import-howto li { margin: 0.125rem 0; }
+.import-howto code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.75rem; }
+.import-counts { display: flex; gap: 2rem; padding: 0.5rem 0 0.25rem; }
+.import-count { display: flex; flex-direction: column; gap: 0.125rem; }
+.import-count span { font-size: 0.8125rem; color: hsl(var(--color-muted-foreground)); }
+.import-count strong { font-size: 1.25rem; font-weight: 600; font-variant-numeric: tabular-nums; color: hsl(var(--color-foreground)); }
+.import-progress { height: 0.25rem; margin: 0.5rem 0 0.25rem; border-radius: 999px; background: hsl(var(--color-foreground) / 0.08); overflow: hidden; }
+.import-progress > div { height: 100%; border-radius: inherit; background: hsl(var(--color-foreground)); transition: width 200ms ease; }
+.import-actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.import-actions-group { display: inline-flex; align-items: center; gap: 0.625rem; }
+.import-note { margin: 0.375rem 0 0; font-size: 0.8125rem; color: hsl(var(--color-muted-foreground)); text-wrap: pretty; }
+.import-error { margin: 0.5rem 0 0; font-size: 0.8125rem; color: hsl(0 72% 45%); text-wrap: pretty; }
+.import-spinner { width: 1rem; height: 1rem; border-radius: 50%; border: 1.5px solid hsl(var(--color-foreground) / 0.15); border-top-color: hsl(var(--color-foreground)); animation: import-spin 0.8s linear infinite; }
+@keyframes import-spin { to { transform: rotate(360deg); } }
+.settings-button-primary { color: hsl(var(--color-background)); background: hsl(var(--color-foreground)); border-color: hsl(var(--color-foreground)); }
+.settings-button-primary:hover:not(:disabled) { background: hsl(var(--color-foreground) / 0.88); border-color: transparent; }
+/* The Delete account confirmation sits over the Settings card, same backdrop. */
+.settings-confirm-layer {
+    /* Outside the .settings-dialog card, so it carries the same control tokens. */
+    --settings-control-h: 2.25rem;
+    --settings-control-border: hsl(var(--color-foreground) / 0.14);
+    --settings-control-border-hover: hsl(var(--color-foreground) / 0.26);
+    position: absolute;
+    inset: 0;
+    /* Above the card: the segmented controls inside it sit at z-index 1. */
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: rgb(0 0 0 / 0.35);
+}
+.settings-confirm-layer .settings-button { padding: 0 1rem; border-radius: 0.625rem; font-size: 0.9375rem; }
+/* Rendered like the Settings panel it floats over: the panel is antialiased
+   and its headings sit tight, so the card's text must be too, or the same
+   face reads heavier and looser than the text behind it. */
+.settings-confirm-layer [role="dialog"] {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+.settings-confirm-layer [role="dialog"] > div > p:first-child {
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+}
+.settings-confirm-layer [role="dialog"] > div > p:first-child + p {
+    line-height: 1.45;
+    text-wrap: pretty;
+}
+/* Spacing lives here, not in utility classes: the generated Tailwind file is
+   a build artifact and did not carry the ones this card used. */
+.settings-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    margin-top: 1rem;
+}
+.settings-button:disabled { opacity: 0.45; cursor: default; }
+/* The typed confirmation: the label reads as a sentence, the word is set apart. */
+.settings-confirm-label {
+    display: block;
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
+    color: hsl(var(--color-foreground));
+    text-wrap: pretty;
+}
+.settings-confirm-word {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8125rem;
+    letter-spacing: 0.04em;
+}
+.settings-confirm-input {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    height: var(--settings-control-h);
+    margin-top: 0.625rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--settings-control-border);
+    border-radius: 0.625rem;
+    background: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+    font: inherit;
+    font-size: 0.9375rem;
+    letter-spacing: 0.04em;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.settings-confirm-input:hover:not(:disabled) { border-color: var(--settings-control-border-hover); }
+.settings-confirm-input:focus {
+    outline: none;
+    border-color: hsl(var(--color-focus-ring) / 0.6);
+    box-shadow: 0 0 0 1px hsl(var(--color-focus-ring) / 0.4);
+}
+.settings-confirm-input:disabled { opacity: 0.6; }
+.settings-button-danger { color: #fff; background: hsl(0 72% 51%); border-color: hsl(0 72% 51%); }
+.settings-button-danger:hover:not(:disabled) { background: hsl(0 72% 45%); border-color: hsl(0 72% 45%); }
+.settings-button-danger:disabled { opacity: 0.45; }
+.dark .settings-button-danger { background: hsl(0 66% 50%); border-color: hsl(0 66% 50%); }
+.dark .settings-button-danger:hover:not(:disabled) { background: hsl(0 66% 44%); border-color: hsl(0 66% 44%); }
+
+/* ---------------------------------------------------------------------
+   One tooltip everywhere: the card Billing shows over Share and Import.
+   A small rounded panel, 12px wrapping text, no arrow, a soft shadow.
+   Positions (below / above / right) and the keyboard-only rules stay as
+   they are; only the skin is unified here, so this block comes last.
+   --------------------------------------------------------------------- */
+[data-tooltip]:hover::after,
+.chat-mode-html-tooltip,
+.sidebar-toggle-tooltip {
+    width: max-content;
+    max-width: 14rem;
+    padding: 0.375rem 0.625rem;
+    border: 0;
+    border-radius: 0.5rem;
+    background: hsl(var(--color-popover));
+    color: hsl(var(--color-foreground));
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.4;
+    text-align: left;
+    text-wrap: pretty;
+    white-space: normal;
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .06),
+        0 4px 16px -4px rgb(0 0 0 / .18);
+}
+/* In the dark a shadow says nothing and the popover colour is the colour
+   of the panels tooltips sit on (the gear, Billing), so the tooltip takes
+   the next surface step up instead. */
+.dark [data-tooltip]:hover::after,
+.dark .chat-mode-html-tooltip,
+.dark .sidebar-toggle-tooltip {
+    background: hsl(var(--color-secondary));
+    box-shadow:
+        0 0 0 1px hsl(var(--color-foreground) / .1),
+        0 4px 16px -4px rgb(0 0 0 / .5);
+}
+[data-tooltip]:hover::before,
+.chat-mode-html-tooltip::before,
+.sidebar-toggle-tooltip::before { display: none !important; }
+/* Position: to the left of the element, centred on it. For controls at
+   the edge of a clipping container (the toolbar's payment method marks):
+   a tooltip below would be cut off, one beside never leaves the row. */
+[data-tooltip-position="start"]:hover::after {
+    top: 50%;
+    left: auto;
+    right: calc(100% + 0.5rem);
+    bottom: auto;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    animation: tooltipBodyFadeInStart 0.15s ease-out;
+}
+@keyframes tooltipBodyFadeInStart {
+    from { opacity: 0; transform: translateY(-50%) translateX(0.25rem); }
+    to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+/* Its mirror: to the right of the element, for controls at the toolbar's
+   left edge (the widen control), where a tooltip below is clipped. */
+[data-tooltip-position="end"]:hover::after {
+    top: 50%;
+    left: calc(100% + 0.5rem);
+    right: auto;
+    bottom: auto;
+    transform: translateY(-50%);
+    white-space: nowrap;
+    animation: tooltipBodyFadeInEnd 0.15s ease-out;
+}
+@keyframes tooltipBodyFadeInEnd {
+    from { opacity: 0; transform: translateY(-50%) translateX(-0.25rem); }
+    to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+.chat-mode-html-tooltip { gap: 0.25rem; }
+
+.settings-heading-with-info { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
+.settings-heading-with-info .settings-section-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; color: hsl(var(--color-foreground)); }
+.settings-info-button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground) / 0.7); }
+.settings-info-button svg { width: 14px; height: 14px; }
+.settings-info-button:hover { background: hsl(var(--color-muted)); }
+html[data-keyboard-nav] .settings-info-button:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
+/* A body-level tooltip avoids clipping inside Settings and the chat toolbar. */
+.info-tooltip { position: fixed; z-index: 10010; width: max-content; max-width: min(285px, calc(100vw - 24px)); box-sizing: border-box; padding: 10px 12px; border: 1px solid hsl(var(--color-border)); border-radius: 9px; background: hsl(var(--color-popover)); color: hsl(var(--color-foreground)); font: 400 12px/1.5 var(--font-sans), sans-serif; box-shadow: none; overflow-wrap: anywhere; }
+.info-tooltip[hidden] { display: none; }
+/* Commercial's older label shim can still set data-tooltip on these buttons. */
+[data-info-tooltip][data-tooltip]:hover::after, [data-info-tooltip][data-tooltip]:hover::before { display: none; }
+
+/* Approved motion studies: quiet travel, shared timings, native controls. */
+:root { --modal-scale: .98; --modal-scale-close: .98; --dropdown-pre-scale: .98; --dropdown-closing-scale: .99; --text-swap-blur: 1px; --icon-swap-blur: 1px; --icon-swap-start-scale: .85; }
+[data-motion-phase] > .t-modal { animation: none; }
+[data-motion-phase="closing"] { pointer-events: none; }
+[data-motion-phase="open"] > .t-modal { opacity: 1; }
+.quick-ask-window > .t-modal { transform-origin: top center; }
+.t-dropdown { animation: none !important; }
+#settings-menu.t-dropdown { transform-origin: bottom right; }
+#app-toast.t-toast { translate: -50% 0; --tw-translate-x: 0px; }
+.update-toast.t-toast { animation: none; translate: -50% 0; }
+details[data-motion-details]::details-content { content-visibility: visible; }
+details[data-motion-details] > .t-acc-panel { padding: 0; }
+.t-acc-panel-inner { min-height: 0; }
+.info-tooltip.t-tt { position: fixed; bottom: auto; width: max-content; max-width: min(320px, calc(100vw - 24px)); white-space: normal; box-shadow: none; background: hsl(var(--color-background)); color: hsl(var(--color-foreground)); transform-origin: top left; --tt-delay: 0ms; }
+.info-tooltip.t-tt[data-show="true"] { pointer-events: auto; }
+.payment-mode-control.t-tabs { --tabs-pill-bg: hsl(var(--color-card)); }
+.payment-mode-control.t-tabs .t-tabs-pill { border-radius: .5rem; }
+.payment-mode-control.t-tabs button[aria-pressed="true"] { background: transparent; box-shadow: none; }
+.payment-mode-control.t-tabs .t-tab { color: inherit; }
+@media (prefers-reduced-motion: reduce) {
+    .oa-motion-backdrop { transition: none; }
+}
+
+:root {
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-scale: 0.96;
+  --modal-scale-close: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.t-modal {
+  transform-origin: center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity   var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
+}
+.t-modal.is-open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+.t-modal.is-closing {
+  transform: scale(var(--modal-scale-close));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-close-dur) var(--modal-ease),
+    opacity   var(--modal-close-dur) var(--modal-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-modal { transition: none !important; }
+}
+
+:root {
+  --dropdown-open-dur: 250ms;
+  --dropdown-close-dur: 150ms;
+  --dropdown-pre-scale: 0.97;
+  --dropdown-closing-scale: 0.99;
+  --dropdown-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.t-dropdown {
+  transform-origin: top left;
+  transform: scale(var(--dropdown-pre-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dropdown-open-dur) var(--dropdown-ease),
+    opacity   var(--dropdown-open-dur) var(--dropdown-ease);
+  will-change: transform, opacity;
+}
+.t-dropdown[data-origin="top-right"]     { transform-origin: top right; }
+.t-dropdown[data-origin="top-center"]    { transform-origin: top center; }
+.t-dropdown[data-origin="bottom-left"]   { transform-origin: bottom left; }
+.t-dropdown[data-origin="bottom-center"] { transform-origin: bottom center; }
+.t-dropdown[data-origin="bottom-right"]  { transform-origin: bottom right; }
+
+.t-dropdown.is-open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+.t-dropdown.is-closing {
+  transform: scale(var(--dropdown-closing-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--dropdown-close-dur) var(--dropdown-ease),
+    opacity   var(--dropdown-close-dur) var(--dropdown-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-dropdown { transition: none !important; }
+}
+
+:root {
+  --icon-swap-dur: 250ms;
+  --icon-swap-blur: 2px;
+  --icon-swap-start-scale: 0.25;
+  --icon-swap-ease: ease-in-out;
+}
+
+.t-icon-swap {
+  position: relative;
+  display: inline-grid;
+}
+.t-icon-swap .t-icon {
+  grid-area: 1 / 1;
+  transition:
+    opacity   var(--icon-swap-dur) var(--icon-swap-ease),
+    filter    var(--icon-swap-dur) var(--icon-swap-ease),
+    transform var(--icon-swap-dur) var(--icon-swap-ease);
+  will-change: opacity, filter, transform;
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="a"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="b"] {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+.t-icon-swap[data-state="a"] .t-icon[data-icon="b"],
+.t-icon-swap[data-state="b"] .t-icon[data-icon="a"] {
+  opacity: 0;
+  filter: blur(var(--icon-swap-blur));
+  transform: scale(var(--icon-swap-start-scale));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-icon-swap .t-icon { transition: none !important; }
+}
+
+:root {
+  --text-swap-dur: 150ms;
+  --text-swap-translate-y: 4px;
+  --text-swap-blur: 2px;
+  --text-swap-ease: ease-in-out;
+}
+
+.t-text-swap {
+  display: inline-block;
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--text-swap-dur) var(--text-swap-ease),
+    filter    var(--text-swap-dur) var(--text-swap-ease),
+    opacity   var(--text-swap-dur) var(--text-swap-ease);
+  will-change: transform, filter, opacity;
+}
+.t-text-swap.is-exit {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+}
+.t-text-swap.is-enter-start {
+  transform: translateY(var(--text-swap-translate-y));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-text-swap { transition: none !important; }
+}
+
+:root {
+  --tabs-dur: 250ms;
+  --tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tabs-text-muted: rgba(15, 15, 15, 0.8);
+  --tabs-text-active: #0f0f0f;
+  --tabs-bar-bg: #f1f1f1;
+  --tabs-pill-bg: #ffffff;
+}
+
+/* The bar is just a flex container with padding for the pill
+   to sit inside. Tabs sit on z-index: 1, the pill on z-index: 0,
+   so labels read above the pill background. */
+.t-tabs {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 48px;
+  background: var(--tabs-bar-bg);
+}
+.t-tab {
+  position: relative;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  height: 30px;
+  padding: 4px 12px;
+  color: var(--tabs-text-muted);
+  cursor: pointer;
+  border-radius: 48px;
+  z-index: 1;
+  transition: color var(--tabs-dur) var(--tabs-ease);
+}
+.t-tab:not([aria-selected="true"]):hover,
+.t-tab[aria-selected="true"] {
+  color: var(--tabs-text-active);
+}
+
+/* The pill: width + transform are written inline by JS so
+   the transition tweens between the previous and next
+   measured positions. */
+.t-tabs-pill {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  height: 30px;
+  width: 0;
+  background: var(--tabs-pill-bg);
+  border-radius: 48px;
+  transform: translateX(0);
+  transition:
+    transform var(--tabs-dur) var(--tabs-ease),
+    width     var(--tabs-dur) var(--tabs-ease);
+  will-change: transform, width;
+  z-index: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-tabs-pill, .t-tab { transition: none !important; }
+}
+
+:root {
+  --stagger-dur: 500ms;
+  --stagger-distance: 12px;
+  --stagger-stagger: 40ms;
+  --stagger-blur: 3px;
+  --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Lines start translated down + blurred + invisible; .is-shown
+   on the parent flips them to their resting state. The second
+   line's transition-delay holds it back by --stagger-stagger
+   so the eye lands on the headline first. */
+.t-stagger-line {
+  display: block;
+  opacity: 0;
+  transform: translateY(var(--stagger-distance));
+  filter: blur(var(--stagger-blur));
+  transition:
+    opacity   var(--stagger-dur) var(--stagger-ease),
+    transform var(--stagger-dur) var(--stagger-ease),
+    filter    var(--stagger-dur) var(--stagger-ease);
+  will-change: transform, opacity, filter;
+}
+.t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
+
+.t-stagger.is-shown .t-stagger-line {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+/* Exit decouples from the stagger: same fade for every line,
+   no Y return, no blur — so the disappearance reads as a
+   single quiet fade instead of a reverse reveal. */
+.t-stagger.is-hiding .t-stagger-line {
+  opacity: 0;
+  transform: translateY(0);
+  filter: blur(0);
+  transition:
+    opacity 200ms ease,
+    transform 0s linear,
+    filter 0s linear;
+  transition-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-stagger-line { transition: none !important; }
+}
+
+:root {
+  --learn-shift: 2px;
+  --learn-spread: 8deg;
+  --learn-in: 350ms;
+  --learn-out: 350ms;
+  --learn-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.t-learn-chevron {
+  display: inline-flex;
+  transform: translateX(0);
+  transition: transform var(--learn-out) var(--learn-ease);
+}
+.t-learn-arm {
+  transform-box: view-box;
+  transform-origin: 10px 8px;
+  vector-effect: non-scaling-stroke;
+  transition: transform var(--learn-out) var(--learn-ease);
+}
+.t-learn:hover .t-learn-chevron { transform: translateX(var(--learn-shift)); transition-duration: var(--learn-in); }
+.t-learn:hover .t-learn-arm { transition-duration: var(--learn-in); }
+.t-learn:hover .t-learn-arm-top { transform: rotate(var(--learn-spread)); }
+.t-learn:hover .t-learn-arm-bot { transform: rotate(calc(var(--learn-spread) * -1)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-learn-chevron, .t-learn-arm { transition: none !important; }
+}
+
+:root {
+  --acc-expand: 250ms;
+  --acc-collapse: 250ms;
+  --acc-chevron: 250ms;
+  --acc-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* grid-template-rows 0fr → 1fr gives a clean height animation
+   with no JS measurement; the inner element clips overflow. */
+.t-acc-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
+}
+.t-acc[data-open="true"] .t-acc-panel {
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--acc-expand) var(--acc-ease);
+}
+.t-acc-panel-inner {
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(2px);
+  transition:
+    opacity var(--acc-collapse) var(--acc-ease),
+    filter var(--acc-collapse) var(--acc-ease);
+}
+.t-acc[data-open="true"] .t-acc-panel-inner {
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--acc-expand) var(--acc-ease),
+    filter var(--acc-expand) var(--acc-ease);
+}
+/* Flip the chevron vertically to turn the "v" into a "^".
+   scaleY(-1) about the centre passes through a flat line at
+   the midpoint (same look as a `d:` path morph) but animates
+   in every browser, unlike CSS `d:` morphing (Chromium only).
+   The chevron path is symmetric about the 16x16 viewBox
+   centre, so the flip lands exactly on the "^"; non-scaling
+   -stroke keeps the stroke width constant through the flip. */
+.t-acc-chevron {
+  display: inline-flex;
+  transform: scaleY(1);
+  transform-origin: center;
+  transition: transform var(--acc-chevron) var(--acc-ease);
+}
+.t-acc-chevron path { vector-effect: non-scaling-stroke; }
+.t-acc[data-open="true"] .t-acc-chevron {
+  transform: scaleY(-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-acc-panel, .t-acc-panel-inner, .t-acc-chevron {
+    transition: none !important;
+  }
+}
+
+:root {
+  --tt-in-dur: 150ms;
+  --tt-out-dur: 50ms;
+  --tt-scale: 0.98;
+  --tt-delay: 80ms;
+  --tt-in-ease: ease-out;
+  --tt-out-ease: ease-out;
+  --tt-move-dur: 160ms;
+  --tt-move-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tt-bg: #ffffff;
+  --tt-fg: #2f2f2f;
+}
+
+.t-tt-group {
+  position: relative;
+  display: inline-flex;
+}
+.t-tt {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0;                 /* the JS writes the measured width */
+  overflow: hidden;
+  /* Individual transform properties: the travel (translate) and the
+     appear (scale) run on their own clocks. */
+  translate: var(--tt-x, 0px) 0;
+  scale: var(--tt-scale);
+  transform-origin: 50% 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--tt-bg);
+  color: var(--tt-fg);
+  white-space: nowrap;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 2px 6px 0 rgba(0, 0, 0, 0.05),
+    0 4px 42px 0 rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  pointer-events: none;
+  /* Default rule controls the LEAVE state: no delay, so hiding plays
+     immediately. The move lanes are always live. */
+  transition:
+    opacity   var(--tt-out-dur) var(--tt-out-ease),
+    scale     var(--tt-out-dur) var(--tt-out-ease),
+    translate var(--tt-move-dur) var(--tt-move-ease),
+    width     var(--tt-move-dur) var(--tt-move-ease);
+}
+/* The appear delay belongs ONLY to the show rule, so hiding snaps it
+   back to 0. A retarget while showing carries no delay at all. */
+.t-tt[data-show="true"] {
+  opacity: 1;
+  scale: 1;
+  transition:
+    opacity   var(--tt-in-dur) var(--tt-in-ease) var(--tt-delay),
+    scale     var(--tt-in-dur) var(--tt-in-ease) var(--tt-delay),
+    translate var(--tt-move-dur) var(--tt-move-ease),
+    width     var(--tt-move-dur) var(--tt-move-ease);
+}
+.t-tt-text { white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-tt { transition: none !important; }
+}
+
+:root {
+  --toast-open: 350ms;
+  --toast-close: 250ms;
+  --toast-distance: 16px;
+  --toast-blur: 2px;
+  --toast-scale: 0.97;
+  --toast-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.t-toast {
+  opacity: 0;
+  transform: translateY(var(--toast-distance)) scale(var(--toast-scale));
+  filter: blur(var(--toast-blur));
+  will-change: transform, opacity, filter;
+  transition:
+    opacity var(--toast-close) var(--toast-ease),
+    transform var(--toast-close) var(--toast-ease),
+    filter var(--toast-close) var(--toast-ease);
+}
+.t-toast.is-open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  filter: blur(0);
+  transition:
+    opacity var(--toast-open) var(--toast-ease),
+    transform var(--toast-open) var(--toast-ease),
+    filter var(--toast-open) var(--toast-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-toast { transition: none !important; }
+}
+
+:root { --modal-scale: .98; --modal-scale-close: .98; --dropdown-pre-scale: .98; --dropdown-closing-scale: .99; --text-swap-blur: 1px; --icon-swap-blur: 1px; --icon-swap-start-scale: .85; }
+.oa-motion-backdrop { animation: none !important; transition: background-color var(--modal-open-dur) var(--modal-ease); }
+.oa-motion-backdrop[data-motion-phase="opening"], .oa-motion-backdrop[data-motion-phase="closing"] { background-color: transparent !important; }
+.oa-motion-backdrop[data-motion-phase="closing"] { transition-duration: var(--modal-close-dur); }
+.oa-motion-backdrop > :first-child { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .oa-motion-backdrop { transition: none; } }
+
+/* A parent's open recipe must not open nested native disclosures. */
+details.t-acc[data-open="false"] > .t-acc-panel { grid-template-rows: 0fr; }
+details.t-acc[data-open="false"] > .t-acc-panel > .t-acc-panel-inner { opacity: 0; filter: blur(2px); }
+details.t-acc[data-open="true"] > .t-acc-panel { grid-template-rows: 1fr; }
+details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1; filter: blur(0); }
+
+/* Outgoing toasts relinquish their id before a replacement is mounted. */
+.t-toast { translate: -50% 0; --tw-translate-x: 0px; }
+
+
+/* Transitions.dev — Toggle */
+:root {
+  --toggle-dur: 350ms;
+  --toggle-travel: 14.66px;
+  --toggle-ov1: 1px;
+  --toggle-ov2: 0px;
+  --toggle-track: 0ms;
+  --toggle-ease: cubic-bezier(0.34, 1.35, 0.64, 1);
+}
+
+
+.t-toggle { transition: background var(--toggle-track) var(--toggle-ease); }
+.t-toggle-thumb { translate: 0 0; will-change: translate; }
+.t-toggle[data-on="true"] .t-toggle-thumb { translate: var(--toggle-travel) 0; }
+.t-toggle.is-init[data-on="true"] .t-toggle-thumb { animation: t-toggle-on var(--toggle-dur) var(--toggle-ease) both; }
+.t-toggle.is-init[data-on="false"] .t-toggle-thumb { animation: t-toggle-off var(--toggle-dur) var(--toggle-ease) both; }
+@keyframes t-toggle-on {
+  0% { translate: 0 0; }
+  55% { translate: calc(var(--toggle-travel) + var(--toggle-ov1)) 0; }
+  80% { translate: calc(var(--toggle-travel) - var(--toggle-ov2)) 0; }
+  100% { translate: var(--toggle-travel) 0; }
+}
+@keyframes t-toggle-off {
+  0% { translate: var(--toggle-travel) 0; }
+  55% { translate: calc(0px - var(--toggle-ov1)) 0; }
+  80% { translate: var(--toggle-ov2) 0; }
+  100% { translate: 0 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-toggle-thumb { animation: none !important; }
+}
+
+.switch-toggle.t-toggle { --toggle-travel: 14px; transition: background-color var(--toggle-track) var(--toggle-ease); }
+.switch-toggle.t-toggle .switch-toggle-indicator { transform: none; transition: none; }
+.switch-toggle-sm.t-toggle { --toggle-travel: 12px; }
+.settings-panel .settings-switch.t-toggle { --toggle-travel: 16px; }
+.settings-panel .settings-switch.t-toggle .switch-toggle-indicator { transform: none; transition: none; }
+
+/* Keep the sidebar's contents at their final width while its outer rail clips. */
+#sidebar .sidebar-main-content,
+#sidebar .account-nav {
+    width: calc(var(--oa-left-sidebar-width, 220px) - 1px);
+    min-width: calc(var(--oa-left-sidebar-width, 220px) - 1px);
+}
+.oa-panel-help {
+    border: 1px solid hsl(var(--color-border));
+    border-radius: .5rem;
+    background: hsl(var(--color-muted) / .05);
+    padding: .625rem;
+    font-family: inherit;
+    font-size: .75rem;
+    line-height: 1.6;
+    color: hsl(var(--color-muted-foreground));
+}
+.oa-panel-help p + p { margin-top: .5rem; }
+.oa-panel-learn-more {
+    display: inline-flex;
+    margin-top: .5rem;
+    color: hsl(var(--color-foreground));
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+.oa-panel-disclosure-inner { min-height: 0; }
+.oa-panel-disclosure .oa-panel-help { margin-bottom: .5rem; }
+.oa-key-detail-row {
+    min-height: 2.625rem;
+    padding: .5rem .75rem;
+    gap: .625rem;
+    width: 100%;
+}
+.oa-key-detail-row > span:last-child { text-align: right; }
+.oa-key-badges { gap: .75rem; }
+.oa-key-detail-row #api-key-expiry { padding: .25rem .375rem; }
+.oa-key-detail-row #renew-key-btn { width: 1.375rem; height: 1.375rem; }
+.oa-key-detail-row > span {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.citation-site-icon { width: 1rem; height: 1rem; object-fit: contain; flex-shrink: 0; }
+.citations-toggle-favicon .citation-site-icon { width: .75rem; height: .75rem; }
+
+/* Transitions.dev — verifier check */
+:root {
+  --check-opacity-dur: 500ms;
+  --check-rotate-dur: 500ms;
+  --check-rotate-from: 80deg;
+  --check-bob-dur: 500ms;
+  --check-y-amount: 40px;
+  --check-blur-dur: 500ms;
+  --check-blur-from: 10px;
+  --check-path-dur: 500ms;
+  --check-path-delay: 80ms;
+  --check-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-opacity: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-rotate: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-bob: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --check-ease-path: cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Wrapper drives the appear animation; it doesn't own any
+   sizing or color so you can drop in any icon. */
+.t-success-check {
+  display: inline-block;
+  transform-origin: center;
+  opacity: 0;
+  will-change: transform, opacity, filter;
+}
+/* overflow: visible keeps the stroke from clipping while it
+   draws; display: block kills the inline whitespace under SVGs. */
+.t-success-check svg { display: block; overflow: visible; }
+/* Stroke-draw setup. Replace 20 with the result of
+   path.getTotalLength() for your path; round caps mean any
+   sub-pixel overshoot is invisible. */
+.t-success-check svg path {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+}
+
+.t-success-check[data-state="in"] {
+  animation:
+    t-check-fade   var(--check-opacity-dur) var(--check-ease-opacity) forwards,
+    t-check-rotate var(--check-rotate-dur)  var(--check-ease-rotate)  forwards,
+    t-check-blur   var(--check-blur-dur)    var(--check-ease-out)     forwards,
+    t-check-bob    var(--check-bob-dur)     var(--check-ease-bob)     forwards;
+}
+.t-success-check[data-state="in"] svg path {
+  animation: t-check-draw var(--check-path-dur) var(--check-ease-path) var(--check-path-delay, 0ms) forwards;
+}
+
+@keyframes t-check-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes t-check-rotate {
+  from { transform: rotate(var(--check-rotate-from)); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes t-check-blur {
+  from { filter: blur(var(--check-blur-from)); }
+  to   { filter: blur(0); }
+}
+@keyframes t-check-bob {
+  from { translate: 0 var(--check-y-amount); }
+  to   { translate: 0 0; }
+}
+@keyframes t-check-draw { to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-success-check { animation: none !important; opacity: 1; }
+  .t-success-check svg path { animation: none !important; stroke-dashoffset: 0 !important; }
+}
+
+.verifier-status-icon { position: relative; display: inline-flex; width: 1rem; height: 1rem; }
+.verifier-status-icon > svg { width: 100%; height: 100%; }
+.verifier-status-icon .t-success-check {
+    position: absolute;
+    inset: 0;
+    opacity: 1;
+    --check-rotate-from: 0deg;
+    --check-y-amount: 0px;
+    --check-blur-from: 0px;
+    --check-opacity-dur: 240ms;
+    --check-path-dur: 320ms;
+    --check-path-delay: 0ms;
+}
+.verifier-status-icon .t-success-check svg { width: 100%; height: 100%; }
+.verifier-status-icon .t-success-check:not([data-state="in"]) svg path { stroke-dashoffset: 0; }
+
+.verifier-status-icon .t-success-check svg path { stroke-dasharray: var(--verifier-check-length, 14); }
+.verifier-status-icon .t-success-check[data-state="in"] svg path { stroke-dashoffset: var(--verifier-check-length, 14); }
+
+@media (max-width: 767px) {
+    #sidebar .sidebar-main-content, #sidebar .account-nav { width: calc(16rem - 1px); min-width: calc(16rem - 1px); }
+}
+.oa-lane-key-card { padding: .625rem; }
+.oa-lane-key-card .oa-lane-key-badges { gap: .5rem; }
+.oa-panel-help [data-council-attestation-lane] { display: block; }
+
+.oa-ticket-help-copy { font-family: inherit; font-size: .75rem; line-height: 1.6; }
+.oa-system-panel-header { flex-shrink: 0; }
+.oa-system-panel-body { overflow-y: auto; overscroll-behavior: contain; }
+.oa-system-timeline { min-height: 12rem; }
+
+/* Compact proxy status: explanatory text lives in the help disclosure. */
+.oa-proxy-status-icon { position: relative; display: inline-flex; width: .875rem; height: .875rem; flex-shrink: 0; cursor: default; --pulse-dur: 1400ms; --pulse-count: infinite; --pulse-min: .35; }
+.oa-proxy-status-tooltip { position: absolute; top: calc(100% + 8px); left: 0; width: max-content; max-width: 240px; padding: .4rem .6rem; border: 1px solid hsl(var(--color-border)); border-radius: .375rem; background: hsl(var(--color-background)); color: hsl(var(--color-foreground)); font-size: .625rem; line-height: 1.5; visibility: hidden; pointer-events: none; z-index: 30; }
+.oa-proxy-status-icon:hover .oa-proxy-status-tooltip, .oa-proxy-status-icon:focus-visible .oa-proxy-status-tooltip { visibility: visible; }
+/* The failure row is the Network Proxy row's subtitle: it exists only while
+   the proxy is unavailable (and through the retry that follows), sits under
+   the label's text rather than under the globe, and stays muted — the globe
+   already carries the state's colour. Retry is the single-arc arrow with a
+   real 22px target; each press turns it one full turn by transition, so a
+   second press continues the motion rather than restarting it. */
+.oa-proxy-failure {
+    display: flex; gap: .375rem; align-items: center; font-size: .6875rem; line-height: 1.4;
+    padding-left: 1rem; margin-top: .25rem; max-height: 1.5rem;
+    --proxy-feedback-fade: 280ms;
+    --text-swap-translate-y: 2px; --text-swap-blur: 1px;
+    --icon-swap-start-scale: .8; --icon-swap-blur: 1px;
+    color: hsl(var(--color-muted-foreground));
+    /* Settling: the line collapses in height as it fades, so the rows
+       below slide up instead of jumping. */
+    transition: opacity var(--proxy-feedback-fade) ease, filter var(--proxy-feedback-fade) ease,
+        max-height var(--proxy-feedback-fade) cubic-bezier(.4, 0, .2, 1), margin-top var(--proxy-feedback-fade) cubic-bezier(.4, 0, .2, 1);
+}
+.oa-proxy-failure[data-state="unavailable"] { color: hsl(var(--color-muted-foreground)); }
+.oa-proxy-failure[data-state="ready"] { color: hsl(var(--color-muted-foreground)); }
+.oa-proxy-failure[data-state="connected"] { color: var(--color-status-success); }
+.oa-proxy-failure.is-settled { opacity: 0; filter: blur(1px); max-height: 0; margin-top: 0; overflow: hidden; pointer-events: none; }
+.oa-proxy-failure[data-state="ready"] .oa-proxy-retry, .oa-proxy-failure[data-state="connected"] .oa-proxy-retry { color: var(--color-status-success); }
+/* The globe's colour change is felt, not seen. */
+.oa-proxy-status-icon { transition: color 420ms ease; }
+.oa-proxy-failure[hidden] { display: none; }
+.oa-proxy-retry {
+    display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
+    width: 1.375rem; height: 1.375rem; padding: 0; border: 0; border-radius: .375rem;
+    background: transparent; color: hsl(var(--color-muted-foreground)); cursor: pointer;
+    transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+.oa-proxy-retry:hover:not([aria-disabled="true"]),
+.oa-proxy-retry:focus-visible:not([aria-disabled="true"]) { background: hsl(var(--color-hover)); color: hsl(var(--color-foreground)); }
+.oa-proxy-retry:active:not([aria-disabled="true"]) { transform: scale(.94); }
+.oa-proxy-retry[aria-disabled="true"] { cursor: default; }
+.oa-proxy-retry .t-icon, .oa-proxy-retry svg { display: block; width: .8125rem; height: .8125rem; }
+.oa-proxy-retry .oa-proxy-retry-turns {
+    display: block; transform: rotate(var(--proxy-turns, 0turn));
+    transition: transform 700ms cubic-bezier(.4, 0, .2, 1);
+}
+/* Hover: a small lean in the direction the arrow travels, undone on leave. */
+.oa-proxy-retry:hover:not([aria-disabled="true"]) .oa-proxy-retry-arrow { transform: rotate(18deg); }
+.oa-proxy-retry .oa-proxy-retry-arrow { transition: transform 200ms ease; }
+.oa-proxy-retry .t-success-check {
+    color: inherit; --check-y-amount: 2px; --check-rotate-from: 0deg; --check-blur-from: 1px;
+    --check-opacity-dur: 250ms; --check-bob-dur: 250ms; --check-rotate-dur: 250ms;
+    --check-blur-dur: 250ms; --check-path-dur: 300ms;
+}
+.oa-proxy-retry .t-success-check svg path { stroke-dasharray: var(--proxy-check-length, 21); stroke-dashoffset: var(--proxy-check-length, 21); }
+.oa-proxy-failure[data-state="connected"] .oa-proxy-retry { color: inherit; }
+/* Connecting: turns chain (see turnProxyRetryArrow), so the pace is even. */
+.oa-proxy-failure[data-state="connecting"] .oa-proxy-retry-turns { transition-timing-function: linear; transition-duration: 900ms; }
+@media (prefers-reduced-motion: reduce) {
+    .oa-proxy-failure, .oa-proxy-retry, .oa-proxy-retry .oa-proxy-retry-turns, .oa-proxy-retry .oa-proxy-retry-arrow { transition: none; }
+    .oa-proxy-retry .oa-proxy-retry-turns { transform: none; }
+    .oa-proxy-retry:hover .oa-proxy-retry-arrow { transform: none; }
+    .oa-proxy-retry .t-success-check[data-state="out"] { opacity: 0; }
+}
+.oa-panel-disclosure .oa-panel-help { margin-top: .5rem; }
+
+/* Transitions.dev — connecting icon pulse */
+.t-skel-skeleton.is-pulsing > * {
+  animation: t-skel-pulse var(--pulse-dur) ease-in-out var(--pulse-count);
+}
+@keyframes t-skel-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: var(--pulse-min); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-skel-skeleton, .t-skel-content {
+    transition: none !important;
+  }
+  .t-skel-skeleton.is-pulsing > * { animation: none !important; }
+}
+
+/* Empty-chat arrival. Content determines layout, including the prelude's first paint.
+   No second input is mounted: drafts, attachments, and focus stay on the same node. */
+#chat-stage:has(#messages-container > .welcome-landing) {
+    justify-content: center;
+    justify-content: safe center;
+    align-items: stretch;
+    gap: 24px;
+    padding-block: 20px clamp(20px, 10dvh, 100px);
+}
+#chat-stage:has(#messages-container > .welcome-landing) #chat-area {
+    flex: 0 1 auto;
+    max-height: 40%;
+    padding-top: 0;
+    overflow-y: auto;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #messages-container {
+    padding-block: 0 !important; /* Overrides the input ResizeObserver's transcript padding. */
+}
+#chat-stage:has(#messages-container > .welcome-landing) .welcome-landing {
+    margin-top: 0;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #chat-composer {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    min-width: 0;
+    z-index: 20;
+}
+#chat-stage:has(#messages-container > .welcome-landing) #message-input {
+    max-height: min(300px, 30dvh) !important;
+}
+.chat-arrival-outgoing {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    margin: 0;
+    animation: none;
+}
+@media (max-height: 500px) {
+    #chat-stage:has(#messages-container > .welcome-landing) {
+        gap: 12px;
+        padding-block: 8px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .welcome-landing { animation: none; opacity: 1; transform: none; }
+}
+
+/* Mobile normally fixes the input card to the viewport and removes this wrapper.
+   Restore flow only while empty; animate the card itself when docking so its
+   fixed positioning never acquires a transformed ancestor. */
+@media (max-width: 767px) {
+    main > #chat-stage:has(#messages-container > .welcome-landing) {
+        display: flex !important;
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #chat-area {
+        flex: 0 1 auto !important;
+        margin-bottom: 0 !important;
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
+        position: relative !important;
+        inset: auto !important;
+    }
+}
+
+/* Visible only during transport silence; the regular pending UI stays intact. */
+.inference-silence-warning {
+    margin: 0.75rem auto;
+    padding: 0.65rem 0.85rem;
+    max-width: 48rem;
+    border-inline-start: 2px solid light-dark(#946000, #e4b85b);
+    border-radius: 0 0.375rem 0.375rem 0;
+    background: light-dark(#fff9ec, #30291b);
+    color: light-dark(#704b0b, #ecd19a);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.inference-failure-warning {
+    padding: 0.65rem 0.85rem;
+    border-inline-start: 2px solid light-dark(#ae3440, #e79ca3);
+    border-radius: 0 0.375rem 0.375rem 0;
+    background: light-dark(#fff5f5, #342225);
+    color: light-dark(#8b2530, #f3c1c6);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.inference-retry-button {
+    display: inline-block;
+    padding: 0.4rem 0.65rem;
+    margin-top: 0.5rem;
+    border: 1px solid currentColor;
+    border-radius: 0.375rem;
+    font: inherit;
+}
+
+/* Shared available-width column for the landing and docked composer. */
+#chat-stage { width: 100%; min-width: 0; }
+#chat-composer { padding-inline: 24px; }
+#input-card { max-width: 680px; }
+#chat-stage:has(#messages-container > .welcome-landing) #messages-container {
+    width: 100%;
+    max-width: 728px;
+    margin-inline: auto;
+    padding-inline: 24px;
+}
+.composer-more-glyph { display: none !important; }
+#compact-composer-actions[hidden] { display: none; }
+
+/* Side panels overlay until the viewport can afford both rails and a chat. */
+@media (min-width: 768px) and (max-width: 1099px) {
+    #sidebar:not(.mobile-visible) {
+        position: fixed !important;
+        left: 0; top: 0;
+        width: 0 !important;
+        border-right-width: 0;
+        overflow: hidden !important;
+    }
+    #sidebar.mobile-visible {
+        position: fixed !important;
+        left: 0; top: 0;
+        z-index: 40;
+        width: 280px !important;
+        height: 100dvh;
+        border-right-width: 1px;
+    }
+    #sidebar .sidebar-main-content,
+    #sidebar .account-nav { width: 279px; min-width: 279px; }
+    #show-sidebar-btn { display: flex !important; }
+    .mobile-sidebar-backdrop.visible { display: block !important; }
+    .sidebar-resize-handle { display: none; }
+}
+@media (max-width: 1099px) {
+    .system-panel-toggle-space { width: 2.75rem; }
+}
+
+/* ResizeObserver uses the card width, including any open desktop sidebars. */
+html[data-composer-compact="true"] .composer-bottom-actions { gap: 4px; }
+html[data-composer-compact="true"] .model-shortcut,
+html[data-composer-compact="true"] #scrubber-shortcut-hint { display: none !important; }
+html[data-composer-compact="true"] #settings-btn > svg { display: none; }
+html[data-composer-compact="true"] #settings-btn > .composer-more-glyph {
+    display: block !important;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 1px;
+}
+html[data-composer-compact="true"] #model-picker-btn.composer-model-chip {
+    max-width: 100%;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-bottom-actions {
+    flex-wrap: wrap;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-left-actions {
+    flex: 1 0 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] .composer-model-chip,
+html[data-composer-compact="true"][data-composer-mode="parallel"] .council-inline-models {
+    width: 100%;
+    max-width: 100%;
+}
+#compact-composer-actions .chat-mode-toggle-container { width: auto; }
+#compact-composer-actions .chat-mode-toggle-btn { width: auto; padding-inline: 10px; }
+#compact-composer-actions .chat-mode-toggle-btn::after { content: attr(aria-label); font-size: 12px; }
+#compact-composer-actions .chat-mode-toggle-btn svg { display: none; }
+#compact-composer-actions #memory-context-toggle { width: 44px; height: 44px; }
+#compact-composer-actions .memory-context-tooltip { display: none; }
+#compact-scrub-btn { width: 100%; text-align: left; min-height: 44px; }
+
+@media (max-width: 767px) {
+    body { height: 100dvh; }
+    main { height: 100dvh !important; }
+    #chat-composer { padding-inline: 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    #chat-stage:has(#messages-container > .welcome-landing) {
+        gap: 20px;
+        padding-block: 16px clamp(24px, 12dvh, 96px);
+    }
+    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
+        width: 100% !important;
+        margin-inline: auto;
+    }
+    #input-card {
+        left: 16px !important;
+        right: 16px !important;
+        bottom: max(12px, env(safe-area-inset-bottom)) !important;
+    }
+    #message-input { font-size: 16px; }
+    #model-picker-btn.composer-model-chip,
+    .council-secondary-model-btn.composer-model-chip,
+    #composer-more-menu #file-upload-btn,
+    #composer-more-menu #settings-btn,
+    .composer-right-actions #send-btn,
+    #chat-toolbar button,
+    #show-right-panel-btn { min-width: 44px !important; min-height: 44px !important; height: 44px !important; }
+    #show-right-panel-btn { top: 4px; right: 8px; }
+    #chat-area { margin-bottom: 0 !important; }
+    #messages-container { padding-bottom: var(--composer-reserved-height, 160px) !important; }
+    html[data-composer-keyboard] main {
+        top: var(--composer-viewport-top) !important;
+        height: var(--composer-viewport-height) !important;
+        bottom: auto !important;
+    }
+    html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) {
+        justify-content: flex-end;
+        gap: 0;
+        padding-block: 0;
+    }
+    html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) #chat-area { display: none; }
+    html[data-composer-keyboard] #chat-stage:not(:has(#messages-container > .welcome-landing)) #input-card {
+        top: auto !important;
+        bottom: calc(100dvh - var(--composer-viewport-height) - var(--composer-viewport-top) + 12px) !important;
+    }
+    html[data-composer-keyboard] #message-input { max-height: min(160px, 25dvh) !important; }
+}
+html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-btn.composer-model-chip { width: 100%; }
+@media (max-width: 767px) {
+    #compact-composer-actions .chat-mode-toggle-btn { min-height: 44px; }
+}
+
+@media (max-width: 767px) {
+    #compact-composer-actions .chat-mode-toggle-container { height: 48px; }
+}
+#compact-scrub-btn:disabled { opacity: .5; cursor: not-allowed; }

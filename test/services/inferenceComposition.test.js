@@ -72,7 +72,40 @@ test('ordinary OpenRouter requests retain direct provider URL and bearer key', a
     assert.equal(result.content, 'answer');
     assert.equal(transport.calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
     assert.equal(transport.calls[0].init.headers.Authorization, 'Bearer ephemeral');
-    assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, undefined);
+    assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, 30000);
+});
+
+test('changing the default never retargets existing sessions or unknown paid backends', async () => {
+    const calls = [];
+    const backends = ['ticket', 'paid'].map(id => ({ id, requestAccess: async () => { calls.push(id); } }));
+    const service = createInferenceService({ backends });
+    const historical = {};
+    service.ensureSessionBackend(historical);
+    service.setDefaultBackendId('paid');
+    const next = { inferenceBackend: service.getDefaultBackendId() };
+    service.ensureSessionBackend(next);
+    assert.equal(historical.inferenceBackend, 'ticket');
+    assert.equal(next.inferenceBackend, 'paid');
+    await service.requestAccess(historical);
+    await service.requestAccess(next);
+    assert.deepEqual(calls, ['ticket', 'paid']);
+    assert.throws(() => service.setDefaultBackendId('unavailable'), /Unknown inference backend/);
+    await assert.rejects(service.requestAccess({ inferenceBackend: 'unavailable' }), /Unknown inference backend/);
+    assert.equal(service.getDefaultBackendId(), 'paid');
+    assert.deepEqual(calls, ['ticket', 'paid']);
+});
+
+test('legacy access ownership is independent of the preferred new-chat backend', () => {
+    const backends = ['ticket', 'paid'].map(id => ({ id, getAccessToken: session => session.apiKey }));
+    const service = createInferenceService({ backends, defaultBackendId: 'paid', legacyBackendId: 'ticket',
+        resolveLegacyBackendId: session => session.paidLease ? 'paid' : null });
+    const legacy = { apiKey: 'old-provider-key' };
+    assert.equal(service.getBackendForSession(legacy).id, 'ticket');
+    assert.equal(legacy.inferenceBackend, 'ticket');
+    service.setDefaultBackendId('ticket');
+    assert.equal(service.getBackendForSession({ paidLease: 'bound' }).id, 'paid');
+    assert.equal(service.getBackendForSession({ inferenceBackend: 'paid' }).id, 'paid');
+    assert.equal(service.getBackendForSession(null).id, 'ticket');
 });
 
 test('title usage computes totals when the provider only reports input and output tokens', async () => {
@@ -111,10 +144,96 @@ test('concurrent request leases keep endpoints, headers, policies and releases i
     for (const call of transport.calls) {
         assert.equal(call.url, `https://${call.init.headers['x-session']}.test/v1/chat/completions`);
         assert.equal(call.init.headers.Authorization, undefined);
-        assert.equal(JSON.parse(call.init.body).max_tokens, 1234);
+        assert.equal(JSON.parse(call.init.body).max_tokens,
+            call.init.headers['x-session'] === 'two' ? 24 : 1234);
         assert.deepEqual(call.config.proxyConfig, { bypassProxy: true });
     }
     assert.equal(api.baseUrl, 'https://openrouter.ai/api/v1');
+});
+
+test('strict completion access captures its actual model and reasoning before awaiting', async () => {
+    let continueAccess;
+    const gate = new Promise(resolve => { continueAccess = resolve; });
+    let captured;
+    const transport = transportWithResponse();
+    const api = new OpenRouterAPI({
+        networkTransport: transport,
+        acquireRequestAccess: async (_token, options) => {
+            captured = options;
+            await gate;
+            return { baseUrl: 'https://provider.test', headers: {} };
+        }
+    });
+    const options = { modelId: 'stale-option/model', reasoningEnabled: false };
+    const pending = api.sendCompletionStrict([], 'captured/model', 'binding', options);
+    options.modelId = 'new-ui/model';
+    options.reasoningEnabled = true;
+    continueAccess();
+    await pending;
+    assert.equal(captured.modelId, 'captured/model');
+    assert.equal(captured.reasoningEnabled, false);
+    const body = JSON.parse(transport.calls[0].init.body);
+    assert.equal(body.model, 'captured/model');
+    assert.equal(body.reasoning, undefined);
+    assert.equal(body.accessModelId, undefined);
+});
+
+test('concurrent title and stream keep the initiating chat access model after selection changes', async () => {
+    let continueAccess;
+    const gate = new Promise(resolve => { continueAccess = resolve; });
+    const acquired = [];
+    const transport = { ...transportWithResponse(), ...transportWithSseEvents([
+        { choices: [{ delta: { content: 'answer' }, finish_reason: 'stop' }] }
+    ]) };
+    const api = new OpenRouterAPI({
+        networkTransport: transport,
+        acquireRequestAccess: async (_token, options) => {
+            acquired.push(options);
+            await gate;
+            return { baseUrl: 'https://provider.test', headers: {} };
+        }
+    });
+    const backend = {
+        id: 'private', defaultModelId: 'provider/default',
+        getCachedModels: () => [{ id: 'provider/premium', name: 'Premium Model' }],
+        getAccessToken: session => session.id,
+        generateSessionTitle: (...args) => api.generateSessionTitle(...args),
+        streamCompletion: (...args) => api.streamCompletion(...args)
+    };
+    const service = createInferenceService({ backends: [backend] });
+    const session = { id: 'same-chat', model: 'Premium Model', reasoningEnabled: false };
+    const titleOptions = { modelId: 'provider/title-helper' };
+    const title = service.generateSessionTitle(session, 'Explain a subject', titleOptions);
+    const stream = service.streamCompletion([], 'provider/premium', session, () => {}, null,
+        [], false, null, null, null, false);
+    session.model = 'provider/cheap';
+    session.reasoningEnabled = true;
+    titleOptions.modelId = 'provider/different-title-helper';
+    continueAccess();
+    await Promise.all([title, stream]);
+    assert.equal(acquired.length, 2);
+    assert.deepEqual(acquired.map(options => options.accessModelId || options.modelId),
+        ['provider/premium', 'provider/premium']);
+    assert.deepEqual(acquired.map(options => options.reasoningEnabled), [false, false]);
+    const titleBody = JSON.parse(transport.calls[0].init.body);
+    assert.equal(titleBody.model, 'provider/title-helper', 'explicit title-model selection remains independent');
+    assert.equal(titleBody.accessModelId, undefined, 'access metadata never enters inference JSON');
+    assert.equal(acquired[0].modelId, 'provider/title-helper');
+});
+
+test('title access can preserve an earlier request model and reasoning over current session selection', async () => {
+    let captured;
+    const backend = {
+        id: 'private', getAccessToken: () => 'binding',
+        getCachedModels: () => [{ id: 'provider/now', name: 'Current Model' }],
+        generateSessionTitle: async (_prompt, _token, options) => { captured = options; return 'Title'; }
+    };
+    const service = createInferenceService({ backends: [backend] });
+    await service.generateSessionTitle({ model: 'Current Model', reasoningEnabled: true }, 'Prompt', {
+        accessModelId: 'provider/original', reasoningEnabled: false
+    });
+    assert.equal(captured.accessModelId, 'provider/original');
+    assert.equal(captured.reasoningEnabled, false);
 });
 
 test('a late abort and request-policy failure both release acquired access', async () => {
@@ -308,6 +427,80 @@ test('same-event output and final usage receive the actual response model', asyn
     assert.equal(usage[0].cost, 0.001);
     assert.equal(result.model, 'google/gemini-3-pro-preview');
     assert.equal(result.totalTokens, 24);
+});
+
+test('routed usage uses exact response-model pricing before same-event output and final usage', async () => {
+    const routerPricing = { prompt: '0.001', completion: '0.002' };
+    const basePricing = { prompt: '0.000002', completion: '0.000006' };
+    const batchPricing = { prompt: '0.000001', completion: '0.000003' };
+    for (const [model, expectedPricing] of [
+        ['provider/routed:batch', batchPricing],
+        ['provider/routed:online', basePricing]
+    ]) {
+        for (const cost of [undefined, 0, 0.017]) {
+            const updates = [];
+            const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([{
+                model,
+                choices: [{ delta: { content: 'answer' }, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 20, completion_tokens: 4, cost }
+            }]) });
+            api.getCachedModels = () => [
+                { id: 'openrouter/auto', pricing: routerPricing },
+                { id: 'provider/routed', pricing: basePricing },
+                { id: 'provider/routed:batch', pricing: batchPricing }
+            ];
+            const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {
+                assert.deepEqual(updates.at(-1).pricing, expectedPricing,
+                    'response pricing must be available before rendering the same event');
+            }, update => updates.push(update));
+            assert.deepEqual(updates[0].pricing, routerPricing);
+            assert.deepEqual(updates.find(update => update.modelOnly).pricing, expectedPricing);
+            assert.deepEqual(updates.find(update => update.isStreaming === false).pricing, expectedPricing);
+            assert.deepEqual(result.pricing, expectedPricing);
+            assert.equal(result.model, model);
+            assert.equal(result.promptTokens, 20);
+            assert.equal(result.completionTokens, 4);
+            assert.equal(result.cost, cost ?? null, 'reported costs, including zero, remain authoritative');
+        }
+    }
+});
+
+test('late routed model metadata refreshes pricing without resetting reported tokens or cost', async () => {
+    const updates = [];
+    const routedPricing = { prompt: '0.000003', completion: '0.000015' };
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { choices: [{ delta: { content: 'answer' } }], usage: { prompt_tokens: 20, completion_tokens: 4, cost: 0 } },
+        { model: 'provider/routed' }
+    ]) });
+    api.getCachedModels = () => [
+        { id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } },
+        { id: 'provider/routed', pricing: routedPricing }
+    ];
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {},
+        update => updates.push(update));
+    const lateUpdate = updates.find(update => update.modelOnly);
+    assert.equal(lateUpdate.promptTokens, 20);
+    assert.equal(lateUpdate.completionTokens, 4);
+    assert.equal(lateUpdate.cost, 0);
+    assert.deepEqual(lateUpdate.pricing, routedPricing);
+    assert.deepEqual(result.pricing, routedPricing);
+    assert.equal(result.cost, 0);
+});
+
+test('an unknown routed model clears requested pricing instead of estimating with the router rate', async () => {
+    const updates = [];
+    const api = new OpenRouterAPI({ networkTransport: transportWithSseEvents([
+        { model: 'new-provider/unknown', choices: [{ delta: { content: 'answer' } }],
+            usage: { prompt_tokens: 20, completion_tokens: 4 } }
+    ]) });
+    api.getCachedModels = () => [{ id: 'openrouter/auto', pricing: { prompt: '0.001', completion: '0.002' } }];
+    const result = await api.streamCompletion([], 'openrouter/auto', 'key', () => {},
+        update => updates.push(update));
+    assert.equal(updates.find(update => update.modelOnly).pricing, null);
+    assert.equal(updates.find(update => update.isStreaming === false).pricing, null);
+    assert.equal(result.pricing, null);
+    assert.equal(result.cost, null);
+    assert.equal(result.model, 'new-provider/unknown');
 });
 
 test('model metadata precedes reasoning and response-text event early returns', async () => {

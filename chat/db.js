@@ -258,13 +258,16 @@ class ChatDatabase {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
-            const request = store.put(session);
-
-            request.onsuccess = () => {
+            // A successful put can still be rolled back by an aborted
+            // transaction (including a reload). Access callers must not
+            // advance to inference until the credential record is committed.
+            transaction.oncomplete = () => {
                 this.emitStorageEvent('sessions-updated', { sessionId: session.id });
                 resolve();
             };
-            request.onerror = () => reject(request.error);
+            transaction.onerror = () => reject(transaction.error || new Error('The chat session could not be saved.'));
+            transaction.onabort = () => reject(transaction.error || new Error('The chat session was not committed.'));
+            store.put(session);
         });
     }
 

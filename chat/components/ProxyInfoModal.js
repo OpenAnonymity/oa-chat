@@ -1,3 +1,4 @@
+import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * Proxy Info Modal Component
  * Explains what the network proxy is and how it works
@@ -20,6 +21,7 @@ class ProxyInfoModal {
 
         this.render();
         document.body.appendChild(this.overlay);
+        showSurface(this.overlay);
         this.setupEventListeners();
     }
 
@@ -29,7 +31,7 @@ class ProxyInfoModal {
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
         }
-        this.overlay?.remove();
+        hideSurface(this.overlay, { remove: true });
         this.overlay = null;
     }
 

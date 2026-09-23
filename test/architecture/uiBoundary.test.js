@@ -9,6 +9,17 @@ function read(relativePath) {
     return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+test('startup composer autofocus preserves the open authentication dialog', () => {
+    const source = read('chat/app.js');
+    const start = source.indexOf('    focusMessageInput({ force = false } = {}) {');
+    const end = source.indexOf('    updateInputState() {', start);
+    const focusSource = source.slice(start, end);
+    const accountGuard = focusSource.indexOf('if (this.accountModal?.isOpen) return;');
+    assert.ok(accountGuard >= 0);
+    assert.ok(accountGuard < focusSource.indexOf('input.focus({ preventScroll: true })'));
+    assert.ok(accountGuard < focusSource.indexOf('if (!force && active'));
+});
+
 test('app entrypoint does not import concrete UI components directly', () => {
     const appSource = read('chat/app.js');
     assert.equal(
@@ -597,7 +608,9 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(settingsIndex > moreMenuIndex, true);
     assert.equal(settingsIndex > settingsControlIndex, true);
     assert.equal(settingsActionsIndex > settingsIndex, true);
-    assert.equal(settingsActionsIndex > themeToggleIndex, true);
+    // Appearance (theme) lives in the composer gear, before its foot.
+    assert.equal(themeToggleIndex > settingsIndex, true);
+    assert.equal(themeToggleIndex < settingsActionsIndex, true);
     assert.equal(searchIndex > moreMenuIndex, true);
     assert.equal(searchIndex < modeToggleIndex, true);
     assert.equal(memoryToggleIndex > -1, true);
@@ -665,6 +678,7 @@ test('composer model controls keep stable compact slots across Chat and Parallel
     assert.equal(source.includes('toolsContainer.append(fileAction, settingsControl, searchToggle);'), false);
     assert.equal(source.includes('toolsContainer.append(fileAction, settingsControl);'), true);
     assert.equal(source.includes('settingsActions.append(searchToggle);'), true);
+    assert.equal(source.includes('searchToggle.hidden = true;'), true, 'Web search is a Tools switch now; the old row stays out of sight');
     assert.equal(source.includes("e.target.closest('#file-upload-btn, #search-toggle')"), true);
     assert.equal(source.includes('inlineButton.disabled = !isEnabled || availableModels.length === 0;'), true);
     assert.equal(source.includes('toggleComposerMoreMenu()'), false);
@@ -779,7 +793,8 @@ test('right panel shows lane-scoped ephemeral keys for Parallel and Council', ()
     assert.equal(source.includes('session?.councilAccess'), true);
     assert.equal(source.includes('generateCouncilAccessKeyPanelHTML'), true);
     assert.equal(source.includes('Ephemeral Access Keys'), true);
-    assert.equal(source.includes('Keys persist until expiry, model change, or exhaustion.'), true);
+    // The multi-key list matches the single-key card: heading, rows, no explanatory line.
+    assert.equal(source.includes('Keys persist until'), false);
     assert.equal(source.includes('this.generateAccessKeyPanelHTML(hasApiKey)'), true);
     assert.equal(source.includes('hasAnyActiveAccessKey()'), true);
     assert.equal(source.includes('if (config.outputMode === COUNCIL_OUTPUT_SYNTHESIS)'), true);
@@ -816,7 +831,8 @@ test('completed assistant content uses shared markdown finalization path', () =>
 
     assert.equal(source.includes('renderCompletedAssistantContent(message, scopeId = message?.id)'), true);
     assert.equal(source.includes('async finalizeStreamingMessage(message, options = {})'), true);
-    assert.equal(source.includes('const forceFullRender = options.forceFullRender === true;'), true);
+    assert.equal(source.includes('const forceFullRender = options.forceFullRender === true || Boolean(message.inferenceError);'), true,
+        'interrupted partial answers must rebuild the failure notice even after reasoning finalization');
     assert.equal(source.includes('if (isReasoningFinalized && !forceFullRender)'), true);
     assert.equal(source.includes('window.MessageTemplates.insertRawCitationMarkers'), true);
     assert.equal(source.includes('this.app.processContentWithLatex(processedContent)'), true);
@@ -859,8 +875,8 @@ test('council review setting drives synthesis output mode in ChatInput', () => {
     );
     assert.match(
         source,
-        /const nextMultiModelEnabled = enabled \|\| currentlyMultiModelEnabled;/,
-        'Turning Council review on should also turn Parallel mode on'
+        /const nextMultiModelEnabled = enabled \|\| \(currentlyMultiModelEnabled && !leaveParallelToo\);/,
+        'Turning Council review on turns Parallel on; turning it off leaves Parallel only if review had entered it'
     );
     assert.match(
         source,
@@ -1145,7 +1161,7 @@ test('inline quick ask preserves scrubber and session lifecycle constraints', ()
         'quick ask should resolve the pinned instant model before key acquisition and use it for ticket cost'
     );
     assert.ok(
-        quickAskModelResolverMatch[0].includes('getDefaultModelConfig()') &&
+        quickAskModelResolverMatch[0].includes('getDefaultModelConfig(session)') &&
         appSource.includes('getQuickAskPinnedInstantModel') &&
         appSource.includes('isQuickAskPinnedInstantModel') &&
         appSource.includes("name.includes('instant')") &&

@@ -104,19 +104,21 @@ test('commercial ticket management replaces right-panel redemption with one comp
     assert.match(source, /aria-label="\$\{ticketSummary\.ariaLabel\}"/);
     assert.match(source, /this\.app\.openTicketManagement\?\.\(event\.currentTarget\)/);
     assert.match(source, /hasExternalTicketManager \? '' :/);
-    assert.match(source, /oa-right-panel-access-stack grid gap-4 p-3/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-6 p-3/);
+    assert.match(source, /class="system-panel-divider" aria-hidden="true"/);
     assert.match(source, /oa-right-panel-ticket-summary min-w-0/);
     assert.match(source, /oa-right-panel-access-key min-w-0/);
     assert.doesNotMatch(source, /border-b border-border\/60 pb-3/);
 });
 
-test('commercial zero balance is actionable only for an unlocked account', () => {
+test('commercial zero balance says Get tickets; signed out, that leads to sign-in', () => {
     const panel = createPanel(0);
 
     const signedOut = panel.getExternalTicketSummary({});
-    assert.equal(signedOut.showGetTickets, false);
+    assert.equal(signedOut.showGetTickets, true);
+    assert.equal(signedOut.needsSignIn, true);
     assert.equal(signedOut.ticketCount, 0);
-    assert.equal(signedOut.ariaLabel, 'Manage inference tickets, 0 available');
+    assert.equal(signedOut.ariaLabel, 'Sign in to get inference tickets');
 
     const signedIn = panel.getExternalTicketSummary({
         accountId: 'account-1',
@@ -124,13 +126,17 @@ test('commercial zero balance is actionable only for an unlocked account', () =>
         status: 'unlocked'
     });
     assert.equal(signedIn.showGetTickets, true);
+    assert.equal(signedIn.needsSignIn, false);
     assert.equal(signedIn.ariaLabel, 'Get inference tickets');
+
+    const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
+    assert.match(source, /needsSignIn && this\.app\.accountModal\?\.open/);
 });
 
 test('right-panel rerenders reattach commercial ticket status through the public facade', () => {
     const originalDocument = globalThis.document;
     const calls = [];
-    const topSection = { innerHTML: '' };
+    const topSection = { innerHTML: '', querySelector: () => null };
     const panel = Object.create(RightPanel.prototype);
     panel.app = {
         refreshExtensionSlot(name) {
@@ -163,7 +169,171 @@ test('commercial ticket launcher keeps a question-mark ticket explanation', () =
     assert.match(source, /h-3\.5 w-3\.5 flex-shrink-0 items-center justify-center rounded-full/);
     assert.match(source, /aria-controls="external-ticket-info-panel"/);
     assert.match(source, /aria-expanded="\$\{this\.showExternalTicketInfo \? 'true' : 'false'\}"/);
-    assert.match(source, /Inference tickets provide unlinkable access to frontier AI models/);
-    assert.match(source, /queries go directly to the model provider—not OA/);
+    assert.match(source, /temporary API key with up to 20 minutes of model access/);
+    assert.match(source, /Each key supports multiple queries, until its time or usage limit is reached/);
+    assert.match(source, /Blind signatures prevent redeemed tickets from being linked to your purchase/);
+    assert.match(source, /queries go directly to the model provider, not The Open Anonymity Project/);
     assert.match(source, /this\.updateExternalTicketInfoVisibility\(\)/);
+});
+
+
+test('access rows follow payment capabilities while preserving historical and pending Parallel choices', () => {
+    const panel = createPanel();
+    const config = { enabled: true, outputMode: 'parallel' };
+    const session = { inferenceBackend: 'tickets', responseMode: 'council', councilConfig: config };
+    panel.currentSession = session;
+    let defaultBackend = 'tickets';
+    panel.app.supportsFeature = (feature, owner) => {
+        assert.equal(feature, 'council');
+        return (owner?.inferenceBackend || defaultBackend) === 'tickets';
+    };
+    panel.app.getPendingCouncilConfig = () => config;
+    assert.deepEqual(panel.getCouncilAccessRows().map(row => row.id), ['primary', 'secondary']);
+    session.inferenceBackend = 'zkapi';
+    assert.deepEqual(panel.getCouncilAccessRows(), []);
+    assert.equal(session.councilConfig.enabled, true);
+    session.inferenceBackend = 'tickets';
+    assert.equal(panel.getCouncilAccessRows().length, 2);
+    panel.currentSession = null;
+    defaultBackend = 'zkapi';
+    assert.deepEqual(panel.getCouncilAccessRows(), []);
+    defaultBackend = 'tickets';
+    assert.equal(panel.getCouncilAccessRows().length, 2);
+    delete panel.app.supportsFeature;
+    assert.equal(panel.getCouncilAccessRows().length, 2, 'ordinary OA preserves its default Parallel presentation');
+});
+
+function createRenderPanel(ticketCount = 100, accountState = {}) {
+    const panel = createPanel(ticketCount);
+    panel.app.hasTicketManagementAction = () => true;
+    panel.app.services.account = { getState: () => accountState };
+    panel.hasAnyAccessKey = () => Boolean(panel.apiKey);
+    panel.getCouncilAccessRows = () => [];
+    panel.getTicketCodeShareUrl = () => null;
+    panel.generateProxySectionHTML = () => '';
+    panel.escapeHtml = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    panel.getKeyDisplayInfo = () => ({ displayMask: 'masked-key', hoverContentHtml: null });
+    panel.getSharedKeyCount = () => 1;
+    return panel;
+}
+
+test('commercial layout renders live counts, one divider and pending key details', () => {
+    const panel = createRenderPanel();
+    const html = panel.generateTopSectionHTML();
+    assert.match(html, /font-semibold">100<\/span>/);
+    assert.match(html, /aria-label="Manage inference tickets, 100 available"/);
+    assert.equal((html.match(/class="system-panel-divider"/g) || []).length, 1);
+    assert.ok(html.indexOf('open-ticket-manager-btn') < html.indexOf('system-panel-divider'));
+    assert.ok(html.indexOf('system-panel-divider') < html.indexOf('Ephemeral Access Key'));
+    assert.match(html, /Requested on message send/);
+    assert.match(html, /To be assigned/);
+    assert.match(html, /data-oa-extension-slot="rightPanel.ticketStatus"/);
+    assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
+    assert.doesNotMatch(html, /id="renew-key-btn"/);
+
+    panel.ticketCount = 987654;
+    panel.showExternalTicketInfo = true;
+    const updated = panel.generateTopSectionHTML();
+    assert.match(updated, /font-semibold">987654<\/span>/);
+    assert.match(updated, /aria-expanded="true"/);
+    assert.match(updated, /id="external-ticket-info-panel"[\s\S]*?aria-hidden="false"/);
+});
+
+test('commercial zero balance and active-key controls survive the layout change', () => {
+    const panel = createRenderPanel(0, { accountId: 'account-1', sessionVerified: true, status: 'unlocked' });
+    panel.apiKey = 'fixture-key';
+    panel.apiKeyInfo = { stationId: 'fixture-station' };
+    panel.timeRemaining = '02:00';
+    const html = panel.generateTopSectionHTML();
+    assert.match(html, /aria-label="Get inference tickets"/);
+    assert.match(html, /<span>Get tickets<\/span>/);
+    assert.match(html, /id="renew-key-btn"/);
+    assert.match(html, /id="api-key-expiry"/);
+    assert.match(html, /masked-key/);
+    assert.match(html, /fixture-station/);
+    assert.match(html, /02:00/);
+    panel.isRenewingKey = true;
+    assert.match(panel.generateTopSectionHTML(), /id="renew-key-btn"[\s\S]*?disabled\s*>/);
+});
+
+test('parallel keys keep per-lane Learn more actions behind one explanation', () => {
+    const panel = createRenderPanel();
+    panel.maskCouncilAccessToken = () => 'masked-lane-key';
+    panel.escapeHtmlAttribute = panel.escapeHtml;
+    panel.getAccessExpiryClasses = () => '';
+    panel.getAccessExpiryLabel = () => '02:00';
+    const rows = [
+        { id: 'lane-1', label: 'First model', access: { apiKey: 'fixture-key' } },
+        { id: 'lane-2', label: 'Second model', access: null }
+    ];
+    panel.getCouncilAccessRows = () => rows;
+    const html = panel.generateCouncilAccessKeyPanelHTML(rows, { embedded: true });
+    assert.match(html, /text-xs font-medium">Ephemeral Access Keys<\/span>/);
+    assert.match(html, /data-council-attestation-lane="lane-1"/);
+    assert.match(html, /Requested on message send/);
+    assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
+    assert.match(html, /Learn more: First model/);
+});
+
+test('System Panel restores original typography and retains only a non-layout divider', () => {
+    const css = fs.readFileSync('chat/styles.css', 'utf8');
+    const source = fs.readFileSync('chat/components/RightPanel.js', 'utf8');
+    assert.match(source, /<h2 class="text-sm font-semibold text-foreground">System Panel<\/h2>/);
+    assert.match(source, /text-left text-xs font-medium/);
+    assert.match(source, /<span class="text-xs font-medium">Ephemeral Access Key<\/span>/);
+    assert.match(source, /oa-right-panel-access-stack grid gap-6 p-3/);
+    assert.match(source, /data-oa-extension-slot="\$\{SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS\}" hidden><\/div>\s*<div class="system-panel-divider" aria-hidden="true"><\/div>/);
+    assert.match(css, /\.oa-right-panel-ticket-summary \{[^}]*position: relative;/);
+    assert.match(css, /\.system-panel-divider \{[^}]*position: absolute;[^}]*right: -12px;[^}]*bottom: -12px;[^}]*left: -12px;[^}]*height: 1px;[^}]*var\(--color-border\)/);
+    assert.doesNotMatch(css, /\.system-panel-(?:header|row|help|close|ticket-trigger)/);
+});
+
+
+test('key help expands inline and retains its state through panel refreshes', () => {
+    const panel = createRenderPanel();
+    const attrs = {};
+    const disclosure = { dataset: {}, inert: true, setAttribute: (key, value) => attrs[key] = value };
+    const button = { closest: () => null, setAttribute: (key, value) => attrs[`button-${key}`] = value };
+    const oldDocument = globalThis.document;
+    globalThis.document = { getElementById: id => id === 'ephemeral-key-info-panel' ? disclosure : id === 'verifier-attestation-btn' ? button : null };
+    try {
+        assert.match(panel.generateAccessKeyInfoHTML(), /aria-hidden="true" inert/);
+        panel.toggleAccessKeyInfo();
+        assert.equal(disclosure.dataset.open, 'true');
+        assert.equal(disclosure.inert, false);
+        assert.equal(attrs['button-aria-expanded'], 'true');
+        assert.match(panel.generateTopSectionHTML(), /id="ephemeral-key-info-panel"[^>]*aria-hidden="false"/);
+        assert.match(panel.generateAccessKeyInfoHTML(), /id="verifier-attestation-learn-more"/);
+        panel.toggleAccessKeyInfo();
+        assert.equal(disclosure.inert, true);
+        assert.equal(attrs['button-aria-expanded'], 'false');
+    } finally { globalThis.document = oldDocument; }
+});
+
+
+test('activity timeline combines status and event icon in one rail marker', () => {
+    const panel = createPanel();
+    panel.expandedLogIds = new Set();
+    panel.escapeHtml = value => String(value);
+    panel.escapeHtmlAttribute = value => String(value);
+    panel.getSessionTitle = () => '';
+    panel.isCurrentSession = () => false;
+    panel.getSessionKey = () => '';
+    for (const [status, extra, color] of [
+        [200, {}, 'text-status-success'],
+        [400, {}, 'text-red-600'],
+        [0, {}, 'text-red-600'],
+        ['pending', {}, 'text-amber-600'],
+        ['queued', {}, 'text-amber-600'],
+        [200, { isAborted: true }, 'text-orange-600'],
+        [200, { response: { detail: 'key_near_expiry' } }, 'text-amber-600'],
+        [302, {}, 'text-gray-600']
+    ]) {
+        panel.networkLogs = [{ id: 'event', type: 'local', action: 'ticket-select',
+            status, timestamp: Date.now(), ...extra }];
+        const html = panel.renderNetworkLogs();
+        assert.match(html, new RegExp('activity-status-icon[^>]*' + color));
+        assert.equal((html.match(/<svg/g) || []).length, 1);
+        assert.doesNotMatch(html, /activity-node/);
+    }
 });

@@ -31,11 +31,16 @@ Extension API version 2 supports these named slots:
 - `rightPanel.ticketStatus`
 - `modalLayer`
 
-`account.menuActions` is rendered inside the signed-in account settings menu.
-Nodes mounted there should be buttons with `role="menuitem"` and the shared
-`account-menu-item` class. The core menu owns focus movement, Escape handling,
-outside-click dismissal, and Account/logout actions. Extensions own their
-menu-item label and destination. A dialog opened from this slot should use
+`account.menuActions` is rendered inside the signed-in account settings menu,
+above the core **Log out** item. When this slot has mounted content, it replaces
+the core **Account** item; without an extension, the core item remains available
+and opens oa-chat's account-security dialog. Nodes mounted in the slot
+should be buttons with `role="menuitem"` and the shared `account-menu-item`
+class. The core menu owns focus movement, Escape handling, outside-click
+dismissal, and the logout action. Extensions own their menu-item label and
+destination. `context.ui.getAccountIdentityLabel()` returns the signed-in
+display name (username, else Google email) for an extension-owned account
+dialog to show; it is a UI helper, not part of `account.getSnapshot()`. A dialog opened from this slot should use
 `context.ui.getAccountMenuReturnTarget()` as its focus-return target because
 the menu itself closes after selection. The legacy `sidebar.accountActions` and
 `account.commercial` slots remain supported for compatibility.
@@ -47,15 +52,16 @@ with the captured element as its focus-return target. The close request honors
 Account's protected recovery and authorization steps.
 
 The context also provides narrow account, entitlement-ticket, ticket-tool, and UI
-capabilities. `account.getSnapshot()` exposes only `isReady`, `accountId`,
-`sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and `status`; it
+capabilities. `account.getSnapshot()` exposes only `isReady`,
+`authBootstrapComplete`, `accountId`, `sessionVerified`, `accountScopeReady`,
+`ticketSyncReady`, and `status`; it
 never exposes credentials or recovery material. Calling
 `tickets.prepareEntitlementBatch()` without a `ticketCount`
 only resumes an already-saved preparation for that scope.
 
 - `account.getSnapshot()` and `account.subscribe()` return `isReady`,
-  `accountId`, `sessionVerified`, `accountScopeReady`, `ticketSyncReady`, and
-  `status`; no credential, recovery, email, or encryption material crosses the
+  `authBootstrapComplete`, `accountId`, `sessionVerified`, `accountScopeReady`,
+  `ticketSyncReady`, and `status`; no credential, recovery, email, or encryption material crosses the
   boundary.
 - `account.resolveAuthContext()` returns an opaque account scope only after the
   SuperTokens session is verified.
@@ -66,11 +72,26 @@ only resumes an already-saved preparation for that scope.
   with credentials omitted.
 - `tickets.getIssuerPublicKey()` fetches without caching and verifies the
   advertised key ID against the RFC 9578 public key bytes.
+- `tickets.refreshSnapshot({ signal })` refreshes the browser-local wallet
+  for the current account and returns the same redacted count/readiness shape
+  as `subscribe`. It does not synchronize from the server or return tickets.
+  Its queued wallet/account locks are cancelable and bounded to 30 seconds;
+  acquired ownership is retained until the scoped read finishes.
 - `tickets.prepareEntitlementBatch()` owns browser-side blinding, strict claim
   response validation, unblinding, durable wallet import, and crash recovery.
   Final tickets contain only ordinary ticket fields.
 - `ui` provides the supported Account, Welcome, ticket-management, and toast
   actions.
+- `ui.persistNavigationForReturn()` saves the currently displayed conversation
+  or explicit New Chat selection in tab-local session storage. Call it just
+  before leaving for an external billing page. It returns no conversation data;
+  do not put a conversation identifier in a billing request or return URL.
+
+Preparation progress may include `phase: 'waiting'` with a reason (`storage`,
+`lock`, `issuer`, or `publication`). Numeric generation/finalization progress
+describes completed work, not time waiting. Account scope is not part of the
+progress payload. Downstream orchestrators may attach ephemeral operation IDs
+to distinguish observers without logging identity or ticket data.
 
 Commercial membership surfaces may call the public ticket-tool capabilities
 `getToolsSnapshot`, `subscribe`, `importTickets`, `shareTickets`,
@@ -90,11 +111,14 @@ content.
 send or regenerate a request whose account ticket balance is below the
 complete turn budget. Its frozen payload contains only `availableTickets` and
 `requiredTickets`; it excludes the prompt, model identities, Memory context,
-session identifiers, and account data. A commercial extension may present an
-explicit purchase surface, but this signal must not initiate automatic billing.
-Automatic reloads are limited to an independently observed synchronized zero
-balance. The core request remains unsent, so a purchase cannot duplicate an
-inference request.
+session identifiers, and account data. The handler either presents the ways to
+get tickets, or, when the person has turned automatic reloads on, runs one
+reload (deduplicated per depletion, as at zero balance) and resolves
+`{ retry: true }` once the tickets are in. On `retry` the chat checks the turn
+budget once more and continues the send; otherwise the request stays unsent.
+Nothing is sent while the handler runs, so a reload cannot pay for a request
+twice. (Decision 2026-09-10: a shortfall for a pricier request reloads too, not
+only an empty wallet.)
 Signed-in core preflight does not call this handler until the account is
 verified, unlocked, scope-ready, and ticket-synchronized.
 
@@ -109,10 +133,16 @@ a newly created Google-plus-passkey account. Core Account UI closes before it
 notifies the extension. The commercial client opens Membership; returning
 accounts do not emit this notification.
 
+`context.ui.registerLoggedOut(handler)` fires after the person chooses Log out
+in Account and the account has been removed from this device. It does not fire
+for a lock, an expired session, or the sign-in hand-off replacing a mismatched
+account. The commercial client uses it to leave for its landing page.
+
 Extensions must not import oa-chat internals under `components/`, `services/`,
 `domain/`, `application/`, or `ui/`. An extension failure is isolated and does
 not prevent standalone chat startup. Slot, capability, or lifecycle changes
-require a new extension API version.
+that break existing consumers require a new extension API version. The optional
+navigation persistence and wallet-refresh capabilities above are additive to v2.
 
 ## Product UI composition
 
@@ -129,6 +159,11 @@ configuration, and `features` (`accounts`, `tickets`, `memory`, `scrubber`,
 `council`, all enabled by default). Disabling tickets requires an explicit
 `checkCanSend` implementation; it never silently authorizes paid inference.
 An accountless app does not bootstrap authentication from `?auth=` either.
+Model configuration callbacks (`getDefaultModelConfig`, `getPinnedModels`,
+`getDisabledModels`) accept an optional session; mixed runtimes must honor its
+backend rather than reading only the visible mode. The core retains separate
+backend catalogs, and `context.getModels(sessionId?)` returns the requested
+session's models so background inference remains independent of navigation.
 
 Lifecycle methods:
 
@@ -141,9 +176,34 @@ Lifecycle methods:
 - `prepareTurn({sessionId, signal, onProgress})` runs with an assistant pending
   indicator already mounted. `onNewChat({sessionId})` establishes any background
   retirement barrier synchronously; the composer opens immediately.
+  Optional `shouldCancelOnNewChat({session})` chooses whether the previous
+  session's owned work should be stopped. Its default follows the presence of
+  `onNewChat`; mixed runtimes can retain ordinary ticket streaming while
+  retiring only paid sessions.
 - `beforeDelete({sessionIds})` runs after owned sends, title jobs, Quick Ask,
   attachment preparation and timeline mutations drain. A failed hook retains
   history so recovery remains possible.
+- `usesTicketAccess(session)` optionally selects ticket policy for each
+  conversation, overriding the static `tickets` feature for preflight and
+  acquisition pricing. Returning false requires `checkCanSend`; there is no
+  alternate-payment-to-ticket fallback. `acquireAccess` can delegate ticket
+  sessions to public `acquireVerifiedAccess`.
+- `context.changeSessionBackend(backendId, {sessionId?})` changes the captured
+  conversation without navigation or transcript changes. The default target is
+  the current session; an empty composer changes the new-chat default only.
+  `context.isSessionBusy(sessionId?)` covers sends, streaming, title generation,
+  Quick Ask, access, files, timeline mutations and deletion; product mode
+  selectors should remain disabled while it is true. Active Send/stream or
+  timeline mutations reject the switch. An exclusive reservation prevents new
+  inference jobs and drains existing auxiliary work before the hook below.
+- `beforeBackendChange({session, previousBackendId, backendId})` receives a
+  staged session clone. Settle/release the previous backend's lease and remove
+  its product metadata there. The core then clears old active access and saves
+  the backend and metadata together before updating the live object. A hook or
+  storage failure leaves the live session unchanged; lease cleanup should be
+  idempotent for retry. Historical messages and ephemeral key mappings remain.
+  Delete waits for the switch and prevents its write if deletion begins before
+  persistence. The hook must not acquire a new paid credential.
 - `recordUsage({sessionId, requestId, usage, pricing, kind, final})` receives
   per-request progress/final metadata, never another session's shared counter.
   `discardUsagePreview` removes pre-request estimates when no output or provider
@@ -161,6 +221,18 @@ Every title/completion releases its own lease in `finally`. OA owns request
 construction and SSE parsing, including incremental reasoning/content, usage,
 provider errors and cancellation. Products must not fork that parser.
 
+`createInferenceService` also exposes `hasBackend(id)`, `getBackends()` and
+`setDefaultBackendId(id)`. Explicit unknown IDs throw rather than selecting a
+different payment method. Send captures the new-chat default synchronously and
+saves `session.inferenceBackend`. Older sessions without a stored backend use
+the fixed `legacyBackendId` constructor option (initial configured default if
+omitted), optionally refined by `resolveLegacyBackendId(session)`. Their
+credentials must never be reinterpreted according to the preferred new-chat
+mode. `getLegacyBackendId(session?)` exposes that same policy for old shared-key
+imports. Products own persistence of the preferred default. The ordinary ticket backend is
+available as `openRouterBackend` from `publicInferenceApi.js`, and standard
+`WelcomePanel` and `AccountModal` are exported from `publicApi.js`.
+
 Trusted product entry points can pass `ui` options to `createChatApp` while using
 the shared renderer. This is distinct from the redacted commercial extension
 context above: product components run locally as part of the configured app.
@@ -175,8 +247,13 @@ context above: product components run locally as part of the configured app.
 - `mountShell()` runs once after the components have mounted. It can relocate
   existing shell controls without replacing their event handlers. It must not
   start funding work or install a timer that remounts the UI.
-- `presentation.getModelPricing(model)` may return `{label, description}` to
-  replace ticket prices with escaped plain-text pricing.
+- `presentation.getModelPricing(model, {reasoningEnabled})` may return
+  `{label, description}` to replace ticket prices with escaped plain-text
+  pricing. Optional `balanceBadgeLabel` and `balanceBadgeTooltip` show an escaped
+  minimum-balance badge in the same right-aligned position and style as ticket
+  counts. For example, `≥ $2` can carry an accessible explanation that a private
+  balance of at least $2 is required. The price subtitle remains below the model
+  name without an additional budget line.
 - `presentation.getSessionStatus(session)` may return `{label, tone}` where
   tone is `working`, `waiting`, `success`, or `error`.
 - `presentation.getPendingPresentation(phase, progress)` may return
@@ -210,3 +287,29 @@ provider-response metadata allowlist.
 TLS inspection retains parsed certificate/protocol metadata, not verbose raw
 transport lines that might carry credentials or request content. Runtime
 exports can be imported in headless tests without requiring a `window` global.
+
+The shared `modelConfiguration` namespace is exported here so compositions can
+reuse standard ticket model availability without importing private services.
+
+
+## Native optional payment modes
+
+A zkAPI-enabled OA build owns both Tickets and private-payment UI/runtime.
+Downstream apps may call `startChatApp({ extensions, ... })` instead of
+implementing another adapter; it returns a promise and preserves the existing
+extension boundary. The original synchronous `createChatApp` remains available.
+See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for the SDK dependency, build
+settings, and storage/privacy boundaries. An extension's ticket-purchase
+onboarding should respect the selected payment method rather than assume that
+zero tickets means no available payment option. No private note or balance
+material should be exposed through the redacted commercial extension context.
+
+`context.payments` is how an extension respects that choice: `getMode()`
+returns `'tickets'` or `'zkapi'` (always `'tickets'` on a build without payment
+modes), `available()` says whether the build has both, and `setMode(mode)`
+switches, returning the runtime's promise. A host's ticket onboarding checks
+`getMode() === 'tickets'` before opening; a Stripe return calls
+`setMode('tickets')` because the purchase belongs to Tickets. On a host that
+requires sign-in, the requirement holds only in Tickets mode: zkAPI needs no
+account, the Log in dialog can be closed there, and it offers "Use zkAPI
+instead" when it stands in for a Tickets account.

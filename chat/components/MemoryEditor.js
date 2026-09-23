@@ -1,3 +1,4 @@
+import { showSurface, hideSurface, setDisclosure } from '../ui/uiMotion.js';
 /**
  * MemoryEditor — Modal UI for browsing and editing memory files.
  *
@@ -61,14 +62,19 @@ class MemoryEditor {
         await this._selectFile(path);
     }
 
-    async open() {
-        if (!this._isMemoryFeatureEnabled()) {
+    /**
+     * Opens the editor. With Memory off the editor stays shut, except for
+     * moving memories in or out (`allowWhileOff`): the store is still the
+     * person's data whether or not the agent is using it.
+     */
+    async open({ allowWhileOff = false } = {}) {
+        if (!allowWhileOff && !this._isMemoryFeatureEnabled()) {
             this._showMemoryOffToast();
             return false;
         }
         if (this.isOpen) return true;
         if (!this.overlay) return false;
-        const operation = this._beginMemoryOperation();
+        const operation = this._beginMemoryOperation({ allowWhileOff });
         if (!operation) return false;
         this.isOpen = true;
         this.returnFocusEl = document.activeElement;
@@ -96,7 +102,7 @@ class MemoryEditor {
         }
 
         this.render();
-        this.overlay.classList.remove('hidden');
+        showSurface(this.overlay);
 
         this.overlay.onclick = (event) => {
             if (event.target === this.overlay) {
@@ -117,8 +123,7 @@ class MemoryEditor {
         const { silent = false } = options;
         const keepBackfillRunning = this._isBackfillActive();
         this.isOpen = false;
-        this.overlay.classList.add('hidden');
-        this.overlay.innerHTML = '';
+        hideSurface(this.overlay, { clear: true });
         this.selectedPath = null;
         this.editorContent = '';
         this.isDirty = false;
@@ -147,6 +152,15 @@ class MemoryEditor {
         }
     }
 
+    handleFeatureAvailabilityChanged() {
+        if (this._isMemoryFeatureEnabled()) return;
+        this.memoryOperationGeneration += 1;
+        for (const controller of this.memoryOperationAbortControllers) controller.abort();
+        // Backfill keeps its captured ticket owner and reservation after closing.
+        // Navigating to another payment mode does not retarget that operation.
+        if (this.isOpen) this.close({ silent: true });
+    }
+
     handleMemoryFeatureDisabled() {
         this.memoryOperationGeneration += 1;
         for (const controller of this.memoryOperationAbortControllers) {
@@ -162,23 +176,31 @@ class MemoryEditor {
         }
     }
 
-    _isMemoryFeatureEnabled() {
-        return this.app?.memoryFeatureEnabled !== false;
+    _isMemoryFeatureEnabled(session = this.app?.getCurrentSession?.() || null) {
+        return this.app?.memoryFeatureEnabled !== false
+            && this.app?.features?.memory !== false
+            && this.app?.supportsFeature?.('memory', session) !== false;
+    }
+
+    _getMemoryUnavailableReason() {
+        return this.app?.supportsFeature?.('memory') === false
+            ? (this.app?.getFeatureUnavailableReason?.('memory') || 'Memory is unavailable in this payment mode.')
+            : 'Memory is off in settings.';
     }
 
     _showMemoryOffToast() {
-        this.app?.showToast?.('Memory is off in settings.', 'info', 3000);
+        this.app?.showToast?.(this._getMemoryUnavailableReason(), 'info', 3000);
     }
 
     _createMemoryOperationAbortError() {
-        const error = new Error('Memory is off in settings.');
+        const error = new Error(this._getMemoryUnavailableReason());
         error.name = 'AbortError';
         error.isCancelled = true;
         return error;
     }
 
-    _beginMemoryOperation() {
-        if (!this._isMemoryFeatureEnabled()) {
+    _beginMemoryOperation({ allowWhileOff = false } = {}) {
+        if (!allowWhileOff && !this._isMemoryFeatureEnabled()) {
             this._showMemoryOffToast();
             return null;
         }
@@ -187,7 +209,8 @@ class MemoryEditor {
         return {
             controller,
             generation: this.memoryOperationGeneration,
-            signal: controller.signal
+            signal: controller.signal,
+            allowWhileOff
         };
     }
 
@@ -201,7 +224,7 @@ class MemoryEditor {
         return !!operation
             && operation.generation === this.memoryOperationGeneration
             && !operation.signal?.aborted
-            && this._isMemoryFeatureEnabled();
+            && (operation.allowWhileOff || this._isMemoryFeatureEnabled());
     }
 
     _assertMemoryOperationActive(operation) {
@@ -767,11 +790,11 @@ class MemoryEditor {
 
         if (this.expandedDirs.has(dir)) {
             this.expandedDirs.delete(dir);
-            children?.classList.add('hidden');
+            setDisclosure(children, false);
             chevron?.classList.remove('is-expanded');
         } else {
             this.expandedDirs.add(dir);
-            children?.classList.remove('hidden');
+            setDisclosure(children, true);
             chevron?.classList.add('is-expanded');
         }
 
@@ -986,7 +1009,8 @@ class MemoryEditor {
     }
 
     async _handleExport() {
-        const operation = this._beginMemoryOperation();
+        // Export works with Memory off: the memories are still the person's to take.
+        const operation = this._beginMemoryOperation({ allowWhileOff: true });
         if (!operation) return;
         try {
             this._assertMemoryOperationActive(operation);
@@ -1067,11 +1091,12 @@ class MemoryEditor {
     async importMemoryFile(file) {
         if (!file) return;
         if (!this.isOpen) {
-            const opened = await this.open();
+            // Import works with Memory off too; the preview needs the editor.
+            const opened = await this.open({ allowWhileOff: true });
             if (!opened) return;
         }
 
-        const operation = this._beginMemoryOperation();
+        const operation = this._beginMemoryOperation({ allowWhileOff: true });
         if (!operation) return;
 
         try {
@@ -1208,6 +1233,7 @@ class MemoryEditor {
     }
 
     async _refreshFilesAfterBackfillIfAllowed(shouldRefreshFiles) {
+        if (!this._isMemoryFeatureEnabled()) return;
         if (!shouldRefreshFiles) {
             if (this.isOpen) {
                 this._syncBackfillButton();
@@ -1252,7 +1278,7 @@ class MemoryEditor {
         if (!this._isMemoryFeatureEnabled()) {
             return {
                 label: 'Backfill',
-                title: 'Memory is off in settings',
+                title: this._getMemoryUnavailableReason(),
                 disabled: true,
                 busy: false
             };
@@ -1319,7 +1345,16 @@ class MemoryEditor {
         }
 
         const activeSession = this.app?.getCurrentSession?.() || null;
-        const keySession = activeSession || { memoryKey: null, memoryKeyInfo: null };
+        const operation = this.app.beginFeatureOperation('memory', activeSession);
+        if (!operation) {
+            this.app?.showToast?.('Wait for the current chat action to finish before backfilling memory.', 'info');
+            return;
+        }
+        this.backfillAbortController = operation.controller;
+        this.backfillState = 'running';
+        this._syncBackfillButton();
+        const ownerSession = operation.session || activeSession;
+        const keySession = activeSession || { ...ownerSession, memoryKey: null, memoryKeyInfo: null };
         let shouldRefreshFiles = false;
         const completedSessionSavePromises = [];
         const BACKFILL_AUTH_RETRY_LIMIT = 1;
@@ -1328,8 +1363,11 @@ class MemoryEditor {
                 return;
             }
             candidate.didPersistBackfillProgress = true;
-            candidate.session.memoryProcessedAt = Date.now();
-            const savePromise = this.app.data.saveSession(candidate.session).catch((error) => {
+            // Only update progress on the current live session. The imported
+            // candidate is a snapshot that may predate another mode or key.
+            const savePromise = this.app.updateMemoryProcessedAt(candidate.session.id, Date.now()).then(saved => {
+                if (!saved) candidate.didPersistBackfillProgress = false;
+            }).catch((error) => {
                 candidate.didPersistBackfillProgress = false;
                 console.error('[MemoryEditor] Failed to save backfill progress:', error);
                 throw error;
@@ -1373,8 +1411,6 @@ class MemoryEditor {
                 return;
             }
 
-            this.backfillAbortController = new AbortController();
-            this.backfillState = 'running';
             this.backfillProgress = {
                 total: candidates.length,
                 processed: 0,
@@ -1388,7 +1424,7 @@ class MemoryEditor {
             let stopReason = null;
 
             for (const candidate of candidates) {
-                if (!this._isMemoryFeatureEnabled()) {
+                if (!this._isMemoryFeatureEnabled(ownerSession)) {
                     stopReason = 'memory_disabled';
                     break;
                 }
@@ -1403,7 +1439,7 @@ class MemoryEditor {
                 let itemFinished = false;
 
                 while (!itemFinished) {
-                    if (!this._isMemoryFeatureEnabled()) {
+                    if (!this._isMemoryFeatureEnabled(ownerSession)) {
                         stopReason = 'memory_disabled';
                         break;
                     }
@@ -1415,12 +1451,12 @@ class MemoryEditor {
                         });
                     } catch (error) {
                         if (error?.name === 'AbortError' || this.backfillAbortController.signal.aborted) {
-                            stopReason = this._isMemoryFeatureEnabled() ? 'aborted' : 'memory_disabled';
+                            stopReason = this._isMemoryFeatureEnabled(ownerSession) ? 'aborted' : 'memory_disabled';
                             break;
                         }
                         throw error;
                     }
-                    if (!this._isMemoryFeatureEnabled()) {
+                    if (!this._isMemoryFeatureEnabled(ownerSession)) {
                         if (keySession.memoryKey && keySession.memoryKey !== previousKey) {
                             invalidateMemoryKey(keySession);
                             await persistActiveSessionIfChanged(previousKey);
@@ -1534,10 +1570,15 @@ class MemoryEditor {
             }
             this.app?.showToast?.(error?.message || 'Failed to backfill chats into memory.', 'error');
         } finally {
-            this.backfillAbortController = null;
-            this.backfillState = null;
-            this.backfillProgress = this._getInitialBackfillProgress();
-            await this._refreshFilesAfterBackfillIfAllowed(shouldRefreshFiles);
+            try {
+                await Promise.allSettled(completedSessionSavePromises);
+                this.backfillAbortController = null;
+                this.backfillState = null;
+                this.backfillProgress = this._getInitialBackfillProgress();
+                await this._refreshFilesAfterBackfillIfAllowed(shouldRefreshFiles);
+            } finally {
+                this.app.finishFeatureOperation(operation);
+            }
         }
     }
 

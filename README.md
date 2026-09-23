@@ -4,7 +4,7 @@ A ChatGPT-like AI chat app that implements [unlinkable inference](https://openan
 
 The web app runs entirely in the browser. Each session uses a fresh ephemeral access key obtained via blind signatures, so no party — including the OA system and the inference provider — can link your identity to your inference activity or link sessions to each other.
 
-For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](docs/CLI.md) provides a local streaming API with ticket and zkAPI access, browser funding, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
+For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](docs/CLI.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
 The daemon also includes a [one-command installer](docs/CLI_PACKAGING.md#one-command-installation)
 for macOS and Linux. Install the published

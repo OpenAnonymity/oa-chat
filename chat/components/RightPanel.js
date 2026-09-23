@@ -1,3 +1,4 @@
+import { motionDuration, setDisclosure } from '../ui/uiMotion.js';
 /**
  * Right Panel Component
  * Manages the ticket system UI panel
@@ -6,7 +7,7 @@
 import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
-import { getActivityDescription, getActivityIcon, getStatusDotClass, formatTimestamp } from '../services/networkLogRenderer.js';
+import { getActivityDescription, getActivityIcon, getStatusIconClass, formatTimestamp } from '../services/networkLogRenderer.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -15,6 +16,12 @@ import { SLOT_NAMES } from '../extensions/extensionHost.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
+// The panel shares the row with the chat from 1100px up (a wallet side panel
+// narrows a laptop window into this range and the chat must still be usable
+// beside it). Below that it is a sheet over the chat, with a scrim. It is
+// open by default only where the chat keeps a wide column: from 1100px.
+const INLINE_PANEL_MIN_WIDTH = 1100;
+const DEFAULT_OPEN_MIN_WIDTH = 1100;
 
 // Feature flag for showing underlying implementation on hover
 const SHOW_UNDERLYING_KEY_DETAILS = true;
@@ -25,13 +32,16 @@ class RightPanel {
         tlsSecurityModal.configureServices?.(this.app.services);
         verifierAttestationModal.configureServices?.(this.app.services);
         this.currentSession = null;
+        this.showAccessKeyInfo = false;
+        this.showProxyInfo = false;
 
-        // Responsive behavior
-        this.isDesktop = window.innerWidth >= 1024;
+        // Responsive behavior: isDesktop = the panel is inline, beside the chat
+        this.isDesktop = window.innerWidth >= INLINE_PANEL_MIN_WIDTH;
+        this.defaultOpen = window.innerWidth >= DEFAULT_OPEN_MIN_WIDTH;
 
         // Panel visibility - check localStorage snapshot first to avoid flash
         const savedPanelVisible = localStorage.getItem('oa-right-panel-visible');
-        this.isVisible = savedPanelVisible === 'true' ? true : savedPanelVisible === 'false' ? false : this.isDesktop;
+        this.isVisible = savedPanelVisible === 'true' ? true : savedPanelVisible === 'false' ? false : this.defaultOpen;
 
         this.ticketCount = 0;
         this.apiKey = null;
@@ -121,7 +131,7 @@ class RightPanel {
     }
 
     loadPreferences() {
-        preferencesStore.getPreference(PREF_KEYS.rightPanelVisible, { isDesktop: this.isDesktop })
+        preferencesStore.getPreference(PREF_KEYS.rightPanelVisible, { isDesktop: this.defaultOpen })
             .then((isVisible) => {
                 if (typeof isVisible === 'boolean') {
                     this.isVisible = isVisible;
@@ -358,17 +368,102 @@ class RightPanel {
         const toggle = document.getElementById('toggle-external-ticket-info-btn');
         if (!panel || !toggle) return;
 
-        const show = this.showExternalTicketInfo;
-        panel.classList.toggle('mt-2', show);
-        panel.classList.toggle('max-h-[480px]', show);
-        panel.classList.toggle('max-h-0', !show);
-        panel.classList.toggle('opacity-100', show);
-        panel.classList.toggle('opacity-0', !show);
-        panel.classList.toggle('pointer-events-none', !show);
-        panel.setAttribute('aria-hidden', show ? 'false' : 'true');
+        const show = !!this.showExternalTicketInfo;
+        this.updateHelpDisclosure(panel, toggle, show);
         toggle.title = show ? 'Hide inference ticket description' : 'What is an inference ticket?';
-        toggle.setAttribute('aria-label', show ? 'Hide inference ticket description' : 'What is an inference ticket?');
-        toggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+        toggle.setAttribute('aria-label', toggle.title);
+    }
+
+    getHelpDisclosures() {
+        return [
+            ['showExternalTicketInfo', 'external-ticket-info-panel', 'toggle-external-ticket-info-btn'],
+            ['showAccessKeyInfo', 'ephemeral-key-info-panel', 'verifier-attestation-btn'],
+            ['showProxyInfo', 'proxy-info-panel', 'proxy-info-btn']
+        ];
+    }
+
+    updateHelpDisclosure(panel, button, open) {
+        if (!panel || !button) return;
+        panel.dataset.open = String(open);
+        panel.setAttribute('aria-hidden', String(!open));
+        panel.inert = !open;
+        button.setAttribute('aria-expanded', String(open));
+    }
+
+    setOpenHelp(property = null) {
+        for (const [name, panelId, buttonId] of this.getHelpDisclosures()) {
+            this[name] = name === property;
+            this.updateHelpDisclosure(document.getElementById(panelId), document.getElementById(buttonId), this[name]);
+        }
+        this.updateExternalTicketInfoVisibility();
+    }
+
+    togglePanelHelp(property) {
+        const entry = this.getHelpDisclosures().find(([name]) => name === property);
+        if (!entry) return;
+        const button = document.getElementById(entry[2]);
+        this.preserveHelpAnchor(button);
+        this.setOpenHelp(this[property] ? null : property);
+    }
+
+    preserveHelpAnchor(button) {
+        this.helpAnchorCleanup?.();
+        const scroller = button?.closest('.oa-system-panel-body');
+        if (!scroller) return;
+        const top = button.getBoundingClientRect().top;
+        const previousAnchor = scroller.style.overflowAnchor;
+        scroller.style.overflowAnchor = 'none';
+        const duration = Math.max(motionDuration(scroller, '--acc-expand', 250), motionDuration(scroller, '--acc-collapse', 250));
+        const start = performance.now();
+        let frame;
+        const stop = () => {
+            cancelAnimationFrame(frame);
+            scroller.style.overflowAnchor = previousAnchor;
+            scroller.removeEventListener('wheel', stop);
+            scroller.removeEventListener('touchstart', stop);
+            this.helpAnchorCleanup = null;
+        };
+        const keepPosition = () => {
+            if (!button.isConnected) { stop(); return; }
+            // Counter movement from another explanation closing above this one.
+            // At the scroll boundary the accordion still collapses smoothly.
+            scroller.scrollTop += button.getBoundingClientRect().top - top;
+            if (performance.now() - start <= duration + 50) frame = requestAnimationFrame(keepPosition);
+            else stop();
+        };
+        scroller.addEventListener('wheel', stop, { passive: true });
+        scroller.addEventListener('touchstart', stop, { passive: true });
+        this.helpAnchorCleanup = stop;
+        frame = requestAnimationFrame(keepPosition);
+    }
+
+    attachHelpDismissal() {
+        if (this.helpDismissClick) return;
+        this.helpDismissClick = event => {
+            const root = document.getElementById('right-panel-content');
+            if (!root) return;
+            const insideHelp = this.getHelpDisclosures().some(([, panelId, buttonId]) =>
+                document.getElementById(panelId)?.contains(event.target) || document.getElementById(buttonId)?.contains(event.target));
+            if (insideHelp) return;
+            this.helpAnchorCleanup?.();
+            this.setOpenHelp();
+        };
+        this.helpDismissKey = event => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            const entry = this.getHelpDisclosures().find(([name]) => this[name]);
+            if (!entry) return;
+            const panel = document.getElementById(entry[1]);
+            const button = document.getElementById(entry[2]);
+            // Let a foreground modal handle its own Escape without moving focus.
+            if (!document.getElementById('right-panel-content')?.contains(event.target)) return;
+            event.preventDefault();
+            const restoreFocus = panel?.contains(document.activeElement);
+            this.preserveHelpAnchor(button);
+            this.setOpenHelp();
+            if (restoreFocus) button?.focus({ preventScroll: true });
+        };
+        document.addEventListener('click', this.helpDismissClick);
+        document.addEventListener('keydown', this.helpDismissKey);
     }
 
     setupEventListeners() {
@@ -412,11 +507,14 @@ class RightPanel {
     }
 
     setupResponsive() {
+        // The sheet's scrim (phones only, by CSS) closes it like a tap outside.
+        document.getElementById('right-panel-scrim')?.addEventListener('click', () => this.closeRightPanel());
+
         // Handle window resize - only update layout mode, NOT visibility
         // User's panel visibility choice is preserved across all screen sizes
         window.addEventListener('resize', () => {
             const wasDesktop = this.isDesktop;
-            this.isDesktop = window.innerWidth >= 1024;
+            this.isDesktop = window.innerWidth >= INLINE_PANEL_MIN_WIDTH;
 
             // Only update panel rendering if we crossed the desktop threshold
             // DO NOT change isVisible - respect user's explicit open/close choice
@@ -524,8 +622,8 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, true);
         this.updatePanelVisibility();
         // Predict final width: panel is opening, main area will be NARROWER
-        // Only affects width on desktop (>=1024px), on mobile it overlays
-        // Grace period in updateToolbarDivider blocks intermediate updates during animation
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
+        // Cover the transcript before the panel moves; measured gutters track the animation.
         this.app?.updateToolbarDivider(this.isDesktop ? -RIGHT_PANEL_WIDTH : 0);
     }
 
@@ -534,7 +632,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
-        // Only affects width on desktop (>=1024px), on mobile it overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         this.app?.updateToolbarDivider(this.isDesktop ? RIGHT_PANEL_WIDTH : 0);
     }
 
@@ -545,7 +643,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, this.isVisible);
         this.updatePanelVisibility();
         // Predict final width based on toggle direction
-        // Only affects width on desktop (>=1024px), on mobile it overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         this.app?.updateToolbarDivider(this.isDesktop ? (wasVisible ? RIGHT_PANEL_WIDTH : -RIGHT_PANEL_WIDTH) : 0);
     }
 
@@ -555,7 +653,7 @@ class RightPanel {
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
-        // Only affects width on desktop (>=1024px), on mobile it overlays
+        // Only affects width while the panel is inline (>=1100px); the sheet overlays
         this.app?.updateToolbarDivider(this.isDesktop ? RIGHT_PANEL_WIDTH : 0);
     }
 
@@ -563,14 +661,18 @@ class RightPanel {
      * Updates right panel visibility based on isDesktop and isVisible state.
      *
      * Behavior:
-     * - Desktop (>= 1024px): panel reserves layout width and content slides out while width collapses
-     * - Mobile/Tablet (< 1024px): panel behaves as an overlay and slides in/out
+     * - Inline (>= 1100px): panel reserves layout width and content slides out while width collapses
+     * - Sheet (< 1100px): panel slides in over the chat behind a scrim
      */
     updatePanelVisibility() {
         const panel = document.getElementById('right-panel');
         const showBtn = document.getElementById('show-right-panel-btn');
         const appContainer = document.getElementById('app');
         if (!panel) return;
+
+        if (this.isDesktop && this.lastAppliedVisibility !== this.isVisible) {
+            this.app?.preserveChatBottomDuringWidthChange?.();
+        }
 
         // Data attribute for CSS initial load protection
         if (this.isVisible) {
@@ -587,7 +689,11 @@ class RightPanel {
         panel.style.transform = '';
 
         if (showBtn) {
-            showBtn.classList.toggle('system-panel-toggle-visible', !this.isVisible);
+            showBtn.classList.add('system-panel-toggle-visible');
+            showBtn.setAttribute('aria-expanded', String(this.isVisible));
+            showBtn.setAttribute('aria-label', this.isVisible ? 'Close system panel' : 'Open system panel');
+            showBtn.setAttribute('data-tooltip', this.isVisible ? 'Close panel' : 'Open panel');
+            if (!this.isVisible && panel.contains(document.activeElement)) showBtn.focus();
         }
 
         if (appContainer) {
@@ -598,6 +704,7 @@ class RightPanel {
             }
         }
 
+        panel.inert = !this.isVisible;
         this.lastAppliedVisibility = this.isVisible;
     }
 
@@ -955,75 +1062,64 @@ class RightPanel {
 
     async handleRequestApiKey() {
         if (!this.currentTicket || this.isRequestingKey) return;
-
-        // Create session if none exists (e.g., at app startup)
-        if (!this.currentSession) {
-            await this.app.createSession();
-            this.currentSession = this.app.getCurrentSession();
-        }
-
-        if (!this.currentSession) return; // Safety check
-
-        this.app.services.inference.ensureSessionBackend(this.currentSession);
-
+        let session = this.currentSession;
+        const backendId = session
+            ? this.app.services.inference.ensureSessionBackend(session)
+            : this.app.services.inference.getDefaultBackendId();
+        let reservation = session ? this.app.beginSessionMutation(session.id, { exclusive: true }) : null;
+        if (session && !reservation) return;
+        this.isRequestingKey = true;
+        const ownsView = () => session && this.currentSession?.id === session.id;
         try {
-            // Set current session for network logging
-            if (this.currentSession && this.app.services.networkLogger) {
-                this.app.services.networkLogger.setCurrentSession(this.currentSession.id);
+            // Capture the created session directly: a delayed creation must not
+            // redeem against whichever historical chat was selected meanwhile.
+            if (!session) {
+                session = await this.app.createSession('New Chat', {
+                    inferenceBackend: backendId,
+                    onCreated: created => {
+                        session = created;
+                        reservation = this.app.beginSessionMutation(created.id, { exclusive: true });
+                    }
+                });
+                if (!session || !reservation) return;
             }
-
-            // Start the animation
-            this.isTransitioning = true;
-            this.renderTopSectionOnly();
-
-            // Wait a bit for the animation to start
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            // Show the finalized version
-            this.showFinalized = true;
-            this.renderTopSectionOnly();
-
-            // Wait for the transformation animation
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // Actually request the API key (uses unified flow with verification)
-            this.isRequestingKey = true;
-            this.renderTopSectionOnly();
-
-            await this.app.acquireAndSetAccess(this.currentSession);
-
-            // Update local state from session
-            const accessInfo = this.app.services.inference.getAccessInfo(this.currentSession);
-            this.apiKey = accessInfo?.token || null;
-            this.apiKeyInfo = accessInfo?.info || null;
-            this.expiresAt = accessInfo?.expiresAt || null;
-
-            // Success - reset for next ticket
-            setTimeout(() => {
-                this.loadNextTicket();
+            if (session.inferenceBackend !== backendId || this.app.isSessionDeleted(session.id)) return;
+            this.app.services.networkLogger?.setCurrentSession(session.id);
+            if (ownsView()) {
+                this.isTransitioning = true;
                 this.renderTopSectionOnly();
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (ownsView()) {
+                this.showFinalized = true;
+                this.renderTopSectionOnly();
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            if (this.app.isSessionDeleted(session.id)) return;
+            await this.app.acquireAndSetAccess(session);
+            if (ownsView()) {
+                const accessInfo = this.app.services.inference.getAccessInfo(session);
+                this.apiKey = accessInfo?.token || null;
+                this.apiKeyInfo = accessInfo?.info || null;
+                this.expiresAt = accessInfo?.expiresAt || null;
                 this.startExpirationTimer();
                 this.updateStatusIndicator();
-
-                // Update floating panel with new status
-                if (this.app.floatingPanel) {
-                    this.app.floatingPanel.render();
-                }
-            }, 500);
+                this.app.floatingPanel?.render();
+            }
         } catch (error) {
-            console.error('Error requesting API key:', error);
-            const accessLabel = this.app.services.inference.getAccessLabel(this.currentSession);
-            alert(`Failed to request ${accessLabel}: ${error.message}`);
-
-            // Reset state even on error
-            setTimeout(() => {
-                this.loadNextTicket();
-                this.renderTopSectionOnly();
-            }, 500);
+            if (!error?.isCancelled && error?.name !== 'AbortError') {
+                const accessLabel = this.app.services.inference.getAccessLabel(session);
+                this.app.showToast?.(`Failed to request ${accessLabel}: ${error.message}`, 'error');
+            }
         } finally {
             this.isRequestingKey = false;
             this.isTransitioning = false;
             this.showFinalized = false;
+            if (reservation) this.app.endSessionMutation(session.id, reservation);
+            if (ownsView()) {
+                this.loadNextTicket();
+                this.renderTopSectionOnly();
+            }
         }
     }
 
@@ -1038,23 +1134,26 @@ class RightPanel {
     }
 
     async handleClearApiKey() {
-        if (!this.currentSession) return;
-
-        this.app.services.inference.clearAccessInfo(this.currentSession);
-
-        await this.app.data.saveSession(this.currentSession);
-
-        this.apiKey = null;
-        this.apiKeyInfo = null;
-        this.expiresAt = null;
-
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
+        const session = this.currentSession;
+        if (!session) return;
+        const reservation = this.app.beginSessionMutation(session.id, { exclusive: true });
+        if (!reservation) return;
+        try {
+            this.app.services.inference.clearAccessInfo(session);
+            await this.app.data.saveSession(session);
+            if (this.currentSession?.id !== session.id) return;
+            this.apiKey = null;
+            this.apiKeyInfo = null;
+            this.expiresAt = null;
+            if (this.timerInterval) {
+                clearInterval(this.timerInterval);
+                this.timerInterval = null;
+            }
+            this.renderTopSectionOnly();
+            this.updateStatusIndicator();
+        } finally {
+            this.app.endSessionMutation(session.id, reservation);
         }
-
-        this.renderTopSectionOnly();
-        this.updateStatusIndicator(); // Ensure dot updates
     }
 
     async handleRenewApiKey() {
@@ -1544,7 +1643,7 @@ class RightPanel {
         if (!wasExpanded) {
             // Remove all existing expanded details
             document.querySelectorAll('.activity-log-details').forEach(details => {
-                details.remove();
+                setDisclosure(details, false, { remove: true });
             });
             this.expandedLogIds.clear();
         }
@@ -1557,7 +1656,7 @@ class RightPanel {
             // Collapse: remove the details element
             const details = logEntry.querySelector('.activity-log-details');
             if (details) {
-                details.remove();
+                setDisclosure(details, false, { remove: true });
             }
             this.expandedLogIds.delete(logId);
         } else {
@@ -1569,7 +1668,9 @@ class RightPanel {
             const detailsHTML = this.generateExpandedDetailsHTML(log);
             const contentColumn = logEntry.querySelector('.flex-1.min-w-0');
             if (contentColumn) {
-                contentColumn.insertAdjacentHTML('beforeend', detailsHTML);
+                // A rapid reopen reverses one existing detail instead of duplicating it.
+                if (!contentColumn.querySelector('.activity-log-details')) contentColumn.insertAdjacentHTML('beforeend', detailsHTML);
+                setDisclosure(contentColumn.querySelector('.activity-log-details'), true);
             }
 
             this.expandedLogIds.add(logId);
@@ -1701,6 +1802,7 @@ class RightPanel {
 
     getCouncilAccessRows() {
         const session = this.currentSession;
+        if (this.app.supportsFeature?.('council', session) === false) return [];
         const access = session?.councilAccess || null;
         const config = session
             ? (session.councilConfig || {})
@@ -1819,20 +1921,12 @@ class RightPanel {
                 : 'Requested on message send';
             const station = access?.apiKeyInfo?.stationId || access?.apiKeyInfo?.station_name || null;
             return `
-                <div class="rounded-md border ${hasKey ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10'} p-2">
+                <div class="oa-lane-key-card rounded-md border ${hasKey ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10'} p-2">
                     <div class="flex items-center justify-between gap-2 mb-1.5">
                         <div class="min-w-0">
                             <div class="text-[10px] font-semibold text-foreground">${this.escapeHtml(row.label)}</div>
                         </div>
-                        <div class="flex items-center gap-1 flex-shrink-0">
-                            ${hasKey ? `
-                                <button
-                                    class="lane-verifier-attestation-btn inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                                    title="Show verifier attestation for ${this.escapeHtmlAttribute(row.label)}"
-                                    type="button"
-                                    data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}"
-                                >?</button>
-                            ` : ''}
+                        <div class="oa-lane-key-badges flex items-center gap-1 flex-shrink-0">
                             <span class="font-medium px-1.5 py-0.5 rounded-full text-[10px] tabular-nums whitespace-nowrap ${this.getAccessExpiryClasses(access)}">
                                 ${this.escapeHtml(this.getAccessExpiryLabel(access))}
                             </span>
@@ -1857,10 +1951,9 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Keys</span>
+                        ${this.generateAccessKeyInfoButtonHTML()}
                     </div>
-                    <div class="text-[10px] text-muted-foreground mb-2">
-                        Keys persist until expiry, model change, or exhaustion.
-                    </div>
+                    ${this.generateAccessKeyInfoHTML()}
                     <div class="space-y-2">
                         ${rowHtml}
                     </div>
@@ -1877,6 +1970,30 @@ class RightPanel {
         };
     }
 
+    generateAccessKeyInfoButtonHTML() {
+        return `<button id="verifier-attestation-btn" type="button"
+            class="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            title="What is an ephemeral key?" aria-label="What is an ephemeral key?"
+            aria-controls="ephemeral-key-info-panel" aria-expanded="${!!this.showAccessKeyInfo}">?</button>`;
+    }
+
+    generateAccessKeyInfoHTML() {
+        return `
+            <div id="ephemeral-key-info-panel" class="oa-panel-disclosure t-acc" data-open="${!!this.showAccessKeyInfo}" aria-hidden="${!this.showAccessKeyInfo}"${this.showAccessKeyInfo ? '' : ' inert'}>
+                <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner">
+                    <div class="oa-panel-help">
+                        <p>An ephemeral key is a temporary API key your device requests when you send a message. It lets you make multiple queries until its time or usage limit is reached.</p>
+                        <p>The issuing station provides the key, and the verifier checks its ownership and limits. Shared keys keep their existing expiry and remaining allowance.</p>
+                        ${this.getCouncilAccessRows().length ? this.getCouncilAccessRows().filter(row => row.access?.apiKey).map(row => `<button type="button" data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}" class="oa-panel-learn-more">Learn more: ${this.escapeHtml(row.label)}</button>`).join('') || '<p>Key details appear after you send a message.</p>' : '<button type="button" id="verifier-attestation-learn-more" class="oa-panel-learn-more">Learn more</button>'}
+                    </div>
+                </div></div>
+            </div>`;
+    }
+
+    toggleAccessKeyInfo() {
+        this.togglePanelHelp('showAccessKeyInfo');
+    }
+
     generateSingleAccessKeyPanelHTML(hasApiKey, { embedded = false } = {}) {
         const missingAccess = this.getMissingApiKeyStatus();
         return hasApiKey ? `
@@ -1887,21 +2004,17 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Key</span>
-                        <button
-                            id="verifier-attestation-btn"
-                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                            title="Show verifier attestation"
-                            type="button"
-                        >?</button>
+                        ${this.generateAccessKeyInfoButtonHTML()}
                     </div>
-                    <div class="flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
+                    ${this.generateAccessKeyInfoHTML()}
+                    <div class="oa-key-detail-row flex items-center justify-between text-[10px] font-mono bg-muted/20 p-2 rounded-md border border-border break-all text-foreground">
                         ${(() => {
                             const keyInfo = this.getKeyDisplayInfo();
                             const hoverClasses = keyInfo.hoverContentHtml ? 'cursor-help hover:bg-muted/40 rounded px-1 -mx-1' : '';
                             return `<span id="ephemeral-key-display" class="flex-1 min-w-0 transition-colors ${this.isRenewingKey ? 'text-muted-foreground opacity-70' : ''} ${hoverClasses}"
                                 ${keyInfo.hoverContentHtml ? 'data-has-tooltip="true"' : ''}>${keyInfo.displayMask}</span>`;
                         })()}
-                        <div class="flex items-center gap-0 flex-shrink-0 ml-1">
+                        <div class="oa-key-badges flex items-center flex-shrink-0">
                             <button
                                 id="renew-key-btn"
                                 class="inline-flex items-center justify-center w-4 h-4 rounded-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-60 disabled:pointer-events-none"
@@ -1925,14 +2038,14 @@ class RightPanel {
                 <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
 
                     ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
-                        <div class="flex items-center justify-between p-2 bg-background rounded-md border border-border">
+                        <div class="oa-key-detail-row flex items-center justify-between p-2 bg-background rounded-md border border-border">
                             <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                             <span class="text-[10px] font-medium">${this.escapeHtml(this.apiKeyInfo.stationId || this.apiKeyInfo.station_name)}</span>
                         </div>
                     ` : ''}
 
                     ${this.getSharedKeyCount() > 1 ? `
-                        <div class="flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
+                        <div class="oa-key-detail-row flex items-center justify-between p-2 bg-primary/5 rounded-md border border-primary/20">
                             <span class="text-[10px] text-muted-foreground">Shared across</span>
                             <span class="text-[10px] font-medium text-primary">${this.getSharedKeyCount()} sessions</span>
                         </div>
@@ -1948,20 +2061,16 @@ class RightPanel {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path>
                         </svg>
                         <span class="text-xs font-medium">Ephemeral Access Key</span>
-                        <button
-                            id="verifier-attestation-btn"
-                            class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all"
-                            title="Show verifier attestation"
-                            type="button"
-                        >?</button>
+                        ${this.generateAccessKeyInfoButtonHTML()}
                     </div>
-                    <div class="flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
+                    ${this.generateAccessKeyInfoHTML()}
+                    <div class="oa-key-detail-row flex items-center justify-between text-[10px] bg-muted/10 p-2 rounded-md border border-dashed border-border text-muted-foreground">
                         <span class="flex-1 min-w-0">${this.escapeHtml(missingAccess.label)}</span>
                         <span class="font-medium px-1 py-0.5 rounded-full text-[10px] flex-shrink-0 ${this.escapeHtmlAttribute(missingAccess.badgeClass)}">${this.escapeHtml(missingAccess.badge)}</span>
                     </div>
                 </div>
                 <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
-                    <div class="flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
+                    <div class="oa-key-detail-row flex items-center justify-between p-2 bg-background rounded-md border border-dashed border-border">
                         <span class="text-[10px] text-muted-foreground">Issuing Station</span>
                         <span class="text-[10px] font-medium text-muted-foreground">To be assigned</span>
                     </div>
@@ -1987,23 +2096,35 @@ class RightPanel {
             accountState.sessionVerified &&
             accountState.status === 'unlocked'
         );
-        const showGetTickets = hasUnlockedAccount && ticketCount === 0;
+        // Signed out there is nothing to count: the summary is the way in,
+        // and it leads to sign-in (tickets need an account), not to billing.
+        const needsSignIn = !hasUnlockedAccount && ticketCount === 0;
+        const showGetTickets = ticketCount === 0;
         return {
             hasUnlockedAccount,
+            needsSignIn,
             showGetTickets,
             ticketCount,
-            ariaLabel: showGetTickets
-                ? 'Get inference tickets'
-                : `Manage inference tickets, ${ticketCount} available`
+            ariaLabel: needsSignIn
+                ? 'Sign in to get inference tickets'
+                : showGetTickets
+                    ? 'Get inference tickets'
+                    : `Manage inference tickets, ${ticketCount} available`
         };
     }
 
     generateTopSectionHTML() {
-        const hasExternalTicketManager = this.app.hasTicketManagementAction?.() === true;
         const hasApiKey = this.hasAnyAccessKey();
         return `${this.generateFundingSectionHTML()}
-            ${hasExternalTicketManager ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
+            ${this.fundingSectionIncludesAccessKey() ? '' : this.generateAccessKeyPanelHTML(hasApiKey)}
             ${this.generateProxySectionHTML()}`;
+    }
+
+    // The commercial ticket layout embeds access below its ticket summary.
+    // Funding replacements must describe their own layout independently of
+    // whether the host also offers ticket management.
+    fundingSectionIncludesAccessKey() {
+        return this.app.hasTicketManagementAction?.() === true;
     }
 
     // Compositions may replace funding while sharing the access, proxy and
@@ -2031,7 +2152,7 @@ class RightPanel {
 
         return `
                 ${hasExternalTicketManager ? `
-                <div class="oa-right-panel-access-stack grid gap-4 p-3">
+                <div class="oa-right-panel-access-stack grid gap-6 p-3">
                     <div class="oa-right-panel-ticket-summary min-w-0">
                     <div class="flex items-center gap-1.5">
                         <button
@@ -2057,14 +2178,16 @@ class RightPanel {
                     </div>
                     <div
                         id="external-ticket-info-panel"
-                        class="${this.showExternalTicketInfo ? 'mt-2 max-h-[480px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'} overflow-hidden transition-all duration-200 ease-in-out"
+                        class="oa-panel-disclosure t-acc" data-open="${!!this.showExternalTicketInfo}"${this.showExternalTicketInfo ? '' : ' inert'}
                         aria-hidden="${this.showExternalTicketInfo ? 'false' : 'true'}"
                     >
-                        <p class="rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
-                            Inference tickets provide unlinkable access to frontier AI models. Your device redeems them for a short-lived API key, usable until its time or credit limit is reached. Blind signatures prevent redeemed tickets from being linked to your purchase, and your queries go directly to the model provider—not OA.
-                        </p>
+                        <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner"><div class="oa-panel-help">
+                            <p>Redeem inference tickets for a temporary API key with up to 20 minutes of model access. Each key supports multiple queries, until its time or usage limit is reached.</p>
+                            <p class="mt-2">Blind signatures prevent redeemed tickets from being linked to your purchase. Your queries go directly to the model provider, not The Open Anonymity Project.</p>
+                        </div></div></div>
                     </div>
                     <div data-oa-extension-slot="${SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS}" hidden></div>
+                    <div class="system-panel-divider" aria-hidden="true"></div>
                     </div>
                     ${this.generateAccessKeyPanelHTML(hasApiKey, { embedded: true })}
                 </div>
@@ -2314,7 +2437,7 @@ class RightPanel {
                                 </svg>
                             </button>
                         </div>
-                    <p class="text-[10px] text-muted-foreground leading-snug mt-1">
+                    <p class="oa-ticket-help-copy text-[10px] text-muted-foreground leading-snug mt-1">
                     Inference tickets are privacy-preserving payment tokens that are detached from your identity (think cash or casino chips).
                     When you start a new chat session, your device auto-redeems tickets for a short-lived, credit-limited access key just for this session (think prepaid SIM cards), making your inference traffic unlinkable to you.<br><br>
                     Cryptographically, tickets are implemented with <a href="https://en.wikipedia.org/wiki/Blind_signature" class="underline hover:text-foreground transition-colors" target="_blank" rel="noopener noreferrer">blind signatures</a>: your device generates and blinds them, the OA server blind-signs them to make them valid, and you unblind them for later use.
@@ -2399,25 +2522,49 @@ class RightPanel {
     }
 
     getProxyStatusMeta(settings = this.proxySettings, status = this.proxyStatus) {
-        if (status?.fallbackActive || status?.lastError) {
-            return { label: 'Proxy Unavailable — try again or use your own VPN', textClass: 'text-amber-500 dark:text-amber-400', dotClass: 'bg-amber-500' };
+        if (this.proxyActionPending) {
+            return this.proxyPendingEnabled
+                ? { state: 'connecting', label: 'Connecting to proxy…', textClass: 'text-muted-foreground' }
+                : { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
         }
-
-        if (!settings || !settings.enabled) {
-            return { label: 'Disabled', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/40' };
+        if (!settings?.enabled && this.proxyFailureDismissed) {
+            return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
         }
-
-        // Connected and verified (first request succeeded)
+        // A failed connection may have automatically switched off. Keep the
+        // warning visible until the user retries or explicitly disables it.
+        if (status?.fallbackActive || status?.lastError || this.proxyActionError) {
+            return { state: 'unavailable', label: 'Unavailable', textClass: 'text-amber-600 dark:text-amber-400' };
+        }
+        if (!settings?.enabled) {
+            return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
+        }
         if (status?.connectionVerified && status?.usingProxy) {
-            return { label: 'Connected', textClass: 'text-status-success', dotClass: 'bg-status-success' };
+            return { state: 'connected', label: 'Connected through proxy', textClass: 'text-status-success' };
         }
-
-        // Ready to use (WebSocket set up, verification happens on first request)
         if (status?.ready) {
-            return { label: 'Ready', textClass: 'text-blue-600 dark:text-blue-400', dotClass: 'bg-blue-500' };
+            return { state: 'ready', label: 'Proxy ready; connection verified on the next request', textClass: 'text-blue-600 dark:text-blue-400' };
         }
+        return { state: 'connecting', label: 'Connecting to proxy…', textClass: 'text-muted-foreground' };
+    }
 
-        return { label: 'Initializing...', textClass: 'text-muted-foreground', dotClass: 'bg-muted-foreground/60' };
+    generateProxyStatusIconHTML(meta) {
+        return `<span class="oa-proxy-status-icon ${meta.textClass}" data-proxy-state="${meta.state}" tabindex="0" role="img" aria-label="${this.escapeHtmlAttribute(meta.label)}">
+            <span class="t-skel-skeleton ${meta.state === 'connecting' ? 'is-pulsing' : ''}">
+                <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <circle cx="12" cy="9" r="8"/><path d="M4 9h16M12 1a12 12 0 0 1 3.5 8 12 12 0 0 1-3.5 8 12 12 0 0 1-3.5-8A12 12 0 0 1 12 1zM12 17v4M4 22h6m4 0h6"/><circle cx="12" cy="22" r="1.5" fill="currentColor"/>
+                </svg>
+            </span>
+            <span class="oa-proxy-status-tooltip" aria-hidden="true">${this.escapeHtml(meta.label)}</span>
+        </span>`;
+    }
+
+    generateProxyInfoHTML() {
+        return `<div id="proxy-info-panel" class="oa-panel-disclosure t-acc" data-open="${!!this.showProxyInfo}" aria-hidden="${!this.showProxyInfo}"${this.showProxyInfo ? '' : ' inert'}>
+            <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner"><div class="oa-panel-help">
+                <p>The network proxy routes supported requests through a relay to help hide your IP address from the destination. It may add latency.</p>
+                <button type="button" id="proxy-info-learn-more" class="oa-panel-learn-more">Learn more</button>
+            </div></div></div>
+        </div>`;
     }
 
     generateProxySectionHTML() {
@@ -2427,52 +2574,38 @@ class RightPanel {
         const pending = this.proxyActionPending;
         const tlsInfo = this.app.services.networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
-        const isEncrypted = settings.enabled && status.usingProxy;
 
         return `<div class="p-3 space-y-2">
                 <!-- Header Row: Title + Toggle -->
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
-                        <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                            <circle cx="12" cy="9" r="8"/>
-                            <path d="M4 9h16"/>
-                            <path d="M12 1a12 12 0 0 1 3.5 8 12 12 0 0 1-3.5 8 12 12 0 0 1-3.5-8A12 12 0 0 1 12 1z"/>
-                            <path d="M12 17v4"/>
-                            <circle cx="12" cy="22" r="1.5" fill="currentColor"/>
-                            <path d="M4 22h6m4 0h6"/>
-                        </svg>
+                        ${this.generateProxyStatusIconHTML(statusMeta)}
                         <span class="text-xs font-medium text-foreground">Network Proxy</span>
-                        <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
-                        <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is this?" type="button">
+                        <button id="proxy-info-btn" class="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-border text-[8px] text-muted-foreground hover:text-foreground hover:bg-accent hover:border-foreground/20 transition-all" title="What is the network proxy?" aria-label="What is the network proxy?" aria-controls="proxy-info-panel" aria-expanded="${!!this.showProxyInfo}" type="button">
                             ?
                         </button>
                     </div>
                     <button
                         id="proxy-toggle-btn"
-                        class="switch-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
+                        class="switch-toggle t-toggle ${settings.enabled ? 'switch-active' : 'switch-inactive'}"
+                        role="switch" aria-label="Network proxy" aria-checked="${!!settings.enabled}" data-on="${!!settings.enabled}"
                         ${pending ? 'disabled' : ''}
                         title="${settings.enabled ? 'Disable relay' : 'Enable relay'}"
                     >
-                        <span class="switch-toggle-indicator"></span>
+                        <span class="switch-toggle-indicator t-toggle-thumb"></span>
                     </button>
                 </div>
 
-                <!-- Status Row -->
-                <div class="flex items-center justify-between text-[10px] ${!settings.enabled ? 'opacity-50' : ''}">
-                    <div class="flex items-center gap-1.5 min-w-0">
-                        <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
-                        <span class="${statusMeta.textClass} truncate" ${statusMeta.title ? `title="${this.escapeHtml(statusMeta.title)}"` : ''}>${this.escapeHtml(statusMeta.label)}</span>
-                        ${isEncrypted ? `
-                            <span class="inline-flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium badge-status-success" title="TLS tunnel over WebSocket proxy">
-                                <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                                </svg>
-                                TLS-over-WSS
-                            </span>
-                        ` : ''}
-                    </div>
+                <div id="proxy-failure-notice" class="oa-proxy-failure" data-state="unavailable"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
+                    <button type="button" id="proxy-retry-btn" class="oa-proxy-retry" aria-label="Retry proxy connection" aria-disabled="${!!pending}" data-tooltip="Retry" data-tooltip-position="end">
+                        <span class="t-icon-swap" data-state="a" aria-hidden="true">
+                            <span class="t-icon" data-icon="a"><span class="oa-proxy-retry-turns"><svg class="oa-proxy-retry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span></span>
+                            <span class="t-icon" data-icon="b"><span class="t-success-check" data-state="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"/></svg></span></span>
+                        </span>
+                    </button>
+                    <span class="oa-proxy-feedback-text t-text-swap" role="status">Unavailable</span>
                 </div>
+                ${this.generateProxyInfoHTML()}
 
                 <!-- Security Details Button -->
                 ${settings.enabled ? `
@@ -2488,8 +2621,106 @@ class RightPanel {
         `;
     }
 
-    async handleProxyToggle() {
-        if (this.proxyActionPending) return;
+    clearProxyFeedbackTimers() {
+        clearTimeout(this.proxyFeedbackTextTimer);
+        clearTimeout(this.proxyFeedbackSettleTimer);
+        clearTimeout(this.proxyFeedbackHideTimer);
+    }
+
+    /** One more full turn of the retry arrow. A CSS transition, not a
+     *  keyframe: a second press mid-turn continues from where it is. */
+    turnProxyRetryArrow() {
+        const turns = document.getElementById('proxy-retry-btn')?.querySelector?.('.oa-proxy-retry-turns');
+        if (!turns) return;
+        this.proxyRetryTurns = (this.proxyRetryTurns || 0) + 1;
+        this.proxyRetryTurning = true;
+        turns.style.setProperty('--proxy-turns', `${this.proxyRetryTurns}turn`);
+    }
+
+    /** A turn ended. The outcome, if it arrived mid-turn, shows now; if the
+     *  proxy is still answering, take another turn so the pace stays even. */
+    onProxyRetryTurnEnd() {
+        this.proxyRetryTurning = false;
+        if (this.proxyFeedbackDeferred) {
+            this.proxyFeedbackDeferred = false;
+            this.updateProxyFeedback();
+            return;
+        }
+        const row = document.getElementById('proxy-failure-notice');
+        if (row?.dataset.state === 'connecting' && !row.hidden) this.turnProxyRetryArrow();
+    }
+
+    updateProxyFeedback() {
+        const row = document.getElementById('proxy-failure-notice');
+        if (!row || this.destroyed) return;
+        const meta = this.getProxyStatusMeta();
+        const visible = meta.state === 'unavailable' || (this.proxyRetryFeedbackActive && meta.state !== 'off');
+        const state = visible ? meta.state : 'hidden';
+        if (row.dataset.feedbackState === state) return;
+        // The answer waits for the motion: an outcome that lands mid-turn
+        // shows when the arrow completes the turn it is on, never before.
+        const confirmed = meta.state === 'ready' || meta.state === 'connected';
+        if (confirmed && this.proxyRetryTurning) { this.proxyFeedbackDeferred = true; return; }
+        this.proxyFeedbackDeferred = false;
+        this.clearProxyFeedbackTimers();
+        row.dataset.feedbackState = state;
+        row.dataset.state = meta.state;
+        row.classList.remove('is-settled');
+        row.inert = !visible;
+        const button = row.querySelector('#proxy-retry-btn');
+        const label = row.querySelector('.oa-proxy-feedback-text');
+        const swap = row.querySelector('.t-icon-swap');
+        const check = row.querySelector('.t-success-check');
+        if (!visible) {
+            if (row.contains(document.activeElement)) document.querySelector('.oa-proxy-status-icon')?.focus();
+            row.hidden = true;
+            return;
+        }
+        const wasHidden = row.hidden;
+        row.hidden = false;
+        // While the arrow turns the word stays: the motion already says
+        // "trying". Success is one moment of change — check and word together.
+        const text = { unavailable: 'Unavailable', connecting: 'Unavailable', ready: 'Connected', connected: 'Connected' }[state];
+        button.setAttribute('aria-disabled', String(state !== 'unavailable'));
+        button.setAttribute('aria-label', state === 'unavailable' ? 'Retry proxy connection' : meta.label);
+        swap.dataset.state = confirmed ? 'b' : 'a';
+        check.dataset.state = 'out';
+        if (confirmed) {
+            const path = check.querySelector('path');
+            const length = Math.ceil(path.getTotalLength()) + 1;
+            check.style.setProperty('--proxy-check-length', String(length));
+            void check.offsetWidth;
+            check.dataset.state = 'in';
+        }
+        label.classList.remove('is-exit', 'is-enter-start');
+        const duration = motionDuration(label, '--text-swap-dur', 150);
+        if (wasHidden || !duration || label.textContent === text) label.textContent = text;
+        else {
+            label.classList.add('is-exit');
+            this.proxyFeedbackTextTimer = setTimeout(() => {
+                label.textContent = text;
+                label.classList.remove('is-exit');
+                label.classList.add('is-enter-start');
+                void label.offsetHeight;
+                label.classList.remove('is-enter-start');
+            }, duration);
+        }
+        if (confirmed) {
+            this.proxyFeedbackSettleTimer = setTimeout(() => {
+                this.proxyRetryFeedbackActive = false;
+                if (row.contains(document.activeElement)) document.querySelector('.oa-proxy-status-icon')?.focus();
+                row.inert = true;
+                row.classList.add('is-settled');
+                this.proxyFeedbackHideTimer = setTimeout(() => {
+                    row.hidden = true;
+                    row.dataset.feedbackState = 'hidden';
+                }, motionDuration(row, '--proxy-feedback-fade', 280));
+            }, 1800 + duration);
+        }
+    }
+
+    async handleProxyToggle({ retry = false } = {}) {
+        if (this.destroyed || this.proxyActionPending) return;
 
         // Block toggle when there are active proxy requests (e.g., streaming response)
         if (this.app.services.networkProxy.hasActiveRequests()) {
@@ -2505,35 +2736,52 @@ class RightPanel {
         }
         this.lastProxyToggleTime = now;
 
+        const nextEnabled = retry || !this.proxySettings.enabled;
+        this.proxyFailureDismissed = !nextEnabled;
+        this.clearProxyFeedbackTimers();
+        this.proxyRetryFeedbackActive = retry;
         this.proxyActionError = null;
+        this.proxyPendingEnabled = nextEnabled;
         this.proxyActionPending = true;
         this.proxyAnimating = true; // Prevent onChange callback from re-rendering during animation
 
         // Update toggle visually BEFORE re-render to trigger CSS animation
         const toggle = document.getElementById('proxy-toggle-btn');
         if (toggle) {
-            const newEnabled = !this.proxySettings.enabled;
+            const newEnabled = nextEnabled;
+            toggle.classList.add('is-init');
+            toggle.dataset.on = String(newEnabled);
+            toggle.setAttribute('aria-checked', String(newEnabled));
             toggle.classList.toggle('switch-active', newEnabled);
             toggle.classList.toggle('switch-inactive', !newEnabled);
             toggle.disabled = true;
         }
 
+        const icon = document.querySelector('.oa-proxy-status-icon');
+        if (icon) icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
+        this.updateProxyFeedback();
         try {
-            await this.app.services.networkProxy.updateSettings({ enabled: !this.proxySettings.enabled });
+            if (retry && this.proxySettings.enabled) await this.app.services.networkProxy.reconnect();
+            else await this.app.services.networkProxy.updateSettings({ enabled: nextEnabled });
         } catch (error) {
             // Show toast for active request errors (race condition protection)
             if (error.message?.includes('requests are in progress')) {
                 this.app?.showToast?.('Cannot change proxy while data is streaming', 'error');
             }
             this.proxyActionError = error.message;
+            this.proxyFailureDismissed = false;
         } finally {
             this.proxyActionPending = false;
+            if (this.destroyed) return;
+            this.proxySettings = this.app.services.networkProxy.getSettings();
+            this.proxyStatus = this.app.services.networkProxy.getStatus();
+            this.updateProxyFeedback();
             this.lastProxyToggleTime = Date.now(); // Update after completion too
-            // Wait for CSS animation to complete (200ms) before re-rendering
-            setTimeout(() => {
+            // Finish the switch animation before replacing its DOM.
+            this.proxyRenderTimer = setTimeout(() => {
                 this.proxyAnimating = false;
                 this.renderTopSectionOnly();
-            }, 230); // Slightly longer than 200ms CSS transition
+            }, motionDuration(toggle, '--toggle-dur', 350));
         }
     }
 
@@ -2541,9 +2789,16 @@ class RightPanel {
      * Attaches event listeners to the top section elements only.
      */
     attachTopSectionEventListeners() {
+        this.attachHelpDismissal();
+        this.updateProxyFeedback();
         const ticketManagerButton = document.getElementById('open-ticket-manager-btn');
         if (ticketManagerButton) {
             ticketManagerButton.onclick = event => {
+                const accountState = this.app.services.account?.getState?.() || {};
+                if (this.getExternalTicketSummary(accountState).needsSignIn && this.app.accountModal?.open) {
+                    this.app.accountModal.open(event.currentTarget);
+                    return;
+                }
                 this.app.openTicketManagement?.(event.currentTarget);
             };
         }
@@ -2551,8 +2806,7 @@ class RightPanel {
         const toggleExternalTicketInfo = document.getElementById('toggle-external-ticket-info-btn');
         if (toggleExternalTicketInfo) {
             toggleExternalTicketInfo.onclick = () => {
-                this.showExternalTicketInfo = !this.showExternalTicketInfo;
-                this.updateExternalTicketInfoVisibility();
+                this.togglePanelHelp('showExternalTicketInfo');
             };
         }
 
@@ -2787,12 +3041,32 @@ class RightPanel {
 
         const proxyInfoBtn = document.getElementById('proxy-info-btn');
         if (proxyInfoBtn) {
-            proxyInfoBtn.onclick = () => proxyInfoModal.open();
+            proxyInfoBtn.onclick = () => this.togglePanelHelp('showProxyInfo');
+        }
+
+        const proxyLearnMore = document.getElementById('proxy-info-learn-more');
+        if (proxyLearnMore) proxyLearnMore.onclick = () => proxyInfoModal.open();
+        const proxyRetry = document.getElementById('proxy-retry-btn');
+        if (proxyRetry) {
+            proxyRetry.onclick = () => {
+                if (proxyRetry.getAttribute('aria-disabled') === 'true') return;
+                this.turnProxyRetryArrow();
+                this.handleProxyToggle({ retry: true });
+            };
+            // While still connecting when a turn ends, take another: the
+            // motion is continuous, and always ends on a whole turn.
+            proxyRetry.querySelector('.oa-proxy-retry-turns')?.addEventListener('transitionend', event => {
+                if (event.propertyName === 'transform') this.onProxyRetryTurnEnd();
+            });
         }
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
         if (verifierAttestationBtn) {
-            verifierAttestationBtn.onclick = () => verifierAttestationModal.open({
+            verifierAttestationBtn.onclick = () => this.toggleAccessKeyInfo();
+        }
+        const learnMore = document.getElementById('verifier-attestation-learn-more');
+        if (learnMore) {
+            learnMore.onclick = () => verifierAttestationModal.open({
                 session: this.currentSession || null,
                 accessInfo: this.apiKeyInfo || null,
                 stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
@@ -2830,7 +3104,14 @@ class RightPanel {
         }
 
         // Generate and update only the top section HTML
+        const proxyFeedback = topSection.querySelector('#proxy-failure-notice');
+        const proxyRetryFocused = proxyFeedback?.contains(document.activeElement);
         topSection.innerHTML = this.generateTopSectionHTML();
+        // Keep the retry animation and its timers alive across unrelated updates.
+        if (proxyFeedback) {
+            topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
+            if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
+        }
         this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
@@ -2866,6 +3147,17 @@ class RightPanel {
      * Attaches click handlers to activity log headers for expand/collapse.
      */
     attachLogRowHandlers() {
+        document.querySelectorAll('.activity-log-entry').forEach(row => {
+            const check = row.querySelector('.verifier-status-icon .t-success-check');
+            if (!check) return;
+            const path = check.querySelector('path');
+            check.style.setProperty('--verifier-check-length', String(Math.ceil(path.getTotalLength()) + 1));
+            row.onpointerenter = () => {
+                check.setAttribute('data-state', 'out');
+                void check.offsetWidth;
+                check.setAttribute('data-state', 'in');
+            };
+        });
         document.querySelectorAll('.activity-log-header').forEach(header => {
             header.onclick = (e) => {
                 const logId = e.currentTarget.dataset.logId;
@@ -2911,7 +3203,7 @@ class RightPanel {
             const description = this.escapeHtml(descriptionRaw);
             const descriptionAttr = this.escapeHtmlAttribute(descriptionRaw);
             const icon = getActivityIcon(log);
-            const dotClass = getStatusDotClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
+            const iconClass = getStatusIconClass(log.status, log.isAborted, log.detail || log.response?.detail || '');
             const isFirst = index === 0;
             const isLast = index === logsToShow.length - 1;
             // Highlight the latest (last in reversed array) with a more visible background
@@ -2980,9 +3272,9 @@ class RightPanel {
                         ${!isFirst ? `<div class="w-0.5 bg-border" style="height: 6px;"></div>` : '<div style="height: 6px;"></div>'}
 
                         <!-- Activity node -->
-                        <div class="relative flex items-center justify-center" style="width: 16px; height: 16px; flex-shrink: 0;">
-                            <div class="${dotClass} activity-node rounded-full transition-all duration-200" style="width: 8px; height: 8px;"></div>
-                            </div>
+                        <div class="activity-status-icon relative flex items-center justify-center ${iconClass}" aria-hidden="true" style="width: 16px; height: 16px; flex-shrink: 0;">
+                            ${icon}
+                        </div>
 
                         <!-- Bottom line (extends to next entry) -->
                         ${!isLast ? `<div class="w-0.5 bg-border" style="height: 12px;"></div>` : ''}
@@ -2993,9 +3285,6 @@ class RightPanel {
                         <!-- Compact one-line view -->
                         <div class="activity-log-header cursor-pointer ${hoverClass} pl-1 pr-2 py-1 rounded transition-all duration-150 text-[10px] ${highlightClass}" data-log-id="${log.id}">
                             <div class="flex items-center gap-1.5">
-                                <span class="flex-shrink-0 text-muted-foreground">
-                                    ${icon}
-                                </span>
                                 <span class="truncate flex-1 font-medium" title="${descriptionAttr}">
                                     ${description}
                                 </span>
@@ -3021,20 +3310,14 @@ class RightPanel {
 
         panel.innerHTML = `
             <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->
-            <div style="min-height: calc(3rem + 1px);" class="px-3 bg-muted/10 flex items-center">
+            <div style="min-height: calc(3rem + 1px);" class="oa-system-panel-header px-3 bg-muted/10 flex items-center">
                 <div class="flex items-center justify-between w-full">
                     <h2 class="text-sm font-semibold text-foreground">System Panel</h2>
-                    <button id="close-right-panel" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-9 w-9 cursor-pointer select-none">
-                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-                            <rect x="4" y="4" width="16" height="16" rx="2"/>
-                            <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4V4z" fill="currentColor" fill-opacity="0.15" stroke="none"/>
-                            <path d="M14 4v16"/>
-                        </svg>
-                    </button>
+
                 </div>
             </div>
 
-            <div class="flex flex-col flex-1 min-h-0">
+            <div class="oa-system-panel-body flex flex-col flex-1 min-h-0">
             <!-- Top Section: Tickets and API Key (non-scrollable) -->
             <div class="flex-shrink-0">
                 ${this.generateTopSectionHTML()}
@@ -3042,18 +3325,18 @@ class RightPanel {
             <!-- End of Top Section -->
 
             <!-- Activity Timeline (scrollable) -->
-            <div class="border-t border-border flex flex-col bg-background flex-1 min-h-0">
+            <div class="oa-system-timeline border-t border-border flex flex-col bg-background flex-1 min-h-0">
                 <div class="p-3 border-b border-border bg-muted/10">
                     <div class="flex items-center justify-between gap-1.5">
                         <div class="flex items-center gap-1.5">
-                            <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            <svg class="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path>
                             </svg>
                             <h3 class="text-xs font-medium text-foreground">Activity Timeline</h3>
                         </div>
-                        <button id="clear-activity-timeline-btn" class="inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-6 w-6" title="Clear activity timeline">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        <button id="clear-activity-timeline-btn" type="button" class="oa-panel-icon-btn oa-panel-icon-btn--destructive oa-panel-icon-btn--tight inline-flex items-center justify-center h-7 w-7" aria-label="Clear activity timeline" data-tooltip="Clear timeline" data-tooltip-position="start">
+                            <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M4 6h16M9 6V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V6M18.5 6l-.9 13.1a2 2 0 0 1-2 1.9H8.4a2 2 0 0 1-2-1.9L5.5 6M10 10.5v6M14 10.5v6"/>
                             </svg>
                         </button>
                     </div>
@@ -3078,12 +3361,6 @@ class RightPanel {
     }
 
     attachEventListeners() {
-        // Close panel button
-        const closeBtn = document.getElementById('close-right-panel');
-        if (closeBtn) {
-            closeBtn.onclick = () => this.closeRightPanel();
-        }
-
         // Attach top section event listeners (tickets/API key)
         this.attachTopSectionEventListeners();
 
@@ -3130,6 +3407,14 @@ class RightPanel {
     }
 
     destroy() {
+        this.destroyed = true;
+        this.clearProxyFeedbackTimers();
+        this.helpAnchorCleanup?.();
+        if (this.proxyRenderTimer) clearTimeout(this.proxyRenderTimer);
+        if (this.helpDismissClick) document.removeEventListener('click', this.helpDismissClick);
+        if (this.helpDismissKey) document.removeEventListener('keydown', this.helpDismissKey);
+        this.helpDismissClick = null;
+        this.helpDismissKey = null;
         this.smoothProgress.stop();
         this.hasMounted = false;
         if (this.timerInterval) {

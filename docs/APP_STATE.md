@@ -1,4 +1,650 @@
+## 2026-09-22: Keep an unresolved deposit dialog through repeated reloads
+
+- An open funding dialog retains its tab-scoped view marker while deposit/approval confirmation is unresolved, including after its JS action returns and after restoration. Closing it or resolving the deposit clears the marker. The marker contains only view/mode, never wallet credentials or transaction data.
+- After initial navigation finishes, explicit same-tab dialog intent may restore over an OA chat without switching its payment mode. Without that intent, SDK-persisted operations still only auto-open in zkAPI mode. Restoration only opens the dialog and refreshes status; no deposit, approval, wallet prompt, or inference request is submitted.
+
+## 2026-09-22: Reloaded response display and resumption boundary
+
+- Ordinary saved assistant streaming flags no longer leave an endless waiting indicator when this tab has no live request. A display-only copy clears the flags, preserves partial text/reasoning/images, and offers the existing manual Retry response action with an explicit new-request notice. Stored records remain untouched because another tab may still own the request. Live sessions and completed/legacy messages are unchanged.
+- Reload never automatically resends a prompt or acquires a replacement key. The direct provider stream has no reconnect path here; a returned access key is authorization, not a handle for retrieving the original response. True continuation after reload is not implemented. Existing key verification, proxy policy, SDK recovery/settlement, and manual retry access rules remain intact. The OA ticket redemption/response-loss gap described below also remains; stopping the browser cannot undo a redemption accepted by the server.
+- Parallel/Council and memory-agent workflows have their own render/state models; this change is limited to ordinary assistant response display.
+
+## 2026-09-22: Clearer standard withdrawal steps
+
+- Preparation copy identifies the zkAPI server authorizing the withdrawal and the device creating its proof. The wallet step says “Confirm your withdrawal in MetaMask” and explains returning the remaining balance to the wallet. Deposit cancellations say “Deposit canceled.” in both funding screens; standard withdrawal cancellations say “Withdrawal canceled.” Escape recovery wording and all transaction behavior remain unchanged.
+
+## 2026-09-22: Explicit deposit and withdrawal confirmation copy
+
+- Deposit confirmation says “This transfer moves funds from your wallet into your zkAPI balance.” without naming a token. Deposit and withdrawal chain steps name Ethereum confirmation. Submitted deposits explain that the deposit awaits confirmation on Ethereum, without a timing promise. Submitted withdrawal notices explain that the withdrawal is awaiting confirmation on Ethereum, without promising a completion time. Escape recovery retains its separate safety-window explanation. No transaction or polling behavior changed.
+
+## 2026-09-22: Search results remain in normal history
+
+- Reproduced with regression tests against the real ChatApp controller: search caches sessions outside the initial 80-row sidebar page. Previously ensureSessionLoaded and insertSessionIntoList mistook cache membership for sidebar membership, so clearing search hid an opened/updated old chat. loadMoreSessions also skipped cached-but-unlisted results.
+- Opening a cached session now inserts its existing object into the sidebar. Insertion and pagination deduplicate against the displayed session list, preserving the cached object and live edits. Search alone does not populate the entire normal sidebar. Tests cover opening/updating/clearing search, repeated opening, pagination, and stale database copies.
+- The trash tooltip uses bottom-start placement: below the trigger and extending rightward, with the existing uncentered entrance animation. No deletion behavior, inference, ticket redemption, or response recovery changes.
+
+## 2026-09-22: Correct Ethereum mark and reload findings
+
+- Further investigation (no recovery implementation): ticketStore.consumeTickets archives selected tickets after the redemption handler returns, but the org spends them before issuing the key. Reload can lose a successful redemption response before durable client access storage; acquireVerifiedAccess retries TICKET_USED with other tickets. Recovery must reconcile the original redemption rather than treating an unknown result as safe to spend again. The local org request_key endpoint rolls back known provisioning failures but does not expose replay of a successful key response. zkAPI separately owns lease recovery and aggregate-usage settlement; preserving a UI spinner cannot keep provider inference alive across reload. Resumable inference would require provider support or a privacy-reviewed durable execution service, not simply browser state restoration.
+- The client payment selector uses the exact six diamond paths/colors from the supplied EF color-light SVG, including its purple facet, in place of the previous embedded PNG.
+- Investigation only (not fixed): request ownership is in-memory and lost on full reload. ChatArea normalizes streamingReasoning/streamingTokens but leaves streamingPending/streamingPhase intact; MessageTemplates renders those saved placeholders even when no request is active. A subsequent change should reconcile orphaned messages to an interrupted/retry state and separately recover access state; do not treat a restored indicator as a resumed inference request.
+
+## 2026-09-21: Withdrawal reload and disclosure continuity
+
+- Deposit confirmation copy now reads “Confirm the deposit in MetaMask to add funds to your private balance.”
+
+- Restore prepared/retry-ready withdrawals as well as submitted/unknown ones, even after the transient tab marker has been consumed. Background submissions/finalizations open Payment history; completed records and long escape waiting periods stay quiet. Reopening only refreshes status and never resubmits a transaction.
+- The first mutual-close step now says “Prepare your withdrawal.” Recovery copy explains opening MetaMask from the browser toolbar and using the existing recovery/retry actions without another page reload. The injected provider has no documented focus-existing-confirmation method; no automatic transaction or permission requests were added.
+- Background wallet updates are coalesced while a guide/history arrow, panel, and follow-up scroll animate. Existing shared Transitions.dev timing and reduced-motion behavior remain; close/rerender clears deferred work.
+
+## 2026-09-21: Tighter sidebar trash placement
+
+- The delete-history glyph sits 6px farther left within its existing 36px button. The adjacent fixed sidebar toggle keeps a separate hit target; New Chat stays in place.
+
+## 2026-09-21: Integrate inference reliability with current main
+
+- Merge preserves request deadlines, silence warnings, partial-response recovery, output-budget recovery, and the 30K generation cap alongside the current responsive layout and wallet UI. Both lifecycle regression groups are retained. Credit-error body inspection now obeys the same abort signal and cancels discarded response branches, including a stalled 402 before streaming begins.
+
+## 2026-09-21: Restore interrupted wallet dialogs
+
+- While an open wallet dialog runs an action, a tab-scoped sessionStorage marker records only its view and withdrawal mode. Reload restores that view even before a transaction exists; restoration consumes it, and completion or dismissal clears it. Ongoing transactions continue to restore from SDK records. Wallet secrets and recovery records remain exclusively SDK-owned. Restoration only opens and refreshes status, never reconnects MetaMask or submits a transaction.
+- Startup waits for SDK initialization, initial conversation restoration, and an eligible zkAPI chat before consuming restoration. In-flight USDC approvals also qualify, even when the surrounding deposit plan is still prepared. Manual navigation/dismissal wins. Restricted session storage falls back to SDK-persisted transaction restoration.
+- Funding copy says “Your deposit progress is saved in this browser.” Sidebar trash moves 4px closer to the fixed toggle without overlapping either 36px hit target.
+
+## 2026-09-21: Named payment selector
+
+- The chat toolbar now shows OA and zkAPI beside their existing marks, with larger 32px-high targets. Labels remain visible on phones. Existing hover explanations, keyboard focus, sliding selection, and locked-mode behavior are retained.
+
+## 2026-09-21: Wallet recovery controls and sidebar order
+
+- MetaMask waiting, submitted deposits, and active wallet work use a neutral spinner with visible status text in the System Panel. Unknown deposits use the same neutral row with a static dot, since no check is running. Error/expiry attention styling is retained.
+- Deposit recovery uses “Check payment status” as the main action and “Try again in MetaMask” as a secondary text button. The existing retry confirmation and SDK recovery/submission methods are unchanged; help toggles never submit wallet actions.
+- Journey labels distinguish submitted confirmation, an active deposit check, and an unknown result. The unknown state explains checking before retrying.
+- Funding accordions now share a gentler ease-in/out and matching 420ms opening/closing durations; the stable scroll gutter avoids text reflow when overflow appears. Existing deferred scrolling, cancellation, inert/ARIA state, and reduced-motion behavior are retained.
+- Sidebar order is fixed toggle, Delete history, New Chat. DOM order matches visual/tab order; the fixed toggle and existing delete confirmation remain unchanged.
+
+## 2026-09-21: Approved zkAPI wallet walkthrough
+
+- Funding uses the approved single-dropdown numbered guide, full-row dividers,
+  shorter mainnet/resume copy, and a flowing private-billing explanation. The
+  mainnet and free Sepolia setup paths remain separate.
+- Shared `FundingDisclosures` keeps setup/billing/history mutually exclusive,
+  updates ARIA/inert state in place, and retains payment-history action bindings.
+  History content is rendered up front, inert when closed. Opening help never
+  triggers a wallet request or service refresh.
+- Reuses installed Transitions.dev accordion/modal CSS. Local accordion timing
+  is 420ms open/320ms close, followed by up to 320ms scrolling after final layout
+  is known. Manual input, close, or rerender disposes timers/listeners/frames.
+- Modal placement anchors the title near the top instead of recentering it as
+  the guide grows. Wallet refresh preserves guide expansion, focus and scroll.
+- See [zkAPI payments](ZKAPI_PAYMENTS.md) for flow and recovery boundaries.
+
+## 2026-09-21: System-panel tooltip clears payment controls
+
+- The fixed right-panel toggle now uses the existing below/right-aligned tooltip placement, for both Open panel and Close panel. The former left-of-button placement overlapped the adjacent OA/zkAPI payment controls.
+
+## 2026-09-21: Panel reflow and anchored sidebar tooltip
+
+- Desktop sidebar and system-panel visibility changes now capture the transcript bottom before changing layout, using the same cancellable anchor as widen/narrow. Overlay panels do not change transcript width and do not start anchoring.
+- Anchoring includes both panel transition durations and rechecks destination styles on the first animation frame. Combined panel/width changes keep the bottom visible through the longest animation; manual scroll and session changes still release the anchor.
+- The fixed left toggle uses the uncentered tooltip entrance animation. Its previous centered keyframes briefly put the tooltip off-screen before snapping to its left-aligned resting position.
+- New Chat remains before Delete history, keeping the frequent action first.
+
+## 2026-09-21: Keep the transcript bottom visible through width changes
+
+- Widen/narrow captures whether the chat scroller is within 8px of the bottom
+  before reflow. It follows the bottom throughout the computed CSS transition,
+  preventing widening's scrollTop clamp from leaving the view higher up after
+  narrowing. Includes the collapsed Council/Parallel transcript width toggle.
+- Readers above the bottom are not moved to the end. Wheel, touch, pointer, or
+  scrolling keys immediately release the temporary anchor. Session changes and
+  rapid reversals cancel stale work; original scroll behavior is restored.
+- This is a brief layout adjustment, not a change to streaming auto-scroll,
+  persisted positions, messages, or inference. Zero-duration/reduced-motion
+  layouts settle without relying on a transitionend event.
+
+## 2026-09-21: Stable left sidebar toggle and stateful widen control
+
+- Left sidebar has one viewport-anchored button at the top-left, outside the
+  moving/inert sidebar. The header reserves its space; when collapsed or in
+  overlay mode the toolbar reserves the same target. Both directions use the
+  same button, preserving pointer position and keyboard focus during reversal.
+- Collapse/expand tooltip uses the shared tooltip typography/skin, retains the
+  shortcut, and opens toward the viewport interior. Labels and aria-expanded
+  update immediately for button, keyboard, programmatic and responsive changes.
+- Widen/narrow labels and pressed state now update directly when the preference
+  changes. Outward/inward chevrons crossfade with the existing Transitions.dev
+  icon swap; hover movement follows the action, with reduced-motion support.
+- At 768–1099px, sidebar contents match the 280px overlay instead of retaining
+  the narrower desktop width. Desktop resize preferences and phone widths stay
+  unchanged. No inference, storage, account or payment behavior changes.
+
+## 2026-09-21: Preserve distinct formulas in long responses
+
+- Markdown math placeholders now terminate their numeric IDs, so restoring token
+  1 cannot consume tokens 10–19 (and similarly at higher counts). Previously a
+  long response could repeat an earlier formula with trailing index digits.
+- Applies to dollar and backslash inline/block math and escaped currency dollars.
+  The shared renderer fixes existing stored responses on rerender; message source,
+  inference, storage, and network behavior are unchanged.
+- Regression coverage exercises 25 expressions per delimiter family and 25
+  escaped dollars through the production Markdown processing method.
+
+## 2026-09-21: Background response keeps its sidebar title glimmer
+
+- The existing title-generation glimmer now also lasts while an unselected chat
+  is responding. New Chat and conversation switches consult the same in-memory
+  stream state used for Send/Stop, including access preparation, Parallel, and
+  Council. Returning to the chat clears the background-response glimmer; any
+  existing title-generation work keeps its original indicator.
+- Start/finish/failure/cancellation update visible title classes in place,
+  preserving inline renames and virtual-list position. Newly rendered rows read
+  live state, so scrolling or filtering cannot revive a completed response.
+- No timer extends or cancels inference, no state is persisted or broadcast to
+  other browser tabs. Reduced motion uses a static emphasized title instead.
+
+## 2026-09-20: Toolbar controls never float over transcript text
+
+- The floating toolbar now measures both control groups against the transcript's
+  inner edges, with 12px clearance. Share, payment-switch width, font changes,
+  chat width mode, and side-panel size all contribute to the actual threshold;
+  the old fixed 52px estimate missed the commercial controls.
+- ResizeObserver watches the groups and chat column, and window resize checks
+  immediately. Panel toggles cover the transcript before movement; observation
+  follows the actual animation instead of retaining a prediction for 350ms.
+- The opaque background applies immediately, including below 768px. Toolbar
+  position and transcript top padding stay fixed, so switching does not shift
+  the conversation. No inference, payment, or persisted preference changes.
+
+## 2026-09-20: Ticket-code redemption survives leaving Billing or reloading
+
+- `TicketCodeRedeemer` persists each code's exact blinded batch, issuer key, and
+  serialized unblinding state in the browser-local `oa-ticket-code-recovery-v1`
+  IndexedDB before `/api/alpha-register` can consume it. Signed responses are
+  validated and saved before unblinding. Interrupted work replays the exact
+  batch or finishes locally from saved signatures; it never generates replacement
+  blinding secrets for a pending code.
+- Recovery is isolated by wallet owner (including anonymous), serialized by an
+  origin-wide Web Lock, and gated on verified/unlocked/synced account readiness.
+  The final wallet write requires durable persistence and the original account.
+  Successful recovery is deleted only after that commit. Definitively unusable
+  codes are retired; transient failures remain saved and do not block other
+  codes. Key rotation retains the bearer code while replacing stale blinding
+  state. Reimports use identical token bytes and treat durably removed or
+  invalidated tokens as settled without resurrecting them.
+- The commercial extension receives only pending count, progress, and final
+  wallet count. Opening Membership resumes saved work; a wallet-ready notification
+  retries an earlier readiness check. Closing the view never cancels issuance.
+  Reopening retains the same owner's progress/success. Account changes suppress
+  stale UI completion and preserve the original owner's recovery record.
+- Code and blinding secrets remain local bearer material; they are never synced
+  or sent to billing/account APIs. Issuance explicitly omits account cookies.
+  Clearing site data removes recovery. Existing codes lost before this journal
+  existed cannot be reconstructed; this change protects new redemptions.
+- The org's existing exact-batch replay implementation is required (present in
+  `oa-org-staging-release`). No production redemption was performed for testing.
+
+## 2026-09-19: Responsive landing and compact composer
+
+- Welcome and composer share the available chat column (680px composer cap),
+  with 24px desktop / 16px phone gutters and bounded space below the landing
+  group to place it slightly above center. The same input node docks on first send.
+- Both side panels overlay below 1100px. CSS, pre-hydration defaults, sidebar
+  interaction logic, and RightPanel use that boundary. Sidebar resize clamps
+  presentation while retaining the preferred desktop width; crossing the boundary
+  restores the saved desktop visibility without overwriting it.
+- A card ResizeObserver selects compact controls below 560px of actual composer
+  width. The original mode and memory nodes move into the existing Settings
+  popover (labelled More options); they retain their listeners/state. A Scrub
+  prompt button calls the same capability-checked scrubber path. Parallel model
+  selectors get a separate two-column row. Phone primary controls have 44px targets.
+- VisualViewport shrink greater than 120px while editing, without pinch zoom,
+  hides the empty welcome and docks the composer above the phone keyboard.
+  Focus-out and viewport resize/scroll update that layout. Short settings menus
+  can use the visible viewport rather than extending above it.
+- Transcript padding now measures the input card itself, including the additional
+  model row and draft growth; the fixed mobile card is outside its wrapper flow.
+- Local demo files are outside the application repository in `oa-responsive-demos`.
+  They exercise the actual chat modules but disable inference submission. The
+  keyboard demo simulates visual-viewport shrink; physical iOS/Android keyboard
+  behavior still needs a device check. Nothing has been pushed.
+
+## 2026-09-17: System Panel icon buttons; submitted transactions resolve themselves
+
+- The widen, collapse and clear-timeline controls share `.oa-panel-icon-btn`:
+  a 16px glyph from the 24px outline set at a 1.5 stroke, muted until hovered,
+  `--color-hover` tint behind it (150ms colour/background transitions), the
+  same state on `:focus-visible`, and a 1px nudge that says which way the
+  control acts (collapse leans toward the edge it leaves to, widen's arrows
+  spread, or draw in when already wide). Clear is destructive and rare: red
+  on hover only. Collapse is a 28px target centred on the header text line;
+  clear is 28px inside the timeline row without growing it (`--tight`).
+- Tooltips (12px, existing system) on all three, delayed 350ms so a pass of
+  the pointer says nothing; labels follow state ("Open/Close panel",
+  "Widen/Narrow chat"). New `data-tooltip-position="end"` (beside, to the
+  right) for controls at the toolbar's left edge, which clips tooltips below.
+- A submitted deposit or withdrawal needs nothing from the person: the step
+  says "Waiting for confirmation. Usually under a minute; this updates on its
+  own." and the check button is the quiet fallback ("Check now"). Other
+  phases (dropped, awaiting wallet, ambiguous) keep the primary check. The
+  SDK reconciles every 15 s and on focus; the dialog re-renders on change.
+
+## 2026-09-17: Wallet progress survives a reload; System Panel inline from 768px
+
+- Private balance dialog: after SDK initialization, a saved deposit or an
+  unfinished withdrawal (prepared/submitted/pending, escape window, late
+  attempt) reopens its own view once, on its steps. Opening only refreshes
+  status; nothing is submitted or resumed without a click. A close, or any
+  manual open during startup, wins and stays through background updates.
+  The SDK was already reconciling the chain every 15 s; only the view was lost.
+- The panel's Private balance status pill no longer truncates ("Withdrawal
+  submi…"): the header row wraps and the pill keeps its whole label.
+- Canceling the MetaMask prompt and finding a saved plan after a reload are two
+  states with one line each, never both. Just canceled: "Canceled in MetaMask.
+  Nothing moved." with "Try again with MetaMask"; the "Saved deposit" caption
+  and "Saved in this browser…" note appear only when nothing was just canceled
+  (a reload). MetaMask's own shortMessage is no longer shown for a rejection.
+- System Panel: inline beside the chat from 768px (was 1024px), so a wallet
+  side panel that narrows a laptop window no longer turns it into a fixed
+  overlay covering the composer. Below 768px it is a sheet with a scrim that
+  closes it on tap (`#right-panel-scrim`). Default-open stays at 1024px+
+  (`DEFAULT_OPEN_MIN_WIDTH`), so tablets in the 768–1023 range keep their old
+  default; with both sidebar and panel open there the chat column is narrow
+  (≈260px at 768) — close one.
+
+## 2026-09-17: Toast placement with the centered composer
+
+- Logout keeps the normal dimmed backdrop and “Logging out…” indicator during
+  cleanup, then shows the login modal (or returns to zkAPI). It no longer shows
+  a success toast: the destination already confirms logout. The unused account
+  toast anchor and its dialog height reservation have been removed.
+- After the account modal closes, unlock confirmations use the composer position
+  (below centered / above docked). A fixed top offset is not safe for account
+  notices: a tall login dialog can occupy that same space.
+- Ordinary and loading toasts sit 16px below a centered composer and 16px above
+  a docked composer. Payment confirmations keep their existing top-center slot.
+- A toast keeps its last position when the composer switches between those
+  layouts. Later notifications choose the current layout. During first-send
+  motion they use the composer's final destination, not a moving animation frame.
+- Position remains responsive to draft resizing within the same layout and is
+  clamped on window/visual-viewport resize and viewport scroll. Listeners are
+  removed on replacement or dismissal; weak placement remains through the exit
+  fade. Existing toast fades and reduced-motion rules remain in place.
+
+## 2026-09-17: No empty-chat flash during conversation restoration
+
+- The restoration flag must also be exposed by `COMPONENT_APP_KEYS`: ChatArea
+  receives the restricted component facade, not the controller itself. Without
+  that entry, renders see `undefined` and show the welcome while loading, and
+  explicit New Chat throws when it tries to clear the flag. The regression test
+  exercises the production `createVanillaUiInterface` for both directions.
+- Prelude and app bootstrap use the same navigation predicate: explicit `?s`
+  links and saved conversation selections keep the normal bottom composer while
+  loading. The versioned navigation record wins over the legacy key, including
+  explicit New Chat selections and interrupted legacy writes.
+- Bootstrap no longer unconditionally renders the welcome. No-session renders
+  stay blank until saved/local/shared navigation resolves; missing/failed links
+  can then fall back to the normal empty state. Explicit New Chat resets the
+  guard immediately.
+- Prelude rechecks navigation, container contents, and app ownership after its
+  asynchronous template import. A late import cannot insert a welcome into a
+  mounted app or overwrite restored messages.
+
+## 2026-09-17: Centered composer on empty chats
+
+- Empty chats center the existing welcome/byline and composer with no prompt
+  suggestions. CSS keys off the actual welcome node, including the prelude's
+  first paint. Typing does not leave the centered state.
+- Appending the first accepted user message animates the same input card to its
+  normal bottom position over 500ms. The welcome fades away, and the transcript
+  fades in without transforming its geometry (prompt scroll anchoring depends
+  on that geometry). No draft, attachment, focus, or input event binding is cloned.
+- Full session renders and new-chat resets cancel transient animations; viewport
+  resizing cancels motion too. Reduced motion docks immediately. Existing/shared
+  conversations render at the bottom without replaying arrival.
+- Empty state overrides the mobile fixed-card/display-contents rules below 768px.
+  Animate the input card itself, never its ancestor: transforming its wrapper
+  would change the containing block of the mobile fixed-position card.
+- Empty transcript padding overrides the input ResizeObserver's inline bottom
+  padding; normal transcript padding resumes as soon as the welcome is removed.
+
+## 2026-09-16: Proxy status and mutually exclusive panel help
+
+- Network Proxy uses its globe for status: muted when off, pulsing while
+  connecting, blue when ready but not verified, green after a verified proxied
+  request, and amber after failure. Hover/focus exposes the exact status. Normal
+  states have no status row; failures show a 12px amber status with a compact
+  adjacent retry arrow. Retry has hover/press feedback, rotates while pending,
+  and uses the shared Transitions.dev text/icon swap and success-check recipes.
+  A completed retry shows Ready until a proxied request is verified; only verified
+  connections say Connected and turn the globe green. Confirmation fades after
+  1.5 seconds, leaving the globe. The retry row survives top-section refreshes;
+  repeated activation is blocked and timers are cleared on failure or destruction. Retry
+  respects active requests and reconnects without accidentally toggling off.
+- The proxy question mark expands the same bordered, 12px explanation as tickets
+  and ephemeral keys. Learn more opens the existing proxy modal; Security Details
+  remains available while enabled. The switch uses the shared Transitions.dev
+  toggle and connecting motion honors reduced-motion preferences.
+- Only one of those three explanations may be open. Outside clicks dismiss it
+  without consuming the action; inside clicks stay open. Escape closes focused
+  panel help and returns focus from its content to its trigger, without taking
+  Escape away from a foreground modal. Hidden explanations are inert.
+- Explanation switches adjust the panel scroll position during the accordion
+  transition to compensate for content collapsing above the selected question
+  mark, within the scroller's bounds. At the top boundary movement remains a
+  smooth collapse. Wheel/touch scrolling cancels this adjustment.
+
+## 2026-09-15: Activity status lives on each event icon
+
+Activity Timeline rows use one status-colored activity icon in the timeline rail,
+replacing the separate dot and gray content icon. The shared dot status policy
+still determines success, error, pending, interruption, and near-expiry colors.
+Verifier shields retain their more specific validation warnings and hover check.
+
+## 2026-09-15: Payment controls stay inside the toolbar
+
+The persistent System Panel toggle now lives outside the app layout. Both the
+combined Tickets/zkAPI switch and zkAPI-only Private balance control must insert
+before `chat-toolbar-panel-space`, not before that floating toggle. Using the
+old sibling anchor placed payment controls in normal body flow above `#app`,
+pushing the entire shell down and misaligning the System Panel header. Keep the
+explicit toolbar anchor in all shared HTML builds. Verify the composed payment
+shell, not only isolated RightPanel previews, when changing header controls.
+
+## 2026-09-15: Panel help, layout stability, and usage feedback
+
+- The ephemeral key question mark expands an in-panel explanation. Learn more
+  opens the existing attestation modal; parallel chats expose a link per issued
+  lane. Expansion state survives top-section refreshes, and collapsed interactive
+  content is inert. Key and ticket explanation text is consistently 12px.
+- Key detail rows share a compact 42px minimum height, 12px horizontal padding,
+  and 8px vertical padding; expiry and renew controls have a 12px gap. Row labels
+  and masked keys stay on one line and ellipsize instead of increasing row height. The System Panel uses one fixed top-right toggle outside the
+  resizing layout, preserving its position and focus when opening or closing.
+  A closed panel is inert. Sidebar contents keep their final width while the
+  outer rail clips, including saved widths and mobile overlays.
+- Successful verifier activity uses a colored shield instead of a second green
+  dot. Its check draws on hover using the Transitions.dev recipe; unsuccessful
+  and pending verification never receive a success check. Reduced motion is kept.
+- Tab-Tab no longer carries a decorative ticket icon. A toast reports one ticket
+  only after new confidential access is issued; reusing a valid key produces no
+  cost toast. UI callback failures cannot break key issuance or persistence.
+- Widen uses a rectangle with outward chevrons and a lower divider, matching the user’s reference. Citation cards and their collapsed source
+  stack use bundled website icons for supported domains and a local website
+  symbol otherwise. Never add remote favicon fetching based on response URLs.
+- Commercial welcome places the inference-ticket explanation below all payment
+  and code options; it remains absent from zkAPI funding screens.
+
+## 2026-09-15: Shared conversation entry and Memory wording
+
+- A nonempty `?s=` conversation link skips only the automatic startup sign-in
+  dialog. The normal URL-session importer can load the transcript without an
+  account, including its existing password and expiry handling. Explicit auth
+  handoffs retain priority; Tickets sending still runs the normal sign-in gate.
+  Commercial routing must also exempt `s` from the first-visit landing redirect.
+- Shared URLs use the active site origin and route root, including root-mounted
+  builds. Staging shares therefore stay on staging; production shares stay on
+  production instead of crossing into a different share backend. Native/opaque
+  renderer origins retain the configured public URL fallback.
+- Settings labels the existing global Memory feature switch “Save memories”,
+  with “Save useful details from your chats.” The book tooltip says “Use memories
+  in replies”. “Always attach retrieval” and its approval behavior are unchanged.
+  Save memories still gates the feature as a whole: disabling it also disables
+  live retrieval; book off alone leaves background saving enabled.
+  Fresh/default preferences remain off, and explicit saved choices survive.
+
+## 2026-09-14: Google passkey setup matches username entry
+
+- New Google accounts now show the shared brief passkey explanation and open
+  the native creation prompt automatically once, like new username accounts.
+  The extra initial Create passkey card is skipped; cancelled or refused
+  prompts retain an explicit retry action. Returning Google accounts retain
+  automatic unlock, and legacy recovery/migration remains explicit.
+- The setup timer is bound to the open login view and account. Closing,
+  switching accounts, losing the verified session, or entering recovery cannot
+  launch a delayed passkey ceremony. Key generation, wrapping, and persistence
+  continue through the existing account service without changes.
+
+## 2026-09-14: Checkout toast placement and username challenge errors
+
+- Commercial checkout can request `showToast` with `{ position: 'top-center' }`.
+  It sits below the header with a safe-area inset and a viewport width cap;
+  ordinary notifications retain their position above the composer.
+- Browser session interception excludes the exact `/auth/challenge` lookup.
+  Its 401 is an authentication lookup outcome, not session expiry; preserving
+  the response lets username continuation recognize `AUTHENTICATION_FAILED`
+  without exhausting SuperTokens refresh retries. Other account and billing
+  APIs retain automatic session refresh. Electron's separate bridge is unchanged.
+- Creating an encryption passkey is still required for a new Google account
+  (`PRF_PENDING`) or new username; existing PRF accounts should unlock instead.
+
+## 2026-09-14: Toggle motion
+
+- Settings and small switches use the Transitions.dev toggle recipe: 350ms thumb
+  overshoot and settle, with travel matched to each existing control size.
+- `ui/toggleMotion.js` initializes controls at their current checked state and
+  enables motion after pointer/keyboard interaction changes that state. Newly
+  rendered controls do not play an off animation. Reduced motion skips keyframes.
+- Legacy transforms are excluded on animated small switches to avoid double
+  movement. The commercial Billing toggle uses the same recipe and retains its
+  two-step consent: revealing the explanation does not move the thumb.
+
+## 2026-09-14: Ask chooses room for a readable answer
+
+- Ask opens below a selection when at least 320px is available; otherwise it
+  chooses above if that side has more room. Placement no longer depends on the
+  height of the initial loading message.
+- The edge beside the selected text stays anchored: an above panel grows upward,
+  a below panel downward. Streaming never flips sides. Long answers retain their
+  internal scrolling and reader-position behavior. Chat scroll and viewport resize
+  re-fit the same side, preserving the selection gap where space permits.
+
+## 2026-09-14: Consistent model waiting shimmer
+
+- zkAPI now shows “Waiting for response” with the same text shimmer as OA tickets,
+  without the additional animated dots. Access/proof preparation remains separate.
+- Verified the existing shimmer CSS against production styles.css: the gradient,
+  240% background and 1.9-second alternating animation match exactly. The original
+  pending shimmer was introduced in commit 10b1ced. zkAPI’s smaller text and flex
+  layout overrides now apply only to preparation details, leaving the waiting row
+  at production’s 12px size and normal line layout.
+
+## 2026-09-13: Inference Tickets explanation
+
+- The commercial Inference Tickets question-mark panel leads with the 20-minute
+  access window, reuse for multiple queries, and token-dependent usage, followed
+  by the existing privacy explanation using The Open Anonymity Project's full name.
+- Verified read-only against staging's active Redis tier configuration: all active
+  ordinary-chat tiers currently have duration_minutes=20. Revisit this copy if tier
+  durations change; it does not describe the separate 60-minute Tinfoil keys used
+  by Tab-Tab and Memory. No issuance, pricing, or expiration logic changed.
+
+## 2026-09-13: Ticket cues and Privacy/Memory explanations
+
+- Tab-Tab keeps the existing shortcut layout with one adjacent decorative ticket
+  icon, no hover or click behavior. Its existing visibility and input inset apply.
+- Privacy and Memory headings use sentence case with compact, muted info icons
+  and 24px click targets; this overrides the gear menu's old uppercase titles.
+- Privacy and Memory use a 14px circled info icon with a filled dot and rounded
+  stem, keeping it legible at Settings scale.
+- Privacy and Memory have matching info buttons with the approved one-line cost
+  descriptions. Hover/focus opens, click pins, outside click or Escape dismisses.
+  Explanations render outside scrolling containers, have no shadow, and stay
+  within the viewport. Both payment mode names open below the entire mode
+  switch, with the tooltip’s right edge aligned to the switch’s right edge.
+  The labels extend left into whitespace, keeping Share and the System Panel
+  clear. Viewport clamping and an above fallback remain for limited space.
+- Memory defaults off when no preference is saved, including imports without a
+  feature preference. Explicit saved on/off choices and memory entries survive.
+  Key issuance, cost/cap enforcement, and runtime availability gates are unchanged.
+- This UI release starts at staging's b4bed57 and retains the published wallet
+  SDK 06e3ee9; later wallet recovery commits remain on the feature branch.
+
+## 2026-09-11: Disabled scrubber model explains its payment restriction
+
+- The Settings scrubber model control shows the runtime's unavailable reason
+  on hover and keyboard focus of its wrapper, including in zkAPI mode. The
+  select remains disabled; returning to Tickets removes the wrapper's extra
+  tab stop and explanation. Model preferences and capability gates are unchanged.
+
+## 2026-09-10: Current Tinfoil chat models in Tab-Tab and Memory
+
+- Added Kimi K3, GLM-5.3, GLM-5.3 Flash, DeepSeek V4 Flash, and Llama 3.3 70B
+  to the shared confidential-model allowlist. Tinfoil's public model catalog
+  confirms these IDs and tool-calling support. Gemma 4 31B and GPT-OSS 120B
+  remain the Memory and Tab-Tab defaults respectively.
+- Removed the unavailable Kimi K2.5 and GPT-OSS Safeguard entries. Saved
+  selections of unavailable models fall back to each feature's default;
+  Tab-Tab now validates stored and runtime choices as Memory already did.
+- No key, provider, transport, or cap changes. The new choices are catalog
+  verified, not live inference certified. GLM's always-on reasoning can consume
+  request budgets before content appears; see [Local inference](local_inference.md).
+
+## 2026-09-10: Tab-Tab preview hints keep their own space
+
+- A pending scrub reserves 150px on the right of both the textarea and diff
+  preview for the Control/Option shortcut hints. Hiding the initial Tab-Tab
+  hint must not shrink that area while the preview/edit hint is visible.
+- Changing pending state recalculates input height after applying the padding,
+  so newly wrapped lines are visible immediately without another keystroke.
+- The same inset keeps wrapped text aligned while holding Control or editing
+  the preview. Clearing the pending scrub restores the existing input spacing.
+
+## 2026-09-10: Saved deposits do not imply an empty wallet transaction queue
+
+- A prepared deposit can coexist with a pending token-approval transaction if
+  confirmation polling times out before the vault deposit starts. Its recovery
+  notice now states only that the deposit did not finish and its amount/private
+  note remain saved, and asks the user to check pending MetaMask transactions
+  before resuming. It no longer claims that no transaction was sent or funds
+  moved. This is a copy correction; submission and recovery behavior is unchanged.
+
+## 2026-09-09: Read confirmed Sepolia balances after test-token minting
+
+- The SDK dependency now includes the confirmed-block balance read. A successful
+  Sepolia test-token mint could previously be followed by a cached `latest`
+  balance, stopping funding with a false insufficient-balance error.
+- Funding reads the balance at the mint receipt's block, verifies the canonical
+  block hash and selected network before and after the read, and retries only
+  reads for a bounded period. It never resends a mint during those retries.
+- The change is confined to automatic test-token minting. Mainnet funding,
+  withdrawal, private-note storage, and recovery journals keep their existing
+  paths. An indexer that cannot catch up to the chain still blocks new proofs;
+  a provider outage must be repaired without weakening that root check.
+- A fresh Node 24 install of the pinned dependency passed 758 OA tests and
+  180 native payment tests. The SDK's mint/read regression tests live with the
+  SDK implementation; live transaction verification is recorded separately.
+
+## 2026-09-09: Commercial payment modes retain ephemeral-key controls
+
+- Commercial's ticket funding layout embeds the shared Ephemeral Access Key
+  panel below its Membership launcher. Private-balance funding does not. The
+  old top-section renderer inferred embedding solely from the host's ticket
+  management action, so Commercial zkAPI hid the key, expiry, renewal, station,
+  and attestation UI even though the runtime still loaded the active lease.
+- `fundingSectionIncludesAccessKey()` now describes the selected funding
+  renderer. Tickets retain their compact embedded layout when Membership is
+  available; zkAPI always lets the shared top section render its key. Funding
+  replacements must override this hook when they do not embed access controls.
+- Render regressions cover standalone/Commercial, Tickets/zkAPI, pending/active
+  keys, proxy and attestation controls, and switching back to Parallel Tickets
+  during private settlement. The existing masking and lease ownership paths
+  remain unchanged: a private chat binding is not a provider credential.
+
+## 2026-09-09: Funding setup for first-time wallet users
+
+- Removed the mainnet risk banner from both native funding entry points.
+  The prerequisite sentence uses “Ethereum network” in the public UI.
+  Mainnet now shows prerequisites and an optional guide to installing MetaMask,
+  buying ETH for gas and USDC for chats, selecting Ethereum for both, and
+  returning to confirm the deposit. Sepolia has its own free-test-token guide.
+- `FundingSetupGuide.js` shares copy and restores the guide's expanded state,
+  keyboard focus and scroll position when wallet refreshes rebuild a dialog.
+  The deposit-focus guard now covers `fund` as well as `balance`. Welcome
+  preserves the entered deposit amount after a canceled wallet attempt.
+- See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for the official copy sources.
+  No SDK, transaction, or transport behavior changed.
+- Updated both stable trial deployments and checked the guides in Chrome.
+  All 165 payment tests and deployed asset/provenance checks passed; see
+  [SDK trial deployments](ZKAPI_SDK_TRIALS.md) for exact source and build IDs.
+
+## 2026-09-09: OA owns optional zkAPI payments
+
+- The dependency is now OA Chat → `@openanonymity/zkapi-browser-sdk`. The
+  payment UI and chat adapter live in `chat/zkapi`; the SDK contains no OA UI.
+- `startChatApp` preserves the synchronous `createChatApp` API and lazily loads
+  the native payment adapter only when `OA_ZKAPI_NETWORK` selects a network.
+  The build validates and emits pinned proof/config/worker assets and records
+  immutable dependency provenance. Ticket-only builds keep their default path.
+- Wallet storage/journals and chat storage remain unchanged and independent.
+  Anonymous SDK protocol/manifest/config/daemon traffic now explicitly omits
+  account cookies, including same-origin proxy requests.
+- Plain Tickets deletion skips unrelated wallet state; private history stays
+  recoverable, and delete-all checks even unloaded private owners.
+- New deployments and verification results are recorded
+  in [SDK trial deployments](ZKAPI_SDK_TRIALS.md).
+- The new Sepolia origin completed a $5 deposit and live private-key/chat
+  checks. Auto Router's returned DeepSeek V4 Flash 0731 model was displayed,
+  and the $0.007184 private estimate matched settlement. Ticket continuation
+  completed before private settlement, retaining history without adding the
+  ticket response to private usage. A `≥ $6` model was blocked at a $4.99
+  balance without losing the draft. A new $1-cap Luna chat worked across
+  reload with its history and estimate retained. Withdrawal's automatic
+  settlement brought total usage to $0.00746. After wallet confirmation, the
+  UI reported $4.99 returned and payment history showed the completed mutual
+  withdrawal and original $5 deposit. Successful public receipts reconcile
+  $5.000000 deposited as $4.992540 returned to the same depositor plus
+  $0.007460 paid to the server, excluding gas. Post-withdrawal reload retained
+  both history entries, both Luna responses and their $0.000274 estimate,
+  with the wallet correctly showing $0.00/not funded. Ticket continuation
+  still recalled the conversation after the relay was explicitly re-enabled;
+  its final response used TLS-over-WSS without new OA errors. The funded
+  Sepolia flow is verified through mutual withdrawal and reload persistence.
+  Switching the empty balance back to zkAPI automatically reopened funding;
+  no further deposit was started, and both trial tabs were preserved.
+- The funded browser run exposed inherited relay behavior: a verifier relay
+  connection failure triggers immediate direct fallback, then RightPanel's
+  error listener persists `enabled: false`. The resulting unavailable status
+  and `Enable relay` action do not imply a user toggle, and later requests can
+  remain direct across reloads. SDK extraction did not add this policy or a
+  second proxy instance. Treat this as a transport-privacy limitation of the
+  trial, not a verified relay-preserving recovery; the detailed source path
+  and follow-up are recorded in the trial notes. Live Tinfoil and mainnet
+  wallet transactions remain untested, as do balance expiry and escape-hatch
+  withdrawal.
+- See [Optional zkAPI payments](ZKAPI_PAYMENTS.md) for build, deployment,
+  lifecycle, and origin/persistence details. Commercial composition is outside
+  this change; account onboarding remains the host's policy.
+
 # App State and Handoff
+
+## 2026-09-22: Recover zkAPI chats interrupted during key issuance
+
+- A failed first Send can retain an ownerless SDK proof journal while the server
+  lease remains `provisioning`. The pinned SDK's settlement does not advance
+  this status, and scoped settlement may return without touching the journal.
+  Do not use `activeLease === null` or a successful scoped call as proof that
+  the wallet is clear.
+- The host compatibility adapter replays only the original saved request under
+  the SDK wallet lock, verifies the recovered key, retires it without exposing
+  it to inference, and applies the SDK's signed receipt. Recovery preserves
+  other-chat/other-tab ownership and retains the journal on all failures.
+- New Chat, deletion, renewal and withdrawal share bounded settlement. Stop
+  waiting releases UI waiters and aborts recovery where supported; it does not
+  forget a still-running SDK mutation. Retry cannot overlap that work. Error
+  status and recovery controls remain visible even if the SDK's last activity
+  still says settling. Deletion now retries ownerless recovery too.
+- An issuer outage can still block deletion/withdrawal until the reserved
+  request is reconciled. Clearing browser storage or inventing zero usage would
+  risk losing funds; neither is part of this fix. See
+  [Interrupted temporary-key issuance](ZKAPI_PAYMENTS.md#interrupted-temporary-key-issuance).
+- Validation after rebasing onto current main: 886 core and 292 native payment
+  tests pass, including real pinned
+  SDK methods with simulated network/storage/proof boundaries. The zkAPI Sepolia
+  production build succeeds. Desktop/mobile browser checks exercise Stop waiting
+  and Retry with simulated settlement state; no live funded outage transaction
+  was performed. Adversarial review approved after bounding deletion discovery,
+  preserving daemon settlement, and serializing concurrent deletion scopes.
 
 This is the living handoff doc for the web app's current state. Use it to capture UI
 behavior, coupled state, implementation gotchas, and lessons that are easy to miss when
@@ -198,6 +844,152 @@ reading code alone.
   Sepolia deposit, streamed inference, and settlement on September 10; see the
   current result above.
 
+## 2026-09-08: Payment runtime reconciled with current account and UI baseline
+
+- `codex/zkapi-browser-sdk` combines the payment runtime changes with the current
+  account/settings baseline (`1380827`). Captured-session send, settlement,
+  metadata and deletion reservations remain authoritative during navigation.
+- The shared navigation helper now persists every owned selection, including
+  forks and clearing the current chat, while retaining the payment branch's
+  stale-navigation guards. Its versioned tab record preserves an explicit new
+  chat across return navigation.
+- Host-required sign-in and the visible-modal send guard apply before either
+  payment path. Accountless compositions still skip authentication bootstrap
+  and auth-intent handling. The optional account component factory coexists
+  with the newer settings dialog.
+- Memory import/export retain the newer ability to run with the global Memory
+  preference off; payment capability guards still prevent unavailable composer
+  actions. Streaming awaits buffered reasoning before content and preserves
+  returned-model pricing alongside interleaved reasoning segment formatting.
+
+## 2026-09-08: Shared model tiers and private-key budgets
+
+- Trusted compositions can import the lightweight `chat/publicModelTierApi.js`
+  seam, or `publicRuntimeApi.modelTiers`, for `getTicketCost`,
+  `ensureModelTiersReady`, `initModelTiers`, and `onModelTiersUpdate`. Both paths
+  share the ordinary OA tier cache and live map. Cached and heuristic values
+  support display; access issuance must await the live tier map. Dollar budgets
+  belong to the downstream payment policy, not the shared ticket service.
+- `presentation.getModelPricing(model, {reasoningEnabled})` receives the same
+  reasoning setting used for ticket pricing. Optional escaped
+  `balanceBadgeLabel` and `balanceBadgeTooltip` fields show the required private
+  balance in the same right-aligned badge position and style as ticket counts.
+  zkAPI uses concise labels such as `≥ $2`; the accessible tooltip explains
+  that a private balance of at least that amount is required. Token prices
+  remain below the model name, with no separate cap/minimum explanation line.
+  Omitting these fields preserves the existing presentation and ticket rows.
+- The zkAPI composition maps reviewed OA ticket tiers to public dollar buckets.
+  A key's cap is a cumulative usage limit and minimum balance proof, not an
+  upfront fee. Its System Panel displays the actual owned key cap while that
+  key is live; otherwise it uses the selected model's budget.
+- `renderCurrentModel()` notifies the optional right-panel
+  `onModelSelectionChange()` hook. The private panel updates only its existing
+  usage labels, so selecting a different model immediately updates the next
+  key cap without remounting billing controls or waiting for wallet activity.
+
+## 2026-09-06: Composer capabilities follow the owning payment mode
+
+- Products may supply `runtime.supportsFeature(feature, session)` and
+  `getFeatureUnavailableReason(feature, session)`. The ordinary app keeps every
+  existing feature; mixed products can retain the normal controls while limiting
+  Memory, Scrubber, or Parallel per payment method. Global Memory and Parallel
+  preferences and historical Council configuration stay intact when switching.
+  The System Panel also gates lane-key rows by capability so an unavailable
+  historical or pending Parallel choice still presents the single-key access panel.
+- The composer leaves its scrubber shortcut area empty when the payment method
+  does not support Scrubber. Switching back restores the normal shortcut hint;
+  unavailable mode reserves no hint space and shows no replacement message.
+- Memory retrieval and background extraction both require a separate confidential
+  Tinfoil key funded with tickets. Gate these flows, one-shot memory overrides,
+  stale approvals, and uncached Scrubber restoration by their captured session.
+  A visible chat in another payment mode must not change background ownership.
+  Cached scrubbed/restored text and existing Parallel transcripts stay readable.
+- `beginFeatureOperation` owns confidential work through its complete promise;
+  its abort signal never releases an unfinished request. Mode changes and Delete
+  drain this work. Empty-draft work captures its default backend and can bind the
+  created session through `bindFeatureOperation`; components finish in `finally`.
+- Backfill writes `memoryProcessedAt` through `updateMemoryProcessedAt`, which
+  merges into the current live session under a metadata reservation. Never save
+  a stale candidate record over a newer payment mode, lease, or deleted chat.
+
+## 2026-09-06: Routed response usage pricing
+
+- Streaming usage snapshots carry the returned model's catalog price as soon
+  as its ID arrives, before output or usage in the same SSE event. Exact model
+  variants take precedence over their base ID. An unknown response model has
+  no local price; it must not inherit Auto Router's rate.
+- Runtime accounting accepts the backend's price snapshot (including an
+  explicit `null`) and only falls back to the owning session's catalog when
+  pricing is absent. It never overrides returned-model pricing with the
+  requested model's rate or a different visible chat's catalog.
+- A late `modelOnly` event reprices the existing usage preview while retaining
+  its token counts and provider cost. Metadata alone still creates no durable
+  charge. Cancellation with partial output retains the repriced snapshot.
+  Completed usage and the later message metadata write use the same pricing.
+- Products persist these response-time snapshots with usage; historical totals
+  are not recalculated against today's model catalog. This changes estimates
+  only, not the requested model, access budget, or settlement amount.
+
+## 2026-09-06: Runtime payment modes share the same conversation
+
+- Trusted runtimes can choose ticket access per session with
+  `usesTicketAccess(session)`. A false result requires explicit `checkCanSend`
+  authorization and skips ticket-tier loading during key acquisition. The
+  normal ticket and verifier path remains unchanged for ticket sessions.
+- `context.changeSessionBackend(backendId, {sessionId?})` captures the chosen
+  conversation, reserves its exclusive mutation, drains outstanding title,
+  access and Quick Ask work, and awaits `beforeBackendChange`. Its hook receives
+  a staged clone so lease settlement metadata and the backend are persisted in
+  one session write. Failed settlement or storage keeps the live backend and
+  recovery metadata. New Send, Quick Ask, title and access work cannot enter
+  during the transition; Delete waits for its reservation before removing data.
+- Switching clears active access, old verifier failure presentation, shared-key
+  marking and Council lane access, while retaining message history, historical
+  ephemeral mappings, title, draft and attachments. It never navigates or
+  rebuilds the conversation. Model refreshes reject stale results after
+  navigation or another backend selection. All configured verifier caches
+  initialize before persisted access is restored, even when the default mode
+  uses an alternate payment backend.
+- `context.isSessionBusy()` lets a mode selector disable itself during any
+  owned work. `presentation.renderComposer` is notified as Send, title, Quick
+  Ask, access and exclusive mutations start/end, as well as navigation.
+- Mixed runtimes can set `shouldCancelOnNewChat({session})` so ticket chats
+  continue streaming in the background while paid chats retire their lease.
+  `onNewChat` still runs synchronously to establish any retirement barrier.
+- Empty-composer mode changes only change the inference service default. Send
+  captures that default before its first await, and new session creation retains
+  the captured backend. Products own durable preference storage and may call
+  `setDefaultBackendId()` after switching an existing conversation to choose
+  the next chat's default. Unknown explicit backends fail closed rather than
+  routing a request through another payment mode.
+- Legacy sessions and imported keys without a backend use the registry's
+  stable `legacyBackendId` and optional `resolveLegacyBackendId(session)`,
+  independently of the preferred new-chat mode. A dual product must identify
+  historical ticket sessions as `openrouter`; provider API keys must never be
+  interpreted as alternate-backend session bindings.
+- Historical/new-chat navigation replaces the prior backend's model catalog
+  synchronously with the destination's cached catalog before refreshing it.
+  Ticket key request/renewal reserves its captured session before animations;
+  navigation cannot redirect redemption or apply its key to another panel.
+- Background ticket requests keep their backend's catalog for ticket pricing,
+  key acquisition, response model resolution, Quick Ask and usage estimates.
+  `getModelsForSession(session)` and `context.getModels(sessionId?)` must replace
+  reads of the visible `state.models` in inference work that can outlive
+  navigation. Model configuration callbacks receive the captured session.
+- Rename, star/unstar and model selection reserve session metadata persistence.
+  A mode switch cannot snapshot over an in-flight metadata write, and those
+  controls acknowledge busy while settlement holds an exclusive reservation.
+- `publicApi.js` additionally exports the ordinary Account and Welcome UI;
+  `publicInferenceApi.js` exports the normal `openRouterBackend`; and
+  `publicRuntimeApi.js` exports the shared `modelConfiguration` namespace for
+  compositions that offer ticketing alongside another funding method.
+- The shared attestation modal describes the selected payment method rather
+  than assuming ticket redemption. Its issuance overview describes the
+  available checks without claiming a current key has verified issuance proof.
+  ZK runtime attestation and station broadcast evidence are distinct from the
+  ordinary ticket key's signatures and persisted `submit_key` proof; this copy
+  change does not create missing key evidence or alter any security checks.
+
 ## 2026-09-06: Vercel Git builds restore the memory browser link
 
 - Vercel Git builds were receiving the initialized root `nanomem` submodule but
@@ -226,8 +1018,8 @@ reading code alone.
   If the provider does not identify a different model, retain the selected name.
 - The shared SSE parser publishes `modelOnly` token callbacks before processing
   output from that event. These callbacks update attribution but are not output
-  or token/cost estimates. Runtime accounting merges only the model into its
-  latest usage snapshot; partial-response cancellation retains that attribution.
+  or new token/cost measurements. Runtime accounting merges the model and its
+  price into its latest usage snapshot; cancellation retains that attribution.
 - Ordinary Chat persists the resolved name/ID in the existing `message.model`.
   Parallel/Council lanes keep their requested `model`/`modelId` for access and
   regeneration and store separate `responseModel` attribution. This survives
@@ -317,9 +1109,320 @@ reading code alone.
   authentication-intent routing, including `?auth=google`; their extension auth
   capability fails explicitly. Standalone/commercial account behavior remains
   enabled by default, with the existing verified-ticket path unchanged.
+## 2026-09-06: First-time accounts go straight to the passkey too
+
+`maybeAutoPromptPasskey()` now also fires for `oauthSetupRequired` (first
+Google keyring setup), and `handleAccountContinue()` chains
+`handleUsernamePasskeyContinue()` when the lookup returns `register`
+(reserve + WebAuthn create) as well as `login`. The setup card lost its
+"Encrypt your data" heading; like the returning path it is untitled
+(`aria-label="Create your passkey"`), hidden behind the spinner while busy,
+and only drawn for Try again / Back. Legacy migration and legacy-passkey
+cards are unchanged.
+
+## 2026-09-06: One continuous wait from the landing button to the passkey sheet
+
+`chat/index.html` paints `#auth-arrival` — the same dim backdrop and spinner
+as the account dialog's waiting state — from an inline script and style that
+run before any stylesheet, whenever the URL carries `?auth=google`,
+`?auth=username` or `?tickets=`. `AccountModal.open()` removes
+`html[data-auth-arriving]` once its own backdrop is up, and `app.js` removes
+it in the `finally` of `routeAuthenticationIntent` so it never outlives the
+route. The username lookup ("Checking username…") is drawn the same way:
+untitled card with `data-waiting`, spinner only, status text for assistive
+technology. Net effect: landing button spinner → page load → lookup → OS
+sheet with no blank frame and no card in between.
+
+## 2026-09-06: Login dialog matches the landing card; spinner behind the passkey prompt
+
+The **Log in** dialog's username step is a standalone **Choose a username**
+field followed by a full-width filled **Continue with username** button
+(`.account-login-submit`, #000 / near-white in dark, hover lift), the same
+control as the landing card; the attached arrow cell is gone. While the
+automatic passkey prompt is in flight the dimmed page shows only a small
+spinner (`.account-unlock-waiting`, role=status) — no card, no text — and
+the untitled card fades in only for Try again.
+
+## 2026-09-06: The core Account item hides through the app facade
+
+`AccountModal` reaches extension slots only via the component facade
+(`appInterface.js`): `refreshExtensionSlot`, and the new
+`hasExtensionSlotNode(name, selector)` and `subscribeExtensionSlot(name,
+listener)`. The earlier `this.app.extensionSlots?.…` calls were `undefined` in
+the real app (the facade never exposed the registry), so the core Account
+fallback was never hidden and the menu showed two Account entries on staging.
+`accountModal.test.js` now asserts the component never touches
+`app.extensionSlots`.
+
+## 2026-09-06: Nothing is drawn behind the automatic passkey prompt
+
+The untitled unlock card carries `data-waiting="true"` while the automatic
+prompt (Google keyring or returning username) is in flight, and CSS hides it
+(`opacity: 0; pointer-events: none`). The OS passkey sheet is the only thing
+the user sees; the card stays mounted for focus and the status sentence and
+fades in only for Try again. `.account-menu-item[hidden]` now actually hides,
+so the core Account fallback item no longer shows beside the extension's
+Account item in the composed app.
+
+## 2026-09-05: Returning accounts prompt their passkey on arrival
+
+The "Welcome back → Unlock" explanation is gone from the returning-user flow.
+`AccountModal.open()` calls `maybeAutoPromptPasskey()`, which runs
+`handleOAuthKeyringUnlock()` once per open for a locked Google keyring (never
+for setup, legacy migration, legacy passkey, busy, error or unsupported
+states), and `handleAccountContinue()` calls `handleUsernamePasskeyContinue()`
+as soon as a username lookup resolves to an existing account. The shared
+`renderPasskeyUnlockCard` renders no `<h2>` for that returning case — the
+dialog carries `aria-label="Unlock your encrypted data"` and the
+`account-unlock-card-untitled` class — so the card only ever shows the waiting
+and Try again states. Setup ("Encrypt your data"), legacy migration and the
+legacy-passkey account keep their headings. Safari's user-activation rule for
+WebAuthn is the known risk on the Google return path: a refused prompt lands
+on the untitled Try again card rather than an idle one.
+
+## 2026-09-05: The account menu prefers the composed Account surface
+
+When `account.menuActions` has mounted content, the core
+`#account-security-menu-item` is hidden and the commercial extension's item,
+labelled **Account**, opens the unified Account dialog (identity row, Get
+tickets, Payment, Invoices), followed by the core **Log out** item. Standalone
+oa-chat keeps the core **Account** item and compact account-security dialog, so
+installing no extension never removes existing account management.
+`context.ui.getAccountIdentityLabel()` gives extensions the signed-in display
+name (username, else Google email) for that identity row; it deliberately
+stays out of `account.getSnapshot()`. `renderCompactAccountUI` is no longer
+reachable from the menu only in the composed commercial app.
+
+## 2026-09-04: Compact Log-in hover matches Account controls
+
+- On hover-capable pointers, the Google button and the complete username
+  input/arrow shell use the same restrained background and border change as the
+  Account `Unlock` button.
+- Keep hover separate from OA-blue keyboard focus, suppress it for disabled
+  controls, and do not add movement, shadow, or sticky touch hover.
+
+## 2026-09-04: Reliable external returns and ticket recovery
+
+- `navigationState.js` owns sessionStorage-only `oa-chat-navigation-v1`:
+  either a conversation selection or explicit New Chat. It synchronizes the
+  legacy `oa-current-session` key and removes that key for New Chat. Generic
+  return loads restore this record before hydration; explicit `?s=` links keep
+  precedence. Deleted conversations become New Chat; unavailable or malformed
+  storage cannot block startup. The commercial host calls the opaque
+  `ui.persistNavigationForReturn()` before Stripe navigation.
+- Preparation reports waiting for storage, issuer, or locks separately from
+  actual blinding/finalization. Existing staged recovery schemas, ticket fields,
+  publication ownership, and account guards remain unchanged. Queued preparation
+  and publication locks time out after 30 seconds without stealing ownership or
+  timing out a running durable commit.
+- `tickets.refreshSnapshot({ signal })` explicitly refreshes only browser-local
+  account-scoped wallet state and exposes redacted counts/readiness. Both its
+  wallet and nested account-data lock queues accept cancellation/deadlines;
+  scope is rechecked after reading. Existing broadcasts remain authoritative
+  notifications to refresh, never evidence that an unrelated purchase completed.
+- Regression coverage: `navigationState.test.js`, `ticketRefresh.test.js`, and
+  the existing entitlement recovery/account-isolation tests. Public interface
+  details are in [EXTENSIONS.md](EXTENSIONS.md).
+
+## 2026-09-04: Focus indicators do not use black UI boxes
+
+- All app-owned focus treatments share a dedicated OA-blue focus token rather
+  than the near-black light-theme foreground token. This covers the fallback
+  `:focus-visible` outline, Tailwind ring utilities, and component-specific
+  focus styles without changing non-focus borders. Controls with their own
+  component treatment continue to override the low-specificity fallback, and
+  pointer focus on non-text controls remains quiet.
+- The model picker still focuses search immediately so users can type without
+  a second click. Its full rectangular outline is replaced by a two-pixel blue
+  underline on the existing search row, avoiding a black box while preserving
+  a visible focus state. The underline clears when focus moves to the close
+  button. Forced-colors mode retains a system `Highlight` outline.
+- Model filtering, keyboard navigation, selection, modal focus movement, and
+  light/dark theme tokens are otherwise unchanged.
+
+## 2026-09-04: Account footer uses a unified disclosure chevron
+
+- The bottom-left account identity row remains one full-width button. Its
+  trailing affordance is now a downward chevron rather than a settings gear;
+  the existing `aria-expanded` state rotates it upward while the account menu
+  or Account dialog is open.
+- The rotation uses the established 240ms ease-out disclosure motion and is
+  disabled for reduced-motion users. The row is not rebuilt, so rapid reversal,
+  focus restoration, pointer/keyboard menu behavior, and full-row hover/press
+  feedback remain intact.
+- This is presentation only. Account restoration, authentication, menu actions,
+  Membership extension mounting, and logout behavior are unchanged.
+
+## 2026-09-04: Account disclosure opens with invoice-style motion
+
+- **Passkey & encryption** stays mounted and expands with the same 240ms
+  grid-row easing used by Membership's **Invoices** disclosure. Content opacity
+  settles during the height transition instead of appearing all at once.
+- The collapsed panel is `aria-hidden` and `inert`; reduced-motion users receive
+  the same state change without animation. The toggle still updates mounted
+  nodes without rebuilding the Account modal, and no authentication, passkey,
+  encryption, sync, or account-state behavior changes.
+
+## 2026-09-04: Landing authentication handoffs require an identity match
+
+- A restored account now satisfies `/chat/?auth=google` only when it is a Google
+  account. A username or legacy account is logged out and its saved local binding
+  is cleared before the Google sign-in surface opens.
+- A restored username account satisfies
+  `/chat/?auth=username#username=...` only when its NFKC-normalized, trimmed,
+  lowercase username matches the requested username. A different username,
+  Google account, or legacy account is logged out and cleared before the requested
+  username lookup begins.
+- Matching verified/unlocked identities still continue directly, while matching
+  locked identities keep their normal unlock flow. Switching is automatic and
+  does not add a confirmation prompt. A username handoff with no submitted
+  username keeps the saved binding and shows the normal form.
+- OAuth profile refreshes capture the account and lifecycle generation before
+  requesting provider state. A response that finishes after logout, lock, or an
+  account switch cannot repopulate provider metadata onto the cleared identity.
+
+## 2026-09-04: Invoice-style Account disclosure chevron
+
+- The signed-in Account dialog's **Passkey & encryption** disclosure uses the
+  same 18px downward chevron and 240ms easing as Membership's **Invoices**
+  disclosure. It rotates upward when expanded and disables the transition under
+  reduced motion.
+- Toggling updates the mounted `aria-expanded`, `aria-hidden`, and `inert` state in place
+  instead of rebuilding the modal, preserving button focus and allowing the
+  transition to complete. Authentication, passkey, encryption, and account
+  state behavior are unchanged. Commercial compositions must pin the public
+  Chat revision containing this change.
+
+## 2026-09-04: Current-base modal title alignment
+
+- Port the intent of old commit `9f660e0` onto public Chat `b37e246`; do not
+  deploy or pin its obsolete `ca47d9d` parent. This preserves the later compact
+  login, unified username/Google encryption, Memory fallback, Welcome-back
+  no-logout behavior,
+  Account focus, Membership, and invoice behavior in the commercial composition.
+- `renderHeader()` and the compact login use semantic `h2.account-dialog-title`
+  at 22px/600/-0.01em, matching Billing & Plan's title scale. The current
+  left-aligned compact-login layout, 48px controls, 32px desktop/24px narrow
+  card padding, radii, close target, body copy, and handlers remain unchanged.
+  Its Google label alone moves from 16px to 15px.
+- The shared Welcome/Encrypt title keeps its existing 26px size, line height,
+  tracking, and card layout while moving from the newer 500 weight to the
+  explicitly requested 600. The account-number and recovery headers use the same
+  shared Account title rule.
+- The sans stack puts `system-ui` and `-apple-system` before the named SF Pro Text
+  font, allowing platform optical sizing for larger text. This is a global
+  family-order change, so browser verification covers body copy as well as the
+  compact Account, login, and Welcome surfaces in both themes and narrow widths.
+
+## 2026-09-04: Focus rings are keyboard-only
+
+- An inline script at the top of `chat/index.html` sets `html[data-keyboard-nav]`
+  on Tab/arrow/Home/End keydown and clears it on pointerdown/mousedown/touchstart.
+  It runs before any stylesheet or focus call.
+- `chat/styles.css` draws the app-wide ring only under `html[data-keyboard-nav]`
+  and forces `outline: none` on `:focus-visible` otherwise. Component rings
+  (account footer avatar, menu items, compact rows, unlock/login controls,
+  dialog close) are scoped the same way and retain the dedicated OA-blue focus
+  token. Model search and the username-login shell are quiet when opened by the
+  app and show their blue treatment only during keyboard navigation. Tailwind
+  ring utilities are unaffected.
+- Why: the app focuses elements itself — dialog open (`focusModal`), focus
+  restore in `close()`, the model search input in `ModelPicker.open()` — and
+  browsers report script focus as `:focus-visible` until the next pointer
+  interaction. That lit rings on first load, unlock, the Account dialog's X,
+  the footer avatar after closing, and under the model search. Prod
+  (`origin/main`) has no global ring and is the reference behaviour.
+- The earlier `data-auth-restored-focus` (footer) and `data-pointer-focus`
+  (menu) markers were per-component workarounds for the same heuristic and are
+  removed; `openAccountMenu` no longer takes `fromPointer`.
+
+## 2026-09-04: Quiet pointer focus in the Account menu
+
+- The menu still focuses its first item on opening for Escape/arrow navigation.
+  Mouse/touch opening now sets a menu-local `data-pointer-focus` marker **before**
+  moving focus. This suppresses the inherited focus-only outline and tint left
+  by the login input, including on the Account row, without blurring the item.
+- Any menu keydown removes that marker immediately. Keyboard/assistive activation
+  (zero-detail click), ArrowDown/Enter/Space opening, and later arrow/Home/End
+  navigation retain visible focus. Pointer interaction within the menu switches
+  back to quiet focus; closing clears the marker. Normal hover feedback remains.
+- This is menu presentation/input-modality state only: footer authentication
+  restoration, menu actions, Membership, logout, and login routing are unchanged.
+- `test/fixtures/account-menu-focus.html` uses the shipped footer markup with
+  fake services to check post-auth focus, pointer reopening, keyboard navigation,
+  and both themes without real authentication or billing.
+
+## 2026-09-03: Lighter login typography
+
+- The compact login card uses the supplied **Login Modal / 1a** proportions:
+  16px Google text, an 18px outlined inline arrow, 48px controls, and a 22px
+  medium heading with tighter line-height/tracking. Google text is regular (400)
+  to address the requested lighter appearance, while retaining OA's system font
+  and theme tokens. The smaller close glyph retains a 32px button target.
+- The shared **Welcome back / Encrypt your data** title now uses weight 500,
+  matching the **Account** title. Its size and layout are unchanged. These are
+  presentation-only changes; auth handlers, Membership, and landing are untouched.
+
+## 2026-09-03: Preserve the restored compact Memory fallback
+
+- Restore the exact presentation fix from `40d9fad5bde7d7e0667666d91d73626b2cdd1ed7`
+  (08:46 PDT, **Restore compact memory fallback**). That branch's fix was missing
+  from the later combined login/Membership staging composition; do not revert the
+  whole client or the membership work to recover it.
+- Failed retrieval again says **No added memory. Sending original prompt.**
+  with no extra bordered **Note:** card, including when older saved messages
+  carry failure metadata. Allowlisted diagnostics, key invalidation, retrieval,
+  extraction, and ticket-budget behavior remain unchanged. This restores the
+  requested presentation; it does not claim to repair the underlying provider failure.
+
+## 2026-09-03: Google and username share the encryption explanation
+
+- Google and returning username unlock use the same centered **Welcome back** card,
+  an outlined **Unlock** action, a disabled **Waiting…** spinner during the
+  passkey prompt, and **Try again** with an alert on failure. Setup and legacy
+  migration share the card with their own copy and existing action handlers.
+- `renderPasskeyUnlockCard()` owns the shared copy, actions, and busy/error shell.
+  Username Continue now looks up the account and pauses at **Welcome back → Unlock**
+  or **Encrypt your data → Create passkey**. This explicitly supersedes the earlier
+  direct-to-passkey request. The same step is used by landing and modal entry;
+  landing still does not repeat the username form. Username uses **Back** because
+  authentication has not occurred yet. **Welcome back** has no **Log out** action,
+  including waiting/retry and legacy-passkey variants. Logout remains in unlocked
+  Account settings; setup and legacy-migration cards retain their existing exit.
+- No WebAuthn operation begins until that explicit action. Returning username
+  Unlock obtains a fresh challenge, since the initial lookup challenge can expire
+  while the explanation is open. New-account lookup is read-only: `/auth/init`,
+  username reservation, and the registration challenge wait until **Create passkey**.
+  Back before that click therefore leaves no ten-minute name reservation, and
+  reading the explanation cannot expire a sixty-second registration challenge.
+  Cancellation stays on **Try again**, never starts
+  registration, and does not retry automatically. Back abandons an uncompleted
+  registration without forgetting an existing saved account.
+- Pending-account generation/object guards discard late initializer or native
+  credential results after cancellation. Modal callbacks also belong to one
+  open-view version. Username finalization briefly disables dismissal while its
+  wrapper is committed, avoiding cancellation that zeroes the master key during
+  registration. A separately cancelled finalization cannot install that key or
+  overwrite a replacement account.
+- The first-account Membership signal, returning-account Chat route, saved legacy
+  recovery, encrypted sync, and post-login footer focus restoration remain intact.
+- Escape and the compact close button dismiss the unlock card without
+  decrypting data or signing Google out. Per the revised UI request, a returning
+  locked Google account must unlock before reaching Account-settings logout;
+  dismissal itself is not a signout/account switch. Successful unlock closes
+  the card through the existing account lifecycle.
 
 ## 2026-09-02: Authentication intent waits for account restoration
 
+- Successful authentication closes with `afterAuthentication: true`. If focus
+  returns to the account footer, its temporary `data-auth-restored-focus` marker
+  suppresses the automatic focus indicator: no black box, avatar ring, or
+  focus-only tint remains after login/unlock. Focus still returns to the same
+  button. Its next keydown or blur removes the marker, so later keyboard
+  navigation shows the avatar's theme-colored ring (system `Highlight` in
+  forced-colors mode). Ordinary dismissal, other return targets, menu focus,
+  full-width hover/pressed feedback, and first-account Membership routing are
+  unchanged. Do not replace this with unconditional outline removal or blur.
 - The commercial landing page now hands Google entry to `/chat/?auth=google`;
   this is distinct from `membership=1`, which remains an explicit billing UI
   request. Core chat owns the one-use auth intent and removes it with
@@ -329,7 +1432,7 @@ reading code alone.
   proceeds directly into chat; a verified locked account opens the encryption-
   passkey UI; and a genuinely signed-out account opens the Google UI. The
   signed-in Account summary is never opened by this route.
-- The footer keeps its stable 52px geometry but renders no visible provisional
+- The footer keeps stable compact geometry but renders no visible provisional
   identity until verification settles. A visually hidden live region announces
   account restoration to assistive technology. Opening the footer during that
   interval still shows the neutral restoration dialog; verified actions and
@@ -343,11 +1446,105 @@ reading code alone.
   be saved. Once the durable key is stored, a later synchronization failure
   keeps the account unlocked and schedules restoration again; it must never be
   relabeled as a missing passkey.
-- Preserve the existing footer geometry: the full-width trigger is 3.25rem
-  tall, the settings menu is anchored to the footer row with `left/right:
-  -0.5rem`, and its rows remain 2.625rem tall. The settings gear, flat open
+- The footer restores its previous 49px total height at the user's request:
+  a 3rem full-width trigger plus its 1px top border, for mouse and touch alike.
+  The 1.75rem avatar and zero outer padding remain. The square-cornered trigger
+  paints hover/pressed feedback edge-to-edge; horizontal spacing lives
+  inside it, and pressing does not scale it into an inset highlight. The
+  sidebar reserves 3.5rem below its content so the restored footer still clears
+  the last chat. The settings menu stays
+  anchored to the footer row with 0.5rem side insets and 2.625rem rows.
+  The settings gear, flat open
   trigger, menu typography, hover states, focus restoration, and keyboard
   navigation remain part of the contract.
+- The build versions copied `styles.css` from its own SHA-256 content digest,
+  independently of the JavaScript bundle hash. CSS-only footer updates must
+  produce a new stylesheet URL even when executable bundles are unchanged;
+  deployed stylesheets may otherwise remain browser-cached for hours.
+
+## 2026-09-03: Pseudonymous username accounts use one authentication passkey
+
+- First-time username setup shows the shared **Encrypt your data** card before
+  the prompt and its **Waiting…** state through creation/finalization, never a
+  username reminder. A generated username keeps
+  creation rendering active until close, even after sync publishes the new
+  account ID; otherwise sync notifications could briefly show Account before
+  the Membership handoff. Retry/error actions and returning login are unchanged.
+- Username login uses the compact reference card: 360px maximum width, rounded
+  24px corners, a left-aligned **Log in** heading, and the close button at the
+  upper right. Google and the joined **Username →** control are 48px high,
+  separated by a subtle lowercase **or** divider. The arrow is a stroked SVG,
+  not the landing's filled arrow. Padding drops from 32px to 24px on narrow
+  screens. This is modal-only; the landing still has no divider between Google
+  and Username. The arrow retains the accessible **Continue** name and existing
+  click/Enter handler; while busy it becomes a disabled spinner. Scoped CSS uses
+  Chat's light/dark theme tokens, neutral autofill, and a 16px input. Saved
+  account-number login keeps its existing layout. Returning Google and username
+  accounts open the passkey prompt immediately; setup and legacy migration retain
+  their explanatory step. A cancelled automatic prompt stays on the untitled
+  encryption card with **Try again** focused, and never prompts again by itself.
+  Username is an input placeholder with an accessible name, not a
+  visible label or example handle. Introductory/helper copy and the separate
+  signup/account-number rows are removed. Continue checks for a username
+  challenge before reserving a new account, then waits for the explicit passkey
+  action. Only typed lookup/registration errors select another flow, never
+  passkey cancellation, network failure, or rate limiting. The button is
+  single-flight and a close/reopen invalidates its pending lookup.
+- The commercial landing page renders Username directly below Google and above
+  the OR/access-code row. Both text rows share the same visual control rules,
+  while independent handlers preserve the existing Google and anonymous
+  access-code routes. The username route is a one-use local UI intent; Chat
+  removes the username from its URL after the normal authentication bootstrap
+  settles, then checks the username before showing the shared encryption step.
+  **Checking username…** covers only lookup, without a redundant username form.
+  Lookup errors restore the form; cancelled passkeys keep an explicit retry on
+  the encryption card. Missing usernames (including no-JS entry), unsupported/busy states,
+  and remembered legacy/Google unlock or recovery still use their normal UI.
+  The native prompt does not block the rest of Chat initialization. Startup composer autofocus also respects
+  an open Account dialog, including its forced first attempt, so focus stays
+  on the authentication surface rather than moving behind it.
+- Account entry now offers Google or a normalized, unique pseudonymous
+  username. Username registration and returning login use one WebAuthn prompt:
+  the assertion authenticates the opaque OA account while PRF unwraps its
+  random master key locally.
+- The server-generated 16-digit account ID remains the WebAuthn user handle and
+  all account/sync cryptographic scoping remains ID-bound. The username is only
+  the human-readable passkey label and login locator; it is stored in local
+  account settings so restored UI can display it immediately.
+- Username accounts do not generate, display, or upload recovery material. The
+  first passkey prompt completes registration immediately and emits
+  `registerFirstAccountReady`, matching the first-time Google-to-Membership
+  handoff. Losing every synced copy of the passkey is intentionally permanent;
+  remembering the public username alone cannot prove ownership or decrypt data.
+- Existing account-number clients and users remain supported. `/auth/init`
+  still accepts no body, old request/response fields and recovery derivation
+  remain unchanged, and a saved legacy account automatically receives the
+  account-number login UI. Manual account-number entry on a fresh device is
+  intentionally removed per the product decision; saved legacy login/recovery
+  remains available and the backend protocol is unchanged.
+- Username challenge and login responses must resolve to the account already
+  saved on the device. Creating or switching to a different username requires
+  the existing explicit **Forget saved account** action, preserving the same
+  account-scope boundary as Google sign-in.
+- Each username login carries an opaque, single-use challenge transaction ID,
+  so concurrent public lookups cannot replace an in-progress passkey prompt.
+  OA limits every attempt by the trusted client IP and adds a hashed-username
+  bucket only after a failed lookup or proof; a third party therefore cannot
+  exhaust a public-name quota and lock out a valid owner.
+- The Continue action passes an explicit username into account preparation. Blank
+  or invalid input fails validation and cannot fall through to the retained
+  no-body legacy account-number initializer.
+- Conditional auto-unlock also uses the username route for a saved username
+  account. Falling back to the legacy opaque-ID route would authenticate but
+  clear the local username label when settings are persisted.
+- Usernames are visible stable pseudonyms; the compact login no longer displays
+  pseudonym guidance. They never accompany ticket
+  redemption or inference. See [USERNAME_PASSKEYS.md](USERNAME_PASSKEYS.md) for
+  the protocol, compatibility, and privacy boundaries.
+- Username accounts mark encrypted sync as identity-backed, like SSO accounts,
+  so consuming a ticket does not trigger an immediate authenticated sync.
+  The consumed/archive state propagates during the next initial or periodic
+  sync; deletion tombstones remain reserved for cash-style transfers.
 
 ## 2026-09-01: Commercial onboarding and ticket surfaces use core UI seams
 
@@ -356,7 +1553,7 @@ reading code alone.
   focuses its heading. Returning accounts close the authentication dialog and
   remain in Chat; they do not emit this signal. The signed-in Account summary
   is opened only by an explicit Account action.
-- Avatar, account label, and settings affordance are one accessible sidebar
+- Avatar, account label, and disclosure affordance are one accessible sidebar
   button. There is no separate gear. Long labels truncate within the shared hit
   target. The new account identity and menu actions match the existing sidebar
   type scale at 14px regular; only an open/selected state uses medium weight.
@@ -366,8 +1563,17 @@ reading code alone.
   Membership and standalone ticket management retain Import, Share, and Redeem.
   Account-data/chat/memory export remains independent and never includes
   inference tickets.
-- The right panel groups the inference-ticket row and ephemeral-key section
-  with a deliberate 16px whitespace gap and no divider. Commercial ticket
+- The System Panel uses its original compact styling: a 14px semibold title,
+  12px medium ticket/key headings, and the original icons and help buttons.
+  The larger September 3 heading redesign was reverted at the user's
+  request; only the full-width theme-aware divider remains. It is positioned
+  midway through the commercial stack's 24px gap, increased from 16px in a
+  follow-up request for 4px more space on each side of the line. The divider
+  itself adds no layout height. Its anchor follows expanded ticket help and preparation
+  status, so the line stays below that content. Live counts, zero-balance,
+  pending/live keys, expiry/renewal, and per-key Council attestation remain
+  unchanged. The compact bottom-left footer and stylesheet cache versioning
+  are separate changes and are not reverted. Commercial ticket
   preparation mounts directly below the ticket row; component rerenders must
   reattach that extension slot through `refreshExtensionSlot(...)`, never an
   internal registry. Paid preparation uses the same compact text and progress
@@ -398,9 +1604,18 @@ reading code alone.
   and overlaps the account/thread divider slightly. **Log out** uses the same
   neutral hover surface as the other account actions; destructive color is not
   used for hover emphasis.
+- Commercial can replace the standalone **Account** menu item only with an
+  enabled, visible extension menu action. Slot mount/unmount notifications keep
+  that fallback correct even while the menu is open; an empty, malformed, hidden,
+  or disabled extension node never removes the only route to account security.
+- The public account identity label is empty until bootstrap has completed and
+  the session is both server-verified and unlocked. Cached usernames or emails
+  must not leak into commercial UI while an account is restoring, locked, or
+  signed out.
 - Its trigger remains a flat, full-width footer row while open, with the
-  account identity on the left and a settings glyph on the right. It does not
-  turn into an inset selected pill or use a disclosure chevron.
+  account identity on the left and a disclosure chevron on the right. The
+  chevron points down while closed and rotates up while expanded; the row does
+  not turn into an inset selected pill.
 - A restored signed-in account reuses its account-bound cached identity label
   immediately after session validation. Profile refresh and encrypted sync
   continue in the background, so the footer does not briefly fall back to the
@@ -418,7 +1633,7 @@ reading code alone.
   session that still needs its encryption passkey is labeled **Unlock encrypted
   data** in the sidebar instead of looking fully logged in. Closing the unlock
   dialog keeps Google authentication but never marks encrypted data or tickets
-  unlocked; the dialog explains this distinction and offers an explicit Log out.
+  unlocked; the Welcome back card explains that a passkey protects the data.
 - The viewport permits browser zoom. Do not restore `maximum-scale` or
   `user-scalable=no`; authentication, Membership, and ticket recovery must remain
   usable under magnification.
@@ -570,7 +1785,9 @@ reading code alone.
   so a pending preparation survives the extraction. The record format is
   generic entitlement state and final wallet tickets contain no account,
   payment, subscription, or claim metadata.
-- Account registration remains Google-only in the public Account surface.
+- At the time of the public/private extraction, account registration was
+  Google-only. The 2026-09-03 username-passkey entry above supersedes that
+  sign-in limitation without changing the extension boundary.
   A commercial extension observes only the sanitized account snapshot and can
   resume an upgrade after the verified session becomes ready; Account itself
   has no Checkout-specific callback.
@@ -599,9 +1816,10 @@ reading code alone.
   retaining the production-org endpoint. Handoff must inspect the emitted app
   bundle for both absence of that endpoint and presence of the demo relay.
 - The commercial composition now uses a three-panel, self-hosted-Newsreader
-  landing page from `oa-commercial/feature/pre-chat-landing`, reconciled with
-  the reviewed Google-only account handoff. Apple, passkey, recovery, and
-  access-code alternatives remain absent. Its Premium modal keeps server-owned
+  landing page from `oa-commercial/feature/pre-chat-landing`, originally
+  reconciled with the reviewed Google-only account handoff. The Account modal
+  now adds a recovery-free username passkey path; Apple and access-code
+  authentication alternatives remain absent. Its Premium modal keeps server-owned
   subscription/top-up prices and eligibility, exposes Customer Portal and
   ticket-pack actions when status authorizes them, and adds a collapsed ticket
   explanation without hard-coding model costs.
@@ -1063,11 +2281,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The compact ticket launcher's icon and label share the same left edge as
     the Ephemeral Access Key heading below it; avoid adding nested horizontal
     padding to the launcher.
-  - The commercial launcher deliberately preserves the production ticket
-    header treatment: `Inference Tickets: N` uses the same `text-xs font-medium`
-    typography as the public client, and its small question-mark control sits
+  - The commercial launcher uses its original `text-xs font-medium` heading
+    treatment, with its original compact question-mark control
     immediately after the count. Do not replace it with a full-width navigation
-    row or move the help control to the far edge of the panel.
+    row or move the help control to the far edge of the panel. Standalone
+    public ticket controls retain their existing compact typography.
 
 
 - 2026-08-07: Google is the only supported SSO provider.
@@ -1266,10 +2484,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     scary diagnostic wording such as raw HTTP statuses or provider exception
     strings. Do not render raw provider error bodies, prompts, memory file
     contents, URLs with secrets, or API keys in the chat.
-  - `MessageTemplates` renders the note as a compact sub-row under the Memory
-    Agent status, but only shows the short title by default to keep the chat
-    low-noise. The main fallback copy stays one line:
-    `Memory context was not added this time. Sending without it.`
+  - The visible Memory Agent fallback deliberately matches the normal empty
+    retrieval state: `No added memory. Sending original prompt.` Structured
+    failure metadata remains available for safe diagnostics and shared-payload
+    compatibility, but the chat does not add a second bordered `Note:` card.
   - `buildSharePayload(...)` now routes through `chat/services/sharePayload.js`
     so shared Memory Agent messages preserve this safe reason metadata without
     pulling share-service network side effects into payload tests.
@@ -1302,6 +2520,11 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     The memory panel/import/export storage bank is also lazy and only constructs
     when the feature is enabled and the user explicitly opens or uses memory
     management.
+- 2026-09-14: Quick Ask caps its growing panel at the space below its positioned
+  top edge, leaving 16px at the viewport bottom. Chat scrolling and window resize
+  re-fit the panel while retaining its content anchor. The mini-chat scrolls
+  internally and is keyboard focusable. Streaming follows the end only while
+  the reader is within 24px of the bottom; scrolling upward preserves their place.
 - 2026-06-03: Inline quick ask is a non-persistent mini-chat for selected
   assistant text.
   - Selecting text inside an assistant `.message-content` shows a compact
@@ -1802,9 +3025,9 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - The shortcut calls the same `showSidebar()` / `hideSidebar()` paths as the
     toolbar buttons, preserving the existing desktop persistence and mobile
     overlay behavior.
-  - During the desktop close animation, `data-left-sidebar-closing` keeps the
-    main-toolbar expand button hidden until the sidebar width transition ends.
-  - The collapse and expand sidebar buttons use real tooltip markup, not
+  - Superseded on 2026-09-21: a single fixed toggle stays available during the
+    close animation. `data-left-sidebar-closing` only suppresses rail tooltips.
+  - The sidebar toggle uses real tooltip markup, not
     `[data-tooltip]`, so the shortcut can match the model-picker style with
     separate muted `⌘` and key glyphs.
   - The delete-history sidebar icon uses the shared `[data-tooltip]` hover
@@ -2032,7 +3255,7 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
   - Confidential retrieval keys are cached per session on `memoryKey` / `memoryKeyInfo` and must be invalidated on `401` / `403` auth failures.
   - Root `oa-chat` currently does not use that attested SDK path for memory mode. `chat/services/memoryBridge.js` intentionally forces the confidential memory client onto the plain OpenAI-compatible HTTPS path against `https://inference.tinfoil.sh/v1` (`provider: 'openai'`, not `provider: 'tinfoil'`).
   - `nanomem` still supports the SDK-backed, attested Tinfoil transport, but the root app is not opting into it right now.
-  - The generic root-app fallback text `Memory context was not added this time. Sending without it.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
+  - The generic root-app fallback text `No added memory. Sending original prompt.` logs the underlying exception to the browser console as `Memory augment query failed:`. Check that before assuming the failure is in the retrieval prompt itself.
   - Root `oa-chat` now also has the memory filesystem modal shell from `memory-chat`, opened by `Cmd/Ctrl+Shift+M`. Storage editing and local-chat backfill are ported there, but the old `memory-chat` extractor/cancel UI is still not.
   - The settings menu `Data Controls` section now has a dedicated `Memory` row. `Export` uses the same OMF exporter as the memory panel header. `Import` uses a hidden settings-menu file input, then opens the memory panel and hands the selected file into the same OMF preview/merge flow as the panel header import button.
   - The root memory panel now also uses `memory-chat`'s OMF import/export UX, but the actual OMF logic has been moved into `nanomem`. `Export` now goes through `memoryBank.exportOmf()`, and import preview/merge go through `memoryBank.previewOmfImport()` / `memoryBank.importOmf()` instead of app-local format logic.
@@ -2173,3 +3396,139 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     aliases while separately named downstream apps are deployed explicitly.
   - Ordinary later commits still build normally; no project settings or domains
     need changing. This does not change the chat runtime or ticket/account defaults.
+
+### Approved UI motion pass (2026-09-14)
+
+The approved motion studies now use the Transitions.dev recipes in `chat/styles.css`
+and the presentation-only adapter `chat/ui/uiMotion.js`. Shared dialogs (Settings,
+Memory, Account, model picker, Share, Import, security details and delete history),
+zkAPI Welcome/balance/withdrawal, Settings/context menus, Quick Ask, tooltips,
+activity details, memory folders, native proof/wallet disclosures, toasts, wallet
+status text and the accepted payment-mode pill have matching motion. Production's
+waiting-response shimmer remains unchanged. No transaction, sign-in, memory or
+inference state is delayed by these animations.
+
+Closing surfaces become logically hidden and inert immediately, then retain the
+actual outgoing DOM for the CSS close duration. Rapid reopening cancels that
+cleanup; modal rerenders are resolved to the current child when closing. Never
+clone private content for animations. Replaced toasts relinquish their ID before
+an incoming toast is mounted. Activity disclosures reuse an outgoing node when
+reopened. Native details retain their own open state and keyboard behavior; direct
+child CSS overrides prevent an open parent exposing closed nested disclosures.
+Browsers without `::details-content` keep native disclosure behavior. Reduced-motion
+preferences skip delayed cleanup and CSS movement.
+
+Quick Ask animates its inner scroller so its measured outer position and viewport
+height cap stay stable. Payment-mode pill movement follows runtime acceptance,
+not the initial click; initial layout and resize place it without motion. Motion
+helpers are owned by the UI layer, not imported as concrete components by app.js.
+Commercial's separately deployed landing/billing adapter deliberately contains only
+its used DOM utilities; the commercial build deploys those modules under /landing.
+
+The private-balance help fixture must implement `classList.toggle`, native `hidden`,
+and `inert`: `setDisclosure` now owns those states together. After changing shared
+motion adapters, run the entire native zkAPI suite, including
+`private-balance-help.test.mjs`, not only the wallet render tests. Vercel runs both
+the core and native suites from the pinned commercial checkout.
+
+## 2026-09-21: Inference silence and failure recovery
+
+The commercial checkout's shared chat code now implements the fixes from the
+[historical review](INFERENCE_RELIABILITY_REVIEW.md). See
+[Inference reliability](INFERENCE_RELIABILITY.md) for deadlines, limits and tests.
+Normal waiting/streaming UI is unchanged. A session-owned warning appears after
+45 seconds without transport activity, clears on activity or termination, and
+is restored correctly when navigating back to a still-silent request. Council
+lanes own separate warnings. Heartbeats reset silence, but not output deadlines.
+
+`inferenceError` is a separate persisted assistant-message field for interrupted
+partial answers; it is rendered with escaped text and the existing regenerate
+action. It is not included in model context. Keep partial text, reasoning and
+images when failing or stopping; clear pending flags in both cases. Errors must
+be saved to the originating session even if the user has navigated elsewhere.
+The reasoning render optimization must fall back to full rendering when an
+error notice is present. Stop remains ordinary cancellation, without an error.
+
+The stream watchdog races fetch, body reads and callbacks because not every
+relay honors AbortSignal. Cleanup must never await a potentially stuck cancel
+promise. HTTP error-body reads own their reader so timeout can cancel/unlock it;
+response cleanup also covers an onStreamOpen callback that never settles.
+The parser requires completion evidence plus usable output; malformed/empty or
+truncated streams now fail instead of silently finalizing. Stream failures and
+permanent HTTP errors must not be retried automatically.
+
+## 2026-09-19: Recover OpenRouter output-budget rejections before rotating access
+
+- Normal browser streaming requests previously omitted `max_tokens` under the
+  incorrect assumption that OpenRouter would fit output to the key's credits.
+  A provider default (65,536 in the reported incident) can exceed the allowance
+  even when a useful answer is affordable. Broad 402 detection then spent a
+  fresh ticket without changing the rejected request.
+- `services/inference/openRouterCreditRecovery.js` retries a rejected HTTP 402
+  once on the same key with 90% of the explicitly reported affordable output,
+  respecting smaller product caps. Body preparation runs once so composed
+  products cannot overwrite the reduced cap. The user subsequently requested
+  a 30,000-token default ceiling, applied as described below.
+- Structured in-flight-budget errors wait for `Retry-After` (1s fallback), up to
+  two retries. A requested wait over 30s surfaces rather than being shortened.
+  Waits are abortable. No successful HTTP body or partial generation is replayed.
+- Access rotation excludes positive affordability, account-wide credit limits,
+  in-flight holds and unknown structured limit sources. Explicit key exhaustion
+  and legacy generic credit errors retain the existing single refresh policy.
+- Terminal activity errors now carry status and an allowlisted local credit
+  code, not provider text. This explains why the earlier timeline said only
+  `Request failed`: its privacy sanitizer discards strings, including the
+  provider message. Prompts, keys and raw error bodies remain excluded.
+- Coverage: browser streaming, including regeneration and Parallel/Council
+  through the shared adapter. Native Android transport and non-streaming helper
+  requests do not use this HTTP recovery wrapper. These remain follow-up work,
+  alongside production monitoring of station balance and admission failures.
+- Tests include the exact reported affordability rejection, repeated rejection,
+  cancellation, provider scope, exhausted-key classification, composed budgets,
+  and a production API streaming harness. No live credentials or ticket spending
+  are needed. Changes prepared against commercial chat revision `a38e534`;
+  deployment and live verification are separate from local validation.
+- Validation: production build succeeds; 843 core and 200 native tests pass,
+  including all 11 new regression tests. Six existing native streaming tests
+  fail attempting to load live model tiers; the same six failures reproduce
+  on unchanged `a38e534` in this environment. Independent final diff review
+  approved the change with no actionable findings.
+
+## 2026-09-19: Set a 30,000-token generation ceiling
+
+- At the user's request, shared request-body preparation now caps output at
+  exactly 30,000 tokens. This covers browser streams, strict completions and
+  Android native request bodies. Input history is not truncated. Reasoning
+  continues to count toward the provider's generation budget where applicable.
+- Smaller caller limits (including 24-token titles), catalog output limits and
+  composed billing limits win. Capture the caller limit, run billing policy on
+  the original body, then apply the ceiling. The actual SDK skips affordability
+  calculation when `max_tokens` is already set; applying the ceiling first
+  would raise a $1 key's 18,000-token budget to 30,000. A regression test uses
+  the real SDK adapter. The 402 recovery still reduces the result further if
+  the key cannot afford the request.
+- Fable 5.1's published standard rates checked on 2026-09-19 are $10/M input
+  and $50/M output. At these rates 65,536 output tokens cost $3.2768 and 30,000
+  cost $1.50, excluding input. Thus a fresh $5 key with a short input should
+  cover 65,536 output tokens; the reported 46,897 affordability does not by
+  itself establish why the first request failed. Its output value is $2.34485.
+  Actual key limit/usage, request input and error metadata are needed to tell
+  whether this was an input cost, issued-key cap, account balance or hold issue.
+  Sources: https://openrouter.ai/anthropic/claude-fable-5.1 and
+  https://platform.claude.com/docs/en/models/fable-5-1/overview.
+- Validation after the ceiling change: 846 core tests and 203 native tests pass;
+  the same six baseline native streaming failures remain. Production build
+  succeeds and independent re-review approves the real SDK budget integration.
+  The user confirmed the failed request's panel shows only HTTP 402 and generic
+  `Request failed`, so the incident's actual key balance remains unverified.
+## 2026-09-22: Smooth widen-button placement during sidebar motion
+
+- The left-toolbar spacer stays mounted and animates its width and compensating margin with the sidebar's existing open/close timing. Previously `display: none/block` introduced a 40px jump in the opposite direction before the sidebar moved. Shared timing variables now live at the root so both elements use the same curve.
+- Overlay layouts retain a fixed 36px spacer; reduced motion disables both sidebar and spacer transitions. Endpoint positions and the fixed sidebar toggle remain unchanged.
+
+## 2026-09-22: Wait for the session transaction before reporting access ready
+
+- `saveSession` now resolves and broadcasts `sessions-updated` only after the IndexedDB transaction completes. A successful `put` request alone can still be rolled back. Transaction errors and aborts reject the save, including an abort after put success.
+- Access acquisition already awaits this save, so inference cannot advance through that path before the credential record commits. Verification requirements, ticket redemption, and server storage are unchanged.
+- Three mocked lifecycle regressions fail against the old implementation and pass with the commit barrier. They prove ordering and serialization of the key with its proof, not browser reload recovery. All 893 core and 312 zkAPI tests and the commercial production build pass; independent review approved the source change.
+- The user's report of a missing key after a prolonged response wait has not been reproduced. This narrow race is a confirmed persistence defect, not a confirmed complete explanation of that incident. Reload still cannot resume an existing provider stream; this change does not refund redeemed tickets or recover credentials whose response never reached the browser.

@@ -1,4 +1,4 @@
-const FALLBACK_MEMORY_FAILURE_CONTENT = 'Memory context was not added this time. Sending without it.';
+const FALLBACK_MEMORY_FAILURE_CONTENT = 'No added memory. Sending original prompt.';
 const MEMORY_RETRIEVAL_FAILURE_COPY = Object.freeze({
     auth: {
         title: 'Memory access will refresh',

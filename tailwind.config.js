@@ -12,7 +12,7 @@ module.exports = {
         /* All colors use CSS variables for dark mode support */
         border: 'hsl(var(--color-border))',
         input: 'hsl(var(--color-input))',
-        ring: 'hsl(var(--color-ring))',
+        ring: 'hsl(var(--color-focus-ring))',
         background: 'hsl(var(--color-background))',
         foreground: 'hsl(var(--color-foreground))',
         primary: {

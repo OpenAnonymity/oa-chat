@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" class="theme-light flat-mode">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Model picker focus — isolated fixture</title>
+    <link rel="stylesheet" href="../../chat/tailwind.generated.css">
+    <link rel="stylesheet" href="../../chat/styles.css">
+    <style>
+        body { min-height: 100vh; margin: 0; background: hsl(var(--color-background)); }
+        .fixture-controls { display: flex; gap: 12px; padding: 16px; }
+        .fixture-controls button { padding: 8px 12px; border: 1px solid hsl(var(--color-border)); border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <nav class="fixture-controls" aria-label="Fixture controls">
+        <button id="toggle-theme" type="button">Toggle theme</button>
+        <button id="focus-close" type="button">Focus close</button>
+    </nav>
+    <div id="model-picker-modal" class="fixed inset-0 w-full h-full bg-black/50 flex items-center justify-center z-50">
+        <div role="dialog" aria-modal="true" aria-label="Choose a model" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
+            <div class="model-picker-search flex items-center border-b border-border px-3" cmdk-input-wrapper="">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M10.5 3.75a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5ZM2.25 10.5a8.25 8.25 0 1 1 14.59 5.28l4.69 4.69a.75.75 0 1 1-1.06 1.06l-4.69-4.69A8.25 8.25 0 0 1 2.25 10.5Z" clip-rule="evenodd"></path>
+                </svg>
+                <input id="model-search" type="text" placeholder="Search models..." class="flex-1 bg-transparent outline-none text-sm py-2.5 text-foreground placeholder:text-muted-foreground" autofocus>
+                <button id="close-modal-btn" type="button" aria-label="Close model picker" class="ml-2 text-muted-foreground hover:text-foreground transition-colors p-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="overflow-y-auto p-2" style="height: 270px;">
+                <p class="px-2 py-1.5 text-xs text-muted-foreground">Pinned</p>
+                <div class="model-option px-2 py-1.5 rounded-sm bg-accent text-foreground">Auto Router</div>
+                <div class="model-option px-2 py-1.5 rounded-sm text-foreground">OpenAI: GPT Chat Latest</div>
+                <div class="model-option px-2 py-1.5 rounded-sm text-foreground">Anthropic: Claude Sonnet</div>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('toggle-theme').onclick = () => {
+            document.documentElement.classList.toggle('dark');
+            document.documentElement.classList.toggle('theme-light');
+            document.documentElement.classList.toggle('theme-dark');
+        };
+        document.getElementById('focus-close').onclick = () => document.getElementById('close-modal-btn').focus();
+    </script>
+</body>
+</html>
