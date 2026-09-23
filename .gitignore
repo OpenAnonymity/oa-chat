@@ -11,6 +11,9 @@
 # production
 /build
 /dist
+/daemon/oa-chat
+/daemon/build/
+/daemon/dist/
 
 # misc
 .DS_Store

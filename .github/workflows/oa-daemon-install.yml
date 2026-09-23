@@ -1,0 +1,31 @@
+name: OA daemon installer
+on:
+  pull_request:
+    paths:
+      - 'daemon/install.sh'
+      - 'daemon/scripts/**'
+      - 'daemon/packaging/**'
+      - '.github/workflows/oa-daemon-install.yml'
+      - '.github/workflows/oa-daemon-release.yml'
+  push:
+    paths:
+      - 'daemon/install.sh'
+      - 'daemon/scripts/**'
+      - 'daemon/packaging/**'
+      - '.github/workflows/oa-daemon-install.yml'
+      - '.github/workflows/oa-daemon-release.yml'
+permissions:
+  contents: read
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Bash syntax
+        run: bash -n daemon/install.sh
+      - name: Test installer with local release fixtures
+        run: python3 daemon/scripts/test-install.py

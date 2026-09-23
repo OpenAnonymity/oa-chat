@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-10",
+  "environment": "Public Sepolia ZKAPI deployment; unfunded wallet; OA-org issuance environment unverified",
+  "openwebui_version": "0.11.3",
+  "daemon_base_url": "http://127.0.0.1:18763/v1",
+  "openwebui_base_url": "http://host.docker.internal:18763/v1",
+  "browser_model": "oa-sepolia.openai/gpt-4o-mini",
+  "upstream_model": "openai/gpt-4o-mini",
+  "health_http_status": 200,
+  "authenticated_models_http_status": 200,
+  "discovered_zkapi_models": 8,
+  "unauthenticated_models_http_status": 401,
+  "browser_requests_sent": 1,
+  "browser_prompt": "Sepolia ZKAPI readiness check: reply with one short sentence.",
+  "browser_error_message": "The private balance needs funding. Run oa-chat fund.",
+  "completion_stop_control_disappeared": true,
+  "inference_content_received": false,
+  "browser_http_status_captured": false,
+  "browser_observation_method": "CUA accessibility tree and screenshot",
+  "automatic_title_tag_followup_autocomplete_query_generation": false,
+  "ticket_connection_preserved": true,
+  "remaining_validation": "Confirmed MetaMask approval/deposit, funded proof-backed inference, streaming, and settlement are pending."
+}

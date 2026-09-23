@@ -1,0 +1,92 @@
+{
+  "test_date": "2026-09-09",
+  "backend": "deterministic mock using real internal/server API",
+  "open_webui_version": "0.11.3",
+  "image_digest": "sha256:7b9979b1c481b1562c1abe85af350e1cfd23c7737b0705bf4dbf0d2325168c75",
+  "model": "oa-e2e-streaming",
+  "browser_measurements": [
+    {
+      "ms": 893,
+      "stopButton": true,
+      "text": "Streaming works:\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 1343,
+      "stopButton": true,
+      "text": "Streaming works: tokens\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 1793,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 2243,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 2693,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 3160,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 3609,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes.\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 4076,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 4526,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This is\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 4976,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This is a\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 5443,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This is a deterministic\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 5893,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This is a deterministic integration\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 6343,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This is a deterministic integration test.\n\n\n\n\noa-e2e-streaming"
+    },
+    {
+      "ms": 6814,
+      "stopButton": true,
+      "text": "Streaming works: tokens arrive before the response finishes. This is a deterministic integration test.\n\nSep 9, 4:10 PM\n\n\n\n\noa-e2e-streaming"
+    }
+  ],
+  "direct_api": {
+    "authentication": "pass",
+    "catalog": "pass",
+    "nonstream": "pass",
+    "stream": "pass",
+    "content_events": 14,
+    "first_content_seconds": 0.0,
+    "completion_seconds": 6.38
+  },
+  "open_webui_nonstream_http_status": 200,
+  "unknown_model_http_status": 404,
+  "uncaught_browser_errors": 0,
+  "limitation": "Synthetic backend; not staging redemption, live inference, or a Sepolia deposit."
+}

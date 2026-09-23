@@ -1,0 +1,22 @@
+pkgbase = oa-chat-bin
+	pkgdesc = Local inference API with Open Anonymity ticket and ZKAPI access
+	pkgver = @@VERSION@@
+	pkgrel = 1
+	url = https://github.com/OpenAnonymity/oa-chat
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = ca-certificates
+	depends = glibc>=2.39
+	depends = gcc-libs
+	depends = openssl
+	optdepends = systemd: user service management
+	optdepends = xdg-utils: open the funding browser
+	provides = oa-chat
+	conflicts = oa-chat
+	source_x86_64 = oa-chat_@@VERSION@@_linux_amd64.tar.gz::@@BASE_URL@@/oa-chat_@@VERSION@@_linux_amd64.tar.gz
+	sha256sums_x86_64 = @@LINUX_AMD64_SHA256@@
+	source_aarch64 = oa-chat_@@VERSION@@_linux_arm64.tar.gz::@@BASE_URL@@/oa-chat_@@VERSION@@_linux_arm64.tar.gz
+	sha256sums_aarch64 = @@LINUX_ARM64_SHA256@@
+
+pkgname = oa-chat-bin

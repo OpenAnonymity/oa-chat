@@ -46,6 +46,36 @@ link them across sessions. See blog post
 
 ## How It Works End-to-End
 
+### Local API clients
+
+The optional [Go daemon](CLI.md) is another client-side implementation. An
+OpenAI-compatible UI sends its prompt to the user's loopback daemon, which
+obtains anonymous access and forwards inference through destination TLS over
+the Wisp relay. The UI process and daemon host are inside the user's trust
+boundary; an externally hosted UI can see/store the user's content just as its
+own operator permits. The daemon cannot anonymize content that the user has
+already disclosed to that UI.
+
+The local API key authenticates only the UI-to-daemon hop and never reaches OA
+services or the provider. Incoming cookies, identity headers, and top-level
+account/storage metadata are stripped. Ticket requests get distinct verified
+provider keys; zkAPI leases are single-use across API requests and process
+restarts. The daemon stores no chat history or request logs. Its proof
+companion receives no prompts/responses and uses the same encrypted relay for
+HTTPS. A disconnected relay, wrong station/key binding, or unverified access
+fails closed. See the CLI documentation for deployed-service prerequisites
+and the zkAPI settlement constraint.
+
+The CLI's Ethereum address-funding route generates an Ethereum signing key
+locally and retains it in an owner-only file alongside its private recovery
+state. No external wallet connection or OA account identity is required.
+Funding address balances, incoming transfers, approvals, and vault deposits
+are public Ethereum activity visible to the configured RPC (accessed through
+Wisp) and chain observers. They are not made anonymous by removing a wallet
+connection. The signing key and private-note secret never enter the optional
+browser page, account synchronization, or inference requests. Backups of the
+private configuration directory control both public funds and private notes.
+
 ### 1. Ticket issuance (blind signatures)
 
 See blog post [Section 1: Blind Signatures](https://openanonymity.ai/blog/unlinkable-inference/#1-blind-signatures)

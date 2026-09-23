@@ -1,0 +1,248 @@
+{
+  "environment": "OA staging tickets, production verifier, OpenRouter inference, temporary encrypted Wisp relay",
+  "open_webui_version": "0.11.3",
+  "model": "openai/gpt-4.1-mini",
+  "first_visible_content_ms": 3329,
+  "last_content_ms": 6006,
+  "completion_observed_ms": 6095,
+  "visible_updates": 39,
+  "initial_characters": 1,
+  "final_characters": 594,
+  "measurements": [
+    {
+      "characters": 1,
+      "ms": 3329,
+      "stop_visible": true,
+      "text": "1"
+    },
+    {
+      "characters": 31,
+      "ms": 3373,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit"
+    },
+    {
+      "characters": 39,
+      "ms": 3445,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit."
+    },
+    {
+      "characters": 42,
+      "ms": 3500,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt"
+    },
+    {
+      "characters": 82,
+      "ms": 3544,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing."
+    },
+    {
+      "characters": 90,
+      "ms": 3589,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see"
+    },
+    {
+      "characters": 121,
+      "ms": 3606,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time"
+    },
+    {
+      "characters": 170,
+      "ms": 3847,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long"
+    },
+    {
+      "characters": 203,
+      "ms": 3886,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once."
+    },
+    {
+      "characters": 236,
+      "ms": 4046,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are"
+    },
+    {
+      "characters": 286,
+      "ms": 4103,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can"
+    },
+    {
+      "characters": 306,
+      "ms": 4130,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right"
+    },
+    {
+      "characters": 312,
+      "ms": 4167,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away."
+    },
+    {
+      "characters": 335,
+      "ms": 4189,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your"
+    },
+    {
+      "characters": 346,
+      "ms": 4213,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention."
+    },
+    {
+      "characters": 349,
+      "ms": 4242,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt"
+    },
+    {
+      "characters": 357,
+      "ms": 4272,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces"
+    },
+    {
+      "characters": 382,
+      "ms": 4312,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings."
+    },
+    {
+      "characters": 430,
+      "ms": 4392,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\n12"
+    },
+    {
+      "characters": 427,
+      "ms": 4434,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed."
+    },
+    {
+      "characters": 440,
+      "ms": 4481,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can"
+    },
+    {
+      "characters": 443,
+      "ms": 4538,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be"
+    },
+    {
+      "characters": 460,
+      "ms": 4584,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go."
+    },
+    {
+      "characters": 484,
+      "ms": 4628,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and"
+    },
+    {
+      "characters": 490,
+      "ms": 4668,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast."
+    },
+    {
+      "characters": 526,
+      "ms": 4714,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s"
+    },
+    {
+      "characters": 536,
+      "ms": 4746,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on"
+    },
+    {
+      "characters": 546,
+      "ms": 4785,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes"
+    },
+    {
+      "characters": 551,
+      "ms": 5507,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than"
+    },
+    {
+      "characters": 559,
+      "ms": 5540,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting"
+    },
+    {
+      "characters": 560,
+      "ms": 5590,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting."
+    },
+    {
+      "characters": 563,
+      "ms": 5690,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\n16"
+    },
+    {
+      "characters": 560,
+      "ms": 5708,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting."
+    },
+    {
+      "characters": 563,
+      "ms": 5773,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\nIt"
+    },
+    {
+      "characters": 573,
+      "ms": 5907,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\nIt makes the"
+    },
+    {
+      "characters": 578,
+      "ms": 5955,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\nIt makes the chat"
+    },
+    {
+      "characters": 593,
+      "ms": 5971,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\nIt makes the chat lively and fun"
+    },
+    {
+      "characters": 594,
+      "ms": 6006,
+      "stop_visible": true,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\nIt makes the chat lively and fun."
+    },
+    {
+      "characters": 594,
+      "ms": 6095,
+      "stop_visible": false,
+      "text": "Streaming lets words appear bit by bit.\nIt shows answers quickly before finishing.\nYou see the response grow in real time.\nIt feels like talking to a person live.\nNo long waiting for full answer at once.\nUpdates come as soon as they are ready.\nThe chat looks active and engaged.\nYou can start reading right away.\nMoving text keeps your attention.\nIt reduces silence or lag feelings.\nThe flow matches natural conversation speed.\nMistakes can be fixed on the go.\nIt feels responsive and fast.\nYou can guess what comes next.\nIt\u2019s easier on your eyes than waiting.\nIt makes the chat lively and fun."
+    }
+  ],
+  "content_updates": 38
+}

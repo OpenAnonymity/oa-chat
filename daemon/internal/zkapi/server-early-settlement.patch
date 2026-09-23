@@ -1,0 +1,158 @@
+--- a/crates/zkapi-serverd/src/processor_v2.rs
++++ b/crates/zkapi-serverd/src/processor_v2.rs
+@@ -327,7 +327,16 @@
+                 )
+             }
+         };
+-        let settle_after = expires_at.saturating_add(lease_config.settlement_grace_seconds);
++        // OA-org keys spend a prepaid hard cap rather than metered aggregate
++        // usage. Charge that full bound as soon as issuance activates, allowing
++        // the client to advance its private state and mint a different key for
++        // the next independent API call. The old key remains limited to funds
++        // already charged; its expiry is unchanged. Direct OpenRouter leases
++        // still require expiry and provider usage propagation before billing.
++        let settle_after = oa_settlement_time(
++            lease_config.source.label(), issued_at, expires_at,
++            lease_config.settlement_grace_seconds,
++        );
+         self.store.update_openrouter_lease_timing(
+             &request.client_request_id,
+             expires_at,
+@@ -344,6 +353,17 @@
+             }
+             return Err(error);
+         }
++        if lease_config.source.label() == "oa_org" {
++            let activated = self.store.lookup_openrouter_lease(&request.client_request_id)
++                .ok_or_else(|| ServerError::Internal("activated OA lease disappeared".into()))?;
++            // Keep the live issuance response even if settlement temporarily
++            // fails: the durable active lease is due and the background worker
++            // will retry. Never retry provisioning to recover a failed debit.
++            if let Err(error) = self.settle_oa_org_lease(&activated) {
++                tracing::warn!(client_request_id = %request.client_request_id,
++                    error = %error, "prepaid OA lease settlement will be retried");
++            }
++        }
+         Ok(IssuedOpenRouterLease {
+             lease: OpenRouterLeaseResponse {
+                 status: "active".to_string(),
+@@ -364,6 +384,9 @@
+     /// Settle every expired lease from OpenRouter's authoritative aggregate
+     /// usage. Failures are retained and retried by the next background scan.
+     pub async fn settle_due_openrouter_leases(&self) {
++        // Issuance and the fallback worker must never race to sign two next
++        // states for one lease now that OA prepaid settlement happens inline.
++        let _settlement_guard = self.lease_issue_lock.lock().await;
+         for lease in self.store.due_openrouter_leases(current_timestamp()) {
+             let result = match lease.key_source.as_str() {
+                 "openrouter" => match &self.openrouter {
+@@ -918,3 +941,109 @@
+         .unwrap_or_default()
+         .as_millis() as u64
+ }
++
++// Only the independently bounded, fully prepaid OA-org source settles early.
++fn oa_settlement_time(source: &str, issued_at: u64, expires_at: u64, grace: u64) -> u64 {
++    if source == "oa_org" { issued_at } else { expires_at.saturating_add(grace) }
++}
++
++#[cfg(test)]
++mod oa_prepaid_settlement_tests {
++    use super::*;
++    use zkapi_types::wire::{Groth16ProofWire, ProofBackendWire};
++    use zkapi_types::RequestPublicInputsV2;
++
++    #[test]
++    fn metered_sources_keep_expiry_and_grace() {
++        assert_eq!(oa_settlement_time("oa_org",100,400,10),100);
++        assert_eq!(oa_settlement_time("openrouter",100,400,10),410);
++        assert_eq!(oa_settlement_time("unknown",100,400,10),410);
++        assert_eq!(oa_settlement_time("openrouter",100,u64::MAX,10),u64::MAX);
++    }
++
++    #[test]
++    fn prepaid_lease_is_due_only_after_key_activation_and_debits_once() {
++        let store = NullifierStore::in_memory().unwrap();
++        let request = ApiRequestV2 {
++            client_request_id: "prepaid-test".into(), payload: "{}".into(),
++            payload_hash: Felt252::from_u64(1),
++            public_inputs: RequestPublicInputsV2 {
++                protocol_version: 2,chain_id:1,contract_address:Felt252::from_u64(1),
++                active_root:Felt252::from_u64(1),state_signing_key_x:Felt252::from_u64(1),
++                state_signing_key_y:Felt252::from_u64(1),request_time:100,solvency_bound:50000,
++                request_nullifier:Felt252::from_u64(7),authorization_tag:Felt252::from_u64(1),
++                anonymous_commitment_x:Felt252::from_u64(1),anonymous_commitment_y:Felt252::from_u64(1),
++            },
++            proof:Groth16ProofWire{backend:ProofBackendWire::Groth16Bn254,proof:"public-proof".into()},
++        };
++        store.create_openrouter_lease(&request,"oa_org",100,400,100,0.05).unwrap();
++        assert!(store.due_openrouter_leases(100).is_empty());
++        store.activate_openrouter_lease("prepaid-test","hash-without-secret-key").unwrap();
++        let due=store.due_openrouter_leases(100);
++        assert_eq!(due.len(),1);
++        assert_eq!(due[0].expires_at,400);
++        assert_eq!(due[0].spending_limit_usd,0.05);
++        // The existing OA settlement method charges this same hard cap, not
++        // the usage reported by an untrusted local client.
++        let charge=pricing::usd_to_credits(due[0].spending_limit_usd).min(50000);
++        assert_eq!(charge,50000);
++        store.finalize_openrouter_lease("prepaid-test",0.05,charge).unwrap();
++        store.finalize_openrouter_lease("prepaid-test",0.05,charge).unwrap();
++        assert!(store.due_openrouter_leases(500).is_empty());
++        assert_eq!(store.lookup_openrouter_lease("prepaid-test").unwrap().charge_applied,Some(50000));
++    }
++    #[tokio::test]
++    async fn processor_settlement_signs_once_with_concurrent_retry_worker() {
++        use crate::provider::EchoProvider;
++        use zkapi_proof::compact::balance_commitment;
++        let store=Arc::new(NullifierStore::in_memory().unwrap());
++        let signer=Arc::new(ServerSigner::new(&Felt252::from_u64(11),&Felt252::from_u64(12)));
++        let state_key=signer.state_public_key();
++        let config=ServerConfig {
++            request_charge_cap:50000,
++            proof_setup_dir:std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../protocol/setup/v2").to_string_lossy().to_string(),
++            ..Default::default()
++        };
++        let processor=Arc::new(RequestProcessor::try_new(config,store.clone(),signer,Arc::new(EchoProvider::new(0)),Felt252::from_u64(1)).unwrap());
++        let anonymous=balance_commitment(200000,&Felt252::from_u64(13));
++        // Model the state after Groth16 validation has durably reserved a
++        // lease. The actual signer/update/recovery path runs below; the proof
++        // blob is unused by settlement and intentionally not a fake verifier.
++        let request=ApiRequestV2 {
++            client_request_id:"processor-prepaid".into(),payload:"{}".into(),payload_hash:Felt252::from_u64(1),
++            public_inputs:RequestPublicInputsV2 {
++                protocol_version:2,chain_id:1,contract_address:Felt252::ZERO,
++                active_root:Felt252::from_u64(1),state_signing_key_x:state_key.x,state_signing_key_y:state_key.y,
++                request_time:100,solvency_bound:50000,request_nullifier:Felt252::from_u64(17),
++                authorization_tag:Felt252::from_u64(1),anonymous_commitment_x:anonymous.x,anonymous_commitment_y:anonymous.y,
++            },
++            proof:Groth16ProofWire{backend:ProofBackendWire::Groth16Bn254,proof:String::new()},
++        };
++        store.reserve_openrouter_lease(&request.public_inputs.request_nullifier,&request.client_request_id,&request.payload_hash).unwrap();
++        store.create_openrouter_lease(&request,"oa_org",100,400,100,0.05).unwrap();
++        store.activate_openrouter_lease(&request.client_request_id,"safe-key-hash").unwrap();
++        let lease=store.lookup_openrouter_lease(&request.client_request_id).unwrap();
++        let issuance_guard=processor.lease_issue_lock.lock().await;
++        let retry_processor=processor.clone();
++        let worker=tokio::spawn(async move { retry_processor.settle_due_openrouter_leases().await; });
++        tokio::task::yield_now().await;
++        assert!(!worker.is_finished(),"background settlement raced the issuance guard");
++        processor.settle_oa_org_lease(&lease).unwrap();
++        let first=processor.recover_by_client_id(&request.client_request_id).unwrap();
++        assert_eq!(first.nullifier_status,"finalized");
++        let response=first.request_response.as_ref().unwrap();
++        assert_eq!(response.charge_applied,50000);
++        assert_ne!(response.next_anchor,Felt252::ZERO);
++        assert_ne!(response.next_commitment,anonymous);
++        let first_json=serde_json::to_value(first).unwrap();
++        drop(issuance_guard);
++        worker.await.unwrap();
++        processor.settle_oa_org_lease(&lease).unwrap();
++        let after=processor.recover_by_client_id(&request.client_request_id).unwrap();
++        // server_update rerandomizes the anchor and commitment on every call;
++        // exact equality proves neither worker nor repeated settle re-signed.
++        assert_eq!(serde_json::to_value(after).unwrap(),first_json);
++        assert_eq!(store.lookup_openrouter_lease(&request.client_request_id).unwrap().charge_applied,Some(50000));
++    }
++
++}
