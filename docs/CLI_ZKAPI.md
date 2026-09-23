@@ -193,17 +193,115 @@ The address-funding journal retains one authorized deposit. A finalized revert
 can be retried explicitly with the same note secret and refreshed witness;
 ambiguous transactions always retain their original signed bytes and nonce.
 An activated journal whose companion note is missing requires recovery, not a
-second deposit. This version does not provide a public-asset sweep command or
-private-note withdrawal/refill workflow. Excess public USDC and ETH remain
-controlled by the saved Ethereum key; preserve the full backup for recovery.
+second deposit. After a confirmed CLI withdrawal the journal retains the
+signing key and transaction history, archives the completed deposit recovery
+file, and permits a fresh `fund --amount` deposit. Excess public USDC and ETH
+remain controlled by the saved Ethereum key; this version has no public-asset
+sweep command, so preserve the full backup for recovery.
 
 The current upstream wallet has one active note. Deposits do not increase an
 active note in place. The Go funding page therefore refuses to overwrite an
-active note. Withdrawing/closing an old note currently requires the upstream
-zkAPI tooling; the Go daemon does not yet expose a withdrawal command. Preserve
-its wallet state when changing to a separate funded state directory.
+active note. Close it with the withdrawal command before funding another note.
+Preserve its wallet state when changing to a separate funded state directory.
+
+## Withdraw without connecting a wallet
+
+Keep `oa-chat serve` running and use the same configuration directory:
+
+```sh
+oa-chat withdraw
+oa-chat withdraw --to 0xYOUR_ETHEREUM_DESTINATION
+```
+
+The first command only shows status. Replace the placeholder in the second
+command with the receiving address; that explicit command authorizes withdrawal
+of the **entire remaining private balance**. There is no partial-amount option.
+The daemon generates the withdrawal proof and uses its existing local Ethereum
+key to submit `mutualClose`. No browser extension, wallet connection, seed
+phrase, or imported key is needed. ETH for gas must be available at the displayed
+local signing address, on the configured network. Existing fee limits apply:
+300 gwei and a maximum transaction cost of 0.02 ETH per signed transaction.
+
+An outstanding inference must settle first. The companion saves a reservation
+before requesting clearance and blocks further inference on that note. The
+destination cannot change after starting; there is no cancellation that resumes
+spending a reserved note. Proof preparation can take several minutes. Ctrl+C
+stops waiting, and rerunning the exact same command resumes saved progress.
+An uncertain broadcast reuses the identical signed transaction. Only a finalized
+revert permits a fresh transaction, following another explicit command, with
+the same note, destination, balance, and nullifier.
+
+Every request is bound to the originally selected note ID. A suspended terminal
+cannot resume against a later deposit, and concurrent polling cannot authorize
+a retry: only a new command that observes the failed transaction sends its exact
+hash as retry authorization. Withdrawal management additionally requires the
+owner-only `management-token` file, automatically retained in the private config
+directory. The inference API key shared with an OpenAI-compatible client is
+insufficient to initiate or inspect withdrawals; the CLI supplies both credentials.
+An unsuccessful retry preserves the previous failed transaction until a
+replacement has been durably signed, so an already-relayed payout can still be
+confirmed after proof, simulation, or gas errors.
+
+Both the daemon and companion validate the finalized canonical receipt and the
+exact vault `MutualClose` event before completing recovery. The companion keeps
+a private archive of the closed note; the funding record is archived with a
+`.withdrawn-<transaction-hash>` suffix. Repeating a completed command does not
+send another transaction. A successful withdrawal permits a new deposit using
+the same local address. A missing note without this verified closure still
+requires recovery and never authorizes a replacement deposit.
+
+If another party relays the same valid withdrawal first, the requested recipient
+still receives the payout but the local transaction can revert. After the local
+revert is finalized, confirm the successful payout instead of sending another
+withdrawal:
+
+```sh
+oa-chat withdraw --to 0xYOUR_ETHEREUM_DESTINATION --confirm 0xSUCCESSFUL_TRANSACTION_HASH
+```
+
+The supplied receipt must be finalized and match the exact saved vault, note,
+nullifier, amount, and destination. Both processes verify it before completing
+recovery; this command cannot substitute a different payout. The local failed
+transaction must also be finalized so its signing nonce is safely retired.
+
+This command implements cooperative withdrawal, which requires the zkAPI
+server to issue clearance. The delayed escape/challenge workflow is not exposed
+by this CLI command. Public tokens or ETH left at the local address are separate
+from the private balance and are not swept by withdrawal. Withdrawal amount,
+destination, and transaction are public Ethereum data.
+
+Build both binaries from this revision: the companion must advertise
+`withdrawal_bridge_version: 1`. The published `daemon-v0.1.0` bundle predates
+the command and cannot run it with only a replaced Go executable.
 
 ## Address-funding verification (2026-09-22)
+
+Withdrawal coverage includes exact ABI/signature binding, gas shortage, frozen
+note/destination/amount, concurrent polling, explicit failed-hash retries,
+canonical finality and event matching, direct and wrapped competing payouts,
+lost replies/restart, zero-balance closure, legacy refill followed by a second
+withdrawal, and separate management authorization. Rust regressions cover
+durable reservations, mutation/lease exclusion, event/finality rejection, archive
+ordering, and old-completion/new-note isolation.
+
+The [live withdrawal acceptance record](../daemon/packaging/validation/sepolia-cli-withdrawal.json)
+completed on September 23 UTC (September 22 Pacific). After safely stopping for
+insufficient gas, the same saved command resumed when test ETH arrived. It
+withdrew note 58's remaining **0.099971 test tokens**, using the locally generated
+funding key, in [this Sepolia transaction](https://sepolia.etherscan.io/tx/0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a).
+Independent receipt and historical balance checks verified the exact recipient
+payout, 29-unit treasury payment, consumed nullifier, closed note, and canonical
+Ethereum finality. Gas cost was 0.007434784766264632 Sepolia ETH.
+
+Restarting while awaiting finality retained the identical signed transaction.
+After finality, both processes reported completion, archived recovery material,
+and cleared the active note and pending transaction. Another daemon restart,
+repeated CLI command, and repeated management request returned the same result:
+the signer nonce remained 3, with only approval, deposit, and withdrawal signed.
+The same funding address reported `ready`; a second live deposit was not made.
+Temporary test services were stopped, with private state and backups retained.
+This verifies cooperative withdrawal on the pinned legacy Sepolia deployment;
+it does not imply a mainnet run or a newly published native release.
 
 The current change is covered by mocked JSON-RPC/companion integration tests:
 address persistence and file permissions, wrong-chain/token checks, exact
@@ -226,9 +324,57 @@ node --test internal/zkapi/funding-ui.test.mjs
 The initial local Go 1.26.5 vulnerability scan reported fixed standard-library
 issues; use Go 1.26.6 or a newer patched release for native builds.
 `govulncheck` with Go 1.26.6 reports no reachable vulnerabilities (one advisory
-in an unused required module). Signing uses pinned `go-ethereum` v1.17.5. This change has not sent live Ethereum
-transactions. Browser visual tooling was unavailable; script behavior was
-verified automatically. Existing live-chain evidence below remains historical.
+in an unused required module). Signing uses pinned `go-ethereum` v1.17.5.
+The subsequent live acceptance below verifies the local signer on Sepolia.
+The optional browser page has script coverage but was not visually tested.
+
+## Live address-funding acceptance (2026-09-22)
+
+The manual terminal flow passed on the pinned Sepolia deployment, with the
+final observations on September 23 UTC. See the
+[sanitized acceptance record](../daemon/packaging/validation/sepolia-address-funding.json).
+The Go daemon was built with Go 1.26.6. The published companion's two patch
+hashes matched this source, and all four proving/verifying assets matched the
+live deployment manifest. This tests the existing `d33l4w2z2nh4cg` deployment;
+the newer note-bound deployment uses different assets and was not substituted.
+
+- `fund` created a fresh address with no external wallet connection. A separate
+  test account minted and transferred exactly 0.100000 configured demo tokens
+  to it; existing test accounts supplied 0.009 Sepolia ETH. The CLI waited for
+  incoming funds and, after approval, correctly waited for additional gas funds.
+- The local signer sent exactly one approval and one
+  [deposit](https://sepolia.etherscan.io/tx/0x1a62f4d827a20db2876c2bb99a391d0572b82ed8b249564ec7c816493e656ee3).
+  The receipt created note 58 for 100000 microcredits. Credits stayed inactive
+  until the deposit's canonical block was finalized, then activated in full.
+- Stopping both the funding command and daemon before finality, restarting,
+  and rerunning the same command preserved the address, nonce, transaction hash
+  and signed bytes. A conflicting amount was rejected. Unauthenticated address
+  and catalog requests returned HTTP 401.
+- One `openai/gpt-4o-mini` inference request passed through the required OA
+  verified-lease path: HTTP 200, 40 content SSE events, first content at 6.595
+  seconds, and `[DONE]` at 6.874 seconds. These are observed test timings, not
+  latency guarantees. Exactly one durable key-handoff marker was created.
+- Automatic settlement charged 29 microcredits, leaving 99971 (0.099971 test
+  USDC). The pending flag cleared and the signed next state was saved. Another
+  daemon restart and the same funding command preserved that reduced balance;
+  the funding address still had exactly two outgoing transactions.
+
+The default public relay failed its TLS handshake. This acceptance used a
+temporary remote Wisp helper through loopback SSH forwarding, preserving
+destination TLS without direct fallback. The helper and daemon were stopped
+after validation; private funding/note state was retained outside the repository.
+This is not a successful default-relay availability check. The existing wait
+between independent leases remains; no mainnet, browser, withdrawal, or new
+native-release validation was performed.
+
+The run also exposed misleading Ctrl+C copy during an in-flight HTTP request.
+Cancellation now says to rerun the same command, including for read-only address
+lookups, without claiming the daemon or transaction stopped. GET/POST
+cancellation and actual connection failures have regression coverage; all Go
+race tests, vet and build passed, followed by a fresh review. The existing
+flush-and-cancel test is timing-dependent for the response-body cancellation
+branch; that narrow coverage limitation is accepted without adding a production
+test-only injection seam.
 
 ## Reproducible companion and verification
 
@@ -323,6 +469,7 @@ successful requests therefore completed their own issuance and settlement.
 
 Mocked receipt tests remain unit coverage, distinct from this live chain result.
 Rapid independent requests still require the settlement redesign above, the
-ZKAPI deployment's OA-org staging status remains unknown, and withdrawal is
-not implemented in the Go CLI. The deployed verifier's 16-character fingerprint
-and signed-expiry safety margin are supported.
+ZKAPI deployment's OA-org staging status remains unknown. Withdrawal was not
+implemented in the Go CLI at this September 10 revision; see the current
+[CLI withdrawal flow](#withdraw-without-connecting-a-wallet) above. The deployed
+verifier's 16-character fingerprint and signed-expiry safety margin are supported.

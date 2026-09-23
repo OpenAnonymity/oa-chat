@@ -17,6 +17,9 @@ with `sudo`.
 Configure your client with the daemon's local API token and the API base URL.
 The local token authenticates clients to this daemon; it is not an OA ticket,
 wallet secret, or provider API key. The daemon accepts only loopback listeners.
+Withdrawals also require a separate `management-token` in that private directory.
+The CLI creates and reads this owner-only credential automatically; do not share
+it with inference clients. It is excluded from `config.json` serialization.
 Client applications
 retain their own transcripts under their own storage/privacy settings.
 
@@ -186,8 +189,11 @@ archive. Linux packages install them as `/usr/bin/oa-zkapi` and
 `/usr/share/oa-chat/proof-setup`. Homebrew installs them under its formula
 prefix. Address funding runs in the terminal with an optional local browser
 page. The Go daemon generates its own local signing key; no external wallet
-is required. Only an explicit deposit command/action signs transactions;
-service startup and address checks never submit one. The published 0.1.0
+is required. `withdraw --to ADDRESS` uses that same key to withdraw the entire
+private balance to the specified address, after reserving it in the companion.
+The command requires the companion's `withdrawal_bridge_version: 1` capability;
+ship both binaries together. Only an explicit deposit or withdrawal command/action
+signs transactions; service startup and address checks never submit one. The published 0.1.0
 release predates this behavior and still uses MetaMask. User-facing configuration
 uses Ethereum mainnet; Sepolia must be selected explicitly for testing.
 

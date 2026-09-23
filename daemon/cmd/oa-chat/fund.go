@@ -18,6 +18,8 @@ import (
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/zkapi"
 )
 
+var errFundingWaitStopped = errors.New("stopped waiting; rerun the same command to resume saved progress")
+
 func runFunding(ctx context.Context, c config.Config, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("fund", flag.ContinueOnError)
 	amountText := flags.String("amount", "", "USDC amount to deposit; waits for incoming funds (up to 6 decimal places)")
@@ -123,7 +125,7 @@ func runFunding(ctx context.Context, c config.Config, args []string, out io.Writ
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return errors.New("stopped waiting; rerun the same fund --amount command to resume saved progress")
+			return errFundingWaitStopped
 		case <-timer.C:
 		}
 	}
@@ -176,10 +178,16 @@ func requestFunding(ctx context.Context, c config.Config, method, path string, b
 	req.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return state, errFundingWaitStopped
+		}
 		return state, errors.New("local funding service unavailable; start oa-chat serve, then retry the same command to resume saved progress")
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, (16<<10)+1))
+	if err != nil && ctx.Err() != nil {
+		return state, errFundingWaitStopped
+	}
 	if err != nil || len(raw) > 16<<10 {
 		return state, errors.New("invalid local funding response")
 	}

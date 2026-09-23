@@ -247,6 +247,9 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 	if err != nil {
 		return nil, err
 	}
+	if err := h.checkWithdrawalFunding(config); err != nil {
+		return nil, err
+	}
 	status, err := h.client.WalletStatus(ctx)
 	if err != nil {
 		return nil, err
@@ -386,6 +389,9 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := h.checkWithdrawalFunding(config); err != nil {
+		return nil, err
+	}
 	if err := h.confirmAddressFinality(ctx, config, tx); err != nil {
 		return nil, err
 	}
@@ -448,6 +454,9 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 		if err := h.save(record); err != nil {
 			return nil, err
 		}
+		if err := h.adoptPostWithdrawalDeposit(config, record, noteID); err != nil {
+			return nil, err
+		}
 		return map[string]any{"active": true, "note_id": noteID}, nil
 	}
 	if record.Active {
@@ -460,6 +469,9 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 	}
 	record.Active = true
 	if err := h.save(record); err != nil {
+		return nil, err
+	}
+	if err := h.adoptPostWithdrawalDeposit(config, record, noteID); err != nil {
 		return nil, err
 	}
 	// Keep the recovery record after activation: losing a crash-raced reply

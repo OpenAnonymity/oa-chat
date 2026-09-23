@@ -53,6 +53,9 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	if e.Code == "withdrawal_conflict" || e.Code == "withdrawal_pending" {
+		return "zkAPI withdrawal is reserved; run oa-chat withdraw and resume the saved destination"
+	}
 	if e.Status == http.StatusPaymentRequired {
 		return "zkAPI private balance needs funding; run oa-chat fund"
 	}
@@ -137,7 +140,13 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 	}
 	req.Header.Set("Authorization", "Bearer "+c.config.BridgeToken)
 	req.Header.Set("Content-Type", "application/json")
-	response, err := c.local.Do(req)
+	local := c.local
+	if strings.HasPrefix(path, "/oa/v1/withdraw/") {
+		copy := *c.local
+		copy.Timeout = 10 * time.Minute
+		local = &copy
+	}
+	response, err := local.Do(req)
 	if err != nil {
 		return nil, &Error{http.StatusBadGateway, "companion_unavailable"}
 	}
@@ -147,6 +156,27 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 		return nil, &Error{http.StatusBadGateway, "invalid_companion_response"}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		var failure struct {
+			Error json.RawMessage `json:"error"`
+			Code  string          `json:"code"`
+		}
+		if json.Unmarshal(data, &failure) == nil {
+			// The companion uses an OpenAI-style nested error envelope. Only
+			// allowlisted codes cross this boundary; its diagnostic message may
+			// contain private protocol state and is never forwarded.
+			var nested struct {
+				Code string `json:"code"`
+			}
+			_ = json.Unmarshal(failure.Error, &nested)
+			var flat string
+			_ = json.Unmarshal(failure.Error, &flat)
+			for _, code := range []string{nested.Code, flat, failure.Code} {
+				switch code {
+				case "pending_settlement", "withdrawal_pending", "withdrawal_conflict":
+					return nil, &Error{response.StatusCode, code}
+				}
+			}
+		}
 		return nil, &Error{response.StatusCode, "companion_request_failed"}
 	}
 	if !json.Valid(data) {

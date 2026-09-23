@@ -16,6 +16,66 @@ import (
 
 const testKey = "local-test-key-with-at-least-32-characters"
 
+func TestWithdrawalRequiresDistinctOwnerCredentialAlongsideInferenceKey(t *testing.T) {
+	const managementToken = "private-management-token-not-shared-with-inference-clients"
+	api, err := New(&fakeBackend{}, testKey, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	api.Admin = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		for _, test := range []struct {
+			name, configured, token, key, origin, site string
+			status                                     int
+		}{
+			{"inference key alone", managementToken, "", testKey, "", "", 403},
+			{"incorrect management token", managementToken, "wrong", testKey, "", "", 403},
+			{"inference key as management token", managementToken, testKey, testKey, "", "", 403},
+			{"unset management token", "", "", testKey, "", "", 403},
+			{"same configured credentials", testKey, testKey, testKey, "", "", 403},
+			{"management token alone", managementToken, managementToken, "", "", "", 401},
+			{"owner", managementToken, managementToken, testKey, "", "", 204},
+			{"browser origin", managementToken, managementToken, testKey, "https://evil.example", "", 403},
+			{"cross site", managementToken, managementToken, testKey, "", "cross-site", 403},
+		} {
+			t.Run(method+"/"+test.name, func(t *testing.T) {
+				api.ManagementToken = test.configured
+				r := httptest.NewRequest(method, "/admin/withdrawal", nil)
+				r.Header.Set("Authorization", "Bearer "+test.key)
+				if test.token != "" {
+					r.Header.Set("X-OA-Management-Token", test.token)
+				}
+				r.Header.Set("Origin", test.origin)
+				r.Header.Set("Sec-Fetch-Site", test.site)
+				before := calls
+				w := httptest.NewRecorder()
+				api.ServeHTTP(w, r)
+				if w.Code != test.status {
+					t.Fatalf("status %d, want %d", w.Code, test.status)
+				}
+				if (calls != before) != (test.status == 204) {
+					t.Fatal("unauthorized request reached withdrawal handler")
+				}
+				if strings.Contains(w.Body.String(), managementToken) || strings.Contains(w.Body.String(), testKey) {
+					t.Fatal("response leaked a credential")
+				}
+			})
+		}
+	}
+	// Other management routes retain their existing inference-key policy.
+	r := httptest.NewRequest(http.MethodGet, "/admin/funding", nil)
+	r.Header.Set("Authorization", "Bearer "+testKey)
+	w := httptest.NewRecorder()
+	api.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatal("changed unrelated management authorization")
+	}
+}
+
 type fakeBackend struct {
 	complete func(context.Context, json.RawMessage) (*http.Response, error)
 	calls    atomic.Int32

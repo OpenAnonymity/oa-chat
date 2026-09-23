@@ -34,9 +34,10 @@ type API struct {
 	backend Backend
 	key     [32]byte
 	slots   chan struct{}
-	// Admin is optional local management, protected by the same bearer and
-	// origin checks as inference. It never participates in provider requests.
-	Admin http.Handler
+	// Admin is optional local management. Withdrawal additionally requires the
+	// private CLI credential; an inference API key cannot authorize payouts.
+	Admin           http.Handler
+	ManagementToken string
 }
 
 func New(backend Backend, key string, concurrency int) (*API, error) {
@@ -70,6 +71,15 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/admin/") && a.Admin != nil {
+		if r.URL.Path == "/admin/withdrawal" {
+			provided := sha256.Sum256([]byte(r.Header.Get("X-OA-Management-Token")))
+			expected := sha256.Sum256([]byte(a.ManagementToken))
+			if len(a.ManagementToken) < 32 || subtle.ConstantTimeCompare(expected[:], a.key[:]) == 1 ||
+				len(r.Header.Values("X-OA-Management-Token")) != 1 || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+				writeError(w, 403, "management_auth_required", "Withdrawal management requires the private local CLI credential.")
+				return
+			}
+		}
 		a.Admin.ServeHTTP(w, r)
 		return
 	}

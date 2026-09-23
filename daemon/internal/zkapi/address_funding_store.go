@@ -15,17 +15,18 @@ import (
 // This file is local custody material, separate from both the inference API
 // credential and the companion's private-note recovery file. Back up both.
 type addressFundingRecord struct {
-	Version    int                  `json:"version"`
-	ChainID    uint64               `json:"chain_id"`
-	Contract   string               `json:"contract_address"`
-	Token      string               `json:"token_address"`
-	Address    string               `json:"address"`
-	PrivateKey string               `json:"private_key"`
-	Amount     uint64               `json:"amount,omitempty"`
-	Commitment string               `json:"commitment,omitempty"`
-	Phase      string               `json:"phase"`
-	Pending    *addressTransaction  `json:"pending,omitempty"`
-	History    []addressTransaction `json:"history,omitempty"`
+	Version    int                      `json:"version"`
+	ChainID    uint64                   `json:"chain_id"`
+	Contract   string                   `json:"contract_address"`
+	Token      string                   `json:"token_address"`
+	Address    string                   `json:"address"`
+	PrivateKey string                   `json:"private_key"`
+	Amount     uint64                   `json:"amount,omitempty"`
+	Commitment string                   `json:"commitment,omitempty"`
+	Phase      string                   `json:"phase"`
+	Pending    *addressTransaction      `json:"pending,omitempty"`
+	History    []addressTransaction     `json:"history,omitempty"`
+	Withdrawal *addressWithdrawalRecord `json:"withdrawal,omitempty"`
 }
 
 type addressTransaction struct {
@@ -89,15 +90,63 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 			return nil, errors.New("payment transaction recovery data is invalid; preserve the file")
 		}
 		from, senderErr := types.Sender(types.NewEIP155Signer(tx.ChainId()), &tx)
-		if senderErr != nil || !strings.EqualFold(from.Hex(), record.Address) || tx.Value().Sign() != 0 || tx.To() == nil || (entry.Kind != "deposit" && entry.Kind != "approval" && entry.Kind != "approval_reset") {
+		if senderErr != nil || !strings.EqualFold(from.Hex(), record.Address) || tx.Value().Sign() != 0 || tx.To() == nil || (entry.Kind != "deposit" && entry.Kind != "approval" && entry.Kind != "approval_reset" && entry.Kind != "withdrawal") {
 			return nil, errors.New("payment transaction recovery signature is invalid; preserve the file")
 		}
 		expected := config.Token
-		if entry.Kind == "deposit" {
+		if entry.Kind == "deposit" || entry.Kind == "withdrawal" {
 			expected = config.Contract
 		}
 		if !strings.EqualFold(tx.To().Hex(), expected) {
 			return nil, errors.New("payment transaction recovery destination is invalid; preserve the file")
+		}
+		if entry.Kind == "withdrawal" && (len(tx.Data()) != 4+56*32 || hex.EncodeToString(tx.Data()[:4]) != withdrawalSelector) {
+			return nil, errors.New("withdrawal transaction recovery call is invalid; preserve the file")
+		}
+		if entry.Kind == "withdrawal" {
+			pending := record.Pending != nil && strings.EqualFold(entry.Hash, record.Pending.Hash)
+			if pending && (record.Withdrawal == nil || !strings.EqualFold(entry.Hash, record.Withdrawal.TransactionHash) || record.Withdrawal.Phase == "complete") {
+				return nil, errors.New("pending withdrawal authorization is invalid; preserve the file")
+			}
+			if pending || (record.Withdrawal != nil && strings.EqualFold(entry.Hash, record.Withdrawal.TransactionHash)) {
+				if err := validateSignedWithdrawal(tx.Data(), config, record.Withdrawal); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if w := record.Withdrawal; w != nil {
+		if _, err := NormalizeWithdrawalDestination(w.Destination); err != nil || w.NoteID > 0xffffffff || (w.Binding != "" && (!isHex(w.Binding, 32) || !isHex(w.Nullifier, 32))) {
+			return nil, errors.New("withdrawal recovery data is invalid; preserve the file")
+		}
+		switch w.Phase {
+		case "withdrawal_pending", "waiting_settlement", "waiting_funds", "confirming", "reverted", "complete":
+		default:
+			return nil, errors.New("withdrawal recovery phase is invalid; preserve the file")
+		}
+		if w.Phase == "complete" && (!isHex(w.TransactionHash, 32) || w.Binding == "") {
+			return nil, errors.New("completed withdrawal recovery data is invalid; preserve the file")
+		}
+		if w.SettlementHash != "" {
+			if !isHex(w.SettlementHash, 32) || !isHex(w.TransactionHash, 32) || strings.EqualFold(w.SettlementHash, w.TransactionHash) || w.Binding == "" || (w.Phase != "confirming" && w.Phase != "complete") {
+				return nil, errors.New("alternate withdrawal settlement is invalid; preserve the file")
+			}
+			if w.Phase == "confirming" && (record.Pending == nil || record.Pending.Kind != "withdrawal" || !strings.EqualFold(record.Pending.Hash, w.TransactionHash)) {
+				return nil, errors.New("alternate withdrawal settlement lost its signed intent; preserve the file")
+			}
+		}
+		if w.Phase == "complete" {
+			found := false
+			for _, entry := range record.History {
+				// A relayer's finalized payout permits retiring the original
+				// signed nonce only after its own canonical finalized failure.
+				if entry.Kind == "withdrawal" && entry.FinalizedRevert == (w.SettlementHash != "") && strings.EqualFold(entry.Hash, w.TransactionHash) {
+					found = true
+				}
+			}
+			if !found {
+				return nil, errors.New("completed withdrawal transaction is missing; preserve the file")
+			}
 		}
 	}
 	return &record, nil

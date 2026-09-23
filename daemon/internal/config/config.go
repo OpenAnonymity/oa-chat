@@ -27,14 +27,17 @@ type ZKAPI struct {
 }
 
 type Config struct {
-	Listen      string `json:"listen"`
-	APIKey      string `json:"api_key"`
-	Backend     string `json:"backend"`
-	OrgURL      string `json:"org_url"`
-	VerifierURL string `json:"verifier_url"`
-	RelayURL    string `json:"relay_url"`
-	Concurrency int    `json:"concurrency"`
-	ZKAPI       ZKAPI  `json:"zkapi"`
+	// ManagementToken is a separate owner-only credential. It must never be
+	// published with config.json or shared with inference API clients.
+	ManagementToken string `json:"-"`
+	Listen          string `json:"listen"`
+	APIKey          string `json:"api_key"`
+	Backend         string `json:"backend"`
+	OrgURL          string `json:"org_url"`
+	VerifierURL     string `json:"verifier_url"`
+	RelayURL        string `json:"relay_url"`
+	Concurrency     int    `json:"concurrency"`
+	ZKAPI           ZKAPI  `json:"zkapi"`
 }
 
 func DefaultDir() (string, error) {
@@ -181,7 +184,17 @@ func Load(dir string) (Config, error) {
 	if d.Decode(&trailing) != io.EOF {
 		return Config{}, errors.New("config.json must contain one JSON object")
 	}
-	return c, Validate(c)
+	if err := Validate(c); err != nil {
+		return Config{}, err
+	}
+	c.ManagementToken, err = loadManagementToken(dir)
+	if err != nil {
+		return Config{}, err
+	}
+	if c.ManagementToken == c.APIKey {
+		return Config{}, errors.New("management credential must differ from the inference API key")
+	}
+	return c, nil
 }
 
 func syncDir(dir string) error {

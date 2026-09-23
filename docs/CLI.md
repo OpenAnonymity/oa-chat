@@ -132,12 +132,26 @@ configuration directory. Back up the entire directory, including `funding/`
 and `zkapi/`; that backup controls public funds and private credits.
 Public address balances are not private inference credits until deposited.
 
+To return the remaining private balance to an Ethereum address:
+
+```sh
+oa-chat withdraw                 # status only
+oa-chat withdraw --to 0xYOUR_ETHEREUM_DESTINATION
+```
+
+Replace the placeholder with the receiving address. This closes the entire
+private balance; the local signer pays ETH gas. No wallet connection is needed.
+Resume an interrupted withdrawal with the same destination and configuration
+directory. Once completed, `fund --amount` can create a new private balance.
+See [withdrawal and recovery details](CLI_ZKAPI.md#withdraw-without-connecting-a-wallet).
+
 `fund --browser` opens an optional local page showing the same address and
 controls; `fund --no-open` prints its expiring capability URL. Reloading the
 page only checks status. Its explicit deposit button authorizes local signing;
 no signing key enters the page. See [funding, recovery, and limitations](CLI_ZKAPI.md).
 The published `daemon-v0.1.0` binary predates this change; build this revision to
-use address funding until an updated native release is published.
+use address funding until an updated native release is published. Withdrawals
+also require building the matching patched companion from this revision.
 
 Ethereum mainnet is the default. Sepolia requires an explicit selection:
 

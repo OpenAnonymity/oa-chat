@@ -33,7 +33,7 @@ index 2337fc9..81581ca 100644
 +    if manifest.chain_id != expected_chain {
 +        anyhow::bail!("deployment chain does not match explicitly selected OA network");
 +    }
- 
+
      let state_dir =
          requested_state_dir.unwrap_or_else(|| default_client_state_dir(&manifest.deployment_id));
 @@ -843,12 +849,13 @@ fn auth_service_from_manifest(
@@ -65,7 +65,7 @@ index 0b24c2c..0dd4244 100644
  tower = { workspace = true }
 @@ -31,6 +32,7 @@ tracing = { workspace = true }
  tracing-subscriber = { workspace = true }
- 
+
  [dev-dependencies]
 +tempfile = { workspace = true }
  zkapi-core = { path = "../../protocol/rust/crates/zkapi-core" }
@@ -91,6 +91,42 @@ index 0787fac..00da439 100644
              demo_private_key: None,
              demo_note_ttl_seconds: None,
              proof_mode: "groth16_bn254".to_string(),
+diff --git a/crates/zkapi-clientd/src/error.rs b/crates/zkapi-clientd/src/error.rs
+index 8edf04e..e55322a 100644
+--- a/crates/zkapi-clientd/src/error.rs
++++ b/crates/zkapi-clientd/src/error.rs
+@@ -4,6 +4,12 @@ use zkapi_client::error::ClientError;
+
+ #[derive(Debug, Error)]
+ pub enum AuthError {
++    #[error("inference is awaiting settlement; retry withdrawal after settlement")]
++    PendingSettlement,
++    #[error("withdrawal transaction is awaiting finalized confirmation")]
++    WithdrawalPending,
++    #[error("a withdrawal is reserved for a different destination or note state; resume the saved withdrawal")]
++    WithdrawalConflict,
+     #[error("wallet is busy in another process")]
+     WalletBusy,
+     #[error("wallet has no active note; fund it first")]
+@@ -31,7 +37,7 @@ pub enum AuthError {
+ impl AuthError {
+     pub fn status_code(&self) -> StatusCode {
+         match self {
+-            Self::WalletBusy => StatusCode::CONFLICT,
++            Self::WalletBusy | Self::PendingSettlement | Self::WithdrawalPending | Self::WithdrawalConflict => StatusCode::CONFLICT,
+             Self::NoActiveNote | Self::InsufficientBalance => StatusCode::PAYMENT_REQUIRED,
+             Self::PendingRequest | Self::LeasePending(_) => StatusCode::CONFLICT,
+             Self::InvalidInput(_) | Self::Serialization(_) => StatusCode::BAD_REQUEST,
+@@ -44,6 +50,9 @@ impl AuthError {
+     pub fn code(&self) -> &'static str {
+         match self {
+             Self::WalletBusy => "wallet_busy",
++            Self::PendingSettlement => "pending_settlement",
++            Self::WithdrawalPending => "withdrawal_pending",
++            Self::WithdrawalConflict => "withdrawal_conflict",
+             Self::NoActiveNote => "no_active_note",
+             Self::InsufficientBalance => "insufficient_balance",
+             Self::PendingRequest => "pending_request",
 diff --git a/crates/zkapi-clientd/src/indexer.rs b/crates/zkapi-clientd/src/indexer.rs
 index 6952f58..cb8c9ab 100644
 --- a/crates/zkapi-clientd/src/indexer.rs
@@ -101,7 +137,7 @@ index 6952f58..cb8c9ab 100644
      base_url: String,
 -    http: reqwest::Client,
  }
- 
+
  #[derive(Debug, Deserialize)]
 @@ -28,14 +27,12 @@ impl IndexerClient {
      pub fn new(base_url: impl Into<String>) -> Self {
@@ -110,7 +146,7 @@ index 6952f58..cb8c9ab 100644
 -            http: reqwest::Client::new(),
          }
      }
- 
+
      pub async fn root(&self) -> Result<Felt252, AuthError> {
          let url = format!("{}/v1/tree/root", self.base_url);
 -        let response = self
@@ -120,7 +156,7 @@ index 6952f58..cb8c9ab 100644
              .send()
              .await
 @@ -52,8 +49,7 @@ impl IndexerClient {
- 
+
      pub async fn next_note_id(&self) -> Result<u32, AuthError> {
          let url = format!("{}/v1/tree/next-note-id", self.base_url);
 -        let response = self
@@ -131,7 +167,7 @@ index 6952f58..cb8c9ab 100644
              .await
 @@ -82,8 +78,7 @@ impl IndexerClient {
      }
- 
+
      async fn path(&self, url: String) -> Result<Vec<Felt252>, AuthError> {
 -        let response = self
 -            .http
@@ -139,6 +175,18 @@ index 6952f58..cb8c9ab 100644
              .get(&url)
              .send()
              .await
+diff --git a/crates/zkapi-clientd/src/lib.rs b/crates/zkapi-clientd/src/lib.rs
+index e046d70..e18b6d5 100644
+--- a/crates/zkapi-clientd/src/lib.rs
++++ b/crates/zkapi-clientd/src/lib.rs
+@@ -4,6 +4,7 @@ pub mod error;
+ pub mod indexer;
+ pub mod routes;
+ pub mod service;
++mod oa_withdrawal;
+
+ pub use config::{AuthConfig, ModelDescriptor, RequestMode};
+ pub use routes::{build_router, run};
 diff --git a/crates/zkapi-clientd/src/main.rs b/crates/zkapi-clientd/src/main.rs
 index 75a1e9a..83554d6 100644
 --- a/crates/zkapi-clientd/src/main.rs
@@ -151,23 +199,772 @@ index 75a1e9a..83554d6 100644
          demo_private_key: args.demo_private_key,
          demo_note_ttl_seconds: args.demo_note_ttl_seconds,
          proof_mode: "groth16_bn254".to_string(),
+diff --git a/crates/zkapi-clientd/src/oa_withdrawal.rs b/crates/zkapi-clientd/src/oa_withdrawal.rs
+new file mode 100644
+index 0000000..fc3d3b1
+--- /dev/null
++++ b/crates/zkapi-clientd/src/oa_withdrawal.rs
+@@ -0,0 +1,734 @@
++//! Durable OA withdrawal reservation. Every call runs under the wallet lock.
++//! The snapshot is local recovery material and is never returned over HTTP.
++use std::fs::{self, File, OpenOptions};
++use std::io::Write;
++use std::path::Path;
++use std::time::Duration;
++
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++use sha3::{Digest, Keccak256};
++use zkapi_client::note_state::NoteState;
++use zkapi_core::v2;
++use zkapi_types::Felt252;
++
++use crate::config::AuthConfig;
++use crate::error::AuthError;
++use crate::service::{WithdrawalMode, WithdrawalPlan};
++
++const FILE: &str = "oa-withdrawal.json";
++
++#[derive(Clone, Serialize, Deserialize)]
++pub(crate) struct Reservation {
++    version: u8,
++    pub snapshot: NoteState,
++    pub destination: [u8; 20],
++    pub nullifier: Felt252,
++    pub plan: Option<WithdrawalPlan>,
++    pub complete: bool,
++    pub transaction_hash: Option<String>,
++}
++
++fn storage_error() -> AuthError {
++    AuthError::Wallet(
++        "withdrawal recovery storage is unavailable or invalid; preserve its files".into(),
++    )
++}
++
++pub(crate) fn destination(value: &str) -> Result<[u8; 20], AuthError> {
++    let bytes = hex_bytes(value, 20)?;
++    let mut result = [0; 20];
++    result.copy_from_slice(&bytes);
++    if result == [0; 20] {
++        return Err(AuthError::InvalidInput(
++            "withdrawal destination cannot be the zero address".into(),
++        ));
++    }
++    Ok(result)
++}
++
++fn hex_bytes(value: &str, size: usize) -> Result<Vec<u8>, AuthError> {
++    if !value.starts_with("0x")
++        || value.len() != 2 + size * 2
++        || !value[2..].bytes().all(|b| b.is_ascii_hexdigit())
++    {
++        return Err(AuthError::InvalidInput(
++            "invalid withdrawal hexadecimal value".into(),
++        ));
++    }
++    (2..value.len())
++        .step_by(2)
++        .map(|i| {
++            u8::from_str_radix(&value[i..i + 2], 16)
++                .map_err(|_| AuthError::InvalidInput("invalid withdrawal hexadecimal value".into()))
++        })
++        .collect()
++}
++
++fn hex(value: &[u8]) -> String {
++    format!(
++        "0x{}",
++        value.iter().map(|b| format!("{b:02x}")).collect::<String>()
++    )
++}
++
++fn same_state(left: &NoteState, right: &NoteState) -> bool {
++    matches!((serde_json::to_value(left), serde_json::to_value(right)), (Ok(left), Ok(right)) if left == right)
++}
++
++pub(crate) fn load(config: &AuthConfig) -> Result<Option<Reservation>, AuthError> {
++    let path = config.state_dir.join(FILE);
++    let metadata = match fs::symlink_metadata(&path) {
++        Ok(metadata) => metadata,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
++        Err(_) => return Err(storage_error()),
++    };
++    if !metadata.is_file() || metadata.len() > 1 << 20 {
++        return Err(storage_error());
++    }
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::PermissionsExt;
++        if metadata.permissions().mode() & 0o777 != 0o600 {
++            return Err(storage_error());
++        }
++    }
++    let record: Reservation = serde_json::from_slice(&fs::read(path).map_err(|_| storage_error())?)
++        .map_err(|_| storage_error())?;
++    if record.version != 1
++        || record.snapshot.protocol_version != config.protocol_version
++        || record.snapshot.chain_id != config.chain_id
++        || record.snapshot.contract_address != config.contract_address
++        || record.destination == [0; 20]
++        || record.nullifier
++            != v2::nullifier(&record.snapshot.secret_s, &record.snapshot.current_anchor)
++        || (record.complete && record.transaction_hash.is_none())
++    {
++        return Err(storage_error());
++    }
++    if let Some(plan) = &record.plan {
++        validate_plan(&record, plan)?;
++    }
++    if let Some(hash) = &record.transaction_hash {
++        hex_bytes(hash, 32)?;
++    }
++    Ok(Some(record))
++}
++
++pub(crate) fn reserve(
++    config: &AuthConfig,
++    state: &NoteState,
++    destination: [u8; 20],
++) -> Result<Reservation, AuthError> {
++    if state.protocol_version != config.protocol_version
++        || state.chain_id != config.chain_id
++        || state.contract_address != config.contract_address
++        || destination == [0; 20]
++    {
++        return Err(AuthError::WithdrawalConflict);
++    }
++    if let Some(previous) = load(config)? {
++        if previous.complete && previous.snapshot.note_id != state.note_id {
++            archive(
++                config,
++                &previous,
++                "reservation",
++                &serde_json::to_vec(&previous).map_err(|_| storage_error())?,
++            )?;
++        } else {
++            if previous.destination != destination || !same_state(&previous.snapshot, state) {
++                return Err(AuthError::WithdrawalConflict);
++            }
++            return Ok(previous);
++        }
++    }
++    let record = Reservation {
++        version: 1,
++        snapshot: state.clone(),
++        destination,
++        nullifier: v2::nullifier(&state.secret_s, &state.current_anchor),
++        plan: None,
++        complete: false,
++        transaction_hash: None,
++    };
++    save(config, &record)?;
++    Ok(record)
++}
++
++pub(crate) fn save(config: &AuthConfig, record: &Reservation) -> Result<(), AuthError> {
++    atomic_write(
++        &config.state_dir.join(FILE),
++        &serde_json::to_vec(record).map_err(|_| storage_error())?,
++    )
++}
++
++pub(crate) fn check_spending(config: &AuthConfig, note_id: Option<u32>) -> Result<(), AuthError> {
++    if let Some(record) = load(config)? {
++        if !record.complete || note_id == Some(record.snapshot.note_id) {
++            return Err(AuthError::WithdrawalConflict);
++        }
++    }
++    Ok(())
++}
++
++pub(crate) fn validate_plan(record: &Reservation, plan: &WithdrawalPlan) -> Result<(), AuthError> {
++    let inputs = &plan.public_inputs;
++    if plan.mode != WithdrawalMode::Mutual
++        || !inputs.has_clearance
++        || inputs.protocol_version != record.snapshot.protocol_version
++        || inputs.chain_id != record.snapshot.chain_id
++        || inputs.contract_address != record.snapshot.contract_address
++        || inputs.note_id != record.snapshot.note_id
++        || inputs.final_balance != record.snapshot.current_balance
++        || inputs.destination != record.destination
++        || inputs.withdrawal_nullifier != record.nullifier
++        || plan.siblings.len() != 32
++        || inputs.withdrawal_tag
++            != v2::withdrawal_tag(
++                &record.nullifier,
++                &inputs.destination_field(),
++                inputs.final_balance,
++                true,
++            )
++    {
++        return Err(AuthError::WithdrawalConflict);
++    }
++    Ok(())
++}
++
++pub(crate) fn public_status(record: Option<&Reservation>) -> Value {
++    match record {
++        None => json!({"phase": "none"}),
++        Some(record) => {
++            let mut status = json!({"phase": if record.complete {"complete"} else {"reserved"},
++                "note_id": record.snapshot.note_id, "destination": hex(&record.destination),
++                "final_balance": record.snapshot.current_balance.to_string(), "withdrawal_nullifier": hex(record.nullifier.as_bytes())});
++            if let Some(hash) = &record.transaction_hash {
++                status["transaction_hash"] = json!(hash);
++            }
++            status
++        }
++    }
++}
++
++fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AuthError> {
++    #[cfg(unix)]
++    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
++    let temporary = path.with_extension("tmp");
++    let mut options = OpenOptions::new();
++    options.write(true).create(true).truncate(true);
++    #[cfg(unix)]
++    options.mode(0o600);
++    let mut file = options.open(&temporary).map_err(|_| storage_error())?;
++    #[cfg(unix)]
++    file.set_permissions(fs::Permissions::from_mode(0o600))
++        .map_err(|_| storage_error())?;
++    file.write_all(bytes)
++        .and_then(|_| file.sync_all())
++        .map_err(|_| storage_error())?;
++    fs::rename(&temporary, path).map_err(|_| storage_error())?;
++    File::open(path.parent().ok_or_else(storage_error)?)
++        .and_then(|f| f.sync_all())
++        .map_err(|_| storage_error())
++}
++
++fn archive(
++    config: &AuthConfig,
++    record: &Reservation,
++    label: &str,
++    bytes: &[u8],
++) -> Result<(), AuthError> {
++    let directory = config.state_dir.join("archive");
++    fs::create_dir_all(&directory).map_err(|_| storage_error())?;
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::PermissionsExt;
++        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
++            .map_err(|_| storage_error())?;
++    }
++    File::open(&config.state_dir)
++        .and_then(|f| f.sync_all())
++        .map_err(|_| storage_error())?;
++    atomic_write(
++        &directory.join(format!(
++            "oa-withdrawal-{}-{}-{label}.json",
++            record.snapshot.note_id,
++            record.nullifier.to_hex()
++        )),
++        bytes,
++    )
++}
++
++// Called only after independently checking canonical finalized payout evidence.
++pub(crate) fn complete(
++    config: &AuthConfig,
++    record: &mut Reservation,
++    hash: &str,
++) -> Result<(), AuthError> {
++    let active_path = config.state_dir.join("note_state.json");
++    if active_path.exists() {
++        let active = NoteState::load(&active_path).map_err(|_| storage_error())?;
++        if !same_state(&active, &record.snapshot) {
++            return Err(AuthError::WithdrawalConflict);
++        }
++    }
++    if zkapi_client::journal::PendingRequestJournal::read(
++        &config.state_dir.join("pending_journal.json"),
++    )?
++    .is_some()
++    {
++        return Err(AuthError::PendingSettlement);
++    }
++    archive(
++        config,
++        record,
++        "note",
++        &serde_json::to_vec(&record.snapshot).map_err(|_| storage_error())?,
++    )?;
++    record.transaction_hash = Some(hash.to_lowercase());
++    save(config, record)?;
++    match fs::remove_file(&active_path) {
++        Ok(()) => {}
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++        Err(_) => return Err(storage_error()),
++    }
++    File::open(&config.state_dir)
++        .and_then(|f| f.sync_all())
++        .map_err(|_| storage_error())?;
++    record.complete = true;
++    save(config, record)
++}
++
++async fn rpc(config: &AuthConfig, method: &str, params: Value) -> Result<Value, AuthError> {
++    let failure = || {
++        AuthError::Wallet("withdrawal RPC unavailable or invalid; preserve saved progress".into())
++    };
++    let url = config.demo_rpc_url.as_deref().ok_or_else(failure)?;
++    let parsed = reqwest::Url::parse(url).map_err(|_| failure())?;
++    if parsed.scheme() != "https"
++        || !parsed.username().is_empty()
++        || parsed.password().is_some()
++        || parsed.fragment().is_some()
++    {
++        return Err(failure());
++    }
++    // New clients inherit the daemon's mandatory authenticated CONNECT/Wisp
++    // proxy. There is no fallback transport and no account authorization header.
++    let client = reqwest::Client::builder()
++        .timeout(Duration::from_secs(20))
++        .redirect(reqwest::redirect::Policy::none())
++        .build()
++        .map_err(|_| failure())?;
++    let mut response = client
++        .post(url)
++        .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
++        .send()
++        .await
++        .map_err(|_| failure())?;
++    if !response.status().is_success() {
++        return Err(failure());
++    }
++    let mut bytes = Vec::new();
++    while let Some(chunk) = response.chunk().await.map_err(|_| failure())? {
++        if bytes.len() + chunk.len() > 1 << 20 {
++            return Err(failure());
++        }
++        bytes.extend_from_slice(&chunk);
++    }
++    let response: Value = serde_json::from_slice(&bytes).map_err(|_| failure())?;
++    if response["id"] != 1
++        || response["jsonrpc"] != "2.0"
++        || response.get("error").is_some()
++        || response.get("result").is_none()
++    {
++        return Err(failure());
++    }
++    Ok(response["result"].clone())
++}
++
++fn quantity(value: &Value) -> Result<u64, AuthError> {
++    let text = value.as_str().ok_or_else(storage_error)?;
++    u64::from_str_radix(text.strip_prefix("0x").ok_or_else(storage_error)?, 16)
++        .map_err(|_| storage_error())
++}
++
++pub(crate) fn validate_close_event(
++    record: &Reservation,
++    receipt: &Value,
++    hash: &str,
++) -> Result<(), AuthError> {
++    if receipt["status"] != "0x1"
++        || !receipt["transactionHash"]
++            .as_str()
++            .is_some_and(|value| value.eq_ignore_ascii_case(hash))
++    {
++        return Err(AuthError::InvalidInput(
++            "withdrawal receipt is not a successful matching transaction".into(),
++        ));
++    }
++    let topic = format!(
++        "0x{:x}",
++        Keccak256::digest(b"MutualClose(uint32,uint256,uint128,address)")
++    );
++    let vault = hex(&record.snapshot.contract_address.as_bytes()[12..]);
++    let note_topic = format!("0x{:064x}", record.snapshot.note_id);
++    // All event parameters except indexed noteId are fixed ABI words.
++    let expected_data = format!(
++        "{}{:064x}{}{}",
++        hex(record.nullifier.as_bytes()),
++        record.snapshot.current_balance,
++        "0".repeat(24),
++        &hex(&record.destination)[2..]
++    );
++    let matches = receipt["logs"]
++        .as_array()
++        .ok_or_else(storage_error)?
++        .iter()
++        .filter(|log| {
++            log["removed"] != true
++                && log["address"]
++                    .as_str()
++                    .is_some_and(|value| value.eq_ignore_ascii_case(&vault))
++                && log["topics"].as_array().is_some_and(|topics| {
++                    topics.len() == 2
++                        && topics[0]
++                            .as_str()
++                            .is_some_and(|value| value.eq_ignore_ascii_case(&topic))
++                        && topics[1]
++                            .as_str()
++                            .is_some_and(|value| value.eq_ignore_ascii_case(&note_topic))
++                })
++                && log["data"]
++                    .as_str()
++                    .is_some_and(|value| value.eq_ignore_ascii_case(&expected_data))
++        })
++        .count();
++    if matches != 1 {
++        return Err(AuthError::InvalidInput(
++            "withdrawal receipt has no unique matching MutualClose payout event".into(),
++        ));
++    }
++    Ok(())
++}
++
++pub(crate) async fn confirm_receipt(
++    config: &AuthConfig,
++    record: &Reservation,
++    hash: &str,
++) -> Result<(), AuthError> {
++    confirm_receipt_using(config, record, hash, |method, params| {
++        rpc(config, method, params)
++    })
++    .await
++}
++
++async fn confirm_receipt_using<F, Fut>(
++    config: &AuthConfig,
++    record: &Reservation,
++    hash: &str,
++    mut request: F,
++) -> Result<(), AuthError>
++where
++    F: FnMut(&'static str, Value) -> Fut,
++    Fut: std::future::Future<Output = Result<Value, AuthError>>,
++{
++    hex_bytes(hash, 32)?;
++    if quantity(&request("eth_chainId", json!([])).await?)? != config.chain_id {
++        return Err(AuthError::WithdrawalConflict);
++    }
++    let receipt = request("eth_getTransactionReceipt", json!([hash])).await?;
++    if receipt.is_null() {
++        return Err(AuthError::WithdrawalPending);
++    }
++    validate_close_event(record, &receipt, hash)?;
++    let number = quantity(&receipt["blockNumber"])?;
++    let hash = receipt["blockHash"].as_str().ok_or_else(storage_error)?;
++    hex_bytes(hash, 32)?;
++    let finalized = request("eth_getBlockByNumber", json!(["finalized", false])).await?;
++    if quantity(&finalized["number"])? < number {
++        return Err(AuthError::WithdrawalPending);
++    }
++    let canonical = request(
++        "eth_getBlockByNumber",
++        json!([receipt["blockNumber"], false]),
++    )
++    .await?;
++    if quantity(&canonical["number"])? != number
++        || !canonical["hash"]
++            .as_str()
++            .is_some_and(|value| value.eq_ignore_ascii_case(hash))
++    {
++        return Err(AuthError::WithdrawalPending);
++    }
++    if quantity(&request("eth_chainId", json!([])).await?)? != config.chain_id {
++        return Err(AuthError::WithdrawalConflict);
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++pub(crate) mod tests {
++    use super::*;
++
++    pub(crate) fn fixture() -> (tempfile::TempDir, AuthConfig, NoteState) {
++        let directory = tempfile::tempdir().unwrap();
++        let config = AuthConfig {
++            state_dir: directory.path().to_path_buf(),
++            chain_id: 11_155_111,
++            contract_address: Felt252::from_u64(0x12345),
++            indexer_url: "http://127.0.0.1:1".into(),
++            protocol_server_url: "http://127.0.0.1:1".into(),
++            ..Default::default()
++        };
++        let note = NoteState::new_from_deposit(
++            2,
++            config.chain_id,
++            config.contract_address,
++            7,
++            Felt252::from_u64(42),
++            1_500_000,
++            4_000_000_000,
++            "0x1".into(),
++            Felt252::ONE,
++            Felt252::ONE,
++        );
++        note.save(&config.state_dir.join("note_state.json"))
++            .unwrap();
++        (directory, config, note)
++    }
++
++    pub(crate) fn plan(record: &Reservation) -> WithdrawalPlan {
++        let mut destination = [0; 32];
++        destination[12..].copy_from_slice(&record.destination);
++        WithdrawalPlan {
++            mode: WithdrawalMode::Mutual,
++            siblings: vec![Felt252::ZERO; 32],
++            public_inputs: zkapi_types::WithdrawalPublicInputsV2 {
++                protocol_version: 2,
++                chain_id: record.snapshot.chain_id,
++                contract_address: record.snapshot.contract_address,
++                active_root: Felt252::ONE,
++                state_signing_key_x: Felt252::ZERO,
++                state_signing_key_y: Felt252::ONE,
++                clearance_signing_key_x: Felt252::ZERO,
++                clearance_signing_key_y: Felt252::ONE,
++                note_id: record.snapshot.note_id,
++                final_balance: record.snapshot.current_balance,
++                destination: record.destination,
++                withdrawal_nullifier: record.nullifier,
++                has_clearance: true,
++                withdrawal_tag: v2::withdrawal_tag(
++                    &record.nullifier,
++                    &Felt252(destination),
++                    record.snapshot.current_balance,
++                    true,
++                ),
++            },
++            proof: zkapi_types::wire::Groth16ProofWire {
++                backend: zkapi_types::wire::ProofBackendWire::Groth16Bn254,
++                proof: "test-proof".into(),
++            },
++        }
++    }
++
++    fn receipt(record: &Reservation, hash: &str) -> Value {
++        json!({"status":"0x1","transactionHash":hash,"blockNumber":"0x64","blockHash":hex(&[3;32]),
++            "logs":[{"address":hex(&record.snapshot.contract_address.as_bytes()[12..]),
++                "topics":[format!("0x{:x}",Keccak256::digest(b"MutualClose(uint32,uint256,uint128,address)")),format!("0x{:064x}",record.snapshot.note_id)],
++                "data":format!("{}{:064x}{}{}",hex(record.nullifier.as_bytes()),record.snapshot.current_balance,"0".repeat(24),&hex(&record.destination)[2..])}]})
++    }
++
++    #[test]
++    fn reservation_survives_restart_and_freezes_private_state() {
++        let (_directory, config, note) = fixture();
++        let record = reserve(&config, &note, [1; 20]).unwrap();
++        let restored = load(&config).unwrap().unwrap();
++        assert!(same_state(&restored.snapshot, &note));
++        assert!(check_spending(&config, Some(note.note_id)).is_err());
++        assert!(check_spending(&config, None).is_err());
++        assert!(reserve(&config, &note, [2; 20]).is_err());
++        let mut changed = note.clone();
++        changed.current_balance -= 1;
++        assert!(reserve(&config, &changed, [1; 20]).is_err());
++        let public = public_status(Some(&record));
++        assert_eq!(public["phase"], "reserved");
++        assert_eq!(public["final_balance"], "1500000");
++        assert_eq!(public["withdrawal_nullifier"].as_str().unwrap().len(), 66);
++        for secret_field in [
++            "snapshot",
++            "secret_s",
++            "current_anchor",
++            "balance_blinding",
++            "state_signature",
++            "plan",
++        ] {
++            assert!(public.get(secret_field).is_none());
++        }
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            assert_eq!(
++                fs::metadata(config.state_dir.join(FILE))
++                    .unwrap()
++                    .permissions()
++                    .mode()
++                    & 0o777,
++                0o600
++            );
++        }
++        let mut wrong_chain = config.clone();
++        wrong_chain.chain_id += 1;
++        assert!(load(&wrong_chain).is_err());
++        let mut wrong_vault = config.clone();
++        wrong_vault.contract_address = Felt252::ONE;
++        assert!(load(&wrong_vault).is_err());
++        fs::write(config.state_dir.join(FILE), "broken").unwrap();
++        assert!(check_spending(&config, Some(note.note_id)).is_err());
++    }
++
++    #[test]
++    fn durable_close_retains_archive_and_allows_only_distinct_new_note() {
++        let (_directory, config, note) = fixture();
++        let mut record = reserve(&config, &note, [1; 20]).unwrap();
++        record.plan = Some(plan(&record));
++        save(&config, &record).unwrap();
++        let hash = hex(&[4; 32]);
++        // Reproduce a crash after the old note was removed, before complete saved.
++        record.transaction_hash = Some(hash.clone());
++        save(&config, &record).unwrap();
++        fs::remove_file(config.state_dir.join("note_state.json")).unwrap();
++        complete(&config, &mut record, &hash).unwrap();
++        assert!(load(&config).unwrap().unwrap().complete);
++        assert!(check_spending(&config, Some(note.note_id)).is_err());
++        assert!(check_spending(&config, None).is_ok());
++        let mut next = note.clone();
++        next.note_id += 1;
++        next.save(&config.state_dir.join("note_state.json"))
++            .unwrap();
++        assert!(check_spending(&config, Some(next.note_id)).is_ok());
++        assert!(
++            complete(&config, &mut record, &hash).is_err(),
++            "must not delete a newer note"
++        );
++        let next_record = reserve(&config, &next, [2; 20]).unwrap();
++        assert_eq!(next_record.snapshot.note_id, next.note_id);
++        assert!(!next_record.complete);
++        let archived: Vec<_> = fs::read_dir(config.state_dir.join("archive"))
++            .unwrap()
++            .collect();
++        assert_eq!(
++            archived.len(),
++            2,
++            "both the closed note and prior reservation must survive"
++        );
++    }
++
++    #[test]
++    fn close_fails_closed_for_pending_or_corrupt_settlement_journal() {
++        let (_directory, config, note) = fixture();
++        let mut record = reserve(&config, &note, [1; 20]).unwrap();
++        fs::write(config.state_dir.join("pending_journal.json"), "corrupt").unwrap();
++        assert!(complete(&config, &mut record, &hex(&[4; 32])).is_err());
++        assert!(config.state_dir.join("note_state.json").exists());
++        assert!(!load(&config).unwrap().unwrap().complete);
++    }
++
++    #[test]
++    fn payout_requires_exact_unique_event_not_just_closed_note_status() {
++        let (_directory, config, note) = fixture();
++        let record = reserve(&config, &note, [1; 20]).unwrap();
++        let hash = hex(&[4; 32]);
++        let valid = receipt(&record, &hash);
++        validate_close_event(&record, &valid, &hash).unwrap();
++        for field in ["address", "data"] {
++            let mut bad = valid.clone();
++            bad["logs"][0][field] = json!("0x00");
++            assert!(
++                validate_close_event(&record, &bad, &hash).is_err(),
++                "{field}"
++            );
++        }
++        for topic in 0..2 {
++            let mut bad = valid.clone();
++            bad["logs"][0]["topics"][topic] = json!(hex(&[0; 32]));
++            assert!(validate_close_event(&record, &bad, &hash).is_err());
++        }
++        let mut bad = valid.clone();
++        bad["logs"][0]["removed"] = json!(true);
++        assert!(validate_close_event(&record, &bad, &hash).is_err());
++        let mut bad = valid.clone();
++        bad["status"] = json!("0x0");
++        assert!(validate_close_event(&record, &bad, &hash).is_err());
++        let mut bad = valid.clone();
++        bad["logs"] = json!([valid["logs"][0], valid["logs"][0]]);
++        assert!(validate_close_event(&record, &bad, &hash).is_err());
++        assert!(validate_close_event(&record, &valid, &hex(&[5; 32])).is_err());
++    }
++
++    #[tokio::test]
++    async fn confirmation_requires_finalized_canonical_block_and_stable_chain() {
++        let (_directory, config, note) = fixture();
++        let record = reserve(&config, &note, [1; 20]).unwrap();
++        let hash = hex(&[4; 32]);
++        for case in [
++            "valid",
++            "pending",
++            "unfinalized",
++            "reorg",
++            "wrong_chain",
++            "changed_chain",
++        ] {
++            let mut chain_reads = 0;
++            let outcome = confirm_receipt_using(&config, &record, &hash, |method, _params| {
++                std::future::ready(Ok(match method {
++                    "eth_chainId" => {
++                        chain_reads += 1;
++                        json!(format!(
++                            "0x{:x}",
++                            if case == "wrong_chain"
++                                || (case == "changed_chain" && chain_reads == 2)
++                            {
++                                1
++                            } else {
++                                config.chain_id
++                            }
++                        ))
++                    }
++                    "eth_getTransactionReceipt" => {
++                        if case == "pending" {
++                            Value::Null
++                        } else {
++                            receipt(&record, &hash)
++                        }
++                    }
++                    "eth_getBlockByNumber" if _params[0] == "finalized" => {
++                        json!({"number":if case == "unfinalized" {"0x63"} else {"0x64"}})
++                    }
++                    "eth_getBlockByNumber" => {
++                        json!({"number":"0x64","hash":hex(&[if case == "reorg" {7} else {3};32])})
++                    }
++                    _ => panic!("unexpected RPC"),
++                }))
++            })
++            .await;
++            assert_eq!(outcome.is_ok(), case == "valid", "{case}");
++            assert!(
++                config.state_dir.join("note_state.json").exists(),
++                "checking evidence alone must never remove private state"
++            );
++        }
++    }
++
++    #[test]
++    fn destination_is_an_explicit_nonzero_evm_address() {
++        assert_eq!(destination(&hex(&[1; 20])).unwrap(), [1; 20]);
++        for bad in [
++            hex(&[0; 20]),
++            hex(&[1; 32]),
++            "11".repeat(20),
++            "0xwrong".into(),
++        ] {
++            assert!(destination(&bad).is_err());
++        }
++    }
++}
 diff --git a/crates/zkapi-clientd/src/routes.rs b/crates/zkapi-clientd/src/routes.rs
-index d5d0955..5b9ff21 100644
+index d5d0955..de2e966 100644
 --- a/crates/zkapi-clientd/src/routes.rs
 +++ b/crates/zkapi-clientd/src/routes.rs
 @@ -15,7 +15,8 @@
- 
+
  use std::sync::Arc;
- 
+
 -use axum::extract::State;
 +use axum::extract::{State, Request};
 +use axum::middleware::{self, Next};
  use axum::http::{header, HeaderValue, Method, StatusCode};
  use axum::response::{Html, IntoResponse, Response};
  use axum::routing::{get, post};
-@@ -42,9 +43,16 @@ struct WithdrawBody {
+@@ -41,10 +42,28 @@ struct WithdrawBody {
+     destination: String,
  }
- 
+
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct OaWithdrawalBody { destination: String }
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct OaWithdrawalConfirmBody { transaction_hash: String }
++
  pub fn build_router(service: Arc<AuthService>) -> Router {
 +    build_router_with_token(service, std::env::var("OA_ZKAPI_BRIDGE_TOKEN").ok())
 +}
@@ -178,18 +975,21 @@ index d5d0955..5b9ff21 100644
          .route("/health", get(healthz))
 +        .route("/oa/v1/status", get(oa_bridge_status))
 +        .route("/oa/v1/lease", post(oa_bridge_lease))
++        .route("/oa/v1/withdraw/status", get(oa_withdrawal_status))
++        .route("/oa/v1/withdraw/prepare", post(oa_prepare_withdrawal))
++        .route("/oa/v1/withdraw/confirm", post(oa_confirm_withdrawal))
 +        .route("/oa/v1/deposit/path", get(oa_deposit_path))
          .route("/healthz", get(healthz))
          .route("/request", post(core_request))
          .route("/status", get(wallet_status))
-@@ -77,9 +85,46 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
+@@ -77,9 +96,67 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
          .route("/zkapi/v1/config", get(zkapi_config))
          .route("/zkapi/v1/inference", post(zkapi_inference))
          .layer(local_cors_layer())
 +        .layer(middleware::from_fn_with_state(token, oa_bridge_auth))
          .with_state(service)
  }
- 
+
 +// A packaged companion is private to the Go daemon. The token is generated
 +// locally and inherited via environment, never command-line arguments. No
 +// unauthenticated route (including funding and reset) is left accessible.
@@ -226,18 +1026,39 @@ index d5d0955..5b9ff21 100644
 +    }
 +}
 +
++async fn oa_withdrawal_status(State(service): State<Arc<AuthService>>) -> Response {
++    match service.oa_withdrawal_status().await {
++        Ok(value) => Json(value).into_response(), Err(error) => generic_error(error),
++    }
++}
++
++async fn oa_prepare_withdrawal(State(service): State<Arc<AuthService>>, Json(body): Json<OaWithdrawalBody>) -> Response {
++    let destination = match crate::oa_withdrawal::destination(&body.destination) {
++        Ok(value) => value, Err(error) => return generic_error(error),
++    };
++    match service.oa_prepare_withdrawal(destination).await {
++        Ok(value) => Json(value).into_response(), Err(error) => generic_error(error),
++    }
++}
++
++async fn oa_confirm_withdrawal(State(service): State<Arc<AuthService>>, Json(body): Json<OaWithdrawalConfirmBody>) -> Response {
++    match service.oa_confirm_withdrawal(body.transaction_hash).await {
++        Ok(value) => Json(value).into_response(), Err(error) => generic_error(error),
++    }
++}
++
  /// A deliberately narrow CORS policy.
  ///
  /// The funding UI is served by this same daemon, so it is same-origin and does
-@@ -370,6 +415,16 @@ fn openai_error(err: AuthError) -> Response {
- 
+@@ -370,6 +447,16 @@ fn openai_error(err: AuthError) -> Response {
+
  #[cfg(test)]
  mod tests {
 +    #[tokio::test]
 +    async fn oa_bridge_requires_authentication_for_every_route() {
 +        let service = AuthService::new(AuthConfig::default()).unwrap();
 +        let router = build_router_with_token(service, Some("companion-test-token-thirty-two-characters".into()));
-+        for path in ["/oa/v1/status", "/oa/v1/lease", "/oa/v1/deposit/path", "/funding", "/wallet/reset", "/health"] {
++        for path in ["/oa/v1/status", "/oa/v1/lease", "/oa/v1/deposit/path", "/oa/v1/withdraw/status", "/oa/v1/withdraw/prepare", "/oa/v1/withdraw/confirm", "/funding", "/wallet/reset", "/health"] {
 +            let response = router.clone().oneshot(axum::http::Request::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
 +            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 +        }
@@ -246,13 +1067,13 @@ index d5d0955..5b9ff21 100644
      use axum::body::Body;
      use http_body_util::BodyExt;
      use tower::ServiceExt;
-@@ -390,12 +445,12 @@ mod tests {
+@@ -390,12 +477,12 @@ mod tests {
              ..Default::default()
          })
          .unwrap();
 -        let router = build_router(service);
 +        let router = build_router_with_token(service, Some("companion-test-token-thirty-two-characters".into()));
- 
+
          let funding = router
              .clone()
              .oneshot(
@@ -261,7 +1082,7 @@ index d5d0955..5b9ff21 100644
                      .uri("/funding")
                      .body(Body::empty())
                      .unwrap(),
-@@ -407,7 +462,7 @@ mod tests {
+@@ -407,7 +494,7 @@ mod tests {
          let models = router
              .clone()
              .oneshot(
@@ -270,7 +1091,7 @@ index d5d0955..5b9ff21 100644
                      .uri("/v1/models")
                      .body(Body::empty())
                      .unwrap(),
-@@ -421,7 +476,7 @@ mod tests {
+@@ -421,7 +508,7 @@ mod tests {
          let health = router
              .clone()
              .oneshot(
@@ -279,7 +1100,7 @@ index d5d0955..5b9ff21 100644
                      .uri("/health")
                      .body(Body::empty())
                      .unwrap(),
-@@ -433,7 +488,7 @@ mod tests {
+@@ -433,7 +520,7 @@ mod tests {
          let config = router
              .clone()
              .oneshot(
@@ -288,7 +1109,7 @@ index d5d0955..5b9ff21 100644
                      .uri("/funding/config")
                      .body(Body::empty())
                      .unwrap(),
-@@ -453,7 +508,7 @@ mod tests {
+@@ -453,7 +540,7 @@ mod tests {
              let removed = router
                  .clone()
                  .oneshot(
@@ -297,8 +1118,8 @@ index d5d0955..5b9ff21 100644
                          .method("POST")
                          .uri(path)
                          .body(Body::empty())
-@@ -466,7 +521,7 @@ mod tests {
- 
+@@ -466,7 +553,7 @@ mod tests {
+
          let demo = router
              .oneshot(
 -                axum::http::Request::builder()
@@ -307,13 +1128,13 @@ index d5d0955..5b9ff21 100644
                      .body(Body::empty())
                      .unwrap(),
 diff --git a/crates/zkapi-clientd/src/service.rs b/crates/zkapi-clientd/src/service.rs
-index 41dc152..80a7171 100644
+index 41dc152..223b758 100644
 --- a/crates/zkapi-clientd/src/service.rs
 +++ b/crates/zkapi-clientd/src/service.rs
 @@ -31,6 +31,67 @@ use zkapi_types::wire::{
  };
  use zkapi_types::{EpochRoots, Felt252, WithdrawalPublicInputsV2};
- 
+
 +// A generic OpenAI request has no authenticated conversation boundary. Never
 +// hand the same provider key to two calls, including after a lost reply or a
 +// daemon restart. A consumed lease remains reserved until server settlement
@@ -386,15 +1207,103 @@ index 41dc152..80a7171 100644
      #[serde(skip_serializing_if = "Option::is_none")]
      pub demo_private_key: Option<String>,
      #[serde(skip_serializing_if = "Option::is_none")]
-@@ -331,7 +393,6 @@ pub struct AuthService {
+@@ -331,10 +393,94 @@ pub struct AuthService {
      config: AuthConfig,
      wallet_mutex: Arc<Mutex<()>>,
      indexer: IndexerClient,
 -    http: reqwest::Client,
      direct_lease: tokio::sync::Mutex<Option<ActiveOpenRouterLease>>,
  }
- 
-@@ -343,11 +404,6 @@ impl AuthService {
+
++#[cfg(test)]
++mod oa_withdrawal_tests {
++    use super::*;
++    use crate::oa_withdrawal::{self, tests::fixture};
++
++    #[tokio::test]
++    async fn reservation_survives_failed_prepare_and_blocks_all_spending_paths() {
++        let (_directory, config, note) = fixture();
++        let service = AuthService::new(config.clone()).unwrap();
++        // The indexer fixture is unreachable. Persistence must happen first.
++        assert!(service.oa_prepare_withdrawal([1;20]).await.is_err());
++        assert_eq!(service.oa_withdrawal_status().await.unwrap()["phase"], "reserved");
++        drop(service);
++        let service = AuthService::new(config.clone()).unwrap();
++        for result in [service.prepare_deposit(1).await.map(|_| ()),
++            service.confirm_deposit(ConfirmDepositRequest { secret: Felt252::ONE, note_id: note.note_id+1, amount: 1, expiry_ts: 4_000_000_000 }).await.map(|_| ()),
++            service.reset_wallet().await.map(|_| ()), service.recover().await.map(|_| ()),
++            service.prepare_direct_lease_request().await.map(|_| ()),
++            service.clear_pending_request().await,
++            service.create_withdrawal(WithdrawalMode::Mutual, [2;20]).await.map(|_| ()),
++            service.execute_request_demo(CoreRequest::post_json("/chat", serde_json::json!({}))).await.map(|_| ())] {
++            assert!(matches!(result, Err(AuthError::WithdrawalConflict)), "{result:?}");
++        }
++        *service.direct_lease.lock().await = Some(ActiveOpenRouterLease {
++            client_request_id: "cached-before-reservation".into(), api_key: "fixture-key".into(),
++            openrouter_api_base: "https://openrouter.ai/api/v1".into(), expires_at: now_seconds()+300,
++            settle_after: now_seconds()+360, verified: true, verification: None,
++        });
++        assert!(matches!(service.ready_direct_lease().await, Err(AuthError::WithdrawalConflict)));
++        assert!(matches!(service.oa_prepare_withdrawal([2;20]).await, Err(AuthError::WithdrawalConflict)));
++        assert!(config.state_dir.join("note_state.json").exists());
++    }
++
++    #[tokio::test]
++    async fn pending_settlement_is_recovered_before_reserving_and_parse_errors_fail_closed() {
++        use axum::{routing::get, Json, Router};
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        let (_directory, mut config, note) = fixture();
++        let attempts = Arc::new(AtomicUsize::new(0)); let seen = attempts.clone();
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        config.protocol_server_url = format!("http://{}", listener.local_addr().unwrap());
++        let router = Router::new().route("/v2/requests/pending", get(move || {
++            seen.fetch_add(1, Ordering::SeqCst);
++            async { Json(serde_json::json!({"status":"pending", "nullifier_status":"reserved"})) }
++        }));
++        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++        let journal_path = config.state_dir.join("pending_journal.json");
++        zkapi_client::journal::PendingRequestJournal::write(&journal_path, &zkapi_client::journal::PendingRequestJournal {
++            exists: true, client_request_id: "pending".into(), nullifier: core_v2::nullifier(&note.secret_s, &note.current_anchor),
++            payload_hash: Felt252::ONE, user_rerandomization: Felt252::ONE, created_at_ms: 1, prepared_request: None,
++        }).unwrap();
++        let service = AuthService::new(config.clone()).unwrap();
++        assert!(matches!(service.oa_prepare_withdrawal([1;20]).await, Err(AuthError::PendingSettlement)));
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        assert!(oa_withdrawal::load(&config).unwrap().is_none());
++        std::fs::write(&journal_path, "malformed").unwrap();
++        assert!(service.oa_prepare_withdrawal([1;20]).await.is_err());
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        assert!(oa_withdrawal::load(&config).unwrap().is_none());
++        server.abort();
++    }
++
++    #[tokio::test]
++    async fn lost_completion_reply_is_idempotent_and_cannot_clear_new_note_lease() {
++        let (_directory, config, note) = fixture();
++        let mut record = oa_withdrawal::reserve(&config, &note, [1;20]).unwrap();
++        record.plan = Some(oa_withdrawal::tests::plan(&record));
++        oa_withdrawal::save(&config, &record).unwrap();
++        let hash = format!("0x{}", "ab".repeat(32));
++        oa_withdrawal::complete(&config, &mut record, &hash).unwrap();
++        let service = AuthService::new(config.clone()).unwrap();
++        assert_eq!(service.oa_prepare_withdrawal([1;20]).await.unwrap(), record.plan.clone().unwrap());
++        let mut next = note.clone(); next.note_id += 1;
++        next.save(&config.state_dir.join("note_state.json")).unwrap();
++        *service.direct_lease.lock().await = Some(ActiveOpenRouterLease {
++            client_request_id: "new-note-lease".into(), api_key: "fixture-key".into(),
++            openrouter_api_base: "https://openrouter.ai/api/v1".into(), expires_at: now_seconds()+300,
++            settle_after: now_seconds()+360, verified: true, verification: None,
++        });
++        assert_eq!(service.oa_confirm_withdrawal(hash).await.unwrap()["phase"], "complete");
++        assert_eq!(service.direct_lease.lock().await.as_ref().unwrap().client_request_id, "new-note-lease");
++        assert_eq!(zkapi_client::note_state::NoteState::load(&config.state_dir.join("note_state.json")).unwrap().note_id, next.note_id);
++    }
++}
++
+ impl AuthService {
+     pub fn new(config: AuthConfig) -> Result<Arc<Self>, AuthError> {
+         std::fs::create_dir_all(&config.state_dir)
+@@ -343,11 +489,6 @@ impl AuthService {
              indexer: IndexerClient::new(config.indexer_url.clone()),
              config,
              wallet_mutex: Arc::new(Mutex::new(())),
@@ -406,7 +1315,41 @@ index 41dc152..80a7171 100644
              direct_lease: tokio::sync::Mutex::new(None),
          }))
      }
-@@ -560,6 +616,7 @@ impl AuthService {
+@@ -388,6 +529,7 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             if wallet.state().is_some() {
+                 return Err(AuthError::InvalidInput(
+                     "wallet already has an active note".to_string(),
+@@ -426,6 +568,8 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let mut wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
++            crate::oa_withdrawal::check_spending(&config, Some(request.note_id))?;
+             wallet.confirm_deposit(
+                 request.secret,
+                 request.note_id,
+@@ -447,6 +591,7 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let mut wallet = load_wallet(&config, trusted_roots)?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let runtime = current_thread_runtime()?;
+             let recovered = runtime.block_on(wallet.recover())?;
+             let request = recovered.as_ref().map(|response| {
+@@ -532,6 +677,8 @@ impl AuthService {
+                 .lock()
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let state_path = config.state_dir.join("note_state.json");
+             let journal_path = config.state_dir.join("pending_journal.json");
+             if state_path.exists() {
+@@ -560,6 +707,7 @@ impl AuthService {
              models: self.config.models.clone(),
              demo_rpc_url: self.config.demo_rpc_url.clone(),
              demo_billing_token_address: self.config.demo_billing_token_address.clone(),
@@ -414,10 +1357,10 @@ index 41dc152..80a7171 100644
              demo_private_key: self.config.demo_private_key.clone(),
              demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
          }
-@@ -599,13 +656,56 @@ impl AuthService {
+@@ -599,13 +747,156 @@ impl AuthService {
          }
      }
- 
+
 -    async fn execute_direct_openrouter(
 -        &self,
 -        request: CoreRequest,
@@ -427,10 +1370,108 @@ index 41dc152..80a7171 100644
 +    pub fn oa_bridge_status(&self) -> serde_json::Value {
 +        serde_json::json!({
 +            "bridge_version": 1,
++            "withdrawal_bridge_version": 1,
 +            "chain_id": self.config.chain_id,
 +            "mode": self.config.request_mode,
 +            "require_oa_org_key_source": self.config.require_oa_org_key_source,
 +        })
++    }
++
++    async fn oa_check_spending(&self) -> Result<(), AuthError> {
++        let config = self.config.clone();
++        let wallet_mutex = self.wallet_mutex.clone();
++        spawn_blocking(move || {
++            let _guard = wallet_mutex.lock().map_err(|_| AuthError::Wallet("wallet lock unavailable".into()))?;
++            let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))
++        }).await
++    }
++
++    pub async fn oa_withdrawal_status(&self) -> Result<Value, AuthError> {
++        let config = self.config.clone();
++        let wallet_mutex = self.wallet_mutex.clone();
++        spawn_blocking(move || {
++            let _guard = wallet_mutex.lock().map_err(|_| AuthError::Wallet("wallet lock unavailable".into()))?;
++            let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            Ok(crate::oa_withdrawal::public_status(crate::oa_withdrawal::load(&config)?.as_ref()))
++        }).await
++    }
++
++    pub async fn oa_prepare_withdrawal(&self, destination: [u8; 20]) -> Result<WithdrawalPlan, AuthError> {
++        if destination == [0; 20] { return Err(AuthError::InvalidInput("withdrawal destination cannot be zero".into())); }
++        // Same order as issuance: lease mutex, wallet mutex, then filesystem lock.
++        // Hold all three through clearance so no inference can race the snapshot.
++        let mut lease = self.direct_lease.lock().await;
++        let config = self.config.clone();
++        let wallet_mutex = self.wallet_mutex.clone();
++        let indexer = self.indexer.clone();
++        let trusted_roots = self.trusted_roots();
++        let result = spawn_blocking(move || {
++            let _guard = wallet_mutex.lock().map_err(|_| AuthError::Wallet("wallet lock unavailable".into()))?;
++            let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            let mut wallet = load_wallet(&config, trusted_roots)?;
++            let existing = crate::oa_withdrawal::load(&config)?;
++            // Parse errors must never be treated as absence of a pending lease.
++            let pending = wallet.get_pending_journal()?.is_some();
++            // A missing active file after finalized close can be the last crash
++            // boundary. Never recreate a note or ask for a second clearance.
++            if wallet.state().is_none() {
++                if pending { return Err(AuthError::PendingSettlement); }
++                if let Some(record) = &existing {
++                    if record.destination != destination { return Err(AuthError::WithdrawalConflict); }
++                    return record.plan.clone().ok_or(AuthError::WithdrawalConflict);
++                }
++                return Err(AuthError::NoActiveNote);
++            }
++            let runtime = current_thread_runtime()?;
++            runtime.block_on(async move {
++                if wallet.get_pending_journal()?.is_some() {
++                    if existing.as_ref().is_some_and(|record| !record.complete) {
++                        return Err(AuthError::PendingSettlement);
++                    }
++                    wallet.recover().await?;
++                    if wallet.get_pending_journal()?.is_some() { return Err(AuthError::PendingSettlement); }
++                }
++                let state = wallet.state().ok_or(AuthError::NoActiveNote)?;
++                let mut record = crate::oa_withdrawal::reserve(&config, state, destination)?;
++                if record.complete { return record.plan.ok_or(AuthError::WithdrawalConflict); }
++                // Clearance is idempotent for this reserved nullifier. Rebuild a
++                // proof against the current Merkle root on every explicit retry.
++                let root = indexer.root().await?;
++                let siblings = indexer.note_path(state.note_id).await?;
++                let (public_inputs, proof) = wallet.withdrawal_mutual_close(destination, root, siblings.clone()).await?;
++                let plan = WithdrawalPlan { mode: WithdrawalMode::Mutual, public_inputs, siblings, proof };
++                crate::oa_withdrawal::validate_plan(&record, &plan)?;
++                record.plan = Some(plan.clone());
++                crate::oa_withdrawal::save(&config, &record)?;
++                Ok(plan)
++            })
++        }).await;
++        if result.is_ok() { *lease = None; }
++        result
++    }
++
++    pub async fn oa_confirm_withdrawal(&self, transaction_hash: String) -> Result<Value, AuthError> {
++        let mut lease = self.direct_lease.lock().await;
++        let config = self.config.clone();
++        let wallet_mutex = self.wallet_mutex.clone();
++        let result = spawn_blocking(move || {
++            let _guard = wallet_mutex.lock().map_err(|_| AuthError::Wallet("wallet lock unavailable".into()))?;
++            let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            let mut record = crate::oa_withdrawal::load(&config)?.ok_or(AuthError::WithdrawalConflict)?;
++            if record.complete {
++                if record.transaction_hash.as_ref().is_some_and(|hash| hash.eq_ignore_ascii_case(&transaction_hash)) {
++                    return Ok((crate::oa_withdrawal::public_status(Some(&record)), false));
++                }
++                return Err(AuthError::WithdrawalConflict);
++            }
++            current_thread_runtime()?.block_on(crate::oa_withdrawal::confirm_receipt(&config, &record, &transaction_hash))?;
++            crate::oa_withdrawal::complete(&config, &mut record, &transaction_hash)?;
++            Ok((crate::oa_withdrawal::public_status(Some(&record)), true))
++        }).await;
++        if result.as_ref().is_ok_and(|(_, changed)| *changed) { *lease = None; }
++        result.map(|(status, _)| status)
 +    }
 +
 +    pub async fn oa_deposit_path(&self) -> Result<serde_json::Value, AuthError> {
@@ -459,7 +1500,9 @@ index 41dc152..80a7171 100644
 +    async fn ready_direct_lease(&self) -> Result<tokio::sync::MutexGuard<'_, Option<ActiveOpenRouterLease>>, AuthError> {
          self.ensure_scheme_agreement().await?;
          let mut lease_guard = self.direct_lease.lock().await;
- 
+
++        self.oa_check_spending().await?;
++
 +        if let Some(lease) = lease_guard.as_ref() {
 +            use sha3::{Digest, Keccak256};
 +            let marker = self.config.state_dir.join("oa-issued-leases")
@@ -475,7 +1518,7 @@ index 41dc152..80a7171 100644
          if let Some(lease) = lease_guard.as_ref() {
              // Leave a small margin so a key cannot expire while a request is
              // being transmitted to OpenRouter.
-@@ -649,6 +749,15 @@ impl AuthService {
+@@ -649,6 +940,15 @@ impl AuthService {
              }
              lease.verified = true;
          }
@@ -491,7 +1534,7 @@ index 41dc152..80a7171 100644
          let (upstream_path, upstream_body) =
              crate::compat::openrouter_request(&request.path, request.body);
          let url = format!(
-@@ -656,8 +765,7 @@ impl AuthService {
+@@ -656,8 +956,7 @@ impl AuthService {
              lease.openrouter_api_base.trim_end_matches('/'),
              upstream_path
          );
@@ -501,7 +1544,7 @@ index 41dc152..80a7171 100644
              .post(url)
              .bearer_auth(&lease.api_key)
              .header("content-type", "application/json")
-@@ -698,8 +806,7 @@ impl AuthService {
+@@ -698,8 +997,7 @@ impl AuthService {
      async fn issue_direct_openrouter_lease(&self) -> Result<ActiveOpenRouterLease, AuthError> {
          for attempt in 0..2 {
              let request = self.prepare_direct_lease_request().await?;
@@ -511,7 +1554,7 @@ index 41dc152..80a7171 100644
                  .post(format!(
                      "{}/v2/openrouter/leases",
                      self.config.protocol_server_url.trim_end_matches('/')
-@@ -815,7 +922,7 @@ impl AuthService {
+@@ -815,7 +1113,7 @@ impl AuthService {
              ));
          }
          if evidence.station_id.is_empty()
@@ -520,7 +1563,7 @@ index 41dc152..80a7171 100644
              || evidence.station_signature.len() != 128
              || evidence.org_signature.len() != 128
          {
-@@ -823,8 +930,7 @@ impl AuthService {
+@@ -823,8 +1121,7 @@ impl AuthService {
                  "OA key evidence is incomplete or inconsistent".to_string(),
              ));
          }
@@ -530,7 +1573,7 @@ index 41dc152..80a7171 100644
              .post(format!("{expected_verifier}/submit_key"))
              .json(&serde_json::json!({
                  "station_id": evidence.station_id,
-@@ -842,7 +948,7 @@ impl AuthService {
+@@ -842,7 +1139,7 @@ impl AuthService {
          let result: Value = response.json().await.map_err(|error| {
              AuthError::KeyVerification(format!("invalid verifier response: {error}"))
          })?;
@@ -539,7 +1582,23 @@ index 41dc152..80a7171 100644
          {
              return Err(AuthError::KeyVerification(format!(
                  "trusted verifier rejected the station key (HTTP {status})"
-@@ -914,7 +1020,7 @@ impl AuthService {
+@@ -866,6 +1163,7 @@ impl AuthService {
+                 .map_err(|error| AuthError::Wallet(error.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let mut wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let authorization = serde_json::to_string(&OpenRouterLeaseAuthorization::default())
+                 .map_err(|error| AuthError::Serialization(error.to_string()))?;
+             if wallet.has_pending_request() {
+@@ -904,6 +1202,7 @@ impl AuthService {
+                 .map_err(|error| AuthError::Wallet(error.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             wallet.clear_pending_request()?;
+             Ok(())
+         })
+@@ -914,7 +1213,7 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<OpenRouterLeaseStatusResponse, AuthError> {
@@ -548,8 +1607,24 @@ index 41dc152..80a7171 100644
              .get(format!(
                  "{}/v2/openrouter/leases/{client_request_id}",
                  self.config.protocol_server_url.trim_end_matches('/')
-@@ -1404,6 +1510,184 @@ fn default_body() -> Value {
- 
+@@ -977,6 +1276,7 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let mut wallet = load_wallet(&config, trusted_roots)?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let payload = serde_json::to_string(&request)
+                 .map_err(|err| AuthError::Serialization(err.to_string()))?;
+             let payload_hash = hash_payload(&payload);
+@@ -1065,6 +1365,7 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let wallet = load_wallet(&config, trusted_roots)?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let runtime = current_thread_runtime()?;
+
+             runtime.block_on(async move {
+@@ -1404,6 +1705,184 @@ fn default_body() -> Value {
+
  #[cfg(test)]
  mod security_tests {
 +    #[tokio::test]
@@ -731,5 +1806,5 @@ index 41dc152..80a7171 100644
 +    }
 +
      use super::{enforce_required_key_source, matches_trusted_url};
- 
+
      #[test]

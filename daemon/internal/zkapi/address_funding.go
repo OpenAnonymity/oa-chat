@@ -128,6 +128,8 @@ func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 		status.Message = "The saved transaction reverted. Retry explicitly to reuse the private note with a fresh transaction after finality."
 	case "legacy_recovery":
 		status.Message = "An earlier browser-funded deposit needs recovery. Resume its saved transaction before starting another deposit."
+	case "withdrawal_pending":
+		status.Message = "A withdrawal is saved. Run oa-chat withdraw and resume its destination before funding again."
 	default:
 		status.Message = "Payment recovery is required. Preserve the local funding files."
 	}
@@ -146,6 +148,9 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 		next := addressPublicStatus(record)
 		next.TokenBalance, next.ETHBalance = status.TokenBalance, status.ETHBalance
 		return next
+	}
+	if record.Withdrawal != nil && record.Withdrawal.Phase != "complete" {
+		return update(), errors.New("a withdrawal is saved; finish it with the same destination before funding again")
 	}
 	if record.Phase == "active" {
 		hasNote, err := h.addressHasNote(ctx)
@@ -217,6 +222,7 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 			return update(), nil
 		}
 		record.Amount, record.Phase = amount, "waiting_funds"
+		record.Withdrawal = nil
 		if err := h.saveAddress(record); err != nil {
 			return status, err
 		}
@@ -512,7 +518,7 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 		return err
 	}
 	if balance.Cmp(fee) < 0 {
-		return errAddressNeedsETH
+		return fmt.Errorf("%w (maximum transaction cost: %s ETH)", errAddressNeedsETH, new(big.Rat).SetFrac(fee, big.NewInt(1_000_000_000_000_000_000)).FloatString(18))
 	}
 	if err := h.assertAddressChain(ctx, config); err != nil {
 		return err
@@ -539,6 +545,13 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 	if kind == "deposit" {
 		record.Phase = "deposit_pending"
 	}
+	if kind == "withdrawal" {
+		record.Phase = "withdrawal_pending"
+		if record.Withdrawal == nil {
+			return errors.New("withdrawal intent is missing; no transaction was sent")
+		}
+		record.Withdrawal.Phase, record.Withdrawal.TransactionHash = "withdrawal_pending", signed.Hash().Hex()
+	}
 	// From this point every retry uses these exact bytes, even if a broadcast
 	// fails or the daemon crashes before the RPC responds.
 	if err := h.saveAddress(record); err != nil {
@@ -563,6 +576,13 @@ type addressReceipt struct {
 	TransactionHash string `json:"transactionHash"`
 	BlockHash       string `json:"blockHash"`
 	BlockNumber     string `json:"blockNumber"`
+	To              string `json:"to"`
+	Logs            []struct {
+		Address string   `json:"address"`
+		Topics  []string `json:"topics"`
+		Data    string   `json:"data"`
+		Removed bool     `json:"removed"`
+	} `json:"logs"`
 }
 
 func (h *FundingHandler) addressFinalReceipt(ctx context.Context, config fundingConfig, hash string, requireFinality bool) (*addressReceipt, bool, error) {
