@@ -3565,3 +3565,14 @@ focus and dismissal guards. The wallet link uses the existing landing entry rout
 only the fields documented in `EXTENSIONS.md`; no credential or inference state.
 Focused regressions cover logout, recovery bypass, host data boundaries, disabled
 controls, and the existing authentication handlers.
+
+### 2026-09-23 — Google popup completion race
+
+Chat now listens for the OAuth result before navigating the popup and keeps the
+origin/source/type-checked listener alive for 1.5 seconds after observing closure.
+This matches the landing page's protection against a queued completion arriving
+after the close poll. Unreadable popup state is not treated as cancellation. Real
+closure without completion reports that the window closed before sign-in finished;
+provider errors, invalid tokens, and the five-minute timeout still fail closed.
+`test/services/oauthPopup.test.js` covers the race, immediate callbacks, transient
+closure, unreadable state, forged messages, errors, and timer/listener cleanup.

@@ -497,17 +497,23 @@ function getOAuthProvider(provider) {
     return config;
 }
 
-function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
+export function waitForOAuthPopup(popup, provider, {
+    authorizationUrl,
+    windowImpl = globalThis.window,
+    timeoutMs = 5 * 60 * 1000
+} = {}) {
     const providerConfig = getOAuthProvider(provider);
     const orgOrigin = ORG_AUTH_ORIGIN;
 
     return new Promise((resolve, reject) => {
         let settled = false;
+        let closeGrace = null;
         const finish = (callback) => {
             if (settled) return;
             settled = true;
-            window.removeEventListener('message', handleMessage);
+            windowImpl.removeEventListener('message', handleMessage);
             clearInterval(closePoll);
+            clearTimeout(closeGrace);
             clearTimeout(timeout);
             callback();
         };
@@ -521,7 +527,7 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
             }
             if (event.data.ok) {
                 const completionToken = event.data.completionToken;
-                if (!OAUTH_COMPLETION_TOKEN_PATTERN.test(completionToken)) {
+                if (typeof completionToken !== 'string' || !OAUTH_COMPLETION_TOKEN_PATTERN.test(completionToken)) {
                     finish(() => reject(new Error(
                         `${providerConfig.label} sign in completion was invalid`
                     )));
@@ -535,11 +541,23 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
             }
         };
         const closePoll = setInterval(() => {
-            if (popup.closed) {
-                finish(() => reject(new Error(
-                    `${providerConfig.label} sign in was cancelled`
-                )));
+            let closed;
+            try { closed = popup.closed; } catch { return; }
+            if (!closed) {
+                clearTimeout(closeGrace);
+                closeGrace = null;
+                return;
             }
+            if (closeGrace !== null) return;
+            // The OAuth callback posts its result and closes. The close poll
+            // may run first; allow the queued, origin-checked message to arrive.
+            closeGrace = setTimeout(() => {
+                closeGrace = null;
+                try { if (!popup.closed) return; } catch { return; }
+                finish(() => reject(new Error(
+                    `${providerConfig.label} sign-in window closed before sign-in finished. Please try again.`
+                )));
+            }, 1500);
         }, 500);
         const timeout = setTimeout(() => {
             try {
@@ -552,7 +570,12 @@ function waitForOAuthPopup(popup, provider, timeoutMs = 5 * 60 * 1000) {
             )));
         }, timeoutMs);
 
-        window.addEventListener('message', handleMessage);
+        windowImpl.addEventListener('message', handleMessage);
+        // Listen before navigation, including an immediate returning-user callback.
+        if (authorizationUrl) {
+            try { popup.location.replace(authorizationUrl); }
+            catch (error) { finish(() => reject(error)); }
+        }
     });
 }
 
@@ -1888,8 +1911,9 @@ class AccountService {
                     );
                 }
 
-                popup.location.replace(startData.authorizationUrl);
-                const completionToken = await waitForOAuthPopup(popup, provider);
+                const completionToken = await waitForOAuthPopup(popup, provider, {
+                    authorizationUrl: startData.authorizationUrl
+                });
                 session = await bootstrapOAuthSession(
                     provider,
                     completionToken
