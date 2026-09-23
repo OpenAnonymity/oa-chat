@@ -5,7 +5,7 @@
 - Closure requires a canonical finalized successful receipt with the exact vault `MutualClose` event in both Go and Rust. Private recovery archives are durable before the active note disappears. Completed retries are idempotent and cannot touch a newer note. Go finishes its closure bookkeeping before any funding entry point can prepare another deposit. A missing note without confirmed closure still requires recovery.
 - A separate owner-only `management-token` is required in addition to the inference API key for withdrawal management. Commands bind every request to their original note ID; retry authorization names the exact reverted hash once, so concurrent or suspended polling cannot authorize a new attempt or withdraw a later note. If someone else relays the identical payout first and the local transaction finalizes reverted, `--confirm SUCCESSFUL_HASH` can recover that independently verified payout without signing again.
 - See [CLI withdrawal and recovery](CLI_ZKAPI.md#withdraw-without-connecting-a-wallet). The published `daemon-v0.1.0` bundle predates these changes; no updated release is implied by source changes.
-- Live Sepolia preparation succeeded for note 58's remaining 99971 units: server clearance, proof, deployment/destination binding, gas simulation, owner authorization, inference exclusion, and restart persistence passed. Gas was insufficient (0.001802 ETH available, 0.009129 ETH maximum estimated cost), so no withdrawal transaction was signed or broadcast. The note is reserved in `waiting_funds`; a 0.01 Sepolia ETH top-up was requested for the same local address. [Readiness evidence](../daemon/packaging/validation/sepolia-cli-withdrawal.json) explicitly leaves on-chain payout/finality unverified.
+- Live Sepolia withdrawal completed on September 23 UTC (September 22 Pacific) after the gas top-up. Note 58 paid its remaining 99971 test-token units to the selected destination in [transaction 0x085471…bdf1a](https://sepolia.etherscan.io/tx/0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a). Exact vault event, historical recipient balance delta, treasury payment, consumed nullifier, closed note, and canonical finality passed. Restarting during finality kept the same signed bytes; restarting after completion and repeating the CLI/management request kept the signer nonce at 3. Both processes report completion, private recovery archives remain, and the same address is ready for funding again (no second live deposit claimed). Gas cost was 0.007434784766264632 test ETH; remaining public ETH stays at the local signer. Temporary services were stopped and closed-state backups retained. See the [acceptance evidence](../daemon/packaging/validation/sepolia-cli-withdrawal.json).
 
 ## 2026-09-22: Live Sepolia CLI address funding and cancellation recovery
 
@@ -781,8 +781,10 @@ reading code alone.
   two durable key handoffs. No extra request was made to observe settlement.
 - Remaining limits: each provider key is handed out once, so independent API
   calls wait for the prior lease's settlement (about 4.5 minutes plus grace in
-  this deployment). Withdrawal is not implemented in the Go CLI. Public Sepolia
-  metadata does not disclose its OA-org issuer URL, so that issuer's staging
+  this deployment). The Go CLI did not implement withdrawal at this September
+  10 revision; the current [CLI withdrawal flow](CLI_ZKAPI.md#withdraw-without-connecting-a-wallet)
+  is documented separately. Public Sepolia metadata does not disclose its
+  OA-org issuer URL, so that issuer's staging
   status remains unknown. The live tests used the owned temporary Wisp helper
   through SSH after the public relay failed; its four-hour lifetime and local
   tunnel must both remain healthy. No direct-transport fallback was used.

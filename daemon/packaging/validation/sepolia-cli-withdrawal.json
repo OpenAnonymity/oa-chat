@@ -1,6 +1,6 @@
 {
-  "observed_at_utc": "2026-09-23T03:27:00Z",
-  "outcome": "proof_ready_awaiting_sepolia_gas",
+  "observed_at_utc": "2026-09-23T04:12:45.632404+00:00",
+  "outcome": "passed_finalized_payout_and_restart_recovery",
   "scope": "CLI cooperative withdrawal using the existing locally generated funding key",
   "network": "sepolia",
   "chain_id": 11155111,
@@ -15,9 +15,6 @@
   "note_id": 58,
   "private_balance_base_units": 99971,
   "private_balance_tokens": "0.099971",
-  "gas_balance_wei": "1801921699097528",
-  "estimated_maximum_transaction_cost_wei": "9129459169206400",
-  "requested_top_up_sepolia_eth": "0.01",
   "checks": {
     "read_only_cli_status": "passed",
     "no_external_wallet_connection": "passed",
@@ -25,7 +22,7 @@
     "proof_binding_to_note_amount_destination_and_deployment": "passed",
     "withdrawal_gas_simulation": "passed",
     "insufficient_gas_stops_before_signing_or_broadcast": "passed",
-    "withdrawal_phase": "waiting_funds",
+    "withdrawal_phase": "complete",
     "anonymous_management_request_status": 401,
     "inference_key_only_management_request_status": 403,
     "incorrect_management_token_status": 403,
@@ -36,15 +33,85 @@
     "new_inference_error_code": "withdrawal_pending",
     "restart_preserves_note_amount_destination_and_phase": true,
     "payment_and_private_note_files_mode": "0600",
-    "outgoing_signed_transaction_count_unchanged": 2,
     "pending_withdrawal_transaction": false,
     "temporary_test_services_stopped_state_retained": true,
-    "on_chain_withdrawal_and_finalized_payout": "not_run_insufficient_test_eth"
+    "on_chain_withdrawal_and_finalized_payout": "passed",
+    "before_topup_signed_transaction_count": 2,
+    "restart_while_awaiting_finality_preserves_signed_bytes": true,
+    "restart_after_completion_and_repeat_command_without_new_transaction": true,
+    "funding_ready_at_same_address_after_closure": true
   },
   "transport": "Mandatory destination TLS over the owned temporary Wisp test relay; no direct product fallback",
   "limitations": [
-    "No withdrawal transaction was signed or broadcast; the live payout and finalized closure remain unverified until test gas arrives.",
-    "The private note remains reserved for this exact destination and new inference is blocked until the withdrawal finishes.",
+    "This run used the pinned legacy Sepolia deployment and its configured test billing token; it does not migrate an existing note to the newer deployment.",
+    "Refill readiness was verified at the same address after closure; a second live deposit was not performed in this run.",
     "No mainnet, escape withdrawal, public-asset sweep, or new packaged release is claimed."
-  ]
+  ],
+  "implementation_commit": "8372dd2f92e6bdf26d11fba3d6def7773f35c111",
+  "native_binary_sha256": {
+    "oa-chat": "9c561701eb7550bac73f5778995c00395f9516659f3aa978d2e4c6ad67be3cb6",
+    "oa-zkapi": "accb9cef51ec2d25bcb8f68281666bc3fed19fd9458578beee735d4524cd4938"
+  },
+  "initial_insufficient_gas_preflight": {
+    "gas_balance_wei": "1801921699097528",
+    "estimated_maximum_transaction_cost_wei": "9129459169206400",
+    "requested_top_up_sepolia_eth": "0.01"
+  },
+  "gas_balance_after_topup_wei": "66301921699097528",
+  "on_chain": {
+    "observed_at_utc": "2026-09-23T04:12:14.842611+00:00",
+    "transaction_hash": "0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a",
+    "transaction_nonce": 2,
+    "receipt_status": 1,
+    "block_number": 11762380,
+    "block_hash": "0x03e5e8cf22a82192a75546fee6b1cc483515521aa2338216bcf601599bf0fd44",
+    "finalized_head_number": 11762404,
+    "finalized_head_hash": "0x896c039880b2b978f5cfcfcbd48ab2a80cd3b0bcd42ff44db9f8d93350589adc",
+    "canonical_block_hash_matches": true,
+    "finalized": true,
+    "exact_mutual_close_event_matches_saved_intent": true,
+    "recipient_balance_before_block": 11762379,
+    "recipient_token_balance_before_base_units": 0,
+    "recipient_balance_after_block": 11762380,
+    "recipient_token_balance_after_base_units": 99971,
+    "payout_transfer_base_units": 99971,
+    "treasury_transfer_base_units": 29,
+    "treasury_transfer_recipient_matches_contract": true,
+    "on_chain_note_status": "Closed",
+    "on_chain_note_status_value": 3,
+    "nullifier_consumed": true,
+    "gas_used": 7074922,
+    "effective_gas_price_wei": "1050864556",
+    "transaction_fee_wei": "7434784766264632",
+    "signer_nonce_after": 3,
+    "signer_eth_balance_after_wei": "58867136932832896",
+    "independent_verification_transport": "Public JSON-RPC (outside product transport)"
+  },
+  "local_recovery": {
+    "observed_at_utc": "2026-09-23T04:12:06.702952+00:00",
+    "go_withdrawal_phase": "complete",
+    "companion_withdrawal_phase": "complete",
+    "transaction_hash": "0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a",
+    "companion_has_active_note": false,
+    "companion_has_pending_request": false,
+    "go_has_pending_transaction": false,
+    "retired_withdrawal_nonce": 2,
+    "total_signed_transaction_count": 3,
+    "signed_bytes_unchanged_across_pending_restart_and_completion": true,
+    "original_signing_key_retained": true,
+    "funding_phase": "ready",
+    "funding_address_unchanged": true,
+    "deposit_amount_and_commitment_cleared": true,
+    "closed_note_archive_retained": true,
+    "closed_deposit_archive_retained": true,
+    "private_file_modes": "0600",
+    "repeat_completed_management_request_leaves_journal_unchanged": true,
+    "post_completion_daemon_restart_and_repeat_cli_command": "passed"
+  },
+  "cleanup": {
+    "observed_at_utc": "2026-09-23T04:12:45.632404+00:00",
+    "local_test_ports_closed": true,
+    "temporary_remote_relay_stopped_and_removed": true,
+    "private_closed_state_and_backup_retained": true
+  }
 }

@@ -284,15 +284,24 @@ withdrawal, and separate management authorization. Rust regressions cover
 durable reservations, mutation/lease exclusion, event/finality rejection, archive
 ordering, and old-completion/new-note isolation.
 
-The [live withdrawal readiness record](../daemon/packaging/validation/sepolia-cli-withdrawal.json)
-records successful Sepolia clearance, proof generation, gas simulation,
-authorization checks, inference exclusion, and restart recovery for note 58's
-remaining 0.099971 test tokens. The signer had 0.001802 Sepolia ETH against an
-estimated maximum transaction cost of 0.009129 ETH. The CLI stopped safely in
-`waiting_funds` before signing or broadcasting; an additional 0.01 test ETH was
-requested. **The live withdrawal payout and finalized closure have not yet been
-verified.** The note remains reserved for its saved destination. Temporary test
-services were stopped with the private state and backups retained for resuming.
+The [live withdrawal acceptance record](../daemon/packaging/validation/sepolia-cli-withdrawal.json)
+completed on September 23 UTC (September 22 Pacific). After safely stopping for
+insufficient gas, the same saved command resumed when test ETH arrived. It
+withdrew note 58's remaining **0.099971 test tokens**, using the locally generated
+funding key, in [this Sepolia transaction](https://sepolia.etherscan.io/tx/0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a).
+Independent receipt and historical balance checks verified the exact recipient
+payout, 29-unit treasury payment, consumed nullifier, closed note, and canonical
+Ethereum finality. Gas cost was 0.007434784766264632 Sepolia ETH.
+
+Restarting while awaiting finality retained the identical signed transaction.
+After finality, both processes reported completion, archived recovery material,
+and cleared the active note and pending transaction. Another daemon restart,
+repeated CLI command, and repeated management request returned the same result:
+the signer nonce remained 3, with only approval, deposit, and withdrawal signed.
+The same funding address reported `ready`; a second live deposit was not made.
+Temporary test services were stopped, with private state and backups retained.
+This verifies cooperative withdrawal on the pinned legacy Sepolia deployment;
+it does not imply a mainnet run or a newly published native release.
 
 The current change is covered by mocked JSON-RPC/companion integration tests:
 address persistence and file permissions, wrong-chain/token checks, exact
@@ -460,6 +469,7 @@ successful requests therefore completed their own issuance and settlement.
 
 Mocked receipt tests remain unit coverage, distinct from this live chain result.
 Rapid independent requests still require the settlement redesign above, the
-ZKAPI deployment's OA-org staging status remains unknown, and withdrawal is
-not implemented in the Go CLI. The deployed verifier's 16-character fingerprint
-and signed-expiry safety margin are supported.
+ZKAPI deployment's OA-org staging status remains unknown. Withdrawal was not
+implemented in the Go CLI at this September 10 revision; see the current
+[CLI withdrawal flow](#withdraw-without-connecting-a-wallet) above. The deployed
+verifier's 16-character fingerprint and signed-expiry safety margin are supported.
