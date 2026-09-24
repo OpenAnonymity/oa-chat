@@ -493,6 +493,7 @@ test('first username account completes after one passkey and routes to Membershi
     let recoveryGenerationCount = 0;
     let closed = 0;
     let firstAccountReady = 0;
+    const toasts = [];
     modal.generatedUsername = 'winter-owl';
     modal.creationStep = 'passkey';
     modal.creationError = null;
@@ -507,7 +508,7 @@ test('first username account completes after one passkey and routes to Membershi
         async completeAccountRegistration() { completeCount += 1; }
     };
     modal.app = {
-        showToast() {},
+        showToast(...args) { toasts.push(args); },
         notifyFirstAccountReady() { firstAccountReady += 1; }
     };
 
@@ -518,6 +519,7 @@ test('first username account completes after one passkey and routes to Membershi
     assert.equal(modal.creationStep, 'complete');
     assert.equal(closed, 1);
     assert.equal(firstAccountReady, 1);
+    assert.deepEqual(toasts, [['Account created successfully', 'success', 3000, { position: 'top-center' }]]);
 });
 
 test('first username setup draws only the spinner and a caption saying what the passkey sheet is for', () => {
@@ -1639,6 +1641,9 @@ test('a landing-page Google hand-off draws only the spinner while the session is
         documentElement: { removeAttribute() {} }
     };
     const token = 'd'.repeat(43);
+    const frames = [];
+    const render = modal.render.bind(modal);
+    modal.render = () => { render(); frames.push(modal.overlay.innerHTML); };
     try {
         await modal.openForOAuthCompletion('google', token);
     } finally {
@@ -1647,6 +1652,8 @@ test('a landing-page Google hand-off draws only the spinner while the session is
 
     assert.deepEqual(calls, [['google', { completionToken: token }]]);
     assert.equal(seen[0][0], true);
+    assert.ok(frames.length > 0);
+    assert.ok(frames.every(html => /aria-label="Signing in"/.test(html)), 'every frame, including open(), shows the handoff spinner');
     assert.match(seen[0][1], /class="account-unlock-card account-unlock-card-untitled" data-waiting="true"/);
     assert.match(seen[0][1], /aria-label="Signing in"/);
     assert.match(seen[0][1], /Signing in with Google…/);
@@ -1656,7 +1663,7 @@ test('a landing-page Google hand-off draws only the spinner while the session is
     assert.deepEqual(closed, { afterAuthentication: true });
 });
 
-test('Google completion survives the sign-in dialog opened while clearing a previous account', async () => {
+test('Google completion keeps the waiting surface throughout slow previous-account cleanup', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { getElementById: () => null };
     let state = {
@@ -1666,6 +1673,8 @@ test('Google completion survives the sign-in dialog opened while clearing a prev
     let notify;
     let finish;
     const completion = new Promise(resolve => { finish = resolve; });
+    let releaseCleanup;
+    const cleanup = new Promise(resolve => { releaseCleanup = resolve; });
     const calls = [];
     const service = {
         getState: () => state,
@@ -1674,6 +1683,7 @@ test('Google completion survives the sign-in dialog opened while clearing a prev
         async clearLocalAccount() {
             state = { accountId: null, sessionVerified: false, status: 'none', authBootstrapComplete: true };
             notify(state);
+            await cleanup;
         },
         authenticateWithOAuth(provider, options) {
             calls.push([provider, options]);
@@ -1687,8 +1697,9 @@ test('Google completion survives the sign-in dialog opened while clearing a prev
     let opens = 0;
     let passkeys = 0;
     modal.overlay = {};
-    modal.open = () => { opens += 1; modal.isOpen = true; };
-    modal.render = () => {};
+    const frames = [];
+    modal.open = () => { opens += 1; modal.isOpen = true; modal.render(); };
+    modal.render = () => { frames.push(modal.oauthHandoffPending ? 'signing-in' : 'login-form'); };
     modal.maybeAutoPromptPasskey = () => { passkeys += 1; };
     const token = 'e'.repeat(43);
     try {
@@ -1698,9 +1709,16 @@ test('Google completion survives the sign-in dialog opened while clearing a prev
             historyImpl: { replaceState() {} }
         });
         assert.equal(result.action, 'complete');
-        assert.equal(opens, 1, 'clearing the old account already opened the dialog');
-        assert.deepEqual(calls, [['google', { completionToken: token }]]);
+        assert.equal(opens, 1, 'open the waiting dialog before clearing the old account');
+        assert.deepEqual(calls, [], 'the previous account must be cleared before completion');
+        assert.ok(frames.length > 0 && frames.every(frame => frame === 'signing-in'));
         assert.equal(modal.oauthHandoffPending, true);
+        await modal.openForOAuthCompletion('google', token);
+        assert.equal(calls.length, 0, 'a duplicate cannot bypass account cleanup');
+        releaseCleanup();
+        await cleanup;
+        await Promise.resolve();
+        assert.deepEqual(calls, [['google', { completionToken: token }]]);
         await modal.openForOAuthCompletion('google', token);
         assert.equal(calls.length, 1, 'do not consume a single-use completion twice');
         finish({ status: 'keyring_unlock' });
@@ -1709,9 +1727,37 @@ test('Google completion survives the sign-in dialog opened while clearing a prev
         assert.equal(passkeys, 1, 'continue to encryption unlock without another Google sign-in');
         assert.equal(modal.oauthHandoffPending, false);
     } finally {
+        releaseCleanup();
         finish(null);
         globalThis.document = originalDocument;
     }
+});
+
+test('a landing handoff suppresses old-account passkeys and fails closed if cleanup fails', async () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.overlay = {};
+    modal.isOpen = true;
+    modal.accountState = { sessionVerified: true, oauthKeyringRequired: true };
+    modal.render = () => {};
+    let passkeys = 0;
+    let completions = 0;
+    let error = '';
+    modal.handleOAuthKeyringUnlock = () => { passkeys += 1; };
+    modal.accountService = {
+        setError(value) { error = value; },
+        authenticateWithOAuth() { completions += 1; }
+    };
+    await modal.openForOAuthCompletion('google', 'f'.repeat(43), null, {
+        beforeComplete: async () => {
+            modal.maybeAutoPromptPasskey();
+            throw new Error('cleanup failed');
+        }
+    });
+    assert.equal(passkeys, 0, 'do not unlock the previous account during handoff');
+    assert.equal(completions, 0, 'do not continue authentication with uncleared account data');
+    assert.equal(modal.oauthHandoffPending, false);
+    assert.equal(modal.creationStep, 'idle');
+    assert.equal(error, 'Could not finish signing in. Please try again.');
 });
 
 test('an already-unlocked Google account completes without commercial coupling', async () => {

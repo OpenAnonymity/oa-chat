@@ -66,7 +66,8 @@ test('username continuation reserves new names and selects login only on a typed
         // Blank input cannot accidentally invoke the legacy no-body initializer.
         requests = [];
         sessionService.fetch = async () => { requests.push('unexpected'); };
-        await assert.rejects(accountService.prepareUsernameContinuation(''));
+        await assert.rejects(accountService.prepareUsernameContinuation(''), /Enter a username to continue/);
+        await assert.rejects(accountService.prepareUsernameContinuation('   '), /Enter a username to continue/);
         await assert.rejects(accountService.prepareUsernameContinuation('not-an-email@example.com'));
         assert.deepEqual(requests, []);
 

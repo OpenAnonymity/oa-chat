@@ -9987,70 +9987,11 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
   .t-skel-skeleton.is-pulsing > * { animation: none !important; }
 }
 
-/* Empty-chat arrival. Content determines layout, including the prelude's first paint.
-   No second input is mounted: drafts, attachments, and focus stay on the same node. */
-#chat-stage:has(#messages-container > .welcome-landing) {
-    justify-content: center;
-    justify-content: safe center;
-    align-items: stretch;
-    gap: 24px;
-    padding-block: 20px clamp(20px, 10dvh, 100px);
-}
-#chat-stage:has(#messages-container > .welcome-landing) #chat-area {
-    flex: 0 1 auto;
-    max-height: 40%;
-    padding-top: 0;
-    overflow-y: auto;
-}
-#chat-stage:has(#messages-container > .welcome-landing) #messages-container {
-    padding-block: 0 !important; /* Overrides the input ResizeObserver's transcript padding. */
-}
-#chat-stage:has(#messages-container > .welcome-landing) .welcome-landing {
-    margin-top: 0;
-}
-#chat-stage:has(#messages-container > .welcome-landing) #chat-composer {
-    position: relative;
-    inset: auto;
-    width: 100%;
-    min-width: 0;
-    z-index: 20;
-}
-#chat-stage:has(#messages-container > .welcome-landing) #message-input {
-    max-height: min(300px, 30dvh) !important;
-}
-.chat-arrival-outgoing {
-    position: absolute;
-    z-index: 1;
-    pointer-events: none;
-    margin: 0;
-    animation: none;
-}
-@media (max-height: 500px) {
-    #chat-stage:has(#messages-container > .welcome-landing) {
-        gap: 12px;
-        padding-block: 8px;
-    }
-}
+/* The composer remains docked on empty and active chats. */
 @media (prefers-reduced-motion: reduce) {
     .welcome-landing { animation: none; opacity: 1; transform: none; }
 }
-
-/* Mobile normally fixes the input card to the viewport and removes this wrapper.
-   Restore flow only while empty; animate the card itself when docking so its
-   fixed positioning never acquires a transformed ancestor. */
-@media (max-width: 767px) {
-    main > #chat-stage:has(#messages-container > .welcome-landing) {
-        display: flex !important;
-    }
-    #chat-stage:has(#messages-container > .welcome-landing) #chat-area {
-        flex: 0 1 auto !important;
-        margin-bottom: 0 !important;
-    }
-    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
-        position: relative !important;
-        inset: auto !important;
-    }
-}
+.chat-arrival-outgoing { position: absolute; pointer-events: none; margin: 0; animation: none; }
 
 /* Visible only during transport silence; the regular pending UI stays intact. */
 .inference-silence-warning {
@@ -10164,14 +10105,6 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] .council-inlin
     body { height: 100dvh; }
     main { height: 100dvh !important; }
     #chat-composer { padding-inline: 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
-    #chat-stage:has(#messages-container > .welcome-landing) {
-        gap: 20px;
-        padding-block: 16px clamp(24px, 12dvh, 96px);
-    }
-    #chat-stage:has(#messages-container > .welcome-landing) #input-card {
-        width: 100% !important;
-        margin-inline: auto;
-    }
     #input-card {
         left: 16px !important;
         right: 16px !important;
@@ -10199,7 +10132,7 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] .council-inlin
         padding-block: 0;
     }
     html[data-composer-keyboard] #chat-stage:has(#messages-container > .welcome-landing) #chat-area { display: none; }
-    html[data-composer-keyboard] #chat-stage:not(:has(#messages-container > .welcome-landing)) #input-card {
+    html[data-composer-keyboard] #chat-stage #input-card {
         top: auto !important;
         bottom: calc(100dvh - var(--composer-viewport-height) - var(--composer-viewport-top) + 12px) !important;
     }
@@ -10214,3 +10147,6 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
     #compact-composer-actions .chat-mode-toggle-container { height: 48px; }
 }
 #compact-scrub-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Account recovery and passkey errors must remain legible in dark themes. */
+.dark #account-modal .text-destructive { color: #fca5a5; }

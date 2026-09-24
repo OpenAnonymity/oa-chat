@@ -239,7 +239,11 @@ function mirrorPhaseToast(app, ...candidates) {
     // would say the same thing twice.
     const dialog = typeof document !== 'undefined' ? document.getElementById?.('payment-balance-modal') : null;
     const dialogOpen = Boolean(dialog && !dialog.classList?.contains?.('hidden'));
-    const text = primary && !dialogOpen ? String(primary.compact || '').trim() : '';
+    // Settlement status belongs in the System Panel; switching back to OA
+    // must never claim that the OA conversation is being closed.
+    const ticketMode = app?.integration?.getMode?.() === 'tickets';
+    const text = primary && !dialogOpen && !ticketMode && primary.phase !== 'closing'
+        ? String(primary.compact || '').trim() : '';
     if (text) {
         if (text === phaseToastText) return;
         phaseToastText = text;

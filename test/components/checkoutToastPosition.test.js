@@ -27,21 +27,16 @@ test('payment confirmation stays at top center in either composer layout', t => 
     assert.equal(f.toast.style.top, 'calc(env(safe-area-inset-top, 0px) + 72px)');
 });
 
-test('centered toast sits below the composer and stays still when it docks', t => {
+test('empty and active chats both position notifications above the bottom composer', t => {
     const f = fixture(t, { centered: true });
     f.update();
-    assert.equal(f.toast.style.top, '516px');
-    f.centered = false; f.rect = { top: 750, bottom: 850 };
+    assert.equal(f.toast.style.top, '344px');
+    f.centered = false;
     f.update();
-    assert.equal(f.toast.style.top, '516px');
-    stopToastPositioning(f.toast);
-    f.update();
-    assert.equal(f.toast.style.top, '516px', 'exit fade retains its frozen position');
-    // A subsequent notification uses the new layout, with its own lifetime.
-    f.toast = { dataset: {}, style: {}, offsetHeight: 40 };
+    assert.equal(f.toast.style.top, '344px');
+    f.rect = { top: 750, bottom: 850 };
     f.update();
     assert.equal(f.toast.style.top, '694px');
-    assert.equal(f.toast.style.bottom, 'auto');
 });
 
 test('docked toast stays still on New Chat, but follows resizing within the same layout', t => {
@@ -59,7 +54,7 @@ test('long notifications stay within the visible phone viewport', t => {
     globalThis.window.visualViewport = { offsetTop: 50, height: 400 };
     f.toast.offsetHeight = 100;
     f.update();
-    assert.equal(f.toast.style.top, '334px');
+    assert.equal(f.toast.style.top, '284px');
 });
 
 test('live toasts respond to viewport events and detach listeners on dismissal', t => {
@@ -68,19 +63,19 @@ test('live toasts respond to viewport events and detach listeners on dismissal',
     const view = Object.assign(new EventTarget(), { innerHeight: 900, visualViewport: viewport });
     watchToastPosition(f.toast, { document: globalThis.document, window: view });
     t.after(() => stopToastPositioning(f.toast));
-    assert.equal(f.toast.style.top, '516px');
+    assert.equal(f.toast.style.top, '344px');
     viewport.height = 400;
     viewport.dispatchEvent(new Event('resize'));
     assert.equal(f.toast.style.top, '344px');
     viewport.offsetTop = 40;
     viewport.dispatchEvent(new Event('scroll'));
-    assert.equal(f.toast.style.top, '384px');
+    assert.equal(f.toast.style.top, '344px');
     viewport.height = 900;
     view.dispatchEvent(new Event('resize'));
-    assert.equal(f.toast.style.top, '516px');
+    assert.equal(f.toast.style.top, '344px');
     stopToastPositioning(f.toast);
     viewport.height = 300;
     viewport.dispatchEvent(new Event('resize'));
     view.dispatchEvent(new Event('resize'));
-    assert.equal(f.toast.style.top, '516px');
+    assert.equal(f.toast.style.top, '344px');
 });

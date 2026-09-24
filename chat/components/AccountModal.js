@@ -431,7 +431,7 @@ class AccountModal {
     /** One automatic ceremony per open; cancellations leave an explicit retry. */
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
-        if (!this.isOpen || this.passkeyAutoPromptAttempted) return;
+        if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         if (state.oauthRecoveryRequired || state.oauthLegacyPasskeyRequired) return;
         const setup = state.oauthSetupRequired === true;
@@ -674,13 +674,27 @@ class AccountModal {
      * The landing page ran the Google popup and handed over its completion
      * token; only the spinner is drawn while the session is finished here.
      */
-    async openForOAuthCompletion(provider, completionToken, returnFocusEl = null) {
+    async openForOAuthCompletion(provider, completionToken, returnFocusEl = null, { beforeComplete = null } = {}) {
         // Clearing a previous account can open the signed-out dialog through
         // the account subscription before this handoff arrives. Reuse it;
         // only an in-flight completion should suppress a duplicate handoff.
         if (!this.overlay || this.oauthHandoffPending) return;
+        this.oauthHandoffPending = true;
+        this.oauthProvider = provider;
         if (!this.isOpen) this.open(returnFocusEl);
-        await this.handleOAuthAuthentication(provider, { completionToken });
+        else this.render();
+        // open() resets creation state. Guard dismissal while old-account
+        // cleanup is still running, before the service itself becomes busy.
+        this.creationStep = 'oauth_authorizing';
+        try {
+            if (beforeComplete) await beforeComplete();
+            await this.handleOAuthAuthentication(provider, { completionToken });
+        } catch {
+            this.oauthHandoffPending = false;
+            this.creationStep = 'idle';
+            this.accountService.setError('Could not finish signing in. Please try again.');
+            this.render();
+        }
     }
 
     async handleOAuthAuthentication(provider, { completionToken = null } = {}) {
@@ -778,7 +792,7 @@ class AccountModal {
                     await this.accountService.completeAccountRegistration();
                     if (!isCurrent()) return;
                     this.creationStep = 'complete';
-                    this.app?.showToast?.('Account created successfully', 'success');
+                    this.app?.showToast?.('Account created successfully', 'success', 3000, { position: 'top-center' });
                     this.completeFirstAccountRouting();
                 } catch (error) {
                     if (!isCurrent()) return;
@@ -909,7 +923,7 @@ class AccountModal {
         try {
             await this.accountService.completeAccountRegistration();
             this.creationStep = 'complete';
-            this.app?.showToast?.('Account created successfully', 'success');
+            this.app?.showToast?.('Account created successfully', 'success', 3000, { position: 'top-center' });
             this.completeFirstAccountRouting();
         } catch (error) {
             this.creationStep = 'error';
@@ -949,6 +963,20 @@ class AccountModal {
         if (state.accountId && !state.username &&
             (!state.googleLinked || state.encryptionMode === 'LEGACY_PASSKEY')) return 'accountId';
         return this.identifierMode || 'username';
+    }
+
+    handleUsernameInput(event) {
+        this.usernameInputValue = event.target.value;
+        if (event.isComposing || !/^(?:Enter a username|Username|Usernames|That username)/i.test(this.accountState?.error || '')) return;
+        const { selectionStart, selectionEnd, selectionDirection } = event.target;
+        // clearErrors publishes synchronously and replaces the form. Keep typing
+        // in the new field without losing the caret or clearing unrelated errors.
+        this.accountService.clearErrors();
+        const input = document.getElementById('account-username-input');
+        input?.focus();
+        if (selectionStart != null && selectionEnd != null) {
+            input?.setSelectionRange?.(selectionStart, selectionEnd, selectionDirection);
+        }
     }
 
     async handleAccountContinue() {
@@ -2289,11 +2317,9 @@ class AccountModal {
 
         const usernameInput = document.getElementById('account-username-input');
         if (usernameInput) {
-            usernameInput.oninput = (event) => {
-                this.usernameInputValue = event.target.value;
-            };
+            usernameInput.oninput = event => this.handleUsernameInput(event);
             usernameInput.onkeydown = (event) => {
-                if (event.key === 'Enter') {
+                if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
                     event.preventDefault();
                     this.handleAccountContinue();
                 }

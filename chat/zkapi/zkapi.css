@@ -1717,3 +1717,19 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-retry-link:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .zkapi-wallet-status-dot { width: 0.375rem; height: 0.375rem; margin-inline: 0.125rem; border-radius: 50%; background: currentColor; opacity: 0.6; flex-shrink: 0; }
+
+/* Funding disclosure rows share their height, inset and divider width. */
+.zkapi-guides { margin-top: 0; }
+.zkapi-guide.t-acc .zkapi-guide-trigger { min-height: 56px; padding-block: 16px; }
+.zkapi-guide.t-acc::before { left: 0; right: 0; }
+.zkapi-deposit > .zkapi-actions { margin-top: 16px; }
+.dark .zkapi-outcome[data-tone="error"],
+.dark .zkapi-step[data-state="error"] .zkapi-step-mark,
+.dark #payment-balance-modal .text-destructive { color: #fca5a5; }
+
+#zkapi-deposit-btn, #welcome-fund-btn {
+    min-height: 44px; height: auto; padding: 10px 16px;
+    white-space: normal; line-height: 1.35;
+}
+.zkapi-figure-row { flex-wrap: wrap; }
+#zkapi-deposit-amount { max-width: min(10ch, 100%); }

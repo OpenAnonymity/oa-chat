@@ -11,7 +11,9 @@ or entering the unlinkable-inference path. See
   single-use completion token in `?auth=google#oauth=...`. The chat removes it
   from the address and finishes the server session before the existing passkey
   setup/unlock flow. If clearing a previous account has already opened Account,
-  the handoff reuses that dialog instead of asking for Google again. Concurrent
+  the handoff reuses that dialog instead of asking for Google again. Its waiting
+  surface opens before old-account cleanup, so slow cleanup does not briefly
+  expose the sign-in form or prompt for the old account's passkey. Concurrent
   duplicate handoffs do not consume the token twice.
 - **Commercial landing handoff:** `/chat/?auth=google` is a one-use UI intent,
   not proof of authentication and not a Membership request. The chat waits for

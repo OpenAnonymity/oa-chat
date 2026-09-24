@@ -2,6 +2,7 @@ import { fundingDisclosure, attachFundingDisclosures, captureFundingDisclosureVi
 import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { settlePrivateAccess } from '../services/privateAccessSettlement.js';
+import { parseTokenAmount } from '@openanonymity/zkapi-browser-sdk/wallet';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
 import { explainZkapiError, isIndexerLag } from '../services/zkapiErrorCopy.mjs';
 import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
@@ -233,6 +234,29 @@ export default class AccountModal {
         return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    startDeposit(amount) {
+        this.depositAmount = amount;
+        // Validate before run() or the SDK can open a wallet request.
+        try {
+            if (!String(amount ?? '').trim()) throw new Error('Enter an amount to deposit.');
+            const parsed = parseTokenAmount(amount);
+            if (parsed <= 0n) throw new Error('Enter an amount greater than zero.');
+            if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Choose a smaller deposit amount.');
+        } catch (error) {
+            this.outcome = { tone: 'error', message: error.message, field: 'deposit', view: this.view };
+            this.render();
+            const input = this.overlay?.querySelector('#zkapi-deposit-amount');
+            input?.focus();
+            return;
+        }
+        return this.run(async (report) => {
+            await zkapiClient.deposit(amount, report);
+            this.depositAmount = null;
+            this.view = 'balance';
+            this.setStatus('Deposit confirmed. Your private balance is ready.');
+        }, { kind: 'deposit', title: 'Adding funds', phase: 'wallet', message: 'Connecting to MetaMask…', blocksSend: true });
+    }
+
     setStatus(message, isError = false) {
         this.status = message;
         this.statusError = isError;
@@ -271,7 +295,7 @@ export default class AccountModal {
      *  view change replaces it. */
     renderOutcome() {
         if (this.busy || !this.outcome?.message) return '';
-        return `<p class="zkapi-outcome" data-tone="${this.escapeHtml(this.outcome.tone)}" role="status">${this.escapeHtml(this.outcome.message)}</p>`;
+        return `<p class="zkapi-outcome" data-tone="${this.escapeHtml(this.outcome.tone)}" ${this.outcome.field === 'deposit' ? 'id="zkapi-deposit-error" role="alert"' : 'role="status"'}>${this.escapeHtml(this.outcome.message)}</p>`;
     }
 
     /** The journey for a kind of wallet work, from the latest status line
@@ -799,7 +823,7 @@ export default class AccountModal {
                 <div class="zkapi-stack">
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
                         <div class="zkapi-figure-row">
-                            <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
+                            <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" ${this.outcome?.field === 'deposit' ? 'aria-invalid="true" aria-describedby="zkapi-deposit-error"' : ''} size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
                             <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit && !canceled ? 'Saved deposit' : 'Deposit'}</label>
                         </div>
                         <p class="zkapi-helper">${helper}</p>
@@ -810,7 +834,7 @@ export default class AccountModal {
                             : `<div class="zkapi-actions">
                             ${this.busy
                                 ? this.renderProgress(this.status || 'Waiting for MetaMask…')
-                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button" type="button">${canceled ? 'Try again with MetaMask' : resumingDeposit ? 'Resume with MetaMask' : 'Continue with MetaMask'}</button>`}
+                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${canceled ? 'Try again with Ethereum wallet' : resumingDeposit ? 'Resume with Ethereum wallet' : 'Continue with Ethereum wallet'}</button>`}
                         </div>`}
                     </section>
                     <div class="zkapi-guides">
@@ -1045,19 +1069,19 @@ export default class AccountModal {
         fitDeposit();
         depositInput?.addEventListener('input', () => {
             this.depositAmount = depositInput.value;
+            if (this.outcome?.field === 'deposit') {
+                depositInput.removeAttribute('aria-invalid');
+                depositInput.removeAttribute('aria-describedby');
+                this.overlay.querySelector('#zkapi-deposit-error')?.remove();
+                this.outcome = null;
+            }
             fitDeposit();
         });
         this.overlay.querySelector('#zkapi-deposit-btn')?.addEventListener('click', () => {
             // Capture the edited amount before run() marks the modal busy and
             // re-renders it with the suggested default value.
             const amount = depositInput?.value ?? this.depositAmount;
-            this.depositAmount = amount;
-            return this.run(async (report) => {
-                await zkapiClient.deposit(amount, report);
-                this.depositAmount = null;
-                this.view = 'balance';
-                this.setStatus('Deposit confirmed. Your private balance is ready.');
-            }, { kind: 'deposit', title: 'Adding funds', phase: 'wallet', message: 'Connecting to MetaMask…', blocksSend: true });
+            return this.startDeposit(amount);
         });
         this.overlay.querySelector('#zkapi-discard-deposit-btn')?.addEventListener('click', () => this.run(async () => {
             const discard = this.pendingDepositDiscarder();

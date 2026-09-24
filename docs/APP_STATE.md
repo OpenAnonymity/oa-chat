@@ -1,3 +1,24 @@
+## 2026-09-24: Expanded release regression checks
+
+- Account username editing clears field-specific errors through the existing service, retaining the value and caret after the synchronous subscriber render. It does not clear unrelated Google/passkey/network errors or replace the field during IME composition. Enter during composition (including keyCode229) does not submit.
+- Twelve adversarial tests exercise this input lifecycle plus deposit boundary validation, recovery gating, persisted field errors and phase-toast ownership. Full core suite:909 application +322 payment tests, zero skipped. Independent review approved.
+- Commercial staging-configured build and artifact checks passed. Real auth/payment/device verification remains a release gate; see the commercial readiness report for exact coverage rather than treating unit counts as end-to-end certification.
+
+## 2026-09-24: UI readiness pass and bottom composer
+
+- Empty chats retain the same bottom-docked composer as active chats, including the mobile keyboard offset. Composer-anchored notices sit above it in both states; outgoing welcome content can fade without moving the composer.
+- Ticket mode suppresses zkAPI phase toasts, and background closing/settlement never emits “Closing previous chat.” System Panel state and settlement work remain intact; cleanup only removes the phase toast it owns.
+- Wallet funding uses a full-width 44px Ethereum-wallet CTA, aligned disclosure rows, bounded amount-field width, and legible dark error text. MetaMask-specific workflow instructions stay accurate.
+- Deposit UI validates using the SDK token parser and safe integer range before starting wallet work (the SDK itself connects before validation). Errors persist with field association across renders, clear on edit, and do not change SDK recovery/transaction checks.
+- Empty username validation rejects locally with “Enter a username to continue.” Commercial sign-in errors now sit within the account column; account recovery errors also have readable dark colors. No authentication or inference privacy boundary changed.
+- Full core tests passed (904 application + 315 payment). Independent review approved. Real OAuth, wallet transactions and native mobile keyboard testing remain separate release checks; see the commercial `docs/UI_READINESS_REVIEW.md` for coverage and previews.
+
+## 2026-09-24: Hide the sign-in form during Google account cleanup
+
+- The completed-Google arrival now opens its waiting surface before clearing a mismatched previous account. The previous fix consumed the completion correctly but left the generic sign-in form visible during asynchronous logout/cleanup.
+- The modal marks the handoff pending before its first render, keeps the waiting surface through cleanup and session completion, and suppresses automatic passkey prompts for the old account. Cleanup failure shows an error without completing the new session; concurrent handoffs cannot bypass cleanup or consume the token twice.
+- Regression coverage checks every initial render, deferred cleanup, duplicate arrival, cleanup failure, and continuation to the normal encryption-passkey flow. Server authentication, account-matching policy and token validation are unchanged. The reported live browser flash has not been independently reproduced with real Google accounts.
+
 ## 2026-09-24: Shorter account-unlocked toast
 
 - The successful username/account-number passkey unlock toast now displays for 1.5 seconds instead of the default 3 seconds. Other notifications are unchanged.
@@ -442,6 +463,9 @@ shell, not only isolated RightPanel previews, when changing header controls.
 
 ## 2026-09-14: Checkout toast placement and username challenge errors
 
+- Account-created success notifications use the top-center position, rather than
+  anchoring to the chat composer behind the commercial welcome dialog. Both
+  username/passkey and recovery-code registration use the same placement.
 - Commercial checkout can request `showToast` with `{ position: 'top-center' }`.
   It sits below the header with a safe-area inset and a viewport width cap;
   ordinary notifications retain their position above the composer.

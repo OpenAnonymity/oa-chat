@@ -943,7 +943,7 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
         assert.match(html, /Before resuming, check MetaMask for a pending transaction\./);
         assert.match(html, /value="5" readonly/);
         assert.doesNotMatch(html, /value="99"/);
-        assert.match(html, /Resume with MetaMask/);
+        assert.match(html, /Resume with Ethereum wallet/);
     } finally {
         zkapiClient.wallet = originalWallet;
         zkapiClient.config = originalConfig;
@@ -965,7 +965,7 @@ test('balance views keep funding and payment history while omitting redundant wa
             const html = modal.renderBalance();
             assert.match(html, /Payment history/);
             assert.doesNotMatch(html, /zkapi-watch-token-btn|Add USDC to MetaMask|<dt>Network|<dt>Request mode|<dt>Vault/);
-            assert.match(html, note ? /Withdraw/ : /Continue with MetaMask/);
+            assert.match(html, note ? /Withdraw/ : /Continue with Ethereum wallet/);
         }
         assert.match(modal.renderWithdrawalRecords(), /Your deposits and withdrawals will appear here/);
         assert.match(modal.renderWithdrawalRecords(), /Back to balance/);
@@ -1854,5 +1854,60 @@ test('both payment shells mount into the toolbar independently of the floating p
         assert.match(source, /getElementById\('chat-toolbar-panel-space'\)/);
         assert.match(source, /toolbarAnchor\.before\(/);
         assert.doesNotMatch(source, /getElementById\('show-right-panel-btn'\)/);
+    }
+});
+
+
+test('phase notifications never describe closing a chat over OA tickets', t => {
+    const originalDocument = globalThis.document;
+    let currentToast = null;
+    globalThis.document = { getElementById: id => id === 'app-toast' ? currentToast : null };
+    t.after(() => { globalThis.document = originalDocument; });
+    const calls = [];
+    let mode = 'zkapi';
+    const app = { integration: { getMode: () => mode },
+        showToast(text) { currentToast = { textContent: text }; calls.push(text); },
+        clearToast() { currentToast = null; calls.push('clear'); } };
+    const element = composerElement();
+    renderZkapiComposerStatus(element, app, lowTextState('quiet', {
+        primary: { phase: 'requesting', compact: 'Requesting private key' }
+    }));
+    assert.equal(currentToast?.textContent, 'Requesting private key');
+    mode = 'tickets';
+    renderZkapiComposerStatus(element, app, lowTextState('quiet', {
+        primary: { phase: 'closing', compact: 'Closing previous chat' }
+    }));
+    assert.equal(currentToast, null);
+    assert.deepEqual(calls, ['Requesting private key', 'clear']);
+    mode = 'zkapi';
+    renderZkapiComposerStatus(element, app, lowTextState('quiet', {
+        primary: { phase: 'closing', compact: 'Closing previous chat' }
+    }));
+    assert.equal(currentToast, null, 'background closure stays in the System Panel');
+});
+
+
+test('invalid deposit amounts never start wallet work', () => {
+    for (const amount of ['', '   ', '0', '-1', 'abc', '1.1234567', '99999999999']) {
+        const modal = Object.create(AccountModal.prototype);
+        modal.overlay = { querySelector() { return null; } };
+        modal.render = () => {};
+        modal.run = () => assert.fail('invalid amount must not start wallet work');
+        modal.startDeposit(amount);
+        assert.equal(modal.outcome.tone, 'error');
+        assert.equal(modal.outcome.field, 'deposit');
+        assert.ok(modal.outcome.message);
+        assert.match(modal.renderOutcome(), /id="zkapi-deposit-error" role="alert"/);
+        assert.equal(modal.depositAmount, amount);
+    }
+});
+
+test('valid deposit amounts reach the existing wallet flow', () => {
+    for (const amount of ['2', '0.000001', '2.50']) {
+        const modal = Object.create(AccountModal.prototype);
+        let runs = 0;
+        modal.run = () => { runs += 1; };
+        modal.startDeposit(amount);
+        assert.equal(runs, 1);
     }
 });

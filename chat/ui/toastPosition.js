@@ -1,18 +1,14 @@
 import { getChatArrivalDestination } from './chatArrival.js';
 
-const placements = new WeakMap();
 const watchers = new WeakMap();
 
 export function stopToastPositioning(toast) {
     watchers.get(toast)?.();
     watchers.delete(toast);
-    // Retain the weak placement through the exit fade: input events can still
-    // find this toast until removal. The WeakMap releases it with the element.
 }
 
 export function watchToastPosition(toast, environment) {
     stopToastPositioning(toast);
-    placements.delete(toast);
     const update = () => positionAppToast(toast, environment);
     const view = environment.window;
     view.addEventListener('resize', update);
@@ -38,20 +34,14 @@ export function positionAppToast(toast, { document: doc, window: view }) {
     const card = doc.getElementById('input-card');
     if (!card) return;
     const container = doc.getElementById('messages-container');
-    const mode = container?.querySelector(':scope > .welcome-landing') ? 'centered' : 'docked';
-    let placement = placements.get(toast);
-    if (placement && placement.mode !== mode) placement.frozen = true;
-    if (!placement?.frozen) {
-        const rect = getChatArrivalDestination(container) || card.getBoundingClientRect();
-        placement = { mode, top: mode === 'centered' ? rect.bottom + 16 : rect.top - 16 - toast.offsetHeight };
-        placements.set(toast, placement);
-    }
-    // Keep an existing toast still when the composer changes layout. Clamp only
-    // to keep it readable if the viewport shrinks (for example, a phone keyboard).
+    const rect = getChatArrivalDestination(container) || card.getBoundingClientRect();
+    const top = rect.top - 16 - toast.offsetHeight;
+    // The composer stays docked in both empty and active chats. Keep notices
+    // above it and within the visual viewport when the phone keyboard opens.
     const viewport = view.visualViewport;
     const viewportTop = viewport?.offsetTop || 0;
     const viewportHeight = viewport?.height || view.innerHeight;
     const maxTop = viewportTop + viewportHeight - toast.offsetHeight - 16;
-    toast.style.top = `${Math.max(viewportTop + 16, Math.min(placement.top, maxTop))}px`;
+    toast.style.top = `${Math.max(viewportTop + 16, Math.min(top, maxTop))}px`;
     toast.style.bottom = 'auto';
 }

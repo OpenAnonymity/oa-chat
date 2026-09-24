@@ -10,10 +10,10 @@ export function fundingSetupGuide({ mainnet, demoMintEnabled, open = false, scop
         ${installStep}
         <li><strong class="zkapi-guide-step-title">Add USDC for your chats</strong><p>In MetaMask, choose <strong>Buy</strong>. Select <strong>USDC on Ethereum</strong> and add the amount you want to deposit.</p>${buyLink('buy-usdc')}</li>
         <li><strong class="zkapi-guide-step-title">Add ETH for network fees</strong><p>Buy ETH on the Ethereum network through the same MetaMask account you used to buy USDC. You will use this ETH to pay the network fees for deposits and withdrawals.</p>${buyLink('buy-eth')}</li>
-        <li><strong class="zkapi-guide-step-title">Return here to add funds</strong><p>Once both tokens arrive, choose <strong>Continue with MetaMask</strong> here. Approve USDC and confirm the deposit in your wallet.</p></li>` : demoMintEnabled ? `
+        <li><strong class="zkapi-guide-step-title">Return here to add funds</strong><p>Once both tokens arrive, choose <strong>Continue with Ethereum wallet</strong> here. Approve USDC and confirm the deposit in your wallet.</p></li>` : demoMintEnabled ? `
         ${installStep}
         <li><strong class="zkapi-guide-step-title">Get free Sepolia ETH</strong>Choose a faucet from <a data-funding-setup-focus="faucets" class="${LINK_CLASSES}" href="https://ethereum.org/en/developers/docs/networks/#sepolia" target="_blank" rel="noopener noreferrer">Ethereum’s Sepolia faucet list</a>. Copy your public MetaMask account address into the faucet and request test ETH.</li>
-        <li><strong class="zkapi-guide-step-title">Return here to fund</strong>Choose <strong>Continue with MetaMask</strong>, select Sepolia if prompted, and confirm the test-token and deposit steps. The app creates demo billing tokens if your wallet needs them.</li>` : installStep;
+        <li><strong class="zkapi-guide-step-title">Return here to fund</strong>Choose <strong>Continue with Ethereum wallet</strong>, select Sepolia if prompted, and confirm the test-token and deposit steps. The app creates demo billing tokens if your wallet needs them.</li>` : installStep;
     const intro = mainnet ? '' : demoMintEnabled
         ? '<p class="zkapi-guide-lead">Use Sepolia ETH for testnet fees. Demo billing tokens are provided automatically when needed. No real ETH or USDC purchase is needed.</p>'
         : '<p class="zkapi-guide-lead">The payment network and token requirements will appear when the payment service connects.</p>';

@@ -116,6 +116,7 @@ export function normalizeUsername(username) {
 
 export function validateUsername(username) {
     const normalized = normalizeUsername(username);
+    if (!normalized) throw new Error('Enter a username to continue.');
     if (!USERNAME_PATTERN.test(normalized)) {
         throw new Error(
             'Username must be 3–32 characters using letters, numbers, hyphens, or underscores'

@@ -139,7 +139,19 @@ export async function routeAuthenticationIntent({
         return Object.freeze({ handled: true, action: 'continue' });
     }
 
-    if (account?.accountId && hasExplicitIdentity && !matchesIntent) {
+    const clearPreviousAccount = account?.accountId && hasExplicitIdentity && !matchesIntent;
+    if (completionToken && accountModal?.openForOAuthCompletion) {
+        // The waiting surface must own the entire transition: clearing an old
+        // account notifies subscribers and can otherwise expose the login form.
+        accountModal.openForOAuthCompletion(intent, completionToken, null, {
+            beforeComplete: clearPreviousAccount
+                ? () => accountService.clearLocalAccount()
+                : null
+        });
+        return Object.freeze({ handled: true, action: 'complete' });
+    }
+
+    if (clearPreviousAccount) {
         await accountService.clearLocalAccount();
         account = accountService.getState();
     }
@@ -147,11 +159,6 @@ export async function routeAuthenticationIntent({
     if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {
         // Do not hold the rest of Chat initialization behind a native prompt.
         accountModal.openForUsername(username, null, { autoContinue: true });
-    } else if (completionToken && accountModal?.openForOAuthCompletion) {
-        // Google already happened on the landing page: finish the session
-        // behind a spinner instead of asking for the same click again.
-        accountModal.openForOAuthCompletion(intent, completionToken);
-        return Object.freeze({ handled: true, action: 'complete' });
     } else {
         accountModal?.open?.();
     }
