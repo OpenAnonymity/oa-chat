@@ -1,3 +1,9 @@
+## 2026-09-24: Complete Google sign-in in an already-open Account dialog
+
+- A landing Google completion can clear a previously verified username/legacy account. That state change opens the signed-out Account dialog through its subscription before the auth-intent router delivers the completion token. `openForOAuthCompletion` previously returned because the dialog was already open, discarding the handoff after its URL fragment had been removed.
+- The completion now reuses the open dialog and runs the existing session-completion and encryption-passkey flow. An in-flight handoff still prevents duplicate consumption. No authentication validation, credential storage, or inference boundary changed.
+- The regression exercises the real Account subscription and auth-intent router: clearing the old account opens the dialog, the token is consumed once, and the result advances to passkey unlock. It failed against the previous implementation. This confirms a code path for the reported second sign-in screen, not the exact circumstances of the user's production session.
+
 ## 2026-09-22: CLI withdrawals using the local funding key
 
 - `oa-chat withdraw` shows status; `withdraw --to ADDRESS` authorizes a cooperative close of the full remaining private balance. The daemon signs with its existing local funding key, so neither funding nor withdrawal requires a wallet connection. Gas comes from that address; public leftovers are not swept, partial withdrawals and escape/challenge submission are not exposed.

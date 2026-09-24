@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import AccountModal from '../../chat/components/AccountModal.js';
 import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
 import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
+import { routeAuthenticationIntent } from '../../chat/application/authIntent.js';
 
 test('account restoration renders an operable neutral progress dialog', () => {
     const originalDocument = globalThis.document;
@@ -1653,6 +1654,64 @@ test('a landing-page Google hand-off draws only the spinner while the session is
     assert.doesNotMatch(seen[0][1], /Waiting for Google|Complete sign in in the popup|Continue with Google/);
     assert.equal(modal.oauthHandoffPending, false);
     assert.deepEqual(closed, { afterAuthentication: true });
+});
+
+test('Google completion survives the sign-in dialog opened while clearing a previous account', async () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = { getElementById: () => null };
+    let state = {
+        accountId: 'old-username-account', username: 'winter-owl',
+        sessionVerified: true, status: 'unlocked', authBootstrapComplete: true
+    };
+    let notify;
+    let finish;
+    const completion = new Promise(resolve => { finish = resolve; });
+    const calls = [];
+    const service = {
+        getState: () => state,
+        subscribe(listener) { notify = listener; return () => {}; },
+        async waitForAuthBootstrap() {},
+        async clearLocalAccount() {
+            state = { accountId: null, sessionVerified: false, status: 'none', authBootstrapComplete: true };
+            notify(state);
+        },
+        authenticateWithOAuth(provider, options) {
+            calls.push([provider, options]);
+            return completion;
+        }
+    };
+    const modal = new AccountModal({
+        services: { account: service, sync: { getStatus: () => ({}), subscribe: () => () => {} } },
+        signInRequiredNow: () => true
+    });
+    let opens = 0;
+    let passkeys = 0;
+    modal.overlay = {};
+    modal.open = () => { opens += 1; modal.isOpen = true; };
+    modal.render = () => {};
+    modal.maybeAutoPromptPasskey = () => { passkeys += 1; };
+    const token = 'e'.repeat(43);
+    try {
+        const result = await routeAuthenticationIntent({
+            accountService: service, accountModal: modal,
+            locationImpl: { pathname: '/', search: '?auth=google', hash: `#oauth=${token}` },
+            historyImpl: { replaceState() {} }
+        });
+        assert.equal(result.action, 'complete');
+        assert.equal(opens, 1, 'clearing the old account already opened the dialog');
+        assert.deepEqual(calls, [['google', { completionToken: token }]]);
+        assert.equal(modal.oauthHandoffPending, true);
+        await modal.openForOAuthCompletion('google', token);
+        assert.equal(calls.length, 1, 'do not consume a single-use completion twice');
+        finish({ status: 'keyring_unlock' });
+        await completion;
+        await Promise.resolve();
+        assert.equal(passkeys, 1, 'continue to encryption unlock without another Google sign-in');
+        assert.equal(modal.oauthHandoffPending, false);
+    } finally {
+        finish(null);
+        globalThis.document = originalDocument;
+    }
 });
 
 test('an already-unlocked Google account completes without commercial coupling', async () => {

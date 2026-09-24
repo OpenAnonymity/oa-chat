@@ -7,6 +7,12 @@ or entering the unlinkable-inference path. See
 
 ## User flows
 
+- **Completed landing sign-in:** A validated Google popup result arrives as a
+  single-use completion token in `?auth=google#oauth=...`. The chat removes it
+  from the address and finishes the server session before the existing passkey
+  setup/unlock flow. If clearing a previous account has already opened Account,
+  the handoff reuses that dialog instead of asking for Google again. Concurrent
+  duplicate handoffs do not consume the token twice.
 - **Commercial landing handoff:** `/chat/?auth=google` is a one-use UI intent,
   not proof of authentication and not a Membership request. The chat waits for
   initial account restoration before routing it. A restored Google account may

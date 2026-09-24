@@ -675,8 +675,11 @@ class AccountModal {
      * token; only the spinner is drawn while the session is finished here.
      */
     async openForOAuthCompletion(provider, completionToken, returnFocusEl = null) {
-        if (this.isOpen || !this.overlay) return;
-        this.open(returnFocusEl);
+        // Clearing a previous account can open the signed-out dialog through
+        // the account subscription before this handoff arrives. Reuse it;
+        // only an in-flight completion should suppress a duplicate handoff.
+        if (!this.overlay || this.oauthHandoffPending) return;
+        if (!this.isOpen) this.open(returnFocusEl);
         await this.handleOAuthAuthentication(provider, { completionToken });
     }
 
