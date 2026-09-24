@@ -1,3 +1,11 @@
+## 2026-09-24: Shorter account-unlocked toast
+
+- The successful username/account-number passkey unlock toast now displays for 1.5 seconds instead of the default 3 seconds. Other notifications are unchanged.
+
+## 2026-09-24: Revised ephemeral-key description
+
+- Replaced the System Panel key-help description with the requested single paragraph describing OA obtaining a key from a trusted issuing station and verifier checks for provider-account ownership and disabled request logging. Removed the previous shared-key paragraph. Copy only; issuance and verification behavior are unchanged.
+
 ## 2026-09-24: Complete Google sign-in in an already-open Account dialog
 
 - A landing Google completion can clear a previously verified username/legacy account. That state change opens the signed-out Account dialog through its subscription before the auth-intent router delivers the completion token. `openForOAuthCompletion` previously returned because the dialog was already open, discarding the handoff after its URL fragment had been removed.

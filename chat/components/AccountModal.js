@@ -1161,7 +1161,7 @@ class AccountModal {
             if (viewVersion !== this.loginViewVersion || (wasOpen && !this.isOpen)) return;
             if (success) {
                 this.close({ afterAuthentication: true });
-                this.app?.showToast?.('Account unlocked', 'success');
+                this.app?.showToast?.('Account unlocked', 'success', 1500);
             } else if (usesAccountId && this.accountService.getState().recoveryRequired) {
                 this.showRecoveryInput = true;
                 this.render();

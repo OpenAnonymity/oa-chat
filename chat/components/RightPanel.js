@@ -1982,9 +1982,7 @@ class RightPanel {
             <div id="ephemeral-key-info-panel" class="oa-panel-disclosure t-acc" data-open="${!!this.showAccessKeyInfo}" aria-hidden="${!this.showAccessKeyInfo}"${this.showAccessKeyInfo ? '' : ' inert'}>
                 <div class="t-acc-panel"><div class="oa-panel-disclosure-inner t-acc-panel-inner">
                     <div class="oa-panel-help">
-                        <p>An ephemeral key is a temporary API key your device requests from OA when needed to send a message. OA obtains it from an issuing station and sends it to your device.</p>
-                        <p>The verifier checks that the key belongs to the issuing station’s provider account and verifies its signatures and expiry time.</p>
-                        <p>If someone shares a chat with its key included, that key keeps its original expiry and remaining credit.</p>
+                        <p>An ephemeral key is a temporary API key your device requests from OA when it sends a message. OA obtains it from a trusted issuing station and sends it to your device. The verifier checks that the key belongs to the issuing station’s provider account and that request logging is disabled.</p>
                         ${this.getCouncilAccessRows().length ? this.getCouncilAccessRows().filter(row => row.access?.apiKey).map(row => `<button type="button" data-council-attestation-lane="${this.escapeHtmlAttribute(row.id)}" class="oa-panel-learn-more">Learn more: ${this.escapeHtml(row.label)}</button>`).join('') || '<p>Key details appear after you send a message.</p>' : '<button type="button" id="verifier-attestation-learn-more" class="oa-panel-learn-more">Learn more</button>'}
                     </div>
                 </div></div>
