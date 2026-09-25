@@ -3599,7 +3599,11 @@ permanent HTTP errors must not be retried automatically.
 The account modal can use `signIn.renderEntry` for its signed-out username view,
 including after logout. The commercial host shares its landing card there and
 adapts its colors to the chat theme. Core still owns authentication, recovery,
-focus and dismissal guards. The wallet link uses the existing landing entry route. The display callback receives
+focus and dismissal guards. The wallet button selects zkAPI in the current chat
+through `changePaymentMode`, closing the sign-in focus trap before funding opens.
+It does not navigate to the landing page or reload the transcript. Busy authentication,
+recovery and repeated clicks cannot start an overlapping switch; a rejected switch
+restores the sign-in dialog with the runtime's error. The display callback receives
 only the fields documented in `EXTENSIONS.md`; no credential or inference state.
 Focused regressions cover logout, recovery bypass, host data boundaries, disabled
 controls, and the existing authentication handlers.

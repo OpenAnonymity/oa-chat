@@ -331,6 +331,8 @@ is allowed only when `canUseWallet`. Disable account controls while busy or when
 passkeys are unsupported; wallet entry stays available without passkey support.
 The optional `account-forget-saved-btn` preserves saved-account mismatch recovery.
 Legal links use `.account-login-legal`. Core owns account handlers, the focus trap, and
-modal motion. Wallet entry is a host link to the existing zkAPI entry route; it
-does not directly request a wallet connection or submit a transaction. When busy,
-render that link without an href and with aria-disabled="true".
+modal motion. Wallet entry is a button handled by core: it closes sign-in and
+selects zkAPI through the existing payment-mode runtime in the current page.
+That runtime opens funding when needed and preserves active-response guards.
+It does not directly request a wallet connection or submit a transaction.
+Render the wallet button disabled while busy.

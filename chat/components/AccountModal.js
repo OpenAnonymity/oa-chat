@@ -2247,6 +2247,29 @@ class AccountModal {
     // Event Listeners
     // =========================================================================
 
+    async handleWalletEntry() {
+        if (!this.isOpen || this.walletEntryPending || this.loggingOut ||
+            this.accountState?.busy || this.usernameContinuePending ||
+            this.creationStep !== 'idle' || this.recoveryStep !== 'idle' ||
+            this.app?.hasPaymentModes?.() !== true) return;
+
+        this.walletEntryPending = true;
+        const returnFocusEl = this.returnFocusEl;
+        const restoreOverlaySidebar = this.restoreOverlaySidebar;
+        // Release the sign-in focus trap before the payment runtime opens its
+        // funding dialog. Reuse its mode-switch and active-response guards.
+        this.close({ afterAuthentication: true });
+        try {
+            await this.app.changePaymentMode('zkapi');
+        } catch (error) {
+            this.restoreOverlaySidebar = restoreOverlaySidebar;
+            this.open(returnFocusEl);
+            this.accountService.setError(error?.message || 'Could not open your private balance. Please try again.');
+        } finally {
+            this.walletEntryPending = false;
+        }
+    }
+
     attachEventListeners() {
         const closeBtn = document.getElementById('close-account-modal');
         if (closeBtn) closeBtn.onclick = () => this.handleCloseAttempt();
@@ -2258,6 +2281,12 @@ class AccountModal {
         if (googleBtn) {
             googleBtn.onclick = () => this.handleOAuthAuthentication('google');
         }
+
+        const walletBtn = document.getElementById('account-wallet-entry-btn');
+        if (walletBtn) walletBtn.onclick = event => {
+            event.preventDefault();
+            return this.handleWalletEntry();
+        };
 
         const entryForm = this.overlay?.querySelector?.('[data-auth-username-form]');
         if (entryForm) entryForm.onsubmit = (event) => {

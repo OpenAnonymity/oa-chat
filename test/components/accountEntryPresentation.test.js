@@ -63,3 +63,77 @@ test('logout renders the host entry after clearing the account, with no intermed
 });
 
 
+
+test('wallet entry closes sign-in before switching in place, without an account operation', async () => {
+    const events = [];
+    const modal = harness();
+    modal.close = options => {
+        assert.deepEqual(options, { afterAuthentication: true });
+        events.push('close'); modal.isOpen = false;
+    };
+    modal.app.changePaymentMode = async mode => { events.push(mode); };
+    await modal.handleWalletEntry();
+    assert.deepEqual(events, ['close', 'zkapi']);
+    assert.equal(modal.walletEntryPending, false);
+});
+
+test('wallet entry preserves the mode-switch guard and restores sign-in on failure', async () => {
+    const events = [];
+    const trigger = {};
+    const modal = harness({ returnFocusEl: trigger, restoreOverlaySidebar: true });
+    modal.close = () => { modal.isOpen = false; modal.restoreOverlaySidebar = false; events.push('close'); };
+    modal.open = element => {
+        assert.equal(element, trigger);
+        assert.equal(modal.restoreOverlaySidebar, true);
+        modal.accountState.error = null; // Opening clears stale account errors.
+        events.push('open');
+    };
+    modal.accountService = { setError: message => { modal.accountState.error = message; events.push(message); } };
+    modal.app.changePaymentMode = async () => { throw new Error('Finish or stop the current response before switching payment methods.'); };
+    await modal.handleWalletEntry();
+    assert.deepEqual(events, ['close', 'open', 'Finish or stop the current response before switching payment methods.']);
+    assert.equal(modal.accountState.error, 'Finish or stop the current response before switching payment methods.');
+    assert.equal(modal.walletEntryPending, false);
+});
+
+test('wallet entry cannot overlap authentication, recovery or another wallet entry', async () => {
+    for (const override of [
+        { isOpen: false }, { walletEntryPending: true }, { loggingOut: true },
+        { accountState: { busy: true } }, { usernameContinuePending: true },
+        { creationStep: 'oauth_authorizing' }, { recoveryStep: 'verifying' }
+    ]) {
+        const modal = harness(override);
+        modal.close = () => assert.fail('must not close');
+        modal.app.changePaymentMode = () => assert.fail('must not switch');
+        await modal.handleWalletEntry();
+    }
+    const modal = harness();
+    modal.app.hasPaymentModes = () => false;
+    await modal.handleWalletEntry();
+});
+
+test('wallet entry ignores repeat clicks while the payment runtime is pending', async () => {
+    let release;
+    let calls = 0;
+    const modal = harness();
+    modal.close = () => {};
+    modal.app.changePaymentMode = () => { calls++; return new Promise(resolve => { release = resolve; }); };
+    const pending = modal.handleWalletEntry();
+    await modal.handleWalletEntry();
+    assert.equal(calls, 1);
+    release();
+    await pending;
+    assert.equal(modal.walletEntryPending, false);
+});
+
+test('the wallet control consumes the click and invokes the in-app handler', async t => {
+    const previousDocument = globalThis.document;
+    t.after(() => { globalThis.document = previousDocument; });
+    const button = {};
+    globalThis.document = { getElementById: id => id === 'account-wallet-entry-btn' ? button : null };
+    const modal = harness();
+    let prevented = false;
+    modal.handleWalletEntry = async () => { assert.equal(prevented, true); return 'switched'; };
+    modal.attachEventListeners();
+    assert.equal(await button.onclick({ preventDefault() { prevented = true; } }), 'switched');
+});
