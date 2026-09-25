@@ -291,7 +291,7 @@ export default class ModelPicker {
         this.hasRenderedOnce = true;
 
         // Show loading state if models are still being fetched
-        if (this.app.state.modelsLoading || this.app.state.models.length === 0) {
+        if (this.app.state.modelsLoading) {
             this.app.elements.modelsList.innerHTML = `
                 <div class="flex items-center justify-center py-8 text-muted-foreground">
                     <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>
@@ -306,6 +306,14 @@ export default class ModelPicker {
 
         // Reset keyboard highlight when rendering
         this.highlightedIndex = -1;
+
+        if (filteredModels.length === 0) {
+            const message = this.app.state.models.length === 0
+                ? 'No models are available right now. Try again later.'
+                : 'No models match your search. Try a different name.';
+            this.app.elements.modelsList.innerHTML = `<p role="status" class="px-3 py-8 text-center text-sm text-muted-foreground">${message}</p>`;
+            return;
+        }
 
         // Separate pinned models from the rest
         const pinnedModelsList = [];

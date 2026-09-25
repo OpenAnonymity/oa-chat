@@ -171,11 +171,11 @@ function emitDesktopEvent(name, detail = {}) {
 }
 const DELETE_HISTORY_COPY = {
     title: 'Delete all chat history',
-    body: 'Past chat history is stored locally on this browser. Prompts and responses are end-to-end encrypted to and from the model providers who only see mixed and unlinkable traffic.',
-    highlightHeading: 'Deletion is irreversible!',
-    highlightBody: 'This is the only copy of your chat history. Deletion cannot be undone. You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline dark:text-blue-300">download a copy</a> of your chat history before proceeding.',
+    body: 'This deletes all chats stored in this browser.',
+    highlightHeading: 'This cannot be undone.',
+    highlightBody: 'You can <a href="#download-chats-link" class="text-primary underline-offset-2 hover:underline focus-visible:underline dark:text-blue-300">download a copy</a> of your chat history before proceeding.',
     cancelLabel: 'Cancel',
-    confirmLabel: 'Delete everything'
+    confirmLabel: 'Delete all chats'
 };
 
 /**
@@ -740,6 +740,7 @@ class ChatApp {
                 closeAccount: () => this.accountModal?.handleCloseAttempt?.(),
                 ensureTicketStatusVisible: () => this.rightPanel?.show?.(),
                 getAccountMenuReturnTarget: () => this.accountModal?.getAccountMenuReturnTarget?.() || null,
+                restoreAccountMenuFocus: target => this.accountModal?.restoreAccountMenuFocus?.(target),
                 getAccountIdentityLabel: () => this.accountModal?.getAccountIdentityLabel?.() || '',
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
@@ -9320,7 +9321,7 @@ class ChatApp {
         showSurface(modal);
 
         requestAnimationFrame(() => {
-            this.elements.deleteHistoryConfirmBtn?.focus();
+            if (!modal.classList.contains('hidden')) this.elements.deleteHistoryCancelBtn?.focus();
         });
     }
 
@@ -9347,7 +9348,7 @@ class ChatApp {
         this.isDeletingAllChats = true;
 
         const confirmBtn = this.elements.deleteHistoryConfirmBtn;
-        const defaultLabel = confirmBtn?.dataset.originalText || confirmBtn?.textContent?.trim() || 'Delete everything';
+        const defaultLabel = confirmBtn?.dataset.originalText || confirmBtn?.textContent?.trim() || 'Delete all chats';
 
         if (confirmBtn) {
             confirmBtn.dataset.originalText = defaultLabel;

@@ -127,3 +127,28 @@ test('model search replaces automatic focus with a keyboard-only accent underlin
     assert.match(tailwindConfig, /ring: 'hsl\(var\(--color-focus-ring\)\)'/);
     assert.doesNotMatch(shareModals, /focus:ring-primary/);
 });
+
+test('model search gives feedback for no matches and recovers when the query clears', () => {
+    const picker = createModelPicker();
+    picker.app.elements.modelsList = { innerHTML: '', querySelectorAll: () => [] };
+    picker.renderModels('zzzz-no-match');
+    assert.match(picker.app.elements.modelsList.innerHTML, /role="status"/);
+    assert.match(picker.app.elements.modelsList.innerHTML, /No models match your search/);
+    assert.equal(picker.highlightedIndex, -1);
+    picker.renderModels('');
+    assert.match(picker.app.elements.modelsList.innerHTML, /OpenAI: Primary/);
+    assert.doesNotMatch(picker.app.elements.modelsList.innerHTML, /No models match/);
+});
+
+test('an empty settled model catalog does not spin forever', () => {
+    const picker = createModelPicker();
+    picker.app.elements.modelsList = { innerHTML: '', querySelectorAll: () => [] };
+    picker.app.state.models = [];
+    picker.app.state.modelsLoading = true;
+    picker.renderModels();
+    assert.match(picker.app.elements.modelsList.innerHTML, /Loading models/);
+    picker.app.state.modelsLoading = false;
+    picker.renderModels();
+    assert.match(picker.app.elements.modelsList.innerHTML, /No models are available/);
+    assert.doesNotMatch(picker.app.elements.modelsList.innerHTML, /Loading models|modelpicker-spin/);
+});

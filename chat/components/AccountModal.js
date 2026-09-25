@@ -53,6 +53,7 @@ class AccountModal {
         this.identifierMode = null;
         this.usernameContinuePending = false;
         this.usernameHandoffPending = false;
+        this.usernameAccountCleanupPending = false;
         this.usernameUnlockReady = false;
         this.usernamePasskeyBusy = false;
         this.passkeyAutoPromptAttempted = false;
@@ -231,6 +232,17 @@ class AccountModal {
         const trigger = this.accountMenuTrigger;
         if (trigger && !trigger.hidden) return trigger;
         return document.getElementById('account-tab-btn');
+    }
+
+    restoreAccountMenuFocus(target = this.getAccountMenuReturnTarget()) {
+        // Commercial dialogs can outlive the narrow sidebar that opened them.
+        // Focus a visible navigation control when the original trigger is inert
+        // or has disappeared during an account/menu refresh.
+        if (target?.isConnected !== false && !target?.closest?.('[inert], [hidden]')) {
+            target?.focus?.({ preventScroll: true });
+            if (target && document.activeElement === target) return;
+        }
+        document.getElementById('show-sidebar-btn')?.focus?.({ preventScroll: true });
     }
 
     openAccountMenu(trigger = null) {
@@ -431,7 +443,7 @@ class AccountModal {
     /** One automatic ceremony per open; cancellations leave an explicit retry. */
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
-        if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending) return;
+        if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending || this.usernameAccountCleanupPending) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         if (state.oauthRecoveryRequired || state.oauthLegacyPasskeyRequired) return;
         const setup = state.oauthSetupRequired === true;
@@ -464,14 +476,51 @@ class AccountModal {
         }, this.remainingPasskeyIntroMs()));
     }
 
-    async openForUsername(username, returnFocusEl = null, { autoContinue = false } = {}) {
-        if (this.isOpen || !this.overlay) return;
+    async openForUsername(username, returnFocusEl = null, { autoContinue = false, beforeContinue = null, onBlocked = null } = {}) {
+        const blocked = () => {
+            if (!onBlocked) return;
+            onBlocked();
+            this.app?.showToast?.('Finish the current sign-in, then reload to switch accounts.', 'info');
+        };
+        if (!this.overlay || this.usernameAccountCleanupPending || this.usernameHandoffPending ||
+            this.usernameContinuePending || this.usernamePasskeyBusy || this.oauthHandoffPending) return blocked();
+        if (beforeContinue && (this.authenticationExitPending || this.accountState?.busy ||
+            (this.recoveryStep !== 'idle' && this.recoveryStep !== undefined))) return blocked();
+        // A bootstrap subscription may already have opened the idle form.
+        // Reuse that surface for an explicit account switch, never an active ceremony.
+        if (this.isOpen && (!beforeContinue || this.creationStep !== 'idle')) return blocked();
+        if (this.isOpen) {
+            // An explanatory timer has not started a ceremony yet. Retire it
+            // before reusing the surface so it cannot prompt for the old owner.
+            this.loginViewVersion += 1;
+            this.clearAnimationTimeouts();
+            this.oauthIntroPending = false;
+        }
         this.dismissOverlaySidebar();
         this.identifierMode = 'username';
         this.usernameInputValue = String(username || '')
             .normalize('NFKC')
             .trim()
             .toLowerCase();
+        if (beforeContinue) {
+            this.usernameAccountCleanupPending = true;
+            this.usernameHandoffPending = true;
+            this.usernameUnlockReady = false;
+            if (!this.isOpen) this.open(returnFocusEl);
+            else this.render();
+            const viewVersion = this.loginViewVersion;
+            try {
+                await beforeContinue();
+            } catch {
+                this.usernameHandoffPending = false;
+                this.accountService.setError('Could not finish switching accounts. Please try again.');
+                if (this.isOpen) this.render();
+                return;
+            } finally {
+                this.usernameAccountCleanupPending = false;
+            }
+            if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
+        }
         const state = this.accountState || {};
         // Only a submitted landing username skips the form. Preserve saved
         // legacy/Google recovery and unlock surfaces, and unsupported browsers.
@@ -480,7 +529,8 @@ class AccountModal {
             state.passkeySupported !== false &&
             !state.oauthRecoveryRequired && !state.oauthKeyringRequired &&
             !state.oauthSetupRequired && !state.oauthLegacyPasskeyRequired;
-        this.open(returnFocusEl);
+        if (!this.isOpen) this.open(returnFocusEl);
+        else this.render();
         if (!this.usernameHandoffPending) {
             this.focusModal('account-username-input');
             return;
@@ -560,7 +610,7 @@ class AccountModal {
 
     handleCloseAttempt() {
         // Log out owns the page until the account is cleared.
-        if (this.loggingOut) return;
+        if (this.loggingOut || this.usernameAccountCleanupPending) return;
         if (this.mustStaySignedIn()) {
             // Cancelling a half-done sign-up is still allowed; it returns to
             // the form rather than to the page behind.

@@ -2657,3 +2657,30 @@ test('Google setup arriving after the dialog opens schedules once when restorati
         globalThis.document = previousDocument;
     }
 });
+
+for (const unavailable of ['inert', 'detached', 'refused', 'available']) {
+    test(`Account dialog return focus uses visible navigation when its trigger is ${unavailable}`, t => {
+        const previous = globalThis.document;
+        const calls = [];
+        const target = {
+            isConnected: unavailable !== 'detached',
+            closest: () => unavailable === 'inert' ? {} : null,
+            focus(options) {
+                calls.push(['target', options]);
+                if (unavailable === 'available') globalThis.document.activeElement = target;
+            }
+        };
+        globalThis.document = {
+            activeElement: null,
+            getElementById: id => {
+                assert.equal(id, 'show-sidebar-btn');
+                return { focus: options => calls.push(['navigation', options]) };
+            }
+        };
+        t.after(() => { globalThis.document = previous; });
+        AccountModal.prototype.restoreAccountMenuFocus.call({}, target);
+        assert.equal(calls.at(-1)[0], unavailable === 'available' ? 'target' : 'navigation');
+        assert.deepEqual(calls.at(-1)[1], { preventScroll: true });
+        if (unavailable === 'inert' || unavailable === 'detached') assert.equal(calls.length, 1);
+    });
+}

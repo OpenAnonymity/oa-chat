@@ -101,6 +101,7 @@ class TLSSecurityModal {
     }
 
     render() {
+        if (!this.overlay) return;
         const status = this.services.networkProxy.getStatus();
         const tlsInfo = this.services.networkProxy.getTlsInfo();
         const isEncrypted = status.enabled && status.usingProxy;
@@ -123,7 +124,7 @@ class TLSSecurityModal {
                         <h2 class="text-sm font-semibold text-foreground">Network Proxy Security Details</h2>
                         <span class="px-1 py-0.5 rounded text-[8px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 uppercase tracking-wide">Beta</span>
                     </div>
-                    <button class="tls-modal-close text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
+                    <button type="button" aria-label="Close security details" class="tls-modal-close text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-muted/50">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                         </svg>
@@ -378,13 +379,17 @@ class TLSSecurityModal {
     }
 
     setupEventListeners() {
+        if (!this.overlay) return;
         this.overlay.querySelector('.tls-modal-close')?.addEventListener('click', () => this.close());
         this.overlay.querySelector('.tls-modal-done')?.addEventListener('click', () => this.close());
 
-        this.overlay.addEventListener('click', (e) => {
+        if (this.backdropHandler) this.overlay.removeEventListener('click', this.backdropHandler);
+        this.backdropHandler = (e) => {
             if (e.target === this.overlay) this.close();
-        });
+        };
+        this.overlay.addEventListener('click', this.backdropHandler);
 
+        if (this.escapeHandler) document.removeEventListener('keydown', this.escapeHandler);
         this.escapeHandler = (e) => {
             if (e.key === 'Escape') this.close();
         };

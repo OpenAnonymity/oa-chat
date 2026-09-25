@@ -113,7 +113,10 @@ export async function routeAuthenticationIntent({
         : null;
 
     await accountService.waitForAuthBootstrap();
-    clearAuthenticationIntent(locationImpl, historyImpl);
+    // Username switches can be refused while an old ceremony is running.
+    // Retain that intent until the modal accepts it so a reload can retry it.
+    const deferUsernameIntentClear = intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername;
+    if (!deferUsernameIntentClear) clearAuthenticationIntent(locationImpl, historyImpl);
 
     // Google and username are the ways in to a Tickets account. Only the
     // landing's own zkAPI entry chooses zkAPI; a mode this browser remembers
@@ -136,6 +139,7 @@ export async function routeAuthenticationIntent({
         account.sessionVerified === true &&
         account.status === 'unlocked'
     ) {
+        if (deferUsernameIntentClear) clearAuthenticationIntent(locationImpl, historyImpl);
         return Object.freeze({ handled: true, action: 'continue' });
     }
 
@@ -151,17 +155,35 @@ export async function routeAuthenticationIntent({
         return Object.freeze({ handled: true, action: 'complete' });
     }
 
+    if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {
+        // Own the waiting surface before clearing the old account: its
+        // subscriber otherwise opens a second sign-in form and drops the handoff.
+        let cleanup;
+        let blocked = false;
+        accountModal.openForUsername(username, null, {
+            autoContinue: true,
+            ...(clearPreviousAccount ? { onBlocked: () => { blocked = true; }, beforeContinue: () => {
+                cleanup = accountService.clearLocalAccount();
+                return cleanup;
+            } } : {})
+        });
+        if (blocked) return Object.freeze({ handled: true, action: 'blocked' });
+        clearAuthenticationIntent(locationImpl, historyImpl);
+        // Keep account-scoped startup behind cleanup, but never behind the
+        // native passkey prompt. The modal presents cleanup failures.
+        if (cleanup) await cleanup;
+        return Object.freeze({
+            handled: true,
+            action: clearPreviousAccount || account?.sessionVerified !== true ? 'sign-in' : 'unlock'
+        });
+    }
+
     if (clearPreviousAccount) {
         await accountService.clearLocalAccount();
         account = accountService.getState();
     }
 
-    if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {
-        // Do not hold the rest of Chat initialization behind a native prompt.
-        accountModal.openForUsername(username, null, { autoContinue: true });
-    } else {
-        accountModal?.open?.();
-    }
+    accountModal?.open?.();
     return Object.freeze({
         handled: true,
         action: account?.sessionVerified === true ? 'unlock' : 'sign-in'

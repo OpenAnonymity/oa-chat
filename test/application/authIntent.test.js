@@ -51,6 +51,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
             openForUsername(username, returnFocusEl, options) {
                 usernameOpens.push(username);
                 usernameOptions.push(options);
+                options?.beforeContinue?.();
                 return new Promise(() => {}); // A native prompt must not block Chat startup.
             },
             openForOAuthCompletion(provider, token, returnFocusEl, { beforeComplete } = {}) {

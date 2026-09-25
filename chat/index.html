@@ -712,33 +712,33 @@
                                                             <span class="settings-row-label" id="flat-mode-label">Layout</span>
                                                             <div id="flat-mode-toggle" class="display-toggle-container settings-segmented" role="radiogroup" aria-labelledby="flat-mode-label">
                                                                 <div class="display-toggle-indicator"></div>
-                                                                <button type="button" class="display-toggle-btn settings-segment" data-mode="flat" aria-checked="true" title="Document">Document</button>
-                                                                <button type="button" class="display-toggle-btn settings-segment" data-mode="bubble" aria-checked="false" title="Bubbles">Bubbles</button>
+                                                                <button type="button" role="radio" class="display-toggle-btn settings-segment" data-mode="flat" aria-checked="true" title="Document">Document</button>
+                                                                <button type="button" role="radio" class="display-toggle-btn settings-segment" data-mode="bubble" aria-checked="false" title="Bubbles">Bubbles</button>
                                                             </div>
                                                         </div>
                                                         <div class="settings-row">
                                                             <span class="settings-row-label" id="font-mode-label">Font</span>
                                                             <div id="font-mode-toggle" class="display-toggle-container settings-segmented" role="radiogroup" aria-labelledby="font-mode-label">
                                                                 <div class="display-toggle-indicator"></div>
-                                                                <button type="button" class="display-toggle-btn settings-segment settings-segment-icon" data-font="sans" aria-checked="true" aria-label="Sans-serif" title="Sans-serif"><span style="font-family: system-ui, sans-serif;">Aa</span></button>
-                                                                <button type="button" class="display-toggle-btn settings-segment settings-segment-icon" data-font="serif" aria-checked="false" aria-label="Serif" title="Serif"><span style="font-family: 'PT Serif', Georgia, serif;">Aa</span></button>
+                                                                <button type="button" role="radio" class="display-toggle-btn settings-segment settings-segment-icon" data-font="sans" aria-checked="true" aria-label="Sans-serif" title="Sans-serif"><span style="font-family: system-ui, sans-serif;">Aa</span></button>
+                                                                <button type="button" role="radio" class="display-toggle-btn settings-segment settings-segment-icon" data-font="serif" aria-checked="false" aria-label="Serif" title="Serif"><span style="font-family: 'PT Serif', Georgia, serif;">Aa</span></button>
                                                             </div>
                                                         </div>
                                                         <div class="settings-row">
                                                             <span class="settings-row-label" id="theme-label">Theme</span>
                                                             <div id="theme-toggle" class="theme-toggle-container settings-segmented" role="radiogroup" aria-labelledby="theme-label" data-theme="system">
                                                                 <div class="theme-toggle-indicator"></div>
-                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="system" aria-checked="false" aria-label="System" title="System">
+                                                                <button type="button" role="radio" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="system" aria-checked="false" aria-label="System" title="System">
                                                                     <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M9 17v2h6v-2m2 0h.75A2.25 2.25 0 0 0 20 14.75V7.25A2.25 2.25 0 0 0 17.75 5H6.25A2.25 2.25 0 0 0 4 7.25v7.5A2.25 2.25 0 0 0 6.25 17H7.5"></path>
                                                                     </svg>
                                                                 </button>
-                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="light" aria-checked="false" aria-label="Light" title="Light">
+                                                                <button type="button" role="radio" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="light" aria-checked="false" aria-label="Light" title="Light">
                                                                     <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364-6.364-1.06 1.06M6.697 17.303l-1.06 1.06m0-12.728 1.06 1.06m9.607 9.607 1.06 1.06M12 8.25a3.75 3.75 0 1 1 0 7.5 3.75 3.75 0 0 1 0-7.5z"></path>
                                                                     </svg>
                                                                 </button>
-                                                                <button type="button" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="dark" aria-checked="false" aria-label="Dark" title="Dark">
+                                                                <button type="button" role="radio" class="theme-toggle-btn settings-segment settings-segment-icon" data-theme-option="dark" aria-checked="false" aria-label="Dark" title="Dark">
                                                                     <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
                                                                         <path stroke-linecap="round" stroke-linejoin="round" d="M21 12.79A9 9 0 0 1 11.21 3 7.5 7.5 0 1 0 21 12.79z"></path>
                                                                     </svg>
@@ -860,10 +860,10 @@
                                                         <span class="settings-row-label" id="reasoning-effort-label">Effort</span>
                                                         <div id="reasoning-effort-toggle" class="theme-toggle-container reasoning-effort-toggle settings-segmented" role="radiogroup" aria-labelledby="reasoning-effort-label" aria-disabled="false" data-effort="medium">
                                                             <div class="theme-toggle-indicator"></div>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">Low</button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">Medium</button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">High</button>
-                                                            <button type="button" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Max effort" title="Max effort">Max</button>
+                                                            <button type="button" role="radio" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="low" aria-checked="false" aria-label="Low effort" title="Low effort">Low</button>
+                                                            <button type="button" role="radio" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="medium" aria-checked="true" aria-label="Medium effort" title="Medium effort">Medium</button>
+                                                            <button type="button" role="radio" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="high" aria-checked="false" aria-label="High effort" title="High effort">High</button>
+                                                            <button type="button" role="radio" class="theme-toggle-btn reasoning-effort-btn settings-segment" data-reasoning-effort="xhigh" aria-checked="false" aria-label="Max effort" title="Max effort">Max</button>
                                                         </div>
                                                     </div>
                                                 </section>
@@ -1052,7 +1052,7 @@
 
     <!-- Model Picker Modal -->
     <div id="model-picker-modal" class="hidden fixed inset-0 w-full h-full bg-black/50 flex items-center justify-center z-50">
-        <div role="dialog" aria-modal="true" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
+        <div role="dialog" aria-modal="true" aria-label="Choose a model" tabindex="-1" data-slot="dialog-content" class="cursor-default relative w-full max-w-lg border border-border bg-background shadow-lg rounded-lg duration-0 overflow-hidden flex flex-col m-4" data-state="open">
             <!-- Search Input -->
             <div class="model-picker-search flex items-center border-b border-border px-3" cmdk-input-wrapper="">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-4 h-4 text-muted-foreground mr-2 flex-shrink-0">
@@ -1065,7 +1065,7 @@
                     class="flex-1 bg-transparent outline-none text-sm py-2.5 text-foreground placeholder:text-muted-foreground"
                     cmdk-input=""
                 />
-                <button id="close-modal-btn" class="ml-2 text-muted-foreground hover:text-foreground transition-colors p-1">
+                <button type="button" aria-label="Close model picker" id="close-modal-btn" class="ml-2 text-muted-foreground hover:text-foreground transition-colors p-1">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>

@@ -1,3 +1,26 @@
+## 2026-09-24: Live Account dialog focus recovery
+
+- Live staging testing at narrow widths confirmed that closing commercial Account by either Escape or Close attempted to focus an Account trigger inside an inert collapsed sidebar, leaving focus on BODY.
+- Added the host UI capability `restoreAccountMenuFocus(target)`: preserve a usable original trigger; otherwise focus the visible sidebar toggle without scrolling or forcing the sidebar open. Billing delegates through this capability and retains its fallback for older hosts.
+- Regressions cover inert, detached, focus-refusing and available triggers, plus commercial-to-host delegation. See commercial `docs/LIVE_UI_AUDIT_2026-09-24.md` for live coverage and transaction/authentication exclusions.
+
+## 2026-09-24: Google-to-username account switching handoff
+
+- Live user testing reported that signing into Google in one tab and entering a different username on the landing page required a second sign-in over chat.
+- The username auth route cleared the old account before opening its passkey handoff. The Account subscription opened the generic sign-in dialog during cleanup; `openForUsername` then returned because the dialog was already open. The earlier OAuth-completion fix did not cover this path.
+- The username handoff now owns the waiting surface before old-account cleanup and can reuse an idle restoration dialog. Cleanup suppresses old-account automatic passkey prompts and dismissal; duplicate handoffs cannot replace the submitted username. Failure shows an error and does not start the new authentication.
+- If an old authentication/recovery operation is already active, the switch is refused with a retry notice and the incoming username route remains available for a reload. Idle explanation timers are invalidated before reusing the dialog.
+- The router still waits for account cleanup before account-scoped app initialization; it does not wait for the native passkey ceremony. Normal username validation, passkey verification, and account-scoped storage remain unchanged. Regression coverage combines the real Account subscriber, auth router, and username handoff with delayed/failing cleanup.
+- Local regression success is not deployment/live acceptance: repeat Google A → landing username B after deploying the fix.
+
+## 2026-09-24: Interactive control audit
+
+- Settings layout/font/theme/effort segments now expose radio semantics, keep only the selected choice in the Tab order, and support arrow keys plus Home/End through existing click handlers. Disabled groups and modified shortcuts are ignored.
+- The model dialog and its close button have accessible names. Empty search results explain how to recover; a settled empty catalog no longer spins forever.
+- Delete-history confirmation focuses Cancel rather than the destructive action. Copy specifies all chats in this browser and retains the download-before-delete option without asserting this is the only copy.
+- Security Details ignores asynchronous integrity-check UI updates after the dialog is removed, replaces old Escape/backdrop listeners on rerender, and names its close button. Integrity and network behavior are unchanged.
+- Commercial `docs/INTERACTION_AUDIT.md` records actual browser checks separately from fixtures and unit tests. Live OAuth/passkey, real payments, and paid inference are not certified by these checks.
+
 ## 2026-09-24: Expanded release regression checks
 
 - Account username editing clears field-specific errors through the existing service, retaining the value and caret after the synchronous subscriber render. It does not clear unrelated Google/passkey/network errors or replace the field during IME composition. Enter during composition (including keyCode229) does not submit.

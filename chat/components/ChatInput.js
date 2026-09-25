@@ -1,3 +1,4 @@
+import { setupRadioGroupKeyboard } from '../ui/radioGroupKeyboard.js';
 import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
@@ -759,6 +760,10 @@ export default class ChatInput {
                 hideSurface(menu);
             });
         });
+
+        for (const id of ['flat-mode-toggle', 'font-mode-toggle', 'theme-toggle', 'reasoning-effort-toggle']) {
+            setupRadioGroupKeyboard(document.getElementById(id));
+        }
 
         // Setup theme controls
         this.setupThemeControls();
@@ -2114,6 +2119,7 @@ export default class ChatInput {
 
         flatModeToggle.querySelectorAll('.display-toggle-btn').forEach(btn => {
             btn.setAttribute('aria-checked', btn.dataset.mode === activeMode ? 'true' : 'false');
+            btn.tabIndex = btn.dataset.mode === activeMode ? 0 : -1;
         });
     }
 
@@ -2169,6 +2175,7 @@ export default class ChatInput {
 
         fontModeToggle.querySelectorAll('.display-toggle-btn').forEach(btn => {
             btn.setAttribute('aria-checked', btn.dataset.font === activeFont ? 'true' : 'false');
+            btn.tabIndex = btn.dataset.font === activeFont ? 0 : -1;
         });
     }
 
@@ -2548,6 +2555,7 @@ export default class ChatInput {
         buttons.forEach((button) => {
             const isActive = button.dataset.reasoningEffort === normalizedEffort;
             button.setAttribute('aria-checked', String(isActive));
+            button.tabIndex = isActive ? 0 : -1;
             button.disabled = false;
         });
     }
@@ -2979,6 +2987,7 @@ export default class ChatInput {
             this.app.elements.themeOptionButtons.forEach((button) => {
                 const option = button.dataset.themeOption;
                 button.setAttribute('aria-checked', String(option === preference));
+                button.tabIndex = option === preference ? 0 : -1;
             });
         }
 
