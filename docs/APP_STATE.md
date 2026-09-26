@@ -3641,3 +3641,22 @@ closure without completion reports that the window closed before sign-in finishe
 provider errors, invalid tokens, and the five-minute timeout still fail closed.
 `test/services/oauthPopup.test.js` covers the race, immediate callbacks, transient
 closure, unreadable state, forged messages, errors, and timer/listener cleanup.
+## 2026-09-25: Deleted local chat reload does not become a share lookup
+
+- A tab can retain `?s=...` after its chat is deleted elsewhere. Because local and shared links use the same parameter, a local miss previously fell through to downloading a share and could show a misleading share error.
+- Locally visited chats now carry `oaLocalSessionId` in that tab's `history.state`. On reload, if that exact chat is missing from IndexedDB, clear only `s` and the marker, preserve other URL/state fields, and show the neutral notice “This chat is no longer saved in this browser.” No share lookup or upload is made.
+- Existing local URLs acquire the marker even when initial selection makes `switchSession` a no-op. New Chat clears it. This is navigation metadata, not a persisted deletion log; it contains no chat text or credentials and is not synced.
+- External/legacy links without a matching marker retain share import behavior. This cannot retroactively distinguish an unmarked, already-deleted local URL from a real legacy share link. Storage failures still propagate instead of being mislabeled as missing chats.
+- Regression tests cover deletion/reload, local startup, clearing selection, external/legacy links, unrelated markers, and unavailable IndexedDB.
+
+### 2026-09-25 — Optional isolated localized checkout (commercial integration)
+
+Commercial ticket purchasing has a new optional checkout site outside the chat
+origin (`oa-commercial/docs/LOCALIZED_CHECKOUT.md`). Never include its Stripe.js
+entry in chat's artifact: a path on the same host does not isolate local browser
+storage. Catalog amounts stay explicitly labeled in their integration currency;
+the separate purchase page uses Stripe's formatted localized Session amounts.
+Billing history supports verified presentment currency without changing the
+USD entitlement ledger. The backend creation flag stays off pending a separate
+checkout deployment and real sandbox-session checks. Independent review approved
+the disabled local implementation after configured-startup and Stripe CSP fixes.

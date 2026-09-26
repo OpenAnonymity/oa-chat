@@ -154,6 +154,74 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
+    function installNavigation(url = 'http://localhost/?s=one', state = {}) {
+        window.location = new URL(url);
+        window.history = {
+            state,
+            replaceState(nextState, _, nextUrl) {
+                this.state = nextState;
+                window.location = new URL(nextUrl, window.location);
+            }
+        };
+    }
+
+    test('reload of a locally visited chat deleted in another tab never tries a share download', async () => {
+        const app = appHarness();
+        app.state.sessions = [{ id: 'one' }];
+        installNavigation('http://localhost/?s=one&view=test#billing', { unrelated: true });
+        app.updateUrlWithSession('one');
+        // Model a fresh startup after the IndexedDB row was removed elsewhere.
+        const restored = appHarness();
+        restored.state.sessions = [];
+        chatDB.getSession = async () => undefined;
+        restored.importSharedSession = () => assert.fail('Deleted local chats must not contact the share service');
+        const notices = [];
+        restored.showToast = (...args) => notices.push(args);
+        await restored.checkForUrlSession();
+        assert.equal(window.location.search, '?view=test');
+        assert.equal(window.location.hash, '#billing');
+        assert.deepEqual(window.history.state, { unrelated: true });
+        assert.deepEqual(notices, [['This chat is no longer saved in this browser.', 'info']]);
+    });
+
+    test('an existing local URL receives reload provenance even when already selected', async () => {
+        const app = appHarness();
+        app.state.sessions = [{ id: 'one' }];
+        installNavigation();
+        app.switchSession = async id => assert.equal(id, 'one');
+        await app.checkForUrlSession();
+        assert.equal(window.history.state.oaLocalSessionId, 'one');
+        app.updateUrlWithSession(null);
+        assert.equal(window.history.state.oaLocalSessionId, undefined);
+        assert.equal(window.location.search, '');
+    });
+
+    for (const marker of [undefined, 'different-chat']) {
+        test(`external and legacy share links still load with marker ${marker}`, async t => {
+            const app = appHarness();
+            app.state.sessions = [];
+            installNavigation('http://localhost/?s=shared-chat', { oaLocalSessionId: marker });
+            for (const method of ['getSession', 'findSessionByShareId', 'findSessionByImportedFrom', 'findSessionByForkedFrom']) {
+                t.mock.method(chatDB, method, async () => undefined);
+            }
+            const imports = [];
+            app.importSharedSession = async id => imports.push(id);
+            await app.checkForUrlSession();
+            assert.deepEqual(imports, ['shared-chat']);
+        });
+    }
+
+    test('storage errors do not get misreported as a deleted local chat', async () => {
+        const app = appHarness();
+        app.state.sessions = [];
+        installNavigation('http://localhost/?s=one', { oaLocalSessionId: 'one' });
+        chatDB.getSession = async () => { throw new Error('IndexedDB unavailable'); };
+        app.showToast = () => assert.fail('Do not report missing data when storage fails');
+        app.importSharedSession = () => assert.fail('Storage failure must not become a share lookup');
+        await assert.rejects(app.checkForUrlSession(), /IndexedDB unavailable/);
+        assert.equal(window.location.search, '?s=one');
+    });
+
     test('an old search result stays in the normal sidebar after opening and new activity', async () => {
         const app = appHarness();
         const today = Date.now();

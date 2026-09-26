@@ -3214,7 +3214,23 @@ class ChatApp {
             }
         }
         if (localSessionById) {
+            // Retain local provenance across reloads, including when switchSession
+            // is a no-op because startup already selected this conversation.
+            this.updateUrlWithSession(localSessionById.id);
             await this.switchSession(localSessionById.id);
+            return;
+        }
+
+        // A different tab can delete this chat while this tab retains its URL.
+        // Do not turn that stale local address into a remote share lookup.
+        const localNavigationId = window.history.state?.oaLocalSessionId;
+        if (typeof localNavigationId === 'string' && this.normalizeId(localNavigationId) === normalizedInput) {
+            const url = new URL(window.location);
+            url.searchParams.delete('s');
+            const navigationState = { ...window.history.state };
+            delete navigationState.oaLocalSessionId;
+            window.history.replaceState(navigationState, '', url);
+            this.showToast('This chat is no longer saved in this browser.', 'info');
             return;
         }
 
@@ -3623,13 +3639,20 @@ class ChatApp {
      * @param {string} sessionId - Session ID (local or share)
      */
     updateUrlWithSession(sessionId) {
+        const navigationState = { ...window.history.state };
+        delete navigationState.oaLocalSessionId;
         if (!sessionId) {
-            window.history.replaceState({}, '', window.location.pathname);
+            window.history.replaceState(navigationState, '', window.location.pathname);
             return;
+        }
+        // This is tab navigation metadata, not a synced/deleted-chat history.
+        // Share URLs built for other people do not carry this marker.
+        if (this.state.sessions.some(session => session.id === sessionId)) {
+            navigationState.oaLocalSessionId = sessionId;
         }
         const url = new URL(window.location);
         url.searchParams.set('s', sessionId);
-        window.history.replaceState({}, '', url);
+        window.history.replaceState(navigationState, '', url);
     }
 
     /**
