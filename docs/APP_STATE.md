@@ -1,3 +1,27 @@
+## 2026-09-27: CLI foreground status and logs
+
+- `oa-chat serve` sends timestamped startup/shutdown, API request start/end,
+  and wallet readiness updates to stdout. Readiness is checked immediately
+  and every five seconds with a three-second deadline; only changes print.
+  Ticket mode reports available count; zkAPI reports policy-checked companion
+  readiness, a loaded private balance, and pending settlement. These read-only
+  checks neither acquire access nor guarantee upstream inference availability.
+- Request logging uses fixed route/method labels and status/duration, excludes
+  health probes, and preserves `http.ResponseController` flushing and deadlines.
+  Aborted requests are marked separately. Raw companion output and HTTP panic
+  diagnostics stay suppressed because they can contain private data. Logs never
+  include prompts, responses, headers, query strings, model names, funding
+  capabilities, or private wallet/proof details.
+- The daemon creates no log file, but stdout redirection, Homebrew services,
+  and systemd may retain operational activity metadata. `oa-chat status` retains
+  its JSON output; fatal command diagnostics still use stderr. See
+  [foreground logging](../daemon/README.md#foreground-status-and-logs) and the
+  [local client privacy model](PRIVACY_MODEL.md#local-api-clients).
+- Full Go race tests, vet, and build passed. A built-binary smoke check and
+  subprocess regression verify stdout status/request/lifecycle output, clean
+  stderr on normal shutdown, and secret exclusion. Fresh review approved.
+- This source change is newer than the published `daemon-v0.1.0` bundle.
+
 ## 2026-09-27: CLI network proxy is opt-in
 
 - The command-line daemon uses direct HTTPS when `relay_url` is empty or absent.

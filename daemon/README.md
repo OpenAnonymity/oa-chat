@@ -92,6 +92,29 @@ explicitly prints the random **local** API key for configuring your client.
 It is not an inference-provider key. Keep keys, ticket codes, wallet files,
 and funding capability URLs out of public logs and bug reports.
 
+### Foreground status and logs
+
+`oa-chat serve` writes timestamped status and operational logs to standard
+output. It shows the API address, backend, transport mode, and startup/shutdown
+events. It checks wallet readiness immediately and every five seconds, printing
+only changes: available ticket count, or zkAPI companion readiness, whether a
+private balance is loaded, and whether settlement is pending. These checks do
+not acquire inference access or spend funds; they do not establish upstream
+availability or guarantee that a balance covers a request.
+
+Requests produce start and completion lines with an allowlisted method/route,
+HTTP status, elapsed time, and an aborted indication for interrupted requests.
+Health probes are silent. Streaming output continues to flush immediately.
+Prompts, responses, headers, model names, query strings, funding URLs, wallet
+secrets, and raw companion/HTTP diagnostics are excluded. Command failures
+still return a nonzero exit status with a diagnostic on stderr.
+
+For example, `oa-chat serve > oa-chat.log` captures operational output. The
+daemon does not create log files itself; shell redirection or your service
+manager can retain this activity metadata. Homebrew services use their
+configured log file and systemd captures stdout in the journal. This behavior
+requires a source build of this revision; `daemon-v0.1.0` predates it.
+
 ## Connect Open WebUI
 
 Add an OpenAI-compatible connection in **Admin Panel → Settings → Connections**:

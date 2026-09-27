@@ -70,7 +70,12 @@ The local API key authenticates only the UI-to-daemon hop and never reaches OA
 services or the provider. Incoming cookies, identity headers, and top-level
 account/storage metadata are stripped. Ticket requests get distinct verified
 provider keys; zkAPI leases are single-use across API requests and process
-restarts. The daemon stores no chat history or request logs. Its proof
+restarts. The daemon stores no chat history and creates no request-log files.
+Its foreground `serve` command emits operational metadata to stdout: local
+readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
+and lifecycle events. Shell redirection and service managers may retain that
+metadata. Prompts, responses, credentials, raw URLs, and private wallet/proof
+details never enter these logs. Its proof
 companion receives no prompts/responses. It always uses an authenticated
 loopback CONNECT bridge that rejects plaintext HTTP and HTTP downgrades. The
 bridge opens destination TCP directly by default, or carries destination TLS

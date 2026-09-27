@@ -82,7 +82,7 @@ func run(args []string) error {
 		if len(args) != 1 {
 			return errors.New("serve accepts no arguments; configure config.json")
 		}
-		return serve(ctx, dir, c)
+		return serve(ctx, dir, c, os.Stdout)
 	case "api-key":
 		if len(args) != 1 {
 			return errors.New("api-key accepts no arguments")
@@ -109,7 +109,7 @@ func help() {
        [--org-url HTTPS_ORIGIN] [--verifier-url HTTPS_ORIGIN]
        [--relay-url WSS_URL] [--listen 127.0.0.1:8787]
        [--zkapi-binary PATH] [--proof-setup-dir PATH]
-  serve                  Run the local OpenAI API (foreground service)
+  serve                  Run the local API with status and logs on stdout
   status                 Show service and private wallet readiness
   api-key                Print the local key to configure your client
   tickets import FILE|-  Import OA exported ticket JSON
@@ -213,7 +213,9 @@ func (t *ticketInference) Complete(ctx context.Context, body json.RawMessage) (*
 	return t.client.Do(req)
 }
 
-func serve(ctx context.Context, dir string, c config.Config) error {
+func serve(ctx context.Context, dir string, c config.Config, out io.Writer) error {
+	logger := log.New(out, "oa-chat ", log.LstdFlags)
+	logger.Print("Starting local API service")
 	lock, err := os.OpenFile(filepath.Join(dir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
@@ -232,17 +234,20 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 		return errors.New("could not bind local API address; check for an existing service")
 	}
 	defer listener.Close()
+	c.Listen = listener.Addr().String()
 	life, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var backend server.Backend
 	var funding *zkapi.FundingHandler
 	var childDone chan error
+	var readiness func(context.Context) string
 	if c.Backend == "ticket" {
 		wallet, err := ticketBackend(dir, c, client)
 		if err != nil {
 			return err
 		}
 		backend = &ticketInference{wallet, client}
+		readiness = ticketReadiness(wallet)
 	} else {
 		zc := zkConfig(c, client)
 		wallet, err := zkapi.New(zc)
@@ -250,6 +255,7 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 			return err
 		}
 		if !c.ZKAPI.ExternalCompanion {
+			logger.Print("Starting zkAPI companion")
 			// Keep the local HTTPS-only bridge in both routing modes so the
 			// companion cannot follow a redirect to plaintext HTTP.
 			proxy, err := relay.StartConnectProxy(life, c.RelayURL)
@@ -282,6 +288,7 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 			}()
 		}
 		backend = zkInference{wallet}
+		readiness = zkReadiness(wallet)
 		funding, err = zkapi.NewFundingHandler(wallet, "http://"+c.Listen, filepath.Join(dir, "funding"))
 		if err != nil {
 			return err
@@ -304,14 +311,23 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 		mux.Handle("/funding", funding)
 		mux.Handle("/funding/", funding)
 	}
-	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0), BaseContext: func(net.Listener) context.Context { return life }}
+	httpServer := &http.Server{Handler: server.LogRequests(mux, logger), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0), BaseContext: func(net.Listener) context.Context { return life }}
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- httpServer.Serve(listener) }()
 	transport := "direct HTTPS (network proxy off)"
 	if c.RelayURL != "" {
 		transport = "encrypted relay required"
 	}
-	fmt.Printf("OA Chat %s listening at http://%s/v1 (%s); %s\n", version, c.Listen, c.Backend, transport)
+	logger.Printf("OA Chat %s listening at http://%s/v1 (%s); %s", version, c.Listen, c.Backend, transport)
+	if c.Backend == "zkapi" {
+		logger.Printf("zkAPI network: %s", c.ZKAPI.Network)
+	}
+	logger.Print("Use oa-chat api-key to configure your client; Ctrl+C stops the service")
+	statusDone := make(chan struct{})
+	go func() {
+		defer close(statusDone)
+		monitorReadiness(life, logger, readiness, 5*time.Second)
+	}()
 	var result error
 	select {
 	case <-ctx.Done():
@@ -322,12 +338,19 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 	case <-childDone:
 		result = errors.New("zkAPI companion stopped; check its installation, proving setup, and deployment availability")
 	}
+	if result != nil {
+		// These lifecycle errors are fixed local messages, never raw child output.
+		logger.Printf("ERROR %s", result)
+	}
+	logger.Print("Stopping local API service")
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		_ = httpServer.Close()
 	}
+	<-statusDone
+	logger.Print("Local API service stopped")
 	return result
 }
 
