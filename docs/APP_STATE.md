@@ -12,6 +12,12 @@
   across reloads and price movement. Principal plus maximum network-fee reserve
   is shown before transfer. Next rechecks funds and durable intent, then allows
   the signer one native payment. A changed input immediately invalidates Next.
+- Prefunding reserves the fixed 0.02 ETH signing ceiling, not a hypothetical
+  16,777,216-gas transaction fee. The latter incorrectly blocked funding at
+  ordinary Sepolia fees even when the smaller actual deposit fit the ceiling.
+  Next still simulates and prices the actual call under unchanged signing caps;
+  the UI explains that final fees are checked then and unused reserve stays at
+  the funding address. Reserve reads check the chain but never authorize signing.
 - Signer/provider recovery stays separate from SDK note recovery. No page load,
   quote, balance check, method hydration or arrival of ETH signs or broadcasts.
   Signed bytes are durably journaled before broadcast and replay exactly only
@@ -53,6 +59,10 @@
 - See [native deployment progress](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md) for
   the unused first test vault, isolated infrastructure, test boundaries and
   remaining deployment gates.
+- Publication review found that `build.json.webauthnRelayUrl` is metadata only:
+  the current build does not inject that URL into executable code. The staging
+  account relay remains unverified; separate origin/CORS checks do not prove it
+  works. Native wallet funding/recovery does not depend on the account relay.
 
 ## 2026-09-22: MetaMask and Send to an address
 

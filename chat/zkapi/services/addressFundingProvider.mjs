@@ -483,15 +483,12 @@ export class AddressFundingProvider {
         if (!ctx.native) throw fail('A native ETH vault is required for this fee quote.', 'address_native_config');
         await this.assertChain(ctx);
         // Before the user funds the address there is no prepared private-note
-        // call to simulate. Reserve for the protocol's full gas ceiling; the
-        // eventual send still simulates and quotes the exact transaction.
-        const fees = await this.transactionFees(ctx, MAX_GAS);
-        await this.assertChain(ctx);
+        // call to simulate. Reserve the signer's spending ceiling, not a fee
+        // estimate for a hypothetical maximum-gas transaction. The actual send
+        // still simulates, quotes fresh fees and enforces every signing cap.
         const quotedAt = Date.now();
-        const feeReserveWei = (fees.maxFeePerGas * MAX_GAS).toString();
-        return { feeReserveWei, feeWei: feeReserveWei,
-            maxFeePerGas: fees.maxFeePerGas.toString(), maxPriorityFeePerGas: fees.maxPriorityFeePerGas.toString(),
-            gasLimit: MAX_GAS.toString(), chainId: Number(ctx.chainId),
+        const feeReserveWei = MAX_TRANSACTION_FEE.toString();
+        return { feeReserveWei, feeWei: feeReserveWei, reserveKind: 'transaction_fee_ceiling', chainId: Number(ctx.chainId),
             quotedAt, expiresAt: quotedAt + FEE_QUOTE_LIFETIME_MS };
     }
 

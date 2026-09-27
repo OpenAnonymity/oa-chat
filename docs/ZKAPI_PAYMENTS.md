@@ -157,11 +157,15 @@ The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing fails closed.
 
 The screen shows the ETH principal, a maximum contract-fee reserve, total ETH
-and receiving address on the chosen network. A five-second read-only loop checks
-balance and fees. It never submits a transaction when funds arrive. **Next** is
-enabled only when the account can cover principal plus the current reserve;
-clicking it rechecks storage ownership, funds and fees before authorizing one
-payable deposit. Unused fee reserve stays at the funding address. The external
+and receiving address on the chosen network. The reserve is the signer's fixed
+0.02 ETH transaction spending ceiling, not an estimated charge or a fee quote
+for a hypothetical maximum-gas call. A five-second read-only loop checks balance
+and the reserve's network. It never submits a transaction when funds arrive.
+**Next** is enabled only when the account can cover principal plus this reserve;
+clicking it rechecks storage ownership and funds before authorizing one payable
+deposit. The signer then simulates the exact call, checks current fees and
+enforces its unchanged gas, per-gas price and total-fee limits. High fees can
+still stop submission without spending. Unused fee reserve stays at the funding address. The external
 sender also pays their own transfer fee in addition to the amount sent.
 Closing the dialog stops polling; reopening restores the same intent/address
 and resumes reads. Signed-transaction and private-note recovery remain in their

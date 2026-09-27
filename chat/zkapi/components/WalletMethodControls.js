@@ -121,9 +121,9 @@ export function renderFundingAccount(owner) {
         ${intent && flow.totalWei && !flow.dirty ? `<h3>Send ${escape(formatFundingAmount(flow.totalWei, 18))} ETH</h3>
         <p class="zkapi-helper">On <strong>${escape(network)}</strong> to this address:</p>${address}
         <dl class="zkapi-funding-breakdown"><div><dt>Added to your wallet</dt><dd>${escape(intent.ethAmount)} ETH <span>(${escape(zkapiClient.formatMoney(intent.amount))})</span></dd></div><div><dt>Maximum contract fee reserve</dt><dd>${escape(formatFundingAmount(flow.fee.feeReserveWei, 18))} ETH</dd></div></dl>
-        <p class="zkapi-note">Unused fee reserve stays at this address. Your sending wallet charges its own transfer fee separately.</p>
+        <p class="zkapi-note">Final network fees are checked when you click Next. Unused fee reserve stays at this address. Your sending wallet charges its own transfer fee separately.</p>
         <p class="zkapi-helper" role="status">${flow.ready ? 'Funds received. Choose Next to add the ETH to your wallet.' : `Checking for funds… Received ${escape(formatFundingAmount(flow.status?.ethBalance, 18))} ETH.`}</p>
-        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !flow.ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `<p class="zkapi-helper" role="status">${flow?.dirty ? 'Updating the ETH amount…' : 'Calculating the ETH amount and network fee…'}</p>${address}`}
+        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !flow.ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `<p class="zkapi-helper" role="status">${flow?.dirty ? 'Updating the ETH amount…' : 'Calculating the ETH amount and fee reserve…'}</p>${address}`}
         ${flow?.error ? `<p class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}
         <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser.</p>`
         : `<h3>Your funding address</h3><p class="zkapi-helper">${escape(network)}</p>${address}

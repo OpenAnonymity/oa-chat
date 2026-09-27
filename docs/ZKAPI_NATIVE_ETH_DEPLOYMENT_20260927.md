@@ -1,6 +1,7 @@
 # Native ETH deployment work, 2026-09-27
 
-Status: **in progress, not published or live-accepted**. Existing ERC20 browser
+Status: **Sepolia published; live acceptance in progress**. Mainnet remains
+guarded and undeployed. Existing ERC20 browser
 origins and services are preserved for matching wallet recovery.
 
 The native protocol work is isolated in `codex/native-eth-wallet` in the
@@ -37,8 +38,8 @@ transaction `0x84bfc92d4ce6ee4981db6912d3aa0c46eb084db60c3daf73bc8900e630354250`
 block `11796375`, costing `0.005658687956398008` Sepolia ETH. All constructor
 getters match the native denomination and fresh signing keys. Reused note-bound
 proof adapter and Poseidon code were verified at finalized state against the
-compiled source. Publication/funding still waits for this vault to finalize
-and for the isolated backend/challenger to pass live checks.
+compiled source. Finalized block `11796405` includes this deployment; the
+finalized runtime hash also matches. Backend/challenger startup checks passed.
 
 ## Infrastructure prepared
 
@@ -82,7 +83,21 @@ The reviewed native Sepolia SDK configuration is committed at
 in both app package files. Mainnet retains its explicit migration guard.
 
 The OA Vercel projects `oa-wallet-eth-sepolia` and `oa-wallet-eth-mainnet`
-are created and linked locally; no native frontend is published yet.
+are created and linked locally. Sepolia is published at
+`https://oa-wallet-eth-sepolia.vercel.app`, deployment
+`dpl_G9uVrVDpqaZ9bMaV9Se1bVfXPQSu`, app commit `37dd4d6` / SDK `ad2b134`.
+All 486 emitted artifact hashes passed independent review. The canonical
+origin serves the correct native backend through same-origin rewrites.
+Mainnet compiles locally with its migration guard and is not published.
+
+The dedicated Sepolia challenger received `0.012` test ETH in transaction
+`0x73443886608f31ac6e3d1109f3742bee94bed7441432d861b9deb63d7ea65bc3`,
+block `11796454`. Its durable checkpoint advances and all five legacy
+containers retain their identities, images and published ports.
+
+Both new Vercel origins were added to staging org credentialed CORS and OAuth
+return allowlists. Existing origins, RP ID, cookies and signing identity were
+preserved; new/existing-origin positive checks and unknown-origin denial pass.
 
 ## Browser verification completed
 
@@ -95,7 +110,23 @@ The fixture used simulated price/RPC/SDK submission and is **not live Sepolia
 end-to-end evidence**. The revised SDK separately passed all 272 tests with
 matching note-bound WASM and proving assets.
 
-Remaining: TLS origin verification, finalized replacement Sepolia vault,
-isolated runtime startup, immutable native SDK pins, both frontend
-builds, live Sepolia funding/chat/settlement/withdrawal/recovery acceptance, and
-the explicit Mainnet deployment/funding decision.
+The prebuilt Sepolia publication review verified all 486 static-file hashes,
+the immutable app/SDK revisions, native deployment/proof pins, staging API
+rewrites, disabled verifier bypass, and absence of operator credentials in the
+public output. Account passkey relay behavior remains unverified: `build.json`
+records `https://staging.openanonymity.ai/passkey-relay.html`, but the current
+build script only records that setting as metadata; it does not inject the URL
+into executable code. The account encryption-passkey implementation uses local
+WebAuthn PRF. Do not treat the metadata value or the separately verified staging
+origin/CORS allowlists as evidence of a working account relay. Native wallet
+funding and recovery do not depend on that inherited account feature.
+
+The first live address screen exposed an overly conservative pre-funding gas
+calculation: the theoretical maximum transaction gas limit could exhaust the
+fee cap despite an affordable actual deposit. No browser funds were sent. A
+quote-only correction is being reviewed before the live test continues.
+
+Remaining: publish the reviewed fee-reserve correction, finish live Sepolia
+funding/chat/settlement/withdrawal/recovery acceptance, and obtain the explicit
+Mainnet test-deployment/funding decision. Mainnet operator/challenger accounts
+currently hold zero ETH.

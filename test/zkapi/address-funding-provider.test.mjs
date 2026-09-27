@@ -715,25 +715,89 @@ test('native status reads only ETH and conservatively exposes its whole gwei led
     assert.equal(h.sent.length, 0);
 });
 
-test('pre-funding ETH fee quote is fresh, capped and read-only without creating custody', async () => {
+test('pre-funding ETH reserve uses the spending ceiling without authorizing hypothetical transaction fees', async () => {
     const h = harness({ config: NATIVE_FUNDING });
-    const before = Date.now();
-    const quote = await h.provider.getDepositFeeQuote();
-    assert.equal(quote.gasLimit, MAX_TRANSACTION_GAS_LIMIT.toString());
-    assert.equal(BigInt(quote.feeReserveWei), BigInt(quote.maxFeePerGas) * MAX_TRANSACTION_GAS_LIMIT);
-    assert.equal(quote.feeWei, quote.feeReserveWei);
-    assert(BigInt(quote.feeReserveWei) <= 20_000_000_000_000_000n);
-    assert(BigInt(quote.maxFeePerGas) <= 300_000_000_000n);
-    assert(quote.quotedAt >= before && quote.quotedAt <= Date.now());
-    assert.equal(quote.expiresAt - quote.quotedAt, 60_000);
+    for (const baseFee of [1_112_000_000n, 10_000_000_000n]) {
+        h.rpc.baseFee = `0x${baseFee.toString(16)}`;
+        const before = Date.now();
+        const quote = await h.provider.getDepositFeeQuote();
+        assert.equal(quote.feeReserveWei, '20000000000000000');
+        assert.equal(quote.feeWei, quote.feeReserveWei);
+        assert.equal(quote.reserveKind, 'transaction_fee_ceiling');
+        assert.equal(quote.chainId, 1);
+        assert.equal(Object.hasOwn(quote, 'gasLimit'), false);
+        assert.equal(Object.hasOwn(quote, 'maxFeePerGas'), false);
+        assert.equal(Object.hasOwn(quote, 'maxPriorityFeePerGas'), false);
+        assert(quote.quotedAt >= before && quote.quotedAt <= Date.now());
+        assert.equal(quote.expiresAt - quote.quotedAt, 60_000);
+    }
     assert.equal(h.generated, 0);
     assert.equal(h.store.data.size, 0);
     assert.equal(h.sent.length, 0);
-    assert.equal(h.calls.some(call => ['eth_call', 'eth_estimateGas'].includes(call.method)), false);
-    h.rpc.baseFee = `0x${10_000_000_000n.toString(16)}`;
-    await assert.rejects(h.provider.getDepositFeeQuote(), { code: 'address_fee_limit' });
+    assert(h.calls.every(call => call.method === 'eth_chainId'), 'a reserve read checks only network identity');
     h.rpc.chain = '0x2';
     await assert.rejects(h.provider.getDepositFeeQuote(), { code: 'wrong_network' });
+});
+
+test('funded native deposit uses its actual gas at reproduced Sepolia fees and retains the total fee cap', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    await h.ready();
+    h.rpc.baseFee = `0x${1_112_000_000n.toString(16)}`;
+    h.rpc.gas = `0x${6_897_262n.toString(16)}`;
+    const gas = bufferedGasLimit(BigInt(h.rpc.gas));
+    const amount = 2_000_000n;
+    const principal = amount * 1_000_000_000n;
+    const quote = await h.provider.getDepositFeeQuote();
+    h.rpc.balance = `0x${(principal + BigInt(quote.feeReserveWei)).toString(16)}`;
+    const plan = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
+    const context = { ...CONTEXT, kind: 'deposit', operationId: 'deposit-op', submissionId: 'deposit-sub',
+        amount: amount.toString(), commitment: plan.commitment };
+    const input = { from: OWN, to: VAULT, data: codec.encodeDeposit(plan, amount), gas, value: `0x${principal.toString(16)}` };
+    await assert.rejects(h.provider.request({ method: 'eth_sendTransaction', params: [input], zkapiRecovery: context }),
+        { code: 4100 }, 'getting a reserve never authorizes signing');
+    await h.send(input, context, { kind: 'deposit', amount: amount.toString() });
+    const signed = Transaction.from(h.sent[0]);
+    assert.equal(signed.value, principal);
+    assert.equal(signed.gasLimit, BigInt(gas));
+    assert.equal(signed.maxFeePerGas, BigInt(h.rpc.baseFee) * 2n + BigInt(h.rpc.priorityFee));
+    assert(signed.gasLimit * signed.maxFeePerGas <= BigInt(quote.feeReserveWei));
+    assert(h.calls.some(call => call.method === 'eth_estimateGas'));
+    assert(h.calls.some(call => call.method === 'eth_getBlockByNumber' && call.params[0] === 'latest'));
+});
+
+test('prefunding reserve never bypasses actual native fee, fee-data or affordability rejection', async () => {
+    for (const failure of ['expensive', 'malformed', 'underfunded']) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        h.rpc.gas = `0x${6_897_262n.toString(16)}`;
+        h.rpc.baseFee = `0x${1_112_000_000n.toString(16)}`;
+        const gas = bufferedGasLimit(BigInt(h.rpc.gas));
+        const amount = 2_000_000n;
+        const principal = amount * 1_000_000_000n;
+        const quote = await h.provider.getDepositFeeQuote();
+        h.rpc.balance = `0x${(principal + BigInt(quote.feeReserveWei)).toString(16)}`;
+        const plan = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
+        const context = { ...CONTEXT, kind: 'deposit', operationId: 'deposit-op', submissionId: 'deposit-sub',
+            amount: amount.toString(), commitment: plan.commitment };
+        const input = { from: OWN, to: VAULT, data: codec.encodeDeposit(plan, amount), gas, value: `0x${principal.toString(16)}` };
+        let addressCode;
+        if (failure === 'expensive') {
+            h.rpc.baseFee = `0x${10_000_000_000n.toString(16)}`;
+            addressCode = 'address_fee_limit';
+        } else if (failure === 'malformed') {
+            h.rpc.baseFee = undefined;
+            addressCode = 'address_fee_data';
+        } else {
+            const exactLiability = BigInt(gas) * (BigInt(h.rpc.baseFee) * 2n + BigInt(h.rpc.priorityFee));
+            h.rpc.balance = `0x${(principal + exactLiability - 1n).toString(16)}`;
+            addressCode = 'address_insufficient_eth';
+        }
+        await assert.rejects(h.send(input, context, { kind: 'deposit', amount: amount.toString() }), { code: 4100, addressCode });
+        assert.equal(h.sent.length, 0);
+        assert.equal(h.provider.pending, null);
+        const record = await h.provider.read(await h.provider.context(), true);
+        assert.equal(record.transactions.length, 0, 'no signed bytes are added after a pre-signing rejection');
+    }
 });
 
 test('actual SDK withdrawal codec is accepted only for proof-bound authorized recipient and mode', async () => {
