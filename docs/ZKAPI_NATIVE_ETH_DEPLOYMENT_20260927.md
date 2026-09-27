@@ -1,13 +1,13 @@
 # Native ETH deployment work, 2026-09-27
 
-Status: **Sepolia published; live acceptance in progress**. Mainnet remains
+Status: **Sepolia published; live deposit, recovery, chat and withdrawal passed**. Mainnet remains
 guarded and undeployed. Existing ERC20 browser
 origins and services are preserved for matching wallet recovery.
 
 The native protocol work is isolated in `codex/native-eth-wallet` in the
 `zkapi-EF-collab` repository. Native implementation commit `abfd3a7` passed its
 initial independent review, but the deployment audit found inherited legacy
-protocol weaknesses. The rollout is therefore incorporating the separate
+protocol weaknesses. The rollout incorporated the separate
 note-bound circuit repair and durable challenge service before publication. The merged source is now independently approved at
 `dfa0e42ca6dfec46e20dcb7ffd6ac44c2ccbebea`, with protocol
 `8b2d4e3da921f956e1eb6b93afbf722a877c060c`. It also namespaces upstream key
@@ -85,7 +85,7 @@ in both app package files. Mainnet retains its explicit migration guard.
 The OA Vercel projects `oa-wallet-eth-sepolia` and `oa-wallet-eth-mainnet`
 are created and linked locally. Sepolia is published at
 `https://oa-wallet-eth-sepolia.vercel.app`, deployment
-`dpl_G9uVrVDpqaZ9bMaV9Se1bVfXPQSu`, app commit `37dd4d6` / SDK `ad2b134`.
+`dpl_CeUjo4sDtrozF8nR7L97VyX85ZY1`, app commit `a534c0e` / SDK `ad2b134`.
 All 486 emitted artifact hashes passed independent review. The canonical
 origin serves the correct native backend through same-origin rewrites.
 Mainnet compiles locally with its migration guard and is not published.
@@ -102,7 +102,7 @@ preserved; new/existing-origin positive checks and unknown-origin denial pass.
 ## Browser verification completed
 
 The app diff passed independent review. Full app tests passed 886 core and
-396 payment tests. A local actual-browser fixture verified the normal address
+403 payment tests (1,289 total including the final recovery follow-up). A local actual-browser fixture verified the normal address
 flow without password/backup controls, USD edits through refresh renders,
 restored address and exact principal after full browser closure, zero automatic
 submissions on simulated receipt, and one submission after explicit Next.
@@ -123,10 +123,90 @@ funding and recovery do not depend on that inherited account feature.
 
 The first live address screen exposed an overly conservative pre-funding gas
 calculation: the theoretical maximum transaction gas limit could exhaust the
-fee cap despite an affordable actual deposit. No browser funds were sent. A
-quote-only correction is being reviewed before the live test continues.
+fee cap despite an affordable actual deposit. The reviewed correction reserves
+the existing 0.02 ETH per-transaction spending ceiling before funding; final
+simulation, gas pricing, affordability and signing caps remain unchanged.
+Unused reserve stays at the public funding address. This reserve covers the
+deposit ceiling; a later withdrawal can require a separate gas top-up.
 
-Remaining: publish the reviewed fee-reserve correction, finish live Sepolia
-funding/chat/settlement/withdrawal/recovery acceptance, and obtain the explicit
-Mainnet test-deployment/funding decision. Mainnet operator/challenger accounts
-currently hold zero ETH.
+## Live Sepolia acceptance
+
+The canonical origin used browser-local custody without an injected wallet.
+The persistent test profile and sanitized evidence are retained outside the
+repository in the protected deployment bundle's `live-e2e/` directory.
+
+- A $2 input produced exactly 747,268 gwei of principal (0.000747268 ETH)
+  plus the 0.02 ETH reserve. A full browser restart preserved the funding
+  address, input, principal and total. Next stayed disabled before funding.
+- Incoming funding transaction
+  `0xe87b91d7fd5d646119a5e1ab7f9e17e61c07997d9d2b90350aec03a668beded4`
+  transferred 0.020747268 ETH. Polling detected it and enabled Next; the
+  funding account's nonce remained zero until the explicit click.
+- One explicit Next submitted deposit
+  `0x76bb11df8398dae9389b8e1206640ebc0d6f740c4838ad35405c579980a0dba3`,
+  block 11796514. The browser was closed while that transaction was pending.
+  Reopening reconciled the same receipt into the private balance without a
+  second submission. Actual gas was 6,759,269 and the fee was
+  0.007528036291476899 ETH.
+- Actual GPT-4o-mini inference returned the requested text, “Native ETH test
+  passed.” The staging issuer returned one active ephemeral key, verified
+  through the existing OA verifier with bypass disabled.
+- The first issuance attempt exposed a station IP allowlist mismatch: the
+  authenticated SSH relay connects from loopback. Adding only `127.0.0.1`
+  alongside the existing org IP resolved it. Signed OrgAuth remained required;
+  missing, malformed and forged signatures returned 401. Station source and
+  identity were unchanged. The original saved request retry succeeded.
+- Signed station/org usage receipts finalized $0.007446 of usage as 2,783
+  gwei, matching the request's frozen 2676.4173 USD/ETH quote. Remaining
+  principal was 744,485 gwei; this is ETH accounting, not fixed dollar credit.
+- Withdrawal retained the explicitly entered destination. Its first attempt
+  was refused before broadcast with 0.012471963708523101 ETH available for
+  gas. A controlled 0.01 ETH top-up and explicit Continue withdrawal resumed
+  the saved authorization successfully, without a new lease or clearance.
+- Mutual close transaction
+  `0xa3e7fe8c3e78db5b6fb433c167bf3c6c195e269d6bad359e43b2e8ef33a3ddc3`,
+  block 11796574, used 7,051,071 gas and paid 0.007263366020626845 ETH in fees.
+  `MutualClose` records the exact 744,485 gwei payout. Note 0 is Closed;
+  the vault balance is zero and chain/indexer/server roots match the empty
+  root. The UI reported the return and retained transaction history. At the
+  first check this was mined and indexed, but not yet finalized by Ethereum.
+
+The final follow-up passed fresh adversarial review and all 1,289 tests. It
+makes fee shortages actionable and keeps collapsed public ETH return controls
+reachable after the private note closes, even without a working price quote
+or balance poll. Public reserve return
+and final reopen acceptance will be recorded after that reviewed publication.
+
+This run does not constitute a live malicious-escape challenge test, a full
+MetaMask extension test, an account/passkey relay test, or a Mainnet test.
+The native real-proof/contract challenge tests passed locally, while a separate
+isolated native Sepolia challenge acceptance plan remains unexecuted.
+
+Mainnet remains guarded and unpublished. Both deployment and dedicated
+challenger accounts hold zero Mainnet ETH. Publication needs an explicit
+bounded experimental deployment/funding decision: the new proof setup is
+single-party development material and the integration is not production-audited.
+
+
+## Prepared Mainnet test decision (not authorization)
+
+A read-only independent review measured a real-proof challenge at 6,993,165 gas.
+For a deliberately bounded experiment it proposed a dedicated signer ceiling of
+10,000,000 gas and 3 gwei, with 0.03 ETH reserved for one worst-case call. This
+is not a universal gas bound or indefinite coverage; fees above the limit pause
+submission, and an operator must monitor balances and stuck nonces throughout
+the 24-hour challenge window. No automatic fee increase/replacement exists.
+
+At 23:20 UTC a fee refresh using the earlier padded verifier/vault gas
+estimates put deployment liability at approximately
+0.0213393163 ETH. A 3 gwei deployment ceiling would bound the two deployments
+at 0.02550786 ETH. The proposed funding is 0.03 ETH for the operator and
+0.03 ETH for the dedicated challenger, with browser principal and its own
+transaction fees additional. These are funding budgets, not predicted fees;
+refresh the estimate before any Mainnet transaction. No Mainnet transaction
+has been signed or broadcast, and no such funding/risk decision was accepted.
+
+The review recommends completing the isolated live native challenge acceptance
+before proceeding. Single-party setup secrets, if retained, can undermine
+proof soundness; the new circuit/native integration is unaudited. A bounded
+experiment is therefore a separate decision from public production readiness.

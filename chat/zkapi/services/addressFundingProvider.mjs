@@ -1,4 +1,4 @@
-import { Wallet, Transaction, getAddress, keccak256 } from 'ethers';
+import { Wallet, Transaction, getAddress, keccak256, formatEther } from 'ethers';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { browserSdkTransport } from '@openanonymity/zkapi-browser-sdk/configure';
 import { MAX_TRANSACTION_GAS_LIMIT as MAX_GAS } from '@openanonymity/zkapi-browser-sdk/gas';
@@ -461,7 +461,7 @@ export class AddressFundingProvider {
             baseFee = uint(block?.baseFeePerGas, 'network base fee');
             priorityFee = uint(suggestedTip, 'network priority fee');
         } catch {
-            throw fail('The payment network returned incomplete or invalid fee information. Check again before sending.', 'address_fee_data');
+            throw this.paymentFailure('address_fee_data');
         }
         const maxPriorityFeePerGas = priorityFee < MIN_PRIORITY_FEE ? MIN_PRIORITY_FEE : priorityFee;
         // EIP-1559 bounds a full block's base-fee increase to 12.5%, with
@@ -473,9 +473,29 @@ export class AddressFundingProvider {
         const feeCap = budgetCap < MAX_GAS_PRICE ? budgetCap : MAX_GAS_PRICE;
         const maxFeePerGas = desiredFee < feeCap ? desiredFee : feeCap;
         if (maxFeePerGas < minimumFee) {
-            throw fail('Ethereum fees exceed the payment-address safety limit. Try when fees are lower.', 'address_fee_limit');
+            throw this.paymentFailure('address_fee_limit');
         }
         return { type: 2, maxFeePerGas, maxPriorityFeePerGas };
+    }
+
+    paymentFailure(code, requirement = null) {
+        let message;
+        if (code === 'address_insufficient_eth') {
+            const network = requirement.chainId === 1 ? 'Ethereum Mainnet'
+                : requirement.chainId === 11155111 ? 'Sepolia' : `chain ${requirement.chainId}`;
+            message = `Your funding address needs at least ${formatEther(requirement.shortfallWei)} ETH more for this transaction and its maximum network fee. Send it to ${requirement.address} on ${network}, then retry the action. Fees may change. This transaction was not sent.`;
+        } else if (code === 'address_fee_limit') {
+            message = 'Current Ethereum fees exceed the 0.02 ETH total-fee or 300 gwei gas-price limit. Wait for lower fees, then retry the action. This transaction was not sent.';
+        } else if (code === 'address_fee_data') {
+            message = 'Current Ethereum fees could not be read reliably. Check the network connection, then retry the action. This transaction was not sent.';
+        } else throw fail('Unsupported payment failure.');
+        const error = fail(message, code);
+        if (requirement) error.fundingRequirement = copy(requirement);
+        // The SDK must finish its own pre-broadcast recovery bookkeeping before
+        // we restore this public-only explanation over its generic wallet copy.
+        // Retain object identity so an unrelated later error is never replaced.
+        if (this.action) this.action.failure = { error, message };
+        return error;
     }
 
     async getDepositFeeQuote() {
@@ -580,7 +600,14 @@ export class AddressFundingProvider {
             });
             this.action = { authorization: copy(authorization), scope: ctx.scope, sends: 0 };
             this.notify();
-            try { return await callback(); } finally { this.action = null; this.notify(); }
+            try { return await callback(); }
+            catch (error) {
+                if (this.action.failure?.error === error) {
+                    error.message = this.action.failure.message;
+                    error.shortMessage = this.action.failure.message;
+                }
+                throw error;
+            } finally { this.action = null; this.notify(); }
         }, true);
     }
 
@@ -596,6 +623,7 @@ export class AddressFundingProvider {
     async send(input, recovery, overrideAuthorization = null) {
         const ctx = await this.context();
         if (!this.action || this.action.scope !== ctx.scope) throw fail('Choose and confirm a wallet action before sending.', 4100);
+        this.action.failure = null;
         if (overrideAuthorization) throw fail('The return transaction differs from the authorized wallet action.', 4100);
         return this.locked(ctx, async () => {
             const record = await this.read(ctx, true);
@@ -627,12 +655,17 @@ export class AddressFundingProvider {
             const fees = await this.transactionFees(ctx, gasLimit);
             const reserve = fees.maxFeePerGas * gasLimit;
             const balance = uint(await this.rpc(ctx, 'eth_getBalance', [record.address, 'pending']), 'ETH balance');
+            const insufficient = required => this.paymentFailure('address_insufficient_eth', {
+                address: record.address, chainId: Number(ctx.chainId), balanceWei: balance.toString(),
+                feeReserveWei: reserve.toString(), requiredWei: required.toString(),
+                shortfallWei: (required - balance).toString()
+            });
             if (maxEthReturn) {
-                if (balance <= reserve) throw fail('This payment address needs more ETH to cover the return transaction fee.', 'address_insufficient_eth');
+                if (balance <= reserve) throw insufficient(reserve + 1n);
                 transaction.value = balance - reserve;
                 authorization = { ...this.action.authorization, amount: transaction.value.toString() };
             }
-            if (balance < transaction.value + reserve) throw fail('Send more ETH to the payment address for Ethereum network fees.', 'address_insufficient_eth');
+            if (balance < transaction.value + reserve) throw insufficient(transaction.value + reserve);
             await this.assertChain(ctx);
             const raw = await new Wallet(record.privateKey).signTransaction({ ...transaction,
                 chainId: ctx.chainId, nonce: Number(nonce), gasLimit, ...fees });
@@ -773,7 +806,12 @@ export class AddressFundingProvider {
                 // as definitely not submitted and retains a retryable note plan.
                 // Once signed bytes are saved, broadcast() always returns their
                 // hash, including on a lost/rejected RPC response.
-                throw Object.assign(fail(error.message, 4100), { addressCode: error.code });
+                const rejection = Object.assign(fail(error.message, 4100), { addressCode: error.code });
+                if (this.action?.failure?.error === error) {
+                    this.action.failure.error = rejection;
+                    if (error.fundingRequirement) rejection.fundingRequirement = copy(error.fundingRequirement);
+                }
+                throw rejection;
             }
         }
         if (!READ_METHODS.has(method)) throw fail('This Ethereum operation is unavailable for the payment address.', 4200);

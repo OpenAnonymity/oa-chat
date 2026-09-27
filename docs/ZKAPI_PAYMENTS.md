@@ -214,6 +214,15 @@ their original bytes; the app does not raise fees or replace a pending
 transaction automatically. These limits can temporarily block a valid operation
 during high fees. Same-origin application code can use the browser-held key.
 
+Before-broadcast funding and fee failures keep a public-only explanation scoped
+to the active action. After the SDK finishes preserving or releasing its own
+submission claim, the host restores that explanation over generic wallet-error
+copy. Insufficient ETH reports the exact shortfall from the freshly checked
+balance and maximum fee liability, the funding address/network, and an explicit
+retry instruction. Fee-limit and malformed-fee errors use fixed copy. No RPC
+error payload, proof, calldata or secret enters these explanations, and they
+are not persisted. A top-up or status refresh never retries the transaction.
+
 For withdrawal, the funding account pays gas and the user supplies a destination
 address. The SDK binds that destination into its proof and durable journal;
 resumed withdrawals keep it. Mutual close, escape initiation, finalization and
@@ -223,6 +232,11 @@ with confirmation. Do not infer a return destination from an incoming transfer,
 which may have come from an exchange. Return the private balance before returning
 ETH so its withdrawal can still pay gas; unsettled public transfers must be
 recovered before a new action.
+Once a usable funding address exists, the collapsed return-funds controls remain
+available in every address view, including a new deposit or after a note closes.
+Their availability does not depend on an ETH/USD quote, saved deposit intent or
+successful balance read. Returning interrupted-deposit or remaining gas funds
+does not require creating or funding another private note.
 The optional ETH amount accepts up to 18 decimal places without floating-point
 rounding. A blank amount returns ETH after reserving the maximum fee for an
 ordinary Ethereum account. The amount and signed transaction use the same fee

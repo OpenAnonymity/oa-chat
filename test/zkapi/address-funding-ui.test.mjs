@@ -64,12 +64,44 @@ test('ordinary native funding shows USD input, ETH principal and fee reserve, th
     assert.match(waiting, /sending wallet charges its own transfer fee separately/);
     assert.match(waiting, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
     assert.match(waiting, /data-funding-next[^>]*disabled/);
-    assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock|Return funds held/i);
+    assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock/i);
+    assert.match(waiting, /Return funds held at this address/);
+    assert.doesNotMatch(waiting, /<details[^>]*open/);
     owner.fundingFlow.ready = true;
     const ready = controls.renderFundingAccount(owner);
     assert.match(ready, /Funds received\. Choose Next/);
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
     assert.match(ready, /Its USD value changes with the ETH price/);
+});
+
+test('closing a private note leaves public ETH return controls accessible in the new-deposit view', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, note: null, formatMoney: () => '$10.00' } });
+    Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: { ethBalance: '15208600000000000' } });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /Amount to add to your wallet \(USD\)/);
+    assert.match(html, /Return funds held at this address/);
+    assert.match(html, /data-funding-return-eth/);
+    assert.doesNotMatch(html, /<details[^>]*open/);
+    owner.fundingFlow = { status: { ethBalance: '15208600000000000' }, ready: false };
+    assert.match(controls.renderFundingAccount(owner), /Return funds held at this address/);
+    owner.fundingFlow.status.ethBalance = '0';
+    owner.fundingStatus.ethBalance = '0';
+    assert.match(controls.renderFundingAccount(owner), /Return funds held at this address/);
+});
+
+test('public ETH return is available without a saved intent, USD price or successful balance read', () => {
+    const failIfCalled = () => assert.fail('rendering recovery must never create, poll or sign');
+    const { controls, owner } = fixture({ wallet: { ensureAddress: failIfCalled, getStatus: failIfCalled, withAuthorizedAction: failIfCalled },
+        client: { isNativeEthFunding: true, note: null, quoteDepositUsd: failIfCalled } });
+    Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: null,
+        fundingFlow: { intent: null, status: null, error: 'The ETH/USD reference price is unavailable.', ready: false } });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /ETH\/USD reference price is unavailable/);
+    assert.match(html, /Return funds held at this address/);
+    assert.match(html, /data-funding-return-eth/);
+    assert.match(html, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
+    assert.doesNotMatch(html, /<details[^>]*open/);
+    assert.doesNotMatch(html, /data-funding-next/);
 });
 
 test('a saved withdrawal shows its durable recipient read-only and escapes drafts', () => {

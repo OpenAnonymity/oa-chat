@@ -1,4 +1,4 @@
-## 2026-09-27: Browser custody and native ETH funding (implementation in progress)
+## 2026-09-27: Browser custody and native ETH funding (Sepolia live)
 
 - User confirmed: hold ETH and show its floating current USD value, rather than
   fixed USD credit. Native ETH requires new vault/server/SDK deployment pins;
@@ -18,6 +18,15 @@
   Next still simulates and prices the actual call under unchanged signing caps;
   the UI explains that final fees are checked then and unused reserve stays at
   the funding address. Reserve reads check the chain but never authorize signing.
+- Fee/affordability failures retain a fixed public-only explanation after SDK
+  withdrawal bookkeeping replaces its generic error copy. The exact additional
+  ETH, address and chain come from the current signing check; the retry remains
+  explicit. Only the same originating Error object can receive this explanation,
+  and it is scoped to action memory rather than persisted.
+- Public ETH return remains a collapsed action for an existing usable funding
+  address even after the private note closes. Its availability must not depend
+  on a USD quote or a successful public-balance poll: stale price feeds must
+  not hide access to residual ETH.
 - Signer/provider recovery stays separate from SDK note recovery. No page load,
   quote, balance check, method hydration or arrival of ETH signs or broadcasts.
   Signed bytes are durably journaled before broadcast and replay exactly only
@@ -30,7 +39,8 @@
   transfer and journal recovery; UI/actions and interruption controller tests
   also pass. The independent native protocol review approved 268 SDK tests,
   52 server tests, native vault tests and the real proof/settlement fixture.
-  Live deployment acceptance is still pending.
+  Live Sepolia deposit, recovery, chat, settlement and withdrawal now pass;
+  see the deployment record below for remaining test boundaries.
 - USD references use the latest finalized Chainlink round with a pinned
   4,500-second freshness limit, so they may lag the chain head. New leases
   reject superseded finalized quotes; accepted leases retain their original
@@ -43,7 +53,9 @@
   only focus/selection can lose composition or input events. Local browser
   testing confirmed amount/address recovery after full browser closure, no
   submission on receiving simulated funds, and one submission on explicit Next.
-  That fixture is not live Sepolia acceptance.
+  Separately, the live canonical Sepolia origin survived full browser closure
+  after funding and while the signed deposit was pending, recovered one
+  successful deposit without resubmission, and completed actual chat and close.
 - Native backend/SDK changes are isolated in
   `/Volumes/Data/codex/worktrees/native-eth-wallet/zkapi-EF-collab`, branch
   `codex/native-eth-wallet`. Do not use the unrelated dirty note-bound checkout.
@@ -53,12 +65,16 @@
   or publish its first native Sepolia vault (`0x0bf47f7fCc28975E4A928587869B73D32CD12f77`),
   which remains empty. The reviewed integration now uses `zkapi-v2-note-bound-v1`,
   matching WASM/proving keys/verifier, historical-root repair and a durable
-  challenge service. Its replacement vault is deployed and awaiting finality;
+  challenge service. Its replacement vault is deployed and finalized;
   none of this upgrades existing immutable contracts. The newer setup is a single-party development
   setup and must not be described as production-audited.
 - See [native deployment progress](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md) for
   the unused first test vault, isolated infrastructure, test boundaries and
   remaining deployment gates.
+- Live staging issuance uses an authenticated SSH tunnel from org to station.
+  Its connection terminates at station loopback; the station IP allowlist must
+  include `127.0.0.1` alongside the existing org private IP. Full signed OrgAuth
+  checks remain mandatory. Missing, malformed and forged signatures return 401.
 - Publication review found that `build.json.webauthnRelayUrl` is metadata only:
   the current build does not inject that URL into executable code. The staging
   account relay remains unverified; separate origin/CORS checks do not prove it

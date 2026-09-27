@@ -800,6 +800,96 @@ test('prefunding reserve never bypasses actual native fee, fee-data or affordabi
     }
 });
 
+test('withdrawal reports the exact safe top-up after SDK error handling and only retries explicitly', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    await h.ready();
+    h.rpc.balance = '0x9184e72a000'; // 0.00001 ETH; quoted liability is 0.000132 ETH.
+    const plan = { mode: 'mutual', siblings: Array(32).fill('0x0'), proof: { backend: 'groth16_bn254', proof: Buffer.alloc(256).toString('base64') },
+        public_inputs: { protocol_version: 2, chain_id: 1, contract_address: VAULT, active_root: '0x1',
+            state_signing_key_x: '0x1', state_signing_key_y: '0x1', clearance_signing_key_x: '0x1', clearance_signing_key_y: '0x1',
+            note_id: 7, final_balance: 1500000, destination: DESTINATION, withdrawal_nullifier: '0x7', has_clearance: true, withdrawal_tag: '0x8' } };
+    const input = { from: OWN, to: VAULT, data: codec.encodeWithdrawal(plan, 'mutual', DESTINATION, VAULT) };
+    const context = { ...CONTEXT, kind: 'withdrawal', operationId: 'op', submissionId: 'sub', noteId: 7,
+        destination: DESTINATION, finalBalance: 1500000, mode: 'mutual' };
+    const authorization = { kind: 'withdrawal', destination: DESTINATION, noteId: 7, mode: 'mutual' };
+    const unchanged = structuredClone({ plan, context });
+    let sdkHandled = false;
+    await assert.rejects(h.provider.withAuthorizedAction(authorization, async () => {
+        try { await h.provider.request({ method: 'eth_sendTransaction', params: [input], zkapiRecovery: context }); }
+        catch (error) {
+            // The SDK preserves the Error object while replacing its display copy.
+            error.shortMessage = 'The wallet refused the transaction before broadcast.';
+            error.withdrawalNeedsAction = true;
+            error.broadcastPossible = false;
+            sdkHandled = true;
+            throw error;
+        }
+    }), error => {
+        assert.equal(sdkHandled, true);
+        assert.equal(error.code, 4100);
+        assert.equal(error.addressCode, 'address_insufficient_eth');
+        assert.equal(error.withdrawalNeedsAction, true);
+        assert.equal(error.broadcastPossible, false);
+        assert.match(error.shortMessage, /0\.000122 ETH more/);
+        assert.match(error.shortMessage, new RegExp(OWN));
+        assert.match(error.shortMessage, /Ethereum Mainnet, then retry the action/);
+        assert.equal(error.message, error.shortMessage);
+        assert.deepEqual(error.fundingRequirement, { address: OWN, chainId: 1, balanceWei: '10000000000000',
+            feeReserveWei: '132000000000000', requiredWei: '132000000000000', shortfallWei: '122000000000000' });
+        assert(!error.shortMessage.includes(input.data));
+        assert(!JSON.stringify(error.fundingRequirement).includes(KEY));
+        return true;
+    });
+    assert.deepEqual({ plan, context }, unchanged);
+    assert.equal(h.provider.action, null, 'the explanation is not retained between actions');
+    assert.equal(h.provider.pending, null);
+    assert.equal(h.sent.length, 0);
+    h.rpc.balance = '0x780de2874000'; // The exact 0.000132 ETH quoted liability.
+    await h.provider.getStatus();
+    assert.equal(h.sent.length, 0, 'a top-up and status check never resubmit');
+    await h.send(input, context, authorization);
+    assert.equal(h.sent.length, 1);
+    assert.equal(h.provider.pending.context.destination, DESTINATION);
+});
+
+test('safe fee-limit and fee-data explanations survive generic SDK copy without RPC details', async () => {
+    for (const scenario of [
+        { baseFee: `0x${300_000_000_000n.toString(16)}`, code: 'address_fee_limit', text: /Wait for lower fees, then retry/ },
+        { baseFee: undefined, code: 'address_fee_data', text: /fees could not be read reliably/ }
+    ]) {
+        const h = harness();
+        await h.ready();
+        h.rpc.baseFee = scenario.baseFee;
+        await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
+            try { await h.provider.request({ method: 'eth_sendTransaction', params: [approve(2000000)], zkapiRecovery: CONTEXT }); }
+            catch (error) { error.shortMessage = `Generic SDK copy ${KEY}`; throw error; }
+        }), error => {
+            assert.equal(error.addressCode, scenario.code);
+            assert.match(error.shortMessage, scenario.text);
+            assert(!error.shortMessage.includes(KEY));
+            assert.equal(error.fundingRequirement, undefined);
+            return true;
+        });
+        assert.equal(h.sent.length, 0);
+        assert.equal(h.provider.pending, null);
+    }
+});
+
+test('a later SDK failure or a new action never inherits a prior safe funding explanation', async () => {
+    const h = harness();
+    await h.ready();
+    h.rpc.baseFee = undefined;
+    const different = new Error('SDK journal persistence failed');
+    await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
+        try { await h.provider.request({ method: 'eth_sendTransaction', params: [approve(2000000)], zkapiRecovery: CONTEXT }); }
+        catch { throw different; }
+    }), error => error === different && error.shortMessage === undefined);
+    const next = new Error('Different action failed');
+    await assert.rejects(h.provider.withAuthorizedAction(auth, async () => { throw next; }), error => error === next && error.shortMessage === undefined);
+    assert.equal(h.provider.action, null);
+    assert.equal(h.sent.length, 0);
+});
+
 test('actual SDK withdrawal codec is accepted only for proof-bound authorized recipient and mode', async () => {
     const h = harness();
     await h.ready();
@@ -966,7 +1056,7 @@ test('local Anvil executes native deposit value, signed approval, exact recovery
     assert.equal(broadcastBytes.length, count, 'restoring the payable journal does not resend it');
 });
 
-test('the SDK classifies a provider fee rejection before signing as definitely not broadcast', async t => {
+test('actual SDK normalization keeps safe provider fee copy and pre-broadcast classification recoverable', async t => {
     const h = harness();
     await h.ready();
     const oldManifest = runtime.manifest;
@@ -977,8 +1067,24 @@ test('the SDK classifies a provider fee rejection before signing as definitely n
     client.browserMode = true;
     client.setWalletProvider(h.provider);
     h.rpc.baseFee = '0x45d964b800';
-    await assert.rejects(h.provider.withAuthorizedAction(auth, () => client.sendContractTransaction(OWN, TOKEN, approve(2000000).data)),
-        error => error.transactionStage === 'send' && error.broadcastPossible === false && error.code === 4100);
+    await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
+        try { return await client.sendContractTransaction(OWN, TOKEN, approve(2000000).data); }
+        catch (error) {
+            // sendContractTransaction has run the real SDK normalization and
+            // stage tagging. Its later withdrawal handler changes this copy.
+            assert.equal(error.transactionStage, 'send');
+            assert.equal(error.broadcastPossible, false);
+            error.shortMessage = 'The wallet refused the transaction before broadcast.';
+            throw error;
+        }
+    }), error => {
+        assert.equal(error.transactionStage, 'send');
+        assert.equal(error.broadcastPossible, false);
+        assert.equal(error.code, 4100);
+        assert.equal(error.addressCode, 'address_fee_limit');
+        assert.match(error.shortMessage, /Current Ethereum fees exceed/);
+        return true;
+    });
     assert.equal(h.sent.length, 0);
     assert.equal(h.provider.pending, null);
 });

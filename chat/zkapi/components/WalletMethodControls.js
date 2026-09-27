@@ -131,14 +131,14 @@ export function renderFundingAccount(owner) {
         ${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`}
         ${owner.view === 'withdraw' ? `<label class="zkapi-funding-field">Withdrawal destination on ${escape(network)}<input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label><p class="zkapi-note">${savedDestination ? 'This withdrawal keeps its saved destination.' : 'Choose an address you control. Your funding address pays the network fee.'}</p>` : ''}
         ${wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><button data-funding-recover class="zkapi-primary-button" type="button" ${disabled}>Check saved transaction</button></div>` : ''}
-        ${!funding ? `<details data-funding-details="return"><summary>Return funds held at this address</summary>
+        <details data-funding-details="return"><summary>Return funds held at this address</summary>
             <p class="zkapi-note">These public funds are separate from your private wallet balance. Keep enough ETH here to pay withdrawal fees.</p>
             <label class="zkapi-funding-field">Destination on ${escape(network)}<input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
             ${!native ? `<label class="zkapi-funding-field">${escape(token)} amount<input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
             <label class="zkapi-funding-field">ETH amount (optional)<input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="Leave blank for remaining ETH" value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>
             <p class="zkapi-note">Enter an exact amount for a smart-contract recipient. A small fee reserve may remain after returning all ETH to a regular account.</p>
             <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled}>Send ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled}>Send ETH</button></div>
-        </details>` : ''}
+        </details>
         <p data-funding-notice class="zkapi-helper" role="status">${escape(owner.fundingNotice || '')}</p>
     </section>`;
 }
