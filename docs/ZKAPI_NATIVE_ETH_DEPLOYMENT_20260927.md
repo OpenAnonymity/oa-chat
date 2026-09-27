@@ -85,7 +85,7 @@ in both app package files. Mainnet retains its explicit migration guard.
 The OA Vercel projects `oa-wallet-eth-sepolia` and `oa-wallet-eth-mainnet`
 are created and linked locally. Sepolia is published at
 `https://oa-wallet-eth-sepolia.vercel.app`, deployment
-`dpl_CeUjo4sDtrozF8nR7L97VyX85ZY1`, app commit `a534c0e` / SDK `ad2b134`.
+`dpl_D7ZFvKuodQ9ifheMZJU9d53BCTuw`, app commit `9e270a5` / SDK `ad2b134`.
 All 486 emitted artifact hashes passed independent review. The canonical
 origin serves the correct native backend through same-origin rewrites.
 Mainnet compiles locally with its migration guard and is not published.
@@ -174,8 +174,23 @@ repository in the protected deployment bundle's `live-e2e/` directory.
 The final follow-up passed fresh adversarial review and all 1,289 tests. It
 makes fee shortages actionable and keeps collapsed public ETH return controls
 reachable after the private note closes, even without a working price quote
-or balance poll. Public reserve return
-and final reopen acceptance will be recorded after that reviewed publication.
+or balance poll. The deployed build's 486 file hashes and public backend pins
+passed verification. Public reserve return then succeeded on the same saved
+browser profile:
+
+- Explicit Send ETH and confirmation returned 0.015166779751890256 ETH to
+  the controlled test account in transaction
+  `0x729180b06f622b2c440fae46644fdf4e9c7a7261ec7acfd22655ae371fab8cc9`,
+  block 11796608, nonce 2. The fee was 0.000023531447772 ETH.
+- The remaining 0.000018286488234 ETH is unused fee headroom. Do not describe
+  max return as an exact zero-balance sweep.
+- Full browser closure and reopening preserved the address and saved return
+  transaction. An explicit check reused its exact signed bytes; confirmed and
+  pending account nonces both remained 3, with no new transfer.
+- The recovery journal intentionally stays pending until the return block is
+  Ethereum-finalized. The check now explains this final-network-confirmation
+  wait. At 23:26 UTC the finalized block was 11796533: deposit finalized,
+  withdrawal and public return mined successfully but awaiting finality.
 
 This run does not constitute a live malicious-escape challenge test, a full
 MetaMask extension test, an account/passkey relay test, or a Mainnet test.

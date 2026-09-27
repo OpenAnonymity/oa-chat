@@ -184,8 +184,12 @@ export function attachWalletMethodControls(owner) {
         if (input('notice')) input('notice').textContent = owner.fundingNotice;
     });
     on('recover', () => perform(async () => {
-        await addressFundingWallet.recoverPending(); await zkapiClient.refresh();
-        owner.fundingStatus = await addressFundingWallet.getStatus(); owner.fundingNotice = 'Saved transaction checked.';
+        const result = await addressFundingWallet.recoverPending();
+        await zkapiClient.refresh();
+        owner.fundingStatus = await addressFundingWallet.getStatus();
+        owner.fundingNotice = result?.status === 'pending'
+            ? 'Waiting for final network confirmation. Your transaction stays saved; check again later.'
+            : 'Saved transaction checked.';
     }));
     const transfer = asset => {
         const destination = value('return-destination');

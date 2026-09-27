@@ -26,7 +26,9 @@
 - Public ETH return remains a collapsed action for an existing usable funding
   address even after the private note closes. Its availability must not depend
   on a USD quote or a successful public-balance poll: stale price feeds must
-  not hide access to residual ETH.
+  not hide access to residual ETH. Public-return journals intentionally remain
+  pending until the receipt block is Ethereum-finalized; explicit status checks
+  explain this wait and retain the exact signed bytes until it completes.
 - Signer/provider recovery stays separate from SDK note recovery. No page load,
   quote, balance check, method hydration or arrival of ETH signs or broadcasts.
   Signed bytes are durably journaled before broadcast and replay exactly only
