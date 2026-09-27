@@ -35,7 +35,7 @@ type Config struct {
 	Backend         string `json:"backend"`
 	OrgURL          string `json:"org_url"`
 	VerifierURL     string `json:"verifier_url"`
-	RelayURL        string `json:"relay_url"`
+	RelayURL        string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp
 	Concurrency     int    `json:"concurrency"`
 	ZKAPI           ZKAPI  `json:"zkapi"`
 }
@@ -65,7 +65,7 @@ func Default() (Config, error) {
 		return Config{}, err
 	}
 	bridge, err := Secret()
-	return Config{Listen: "127.0.0.1:8787", APIKey: key, Backend: "ticket", OrgURL: "https://org.openanonymity.ai", VerifierURL: "https://verifier2.openanonymity.ai", RelayURL: relay.DefaultURL, Concurrency: 4, ZKAPI: ZKAPI{ClientURL: "http://127.0.0.1:8790", BridgeToken: bridge, Network: "mainnet"}}, err
+	return Config{Listen: "127.0.0.1:8787", APIKey: key, Backend: "ticket", OrgURL: "https://org.openanonymity.ai", VerifierURL: "https://verifier2.openanonymity.ai", Concurrency: 4, ZKAPI: ZKAPI{ClientURL: "http://127.0.0.1:8790", BridgeToken: bridge, Network: "mainnet"}}, err
 }
 
 func Validate(c Config) error {

@@ -1,6 +1,6 @@
-// Package relay tunnels destination TLS through OA's Wisp v1 relay. The relay
-// resolves destination names and forwards encrypted bytes; it never terminates
-// the inner TLS connection. There is deliberately no direct-connect fallback.
+// Package relay provides direct HTTPS or destination TLS through a Wisp v1
+// relay. A configured relay resolves destination names and forwards encrypted
+// bytes without terminating TLS. Relay mode never falls back to direct access.
 package relay
 
 import (
@@ -22,17 +22,17 @@ import (
 // DefaultURL is the same public, shared relay credential as chat/config.js.
 const DefaultURL = "wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf"
 
-// NewClient creates an HTTPS-only, cookie-free client. One WebSocket per TCP
-// connection avoids multiplexing separate inference credentials together.
+// NewClient creates an HTTPS-only, cookie-free client. An empty relayURL uses
+// direct connections without environment proxies. When a relay is configured,
+// one WebSocket per TCP connection avoids multiplexing inference credentials.
 func NewClient(relayURL string) (*http.Client, error) {
-	u, err := url.Parse(relayURL)
-	if err != nil || u.User != nil || u.Fragment != "" || u.Hostname() == "" || (u.Scheme != "wss" && !(u.Scheme == "ws" && loopback(u.Hostname()))) {
-		return nil, errors.New("relay must use wss (ws is allowed only on loopback)")
+	dialContext, err := destinationDialer(relayURL)
+	if err != nil {
+		return nil, err
 	}
 	t := &http.Transport{
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return dial(ctx, relayURL, address)
-		},
+		Proxy:                 nil,
+		DialContext:           dialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   20 * time.Second,
 		ResponseHeaderTimeout: 3 * time.Minute,
@@ -48,11 +48,25 @@ func NewClient(relayURL string) (*http.Client, error) {
 	}, nil
 }
 
+// destinationDialer shares the selected route with the companion's HTTPS bridge.
+func destinationDialer(relayURL string) (func(context.Context, string, string) (net.Conn, error), error) {
+	if relayURL == "" {
+		return (&net.Dialer{Timeout: 20 * time.Second}).DialContext, nil
+	}
+	u, err := url.Parse(relayURL)
+	if err != nil || u.User != nil || u.Fragment != "" || u.Hostname() == "" || (u.Scheme != "wss" && !(u.Scheme == "ws" && loopback(u.Hostname()))) {
+		return nil, errors.New("relay must use wss (ws is allowed only on loopback)")
+	}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dial(ctx, relayURL, address)
+	}, nil
+}
+
 type httpsOnly struct{ base http.RoundTripper }
 
 func (t httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.URL.Scheme != "https" || r.URL.User != nil {
-		return nil, errors.New("anonymous transport requires destination HTTPS")
+		return nil, errors.New("upstream transport requires destination HTTPS")
 	}
 	return t.base.RoundTrip(r)
 }

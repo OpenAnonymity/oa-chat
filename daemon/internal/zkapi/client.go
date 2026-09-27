@@ -1,6 +1,6 @@
 // Package zkapi connects the Go API gateway to the pinned local zkAPI wallet
 // and prover. Prompts never cross this bridge: only a verified short-lived
-// provider credential does. Inference uses the caller's anonymous transport.
+// provider credential does. Inference uses the caller's configured transport.
 package zkapi
 
 import (
@@ -34,7 +34,7 @@ type Config struct {
 	BridgeToken      string       `json:"bridge_token"`
 	Network          string       `json:"network"` // empty means mainnet; Sepolia is explicit
 	InferenceBaseURL string       `json:"inference_base_url"`
-	HTTPClient       *http.Client `json:"-"` // inference only; typically TLS over Wisp
+	HTTPClient       *http.Client `json:"-"` // remote HTTPS, direct or over Wisp as configured
 }
 
 type Client struct {
@@ -91,7 +91,7 @@ func New(config Config) (*Client, error) {
 		return nil, errors.New("zkAPI inference base must be an HTTPS URL without credentials, query, or fragment")
 	}
 	if config.HTTPClient == nil {
-		return nil, errors.New("zkAPI inference requires an explicit anonymous HTTP transport")
+		return nil, errors.New("zkAPI inference requires an explicit HTTP transport")
 	}
 	inference := *config.HTTPClient
 	inference.CheckRedirect = noRedirect

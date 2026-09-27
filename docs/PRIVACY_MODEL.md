@@ -18,6 +18,11 @@ system and the inference provider -- from linking a specific user's identity to
 what they asked. The user obtains an ephemeral API key through blind signatures
 and uses it to talk directly to the inference provider.
 
+These protocol guarantees do not hide network metadata. The command-line
+client defaults to direct HTTPS, which reveals the source IP to destination
+services and can let them correlate otherwise unlinkable requests. Its optional
+Wisp relay provides network-layer separation; see [Local API clients](#local-api-clients).
+
 Optional Google or username ticket-wallet sync adds a stable account metadata
 surface that is not covered by the strongest form of this claim. The org still
 cannot decrypt tickets or prompts, but it can observe authenticated sync timing,
@@ -50,10 +55,15 @@ link them across sessions. See blog post
 
 The optional [Go daemon](../daemon/README.md) is another client-side implementation. An
 OpenAI-compatible UI sends its prompt to the user's loopback daemon, which
-obtains anonymous access and forwards inference through destination TLS over
-the Wisp relay. The UI process and daemon host are inside the user's trust
-boundary; an externally hosted UI can see/store the user's content just as its
-own operator permits. The daemon cannot anonymize content that the user has
+obtains unlinkably issued access and forwards inference over direct HTTPS by
+default. An empty or omitted `relay_url` disables the external network proxy; setting a
+Wisp URL opts in to destination TLS over that relay. Existing nonempty relay
+settings remain enabled. Direct mode exposes the source IP to destination
+services and uses local DNS, allowing network-metadata correlation across
+issuance, redemption, and inference despite the cryptographic unlinkability
+of tickets and fresh keys. The UI process and daemon host are inside the user's
+trust boundary; an externally hosted UI can see/store the user's content just
+as its own operator permits. The daemon cannot anonymize content that the user has
 already disclosed to that UI.
 
 The local API key authenticates only the UI-to-daemon hop and never reaches OA
@@ -61,10 +71,15 @@ services or the provider. Incoming cookies, identity headers, and top-level
 account/storage metadata are stripped. Ticket requests get distinct verified
 provider keys; zkAPI leases are single-use across API requests and process
 restarts. The daemon stores no chat history or request logs. Its proof
-companion receives no prompts/responses and uses the same encrypted relay for
-HTTPS. A disconnected relay, wrong station/key binding, or unverified access
-fails closed. See the CLI documentation for deployed-service prerequisites
-and the zkAPI settlement constraint.
+companion receives no prompts/responses. It always uses an authenticated
+loopback CONNECT bridge that rejects plaintext HTTP and HTTP downgrades. The
+bridge opens destination TCP directly by default, or carries destination TLS
+through opt-in Wisp. Environment proxy variables are ignored. Opt-in Wisp resolves
+destination DNS and hides the source IP from destination services, while the
+relay can observe connection metadata. A configured relay failure never falls
+back to direct HTTPS. Destination certificate validation, station/key binding,
+and verified access remain mandatory in either mode. See the CLI documentation
+for deployed-service prerequisites and the zkAPI settlement constraint.
 
 The CLI's Ethereum address-funding route generates an Ethereum signing key
 locally and retains it in an owner-only file alongside its private recovery
@@ -73,9 +88,9 @@ Withdrawal management uses a separate owner-only local credential; the
 inference API key shared with a UI cannot authorize a withdrawal destination.
 Funding address balances, incoming transfers, approvals, vault deposits, and
 withdrawal amounts and destinations
-are public Ethereum activity visible to the configured RPC (accessed through
-Wisp) and chain observers. They are not made anonymous by removing a wallet
-connection. The signing key and private-note secret never enter the optional
+are public Ethereum activity visible to the configured RPC (accessed directly
+by default, or through opt-in Wisp) and chain observers. They are not made
+anonymous by removing a wallet connection. The signing key and private-note secret never enter the optional
 browser page, account synchronization, or inference requests. Backups of the
 private configuration directory control both public funds and private notes.
 
@@ -454,7 +469,7 @@ network layer, the following metadata vectors exist and should be mitigated:
 
 | Vector             | Status                                                                                                                                                                                                               |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IP address         | oa-chat's built-in proxy covers accountless invitation issuance, ticket redemption, and access requests, hiding the browser IP from the org/station. Account-authenticated billing issuance intentionally uses the narrow SuperTokens transport directly to the configured org (or a first-party same-origin deployment proxy), so a direct production org can observe the subscriber's source IP and request timing. It still sees only blinded requests and cannot link them to later finalized-ticket redemption. Users who need network-layer separation for this identity-bound issuance can use a trusted VPN/Tor; deployments may provide a first-party reverse proxy. |
+| IP address         | The command-line daemon uses direct HTTPS and local DNS by default, exposing the source IP to destination services; users can opt in to Wisp with a nonempty `relay_url`. The browser's built-in proxy covers accountless invitation issuance, ticket redemption, and access requests when enabled, hiding the browser IP from the org/station. Account-authenticated billing issuance intentionally uses the narrow SuperTokens transport directly to the configured org (or a first-party same-origin deployment proxy), so a direct production org can observe the subscriber's source IP and request timing. It still sees only blinded requests and cannot link them to later finalized-ticket redemption. Users who need network-layer separation for this identity-bound issuance can use a trusted VPN/Tor; deployments may provide a first-party reverse proxy. |
 | Browser User-Agent | Standard browser fingerprinting concern; use a common browser or randomize UA.                                                                                                                                       |
 | Account sync metadata | For Google and username accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. A username also exposes the chosen stable pseudonym during authentication. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
 
@@ -483,7 +498,7 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | "The provider sees prompts, so zero-trust is violated."                      | False. OA's claim is unlinkable inference, not invisible inference. Prompts reach the provider (they must for inference to work), but they are unlinkable to the user's identity and to each other. The provider sees anonymous requests from ephemeral keys.                                                                                                                                                                                                                         |
 | "Google login has exactly the same unlinkability as an identity-free account." | False. OAuth authorizes a dedicated identity account and its encrypted ticket-wallet sync exposes timing, size, and stable opaque-ID metadata. The org cannot decrypt a finalized ticket or prompt, and the identity credential is absent from redemption and inference requests, but metadata correlation is a documented Google-account tradeoff. |
 | "Station operator cookies stored in verifier memory affect user privacy."    | False. Station operator credentials are governance data for compliance checks on the operator's provider account. They are not end-user data. The verifier never receives or stores any end-user identity material.                                                                                                                                                                                                                                                                   |
-| "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated by the built-in proxy. Ticket consumption by Google and username accounts deliberately does not trigger immediate sync, but later authenticated sync timing and size remain correlatable metadata. |
+| "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated when the built-in proxy is enabled; the command-line daemon defaults to direct HTTPS, which exposes its source IP. Ticket consumption by Google and username accounts deliberately does not trigger immediate sync, but later authenticated sync timing and size remain correlatable metadata. |
 | "The org is closed-source, so it's an unauditable trust anchor."             | Blinding/unblinding and sync encryption run client-side in open-source JS, so the org cannot decrypt ticket blobs or prompt contents. The identity-free flow does not rely on it for unlinkability. Google and username flows accept the explicitly documented sync-metadata correlation surface. See [UNLINKABILITY_PROOF.md](UNLINKABILITY_PROOF.md) for the blind-signature proof. |
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
 | "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |

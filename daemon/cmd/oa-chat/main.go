@@ -125,6 +125,7 @@ func help() {
 
 OpenAI base URL: http://127.0.0.1:8787/v1
 Config: OA_CHAT_CONFIG_DIR or the OS user config directory / oa-chat.
+Network proxy is off by default; --relay-url opts into the encrypted Wisp relay.
 No prompts or responses are stored by the daemon. The connected UI may store them.
 Ethereum mainnet is the default; Sepolia requires --network sepolia at init.`)
 }
@@ -139,7 +140,7 @@ func initialize(dir string, args []string) error {
 	f.StringVar(&c.ZKAPI.Network, "network", c.ZKAPI.Network, "mainnet or sepolia")
 	f.StringVar(&c.OrgURL, "org-url", c.OrgURL, "ticket organization HTTPS origin")
 	f.StringVar(&c.VerifierURL, "verifier-url", c.VerifierURL, "verifier HTTPS origin")
-	f.StringVar(&c.RelayURL, "relay-url", c.RelayURL, "encrypted Wisp relay")
+	f.StringVar(&c.RelayURL, "relay-url", c.RelayURL, "opt into an encrypted Wisp relay (default: direct HTTPS)")
 	f.StringVar(&c.Listen, "listen", c.Listen, "loopback IP:port")
 	f.StringVar(&c.ZKAPI.Binary, "zkapi-binary", "", "path to oa-zkapi wallet/prover")
 	f.StringVar(&c.ZKAPI.ProofSetupDir, "proof-setup-dir", "", "verified deployed circuit proving assets")
@@ -249,6 +250,8 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 			return err
 		}
 		if !c.ZKAPI.ExternalCompanion {
+			// Keep the local HTTPS-only bridge in both routing modes so the
+			// companion cannot follow a redirect to plaintext HTTP.
 			proxy, err := relay.StartConnectProxy(life, c.RelayURL)
 			if err != nil {
 				return err
@@ -304,7 +307,11 @@ func serve(ctx context.Context, dir string, c config.Config) error {
 	httpServer := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0), BaseContext: func(net.Listener) context.Context { return life }}
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- httpServer.Serve(listener) }()
-	fmt.Printf("OA Chat %s listening at http://%s/v1 (%s); encrypted relay required\n", version, c.Listen, c.Backend)
+	transport := "direct HTTPS (network proxy off)"
+	if c.RelayURL != "" {
+		transport = "encrypted relay required"
+	}
+	fmt.Printf("OA Chat %s listening at http://%s/v1 (%s); %s\n", version, c.Listen, c.Backend, transport)
 	var result error
 	select {
 	case <-ctx.Done():
@@ -390,7 +397,7 @@ func tickets(ctx context.Context, dir string, c config.Config, args []string) er
 func status(ctx context.Context, dir string, c config.Config) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	result := map[string]any{"backend": c.Backend, "api_base": "http://" + c.Listen + "/v1", "relay_required": true}
+	result := map[string]any{"backend": c.Backend, "api_base": "http://" + c.Listen + "/v1", "relay_required": c.RelayURL != ""}
 	_, err := localRequest(ctx, c, "GET", "/healthz")
 	result["service_running"] = err == nil
 	client, _ := relay.NewClient(c.RelayURL)

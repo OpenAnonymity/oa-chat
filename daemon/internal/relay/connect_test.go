@@ -3,16 +3,93 @@ package relay
 import (
 	"bufio"
 	"context"
+	"crypto/x509"
 	"encoding/base64"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestDirectCompanionBridgeRejectsPlaintext(t *testing.T) {
+	proxy, err := StartConnectProxy(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal("invalid local proxy URL")
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}, Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
+	response, err := client.Get("http://destination.invalid/proof")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatal("direct bridge allowed plaintext HTTP")
+	}
+}
+
+func TestDirectCompanionTLSAndDowngradeRejection(t *testing.T) {
+	var plaintextHits atomic.Int32
+	plaintext := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { plaintextHits.Add(1) }))
+	defer plaintext.Close()
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, plaintext.URL, http.StatusTemporaryRedirect)
+			return
+		}
+		_, _ = io.WriteString(w, "TLS response")
+	}))
+	defer origin.Close()
+	dialContext, err := destinationDialer("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("oa:test-password"))
+	proxy := httptest.NewServer(connectHandler(context.Background(), auth, func(ctx context.Context, target string) (net.Conn, error) {
+		if target != "example.com:443" {
+			t.Errorf("unexpected target %s", target)
+		}
+		return dialContext(ctx, "tcp", origin.Listener.Addr().String())
+	}))
+	defer proxy.Close()
+	proxyURL, _ := url.Parse(proxy.URL)
+	proxyURL.User = url.UserPassword("oa", "test-password")
+	pool := x509.NewCertPool()
+	pool.AddCert(origin.Certificate())
+	transport := origin.Client().Transport.(*http.Transport).Clone()
+	transport.TLSClientConfig.RootCAs = pool
+	transport.Proxy = http.ProxyURL(proxyURL)
+	// Like the companion's reqwest default clients, this client follows redirects.
+	client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
+	response, err := client.Get("https://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(body) != "TLS response" {
+		t.Fatalf("direct companion TLS failed: %q, %v", body, err)
+	}
+	response, err = client.Post("https://example.com/redirect", "application/json", strings.NewReader(`{"proof":"private"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusMethodNotAllowed || plaintextHits.Load() != 0 {
+		t.Fatal("companion bridge allowed a plaintext redirect")
+	}
+}
 
 func TestCompanionCONNECTAuthenticationTargetsAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

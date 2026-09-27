@@ -3,7 +3,8 @@
 The Go gateway supports the prompt-private OA-org key path of zkAPI. It runs
 an authenticated local Rust wallet/prover companion, obtains a verifier-backed
 provider key without sending a prompt to the companion, and forwards the
-original OpenAI JSON and streaming response over destination TLS through Wisp.
+original OpenAI JSON and streaming response over direct HTTPS by default.
+A nonempty `relay_url` opts in to destination TLS through Wisp.
 The Rust companion is needed because the deployed Groth16 wallet and recovery
 implementation is Rust; this change does not claim to port those cryptographic
 primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md).
@@ -77,13 +78,23 @@ proof/lease requests. The companion authenticates every
 route, including reset, health, and its upstream funding UI.
 
 Every companion HTTP path, including manifest discovery, indexer reads, ZK
-proof submission, lease issuance, and verifier submission, uses the daemon's
-mandatory authenticated loopback CONNECT proxy. That proxy carries the
-companion's destination TLS inside Wisp. Inference and all funding RPC calls
-use the Go Wisp HTTP client. There is no direct transport fallback. The configured RPC and public chain can observe the
-funding address, incoming transfers, approval, and deposit. Generating the
-address locally does not make public funding anonymous; the private-note proof
-and ephemeral inference-key boundaries remain unchanged.
+proof submission, lease issuance, and verifier submission, always uses the
+daemon's authenticated loopback CONNECT bridge. The bridge rejects plaintext
+HTTP, including HTTPS-to-HTTP redirects. With an empty or omitted `relay_url`,
+it connects directly to destination TCP; with a nonempty value, it carries the
+companion's destination TLS through Wisp. The local HTTPS enforcement bridge
+remains active when the external network relay is disabled. Inference and all
+funding RPC calls use the same external transport choice in Go. Environment
+proxy variables are ignored. A configured relay fails closed without direct
+fallback. See [transport configuration](../README.md#build-and-run-ticket-mode).
+
+Direct mode exposes the source IP to destination services and uses local DNS;
+fresh ephemeral keys do not prevent source-IP or timing correlation. HTTPS
+certificate validation and station/key verification remain required in either
+mode. The configured RPC and public chain can observe the funding address,
+incoming transfers, approval, and deposit. Generating the address locally does
+not make public funding anonymous; the private-note proof and ephemeral
+inference-key boundaries remain unchanged.
 
 The companion requires `direct_openrouter` and `require_oa_org_key_source`.
 Before any key leaves the companion, the independently configured verifier

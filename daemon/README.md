@@ -68,6 +68,25 @@ and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
 The directory must be `0700`; `config.json` is `0600`. `init` never overwrites
 existing configuration. Use separate directories for staging and production.
 
+The external network proxy is disabled by default: an empty or omitted `relay_url` uses
+direct HTTPS, including ticketing, verification, inference, companion requests,
+and funding RPC. Environment proxy variables are ignored. Destination services
+can see your source IP, and destination DNS uses your local resolver.
+To opt in to the encrypted Wisp relay when initializing a new configuration:
+
+```sh
+oa-chat init --relay-url wss://YOUR_WISP_RELAY/
+```
+
+Replace the example URL with your Wisp relay URL. For an existing configuration,
+set `relay_url` in `config.json` to the desired Wisp URL, or to `""` to disable
+the proxy, then restart the daemon. Existing
+nonempty relay settings stay enabled after upgrading. Wisp resolves destination
+DNS and hides your source IP from destination services; it still sees connection
+metadata. A configured relay fails closed without falling back to direct HTTPS.
+This default change requires a source build of this revision; the published
+`daemon-v0.1.0` bundle still defaults to Wisp.
+
 `oa-chat status` shows service and wallet readiness. `oa-chat api-key`
 explicitly prints the random **local** API key for configuring your client.
 It is not an inference-provider key. Keep keys, ticket codes, wallet files,
@@ -165,11 +184,14 @@ oa-chat --config-dir /path/to/private-sepolia-state fund
 ```
 
 The companion checks the manifest chain against the selected network, and
-state is separated by network. Its HTTPS requests use an authenticated local
-CONNECT proxy over Wisp; Go inference uses the same anonymous transport.
-No direct fallback is allowed. The advanced `zkapi.external_companion` option
-requires an operator-managed, patched companion with equivalent anonymous
-transport, bridge authentication, and verification policy.
+state is separated by network. Its HTTPS requests always use the daemon's
+authenticated loopback CONNECT bridge, which rejects plaintext HTTP. The bridge
+connects directly to destination TCP by default, or carries destination TLS
+through Wisp when `relay_url` is set. Go inference uses the same external
+transport choice. A configured relay has no direct fallback. The advanced
+`zkapi.external_companion` option requires an operator-managed, patched
+companion with the matching transport mode, HTTPS enforcement, bridge
+authentication, and verification policy.
 
 The deployed zkAPI protocol may keep one private-wallet lease outstanding
 until expiry and settlement (currently up to five minutes on Sepolia). A lease
@@ -216,10 +238,13 @@ release action; none has been published by this implementation.
   Like the browser, the daemon accepts the deployed 16-hex identifier; it also
   accepts a matching full 64-hex digest. This check applies to the authenticated
   HTTPS response to that key's submission, never a generic broadcast result.
-- Wisp resolves destination DNS and forwards encrypted TCP. TLS validation
-  remains in Go/the companion. The relay sees timing and connection metadata,
-  not HTTP content. Each HTTP request uses a separate destination TLS
-  connection, with no persistent connection/session-cache grouping of keys.
+- HTTPS validates destination certificates in Go/the companion in both
+  transport modes. Direct mode exposes your source IP to destination services
+  and uses local DNS. Opt-in Wisp resolves destination DNS and forwards encrypted
+  TCP; the relay sees timing and connection metadata, not HTTP content. Each
+  HTTP request uses a separate destination TLS connection, with no persistent
+  connection/session-cache grouping of keys. Ephemeral keys do not prevent
+  source-IP or timing correlation in direct mode.
 - Client authorization, cookies, forwarding headers, request IDs, and referrers
   are never copied upstream. Top-level identity/storage fields (`user`,
   `metadata`, `safety_identifier`, `prompt_cache_key`, `store`) and arbitrary

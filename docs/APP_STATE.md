@@ -1,3 +1,27 @@
+## 2026-09-27: CLI network proxy is opt-in
+
+- The command-line daemon uses direct HTTPS when `relay_url` is empty or absent.
+  `oa-chat init --relay-url WISP_URL` opts in; existing nonempty relay settings
+  stay enabled. Clear the value to `""` and restart to disable it. `init` still
+  never overwrites existing configuration.
+- Ticketing, verification, inference, funding RPC, and the supervised zkAPI
+  companion share this external transport choice. The companion always keeps
+  its authenticated loopback CONNECT bridge, which rejects plaintext HTTP and
+  HTTPS-to-HTTP redirects that reqwest could otherwise follow. An empty relay
+  setting makes that bridge dial
+  destination TCP directly; nonempty uses Wisp. Environment proxy variables
+  are ignored. Opt-in Wisp continues to fail closed without a direct fallback;
+  HTTPS certificate and station/key verification remain mandatory.
+- Direct mode uses local DNS and reveals the source IP to destination services,
+  so network metadata can correlate requests despite blind issuance and fresh
+  provider keys. See [CLI setup](../daemon/README.md#build-and-run-ticket-mode)
+  and [the privacy model](PRIVACY_MODEL.md#local-api-clients).
+- Full Go race tests, vet, and build passed; changed relay/command packages
+  passed a final race-test rerun. Coverage includes direct routing, destination
+  TLS validation, and rejection of HTTPS-to-HTTP redirects.
+- This is a source change after the published `daemon-v0.1.0` bundle. Historical
+  Wisp validation records below describe the transport used at the time.
+
 ## 2026-09-27: Daemon documentation lives with the daemon
 
 - The daemon entry point is [daemon/README.md](../daemon/README.md). Supporting

@@ -156,6 +156,87 @@ func TestNoPlaintextOrDirectFallback(t *testing.T) {
 	}
 }
 
+func TestDirectHTTPSWithoutProxyAndWithoutRedirects(t *testing.T) {
+	var proxyHits, targetHits atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits.Add(1)
+		http.Error(w, "unexpected proxy", http.StatusBadGateway)
+	}))
+	defer proxy.Close()
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		t.Setenv(name, proxy.URL)
+	}
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/redirect":
+			http.Redirect(w, r, "/target", http.StatusTemporaryRedirect)
+		case "/target":
+			targetHits.Add(1)
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: first\n\n")
+			w.(http.Flusher).Flush()
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		}
+	}))
+	defer origin.Close()
+	client, err := NewClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := client.Transport.(httpsOnly).base.(*http.Transport)
+	pool := x509.NewCertPool()
+	pool.AddCert(origin.Certificate())
+	transport.TLSClientConfig.RootCAs = pool
+	// A non-loopback request host also exercises environment proxy exclusion:
+	// Go would bypass environment proxies automatically for a loopback URL.
+	dialContext := transport.DialContext
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return dialContext(ctx, network, origin.Listener.Addr().String())
+	}
+	transport.TLSClientConfig.ServerName = "example.com" // httptest certificate SAN
+	client.Timeout = 5 * time.Second
+	response, err := client.Get("https://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || string(body) != "data: first\n\ndata: [DONE]\n\n" {
+		t.Fatalf("direct stream failed: %q, %v", body, err)
+	}
+	response, err = client.Get("https://example.com/redirect")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusTemporaryRedirect || targetHits.Load() != 0 || proxyHits.Load() != 0 {
+		t.Fatal("direct request used a proxy or followed a redirect")
+	}
+}
+
+func TestDirectTransportRejectsPlaintextCredentialsAndUntrustedTLS(t *testing.T) {
+	var hits atomic.Int32
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer origin.Close()
+	client, err := NewClient("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Timeout = 5 * time.Second
+	for _, target := range []string{origin.URL, "http" + strings.TrimPrefix(origin.URL, "https"), "https://user:secret@" + strings.TrimPrefix(origin.URL, "https://")} {
+		if response, err := client.Get(target); err == nil {
+			response.Body.Close()
+			t.Fatal("unsafe direct request accepted")
+		}
+	}
+	if hits.Load() != 0 {
+		t.Fatal("unsafe request reached destination HTTP handler")
+	}
+}
+
 func TestLivePublicRelay(t *testing.T) {
 	if os.Getenv("OA_LIVE_RELAY_TEST") != "1" {
 		t.Skip("set OA_LIVE_RELAY_TEST=1 for public relay check")

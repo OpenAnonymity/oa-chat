@@ -15,6 +15,9 @@ func TestInitPrivateAndNeverClobbers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if c.RelayURL != "" {
+		t.Fatal("default configuration enabled the network proxy")
+	}
 	dir := filepath.Join(t.TempDir(), "config")
 	if err := Init(dir, c); err != nil {
 		t.Fatal(err)
@@ -26,7 +29,7 @@ func TestInitPrivateAndNeverClobbers(t *testing.T) {
 		}
 	}
 	loaded, err := Load(dir)
-	if err != nil || loaded.APIKey != c.APIKey || loaded.ZKAPI.Network != "mainnet" {
+	if err != nil || loaded.APIKey != c.APIKey || loaded.ZKAPI.Network != "mainnet" || loaded.RelayURL != "" {
 		t.Fatalf("load failed %v", err)
 	}
 	other, _ := Default()
@@ -42,6 +45,26 @@ func TestInitPrivateAndNeverClobbers(t *testing.T) {
 	}
 	if _, err := Load(dir); err == nil {
 		t.Fatal("accepted readable secrets")
+	}
+}
+
+func TestLoadPreservesRelaySelection(t *testing.T) {
+	for _, relayURL := range []string{"", "wss://relay.example/", "ws://127.0.0.1:8765/"} {
+		t.Run(relayURL, func(t *testing.T) {
+			c, err := Default()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.RelayURL = relayURL
+			dir := filepath.Join(t.TempDir(), "config")
+			if err := Init(dir, c); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := Load(dir)
+			if err != nil || loaded.RelayURL != relayURL {
+				t.Fatalf("saved relay selection changed: %q, %v", loaded.RelayURL, err)
+			}
+		})
 	}
 }
 

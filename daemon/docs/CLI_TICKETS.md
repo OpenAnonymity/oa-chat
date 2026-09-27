@@ -66,9 +66,14 @@ signatures over the exact key, then uses its full SHA-256 hash for provider
 ownership verification. It deliberately returns the short identifier. This
 matches `StationVerifier._hashKey()` and the browser's verifier tests.
 
-The package receives the daemon's TLS-over-Wisp HTTP transport. It clones the
-client with no cookie jar and disables redirects. Provider requests use the
-same anonymous transport, while TLS terminates at the inference provider.
+The package receives the daemon's configured HTTP transport: direct HTTPS by
+default, or TLS-over-Wisp when `relay_url` is nonempty. It clones the client with
+no cookie jar and disables redirects. Provider requests use the same transport
+mode, while TLS terminates at the inference provider. Direct mode uses local DNS
+and exposes the source IP to destination services; blind signatures and fresh
+keys do not prevent network-metadata correlation. Opt-in Wisp uses relay-side
+DNS and fails closed without direct fallback. Environment proxy variables are
+ignored. See [transport configuration](../README.md#build-and-run-ticket-mode).
 Requests to the org and verifier contain no prompts, responses, local-client
 API keys, request IDs, or account identity. The fixed `OA-Chat/1` User-Agent is
 shared by users. Service errors never relay arbitrary upstream error bodies or

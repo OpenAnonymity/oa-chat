@@ -519,8 +519,8 @@ index 0000000..fc3d3b1
 +    {
 +        return Err(failure());
 +    }
-+    // New clients inherit the daemon's mandatory authenticated CONNECT/Wisp
-+    // proxy. There is no fallback transport and no account authorization header.
++    // New clients inherit the daemon's authenticated local CONNECT proxy,
++    // using direct TCP or Wisp with no fallback or account authorization header.
 +    let client = reqwest::Client::builder()
 +        .timeout(Duration::from_secs(20))
 +        .redirect(reqwest::redirect::Policy::none())
@@ -1189,7 +1189,7 @@ index 41dc152..223b758 100644
 +}
 +
 +// A new client has neither a connection pool nor prior TLS session state.
-+// It still inherits the mandatory authenticated local anonymity proxy.
++// It inherits the authenticated local CONNECT proxy for direct TCP or Wisp.
 +fn fresh_private_http() -> Result<reqwest::Client, AuthError> {
 +    reqwest::Client::builder().timeout(Duration::from_secs(180))
 +        .redirect(reqwest::redirect::Policy::none()).build()

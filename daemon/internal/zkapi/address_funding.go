@@ -414,7 +414,7 @@ func (h *FundingHandler) addressRPC(ctx context.Context, config fundingConfig, m
 		return errors.New("invalid payment RPC request")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// This is the existing mandatory Wisp client. Never use http.DefaultClient
+	// This uses the configured direct/Wisp client. Never use http.DefaultClient
 	// and never reflect RPC errors, request bodies, or signed bytes to callers.
 	response, err := h.client.inference.Do(req)
 	if err != nil {

@@ -15,9 +15,9 @@ import (
 	"time"
 )
 
-// ConnectProxy lets the Rust prover's HTTPS client use the same encrypted relay
-// without porting its proof implementation. It accepts authenticated CONNECT
-// only, and neither sees nor terminates the destination's TLS session.
+// ConnectProxy gives the Rust prover the same direct or Wisp route as Go while
+// enforcing HTTPS-only access. It accepts authenticated CONNECT only, and
+// neither sees nor terminates the destination's TLS session.
 type ConnectProxy struct {
 	URL    string // contains a process-local credential; do not log
 	server *http.Server
@@ -25,7 +25,8 @@ type ConnectProxy struct {
 }
 
 func StartConnectProxy(ctx context.Context, relayURL string) (*ConnectProxy, error) {
-	if _, err := NewClient(relayURL); err != nil {
+	dialContext, err := destinationDialer(relayURL)
+	if err != nil {
 		return nil, err
 	}
 	secret := make([]byte, 32)
@@ -39,7 +40,7 @@ func StartConnectProxy(ctx context.Context, relayURL string) (*ConnectProxy, err
 	}
 	life, cancel := context.WithCancel(ctx)
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("oa:"+password))
-	server := &http.Server{Handler: connectHandler(life, auth, func(ctx context.Context, target string) (net.Conn, error) { return dial(ctx, relayURL, target) }), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8192, ErrorLog: log.New(io.Discard, "", 0)}
+	server := &http.Server{Handler: connectHandler(life, auth, func(ctx context.Context, target string) (net.Conn, error) { return dialContext(ctx, "tcp", target) }), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8192, ErrorLog: log.New(io.Discard, "", 0)}
 	proxy := &ConnectProxy{URL: "http://oa:" + password + "@" + listener.Addr().String(), server: server, cancel: cancel}
 	go func() { _ = server.Serve(listener) }()
 	return proxy, nil
@@ -75,7 +76,7 @@ func connectHandler(life context.Context, authorization string, dialer func(cont
 		}
 		upstream, err := dialer(r.Context(), r.Host)
 		if err != nil {
-			http.Error(w, "Encrypted relay unavailable", 502)
+			http.Error(w, "Upstream connection unavailable", 502)
 			return
 		}
 		defer upstream.Close()

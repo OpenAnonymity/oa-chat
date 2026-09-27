@@ -14,7 +14,7 @@ import (
 // CompanionConfig controls the pinned Rust wallet/prover process. Production
 // uses Ethereum mainnet; no automatic funding transaction is ever submitted.
 type CompanionConfig struct {
-	ProxyURL    string `json:"-"` // authenticated local CONNECT proxy over the anonymity relay
+	ProxyURL    string `json:"-"` // authenticated local CONNECT proxy using direct TCP or Wisp
 	Binary      string `json:"binary"`
 	SetupDir    string `json:"setup_dir"`
 	StateDir    string `json:"state_dir"`
@@ -41,7 +41,7 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 	}
 	proxy, err := url.Parse(companion.ProxyURL)
 	if err != nil || proxy.User == nil || proxy.User.Username() == "" {
-		return nil, errors.New("zkAPI companion requires an authenticated loopback anonymity proxy")
+		return nil, errors.New("zkAPI companion requires an authenticated loopback CONNECT proxy")
 	}
 	proxyOrigin := *proxy
 	proxyOrigin.User = nil
