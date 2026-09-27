@@ -85,7 +85,8 @@ in both app package files. Mainnet retains its explicit migration guard.
 The OA Vercel projects `oa-wallet-eth-sepolia` and `oa-wallet-eth-mainnet`
 are created and linked locally. Sepolia is published at
 `https://oa-wallet-eth-sepolia.vercel.app`, deployment
-`dpl_D7ZFvKuodQ9ifheMZJU9d53BCTuw`, app commit `9e270a5` / SDK `ad2b134`.
+`dpl_Cu6hwbThiU9XnJ5A1YXCPLLtzxbs`, app commit `dd1009a` / SDK `ad2b134`.
+Build hash: `Y42XTF2L`. All 486 final published files match their build manifest.
 All 486 emitted artifact hashes passed independent review. The canonical
 origin serves the correct native backend through same-origin rewrites.
 Mainnet compiles locally with its migration guard and is not published.
@@ -190,7 +191,26 @@ browser profile:
 - The recovery journal intentionally stays pending until the return block is
   Ethereum-finalized. The check now explains this final-network-confirmation
   wait. At 23:26 UTC the finalized block was 11796533: deposit finalized,
-  withdrawal and public return mined successfully but awaiting finality.
+  withdrawal and public return mined successfully but awaiting finality. The
+  23:29 check advanced to 11796565; do not claim the latter two transactions
+  or the public-return journal have finalized yet. The protected test profile
+  remains available to complete the explicit saved-transaction check later.
+- A separate unfunded browser profile exercised the deployed fee error: blank
+  max ETH return reported the exact 0.000042852911430001 ETH shortfall, public
+  address, Sepolia, and explicit retry instructions. Chain balance and both
+  nonces stayed zero. No transfer, deposit or inference occurred in that test.
+  The final pending-confirmation copy change also passed independent review
+  and 38 focused UI/action tests after the complete 1,289-test run.
+
+At 23:29 the finalized ETH/USD round briefly exceeded the pinned 4,500-second
+freshness limit and the quote endpoint returned `native_quote_expired` (409).
+The latest block already contained the next round; when finality advanced from
+11796533 to 11796565, the endpoint automatically returned the new round with
+200. A roughly hourly feed heartbeat plus finality delay can produce this brief
+window. There is no server oracle cache to clear, and no freshness pin was
+relaxed. New USD quotes/leases fail closed during it; existing ETH ownership and
+withdrawal/return recovery do not depend on it. The final public verification
+at 23:29:40 recorded matching artifacts and 200 health/config/quote responses.
 
 This run does not constitute a live malicious-escape challenge test, a full
 MetaMask extension test, an account/passkey relay test, or a Mainnet test.

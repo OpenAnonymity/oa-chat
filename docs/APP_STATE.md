@@ -47,6 +47,10 @@
   4,500-second freshness limit, so they may lag the chain head. New leases
   reject superseded finalized quotes; accepted leases retain their original
   conversion. Exact unaccepted-request acknowledgment gates journal replacement.
+  Sepolia live testing saw a brief hourly quote outage when heartbeat plus
+  finality delay exceeded 4,500 seconds: 409/native_quote_expired recovered
+  automatically with the next finalized round. No cache flush or pin relaxation
+  was needed. Existing withdrawal/return recovery remains usable in this window.
 - A saved deposit in Welcome opens the existing balance dialog's recovery UI;
   it never requotes or submits from the welcome screen. Non-funding address
   views poll public ETH separately, including recovery from transient storage
