@@ -110,6 +110,7 @@ for (const state of [{}, { note: { note_id: 7 } }, { withdrawal: { phase: 'close
 test('manual navigation and dismissal during loading takes precedence over restoration', async t => {
     const f = setup(t, { config: { prepared_withdrawal: { phase: 'submitted' } } });
     f.modal.open('withdrawals');
+    assert.equal(f.refresh.mock.callCount(), 0, 'early open cannot capture the injected provider before manual restoration');
     f.modal.close();
     await f.load();
     assert.equal(f.modal.isOpen, false);
@@ -169,6 +170,8 @@ test('running action stores only the view and clears it on completion', async t 
     let complete;
     const action = f.modal.run(() => new Promise(resolve => { complete = resolve; }));
     assert.deepEqual(JSON.parse(f.storage.get('oa-zkapi-running-modal')), { view: 'fund', mode: 'mutual' });
+    // Wallet actions re-read manual transaction ownership across tabs first.
+    await new Promise(resolve => setImmediate(resolve));
     complete();
     await action;
     assert.equal(f.storage.has('oa-zkapi-running-modal'), false);

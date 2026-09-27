@@ -26,7 +26,7 @@ function waitFor(promise, signal) {
 }
 
 /** OA owns the chat lifecycle; the SDK owns private keys, proofs and settlement. */
-export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
     if (!client || !backend || typeof createInferenceService !== 'function' || !modelConfiguration) {
         throw new Error('Private chat runtime dependencies are required.');
     }
@@ -92,7 +92,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             if (expectedOwner || deletionScope !== undefined) {
                 // Hydration and owner discovery belong inside the registered
                 // barrier: a fast return to private mode must see them too.
-                await client.init();
+                await initializeClient();
                 checkCanceled();
             }
             if (deletionScope !== undefined) {
@@ -214,12 +214,12 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             const unsubscribe = client.subscribe((snapshot, detail) => {
                 if (detail?.reason !== 'clock') reportSnapshot(snapshot);
             });
-            void client.init().then(publish, publish);
+            void initializeClient().then(publish, publish);
             return () => { disposed = true; unsubscribe(); };
         },
         async checkCanSend({ signal, sessionId, modelId, reasoningEnabled, shouldOpenFunding = () => true } = {}) {
             if (signal?.aborted) throw abortError();
-            await client.init();
+            await initializeClient();
             if (signal?.aborted) throw abortError();
             const expired = Number(client.note?.expiry_ts) > 0
                 && Number(client.note.expiry_ts) * 1000 <= Date.now();

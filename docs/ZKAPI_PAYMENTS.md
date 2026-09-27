@@ -37,12 +37,16 @@ OA_DEPLOYMENT_ORG_ORIGIN=https://org-staging.openanonymity.ai \
   OA_ZKAPI_NETWORK=sepolia node scripts/generate-zkapi-vercel-config.mjs vercel.generated.json
 ```
 
-Select `mainnet` in both commands for the existing mainnet vault. The generator
+Select `mainnet` in both commands to build the SDK-pinned Mainnet configuration.
+The repaired SDK currently marks Mainnet `migration_required`; a build does
+not make that guarded deployment usable. The generator
 keeps real verifier checks enabled. Supply the appropriate
 `OA_WEBAUTHN_RELAY_URL` for an account-enabled deployment. Deployment operators
 must keep frontend/auth return origins allowed by the chosen OA organization.
 The generated config routes anonymous zkAPI protocol traffic separately from
-the OA account/ticket endpoints. Mainnet funding uses real USDC and ETH.
+the OA account/ticket endpoints. The previous Mainnet deployment uses USDC
+and ETH for gas. Native ETH requires a separate compatible vault, reviewed
+pins, and a new browser origin; do not replace the old origin for recovery.
 
 `build.json` records the OA revision, SDK version and immutable revision,
 network, protocol/artifact provenance, and emitted file hashes. Hidden files and
@@ -123,11 +127,120 @@ blocked: the server has reserved the note's nullifier, and a client cannot safel
 assume that a missing response means no key was issued. No automatic refund or
 force-reset is performed.
 
-## Funding setup
+## Wallet methods: MetaMask and Send to an address
 
-Funding onboarding has one “Set up your wallet” disclosure with four visible
-numbered steps: install MetaMask, add USDC, add ETH for fees, and return to
-deposit. Both tokens must be on Ethereum Mainnet in the same account. Official
+The web app offers exactly two choices: **MetaMask** first, then **Send to an
+address**. Native-ETH deployments hold ETH and display its current USD value;
+this is not fixed dollar credit. MetaMask keeps the existing deposit/withdrawal
+flow, with a payable ETH deposit instead of token minting and approval.
+
+The address option creates and durably saves a separate Ethereum account in the
+browser before displaying it. New accounts have no password, backup download,
+or unlock/lock step. A non-extractable AES-GCM CryptoKey and the encrypted signer
+and transaction journal are structured-cloned into the same strict IndexedDB
+transaction. This is browser custody, not protection against executing code on
+the same origin. Clearing site data or losing this browser profile loses both
+the public funding account and the separate SDK private-note recovery state.
+Nothing is synchronized with an OA account. Existing version-1 password accounts
+are never overwritten; a one-time password conversion retains their exact key,
+address, nonce and signed journal. New account setup never offers a password.
+
+The user enters the desired wallet deposit in USD. The SDK reads a pinned,
+fresh finalized Chainlink ETH/USD reference price and computes an exact integer-gwei principal,
+rounding up by at most one gwei. The host durably saves this intent through
+`chatDB` settings under a chain/vault/address scope before displaying payment
+instructions. The ETH principal stays fixed across price updates and reloads;
+editing the dollar input explicitly replaces it. Current USD display continues
+to float with the oracle price. Amount edits invalidate Next immediately, and
+stale asynchronous reads cannot re-enable it.
+The reference uses the latest finalized round, with a 4,500-second age limit,
+and can lag the chain head. Unavailable or stale pricing fails closed.
+
+The screen shows the ETH principal, a maximum contract-fee reserve, total ETH
+and receiving address on the chosen network. A five-second read-only loop checks
+balance and fees. It never submits a transaction when funds arrive. **Next** is
+enabled only when the account can cover principal plus the current reserve;
+clicking it rechecks storage ownership, funds and fees before authorizing one
+payable deposit. Unused fee reserve stays at the funding address. The external
+sender also pays their own transfer fee in addition to the amount sent.
+Closing the dialog stops polling; reopening restores the same intent/address
+and resumes reads. Signed-transaction and private-note recovery remain in their
+existing durable journals, and reopening never authorizes new signing.
+Welcome sends any saved SDK deposit to the balance dialog's existing recovery
+controls without replacing its amount. Withdrawal and saved-deposit views have
+their own cancellable public-balance polling, which retries transient storage
+and RPC failures without creating an address or invoking signing.
+
+Native asset support requires a newly deployed native vault and matching server
+and independently pinned SDK manifest. Existing ERC20 deployments/notes must
+not be relabeled or silently migrated to native ETH. The prior production URLs
+remain ERC20 until the native deployment and verification are completed. Native
+protocol accounting uses gwei (1e9 wei per unit), preserving exact integer
+circuit accounting. A lease binds a fresh oracle round into its existing
+prompt-free authorization/proof payload. The server converts actual verified
+USD usage at that lease's fixed rate; later ETH price changes affect displayed
+wallet value but never reprice a completed lease.
+New deployments also require the repaired `zkapi-v2-note-bound-v1` circuit,
+matching WASM/proving keys/verifier, the historical-root withdrawal-challenge
+repair, and an operating challenge service. The legacy circuit cannot safely
+be used for a fresh ETH deployment. Its initial empty native Sepolia test vault
+is abandoned. Existing origins remain available solely to preserve their
+matching recovery paths. The repaired setup remains a single-party development
+setup, not an audited production ceremony.
+
+The address provider validates the configured chain, token and vault, exact
+calldata and authorized amount/destination. It simulates calls and applies gas
+and fee caps. Signed transaction bytes and nonce are encrypted and durably saved
+before broadcast. Explicit recovery replays those identical bytes; ordinary
+status reads never broadcast. Web Locks serialize local signing across tabs;
+unsupported storage or locks fail closed for this option. All RPC requests use
+the existing SDK transport with credentials omitted; no separate proxy policy
+or `globalThis.ethereum` substitution is introduced.
+
+New browser records use AES-256-GCM with a non-extractable browser key. Legacy
+records retain PBKDF2-SHA-256 until explicit conversion. The encrypted journal
+envelope has a 4 MiB limit. The signer uses the SDK’s EIP-7825 ceiling of 16,777,216 gas, with
+additional caps of 300 gwei and 0.02 ETH in gas fees. New transactions use
+EIP-1559: twice the latest base fee plus the suggested priority fee, clipped to
+both caps. The quote must still cover a full next block's base-fee increase and
+the priority fee, otherwise signing stops. Missing or malformed fee data also
+stops signing. Affordability uses the maximum possible fee, while the chain
+charges the actual fee. Existing legacy and type-2 recovery records replay
+their original bytes; the app does not raise fees or replace a pending
+transaction automatically. These limits can temporarily block a valid operation
+during high fees. Same-origin application code can use the browser-held key.
+
+For withdrawal, the funding account pays gas and the user supplies a destination
+address. The SDK binds that destination into its proof and durable journal;
+resumed withdrawals keep it. Mutual close, escape initiation, finalization and
+background withdrawals share the normal SDK lifecycle. The address panel also
+returns public token funds or remaining ETH to an explicitly chosen address,
+with confirmation. Do not infer a return destination from an incoming transfer,
+which may have come from an exchange. Return the private balance before returning
+ETH so its withdrawal can still pay gas; unsettled public transfers must be
+recovered before a new action.
+The optional ETH amount accepts up to 18 decimal places without floating-point
+rounding. A blank amount returns ETH after reserving the maximum fee for an
+ordinary Ethereum account. The amount and signed transaction use the same fee
+quote; a small ETH balance can remain when the actual fee is lower. Contract
+destinations require an exact amount so the signer can simulate and estimate
+the actual transfer.
+
+The implementation follows the CLI's local-signing approach at revision
+`a376a9e53022179dec985a10e4eb4854fa8eb486`, with browser-specific encrypted
+storage/unlock and explicit withdrawal/return controls. The SDK dependency adds
+provider injection and a per-withdrawal destination option at immutable revision
+`08c7666e949169b87de8b5ebaacbe106d7432b0e` for the original ERC20 address
+flow. The native ETH rollout instead uses the separately reviewed note-bound
+SDK/protocol and new deployment pins; see the deployment progress document.
+
+## MetaMask funding setup
+
+Native ETH onboarding keeps the “Set up your wallet” disclosure with three
+steps: install MetaMask, add ETH, and return to deposit. ETH also pays network
+fees. The following token-specific details describe the preserved legacy
+deployments: four steps install MetaMask, add USDC, add ETH for fees, and return
+to deposit. Both tokens must be on Ethereum Mainnet in the same account. Official
 MetaMask install/buy links remain alongside the relevant steps. Sepolia retains
 its separate free test ETH/demo-token instructions; no real purchase is suggested.
 

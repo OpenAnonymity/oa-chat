@@ -1,5 +1,6 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { recoverInterruptedPrivateAccess } from './privateLeaseRecovery.mjs';
+import { initWalletClient } from './walletMethod.mjs';
 
 function waitForCaller(promise, signal) {
     if (!signal) return promise;
@@ -13,7 +14,7 @@ function waitForCaller(promise, signal) {
 
 // Keep recovery shared by New Chat, renewal, deletion and withdrawal. A proof
 // left by failed issuance must be reconciled before the SDK can settle it.
-export function createPrivateAccessSettlement({ client, recover, timeoutMs = 30_000 }) {
+export function createPrivateAccessSettlement({ client, recover, initializeClient = () => client.init(), timeoutMs = 30_000 }) {
     let pending = null;
     return async function settle(onStatus, { sessionId = null, signal, expectedOwner = true } = {}) {
         if (signal?.aborted) throw signal.reason;
@@ -32,7 +33,7 @@ export function createPrivateAccessSettlement({ client, recover, timeoutMs = 30_
         const checkCanceled = () => { if (controller.signal.aborted) throw controller.signal.reason; };
         const work = Promise.resolve().then(async () => {
             checkCanceled();
-            await client.init();
+            await initializeClient();
             checkCanceled();
             if (client.browserMode) {
                 await recover({ sessionId, signal: controller.signal,
@@ -76,5 +77,5 @@ export function createPrivateAccessSettlement({ client, recover, timeoutMs = 30_
 }
 
 export const settlePrivateAccess = createPrivateAccessSettlement({
-    client: zkapiClient, recover: recoverInterruptedPrivateAccess
+    client: zkapiClient, recover: recoverInterruptedPrivateAccess, initializeClient: initWalletClient
 });

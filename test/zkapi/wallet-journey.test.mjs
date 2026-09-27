@@ -49,6 +49,13 @@ test('after a reload the persisted phase places the journey, and a failure marks
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'awaiting_wallet', failed: true })), ['proof:complete', 'wallet:error', 'chain:upcoming']);
 });
 
+test('native ETH funding has one deposit confirmation without token approval', () => {
+    const journey = walletJourney({ kind: 'deposit', nativeEth: true, tokenSymbol: 'ETH',
+        message: 'Depositing into the private-note vault… confirm in MetaMask.' });
+    assert.deepEqual(states(journey), ['connect:complete', 'deposit:waiting', 'chain:upcoming']);
+    assert(!journey.steps.some(step => /Approve|test billing/.test(step.label)));
+});
+
 
 test('deposit journey distinguishes unknown, checking, and submitted outcomes', () => {
     const chain = options => walletJourney({ kind: 'deposit', ...options }).steps.find(s => s.id === 'chain');

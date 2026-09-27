@@ -273,6 +273,10 @@ html.zkapi-mode .zkapi-dialog {
 /* Full-width buttons in the deeper withdraw views keep the same skin. */
 .zkapi-primary-button.w-full,
 .zkapi-secondary-button.w-full { width: 100%; }
+/* Author display styles must not expose unavailable wallet actions. */
+.zkapi-primary-button[hidden],
+.zkapi-secondary-button[hidden],
+.zkapi-quiet-button[hidden] { display: none; }
 html[data-keyboard-nav] .zkapi-dialog button:focus-visible,
 html[data-keyboard-nav] .zkapi-dialog summary:focus-visible,
 html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
@@ -1672,6 +1676,39 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
     --modal-scale-close: 0.96;
 }
 .zkapi-dialog-scroll { overflow-anchor: none; scrollbar-gutter: stable; overflow-x: hidden; scroll-behavior: auto; }
+
+/* Both methods share the wallet lifecycle; manual calls expose only public
+   transaction fields. Long addresses and calldata stay inside the dialog. */
+.zkapi-wallet-method { margin: 0 0 24px; }
+.zkapi-wallet-method-options { display: flex; gap: 4px; padding: 4px; border: 1px solid hsl(var(--color-border)); border-radius: 12px; }
+.zkapi-wallet-method-options button { flex: 1; min-height: 40px; padding: 8px; border-radius: 8px; font-size: 12px; color: hsl(var(--color-muted-foreground)); }
+.zkapi-wallet-method-options button[aria-pressed="true"] { background: hsl(var(--color-muted)); color: hsl(var(--color-foreground)); font-weight: 600; }
+.zkapi-wallet-method-options button:disabled { opacity: .6; cursor: default; }
+.zkapi-wallet-method-options button:focus-visible,
+.zkapi-funding-address button:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
+/* A compact address handoff; long public addresses never widen the dialog. */
+.zkapi-funding-account { margin: 0 0 24px; padding: 18px; border: 1px solid hsl(var(--color-border)); border-radius: 14px; }
+.zkapi-funding-account h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.zkapi-funding-field { display: flex; flex-direction: column; gap: 7px; margin: 14px 0; font-size: 12px; font-weight: 500; }
+.zkapi-funding-field input,
+.zkapi-funding-address input { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid hsl(var(--color-border)); border-radius: 8px; background: hsl(var(--color-background)); color: hsl(var(--color-foreground)); font-size: 12px; line-height: 1.6; }
+.zkapi-funding-address { display: flex; gap: 8px; margin-top: 14px; }
+.zkapi-funding-address input { font-family: monospace; }
+.zkapi-funding-account code { overflow-wrap: anywhere; }
+.zkapi-funding-account > button { margin-top: 8px; }
+.zkapi-funding-account details { border-top: 1px solid hsl(var(--color-border)); margin-top: 16px; padding-top: 12px; }
+.zkapi-funding-account summary { cursor: pointer; font-size: 12px; font-weight: 500; }
+.zkapi-funding-account summary:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 3px; }
+.zkapi-funding-error { margin: 12px 0; font-size: 12px; line-height: 1.6; color: hsl(var(--color-destructive)); }
+.zkapi-funding-pending { margin-top: 12px; }
+.zkapi-funding-usd { display: flex; align-items: center; gap: 8px; }
+.zkapi-funding-usd > span { font-size: 20px; }
+.zkapi-funding-breakdown { display: grid; gap: 10px; margin: 18px 0 10px; font-size: 12px; line-height: 1.6; }
+.zkapi-funding-breakdown > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.zkapi-funding-breakdown dt { color: hsl(var(--color-muted-foreground)); }
+.zkapi-funding-breakdown dd { margin: 0; overflow-wrap: anywhere; }
+.zkapi-funding-account .zkapi-note + .zkapi-helper { margin-top: 12px; }
+.zkapi-funding-account [data-funding-next] { width: 100%; margin-top: 12px; }
 .zkapi-welcome-dialog { overflow-anchor: none; scroll-behavior: auto; }
 .zkapi-guide.t-acc { position: relative; }
 .zkapi-guide.t-acc::before {

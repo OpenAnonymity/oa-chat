@@ -1,3 +1,126 @@
+## 2026-09-27: Browser custody and native ETH funding (implementation in progress)
+
+- User confirmed: hold ETH and show its floating current USD value, rather than
+  fixed USD credit. Native ETH requires new vault/server/SDK deployment pins;
+  the existing live ERC20 vaults cannot accept payable ETH deposits.
+- New local funding accounts use a non-extractable AES-GCM browser key committed
+  atomically with ciphertext in IndexedDB. No password, backup or lock step.
+  V1 accounts fail closed until one-time conversion preserves their key/journal.
+  Same-origin scripts can use browser custody; clearing site data loses access.
+- `AddressDepositFlow` owns only the local funding intent and read-only five-
+  second polling. Dollar input produces exact gwei/ETH principal; it stays fixed
+  across reloads and price movement. Principal plus maximum network-fee reserve
+  is shown before transfer. Next rechecks funds and durable intent, then allows
+  the signer one native payment. A changed input immediately invalidates Next.
+- Signer/provider recovery stays separate from SDK note recovery. No page load,
+  quote, balance check, method hydration or arrival of ETH signs or broadcasts.
+  Signed bytes are durably journaled before broadcast and replay exactly only
+  after an explicit recovery action. Cross-tab locks and nonce guards remain.
+- Public deposit intent uses `chatDB` settings with chain/vault/address scope;
+  account synchronization has an explicit allowlist that excludes these keys.
+- Provider adversarial review found and fixed native deposit authorization
+  allowing multiple payments in one action, and stale cached custody after an
+  IndexedDB read failure. All 45 provider tests pass, including local EVM value
+  transfer and journal recovery; UI/actions and interruption controller tests
+  also pass. The independent native protocol review approved 268 SDK tests,
+  52 server tests, native vault tests and the real proof/settlement fixture.
+  Live deployment acceptance is still pending.
+- USD references use the latest finalized Chainlink round with a pinned
+  4,500-second freshness limit, so they may lag the chain head. New leases
+  reject superseded finalized quotes; accepted leases retain their original
+  conversion. Exact unaccepted-request acknowledgment gates journal replacement.
+- A saved deposit in Welcome opens the existing balance dialog's recovery UI;
+  it never requotes or submits from the welcome screen. Non-funding address
+  views poll public ETH separately, including recovery from transient storage
+  failures. Closing or switching methods cancels both polling lifetimes.
+- Keep the actual focused USD input DOM node across refresh renders. Restoring
+  only focus/selection can lose composition or input events. Local browser
+  testing confirmed amount/address recovery after full browser closure, no
+  submission on receiving simulated funds, and one submission on explicit Next.
+  That fixture is not live Sepolia acceptance.
+- Native backend/SDK changes are isolated in
+  `/Volumes/Data/codex/worktrees/native-eth-wallet/zkapi-EF-collab`, branch
+  `codex/native-eth-wallet`. Do not use the unrelated dirty note-bound checkout.
+  See [payment details](ZKAPI_PAYMENTS.md) for custody and conversion semantics.
+- Deployment audit found the selected legacy protocol has a cross-note balance
+  binding flaw and rejects valid historical-root escape challenges. Do not fund
+  or publish its first native Sepolia vault (`0x0bf47f7fCc28975E4A928587869B73D32CD12f77`),
+  which remains empty. The reviewed integration now uses `zkapi-v2-note-bound-v1`,
+  matching WASM/proving keys/verifier, historical-root repair and a durable
+  challenge service. Its replacement vault is deployed and awaiting finality;
+  none of this upgrades existing immutable contracts. The newer setup is a single-party development
+  setup and must not be described as production-audited.
+- See [native deployment progress](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md) for
+  the unused first test vault, isolated infrastructure, test boundaries and
+  remaining deployment gates.
+
+## 2026-09-22: MetaMask and Send to an address
+
+- Live Sepolia testing exposed fixed-price legacy transactions getting stuck
+  below a rising base fee. New address transactions now use capped EIP-1559
+  headroom, with maximum-fee affordability checks and unchanged 300-gwei /
+  0.02-ETH limits. Existing signed transactions still replay exactly; this is
+  not a replacement feature. ETH max return resolves its amount from the same
+  fee quote used to sign, and explains that unused fee reserve may remain.
+- User selected exactly two options: MetaMask first and Send to an address.
+  The earlier manual calldata/hash-entry experiment was never deployed and has
+  been replaced. Receiving funds and converting them to private credit are
+  distinct states; only Add to private balance authorizes contract calls.
+- The new local Ethereum account is password-encrypted in separate IndexedDB,
+  locks on reload, and downloads a recovery file before showing its address.
+  That file restores public funding-account assets only. Private notes remain
+  in the SDK's browser storage; clearing site data can still lose private credit.
+- SDK provider restoration precedes init; after config initialization the host
+  reloads the funding record. Signing is scoped to a user's explicit action,
+  serialized across tabs, and journaled before broadcast. Read-only refreshes
+  and unlock never send transactions. Stop waiting must recheck cancellation
+  after asynchronous balance reads before permitting any deposit.
+- Withdrawal gas payer and payout destination are separate. Saved proof-bound
+  destinations cannot change during recovery. Return-funds controls handle
+  residual public tokens/ETH without guessing the incoming sender's address.
+- UI preserves ordinary field edits and disclosure/scroll state; passwords stay
+  only in input/event scope and are never serialized into rendered markup.
+  Copy stays usable while waiting for funds, and stopping that wait is an
+  informational outcome rather than a failed or submitted transaction.
+- Wallet button styles explicitly honor `hidden`. Their author-level grid
+  display otherwise overrides the native hidden style and exposes MetaMask
+  replacement controls in address mode after a transaction timeout. This rule
+  covers primary, secondary and quiet actions without changing disclosure motion.
+- Pre-deployment gas checks found an observed vault deposit using 6,897,262
+  gas; the SDK pads that estimate to 8,326,714. The address signer now imports
+  the SDK’s 16,777,216 transaction gas ceiling, replacing its lower 8-million
+  limit. The 300-gwei and 0.02-ETH transaction fee caps remain in force. Tests
+  exercise the real SDK buffering and reject oversized or over-budget calls.
+- Exact ETH returns preserve all 18 decimal places and the original authorized
+  amount. Only the blank/max path resolves its authorized amount after reserving
+  fees; it supports ordinary accounts, while contract recipients need an exact
+  amount. Provider-level tests cover both paths, not only UI mocks.
+- Validation: 886 core and 352 payment tests pass, including 60 focused address
+  tests and a real local Anvil contract call, lost-response recovery through the
+  SDK, and ETH return. Sepolia, Mainnet and Tickets-only production builds pass.
+  Browser checks without an injected wallet cover production option switching,
+  encrypted setup, reload/unlock, copy during waiting, cancellation, destination
+  preservation and a 390px layout. The final adversarial review approved the
+  diff. Live Sepolia deposit, chat, settlement, custom-destination withdrawal
+  and public ETH return passed, including finalized closure and journal
+  cleanup. The local-chain test also uses a fixture contract.
+  See [zkAPI payments](ZKAPI_PAYMENTS.md) for custody and recovery boundaries.
+- The user chose the current pinned servers. `oa-wallet-sepolia.vercel.app`
+  and `oa-wallet-mainnet.vercel.app` are now READY in Vercel team
+  `oas-projects-cbf58581`, with staging-org rewrites, the staging passkey relay
+  and the existing verifier. All 972 published asset hashes and backend pins
+  passed independent verification. Mainnet desktop/mobile smoke and Sepolia
+  encrypted setup/reload/unlock/waiting checks passed without an extension.
+  The live Sepolia contract lifecycle resumed with 0.0825 test ETH. Mint
+  and exact approval passed. The fixed-fee deposit became stale while queued;
+  a zero-value test cancellation cleared its nonce. After finalized recovery,
+  the EIP-1559 deposit, chat and custom-destination withdrawal passed, and
+  unused public ETH was returned. Finalized block 11,762,594 confirmed all
+  receipts, and the app cleared the funding transaction journal and active lease. See [deployment evidence](ZKAPI_DEPLOYMENT_20260922.md) and
+  `/tmp/oa-address-deploy-20260922/task-state.json` to resume. No Mainnet funds
+  were used. The newer note-bound Sepolia server requires a separate matching
+  SDK/artifact migration and is not selected for these deployments.
+
 ## 2026-09-21: Tighter sidebar trash placement
 
 - The delete-history glyph sits 6px farther left within its existing 36px button. The adjacent fixed sidebar toggle keeps a separate hit target; New Chat stays in place.

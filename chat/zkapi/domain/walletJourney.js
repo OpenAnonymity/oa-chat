@@ -7,12 +7,12 @@
 
 const STATES = ['complete', 'active', 'waiting', 'upcoming', 'error'];
 
-function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, escapePeriod = '' } = {}) {
+function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, nativeEth = false, escapePeriod = '' } = {}) {
     if (kind === 'deposit') {
         return [
             { id: 'connect', label: 'Connect MetaMask' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
-            { id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' },
+            ...(!nativeEth ? [{ id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' }] : []),
             { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' },
             { id: 'chain', label: 'Waiting for confirmation', detail: 'Usually under a minute.' }
         ];

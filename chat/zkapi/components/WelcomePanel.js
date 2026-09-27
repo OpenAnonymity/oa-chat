@@ -2,6 +2,10 @@ import { attachFundingDisclosures } from './FundingDisclosures.js';
 import { showSurface, hideSurface } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
+import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
+import { runAddressAction } from '../services/addressFunding.js';
+import { getWalletMethod, initWalletClient, prepareWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
+import { attachWalletMethodControls, captureWalletView, refreshWalletView, renderFundingAccount, renderWalletMethod, restoreWalletView, stopFundingFlow } from './WalletMethodControls.js';
 
 const DISMISSED_KEY = 'zkapi-oa-welcome-dismissed';
 const MODAL_CLASSES = 'rounded-2xl border border-border shadow-lg flex flex-col zkapi-welcome-dialog';
@@ -16,6 +20,11 @@ export default class WelcomePanel {
         this.status = '';
         this.error = '';
         this.depositAmount = null;
+        this.fundingDestination = null;
+        this.fundingError = '';
+        const renderFundingUpdate = () => refreshWalletView(this);
+        this.fundingUnsubscribe = addressFundingWallet.subscribe(renderFundingUpdate);
+        this.methodUnsubscribe = subscribeWalletMethod(renderFundingUpdate);
         this.returnFocusEl = null;
         this.escapeHandler = null;
         this.unsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
@@ -30,7 +39,7 @@ export default class WelcomePanel {
     async init() {
         if (!this.overlay) return;
         try {
-            await zkapiClient.init();
+            await initWalletClient();
         } catch {
             // The modal still explains how to reconnect to the daemon.
         }
@@ -61,6 +70,7 @@ export default class WelcomePanel {
     close() {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
+        stopFundingFlow(this);
         this.disposeFundingDisclosures?.();
         localStorage.setItem(DISMISSED_KEY, 'true');
         hideSurface(this.overlay, { clear: true });
@@ -80,11 +90,14 @@ export default class WelcomePanel {
     setStatus(message) {
         this.status = message;
         const element = this.overlay?.querySelector('[data-welcome-status]');
-        if (element) element.textContent = message;
+        if (element) element.textContent = walletMethodText(message);
     }
 
     async fund() {
-        if (this.busy) return;
+        if (this.busy || this.fundingBusy) return;
+        // The balance dialog owns every durable deposit phase, including a
+        // prepared plan that never reached the signer. Never reprice it here.
+        if (zkapiClient.config?.pending_deposit) return this.resumeSavedDeposit();
         const amount = this.overlay.querySelector('#welcome-deposit-amount')?.value;
         this.depositAmount = amount;
         this.busy = true;
@@ -93,24 +106,46 @@ export default class WelcomePanel {
         this.error = '';
         this.render();
         try {
-            await zkapiClient.deposit(amount, message => this.setStatus(message));
+            await prepareWalletMethod();
+            const report = message => this.setStatus(message);
+            const flow = this.fundingFlow;
+            const action = async () => {
+                const deposit = getWalletMethod() === 'address' ? this.fundingDepositIntent.ethAmount
+                    : zkapiClient.isNativeEthFunding ? (await zkapiClient.quoteDepositUsd(amount)).ethAmount : amount;
+                await zkapiClient.deposit(deposit, report);
+                if (flow) await flow.complete();
+                this.fundingUsdAmount = null;
+            };
+            if (getWalletMethod() === 'address') await runAddressAction(this, { kind: 'deposit', phase: 'wallet' }, report, action);
+            else await action();
             this.step = 'success';
             this.status = '';
             this.render();
         } catch (error) {
             this.step = 'welcome';
-            this.error = error?.code === 4001
+            if (error?.code === 'address_wait_stopped') this.fundingNotice = error.message;
+            this.error = error?.code === 'address_wait_stopped' ? '' : error?.code === 4001
                 ? 'Canceled in MetaMask. Nothing moved.'
                 : error.shortMessage || error.message || String(error);
             this.render();
         } finally {
             this.busy = false;
+            this.render();
         }
+    }
+
+    async submitAddressDeposit() { return this.fund(); }
+
+    resumeSavedDeposit() {
+        if (this.busy || this.fundingBusy) return;
+        this.close();
+        this.app.accountModal.openFunding();
     }
 
     renderWelcome(fundingSetup = null) {
         const suggested = zkapiClient.suggestedDeposit;
         const daemonError = zkapiClient.lastError?.message;
+        const pendingDeposit = zkapiClient.config?.pending_deposit;
         return `
             <div data-funding-scroll role="dialog" aria-modal="true" aria-labelledby="welcome-title" class="${MODAL_CLASSES}" style="width:464px;max-width:94vw;padding:28px">
                 <div class="text-center">
@@ -121,20 +156,22 @@ export default class WelcomePanel {
                     <p class="mt-1 text-xs text-muted-foreground">by <a class="underline underline-offset-2 hover:text-foreground" href="https://openanonymity.ai/" target="_blank" rel="noopener noreferrer">The Open Anonymity Project</a></p>
                 </div>
                 <div class="mt-6 rounded-xl border border-border bg-muted/20 p-4">
-                    <p class="text-sm font-medium text-foreground">Private access, funded with MetaMask</p>
+                    <p class="text-sm font-medium text-foreground">Private access, funded with your wallet</p>
                     <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">OA Chat uses a private prepaid balance for access. Deposit once, then chat normally. Each chat reuses one bounded ephemeral key for its title, response, and follow-ups.</p>
                 </div>
-                <div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, open: fundingSetup?.open, scope: 'welcome' })}</div>
-                <label class="mt-4 block">
+                ${renderWalletMethod(this, { scope: 'welcome' })}
+                ${renderFundingAccount(this)}
+                ${getWalletMethod() === 'address' ? '' : `<div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, nativeEth: zkapiClient.isNativeEthFunding, open: fundingSetup?.open, scope: 'welcome' })}</div>`}
+                ${pendingDeposit ? `<p class="mt-4 text-sm text-foreground">Saved deposit: ${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="mt-1 text-xs text-muted-foreground">Your original amount and progress are saved. Continue to check or resume this deposit.</p>` : getWalletMethod() === 'address' ? '' : `<label class="mt-4 block">
                     <span class="text-xs font-medium text-foreground">Starting balance</span>
                     <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
                         <span class="text-sm text-muted-foreground">$</span>
                         <input id="welcome-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(this.depositAmount ?? suggested.toFixed(suggested < 0.01 ? 6 : 2))}" />
                     </div>
-                </label>
+                </label>`}
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
-                ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(this.error)}</p>` : ''}
-                <button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue with MetaMask</button>
+                ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(walletMethodText(this.error))}</p>` : ''}
+                ${pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with MetaMask')}</button>`}
                 <button id="welcome-skip-btn" class="btn-ghost-hover mt-2 w-full rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground" type="button">Not now</button>
                 <p class="mt-4 text-center text-[10px] leading-relaxed text-muted-foreground/70">The note secret and chat history stay on this device.</p>
             </div>`;
@@ -142,12 +179,13 @@ export default class WelcomePanel {
 
     renderProgress() {
         return `
-            <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="width:420px;max-width:94vw;padding:32px">
+            <div data-funding-scroll role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="width:464px;max-width:94vw;padding:32px;overflow:auto;max-height:90vh">
                 <div class="mx-auto h-8 w-8 rounded-full border-2 border-muted border-t-blue-600 animate-spin"></div>
                 <h2 class="mt-5 text-center text-base font-semibold text-foreground">Preparing private access</h2>
-                <p data-welcome-status class="mt-2 text-center text-xs leading-relaxed text-muted-foreground">${this.escapeHtml(this.status)}</p>
+                <p data-welcome-status class="mt-2 text-center text-xs leading-relaxed text-muted-foreground">${this.escapeHtml(walletMethodText(this.status))}</p>
+                ${renderFundingAccount(this)}
                 <div class="mt-5 h-1 overflow-hidden rounded-full bg-muted"><div class="zkapi-progress-indeterminate h-full rounded-full bg-blue-600"></div></div>
-                <p class="mt-4 text-center text-[10px] text-muted-foreground/70">Keep this tab open while MetaMask confirmations are pending.</p>
+                <p class="mt-4 text-center text-[10px] text-muted-foreground/70">${getWalletMethod() === 'address' ? 'Your funding transactions are saved in this browser.' : 'Keep this tab open while MetaMask confirmations are pending.'}</p>
             </div>`;
     }
 
@@ -167,6 +205,7 @@ export default class WelcomePanel {
     render() {
         if (!this.overlay) return;
         this.disposeFundingDisclosures?.();
+        const walletView = captureWalletView(this);
         const fundingSetup = captureFundingSetupView(this.overlay);
         this.overlay.innerHTML = this.step === 'redeeming'
             ? this.renderProgress()
@@ -175,7 +214,13 @@ export default class WelcomePanel {
                 : this.renderWelcome(fundingSetup);
         this.disposeFundingDisclosures = attachFundingDisclosures(this.overlay);
         restoreFundingSetupView(this.overlay, fundingSetup);
+        attachWalletMethodControls(this);
+        restoreWalletView(this, walletView);
+        this.overlay.querySelector('#welcome-deposit-amount')?.addEventListener('input', event => {
+            this.depositAmount = event.target.value;
+        });
         this.overlay.querySelector('#welcome-fund-btn')?.addEventListener('click', () => this.fund());
+        this.overlay.querySelector('#welcome-resume-deposit-btn')?.addEventListener('click', () => this.resumeSavedDeposit());
         this.overlay.querySelector('#welcome-skip-btn')?.addEventListener('click', () => this.close());
         this.overlay.querySelector('#welcome-start-btn')?.addEventListener('click', () => {
             this.close();
