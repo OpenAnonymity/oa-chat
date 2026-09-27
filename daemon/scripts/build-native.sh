@@ -44,7 +44,7 @@ python3 "$script_dir/collect-release-notices.py" "$zkapi_dir" "$stage"
 find "$stage/share" -type d -exec chmod 755 {} +
 find "$stage/share" -type f -exec chmod 644 {} +
 cp "$repo_dir/LICENSE" "$stage/LICENSE"
-cp "$repo_dir/docs/CLI_PACKAGING.md" "$stage/CLI_PACKAGING.md"
+cp "$repo_dir/daemon/docs/CLI_PACKAGING.md" "$stage/CLI_PACKAGING.md"
 cp "$repo_dir/daemon/packaging/systemd/oa-chat.service" "$stage/oa-chat.service"
 printf '%s\n' "$version" > "$stage/VERSION"
 python3 "$script_dir/archive-release.py" "$stage" "$output_dir/oa-chat_${version}_${build_os}_${build_arch}.tar.gz"

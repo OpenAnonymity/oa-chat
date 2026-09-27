@@ -4,9 +4,9 @@ A ChatGPT-like AI chat app that implements [unlinkable inference](https://openan
 
 The web app runs entirely in the browser. Each session uses a fresh ephemeral access key obtained via blind signatures, so no party — including the OA system and the inference provider — can link your identity to your inference activity or link sessions to each other.
 
-For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](docs/CLI.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
+For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
-The daemon also includes a [one-command installer](docs/CLI_PACKAGING.md#one-command-installation)
+The daemon also includes a [one-command installer](daemon/docs/CLI_PACKAGING.md#one-command-installation)
 for macOS and Linux. Install the published
 [`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0):
 
@@ -16,7 +16,7 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.
 
 It installs the binaries and proving assets for your user. Follow its PATH
 guidance, then run `oa-chat init` and configure tickets or zkAPI access as
-described in the [CLI guide](docs/CLI.md). The exact-tag URL supports prereleases;
+described in the [CLI guide](daemon/README.md). The exact-tag URL supports prereleases;
 GitHub's `latest/download` URL excludes them. Public package repositories have
 not yet been published.
 

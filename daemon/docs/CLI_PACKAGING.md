@@ -51,7 +51,7 @@ oa-chat init
 oa-chat serve
 ```
 
-Import/redeem tickets or follow the [zkAPI funding setup](CLI.md#zkapi-and-funding)
+Import/redeem tickets or follow the [zkAPI funding setup](../README.md#zkapi-and-funding)
 before sending inference requests. The installer does not initialize a
 configuration, import tickets, fund a wallet, start a daemon/service, or edit
 shell startup files.
@@ -199,7 +199,8 @@ uses Ethereum mainnet; Sepolia must be selected explicitly for testing.
 
 ## Building a release
 
-Use a clean, reviewed checkout and a fresh companion directory:
+Use a clean, reviewed checkout and a fresh companion directory. Run these
+commands from the repository root:
 
 ```sh
 daemon/scripts/prepare-zkapi.sh /tmp/oa-zkapi-source
@@ -226,7 +227,7 @@ and available notice/license texts are retained under
 `share/oa-chat/third-party`. No script invents a release version or checksum, uploads a tap,
 submits an AUR package, or publishes a release.
 
-The [release workflow](../.github/workflows/oa-daemon-release.yml) builds a four-platform matrix from a
+The [release workflow](../../.github/workflows/oa-daemon-release.yml) builds a four-platform matrix from a
 `daemon-vMAJOR.MINOR.PATCH` tag and creates a **draft** GitHub release. It
 attaches the generated `install.sh` alongside native archives, Linux packages,
 packaging metadata, and `SHA256SUMS`. The installer and formula URLs point to
@@ -304,7 +305,7 @@ and public download URLs were validated separately on September 22 above.
 ## Validation record (2026-09-10)
 
 Both deterministic integration checks and live staging inference were run.
-The [fixture timing record](../daemon/packaging/validation/openwebui-fixture.json)
+The [fixture timing record](../packaging/validation/openwebui-fixture.json)
 and [fixture screenshot](images/cli-openwebui-stream.png) cover controlled
 streaming and error cases; the separate live records below cover real tickets
 and inference.
@@ -326,14 +327,14 @@ and inference.
 - Live staging model discovery returned 382 models. A real ticket-backed
   `openai/gpt-4.1-mini` request produced 114 content SSE events, with first
   content at 3.329 seconds and `[DONE]` at 4.183 seconds. The
-  [direct streaming record](../daemon/packaging/validation/staging-direct-stream.json)
+  [direct streaming record](../packaging/validation/staging-direct-stream.json)
   contains the sanitized measurements. Organization, verifier, and inference
   requests used the temporary encrypted Wisp relay, without direct fallback.
 - Open WebUI was then connected to that running staging daemon. Two real
   browser requests succeeded; the measured request showed 38 visible content
   updates, first text at 3.329 seconds, final content at 6.006 seconds, and
   completion at 6.095 seconds. The Stop control remained active during the
-  updates. See the [browser timing record](../daemon/packaging/validation/openwebui-staging-stream.json),
+  updates. See the [browser timing record](../packaging/validation/openwebui-staging-stream.json),
   [in-progress screenshot](images/cli-openwebui-staging-streaming.png), and
   [completed response](images/cli-openwebui-staging.png). No uncaught browser
   errors were observed. The three live requests consumed three tickets;
@@ -359,15 +360,15 @@ and inference.
   now includes the web SDK's explicit gas estimation and cap. The later
   allowance, demo mint, deposit, and private-note activation succeeded. The
   receipt validator was corrected to accept the wallet's transaction wrapper
-  while requiring the matching vault event. See the [funding record](../daemon/packaging/validation/sepolia-gas-preflight.json).
+  while requiring the matching vault event. See the [funding record](../packaging/validation/sepolia-gas-preflight.json).
 - Funded Sepolia inference passed in Open WebUI: first content at 13.815
   seconds, eight partial content frames, and completion at 15.277 seconds.
   The lease settled automatically with a 0.000723 USDC charge and a remaining
   private balance of 0.099277 USDC. A fresh independent API request after
   settlement returned HTTP 200, 100 content events, and `[DONE]`; first content
   arrived at 7.081 seconds and completion at 7.843 seconds. See the
-  [browser/settlement record](../daemon/packaging/validation/openwebui-sepolia-stream.json)
-  and [direct SSE record](../daemon/packaging/validation/sepolia-direct-stream.json).
+  [browser/settlement record](../packaging/validation/openwebui-sepolia-stream.json)
+  and [direct SSE record](../packaging/validation/sepolia-direct-stream.json).
   The second lease also finalized automatically with a 0.000065-USDC charge,
   leaving 0.099212 USDC and no pending request.
   This uses the public Sepolia ZKAPI deployment; its manifest does not identify
@@ -427,7 +428,7 @@ model discovery returned eight models; unauthenticated discovery returned
 HTTP 401. One unfunded browser request to
 `oa-sepolia.openai/gpt-4o-mini` displayed “The private balance needs funding.
 Run oa-chat fund.” Automatic title, tag, follow-up, autocomplete, and query
-generation remain disabled. The [sanitized readiness record](../daemon/packaging/validation/openwebui-sepolia-unfunded.json)
+generation remain disabled. The [sanitized readiness record](../packaging/validation/openwebui-sepolia-unfunded.json)
 covers this earlier error path. The later funded browser and direct API
 tests above passed with separate keys, with automatic settlement between them.
 

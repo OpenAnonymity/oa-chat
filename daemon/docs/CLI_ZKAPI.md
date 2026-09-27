@@ -6,7 +6,7 @@ provider key without sending a prompt to the companion, and forwards the
 original OpenAI JSON and streaming response over destination TLS through Wisp.
 The Rust companion is needed because the deployed Groth16 wallet and recovery
 implementation is Rust; this change does not claim to port those cryptographic
-primitives to Go. See [CLI usage](CLI.md) and [packaging](CLI_PACKAGING.md).
+primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md).
 
 ## Network and funding
 
@@ -144,7 +144,7 @@ no balance reduction. These observations describe the tested Sepolia deployment;
 do not infer another deployment's accounting from its key limit or source label.
 
 The standalone, **not deployed**
-[`server-early-settlement.patch`](../daemon/internal/zkapi/server-early-settlement.patch)
+[`server-early-settlement.patch`](../internal/zkapi/server-early-settlement.patch)
 is a historical proposal against the pinned upstream commit. It assumes each
 OA-org key is charged its entire proof-bound cap at issuance and signs the next
 state immediately. **It is unsuitable for this metered Sepolia deployment and
@@ -284,7 +284,7 @@ withdrawal, and separate management authorization. Rust regressions cover
 durable reservations, mutation/lease exclusion, event/finality rejection, archive
 ordering, and old-completion/new-note isolation.
 
-The [live withdrawal acceptance record](../daemon/packaging/validation/sepolia-cli-withdrawal.json)
+The [live withdrawal acceptance record](../packaging/validation/sepolia-cli-withdrawal.json)
 completed on September 23 UTC (September 22 Pacific). After safely stopping for
 insufficient gas, the same saved command resumed when test ETH arrived. It
 withdrew note 58's remaining **0.099971 test tokens**, using the locally generated
@@ -332,7 +332,7 @@ The optional browser page has script coverage but was not visually tested.
 
 The manual terminal flow passed on the pinned Sepolia deployment, with the
 final observations on September 23 UTC. See the
-[sanitized acceptance record](../daemon/packaging/validation/sepolia-address-funding.json).
+[sanitized acceptance record](../packaging/validation/sepolia-address-funding.json).
 The Go daemon was built with Go 1.26.6. The published companion's two patch
 hashes matched this source, and all four proving/verifying assets matched the
 live deployment manifest. This tests the existing `d33l4w2z2nh4cg` deployment;
@@ -381,10 +381,10 @@ test-only injection seam.
 The companion source is pinned to
 [`OpenAnonymity/zkapi-EF-collab` at `b89365f7050e376f55e489c4d60b623cf224a4d8`](https://github.com/OpenAnonymity/zkapi-EF-collab/tree/b89365f7050e376f55e489c4d60b623cf224a4d8),
 with protocol submodule `e4efda23e6d416ee132938e4e67924fb0f7d4fe2`.
-[`companion.patch`](../daemon/internal/zkapi/companion.patch) adds authenticated
+[`companion.patch`](../internal/zkapi/companion.patch) adds authenticated
 bridge routes, single-use reservations, the verifier’s exact fingerprint contract, network pinning,
 and installed proving-setup path support.
-[`protocol-transport.patch`](../daemon/internal/zkapi/protocol-transport.patch)
+[`protocol-transport.patch`](../internal/zkapi/protocol-transport.patch)
 removes persistent HTTP clients in the pinned protocol wallet. Both patches
 are required and are verified separately against their exact source commits. Package `protocol/setup/v2` intact;
 do not generate new proving keys for an existing deployment.
@@ -434,7 +434,7 @@ Sepolia daemon, discovered all eight models, and made one unfunded request.
 The browser correctly displayed “The private balance needs funding. Run
 oa-chat fund.” The daemon still reported `funded: false`; this checks the
 integration and funding-required error, not successful private inference.
-See the [readiness record](../daemon/packaging/validation/openwebui-sepolia-unfunded.json).
+See the [readiness record](../packaging/validation/openwebui-sepolia-unfunded.json).
 The first funded Open WebUI attempt generated a valid proof and obtained an
 active OA-backed lease, but native verification rejected the server's safety
 margin between lease and signed-key expiry. No key was handed to Go, and the
@@ -447,7 +447,7 @@ the bounded expiry fix was rebuilt and the funded retry succeeded.
 with eight observed partial-content frames before completion at 15.277 seconds.
 These browser timings include access preparation; they demonstrate incremental
 delivery rather than buffering the complete response. See the
-[successful streaming record](../daemon/packaging/validation/openwebui-sepolia-stream.json).
+[successful streaming record](../packaging/validation/openwebui-sepolia-stream.json).
 
 Independent read-only checks then followed the same lease. At
 `2026-09-10T20:56:01Z`, the server reported `status: finalized`, usage 0.000723 USD,
@@ -459,7 +459,7 @@ automatic settlement flow without an additional lease or inference request.
 After that lease settled, one fresh independent API request also passed:
 HTTP 200, 100 content events, first content at 7.081 seconds, and `[DONE]` at
 7.843 seconds. Model catalog and local authentication checks passed as well.
-See the [direct SSE record](../daemon/packaging/validation/sepolia-direct-stream.json).
+See the [direct SSE record](../packaging/validation/sepolia-direct-stream.json).
 This confirms raw SSE framing and completion separately from the browser's
 visible-content observations; it does not remove the wait between leases.
 At `2026-09-10T21:03:36Z`, this second lease was finalized with 0.000065 USD

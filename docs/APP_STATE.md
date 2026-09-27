@@ -1,3 +1,12 @@
+## 2026-09-27: Daemon documentation lives with the daemon
+
+- The daemon entry point is [daemon/README.md](../daemon/README.md). Supporting
+  [packaging](../daemon/docs/CLI_PACKAGING.md), [ticket](../daemon/docs/CLI_TICKETS.md),
+  and [zkAPI](../daemon/docs/CLI_ZKAPI.md) guides and their screenshots live in
+  `daemon/docs/`; keep future daemon-specific documentation there.
+- Native release and Linux package sources use the relocated packaging guide.
+  Installed packages retain the existing `CLI_PACKAGING.md` filename.
+
 ## 2026-09-24: Live Account dialog focus recovery
 
 - Live staging testing at narrow widths confirmed that closing commercial Account by either Escape or Close attempted to focus an Account trigger inside an inert collapsed sidebar, leaving focus on BODY.
@@ -62,13 +71,13 @@
 - Both native binaries must be rebuilt: the companion now advertises `withdrawal_bridge_version: 1`, persists its exact note/destination reservation before requesting clearance, and blocks inference and legacy mutation paths until closure. Go freezes the recipient, shares the existing transaction journal and nonce history, replays identical signed bytes after uncertainty, and accepts a refreshed proof/new nonce only after reporting a finalized revert and another explicit command.
 - Closure requires a canonical finalized successful receipt with the exact vault `MutualClose` event in both Go and Rust. Private recovery archives are durable before the active note disappears. Completed retries are idempotent and cannot touch a newer note. Go finishes its closure bookkeeping before any funding entry point can prepare another deposit. A missing note without confirmed closure still requires recovery.
 - A separate owner-only `management-token` is required in addition to the inference API key for withdrawal management. Commands bind every request to their original note ID; retry authorization names the exact reverted hash once, so concurrent or suspended polling cannot authorize a new attempt or withdraw a later note. If someone else relays the identical payout first and the local transaction finalizes reverted, `--confirm SUCCESSFUL_HASH` can recover that independently verified payout without signing again.
-- See [CLI withdrawal and recovery](CLI_ZKAPI.md#withdraw-without-connecting-a-wallet). The published `daemon-v0.1.0` bundle predates these changes; no updated release is implied by source changes.
+- See [CLI withdrawal and recovery](../daemon/docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet). The published `daemon-v0.1.0` bundle predates these changes; no updated release is implied by source changes.
 - Live Sepolia withdrawal completed on September 23 UTC (September 22 Pacific) after the gas top-up. Note 58 paid its remaining 99971 test-token units to the selected destination in [transaction 0x085471…bdf1a](https://sepolia.etherscan.io/tx/0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a). Exact vault event, historical recipient balance delta, treasury payment, consumed nullifier, closed note, and canonical finality passed. Restarting during finality kept the same signed bytes; restarting after completion and repeating the CLI/management request kept the signer nonce at 3. Both processes report completion, private recovery archives remain, and the same address is ready for funding again (no second live deposit claimed). Gas cost was 0.007434784766264632 test ETH; remaining public ETH stays at the local signer. Temporary services were stopped and closed-state backups retained. See the [acceptance evidence](../daemon/packaging/validation/sepolia-cli-withdrawal.json).
 
 ## 2026-09-22: Live Sepolia CLI address funding and cancellation recovery
 
 - The manual CLI flow passed against the pinned legacy Sepolia deployment: a fresh locally generated address received 0.1 demo tokens and gas, signed its own approval/deposit, waited for canonical finality, and activated note 58. Restarting during confirmation retained the exact signed transaction. No external wallet connection was used.
-- One verified `openai/gpt-4o-mini` stream returned HTTP 200 and 40 content events; automatic signed settlement charged 29 microcredits and left 99971. Restarting again and repeating the same funding command preserved the reduced balance and did not send another deposit. See [CLI acceptance details](CLI_ZKAPI.md#live-address-funding-acceptance-2026-09-22) and [sanitized evidence](../daemon/packaging/validation/sepolia-address-funding.json).
+- One verified `openai/gpt-4o-mini` stream returned HTTP 200 and 40 content events; automatic signed settlement charged 29 microcredits and left 99971. Restarting again and repeating the same funding command preserved the reduced balance and did not send another deposit. See [CLI acceptance details](../daemon/docs/CLI_ZKAPI.md#live-address-funding-acceptance-2026-09-22) and [sanitized evidence](../daemon/packaging/validation/sepolia-address-funding.json).
 - The default relay failed TLS, so the test used a temporary remote Wisp helper through SSH with destination TLS intact. Test services were stopped and private recovery state retained outside the repo. The existing independent-request settlement wait remains; this does not validate the newer note-bound deployment, mainnet, browser UX, or a new release.
 - Ctrl+C during the local funding HTTP request previously reported an unavailable daemon. Cancellation now gives neutral same-command resumption guidance; read-only `fund` cancellation never suggests selecting `--amount`. Focused regression tests, the full Go race suite, vet/build and fresh review passed.
 
@@ -757,7 +766,7 @@ reading code alone.
 - The published `daemon-v0.1.0` installer still installs the earlier MetaMask
   implementation. Address funding needs a build of this revision and a future
   native release. Existing Sepolia live validation below belongs to the older
-  implementation. See [CLI funding](CLI_ZKAPI.md) for recovery and limitations.
+  implementation. See [CLI funding](../daemon/docs/CLI_ZKAPI.md) for recovery and limitations.
 
 ## 2026-09-22: First CLI prerelease published and installation verified
 
@@ -779,7 +788,7 @@ reading code alone.
   default prefix. Both executables and all five proof assets passed. Linux
   reinstallation retained the previous release, activated a complete new one,
   and left no configuration or stale lock. See the
-  [dated validation record](CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
+  [dated validation record](../daemon/docs/CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
 
 ## 2026-09-21: One-command CLI installer
 
@@ -787,7 +796,7 @@ reading code alone.
   ARM64 bundles into a user-owned prefix, defaulting to `~/.local`. It checks
   the OS/runtime baseline and both executables before switching the active
   release. It never initializes configuration, funds a wallet, changes shell
-  startup files, or starts a service. See [installation and upgrades](CLI_PACKAGING.md#one-command-installation).
+  startup files, or starts a service. See [installation and upgrades](../daemon/docs/CLI_PACKAGING.md#one-command-installation).
 - Release assembly fills the script's single `@@VERSION@@` placeholder,
   includes `install.sh` in `SHA256SUMS`, and attaches it to the draft daemon
   release. The published script downloads its own exact version; it does not
@@ -830,7 +839,7 @@ reading code alone.
   The 0.05-USDC lease limit is a cap, not the debit. The earlier rejected lease
   settled without reducing the balance. The undeployed early-settlement patch
   assumes full-cap billing and is unsuitable for this metered deployment;
-  redesign and validation are required before using it. See [details](CLI_ZKAPI.md).
+  redesign and validation are required before using it. See [details](../daemon/docs/CLI_ZKAPI.md).
 - After settlement, one new independent direct SSE request passed HTTP 200,
   delivered 100 content events, first content at 7.081 seconds and `[DONE]`
   at 7.843 seconds. Catalog and authentication checks passed. See the
@@ -843,7 +852,7 @@ reading code alone.
 - Remaining limits: each provider key is handed out once, so independent API
   calls wait for the prior lease's settlement (about 4.5 minutes plus grace in
   this deployment). The Go CLI did not implement withdrawal at this September
-  10 revision; the current [CLI withdrawal flow](CLI_ZKAPI.md#withdraw-without-connecting-a-wallet)
+  10 revision; the current [CLI withdrawal flow](../daemon/docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet)
   is documented separately. Public Sepolia metadata does not disclose its
   OA-org issuer URL, so that issuer's staging
   status remains unknown. The live tests used the owned temporary Wisp helper
@@ -888,8 +897,8 @@ reading code alone.
 
 - The standalone `daemon/` Go module exposes OpenAI models/chat completions
   with immediate SSE flushing for Open WebUI and other clients. See
-  [CLI setup and validation](CLI.md), [ticket recovery](CLI_TICKETS.md),
-  [zkAPI companion/funding](CLI_ZKAPI.md), and [packaging](CLI_PACKAGING.md).
+  [CLI setup and validation](../daemon/README.md), [ticket recovery](../daemon/docs/CLI_TICKETS.md),
+  [zkAPI companion/funding](../daemon/docs/CLI_ZKAPI.md), and [packaging](../daemon/docs/CLI_PACKAGING.md).
 - Ticket blinding uses CIRCL with browser interoperability tests. Wallet
   mutations use a process-shared lock and durable reservations. Each API call
   obtains a separately verified key; client identity headers/metadata are stripped.
@@ -913,7 +922,7 @@ reading code alone.
 - Open WebUI streaming passed both with the deterministic fixture and with
   real staging tickets/OpenRouter inference. The live browser recorded 38
   content updates, first content at 3.329 seconds and completion at 6.095 seconds.
-  Evidence and screenshots are linked from CLI.md. Its automatic title/tag
+  Evidence and screenshots are linked from [the daemon README](../daemon/README.md). Its automatic title/tag
   requests cost extra access and conflict with pending zkAPI settlement.
 - Homebrew install/start/stop passed. Linux packages were built and inspected;
   publishing and Linux boot tests remain distinct from that validation record.

@@ -48,7 +48,7 @@ link them across sessions. See blog post
 
 ### Local API clients
 
-The optional [Go daemon](CLI.md) is another client-side implementation. An
+The optional [Go daemon](../daemon/README.md) is another client-side implementation. An
 OpenAI-compatible UI sends its prompt to the user's loopback daemon, which
 obtains anonymous access and forwards inference through destination TLS over
 the Wisp relay. The UI process and daemon host are inside the user's trust

@@ -129,4 +129,4 @@ and oa-verifier's `handleSubmitKey` established that the deployed 16-character
 `key_hash` is the intended response contract. The daemon now matches that
 contract while retaining exact station, status, and hash checks. Three tickets
 were consumed while diagnosing this client compatibility bug; they remain
-spent. Live inference results are tracked separately in [CLI validation](CLI.md).
+spent. Live inference results are tracked separately in [CLI validation](../README.md).

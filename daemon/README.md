@@ -35,16 +35,18 @@ oa-chat serve
 ```
 
 For zkAPI access, use the [funding setup](#zkapi-and-funding) instead.
-[Installer options and upgrades](CLI_PACKAGING.md#one-command-installation)
+[Installer options and upgrades](docs/CLI_PACKAGING.md#one-command-installation)
 cover version pinning and custom installation directories.
 
 The exact-tag installer URL works for stable releases and GitHub prereleases.
 GitHub's `latest/download` URL excludes prereleases, so use the command above
 for this preview. Public installation passed on macOS ARM64 and Ubuntu 24.04
-ARM64; see the [release validation record](CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
+ARM64; see the [release validation record](docs/CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
 A Homebrew tap and an AUR package have not yet been published.
 
 ## Build and run ticket mode
+
+Run source-build commands from the repository root:
 
 ```sh
 cd daemon
@@ -58,7 +60,7 @@ go build -o oa-chat ./cmd/oa-chat
 
 Imports also work while the service runs. `tickets redeem` without a file
 reads an invitation code or OA ticket-share URL from stdin. No account sign-in
-is required. See [ticket protocol and recovery](CLI_TICKETS.md).
+is required. See [ticket protocol and recovery](docs/CLI_TICKETS.md).
 
 Configuration defaults to `~/Library/Application Support/oa-chat` on macOS
 and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
@@ -102,7 +104,7 @@ Go supervises the companion and owns inference streaming. Neither prompts
 nor responses enter the proof companion.
 
 Build it with `daemon/scripts/prepare-zkapi.sh` followed by
-`daemon/scripts/build-native.sh`; see [packaging](CLI_PACKAGING.md).
+`daemon/scripts/build-native.sh`; see [packaging](docs/CLI_PACKAGING.md).
 Installed native bundles include both binaries and proving assets.
 
 ```sh
@@ -143,12 +145,12 @@ Replace the placeholder with the receiving address. This closes the entire
 private balance; the local signer pays ETH gas. No wallet connection is needed.
 Resume an interrupted withdrawal with the same destination and configuration
 directory. Once completed, `fund --amount` can create a new private balance.
-See [withdrawal and recovery details](CLI_ZKAPI.md#withdraw-without-connecting-a-wallet).
+See [withdrawal and recovery details](docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet).
 
 `fund --browser` opens an optional local page showing the same address and
 controls; `fund --no-open` prints its expiring capability URL. Reloading the
 page only checks status. Its explicit deposit button authorizes local signing;
-no signing key enters the page. See [funding, recovery, and limitations](CLI_ZKAPI.md).
+no signing key enters the page. See [funding, recovery, and limitations](docs/CLI_ZKAPI.md).
 The published `daemon-v0.1.0` binary predates this change; build this revision to
 use address funding until an updated native release is published. Withdrawals
 also require building the matching patched companion from this revision.
@@ -173,7 +175,7 @@ The deployed zkAPI protocol may keep one private-wallet lease outstanding
 until expiry and settlement (currently up to five minutes on Sepolia). A lease
 is handed to the API only once, including across restarts. Another request
 returns `409 settlement_pending` until a fresh key is available, avoiding
-cross-chat key reuse. See [zkAPI integration and server prerequisites](CLI_ZKAPI.md)
+cross-chat key reuse. See [zkAPI integration and server prerequisites](docs/CLI_ZKAPI.md)
 for the settlement limitation and the undeployed server proposal, which requires
 a different billing policy and is unsuitable for the tested metered deployment.
 
@@ -255,8 +257,8 @@ through the production Go daemon. Its browser rendered 38 content updates:
 first content at 3.329 seconds, the full response at 6.006 seconds, and the Stop
 control disappeared at 6.095 seconds. These measurements include ticket/key
 preparation and browser rendering, not just model generation. See the
-[live timing record](../daemon/packaging/validation/openwebui-staging-stream.json)
-and [partial-response screenshot](images/cli-openwebui-staging-streaming.png).
+[live timing record](packaging/validation/openwebui-staging-stream.json)
+and [partial-response screenshot](docs/images/cli-openwebui-staging-streaming.png).
 
 The compiled CLI imported twelve real staging tickets through a temporary
 SSH-forwarded Wisp helper on the staging host. Real keys were issued. An initial
@@ -270,7 +272,7 @@ successfully. After correcting verifier compatibility, live staging ticket
 redemption, verification, and `openai/gpt-4.1-mini` streaming passed: HTTP 200,
 114 content events, first content at 3.329 seconds, and `[DONE]` at 4.183 seconds.
 The timing includes access preparation. See the
-[recorded stream timing](../daemon/packaging/validation/staging-direct-stream.json).
+[recorded stream timing](packaging/validation/staging-direct-stream.json).
 The Sepolia flow passed with real proving assets and a 0.100000 test-USDC
 MetaMask deposit. The funding flow now follows the working web SDK's gas
 preflight, reuses existing allowance, and mints only the permitted Sepolia demo
@@ -282,19 +284,19 @@ also now accepts the server's bounded lease safety margin, as the SDK does.
 Open WebUI then completed a real proof-backed `openai/gpt-4o-mini` chat: first
 visible text at 13.815 seconds, eight partial content frames, and completion
 at 15.277 seconds. Settlement cleared automatically and charged 0.000723 USDC,
-leaving 0.099277 USDC. See the [browser and settlement record](../daemon/packaging/validation/openwebui-sepolia-stream.json).
+leaving 0.099277 USDC. See the [browser and settlement record](packaging/validation/openwebui-sepolia-stream.json).
 A fresh independent request after settlement passed HTTP 200 with 100 content
 events, first content at 7.081 seconds, and `[DONE]` at 7.843 seconds. See the
-[direct SSE record](../daemon/packaging/validation/sepolia-direct-stream.json).
+[direct SSE record](packaging/validation/sepolia-direct-stream.json).
 That second lease also settled automatically, charging 0.000065 USDC and
 leaving 0.099212 USDC with no pending request.
 These timings include access preparation. The public Sepolia manifest does
 not expose its OA-org issuer environment, so this ZKAPI test does not establish
 that its issuer is staging; the ticket test above explicitly uses staging.
 
-Additional screenshots: [Open WebUI completed live response](images/cli-openwebui-staging.png),
-[streaming fixture](images/cli-openwebui-stream.png), and
-[live Sepolia funding page](images/cli-sepolia-funding.png).
+Additional screenshots: [Open WebUI completed live response](docs/images/cli-openwebui-staging.png),
+[streaming fixture](docs/images/cli-openwebui-stream.png), and
+[live Sepolia funding page](docs/images/cli-sepolia-funding.png).
 
 The default public OA relay closed before its Wisp handshake. The helper proves
 the transport but does not repair that external relay. No verifier server

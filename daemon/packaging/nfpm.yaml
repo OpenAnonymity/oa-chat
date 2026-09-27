@@ -36,7 +36,7 @@ contents:
     dst: /usr/share/licenses/oa-chat/LICENSE
     file_info:
       mode: 0644
-  - src: docs/CLI_PACKAGING.md
+  - src: daemon/docs/CLI_PACKAGING.md
     dst: /usr/share/doc/oa-chat/CLI_PACKAGING.md
     file_info:
       mode: 0644
