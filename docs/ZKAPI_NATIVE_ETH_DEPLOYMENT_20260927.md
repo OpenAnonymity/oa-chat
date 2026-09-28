@@ -78,12 +78,12 @@ Operator-only deployment records and credentials live under
 Never publish those files or print private keys, service credentials, raw
 browser storage, or full key responses.
 
-The reviewed native Sepolia SDK configuration is committed at
-`ad2b134d36222cc84f6105b29c52ce878516213a` and installed by immutable Git pin
-in both app package files. Mainnet retains its explicit migration guard.
+The initial reviewed native Sepolia SDK configuration was committed at
+`ad2b134d36222cc84f6105b29c52ce878516213a`. The dynamic-fee release below
+updates both immutable app package pins to `6f12f3b520989d24c50fbeee33b4c42b761d5651`. Mainnet retains its explicit migration guard.
 
 The OA Vercel projects `oa-wallet-eth-sepolia` and `oa-wallet-eth-mainnet`
-are created and linked locally. Sepolia is published at
+are created and linked locally. The initial Sepolia release was published at
 `https://oa-wallet-eth-sepolia.vercel.app`, deployment
 `dpl_Cu6hwbThiU9XnJ5A1YXCPLLtzxbs`, app commit `dd1009a` / SDK `ad2b134`.
 Build hash: `Y42XTF2L`. All 486 final published files match their build manifest.
@@ -99,6 +99,69 @@ containers retain their identities, images and published ports.
 Both new Vercel origins were added to staging org credentialed CORS and OAuth
 return allowlists. Existing origins, RP ID, cookies and signing identity were
 preserved; new/existing-origin positive checks and unknown-origin denial pass.
+
+## Dynamic deposit quotes: current Sepolia release
+
+The current canonical site is **https://oa-wallet-eth-sepolia.vercel.app**,
+Vercel deployment `dpl_7Rp4HvNH1P1Xi39rcCKJmuhHMF3E`, app source
+`ca008e64998fee4808b2ba2ad737abc36902044a`, SDK
+`6f12f3b520989d24c50fbeee33b4c42b761d5651`, build hash `PE25UOAE`.
+The separate audit verified all 486 published files against their SHA-256
+manifest, matching deployment/proof pins and four public endpoints returning
+200. The staging org and native backend are unchanged. Mainnet remains guarded
+and unpublished; a local Mainnet build passed.
+
+The address flow now simulates its actual prepared native deposit before
+funding, showing principal, estimated fee, buffer and total to send. Existing
+public ETH reduces that transfer. Explicit Next refreshes the quote; an
+increased total requires review. The signer can use the approved buffer for
+modest changes while never exceeding its total fee cap. A pre-sign rejection
+retains the exact prepared deposit for a fresh quote. Actual receipt fees are
+persisted and shown beside the independently polled remaining public ETH.
+
+Validation passed 886 core and 448 payment tests (1,334 total), plus 298 SDK
+tests. Real local Anvil tests exercise unfunded balance-only simulation,
+approved-buffer use, exhausted-budget rejection, exact payable calldata and
+remaining-balance arithmetic. Fresh adversarial review approved both the SDK
+and app, including the live-test pricing refinement. Desktop and 390px browser
+checks showed the four fee rows without overflow. The tested USD price outage
+failed closed and recovered when a fresh finalized round became available.
+
+Live Sepolia acceptance on 2026-09-28 UTC (Sep 27 PDT):
+
+- The browser showed `0.01812683356071672` ETH to send, comprising principal
+  `0.000744884`, estimated fee `0.0072093324245628`, and buffer
+  `0.01019090362438792`, less `0.000018286488234` ETH already present.
+  The operator sent exactly the displayed amount in
+  `0x1e3614cefd9a5614b6a92879349ab4a2dae121319cfc57ecdc47913fa27702ae`,
+  block `11796966`. The sender's separate transfer fee was
+  `0.000022043317632` ETH.
+- Full browser closure after funding restored the same address and principal.
+  The funding account nonce remained 3 until explicit Next. A higher fresh quote
+  required another review; a pre-sign price rejection saved a prepared deposit
+  without broadcasting. That exact plan also survived a full browser restart.
+- The final app submitted one deposit,
+  `0x74cb011fc5fec292e89658ce18e99343c3beead542ed99258d2d4b6679cab3a9`,
+  block `11796995`, nonce 3. The browser was closed while confirmation was
+  pending. On reopening, an explicit Check payment status recovered the same
+  transaction and made the private balance available; nonce is 4, not 5.
+- The successful receipt used `6742196` gas at `1060659586` wei/gas. The actual
+  fee is **`0.007151174818090856` ETH**, versus the initial estimate
+  `0.0072093324245628`. The public remainder is
+  **`0.010249061230859864` ETH**. Independent chain arithmetic verifies
+  incoming transfer + previous balance − principal − actual fee = remainder.
+  The receipt was canonical and successful at verification time; it had not yet
+  reached Ethereum finality, so this evidence does not claim finalized inclusion.
+- Both exact values appear in the confirmed UI. A further full browser restart
+  retained the actual fee in payment history and refreshed the same public
+  remainder. These are conservative fee allowances, not a guarantee of tiny or
+  zero leftovers. The controlled test profile retains its private test balance
+  and public ETH for inspection/future test fees; no Mainnet funds were used.
+
+Public-only evidence is stored in the protected deployment bundle's `live-e2e/`
+files prefixed `browser-quote-`, plus `final-public-artifacts.json`. This follow-up
+retests the deposit/fee/recovery flow; the earlier chat, settlement and withdrawal
+acceptance remains recorded below and was not repeated for this fee-only change.
 
 ## Browser verification completed
 

@@ -17,6 +17,14 @@
   reloads and saved-plan method switching. Fresh adversarial review approved
   the final source after fixing MetaMask-to-address intent reconstruction.
   SDK pin: `6f12f3b520989d24c50fbeee33b4c42b761d5651`.
+- Dynamic quotes are live on `oa-wallet-eth-sepolia.vercel.app`, app `ca008e6`,
+  SDK `6f12f3b`, build `PE25UOAE`. All 486 published hashes were independently
+  verified. The real deposit quoted 0.0072093324245628 ETH expected fees and paid
+  0.007151174818090856 ETH. Exact displayed funding, existing ETH reuse,
+  pre-sign retry, browser closures before/after submission, one confirmed
+  transaction and persisted actual-fee history passed. The conservative buffer
+  still left 0.010249061230859864 public test ETH; do not promise zero/tiny dust.
+  Full evidence and retained test balances are in the deployment record.
 - User confirmed: hold ETH and show its floating current USD value, rather than
   fixed USD credit. Native ETH requires new vault/server/SDK deployment pins;
   the existing live ERC20 vaults cannot accept payable ETH deposits.
