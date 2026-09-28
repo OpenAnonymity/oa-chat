@@ -21,6 +21,13 @@
   adversarial approval. Browser checks cover exact ETH/USD round trips, restored
   input currency, mobile layout, immediate removal of stale transfer instructions,
   invalid precision, and concurrent settings writes using real IndexedDB.
+- Published on `oa-wallet-eth-sepolia.vercel.app`, app `f860264`, SDK
+  `6f12f3b`, build `4YKO3YLN`, deployment `dpl_4jLxYSYEKeE61reyJEKG6iD3ULbN`.
+  All 486 live artifact hashes match; public config, health and billing quote
+  checks returned 200. The canonical browser confirmed visible USD totals,
+  closed fee help, and an exact 0.002 ETH → USD → ETH round trip with no errors.
+  No transaction was signed for this UI release; the backend and gas policy
+  are unchanged.
 - See [payment details](ZKAPI_PAYMENTS.md) for conversion and recovery behavior.
 
 ## 2026-09-27: Compact send-to-address deposit screen
