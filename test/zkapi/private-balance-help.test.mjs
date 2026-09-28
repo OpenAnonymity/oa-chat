@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
-    privateBalanceExpired, privateBalanceHelpButton, privateBalanceHelpContent,
+    privateBalanceExpired, privateBalanceGuide, privateBalanceHelpButton, privateBalanceHelpContent,
     restorePrivateBalanceHelpFocus, updatePrivateBalanceExpiryState
 } from '../../chat/zkapi/components/PrivateBalanceHelp.js';
 
@@ -57,6 +57,8 @@ test('billing and expiry help have distinct accessible controls and truthful wit
     assert.match(expiry, /used funds go to the service/);
     assert.match(expiry, /service treasury can claim the full original deposit/);
     assert.doesNotMatch(expiry, / hidden>/);
+    assert.match(privateBalanceHelpContent('panel', 'billing'), /No account or Google sign-in is required/);
+    assert.match(privateBalanceGuide('billing'), /No account or Google sign-in is required/);
 });
 
 test('help clicks patch only their own disclosure and preserve independent open preferences', () => {

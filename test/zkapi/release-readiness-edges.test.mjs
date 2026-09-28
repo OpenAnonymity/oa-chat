@@ -53,6 +53,58 @@ test('background balance render retains invalid amount and associated error', t 
     }
 });
 
+test('native USD validation precedes quoting and keeps the confirmed display-pending result', async t => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
+    Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {
+        billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000'
+    } } });
+    t.after(() => Object.assign(zkapiClient, original));
+    const quoted = [];
+    const deposited = [];
+    t.mock.method(zkapiClient, 'quoteDepositUsd', async amount => {
+        quoted.push(amount);
+        return { ethAmount: '0.003333334' };
+    });
+    t.mock.method(zkapiClient, 'deposit', async amount => {
+        deposited.push(amount);
+        return { status: 'confirmed', noteId: 9, balanceRefreshPending: true };
+    });
+    const modal = depositModal();
+    let walletActions = 0;
+    modal.run = action => { walletActions++; return action(() => {}); };
+    for (const invalid of ['', '0', '1e3', '0.0000001']) modal.startDeposit(invalid);
+    assert.equal(walletActions, 0);
+    assert.deepEqual(quoted, []);
+    await modal.startDeposit('10');
+    assert.deepEqual(quoted, ['10']);
+    assert.deepEqual(deposited, ['0.003333334']);
+    assert.equal(modal.depositBalanceRefreshPending, true);
+    assert.match(modal.status, /Deposit confirmed and saved.*Refreshing/);
+    const html = modal.renderBalance();
+    assert.doesNotMatch(html, /zkapi-deposit-btn|zkapi-deposit-amount|private balance is ready/);
+    await modal.startDeposit('20');
+    assert.equal(walletActions, 1, 'committed pending-display deposit cannot start another wallet action');
+});
+
+test('saved native deposit resumes its exact gwei principal without parsing or repricing its USD display', async t => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
+    const pending = { phase: 'prepared', amount: 1, operation_id: 'saved-one-gwei' };
+    Object.assign(zkapiClient, { wallet: { note: null }, config: { pending_deposit: pending, funding: {
+        billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000'
+    } } });
+    t.after(() => Object.assign(zkapiClient, original));
+    t.mock.method(zkapiClient, 'quoteDepositUsd', () => assert.fail('saved native principal must not be repriced'));
+    const deposited = [];
+    t.mock.method(zkapiClient, 'deposit', async amount => { deposited.push(amount); return { status: 'confirmed' }; });
+    const modal = depositModal();
+    modal.run = action => action(() => {});
+    // USD valuation may round to zero or be temporarily unavailable; the
+    // persisted whole-gwei principal remains authoritative in either case.
+    for (const displayedAmount of ['0.00', '—']) await modal.startDeposit(displayedAmount);
+    assert.deepEqual(deposited, ['0.000000001', '0.000000001']);
+    assert.equal(zkapiClient.config.pending_deposit, pending);
+});
+
 test('pending submitted deposits never expose a fresh-deposit action or editable amount', t => {
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
     t.after(() => Object.assign(zkapiClient, original));

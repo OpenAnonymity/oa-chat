@@ -718,6 +718,32 @@ class ChatDatabase {
         });
     }
 
+    // Compare JSON-compatible settings and write in the same transaction so a
+    // display-only update cannot replace another tab's newer deposit amount.
+    // A missing record and a cleared (null) setting both mean no current value.
+    async compareAndSetSetting(key, expected, value) {
+        const expectedJson = JSON.stringify(expected ?? null);
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['settings'], 'readwrite');
+            const store = transaction.objectStore('settings');
+            let matched = false;
+            transaction.oncomplete = () => resolve(matched);
+            transaction.onerror = () => reject(transaction.error || new Error('Settings transaction failed'));
+            transaction.onabort = () => reject(transaction.error || new Error('Settings transaction aborted'));
+            const request = store.get(key);
+            request.onsuccess = () => {
+                try {
+                    if (JSON.stringify(request.result?.value ?? null) !== expectedJson) return;
+                    store.put({ key, value });
+                    matched = true;
+                } catch (error) {
+                    transaction.abort();
+                    reject(error);
+                }
+            };
+        });
+    }
+
     async deleteSetting(key) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['settings'], 'readwrite');

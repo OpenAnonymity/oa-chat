@@ -88,6 +88,11 @@ const { createVanillaUiInterface } = await import('../../chat/ui/appInterface.js
 const { default: Sidebar } = await import('../../chat/components/Sidebar.js');
 const { default: RightPanel } = await import('../../chat/zkapi/components/RightPanel.js');
 const { default: AccountModal } = await import('../../chat/zkapi/components/AccountModal.js');
+const { addressFundingWallet } = await import('../../chat/zkapi/services/addressFundingProvider.mjs');
+// The settings-only IndexedDB shell above has no transaction completion events.
+// Supply the unrelated funding-account store independently for wallet UI runs.
+addressFundingWallet.store = { load: async () => null, save: async () => {} };
+addressFundingWallet.createChannel = () => null;
 const { default: WelcomePanel } = await import('../../chat/zkapi/components/WelcomePanel.js');
 const { default: zkapiClient, ZkapiClient } = await import('@openanonymity/zkapi-browser-sdk/client');
 const {
@@ -314,7 +319,7 @@ test('settlement controls forward runtime actions, prevent duplicate retry, and 
     assert.equal(calls[2][1], 'error');
 });
 
-test('mixed payment shell renders recovery above the private composer and clears it for Tickets', t => {
+test('mixed payment shell renders recovery above the private composer and clears it for Tickets', async t => {
     const originalDocument = globalThis.document;
     t.after(() => { globalThis.document = originalDocument; });
     const nodes = new Map();
@@ -361,6 +366,8 @@ test('mixed payment shell renders recovery above the private composer and clears
     ui.presentation.renderComposer();
     assert.equal(status.className, 'hidden');
     assert.equal(status.innerHTML, '');
+    // Let wallet-method restoration finish while this test's DOM is mounted.
+    await new Promise(resolve => setImmediate(resolve));
 });
 
 test('low-text proposal panels render compact summaries with detail collapsed', () => {
@@ -999,6 +1006,17 @@ test('payment history combines deposits and withdrawals by date without inventin
         assert.doesNotMatch(modal.renderDepositRecord({ recordId: '<script>', status: 'confirmed',
             amount: 1, transactionHash: 'javascript:alert(1)' }), /<script>|href=/);
     } finally { Object.assign(zkapiClient, original); }
+});
+
+test('confirmed deposit history shows only receipt-backed ETH fees, including after reload', () => {
+    const modal = Object.create(AccountModal.prototype);
+    const record = { recordId: 'confirmed-fee', status: 'confirmed', amount: 2_000_000,
+        feeWei: '351234567890123', transactionHash: `0x${'ef'.repeat(32)}` };
+    const html = modal.renderDepositRecord(record);
+    assert.match(html, /Actual network fee: 0\.000351234567890123 ETH/);
+    assert.doesNotMatch(modal.renderDepositRecord({ ...record, feeWei: null }), /Actual network fee/);
+    assert.doesNotMatch(modal.renderDepositRecord({ ...record, feeWei: '<script>123</script>' }), /Actual network fee|<script>/);
+    assert.doesNotMatch(modal.renderDepositRecord({ ...record, status: 'pending' }), /Actual network fee/);
 });
 
 test('expiry history distinguishes a deadline from a verified payment, including after archival', () => {

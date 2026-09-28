@@ -4,9 +4,12 @@ const LINK_CLASSES = 'underline underline-offset-2 hover:text-foreground';
 const BUY_GUIDE = 'https://support.metamask.io/manage-crypto/move-crypto/buy/how-to-buy-crypto-in-metamask';
 const buyLink = name => `<a data-funding-setup-focus="${name}" class="${LINK_CLASSES}" href="${BUY_GUIDE}" target="_blank" rel="noopener noreferrer">How to buy in MetaMask ↗</a>`;
 
-export function fundingSetupGuide({ mainnet, demoMintEnabled, open = false, scope = 'account' }) {
+export function fundingSetupGuide({ mainnet, demoMintEnabled, nativeEth = false, open = false, scope = 'account' }) {
     const installStep = `<li><strong class="zkapi-guide-step-title">Create your MetaMask wallet</strong><p>Install the browser extension, create a wallet, and follow its backup instructions.</p><a data-funding-setup-focus="install" class="${LINK_CLASSES}" href="https://metamask.io/download/" target="_blank" rel="noopener noreferrer">Install MetaMask ↗</a></li>`;
-    const steps = mainnet ? `
+    const steps = nativeEth ? `
+        ${installStep}
+        ${mainnet ? `<li><strong class="zkapi-guide-step-title">Add ETH to MetaMask</strong><p>Buy ETH on Ethereum for the amount you want to deposit, plus network fees.</p>${buyLink('buy-eth')}</li>` : `<li><strong class="zkapi-guide-step-title">Get Sepolia test ETH</strong><p>Use a faucet from <a data-funding-setup-focus="faucets" class="${LINK_CLASSES}" href="https://ethereum.org/en/developers/docs/networks/#sepolia" target="_blank" rel="noopener noreferrer">Ethereum’s Sepolia faucet list</a> with your MetaMask address.</p></li>`}
+        <li><strong class="zkapi-guide-step-title">Return here to add funds</strong><p>Enter the amount in USD and choose <strong>Continue with Ethereum wallet</strong>. Confirm the ETH deposit and network fee in your wallet.</p></li>` : mainnet ? `
         ${installStep}
         <li><strong class="zkapi-guide-step-title">Add USDC for your chats</strong><p>In MetaMask, choose <strong>Buy</strong>. Select <strong>USDC on Ethereum</strong> and add the amount you want to deposit.</p>${buyLink('buy-usdc')}</li>
         <li><strong class="zkapi-guide-step-title">Add ETH for network fees</strong><p>Buy ETH on the Ethereum network through the same MetaMask account you used to buy USDC. You will use this ETH to pay the network fees for deposits and withdrawals.</p>${buyLink('buy-eth')}</li>
@@ -14,7 +17,7 @@ export function fundingSetupGuide({ mainnet, demoMintEnabled, open = false, scop
         ${installStep}
         <li><strong class="zkapi-guide-step-title">Get free Sepolia ETH</strong>Choose a faucet from <a data-funding-setup-focus="faucets" class="${LINK_CLASSES}" href="https://ethereum.org/en/developers/docs/networks/#sepolia" target="_blank" rel="noopener noreferrer">Ethereum’s Sepolia faucet list</a>. Copy your public MetaMask account address into the faucet and request test ETH.</li>
         <li><strong class="zkapi-guide-step-title">Return here to fund</strong>Choose <strong>Continue with Ethereum wallet</strong>, select Sepolia if prompted, and confirm the test-token and deposit steps. The app creates demo billing tokens if your wallet needs them.</li>` : installStep;
-    const intro = mainnet ? '' : demoMintEnabled
+    const intro = nativeEth ? '<p class="zkapi-guide-lead">Your wallet holds ETH. The displayed USD value changes with its price.</p>' : mainnet ? '' : demoMintEnabled
         ? '<p class="zkapi-guide-lead">Use Sepolia ETH for testnet fees. Demo billing tokens are provided automatically when needed. No real ETH or USDC purchase is needed.</p>'
         : '<p class="zkapi-guide-lead">The payment network and token requirements will appear when the payment service connects.</p>';
     return fundingDisclosure({ key: 'setup', id: `zkapi-${scope}-setup`, open,

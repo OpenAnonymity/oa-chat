@@ -6,11 +6,13 @@ import { createZkapiChatRuntimeCore } from './zkapiChatRuntimeCore.mjs';
 import { ensureModelTiersReady } from '../../publicModelTierApi.js';
 import { getModelBudget } from './zkapiModelBudget.mjs';
 import { settlePrivateAccess } from './privateAccessSettlement.js';
+import { initWalletClient } from './walletMethod.mjs';
 
 /** Production defaults; the lifecycle core has no browser/wallet side effects. */
 export function createZkapiChatRuntime(options = {}) {
     return createZkapiChatRuntimeCore({
         client: zkapiClient,
+        initializeClient: initWalletClient,
         backend: zkapiBackend,
         createInferenceService,
         modelConfiguration,

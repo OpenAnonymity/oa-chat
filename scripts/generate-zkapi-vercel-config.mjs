@@ -1,23 +1,27 @@
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDemoVercelConfig } from './generate-demo-vercel-config.mjs';
 import { resolveZkapiNetwork } from './zkapiBuild.mjs';
 
-const DEPLOYMENTS = Object.freeze({
-    sepolia: 'https://d33l4w2z2nh4cg.cloudfront.net',
-    mainnet: 'https://d27v1dvkaxfc09.cloudfront.net'
-});
-
 export function buildZkapiVercelConfig({ orgOrigin, network }) {
     if (!resolveZkapiNetwork({ OA_ZKAPI_NETWORK: network })) throw new Error('An explicit zkAPI network is required.');
+    // Route to the same immutable deployment pinned by the browser SDK.
+    const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
+    const pins = JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/config', `${network}.json`), 'utf8'));
+    const deployment = new URL(pins.trusted_deployment.protocol_server_url);
+    if (deployment.protocol !== 'https:' || deployment.username || deployment.password
+        || deployment.pathname !== '/' || deployment.search || deployment.hash) {
+        throw new Error('The SDK deployment must pin a credential-free HTTPS origin.');
+    }
     const config = buildDemoVercelConfig(orgOrigin, false);
     return {
         ...config,
         buildCommand: `OA_ZKAPI_NETWORK=${network} ${config.buildCommand}`,
         build: { env: { ...config.build.env, OA_ZKAPI_NETWORK: network } },
         rewrites: [
-            { source: '/zkapi-deployment/:path*', destination: `${DEPLOYMENTS[network]}/:path*` },
+            { source: '/zkapi-deployment/:path*', destination: `${deployment.origin}/:path*` },
             { source: '/zkapi-model-catalog', destination: 'https://openrouter.ai/api/v1/models' },
             ...config.rewrites
         ],

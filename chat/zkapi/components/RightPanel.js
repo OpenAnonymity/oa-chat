@@ -4,6 +4,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { attachZkapiSettlementActions, getZkapiExperience, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
 import { formatModelBudgetUsd, getModelBudget } from '../services/zkapiModelBudget.mjs';
 import { onModelTiersUpdate } from '../../publicModelTierApi.js';
+import { walletMethodText } from '../services/walletMethod.mjs';
 import { formatEstimatedCost, formatUsageTokens } from '../services/modelPricing.mjs';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
@@ -237,7 +238,7 @@ export default class RightPanel extends SharedRightPanel {
         // Normal progress is a quiet line; warning pills are reserved for attention states.
         const badgeBusy = !claimed && !hasError && experience.primary.busy && experience.primary.tone !== 'error';
         const walletWaiting = !claimed && !hasError && experience.primary.tone !== 'error'
-            && statusBadge === 'Waiting for MetaMask';
+            && statusBadge === walletMethodText('Waiting for MetaMask');
         const depositStatus = !claimed && !hasError && experience.primary.tone !== 'error'
             && experience.primary.phase === 'deposit-recovery';
         const quietProgress = badgeBusy || walletWaiting || depositStatus;

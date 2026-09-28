@@ -1,6 +1,7 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
 import { zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
+import { walletMethodText } from '../services/walletMethod.mjs';
 
 function escapeFallback(value) {
     return String(value ?? '')
@@ -17,6 +18,15 @@ export function getZkapiExperience(app, sessionId = app?.state?.currentSessionId
         transition: app?.integration?.getTransition?.() || app?.newChatSettlementState || null,
         sessionId
     });
+    // Keep status on the System Panel consistent with the selected wallet UI.
+    for (const key of ['primary', 'composerPrimary', 'balancePrimary', 'panelPrimary', 'closingPrimary']) {
+        if (!state[key]) continue;
+        state[key] = { ...state[key] };
+        for (const field of ['title', 'detail', 'compact']) {
+            if (typeof state[key][field] === 'string') state[key][field] = walletMethodText(state[key][field]);
+        }
+    }
+    state.journey = state.journey.map(step => ({ ...step, label: walletMethodText(step.label) }));
     if (typeof document !== 'undefined') {
         document.documentElement.dataset.zkapiUxProposal = state.proposal;
     }

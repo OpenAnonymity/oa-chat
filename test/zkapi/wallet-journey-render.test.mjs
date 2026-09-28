@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
+import { deriveZkapiUxState } from '../../chat/zkapi/services/zkapiUxState.mjs';
 
 function modalWith(config, extra = {}) {
     const modal = Object.create(AccountModal.prototype);
@@ -12,6 +13,48 @@ function modalWith(config, extra = {}) {
     return modal;
 }
 const note = { note_id: 7, deposit_amount: 2_000_000, current_balance: 1_780_000, expiry_ts: Math.floor(Date.now() / 1000) + 86400 };
+
+for (const failureKind of ['receipt', 'indexer', 'reverted', 'mismatch']) {
+    test(`deposit ${failureKind} interruption keeps truthful activity status and SDK recovery unchanged`, async t => {
+        const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
+        const plan = { phase: 'submitted', operation_id: 'saved-operation', amount: 4_000_000 };
+        Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {}, pending_deposit: plan } });
+        t.after(() => Object.assign(zkapiClient, original));
+        const changes = [];
+        const failures = [];
+        t.mock.method(zkapiClient, 'beginActivity', () => 'deposit-activity');
+        t.mock.method(zkapiClient, 'updateActivity', (id, value) => { changes.push(value); });
+        t.mock.method(zkapiClient, 'completeActivity', () => assert.fail('An interrupted deposit cannot claim success'));
+        t.mock.method(zkapiClient, 'failActivity', (id, error) => { failures.push(error); });
+        const error = failureKind === 'indexer' ? Object.assign(new Error('Indexer catching up'), { code: 'indexer_root_lag' })
+            : failureKind === 'mismatch' ? new Error('The mined deposit did not match this browser’s durable private note.')
+                : Object.assign(new Error(failureKind === 'reverted' ? 'Transaction reverted.' : 'RPC connection lost'), {
+                    broadcastPossible: true, transactionStage: 'receipt',
+                    ...(failureKind === 'reverted' ? { transactionReceipt: { status: '0x0' } } : {})
+                });
+        const modal = modalWith({}, { view: 'balance', render() {} });
+        let calls = 0;
+        await modal.run(async () => { calls++; throw error; }, { kind: 'deposit', title: 'Adding funds' });
+        assert.equal(calls, 1);
+        assert.equal(zkapiClient.config.pending_deposit, plan);
+        if (['receipt', 'indexer'].includes(failureKind)) {
+            assert.equal(modal.outcome.tone, 'info');
+            assert.equal(modal.statusError, false);
+            assert.equal(failures.length, 0);
+            assert.equal(changes.at(-1).status, 'pending');
+            assert.equal(changes.at(-1).error, null);
+            assert.equal(changes.at(-1).blocksSend, false, 'Activity ends; SDK recovery still controls eligibility');
+            const ux = deriveZkapiUxState({ snapshot: { wallet: { note: null }, config: zkapiClient.config,
+                activities: [{ kind: 'deposit', ...changes.at(-1) }] } });
+            assert.notEqual(ux.balancePrimary.tone, 'error');
+            assert.notEqual(ux.balancePrimary.phase, 'ready', 'Recovery remains pending in the shared UI');
+        } else {
+            assert.equal(modal.outcome.tone, 'error');
+            assert.equal(modal.statusError, true);
+            assert.deepEqual(failures, [error]);
+        }
+    });
+}
 
 test('while a withdrawal runs, the form folds to its method and the steps follow the status line', () => {
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };

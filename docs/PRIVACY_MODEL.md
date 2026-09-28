@@ -549,3 +549,29 @@ Public on-chain deposits/withdrawals and the SDK's existing timing/metadata
 tradeoffs are not changed by this packaging integration. The ticket protocol
 and its privacy claims remain as described above; SDK inclusion does not turn
 public funding transactions into anonymous account activity.
+
+Send-to-address funding uses the same private-note protocol with a locally
+created Ethereum signing account. The browser stores a non-extractable AES-GCM
+CryptoKey alongside the encrypted signer and signed-transaction journal in one
+atomic IndexedDB row, outside account sync. Reload restores local custody with
+no password and never signs or broadcasts. There is no recovery-file download
+for new accounts; losing site data loses the account and independent SDK note
+state. Legacy password-encrypted accounts require a one-time local conversion
+that preserves the original address and journal. The OA server never receives
+the signing key. Executing same-origin code can exercise the browser-held key,
+so this option requires trust in the served client code and is not equivalent
+to the separate custody boundary of an external wallet.
+
+Native ETH funding quotes use the existing credential-free RPC transport to
+read a deployment-pinned price feed. Deposit instructions and USD input stay
+in local settings outside the account-sync allowlist. Lease conversion rates
+are bound into the same prompt-free authorization as the coarse USD spending
+cap; no public funding address, exact wallet balance, account identity or chat
+content is added to the private lease request.
+
+Configured-chain RPC reads and signed broadcasts use the existing SDK transport
+with account cookies omitted. Public funding addresses, incoming transfers,
+approvals, deposits and withdrawals remain visible to the chain/RPC; the extra
+funding account does not make these anonymous. Private-note secrets, proofs and
+recovery ownership remain in the SDK. No account identity, ticket contents or
+inference prompts enter the address-funding service.
