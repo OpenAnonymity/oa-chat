@@ -14,6 +14,11 @@
   introduced. Mainnet challenger funding remains deferred as previously agreed.
 - See [fresh deployment details](ZKAPI_FRESH_DEPLOYMENT_20260928.md) and
   [build configuration](ZKAPI_PAYMENTS.md#build).
+- Vercel evaluates a relocated bundle of `vercel.mjs` before installing the
+  submodule's SDK dependency. Fresh profiles are static JSON imports so this
+  phase needs neither SDK resolution nor source-relative filesystem paths.
+  Proof/circuit checks still run against the actual emitted SDK assets before
+  publication. Regressions execute relocated bundles without SDK access.
 
 ## 2026-09-28: Fresh Mainnet and Sepolia infrastructure
 

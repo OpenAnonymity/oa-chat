@@ -45,6 +45,35 @@ test('fresh deployment selection is explicit, named and requires a network', () 
     assert.throws(() => resolveZkapiNetwork({ OA_ZKAPI_DEPLOYMENT: 'fresh-20260928' }), /requires an explicit/);
 });
 
+test('Vercel bundled fresh config resolves outside the repository without an installed SDK', async t => {
+    const { root, build } = await sourceBuildHelpers();
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-isolated-vercel-config-'));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const outfile = path.join(directory, '.vercel/vercel-temp.mjs');
+    await build({ entryPoints: [path.join(root, 'scripts/generate-zkapi-vercel-config.mjs')],
+        outfile, bundle: true, platform: 'node', format: 'esm', target: 'node20.20', packages: 'external', logLevel: 'silent' });
+    // The child has neither the source JSON directory nor an SDK dependency.
+    // Even package resolution is denied so an accidentally reintroduced fresh
+    // import.meta.resolve() fails independently of the developer's /tmp setup.
+    const source = await fs.readFile(outfile, 'utf8');
+    await fs.writeFile(outfile, `import.meta.resolve = () => { throw new Error('SDK package resolution is unavailable'); };\n${source}`);
+    const result = execFileSync(process.execPath, ['--input-type=module', '-e', `
+        import { buildZkapiVercelConfig } from ${JSON.stringify(pathToFileURL(outfile).href)};
+        const results = ['mainnet', 'sepolia'].map(network => buildZkapiVercelConfig({
+            network, deployment: 'fresh-20260928', orgOrigin: 'https://org-staging.openanonymity.ai'
+        }));
+        console.log(JSON.stringify(results));
+    `], { cwd: directory, encoding: 'utf8' });
+    for (const [index, config] of JSON.parse(result).entries()) {
+        const network = index === 0 ? 'mainnet' : 'sepolia';
+        assert.equal(config.rewrites[0].destination,
+            index === 0 ? 'https://54.67.93.98.sslip.io/:path*' : 'https://52.52.207.206.sslip.io/:path*');
+        assert.equal(config.build.env.OA_ZKAPI_DEPLOYMENT, 'fresh-20260928');
+        assert.equal(config.build.env.OA_ZKAPI_NETWORK, network);
+        assert.match(config.buildCommand, new RegExp(`OA_ZKAPI_NETWORK=${network} OA_ZKAPI_DEPLOYMENT=fresh-20260928 `));
+    }
+});
+
 test('Vercel source uploads include only the two reviewed public deployment pin files', async t => {
     // Installed core packages may sit inside another Git repository. Check the
     // ignore rules in their own temporary root, matching a source upload.

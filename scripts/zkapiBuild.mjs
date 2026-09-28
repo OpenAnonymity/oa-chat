@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import freshMainnet from '../deployments/zkapi/fresh-20260928/mainnet.json' with { type: 'json' };
+import freshSepolia from '../deployments/zkapi/fresh-20260928/sepolia.json' with { type: 'json' };
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -76,16 +78,14 @@ export function readZkapiBuildConfig({ network, deployment = process.env.OA_ZKAP
     if (!resolveZkapiNetwork({ OA_ZKAPI_NETWORK: network, OA_ZKAPI_DEPLOYMENT: deployment })) {
         throw new Error('[build] An explicit zkAPI network is required.');
     }
-    const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
-    if (!deployment) {
-        return JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/config', `${network}.json`), 'utf8'));
+    if (deployment) {
+        // Vercel evaluates a bundled config outside this package before its
+        // SDK dependency is installed. Embed public pins; the asset build below
+        // still verifies their circuit and hashes against emitted proof bytes.
+        return structuredClone(network === 'mainnet' ? freshMainnet : freshSepolia);
     }
-    const config = JSON.parse(readFileSync(new URL(`../deployments/zkapi/${deployment}/${network}.json`, import.meta.url), 'utf8'));
-    const assets = JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/manifest.json'), 'utf8'));
-    return validateZkapiDeploymentPins(config, { network, circuitId: assets.circuitId, files: {
-        'proofs/request.pk': assets.files?.['assets/proofs/request.pk'],
-        'proofs/withdrawal.pk': assets.files?.['assets/proofs/withdrawal.pk']
-    } });
+    const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
+    return JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/config', `${network}.json`), 'utf8'));
 }
 
 export function zkapiBuildPlugins(network) {
