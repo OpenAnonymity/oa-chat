@@ -414,6 +414,101 @@ includes an additional buffer that is not necessarily spent. Ethereum's
 gas-times-price calculation, and its [network documentation](https://ethereum.org/developers/docs/networks/)
 distinguishes test assets from actual-value Mainnet transactions.
 
+## Mainnet MetaMask $26.45 fee investigation (2026-09-28)
+
+The user reported a pending Mainnet deposit quote of $26.45 on MetaMask's Slow
+setting, with gas limit **6,759,269**, max base fee **1.6097 gwei** and priority
+fee **0.0001 gwei**. These are user-reported pending UI fields, not a submitted
+transaction or captured provider payload.
+
+At **14:22:51 UTC**, public Mainnet block **26076524** had base fee
+**1.347259214 gwei**. The pinned finalized Chainlink ETH/USD round (updated
+14:02:35 UTC) was **$2,682.88068716**. At that snapshot:
+
+- Spending all 6,759,269 reported gas units at base fee alone costs about
+  **$24.4316**. Adding the reported tip gives **$24.4334**.
+- The entire priority fee is only **0.0000006759269 ETH**, about **$0.0018**.
+  A lower tip cannot materially change the quote. The reported $26.45 is
+  consistent with this gas magnitude and moving fees; it is not an exact
+  reconstruction of MetaMask's own price source or estimation timestamp.
+- Treating the reported maximum base allowance plus tip as 1.6098 gwei gives
+  about **0.0108810712362 ETH / $29.19** maximum for that gas limit. Expected
+  fees and maximum allowance are distinct; unused gas is not charged.
+- The observed base fee is **5.32 times** the prepublication RPC gas-price
+  sample of 0.253192496 gwei. Earlier low Mainnet price observations were not a
+  durable property of Mainnet. The expensive contract work affects both chains.
+
+The installed SDK's MetaMask path does not set gasPrice, maxFeePerGas or
+maxPriorityFeePerGas. It asks the wallet to estimate the exact call and sets a
+bounded gas limit: floor(estimate × 1.2) + 50,000. The actual legacy Mainnet
+frontend `NVSQQZXU` used SDK `08c7666e949169b87de8b5ebaacbe106d7432b0e`, whose
+gas helper is byte-identical to native SDK `cf56d67`. A local provider mock and
+two focused tests confirmed the supplied fields are from/to/data/value/gas;
+MetaMask controls fee rates. Native adds payable value and skips token approval.
+The reported gas limit is already near measured deposit consumption; do not
+attribute this specific $26.45 quote to the SDK's generic headroom without
+capturing the actual wallet transaction parameters.
+
+The actual legacy deployment manifest identifies protocol
+`e4efda23e6d416ee132938e4e67924fb0f7d4fe2`. Its Poseidon and Merkle source files
+and compiler configuration are identical to current `8b2d4e3`, and both Mainnet
+vaults use Poseidon library `0xc6B55e86668d8c446B3D81273AAb9CBb20F28c7f`.
+Deposit verifies the old root and computes the new one: 32 levels × two node
+hashes, with two domain-separated sponge permutations per node hash. This is
+128 permutations plus the leaf's three. Deposit does not call the Groth16
+verifier, so the note-binding security repair does not add deposit verification.
+
+Fresh controlled call benchmarks passed ten tests with solc 0.8.28, via IR,
+optimizer 10,000, Prague and identical current dependencies:
+
+| Source/asset | Deposit-call gas |
+| --- | ---: |
+| Legacy e4efda2-equivalent contracts, mock ERC20 | 6,090,717 |
+| Pre-native b542b1b, mock ERC20 | 6,090,717 |
+| Native a88fbb8 before note-binding repair | 6,063,084 |
+| Current 8b2d4e3, mock ERC20 | 6,090,809 |
+| Current 8b2d4e3, native ETH | 6,063,084 |
+
+Native saves 27,633 gas (about 0.454%) versus legacy in this fixture; the security
+repair adds zero native deposit gas. Root-call measurement was 5,828,831 gas in
+every case, roughly 96% of native call cost. This fixture uses ERC20Mock, one
+note in an empty tree, current dependencies and gasleft around a call, including
+encoding/sibling reads. These numbers are not live receipt totals, live USDC
+measurements, or an exact live opcode attribution. The fixture's optimizer
+setting also differs from the Mainnet release artifact's 200-run setting.
+Archived 58eea17 was executed for legacy; its complete contracts tree is
+byte-identical to actual legacy e4efda2. A historical Mainnet receipt comparison
+was unavailable through the configured public RPC's archive access; no claim
+is made about the user's unidentified earlier transaction. Native deposit logs
+were empty through block 26076524, consistent with a pending new deposit.
+
+The substantive optimization target is implementation-equivalent Poseidon code
+that preserves constants, domains, sponge operations and outputs, with
+cross-language differential tests and independent review. A generic Poseidon
+hash2 is not a compatible replacement. The linked vaults are immutable, so
+contract optimization requires a new reviewed deployment and explicit wallet
+recovery/migration handling. Lowering the gas limit does not reduce required
+work and can cause out-of-gas failure. No fee policy, contract, deployment or
+wallet state was changed during this investigation.
+
+The gas rise also affects challenger funding. At **14:29:37 UTC**, block
+**26076556**, challenger `0x667F2BB2aC6f56516B2e064B8be91526E86A6fF3`
+still held **0.005 ETH** (mined/pending nonce 0/0), while RPC gas price was
+**1.565704917 gwei**. The installation readiness allowance of 10,000,000 gas
+therefore required **0.01565704917 ETH**, a **0.01065704917 ETH** reserve gap.
+The daemon sets its transaction gas limit to the estimate plus 20%, within the
+signer's 10M-gas and 3-gwei limits; this does not establish that every challenge
+would fail. Current funds cover approximately 3.19M gas at that price. The full-ceiling reserve
+check runs at installation, not continuously, so a healthy running service
+does not establish adequate challenge funding. At the snapshot the vault held
+zero ETH, had zero notes and was unpaused; pending challenges were zero, and
+checkpoints advanced through 26076560 at 14:30:41 UTC. No funding, pause or
+other runtime change was made. Recheck gas prices and reserves before relying
+on readiness for new deposits.
+
+See [Ethereum gas calculation](https://ethereum.org/developers/docs/gas/) and
+[MetaMask's gas controls](https://support.metamask.io/more-web3/learn/user-guide-gas).
+
 ## Low-fee address transactions (2026-09-27)
 
 Low is the default for new Send-to-an-address deposits, withdrawals and public

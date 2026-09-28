@@ -1,3 +1,32 @@
+## 2026-09-28: Mainnet high-fee investigation
+
+- User's pending MetaMask Slow quote was $26.45, with gas limit 6,759,269,
+  max base fee 1.6097 gwei and tip 0.0001 gwei. At 14:22 UTC Mainnet base fee
+  was 1.347259214 gwei and the finalized ETH/USD quote $2,682.88: the reported
+  gas limit would cost about $24.43 if fully consumed at base plus that tip.
+  The tip contributes only $0.0018. Base fee was 5.32× the prepublication
+  gas-price sample, so the earlier assumption that expensive fees were
+  Sepolia-only was too broad.
+- No native-asset gas regression or new MetaMask fee override was found. The
+  actual legacy Mainnet SDK uses the same gas-estimate padding and leaves all
+  fee rates to MetaMask. Native skips ERC20 approval/transfer; old and new
+  contracts share the same expensive Poseidon/Merkle code and linked library.
+- Ten controlled same-environment tests found 6,090,717 gas for legacy mock
+  token deposit versus 6,063,084 for native, with no extra deposit gas from the
+  note-binding repair. Approximately 96% was root hashing in this fixture.
+  These are not live USDC/receipt measurements or exact live opcode shares.
+- Equivalent hashing optimization needs differential proof-format tests and a
+  new vault rollout; reducing a wallet gas limit does not reduce contract work.
+  No runtime, fee setting, contract or wallet was changed by the investigation.
+- At 14:29 UTC the same gas-price rise put the challenger's 0.005 ETH below
+  the installation readiness allowance: 10M gas at 1.565704917 gwei requires
+  0.01565704917 ETH. The daemon sets its transaction gas limit to the estimate
+  plus 20%, so this is a reserve gap, not proof every challenge would fail.
+  The vault had zero balance/notes and no pending challenges; checkpoints advanced. Readiness
+  funding is checked at installation, not continuously by service health.
+- Full timestamped arithmetic, source provenance and measurement limitations:
+  [Mainnet fee investigation](ZKAPI_PAYMENTS.md#mainnet-metamask-2645-fee-investigation-2026-09-28).
+
 ## 2026-09-28: Native ETH Mainnet public deployment
 
 - User explicitly authorized public Mainnet deposits after funding 0.005 ETH
