@@ -8,11 +8,42 @@ The native protocol work is isolated in `codex/native-eth-wallet` in the
 `zkapi-EF-collab` repository. Native implementation commit `abfd3a7` passed its
 initial independent review, but the deployment audit found inherited legacy
 protocol weaknesses. The rollout incorporated the separate
-note-bound circuit repair and durable challenge service before publication. The merged source is now independently approved at
+note-bound circuit repair and durable challenge service before publication. The deployed backend source is independently approved at
 `dfa0e42ca6dfec46e20dcb7ffd6ac44c2ccbebea`, with protocol
 `8b2d4e3da921f956e1eb6b93afbf722a877c060c`. It also namespaces upstream key
 replay by the complete accepted request/deployment, supports delayed issuance
 replay, and challenges active leases without waiting for final usage accounting.
+
+## Review merge: current Sepolia frontend
+
+The canonical origin **https://oa-wallet-eth-sepolia.vercel.app** serves app
+`5255a23d3373d45e679d97499e6bcb28bedbe2f8`, immutable SDK
+`2e9647cecec78e1258b34f8be1bc85ea2378cd66`, build `IPB766G3`, Vercel production
+deployment `dpl_B7BXWut3W6uYnupsjwX3CAacAzjo` (READY). The SDK merge has native
+parent `6f12f3b` and review parent `2eda8f3`; protocol/vault/proof pins are
+unchanged. Exact deposit confirmation now survives a later display refresh
+failure, with truthful pending/confirmed UI and no second funding prompt.
+See the [review acceptance matrix](ZKAPI_REVIEW_MERGE_20260927.md).
+
+Source validation passed 1,400 app tests, 305 SDK tests, 141 integration Rust
+tests, 82 protocol Rust tests, 27 Solidity tests, two real shipped-WASM proofs,
+11 restricted signer tests and four launcher smoke checks. Fresh independent
+reviews approved the final SDK/backend and host diffs. Both app network builds
+pass; Mainnet still reports `migration_required` and is not published.
+
+Independent verification matched all 486 published artifact hashes; public
+browser configuration, deployment configuration, health and billing quote all
+returned HTTP 200. A fresh canonical browser confirmed the release identity,
+accountless ETH/USD funding, collapsed help and disabled unfunded Next. Four
+unit switches took 8.2–17.6 ms without changing principal; no JavaScript page
+errors appeared. The browser was closed without signing or inference.
+
+This frontend release does **not** replace the live AWS daemon, org, station,
+challenger or contracts. The optional proxy/direct-OpenRouter backend changes
+are merged and tested in source; the deployed native OA flow already uses the
+note-bound protocol, historical-root repair and v2 active-lease challenger from
+`dfa0e42`. No new live funding, provider inference or challenge was submitted
+for this merge; prior live acceptance below remains historical evidence.
 
 ## Unused first test vault
 
@@ -100,9 +131,9 @@ Both new Vercel origins were added to staging org credentialed CORS and OAuth
 return allowlists. Existing origins, RP ID, cookies and signing identity were
 preserved; new/existing-origin positive checks and unknown-origin denial pass.
 
-## Compact address screen: current Sepolia release
+## Compact address screen: earlier Sepolia release
 
-The canonical site **https://oa-wallet-eth-sepolia.vercel.app** now serves
+The canonical site **https://oa-wallet-eth-sepolia.vercel.app** previously served
 deployment `dpl_B2SCH5aHQuqR4GRB1UqxCowehmvo`, app
 `f9ee03fc96b631b01a3c6a1bea21fbeb5c72e41d`, SDK
 `6f12f3b520989d24c50fbeee33b4c42b761d5651`, build `SXHXD7RB`.

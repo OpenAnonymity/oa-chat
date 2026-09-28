@@ -75,7 +75,24 @@ failures. Fresh independent reviews approved both the SDK/backend merge and
 final host diff after the reported issues were fixed. The final host follow-up
 also passed 115 focused checks of pending confirmation, exact-note display
 recovery, Welcome-to-Account handoff, and suppression of a second funding prompt.
-The canonical Sepolia publication identity is recorded below after deployment.
+The Sepolia frontend is published at **https://oa-wallet-eth-sepolia.vercel.app**,
+app `5255a23d3373d45e679d97499e6bcb28bedbe2f8`, SDK `2e9647c`, build `IPB766G3`,
+Vercel production deployment `dpl_B7BXWut3W6uYnupsjwX3CAacAzjo` (READY).
+All 486 published file hashes match the reviewed build; public config, health
+and billing-quote checks return HTTP 200. Both final app network builds pass;
+Mainnet remains `migration_required`.
+The live AWS backend remains `dfa0e42`; optional backend-mode changes are merged
+and tested in source, not newly deployed. Contracts, keys and protocol pins did
+not change.
+
+The final canonical browser smoke verified `IPB766G3` / app `5255a23` / SDK
+`2e9647c`, accountless native ETH/USD funding, initially closed help and optional
+account wording. Four unit switches took 8.2–17.6 ms and preserved the exact
+0.003767075 ETH principal, returning to the original USD input. Unfunded Next
+stayed disabled; no visible alert or JavaScript page error appeared. The fresh
+browser was closed without transactions, inference, login or reading private
+storage. The exceptional confirmed-but-refresh-pending branch is covered by
+SDK and host regressions, not by a new funded browser transaction.
 
 ## Release boundaries
 

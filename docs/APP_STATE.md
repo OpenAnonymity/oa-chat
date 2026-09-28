@@ -23,6 +23,13 @@
   integration Rust tests, 82 protocol Rust tests, 27 Solidity tests, two real
   shipped-WASM proofs, 11 signer tests and four launcher tests pass. Fresh
   independent reviews approved both final diffs; Rust formatting/Clippy pass.
+- Published frontend: app `5255a23`, SDK `2e9647c`, build `IPB766G3`,
+  deployment `dpl_B7BXWut3W6uYnupsjwX3CAacAzjo` on the canonical native Sepolia
+  origin. All 486 file hashes match and four public endpoint checks return 200.
+  Canonical browser checks passed; four unit switches took 8.2–17.6 ms with
+  unchanged exact principal, no page errors and unfunded Next disabled.
+  AWS/backend/contracts are unchanged; optional backend-mode changes are
+  merged/tested in source. See the acceptance matrix for this boundary.
 - Do not confuse the newly merged ERC20 AWS/CLI acceptance examples with this
   native deployment. Full Google login and native Mainnet publication remain
   outside the completed acceptance coverage.
