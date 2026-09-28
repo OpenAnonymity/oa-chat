@@ -1,3 +1,28 @@
+## 2026-09-28: Fresh Mainnet and Sepolia infrastructure
+
+- User requested fresh latest-main zkAPI deployments with new Ethereum
+  addresses on both networks. Two new isolated EC2 instances are provisioned.
+  Both networks' contracts are finalized and HTTPS read-only acceptance passed.
+  Mainnet deployment cost 0.009639044233442061 ETH of the funded 0.02 ETH.
+  Sepolia's funded real-SDK normal-flow test passed deposit, issuance,
+  verification, inference, settlement and finalized mutual withdrawal with the
+  exact refund and treasury payout. This was a headless acceptance test, not a
+  browser UI test or frontend cutover. Existing services and wallet recovery
+  origins are preserved.
+- The user explicitly deferred Mainnet challenger funding. Ordinary issuance,
+  settlement and cooperative withdrawal do not require challenger gas; stale
+  escapes cannot be contested until it is funded. Mainnet deployment completed
+  within its funded 0.02 ETH balance, retaining 0.010360955766557939 ETH.
+- Each network has separate owner/deployer, earnings treasury, challenger and
+  protocol signing material. Only the treasury credential belongs in an
+  earnings-only operator handoff; note closure pays earnings automatically.
+- In the dynamic lease path, the legacy `request_charge_cap` value (50,000
+  gwei here) is a minimum proof solvency. The actual lease ceiling is bound by
+  `public.solvency_bound` and may exceed that value. Do not describe the legacy
+  configuration field as a universal maximum request budget.
+- See [fresh deployment record](ZKAPI_FRESH_DEPLOYMENT_20260928.md) for resource
+  identities, credential locations, operational status and handoff details.
+
 ## 2026-09-28: Current Linux package runtime trials
 
 - Docker on `rockypika` built current daemon source `d22c80d` into a fresh
