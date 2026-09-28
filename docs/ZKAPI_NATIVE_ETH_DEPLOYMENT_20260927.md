@@ -100,9 +100,63 @@ Both new Vercel origins were added to staging org credentialed CORS and OAuth
 return allowlists. Existing origins, RP ID, cookies and signing identity were
 preserved; new/existing-origin positive checks and unknown-origin denial pass.
 
-## Dynamic deposit quotes: current Sepolia release
+## Low network fees: current Sepolia release
 
-The current canonical site is **https://oa-wallet-eth-sepolia.vercel.app**,
+The canonical site **https://oa-wallet-eth-sepolia.vercel.app** now serves
+Vercel deployment `dpl_ANwtdv4QYnsF2jwnfn3KTQcjCixN`, app source
+`bfe09cf3ca162d2bcbc3c3d4efe7133b772f981e`, SDK
+`6f12f3b520989d24c50fbeee33b4c42b761d5651`, build `VUJXGHPE`.
+Independent verification matched all 486 live artifact hashes and checked
+the unchanged native Sepolia vault, staging issuer and public endpoints.
+Mainnet remains guarded and unpublished.
+
+New address deposits, withdrawals and public ETH returns use the median
+10th-percentile priority reward from nonempty blocks within the latest 20
+blocks, with a 0.001-gwei floor. The fee cap uses 1.25 times current base fee
+plus that tip. Strict, fresh, block-anchored history is required; malformed
+or unavailable history refuses signing instead of falling back to an expensive
+node suggestion. Gas limits, spending caps, durable journal replay and explicit
+submission remain unchanged. Existing signed transactions retain their exact
+bytes. MetaMask continues to set its own fees.
+
+All 886 core and 454 payment tests passed (1,340 total), including real-EVM
+simulation, fee-spike refusal and modest-rise execution within the approved
+cap. A fresh adversarial review approved the final source. Desktop and mobile
+preview checks verified the Low-fee guidance and quote layout.
+
+The same-block Sepolia comparison at block 11797083 reduced the maximum fee
+reserve from 0.01565140231992339 to 0.009785179194182595 ETH (37.48%).
+The priority tip remained 0.001 gwei. This is a reduction in prefunding and
+fee headroom, not a claim of 37.48% lower actual charges: the earlier deposit
+already spent 99.9057% of its network fee on base fee rather than the tip.
+Lower headroom can require more waiting when base fees rise; there is no
+automatic fee bump.
+
+The canonical browser profile also completed a live Low-fee mutual withdrawal
+of the retained 744,884-gwei test note. Two affordability failures were refused
+before signing as fees moved; explicit test-account top-ups of
+0.000734714560264192 and 0.003 ETH and explicit Continue withdrawal resumed
+the existing authorization. Transaction
+`0xd3d2dd7ef4dcbecdc0362fd71045f70e52866e57b6b39e22c1778e0fd00991b8`
+mined successfully in block 11797127, using account nonce 4. It signed with
+maximum fee 1.292962397 gwei and priority fee 0.001 gwei, used 7,043,946 gas,
+and paid 0.007545454436185302 ETH. The inclusion base fee was 1.070197087
+gwei. Confirmed and pending account nonces both became 5. The UI reported
+the correct payout to the controlled test operator and retained its history.
+Full browser closure and reopening preserved that history, the funding address
+and Low-fee guidance; both nonces stayed 5 with no additional transaction.
+The public funding address retains 0.006438321354938754 test ETH for future
+fees; no further sweep was requested. This receipt is mined evidence, not a
+claim that its block has reached Ethereum finality.
+
+Public-only evidence is in the protected bundle's `live-e2e/low-fee-*` files.
+This fee-only live acceptance exercises the shared address signer through a
+withdrawal. The earlier live deposit/recovery/chat run and current real-EVM
+deposit tests supply the remaining coverage; a new live deposit was not made.
+
+## Dynamic deposit quotes: earlier Sepolia release
+
+The earlier dynamic-quote release at **https://oa-wallet-eth-sepolia.vercel.app** was
 Vercel deployment `dpl_7Rp4HvNH1P1Xi39rcCKJmuhHMF3E`, app source
 `ca008e64998fee4808b2ba2ad737abc36902044a`, SDK
 `6f12f3b520989d24c50fbeee33b4c42b761d5651`, build hash `PE25UOAE`.

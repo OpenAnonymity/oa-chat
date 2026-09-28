@@ -22,6 +22,21 @@
   reserve from 0.01565140231992339 to 0.009785179194182595 ETH (37.48%) for
   the same gas limit and unchanged 0.001-gwei tip. This is a read-only quote
   comparison, not a claimed reduction in the actual transaction charge.
+- Published at `oa-wallet-eth-sepolia.vercel.app`, app `bfe09cf`, SDK
+  `6f12f3b`, build `VUJXGHPE`; independent verification matched all 486 live
+  artifact hashes and returned 200 for config, health and billing quote.
+- Live Low-fee withdrawal succeeded at Sepolia block 11797127 with nonce 4,
+  maximum fee 1.292962397 gwei and tip 0.001 gwei. Two fee-shortage refusals
+  occurred before signing; explicit controlled test top-ups and retry resumed
+  the same authorization. One transaction returned the retained test principal,
+  paid 0.007545454436185302 ETH and left 0.006438321354938754 public test ETH.
+  See [deployment evidence](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md).
+- Known preexisting UI follow-up: five-second address-status refreshes reset
+  the withdrawal acknowledgement checkbox. It fails safely by disabling the
+  action, but can interrupt slower users. Preserve acknowledgement only across
+  read-only refreshes for the same note, wallet method, withdrawal mode and
+  destination; reset it on context changes and dialog closure. Independent
+  review accepts this usability limitation for the fee-only release.
 
 ## 2026-09-27: Browser custody and native ETH funding (Sepolia live)
 
