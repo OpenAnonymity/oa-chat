@@ -453,6 +453,14 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
     letter-spacing: -0.02em;
     font-variant-numeric: tabular-nums;
 }
+.zkapi-balance-eth {
+    margin-top: 0.375rem;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
 .zkapi-pill {
     align-self: center;
     padding: 0.1875rem 0.5rem;

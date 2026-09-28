@@ -87,6 +87,16 @@ static hosts actually serve. Pin updates
 must change the package dependency and lock together; floating SDK branch
 references and local workspace dependencies are rejected by enabled builds.
 
+## Native balance details
+
+Balance details retain the USD available balance and show its exact ETH amount
+directly beneath it on native deployments. Both use the same available ledger
+balance, or zero after a confirmed expiry claim. The ETH line uses the SDK's
+`formatBillingAmount` integer-gwei conversion with up to nine decimal places;
+it is not derived from the rounded USD display. It remains available when the
+oracle is stale and the USD value displays `—`. Rendering adds no network reads
+or wallet operations.
+
 ## Application integration
 
 The standalone entry uses `startChatApp()` from `chat/publicApi.js`, which

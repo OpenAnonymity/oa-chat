@@ -1,3 +1,12 @@
+## 2026-09-28: ETH in balance details
+
+- Native balance details show exact ETH beneath the existing USD available
+  balance. The SDK's integer-gwei formatter preserves all nine ETH decimals,
+  independently of the USD oracle; stale pricing leaves USD unavailable while
+  ETH remains visible. Claimed balances use zero for both amount calculations.
+- This is display-only, with no new price requests or wallet operations. See
+  [native balance details](ZKAPI_PAYMENTS.md#native-balance-details).
+
 ## 2026-09-28: Actual historical Mainnet USDC fees verified
 
 - The user supplied old Mainnet vault `0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709`.

@@ -985,6 +985,7 @@ export default class AccountModal {
         }
 
         const claimed = Boolean(zkapiClient.noteExpiryClaim);
+        const available = claimed ? 0 : note.current_balance;
         const expired = privateBalanceExpired(note);
         const spent = Math.max(0, Number(note.deposit_amount) - Number(note.current_balance));
         const percent = claimed ? 0 : this.progressPercent(note);
@@ -994,7 +995,8 @@ export default class AccountModal {
                     <div class="zkapi-balance-top">
                         <div>
                             <p class="zkapi-balance-caption">Available</p>
-                            <p class="zkapi-balance-amount">${zkapiClient.formatMoney(claimed ? 0 : note.current_balance)}</p>
+                            <p class="zkapi-balance-amount">${zkapiClient.formatMoney(available)}</p>
+                            ${zkapiClient.isNativeEthFunding ? `<p class="zkapi-balance-eth">${this.escapeHtml(zkapiClient.formatBillingAmount(available))} ETH</p>` : ''}
                         </div>
                         <span ${!claimed && !zkapiClient.withdrawalBlocksChat ? 'data-private-balance-readiness' : ''} class="zkapi-pill ${claimed ? 'bg-muted text-muted-foreground' : zkapiClient.withdrawalBlocksChat || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : 'badge-status-success'}">${claimed ? 'claimed' : zkapiClient.withdrawalBlocksChat ? (['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Submitted' : 'Needs attention') : expired ? 'expired' : 'ready'}</span>
                     </div>
