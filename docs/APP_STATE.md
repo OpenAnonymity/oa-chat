@@ -11,7 +11,7 @@
   operation, commitment and displayed fee ceiling. Receipt-backed actual fee is
   saved with deposit history and the remaining public ETH is polled separately.
   Tiny leftovers remain possible; the estimate does not promise an exact charge.
-- Dynamic-quote validation: 886 core + 446 payment tests and 298 SDK tests pass,
+- Dynamic-quote validation: 886 core + 448 payment tests and 298 SDK tests pass,
   including unfunded state-override simulation on a real local EVM, pre-sign fee
   rejection, exact remaining-balance arithmetic, concurrent edits, browser-state
   reloads and saved-plan method switching. Fresh adversarial review approved
@@ -33,7 +33,10 @@
   Expected fee uses simulated gas at current base fee plus tip; the buffer is the
   difference up to SDK-padded gas at the EIP-1559 maximum fee. Signing rechecks
   gas/fees and expires the authorization before any signature if the quote is
-  stale. SDK quote drafts never become pending deposits until explicit Next.
+  stale. At signing, fresh EIP-1559 headroom is clamped to the already approved
+  total allowance while still covering the next-block minimum plus tip. This
+  lets the buffer absorb modest increases without silently raising its cap.
+  SDK quote drafts never become pending deposits until explicit Next.
 - Definitely unsubmitted prepared deposits can re-enter the same quote screen
   with a fixed principal after reload or a pre-sign failure. The SDK alone
   declares this state safe; host UI never infers it from missing public hashes.

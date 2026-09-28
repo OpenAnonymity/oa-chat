@@ -93,7 +93,7 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
     }) });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Send 0\.0015 ETH more/);
-    assert.match(html, /Already at this address<\/dt><dd>− 0\.004 ETH/);
+    assert.match(html, /Available toward this deposit<\/dt><dd>− 0\.004 ETH/);
     assert.match(html, /Total ETH to send<\/dt><dd>0\.0015 ETH/);
     assert.doesNotMatch(html, /Received/);
 });

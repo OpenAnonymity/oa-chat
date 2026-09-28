@@ -109,7 +109,7 @@ test('real EVM quotes an unfunded payable deposit, enforces its cap, and account
     await provider.ensureAddress();
     await assert.rejects(rpc('eth_call', [prepared.transaction, 'pending']), 'the native value cannot execute from an unfunded account');
 
-    let quote = await provider.getDepositFeeQuote(INTENT);
+    const quote = await provider.getDepositFeeQuote(INTENT);
     assert.equal(signedBytes.length, 0);
     assert.equal(await rpc('eth_getTransactionCount', [OWN, 'pending']), '0x0');
     assert.equal(await rpc('eth_getBalance', [OWN, 'latest']), '0x0', 'state override did not fund the real account');
@@ -141,15 +141,11 @@ test('real EVM quotes an unfunded payable deposit, enforces its cap, and account
     assert.equal(await rpc('eth_getTransactionCount', [OWN, 'pending']), '0x0');
     assert.equal(provider.pending, null);
 
-    const refreshed = await provider.getDepositFeeQuote(INTENT);
-    assert(BigInt(refreshed.feeReserveWei) > BigInt(quote.feeReserveWei));
-    assert.equal(refreshed.operationId, quote.operationId);
-    assert.equal(refreshed.depositCommitment, quote.depositCommitment);
-    quote = refreshed;
-    await rpc('anvil_setBalance', [OWN, `0x${(BigInt(INTENT.depositWei) + BigInt(quote.feeReserveWei)).toString(16)}`]);
-    authorization.feeLimitWei = quote.feeReserveWei;
-    authorization.feeQuoteExpiresAt = quote.expiresAt;
-    transaction.gas = `0x${BigInt(quote.gasLimit).toString(16)}`;
+    // Return to a modest 10% increase over the original base fee. The already
+    // approved quote has enough headroom; no new quote, top-up or higher fee
+    // authorization is needed to spend within its original total allowance.
+    await rpc('anvil_setNextBlockBaseFeePerGas', [`0x${(BigInt(beforeFeesRise.baseFeePerGas) * 11n / 10n).toString(16)}`]);
+    await rpc('anvil_mine', ['0x1']);
     const hash = await send(authorization);
     const receipt = await rpc('eth_getTransactionReceipt', [hash]);
     assert.equal(receipt.status, '0x1');
@@ -159,6 +155,7 @@ test('real EVM quotes an unfunded payable deposit, enforces its cap, and account
     assert.equal(signed.value, BigInt(INTENT.depositWei));
     assert.equal(signed.data, prepared.transaction.data);
     assert.equal(signed.gasLimit, BigInt(quote.gasLimit));
+    assert.equal(signed.maxFeePerGas, BigInt(quote.feeReserveWei) / signed.gasLimit);
     assert(signed.gasLimit * signed.maxFeePerGas <= BigInt(quote.feeReserveWei));
     assert(actualFee <= BigInt(quote.feeReserveWei));
     assert.equal(BigInt(await rpc('eth_getBalance', [VAULT, 'latest'])), BigInt(INTENT.depositWei));

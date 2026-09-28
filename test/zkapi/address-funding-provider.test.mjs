@@ -868,6 +868,49 @@ test('native deposit cannot exceed the displayed fee cap or substitute a prepare
     }
 });
 
+test('approved deposit fee buffer covers modest fee or gas changes without increasing the authorized total', async () => {
+    for (const changed of ['fee', 'gas', 'both']) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+        const prepared = await h.provider.prepareDepositQuote(NATIVE_INTENT.ethAmount, { from: OWN });
+        const context = { ...CONTEXT, kind: 'deposit', operationId: prepared.operationId, submissionId: 'deposit-sub',
+            amount: prepared.amount, commitment: prepared.commitment };
+        const authorization = { kind: 'deposit', amount: prepared.amount, feeLimitWei: quote.feeReserveWei,
+            preparedOperationId: quote.operationId, depositCommitment: quote.depositCommitment, feeQuoteExpiresAt: quote.expiresAt };
+        if (changed !== 'gas') h.rpc.baseFee = `0x${(BigInt(h.rpc.baseFee) * 11n / 10n).toString(16)}`;
+        if (changed !== 'fee') h.rpc.gas = `0x${(BigInt(h.rpc.gas) * 11n / 10n).toString(16)}`;
+        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + BigInt(quote.feeReserveWei)).toString(16)}`;
+        const gasLimit = BigInt(bufferedGasLimit(BigInt(h.rpc.gas)));
+        await h.send({ ...prepared.transaction, gas: `0x${gasLimit.toString(16)}` }, context, authorization);
+        const signed = Transaction.from(h.sent[0]);
+        const approvedPerGas = BigInt(quote.feeReserveWei) / gasLimit;
+        const minimumFee = BigInt(h.rpc.baseFee) + (BigInt(h.rpc.baseFee) / 8n || 1n) + BigInt(h.rpc.priorityFee);
+        assert.equal(signed.maxFeePerGas, approvedPerGas);
+        assert(signed.maxFeePerGas >= minimumFee);
+        assert(signed.gasLimit * signed.maxFeePerGas <= BigInt(quote.feeReserveWei));
+        if (changed !== 'fee') {
+            assert(BigInt(quote.feeReserveWei) % gasLimit > 0n, 'non-divisible total fee rounds down safely');
+        }
+        await h.provider.reload();
+        assert.equal(h.provider.pending.hash, signed.hash);
+    }
+});
+
+test('approved deposit pricing distinguishes the hard safety limit from an exhausted quote buffer', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    const ctx = await h.provider.context();
+    const gasLimit = 170_000n;
+    const minimumFee = BigInt(h.rpc.baseFee) + BigInt(h.rpc.baseFee) / 8n + BigInt(h.rpc.priorityFee);
+    const exactMinimum = minimumFee * gasLimit;
+    const exact = await h.provider.transactionFees(ctx, gasLimit, exactMinimum);
+    assert.equal(exact.maxFeePerGas, minimumFee);
+    await assert.rejects(h.provider.transactionFees(ctx, gasLimit, exactMinimum - 1n), { code: 'address_fee_quote_changed' });
+    h.rpc.baseFee = `0x${300_000_000_001n.toString(16)}`;
+    await assert.rejects(h.provider.transactionFees(ctx, gasLimit, '1'), { code: 'address_fee_limit' });
+    assert.equal(h.sent.length, 0);
+});
+
 test('funded native deposit uses its actual gas at reproduced Sepolia fees and retains the total fee cap', async () => {
     const h = harness({ config: NATIVE_FUNDING });
     await h.ready();

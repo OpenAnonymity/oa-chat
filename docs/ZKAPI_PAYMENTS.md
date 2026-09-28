@@ -175,6 +175,10 @@ quote and checks the saved amount before and after the asynchronous reads.
 An increased allowance requires reviewing the new quote and another explicit
 click. Submission binds the exact prepared operation, commitment, principal and
 fee ceiling, then rechecks simulation, fees and expiry before signing.
+Fresh maximum price can be clamped to that approved total allowance divided by
+actual padded gas, so modest increases consume the existing buffer instead of
+requiring a larger allowance. The current next-block base fee plus tip must
+still fit, and the signer never exceeds the amount already approved.
 
 After confirmation, canonical receipt gas usage/effective price yields an actual
 fee in SDK deposit history. The UI labels the current public address balance

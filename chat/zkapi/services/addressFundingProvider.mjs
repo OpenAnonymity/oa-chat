@@ -451,11 +451,11 @@ export class AddressFundingProvider {
         if (uint(await this.rpc(ctx, 'eth_chainId'), 'RPC network') !== ctx.chainId) throw fail('The payment network connection is on the wrong chain.', 'wrong_network');
     }
 
-    async transactionFees(ctx, gasLimit) {
-        return (await this.transactionFeeQuote(ctx, gasLimit)).fees;
+    async transactionFees(ctx, gasLimit, approvedFeeLimit = null) {
+        return (await this.transactionFeeQuote(ctx, gasLimit, approvedFeeLimit)).fees;
     }
 
-    async transactionFeeQuote(ctx, gasLimit) {
+    async transactionFeeQuote(ctx, gasLimit, approvedFeeLimit = null) {
         const [block, suggestedTip] = await Promise.all([
             this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]),
             this.rpc(ctx, 'eth_maxPriorityFeePerGas')
@@ -475,11 +475,18 @@ export class AddressFundingProvider {
         const minimumFee = nextBaseFee + maxPriorityFeePerGas;
         const desiredFee = (baseFee * 2n > nextBaseFee ? baseFee * 2n : nextBaseFee) + maxPriorityFeePerGas;
         const budgetCap = MAX_TRANSACTION_FEE / gasLimit;
-        const feeCap = budgetCap < MAX_GAS_PRICE ? budgetCap : MAX_GAS_PRICE;
-        const maxFeePerGas = desiredFee < feeCap ? desiredFee : feeCap;
-        if (maxFeePerGas < minimumFee) {
+        const safetyCap = budgetCap < MAX_GAS_PRICE ? budgetCap : MAX_GAS_PRICE;
+        if (safetyCap < minimumFee) {
             throw this.paymentFailure('address_fee_limit');
         }
+        // A quote already reserves price headroom. Let that approved buffer
+        // cover modest fee/gas changes instead of demanding a fresh 2x-base
+        // reserve on every send. Never spend more than its total allowance.
+        const approvedCap = approvedFeeLimit == null ? safetyCap
+            : uint(approvedFeeLimit, 'authorized fee', MAX_TRANSACTION_FEE) / gasLimit;
+        const feeCap = approvedCap < safetyCap ? approvedCap : safetyCap;
+        if (feeCap < minimumFee) throw this.paymentFailure('address_fee_quote_changed');
+        const maxFeePerGas = desiredFee < feeCap ? desiredFee : feeCap;
         return { fees: { type: 2, maxFeePerGas, maxPriorityFeePerGas },
             expectedFeePerGas: baseFee + maxPriorityFeePerGas };
     }
@@ -702,7 +709,8 @@ export class AddressFundingProvider {
             if (estimate < 21_000n) throw fail('Invalid transaction gas estimate.');
             const gasLimit = maxEthReturn ? 21_000n : input.gas == null ? (estimate * 120n + 99n) / 100n : uint(input.gas, 'gas limit', MAX_GAS);
             if (gasLimit < estimate || gasLimit > MAX_GAS) throw fail('The gas limit is outside the allowed range.', 'transaction_gas_limit_exceeded');
-            const fees = await this.transactionFees(ctx, gasLimit);
+            const approvedFeeLimit = authorization.kind === 'deposit' && ctx.native ? authorization.feeLimitWei : null;
+            const fees = await this.transactionFees(ctx, gasLimit, approvedFeeLimit);
             const reserve = fees.maxFeePerGas * gasLimit;
             if (authorization.kind === 'deposit' && ctx.native && authorization.feeLimitWei != null
                 && (reserve > uint(authorization.feeLimitWei, 'authorized fee', MAX_TRANSACTION_FEE)
