@@ -17,6 +17,10 @@
   review approved the final diff. Actual browser checks covered collapsed and
   expanded details, keyboard and outside-click dismissal, a full fee-quote
   refresh with retained focus, and desktop/mobile amount layout.
+- Published on `oa-wallet-eth-sepolia.vercel.app`, app `f9ee03f`, SDK
+  `6f12f3b`, build `SXHXD7RB`. All 486 live artifact hashes match, all four
+  public config/health/quote checks returned 200, and the canonical browser
+  confirmed closed-by-default details, click expansion and removed slow copy.
 
 ## 2026-09-27: Native ETH versus earlier token gas comparison
 

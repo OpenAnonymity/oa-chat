@@ -100,9 +100,30 @@ Both new Vercel origins were added to staging org credentialed CORS and OAuth
 return allowlists. Existing origins, RP ID, cookies and signing identity were
 preserved; new/existing-origin positive checks and unknown-origin denial pass.
 
-## Low network fees: current Sepolia release
+## Compact address screen: current Sepolia release
 
 The canonical site **https://oa-wallet-eth-sepolia.vercel.app** now serves
+deployment `dpl_B2SCH5aHQuqR4GRB1UqxCowehmvo`, app
+`f9ee03fc96b631b01a3c6a1bea21fbeb5c72e41d`, SDK
+`6f12f3b520989d24c50fbeee33b4c42b761d5651`, build `SXHXD7RB`.
+The exact amount to send and address are prominent; principal, fees, buffer
+and explanations are behind a clickable question mark. Slow-confirmation
+explanations were removed. Fee policy, transaction amounts and signing are
+unchanged.
+
+All 129 focused UI/funding/recovery tests passed and fresh review approved the
+final diff. Browser checks covered desktop plus 390px and 320px widths, exact
+unbroken decimal amounts, default-hidden details, keyboard/outside dismissal,
+and a full 35-second quote-refresh interval with open state and focus retained.
+The refresh placeholder contains no stale numeric instructions or Next.
+Published verification matched all 486 artifact hashes, with four public
+config/health/quote checks returning 200. The canonical browser confirmed
+the amount display, disabled Next before funding, click expansion and absence
+of slow-fee copy. No funded transaction was needed for this presentation change.
+
+## Low network fees: earlier Sepolia release
+
+The earlier Low-fee release at **https://oa-wallet-eth-sepolia.vercel.app** used
 Vercel deployment `dpl_ANwtdv4QYnsF2jwnfn3KTQcjCixN`, app source
 `bfe09cf3ca162d2bcbc3c3d4efe7133b772f981e`, SDK
 `6f12f3b520989d24c50fbeee33b4c42b761d5651`, build `VUJXGHPE`.
