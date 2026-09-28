@@ -1,3 +1,31 @@
+## 2026-09-28: Actual historical Mainnet USDC fees verified
+
+- The user supplied old Mainnet vault `0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709`.
+  Etherscan shows 31 successful deposits: 6,769,348–6,798,742 gas each,
+  effective prices 0.032632814–0.218146265 gwei, and approximately $0.42–$3.67
+  per deposit using each transaction date's ETH/USD closing reference.
+- The September 22 deposit of 2 USDC used 6,769,771 gas at 0.144245936 gwei:
+  0.000976511954400656 ETH, about $2.69. The later native quote's sampled
+  5.388380983-gwei effective rate is 37.36 times higher. Repricing that exact
+  old deposit at the quote's rate/reference gives $98.29. The user's memory of
+  much cheaper deposits is correct; network gas pricing explains the increase.
+- Both exact Mainnet deployments link the same Poseidon library and have
+  identical hashing source. These actual Mainnet transactions supersede the
+  earlier reliance on Sepolia/mock-token comparisons for historical costs.
+  See [Mainnet receipt comparison](ZKAPI_PAYMENTS.md#historical-mainnet-usdc-receipts-2026-09-28).
+
+## 2026-09-28: Nearly $100 Mainnet deposit quote
+
+- A later MetaMask screenshot still has a 6,759,269 gas limit, with 6.8453-gwei
+  max base fee and a 0.1-gwei tip. At Mainnet block 26078062's 5.288380983-gwei
+  base fee and the app's valid $2,694.5224 ETH/USD reference, using that full gas
+  limit would cost about $98.14. This is an estimate, not a completed receipt.
+- Prior controlled comparisons and archived Sepolia token/native receipts show
+  slightly lower native gas consumption. Historical Mainnet USDC receipts were
+  subsequently checked above. The expensive shared tree update and gas pricing
+  explain the quote; changing the deposit asset does not remove the hashing cost.
+- See the [quote investigation](ZKAPI_PAYMENTS.md#mainnet-metamask-nearly-100-fee-quote-2026-09-28).
+
 ## 2026-09-28: Immediate payment method selection and user-approved fees
 
 - Payment method selection is local presentation state, independent of SDK
@@ -39,7 +67,8 @@
   remaining ETH transfer, including fees and subtracting the current address
   balance. Hide it with stale payment instructions on edits, quote failures,
   expiration or a fully funded address. The encoder is bundled; no remote QR
-  service or private data is used. Decoder tests cover both networks.
+  service or private data is used. Its caption is simply "Scan to pay"; the
+  redundant amount explanation underneath was removed. Decoder tests cover both networks.
 - See [wallet methods](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address)
   for amount persistence, quote boundaries and QR semantics.
 - Regression coverage includes locking both dialogs before asynchronous price

@@ -31,7 +31,6 @@ for (const [chainId, network] of [[1, 'Ethereum Mainnet'], [11155111, 'Ethereum 
         const amountWei = '1500000000000001';
         const html = renderFundingPaymentQr({ address, chainId, amountWei, network });
         assert.equal(decodeSvg(html), `ethereum:${address}@${chainId}?value=${amountWei}`);
-        assert.match(html, /Includes the ETH amount shown above/);
         assert.doesNotMatch(html, /<img|<script|href=|src=|data:/);
     });
 }
@@ -56,7 +55,7 @@ test('updated transfer instructions replace the QR without a repetitive network 
     const updated = renderFundingPaymentQr({ ...props, amountWei: '1500000000000000' });
     assert.notEqual(decodeSvg(initial), decodeSvg(updated));
     assert.equal(decodeSvg(updated), `ethereum:${address}@1?value=1500000000000000`);
-    assert.match(updated, /<figcaption>Scan to pay<span>/);
+    assert.match(updated, /<figcaption>Scan to pay<\/figcaption>/);
     assert.doesNotMatch(updated, /onload|Ethereum|Sepolia/);
     assert.doesNotMatch(updated, /<svg onload/);
 });

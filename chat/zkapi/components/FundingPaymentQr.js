@@ -41,6 +41,6 @@ export function renderFundingPaymentQr({ address, chainId, amountWei }) {
     if (!uri) return '';
     return `<figure class="zkapi-funding-qr" data-funding-payment-qr>
         ${qrSvg(uri)}
-        <figcaption>Scan to pay<span>Includes the ETH amount shown above.</span></figcaption>
+        <figcaption>Scan to pay</figcaption>
     </figure>`;
 }

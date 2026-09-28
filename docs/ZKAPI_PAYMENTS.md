@@ -227,7 +227,8 @@ The provider simulates the exact payable deposit with only the sender's balance
 overridden, then estimates its gas. RPCs lacking state-override support fail
 closed instead of substituting a fixed reserve.
 
-Valid address-payment instructions also display a locally generated QR code.
+Valid address-payment instructions also display a locally generated QR code
+with the short caption "Scan to pay" and no additional amount caption.
 Its [ERC-681 URI](https://eips.ethereum.org/EIPS/eip-681) binds the public
 funding address, configured chain ID and exact remaining transfer in wei:
 principal plus the fee allowance, less funds already held at that address.
@@ -434,9 +435,10 @@ Native used 0.1615% less gas than the earlier address/token deposit and paid
 older gas price gives 0.007440519287809800 ETH: the asset switch itself does
 not explain materially higher costs. The earlier token approval was a separate
 45,921-gas transaction costing 0.000044138983382823 ETH; do not compare an
-approval-only wallet quote with the whole deposit. No known historical Mainnet
-user receipt was supplied, so these are not assertions about that user's own
-Mainnet transactions.
+approval-only wallet quote with the whole deposit. At the time of this Sepolia
+comparison no historical Mainnet user receipt had been supplied. The later
+[actual Mainnet comparison](#historical-mainnet-usdc-receipts-2026-09-28)
+establishes the user's historical costs independently.
 
 The same comparison for withdrawal shows 7,057,861 gas / 0.007476799452342588
 ETH previously and 7,043,946 gas / 0.007545454436185302 ETH now. Gas usage fell
@@ -474,6 +476,74 @@ includes an additional buffer that is not necessarily spent. Ethereum's
 [gas documentation](https://ethereum.org/developers/docs/gas/) explains the
 gas-times-price calculation, and its [network documentation](https://ethereum.org/developers/docs/networks/)
 distinguishes test assets from actual-value Mainnet transactions.
+
+## Historical Mainnet USDC receipts (2026-09-28)
+
+The user supplied old Mainnet vault
+[`0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709`](https://etherscan.io/address/0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709).
+Its Etherscan history contains 54 transactions, including 31 successful deposit
+calls (`0xc588341c`, with the vault's deposit event). Reading all 31 transaction
+detail pages and verifying gas-used × effective-price against each fee gives:
+
+- Gas used: **6,769,348–6,798,742**.
+- Effective gas price: **0.032632814–0.218146265 gwei**.
+- Actual fees: **0.000220904538458786–0.001476713872634375 ETH**.
+- Approximately **$0.42–$3.67** using each transaction date's Etherscan ETH/USD
+  closing reference, rather than Etherscan's default current-dollar fee display.
+  This is a historical reference conversion, not an exact execution-time FX rate.
+
+The [September 22 deposit of 2 USDC](https://etherscan.io/tx/0x74c20b1a84bd8652baf319eeb9567de0e4b77dfa152945273dc00a3e15c39a92)
+used **6,769,771 gas** at **0.144245936 gwei**, paying
+**0.000976511954400656 ETH**, about **$2.69** at that date's $2,753.25 reference.
+Its base fee was 0.144145936 gwei and priority fee 0.0001 gwei. This was the
+full deposit, with a real USDC transfer and vault deposit event, not an approval.
+The user's recollection of substantially cheaper Mainnet deposits is correct.
+
+The native screenshot's 6,759,269 gas limit is essentially the same magnitude
+as that actual old consumption; a quote limit and a completed receipt are not
+identical measurements. The sampled native rate below, 5.288380983 base plus
+0.1 tip, is **37.36 times** that old effective gas price. Repricing the exact old
+deposit at that sampled rate and $2,694.5224 reference gives **$98.29**. The
+large dollar increase is explained by gas prices, not additional native hashing.
+
+Fresh reads of the old and new public manifests identify protocol e4efda23 and
+8b2d4e3 respectively, both linked to the same Mainnet Poseidon library
+`0xc6B55e86668d8c446B3D81273AAb9CBb20F28c7f`; public `eth_getCode` confirms that
+address in both vault runtimes. Those exact versions have byte-identical
+Poseidon, Merkle update, note-leaf source and source compiler configuration.
+
+Sanitized per-transaction evidence is saved locally as
+`~/.codex/deployments/zkapi-fresh-20260928/old-mainnet-usdc-receipt-comparison-public.json`.
+Historical receipt RPC calls to PublicNode returned null, so receipt fields
+above were verified from Etherscan rather than independently from that RPC.
+No transaction, contract change or deployment was performed.
+
+## Mainnet MetaMask nearly $100 fee quote (2026-09-28)
+
+The later screenshot reports gas limit **6,759,269**, max base fee **6.8453
+gwei**, and priority fee **0.1 gwei** for a roughly $2 deposit. These are wallet
+quote fields, not a submitted transaction or actual receipt.
+
+A read-only sample at **19:31:55 UTC** returned Mainnet block **26078062**
+(timestamp 19:31:47 UTC) with base fee **5.288380983 gwei**. The app's pinned
+finalized ETH/USD reference was **$2,694.5224**, updated at 18:30:35 UTC and
+within its 4,500-second validity window. Assuming the entire screenshot gas
+limit is consumed, base fee plus its 0.1-gwei tip gives
+**0.036421516538581427 ETH**, or **$98.14**. The tip alone contributes about
+**$1.82**. This explains the displayed order of magnitude without treating the
+maximum fee field as the actual inclusion price. The eventual charge depends
+on actual gas used and the inclusion block's fee.
+
+The amount deposited does not scale down the vault's tree-hashing work. Prior
+controlled legacy ERC20/native comparisons below found native slightly cheaper
+in gas, and token approval was an additional transaction. Those tests and
+Sepolia receipts are not the user's historical Mainnet USDC receipt. The recent
+browser fee-cap removal changes the address provider's acceptance policy; it
+does not change MetaMask's fee rates or the deployed vault's computation.
+
+The sanitized read-only sample and arithmetic are saved locally as
+`~/.codex/deployments/zkapi-fresh-20260928/mainnet-fee-screenshot-20260928-public.json`.
+No wallet connection, signature, transaction or deployment was performed.
 
 ## Mainnet MetaMask $26.45 fee investigation (2026-09-28)
 
