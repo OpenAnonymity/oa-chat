@@ -478,8 +478,9 @@ export default class AccountModal {
                 ...(phase ? { phase } : {})
             });
         };
+        let releaseWalletMethod;
         try {
-            await prepareWalletMethod();
+            releaseWalletMethod = await prepareWalletMethod();
             if (getWalletMethod() === 'address') await runAddressAction(this, activityDetails, report, () => action(report));
             else await action(report);
             if (activityId) zkapiClient.completeActivity(activityId, {
@@ -526,6 +527,7 @@ export default class AccountModal {
             // safe retry/canceled state, so do not present it as an app error.
             this.outcome = { message: this.status, tone: recoverable || confirmationPending || rejected ? 'info' : 'error', canceled: rejected };
         } finally {
+            releaseWalletMethod?.();
             this.rememberRunningModal(this.hasPendingDepositConfirmation());
             this.busy = false;
             this.backgroundProgress = null;
@@ -951,7 +953,7 @@ export default class AccountModal {
                     ?? zkapiClient.suggestedDeposit.toFixed(zkapiClient.suggestedDeposit < 0.01 ? 6 : 2);
             const mainnet = zkapiClient.isMainnetFunding;
             const demoMintEnabled = zkapiClient.config?.funding?.demo_mint_enabled;
-            const helper = zkapiClient.isNativeEthFunding ? `${zkapiClient.networkName()} · ETH` : mainnet
+            const helper = zkapiClient.isNativeEthFunding ? '' : mainnet
                 ? 'USDC on Ethereum'
                 : demoMintEnabled
                     ? 'Sepolia testnet · demo billing tokens are provided when needed'
@@ -963,7 +965,7 @@ export default class AccountModal {
                             <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" ${this.outcome?.field === 'deposit' ? 'aria-invalid="true" aria-describedby="zkapi-deposit-error"' : ''} size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
                             <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit && !canceled ? 'Saved deposit' : 'Deposit'}</label>
                         </div>`}
-                        <p class="zkapi-helper">${helper}</p>
+                        ${helper ? `<p class="zkapi-helper">${helper}</p>` : ''}
                         ${resumingDeposit && !canceled && !this.busy ? '<p class="zkapi-note">Before resuming, check MetaMask for a pending transaction.</p>' : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'

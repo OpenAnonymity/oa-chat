@@ -45,7 +45,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
     for (const name of ['amount', 'currency']) fields.set(`[data-funding-${name}]`, element());
     const methods = ['metamask', 'address'].map(value => Object.assign(element(), { dataset: { walletMethod: value } }));
     const context = { formatFundingAmount, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
-        addressFundingWallet: wallet, getWalletMethod: () => method, setWalletMethod: async value => { method = value; },
+        addressFundingWallet: wallet, getWalletMethod: () => method, walletMethodActionBusy: () => false, setWalletMethod: value => { method = value; },
         canQuotePendingAddressDeposit: () => Boolean(client.config.pending_deposit?.funding_quote_available),
         chatDB: { getSetting: async key => records.get(key) ?? null,
             updateSettings: async values => { for (const { key, value } of values) records.set(key, value); },
@@ -89,6 +89,7 @@ test('one shared amount precedes method choice in both native deposit dialogs', 
     });
     f.context.privateBalanceGuide = () => '';
     assert.doesNotMatch(account.renderBalance(), /zkapi-deposit-amount/);
+    assert.doesNotMatch(account.renderBalance(), /Ethereum Mainnet · ETH/);
     assert.equal(f.effects.addresses, 0, 'MetaMask amount hydration never creates a local address');
     assert.equal(f.effects.authorizations, 0);
 });
@@ -165,7 +166,7 @@ test('QR uses the remaining exact wei and disappears immediately on edits, stale
     let html = f.controls.renderFundingAccount(f.owner);
     assert.match(html, /data-test-qr/);
     assert.deepEqual(JSON.parse(JSON.stringify(f.effects.qr.at(-1))), {
-        address, chainId: 1, amountWei: '1000000000000150', network: 'Ethereum Mainnet'
+        address, chainId: 1, amountWei: '1000000000000150'
     });
     f.edit('0.006');
     assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
@@ -242,4 +243,43 @@ test('a failed initial USD read can retry the same input after the oracle recove
     f.client.quoteDepositUsd = quote;
     assert.equal(await f.controls.prepareDepositAmount(f.owner), '0.003333334');
     assert.equal(f.effects.authorizations, 0);
+});
+
+
+test('rapid switches and a draft stay responsive while an old address fee quote and balance read stall', async t => {
+    const f = fixture(t, { input: '0.005', currency: 'eth' });
+    await f.hydrate();
+    const quote = f.wallet.getDepositFeeQuote;
+    const status = f.wallet.getStatus;
+    let finishQuote;
+    let finishStatus;
+    f.wallet.getDepositFeeQuote = async intent => {
+        const result = await quote(intent);
+        return new Promise(resolve => { finishQuote = () => resolve(result); });
+    };
+    f.wallet.getStatus = () => new Promise(resolve => { finishStatus = () => resolve({ ethBalance: '0' }); });
+    await f.changeMethod('address');
+    const oldFlow = f.owner.fundingFlow;
+    assert.equal(typeof finishQuote, 'function');
+    assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /<p class="zkapi-helper">Ethereum Mainnet<\/p>/);
+    await f.changeMethod('metamask');
+    assert.equal(f.owner.fundingBusy, false);
+    assert.equal(f.owner.fundingInputAmount, '0.005');
+    f.edit('0.007');
+    f.wallet.getDepositFeeQuote = quote;
+    f.wallet.getStatus = status;
+    await f.changeMethod('address');
+    const newFlow = f.owner.fundingFlow;
+    assert.notEqual(newFlow, oldFlow);
+    assert.equal(newFlow.intent.ethAmount, '0.007');
+    assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /On <strong>Ethereum Mainnet/);
+    finishQuote();
+    finishStatus();
+    await tick();
+    assert.equal(f.owner.fundingFlow, newFlow);
+    assert.equal(newFlow.intent.ethAmount, '0.007');
+    assert.equal(oldFlow.running, false);
+    assert.equal(oldFlow.fee, null, 'late quote never becomes payable in the old view');
+    assert.equal(f.effects.authorizations, 0);
+    assert.deepEqual(f.effects.deposits, []);
 });

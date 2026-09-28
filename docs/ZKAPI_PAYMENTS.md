@@ -184,6 +184,15 @@ units. MetaMask's amount control does not create a browser funding account;
 only selecting Send to an address starts that method's address and fee checks.
 An edited draft follows the method switch instead of being replaced by an older
 address-scoped amount. An in-progress SDK deposit always keeps its saved amount.
+Selecting a method changes the local UI immediately, independently of background
+price, balance and fee reads. Provider activation happens when a read or explicit
+wallet action needs it. Read-only quote preparation activates and captures the
+address provider together, so it also works without a MetaMask extension.
+Transaction submission and saved-transaction recovery remain serialized.
+A stopped flow cannot activate a provider or repaint a different method when its
+read finishes.
+The deposit form omits redundant network badges and captions. Payment QR payloads
+still bind the configured chain, and destination fields retain their network context.
 
 For USD entry, the SDK reads a pinned,
 fresh finalized Chainlink ETH/USD reference price and computes an exact integer-gwei principal,
@@ -204,8 +213,8 @@ The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
-The screen emphasizes the exact ETH still to send and its current USD estimate,
-network and funding address, with a short waiting/ready status. A clickable question
+The screen emphasizes the exact ETH still to send and its current USD estimate
+and funding address, with a short waiting/ready status. A clickable question
 mark beside the send amount reveals the breakdown: ETH principal added to the
 private balance, estimated network fee, additional fee buffer and total ETH to
 send, together with the estimate and browser-storage explanations. These details
@@ -230,8 +239,9 @@ key, recovery material, account identity or inference content is involved.
 
 Expected fee is estimated gas multiplied by current base fee plus priority fee.
 The maximum allowance uses the SDK's padded gas limit and current EIP-1559
-maximum price; their difference is the additional buffer. The unchanged 300-gwei
-and 0.02-ETH caps are signing safety limits, not the normal prefunding amount.
+maximum price; their difference is the additional buffer. There is no fixed
+gas-price or total-ETH fee ceiling: users review the current quote and choose
+whether to proceed. The user's approved allowance still limits the signed deposit.
 **Next** requires enough ETH for principal plus the allowance, forces a fresh
 quote and checks the saved amount before and after the asynchronous reads.
 An increased allowance requires reviewing the new quote and another explicit
@@ -275,8 +285,8 @@ matching recovery paths. The repaired setup remains a single-party development
 setup, not an audited production ceremony.
 
 The address provider validates the configured chain, token and vault, exact
-calldata and authorized amount/destination. It simulates calls and applies gas
-and fee caps. Signed transaction bytes and nonce are encrypted and durably saved
+calldata and authorized amount/destination. It simulates calls and enforces the
+protocol gas ceiling and approved deposit allowance. Signed transaction bytes and nonce are encrypted and durably saved
 before broadcast. Explicit recovery replays those identical bytes; ordinary
 status reads never broadcast. Web Locks serialize local signing across tabs;
 unsupported storage or locks fail closed for this option. All RPC requests use
@@ -285,10 +295,10 @@ or `globalThis.ethereum` substitution is introduced.
 
 New browser records use AES-256-GCM with a non-extractable browser key. Legacy
 records retain PBKDF2-SHA-256 until explicit conversion. The encrypted journal
-envelope has a 4 MiB limit. The signer uses the SDK’s EIP-7825 ceiling of 16,777,216 gas, with
-additional caps of 300 gwei and 0.02 ETH in gas fees. New transactions use
-EIP-1559 with the app's **Low** policy: 1.25 times the latest base fee (rounded
-up) plus a priority fee estimated from recent low bids, clipped to both caps.
+envelope has a 4 MiB limit. The signer uses the SDK’s EIP-7825 ceiling of 16,777,216 gas.
+New transactions use EIP-1559 with the app's **Low** policy: 1.25 times the latest
+base fee (rounded up) plus a priority fee estimated from recent low bids.
+Deposits may use the previously approved buffer, but never exceed that allowance.
 The tip is the integer median of the gas-weighted 10th-percentile rewards in
 nonempty blocks within the latest 20 blocks, with the existing 0.001-gwei minimum. Empty blocks
 are excluded; an entirely empty history uses that minimum. This avoids blindly
@@ -304,15 +314,17 @@ the priority fee, otherwise signing stops. Missing or malformed fee data also
 stops signing. Affordability uses the maximum possible fee, while the chain
 charges the actual fee. Existing legacy and type-2 recovery records replay
 their original bytes; the app does not raise fees or replace a pending
-transaction automatically. These limits can temporarily block a valid operation
-during high fees. Same-origin application code can use the browser-held key.
+transaction automatically. Arithmetic must fit a valid uint256 transaction,
+including value plus maximum fee. High market fees alone do not block a quote
+or an affordable, explicitly approved deposit. Same-origin application code can
+use the browser-held key.
 
 Before-broadcast funding and fee failures keep a public-only explanation scoped
 to the active action. After the SDK finishes preserving or releasing its own
 submission claim, the host restores that explanation over generic wallet-error
 copy. Insufficient ETH reports the exact shortfall from the freshly checked
 balance and maximum fee liability, the funding address/network, and an explicit
-retry instruction. Fee-limit and malformed-fee errors use fixed copy. No RPC
+retry instruction. Changed-quote and malformed-fee errors use fixed copy. No RPC
 error payload, proof, calldata or secret enters these explanations, and they
 are not persisted. A top-up or status refresh never retries the transaction.
 

@@ -1,3 +1,28 @@
+## 2026-09-28: Immediate payment method selection and user-approved fees
+
+- Payment method selection is local presentation state, independent of SDK
+  provider activation. Read-only fee/price RPCs must not block switching between
+  MetaMask and Send to an address. Explicit wallet actions and saved signed
+  transactions retain serialization; stale reads cannot restore old UI state.
+  Address quote preparation must activate and invoke the SDK in one synchronous
+  turn: the SDK reads the chain/root through its captured provider even when an
+  explicit sender is supplied. Stopped flow generations cancel delayed activation.
+- Removed the address signer's fixed 0.02 ETH total-fee and 300-gwei price caps.
+  They originated in the September 27 address-provider implementation, not an
+  Ethereum rule. Keep validated fee data, protocol gas bounds, sufficient funds,
+  and the user's exact approved quote allowance. Higher fees require a current
+  quote and user action; they do not justify an arbitrary market-price block.
+- Deposit screens omit repeated Mainnet/Sepolia labels and the network caption
+  under MetaMask. QR payloads retain their chain ID; withdrawal/return destination
+  labels still provide the network context needed for those actions.
+- See [wallet methods](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address)
+  for provider activation, current fee policy and quote approval boundaries.
+- Independent review passed 276 focused tests, including a real local-EVM
+  high-fee deposit. A fresh browser without MetaMask displayed a live Mainnet
+  quote/QR above the former fee cap and preserved the amount during rapid
+  method switches. No funds or external wallet signatures were used in that
+  browser check.
+
 ## 2026-09-28: Tinfoil DeepSeek V4.1 Flash catalog update
 
 - Memory and Tab-Tab now offer `deepseek-v4-1-flash` instead of the stale `deepseek-v4-flash`, matching Tinfoil's public catalog. Tinfoil marks V4.1 Flash experimental; live inference quality has not been validated here.

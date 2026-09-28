@@ -196,7 +196,10 @@ export class AddressDepositFlow extends DepositAmount {
             }
             const [status, result] = await Promise.all([
                 this.wallet.getStatus(),
-                !forceQuote && fresh ? this.fee : this.wallet.getDepositFeeQuote(intent)
+                !forceQuote && fresh ? this.fee : this.wallet.getDepositFeeQuote(intent, {
+                    isCurrent: () => this.running && generation === this.generation && edit === this.editGeneration
+                        && intent === this.intent && check === this.checkGeneration
+                })
             ]);
             if (!this.running || generation !== this.generation || edit !== this.editGeneration
                 || intent !== this.intent || check !== this.checkGeneration) return;

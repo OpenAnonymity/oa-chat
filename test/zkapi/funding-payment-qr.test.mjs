@@ -50,12 +50,13 @@ test('invalid or fully funded payment instructions never produce a QR', () => {
     }
 });
 
-test('updated transfer instructions replace the QR; captions remain escaped', () => {
+test('updated transfer instructions replace the QR without a repetitive network caption', () => {
     const props = { address, chainId: 1, amountWei: '5500000000000000', network: '<svg onload="alert(1)">' };
     const initial = renderFundingPaymentQr(props);
     const updated = renderFundingPaymentQr({ ...props, amountWei: '1500000000000000' });
     assert.notEqual(decodeSvg(initial), decodeSvg(updated));
     assert.equal(decodeSvg(updated), `ethereum:${address}@1?value=1500000000000000`);
-    assert.match(updated, /&lt;svg onload=&quot;alert\(1\)&quot;&gt;/);
+    assert.match(updated, /<figcaption>Scan to pay<span>/);
+    assert.doesNotMatch(updated, /onload|Ethereum|Sepolia/);
     assert.doesNotMatch(updated, /<svg onload/);
 });

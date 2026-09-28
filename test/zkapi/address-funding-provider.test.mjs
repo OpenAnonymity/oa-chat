@@ -8,6 +8,7 @@ import runtime from '@openanonymity/zkapi-browser-sdk/runtime';
 import codec from '@openanonymity/zkapi-browser-sdk/wallet';
 import { bufferedGasLimit, MAX_TRANSACTION_GAS_LIMIT } from '@openanonymity/zkapi-browser-sdk/gas';
 
+const UINT256_MAX = (1n << 256n) - 1n;
 const KEY = `0x${'11'.repeat(32)}`;
 const OWN = new Wallet(KEY).address.toLowerCase();
 const VAULT = `0x${'22'.repeat(20)}`;
@@ -375,8 +376,7 @@ test('encrypted journals reject unsupported transaction types and unsafe type-2 
     for (const fees of [
         { type: 1, gasPrice: 1000000000n, accessList: [] },
         { type: 2, maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 0n },
-        { type: 2, maxFeePerGas: 301000000000n, maxPriorityFeePerGas: 1000000n },
-        { type: 2, maxFeePerGas: 200000000000n, maxPriorityFeePerGas: 1000000n },
+        { type: 2, maxFeePerGas: UINT256_MAX, maxPriorityFeePerGas: 1000000n },
         { type: 2, maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 1000000n,
             accessList: [{ address: TOKEN, storageKeys: [] }] }
     ]) {
@@ -549,32 +549,29 @@ test('low base-fee headroom rounds up to whole wei without lowering the next-blo
     }
 });
 
-test('the total fee ceiling clips headroom but rejects a quote that cannot cover the next block and tip', async () => {
+test('explicitly authorized transactions can exceed the former total fee and per-gas ceilings', async () => {
     const h = harness();
     await h.ready();
-    const gas = `0x${8000000n.toString(16)}`;
-    h.rpc.baseFee = `0x${2133333335n.toString(16)}`;
-    await assert.rejects(h.send({ ...approve(2000000), gas }), { code: 4100, addressCode: 'address_fee_limit' });
-    assert.equal(h.sent.length, 0);
-    h.rpc.baseFee = `0x${2133333334n.toString(16)}`;
-    await h.send({ ...approve(2000000), gas });
-    const transaction = Transaction.from(h.sent[0]);
-    assert.equal(transaction.maxFeePerGas, 2500000000n);
-    assert.equal(transaction.maxPriorityFeePerGas, BigInt(h.rpc.priorityFee));
-    assert.equal(transaction.maxFeePerGas * transaction.gasLimit, 20000000000000000n);
-    await h.provider.reload();
-});
-
-test('the per-gas price ceiling clips headroom and is enforced independently of total fees', async () => {
-    const h = harness();
-    await h.ready();
-    h.rpc.gas = '0x5208';
-    h.rpc.baseFee = `0x${240000000000n.toString(16)}`;
-    h.rpc.priorityFee = `0x${10000000000n.toString(16)}`;
+    h.rpc.baseFee = `0x${400_000_000_000n.toString(16)}`;
+    h.rpc.priorityFee = `0x${10_000_000_000n.toString(16)}`;
     await h.send();
     const transaction = Transaction.from(h.sent[0]);
-    assert.equal(transaction.maxFeePerGas, 300000000000n);
-    assert(transaction.maxFeePerGas * transaction.gasLimit < 20000000000000000n);
+    assert.equal(transaction.maxFeePerGas, 510_000_000_000n);
+    assert.equal(transaction.maxPriorityFeePerGas, 10_000_000_000n);
+    assert(transaction.maxFeePerGas * transaction.gasLimit > 20_000_000_000_000_000n);
+    await h.provider.reload();
+    assert.equal(h.provider.pending.hash, transaction.hash);
+});
+
+test('fee data whose transaction liability exceeds uint256 never signs', async () => {
+    const h = harness();
+    await h.ready();
+    for (const baseFee of [UINT256_MAX, UINT256_MAX / 120_000n]) {
+        h.rpc.baseFee = `0x${baseFee.toString(16)}`;
+        await assert.rejects(h.send(), { code: 4100, addressCode: 'address_fee_data' });
+    }
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.provider.pending, null);
 });
 
 test('funding must cover maximum fee liability even when it covers the current effective fee', async () => {
@@ -641,7 +638,7 @@ test('authorization rejects unexpected contract, allowance, call shape, value an
     assert.equal(h.sent.length, 0);
 });
 
-test('wrong chain, failed simulation, high fees, and signed nonce rollback cannot send', async () => {
+test('wrong chain, failed simulation and signed nonce rollback cannot send', async () => {
     const h = harness();
     await h.ready();
     h.rpc.chain = '0x2';
@@ -650,9 +647,6 @@ test('wrong chain, failed simulation, high fees, and signed nonce rollback canno
     h.rpc.simulationFails = true;
     await assert.rejects(h.send(), error => error.code === 4100 && error.addressCode === 'address_rpc_error' && !error.message.includes(KEY));
     h.rpc.simulationFails = false;
-    h.rpc.baseFee = '0x45d964b800'; // 300 gwei; buffered gas * price exceeds total fee cap.
-    await assert.rejects(h.send(), { code: 4100, addressCode: 'address_fee_limit' });
-    h.rpc.baseFee = '0x1dcd6500';
     assert.equal(h.sent.length, 0);
     const hash = await h.send();
     await h.provider.acknowledgeTransaction(hash);
@@ -891,7 +885,7 @@ test('unfunded deposit quotes simulate the exact prepared call with only its sen
         assert.equal(call.params[0].to, VAULT);
         assert.equal(BigInt(call.params[0].value), BigInt(NATIVE_INTENT.depositWei));
         assert.equal(call.params[1], 'pending');
-        assert.deepEqual(call.params[2], { [OWN]: { balance: `0x${(BigInt(NATIVE_INTENT.depositWei) + MAX_TRANSACTION_GAS_LIMIT * 300_000_000_000n).toString(16)}` } });
+        assert.deepEqual(call.params[2], { [OWN]: { balance: `0x${UINT256_MAX.toString(16)}` } });
         assert.equal(call.options.credentials, 'omit');
     }
     assert.deepEqual([...h.store.data], beforeRecord, 'quote does not change funding custody or create a transaction journal');
@@ -951,27 +945,18 @@ test('unfunded simulation failures expose no RPC details and never fall back to 
     }
 });
 
-test('deposit quotes enforce buffered gas, valid fee data and the existing transaction caps', async () => {
-    for (const failure of ['gas', 'fee', 'malformed']) {
+test('deposit quotes enforce buffered gas and valid bounded fee data', async () => {
+    for (const failure of ['gas', 'overflow', 'malformed']) {
         const h = harness({ config: NATIVE_FUNDING });
         await h.ready();
         if (failure === 'gas') h.rpc.gas = `0x${MAX_TRANSACTION_GAS_LIMIT.toString(16)}`;
-        if (failure === 'fee') { h.rpc.gas = '0x693ea0'; h.rpc.baseFee = '0x2540be400'; }
+        if (failure === 'overflow') h.rpc.baseFee = `0x${UINT256_MAX.toString(16)}`;
         if (failure === 'malformed') h.rpc.baseFee = undefined;
         await assert.rejects(h.provider.getDepositFeeQuote(NATIVE_INTENT), {
-            code: failure === 'gas' ? 'transaction_gas_limit_exceeded' : failure === 'fee' ? 'address_fee_limit' : 'address_fee_data'
+            code: failure === 'gas' ? 'transaction_gas_limit_exceeded' : 'address_fee_data'
         });
         assert.equal(h.sent.length, 0);
     }
-    const capped = harness({ config: NATIVE_FUNDING });
-    await capped.ready();
-    capped.rpc.gas = `0x${6_897_262n.toString(16)}`;
-    capped.rpc.baseFee = `0x${2_000_000_000n.toString(16)}`;
-    const quote = await capped.provider.getDepositFeeQuote(NATIVE_INTENT);
-    assert(BigInt(quote.feeReserveWei) <= 20_000_000_000_000_000n);
-    assert.equal(BigInt(quote.maxFeePerGas), 20_000_000_000_000_000n / BigInt(quote.gasLimit));
-    assert(BigInt(quote.maxFeePerGas) < (5n * BigInt(capped.rpc.baseFee) + 3n) / 4n + BigInt(capped.rpc.priorityFee));
-    assert(BigInt(quote.feeBufferWei) > 0n);
 });
 
 test('native deposit cannot exceed the displayed fee cap or substitute a prepared note before signing', async () => {
@@ -1035,7 +1020,7 @@ test('approved deposit fee buffer covers modest fee or gas changes without incre
     }
 });
 
-test('approved deposit pricing distinguishes the hard safety limit from an exhausted quote buffer', async () => {
+test('approved deposit pricing rejects an exhausted quote buffer at any market price', async () => {
     const h = harness({ config: NATIVE_FUNDING });
     const ctx = await h.provider.context();
     const gasLimit = 170_000n;
@@ -1045,11 +1030,11 @@ test('approved deposit pricing distinguishes the hard safety limit from an exhau
     assert.equal(exact.maxFeePerGas, minimumFee);
     await assert.rejects(h.provider.transactionFees(ctx, gasLimit, exactMinimum - 1n), { code: 'address_fee_quote_changed' });
     h.rpc.baseFee = `0x${300_000_000_001n.toString(16)}`;
-    await assert.rejects(h.provider.transactionFees(ctx, gasLimit, '1'), { code: 'address_fee_limit' });
+    await assert.rejects(h.provider.transactionFees(ctx, gasLimit, '1'), { code: 'address_fee_quote_changed' });
     assert.equal(h.sent.length, 0);
 });
 
-test('funded native deposit uses its actual gas at reproduced Sepolia fees and retains the total fee cap', async () => {
+test('funded native deposit uses its actual gas at reproduced Sepolia fees and retains the approved quote allowance', async () => {
     const h = harness({ config: NATIVE_FUNDING });
     await h.ready();
     h.rpc.baseFee = `0x${1_112_000_000n.toString(16)}`;
@@ -1078,6 +1063,71 @@ test('funded native deposit uses its actual gas at reproduced Sepolia fees and r
     assert.equal(h.provider.pending.hash, signed.hash, 'persisted quote bindings survive journal validation');
 });
 
+test('both networks quote, explicitly authorize and recover deposits above both former fee ceilings', async () => {
+    for (const chainId of [1, 11155111]) {
+        const h = harness({ config: { ...NATIVE_FUNDING, chain_id: chainId } });
+        h.rpc.chain = `0x${chainId.toString(16)}`;
+        h.rpc.gas = `0x${6_897_262n.toString(16)}`;
+        const baseFee = 400_000_000_000n;
+        h.rpc.baseFee = `0x${baseFee.toString(16)}`;
+        await h.ready();
+        const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+        const reserve = BigInt(quote.feeReserveWei);
+        assert(reserve > 20_000_000_000_000_000n);
+        assert(BigInt(quote.maxFeePerGas) > 300_000_000_000n);
+        assert.equal(BigInt(quote.maxFeePerGas), baseFee * 5n / 4n + BigInt(h.rpc.priorityFee));
+        assert.equal(h.sent.length, 0, 'a high quote grants no signing permission');
+        const prepared = await h.provider.prepareDepositQuote(NATIVE_INTENT.ethAmount, { from: OWN });
+        const context = { ...CONTEXT, chainId, kind: 'deposit', operationId: prepared.operationId,
+            submissionId: 'high-fee-sub', amount: prepared.amount, commitment: prepared.commitment };
+        const input = { ...prepared.transaction, gas: `0x${BigInt(quote.gasLimit).toString(16)}` };
+        const authorization = { kind: 'deposit', amount: prepared.amount, preparedOperationId: quote.operationId,
+            depositCommitment: quote.depositCommitment, feeLimitWei: quote.feeReserveWei, feeQuoteExpiresAt: quote.expiresAt };
+        await assert.rejects(h.provider.request({ method: 'eth_sendTransaction', params: [input], zkapiRecovery: context }), { code: 4100 });
+        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + reserve).toString(16)}`;
+        h.rpc.baseFee = `0x${(baseFee * 2n).toString(16)}`;
+        await assert.rejects(h.send(input, context, authorization), { code: 4100, addressCode: 'address_fee_quote_changed' });
+        h.rpc.baseFee = `0x${baseFee.toString(16)}`;
+        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + reserve - 1n).toString(16)}`;
+        await assert.rejects(h.send(input, context, authorization), { code: 4100, addressCode: 'address_insufficient_eth' });
+        assert.equal(h.sent.length, 0, 'higher market prices never bypass approval or affordability');
+        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + reserve).toString(16)}`;
+        await h.send(input, context, authorization);
+        const signed = Transaction.from(h.sent[0]);
+        assert.equal(signed.chainId, BigInt(chainId));
+        assert.equal(signed.value, BigInt(NATIVE_INTENT.depositWei));
+        assert.equal(signed.gasLimit * signed.maxFeePerGas, reserve);
+        const restored = new AddressFundingProvider(h.init);
+        await restored.init();
+        assert.equal(restored.pending.hash, signed.hash);
+        assert.equal(h.sent.length, 1, 'restoration cannot sign or rebroadcast');
+        const feeReadCount = h.calls.filter(call => call.method === 'eth_feeHistory').length;
+        h.rpc.baseFee = undefined;
+        h.rpc.feeHistory = null;
+        await restored.recoverPending();
+        assert.deepEqual(h.sent, [signed.serialized, signed.serialized]);
+        assert.equal(h.calls.filter(call => call.method === 'eth_feeHistory').length, feeReadCount,
+            'recovery replays the exact approved bytes without repricing');
+
+        const ctx = await h.provider.context();
+        const record = await h.provider.read(ctx, true);
+        record.transactions[0].authorization.feeLimitWei = (reserve - 1n).toString();
+        await h.provider.save(ctx, record);
+        await assert.rejects(new AddressFundingProvider(h.init).init(), { code: 'address_storage_invalid' },
+            'a saved signature cannot exceed its recorded user-approved allowance');
+    }
+});
+
+test('transaction value plus network fee must fit uint256 before signing', async () => {
+    const h = harness();
+    await h.ready();
+    h.rpc.balance = `0x${UINT256_MAX.toString(16)}`;
+    await assert.rejects(h.send({ from: OWN, to: DESTINATION, value: `0x${UINT256_MAX.toString(16)}` }, null,
+        { kind: 'sweep', asset: 'eth', amount: UINT256_MAX.toString(), destination: DESTINATION }), { code: 4100 });
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.provider.pending, null);
+});
+
 test('prefunding reserve never bypasses actual native fee, fee-data or affordability rejection', async () => {
     for (const failure of ['expensive', 'malformed', 'underfunded']) {
         const h = harness({ config: NATIVE_FUNDING });
@@ -1096,7 +1146,7 @@ test('prefunding reserve never bypasses actual native fee, fee-data or affordabi
         let addressCode;
         if (failure === 'expensive') {
             h.rpc.baseFee = `0x${10_000_000_000n.toString(16)}`;
-            addressCode = 'address_fee_limit';
+            addressCode = 'address_insufficient_eth';
         } else if (failure === 'malformed') {
             h.rpc.baseFee = undefined;
             addressCode = 'address_fee_data';
@@ -1165,9 +1215,9 @@ test('withdrawal reports the exact safe top-up after SDK error handling and only
     assert.equal(h.provider.pending.context.destination, DESTINATION);
 });
 
-test('safe fee-limit and fee-data explanations survive generic SDK copy without RPC details', async () => {
+test('safe malformed-fee explanations survive generic SDK copy without RPC details', async () => {
     for (const scenario of [
-        { baseFee: `0x${300_000_000_000n.toString(16)}`, code: 'address_fee_limit', text: /Wait for lower fees, then retry/ },
+        { baseFee: `0x${UINT256_MAX.toString(16)}`, code: 'address_fee_data', text: /fees could not be read reliably/ },
         { baseFee: undefined, code: 'address_fee_data', text: /fees could not be read reliably/ }
     ]) {
         const h = harness();
@@ -1393,7 +1443,7 @@ test('actual SDK normalization keeps safe provider fee copy and pre-broadcast cl
     client.config = { funding: FUNDING };
     client.browserMode = true;
     client.setWalletProvider(h.provider);
-    h.rpc.baseFee = '0x45d964b800';
+    h.rpc.baseFee = undefined;
     await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
         try { return await client.sendContractTransaction(OWN, TOKEN, approve(2000000).data); }
         catch (error) {
@@ -1408,8 +1458,8 @@ test('actual SDK normalization keeps safe provider fee copy and pre-broadcast cl
         assert.equal(error.transactionStage, 'send');
         assert.equal(error.broadcastPossible, false);
         assert.equal(error.code, 4100);
-        assert.equal(error.addressCode, 'address_fee_limit');
-        assert.match(error.shortMessage, /Current Ethereum fees exceed/);
+        assert.equal(error.addressCode, 'address_fee_data');
+        assert.match(error.shortMessage, /Current Ethereum fees could not be read reliably/);
         return true;
     });
     assert.equal(h.sent.length, 0);
@@ -1438,7 +1488,7 @@ test('sweep overrides cannot turn a deposit action into an arbitrary transfer', 
     assert.equal(h.sent.length, 0);
 });
 
-test('SDK-aligned gas ceiling still rejects oversized requests and excessive transaction fees', async () => {
+test('SDK-aligned gas ceiling still rejects oversized requests', async () => {
     const h = harness();
     await h.ready();
     h.rpc.gas = `0x${6_897_262n.toString(16)}`;
@@ -1447,15 +1497,10 @@ test('SDK-aligned gas ceiling still rejects oversized requests and excessive tra
     h.rpc.gas = `0x${(MAX_TRANSACTION_GAS_LIMIT + 1n).toString(16)}`;
     await assert.rejects(h.send({ ...approve(2000000), gas }), { code: 4100 });
     h.rpc.gas = `0x${6_897_262n.toString(16)}`;
-    h.rpc.baseFee = `0x${3_000_000_000n.toString(16)}`;
-    await assert.rejects(h.send({ ...approve(2000000), gas }), { code: 4100, addressCode: 'address_fee_limit' });
-    h.rpc.gas = '0x5208';
-    h.rpc.baseFee = `0x${300_000_000_001n.toString(16)}`;
-    await assert.rejects(h.send(), { code: 4100 });
-    assert.equal(h.sent.length, 0, 'neither ceiling nor fee rejection broadcasts');
+    assert.equal(h.sent.length, 0, 'gas-limit rejection never broadcasts');
     assert.equal(h.provider.pending, null);
     h.rpc.baseFee = '0x1dcd6500';
     await h.send({ ...approve(2000000), gas: `0x${MAX_TRANSACTION_GAS_LIMIT.toString(16)}` });
-    assert.equal(Transaction.from(h.sent[0]).gasLimit, 16_777_216n, 'the exact SDK/network ceiling remains allowed within the fee cap');
+    assert.equal(Transaction.from(h.sent[0]).gasLimit, 16_777_216n, 'the exact SDK/network gas ceiling remains allowed');
     await h.provider.reload();
 });

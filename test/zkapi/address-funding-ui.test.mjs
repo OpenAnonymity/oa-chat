@@ -19,7 +19,7 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
     const timers = new Map();
     const context = { DepositAmount, renderFundingPaymentQr, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
-        setWalletMethod: async value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
+        walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
         formatFundingAmount, confirm,
         queueMicrotask: callback => microtasks.push(callback),
         setTimeout: callback => { const id = timers.size + 1; timers.set(id, callback); return id; },
