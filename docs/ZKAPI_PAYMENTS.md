@@ -153,7 +153,11 @@ places to match the native ledger's gwei precision. The host durably saves this 
 `chatDB` settings under a chain/vault/address scope before displaying payment
 instructions. The ETH principal stays fixed across price updates and reloads;
 switching the input currency changes its presentation without repricing the
-deposit. Explicit amount edits replace the principal. The selected input unit
+deposit. The switch uses the already-loaded, validated price and local storage;
+balance and fee checks run afterward without delaying the input update. A
+just-edited amount is converted with that same loaded price before switching.
+If no valid price is loaded, conversion reports this immediately instead of
+waiting for an RPC or using a stale price. Explicit amount edits replace the principal. The selected input unit
 is saved with the intent and restored when reopening. Current USD display continues
 to float with the oracle price. Amount edits invalidate Next immediately, and
 stale asynchronous reads cannot re-enable it.

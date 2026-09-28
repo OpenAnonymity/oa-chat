@@ -605,13 +605,15 @@ test('a clean currency switch changes display only, preserves the exact principa
     assert.equal(focuses, 1);
 });
 
-test('switching immediately after typing flushes that draft before conversion and cancels its debounce', async () => {
+test('switching after typing saves with the loaded price and skips chain checks before conversion', async () => {
     const f = fixture();
     const calls = [];
     let finishQuote;
     const flow = quotedFlow({ dirty: false,
         invalidate() { this.dirty = true; },
-        setAmount(amount, currency) {
+        setAmount(amount, currency, options) {
+            assert.equal(options.check, false);
+            assert.equal(options.useCachedPrice, true);
             calls.push(['amount', amount, currency]);
             return new Promise(resolve => { finishQuote = () => {
                 this.dirty = false;

@@ -341,7 +341,7 @@ export function attachWalletMethodControls(owner) {
                 if (!flow.requestedAmount) return;
                 const nextCurrency = currency === 'usd' ? 'eth' : 'usd';
                 flow.invalidate();
-                await flow.setAmount('', nextCurrency);
+                await flow.setAmount('', nextCurrency, { check: false, useCachedPrice: true });
                 if (owner.fundingFlow === flow && owner.isOpen) {
                     owner.fundingInputCurrency = nextCurrency;
                     owner.fundingInputAmount = '';
@@ -349,9 +349,9 @@ export function attachWalletMethodControls(owner) {
                 }
                 return;
             }
-            // Commit a just-typed draft before converting its display. The
-            // controller changes units without ever repricing the principal.
-            if (flow.dirty && !await flow.setAmount(amount, currency)) return;
+            // Convert a just-typed draft with the loaded price. Only local
+            // persistence precedes the unit change; chain reads run afterward.
+            if (flow.dirty && !await flow.setAmount(amount, currency, { check: false, useCachedPrice: true })) return;
             if (owner.fundingFlow !== flow || !owner.isOpen || flow.dirty) return;
             if (await flow.setCurrency(currency === 'usd' ? 'eth' : 'usd') && owner.fundingFlow === flow && owner.isOpen) {
                 syncFundingInput(owner, flow.intent);

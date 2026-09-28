@@ -402,8 +402,103 @@ test('USD and ETH display toggles preserve original principal, fee commitment an
     assert.equal(f.flow.fee, fee);
     assert.equal(f.quotes(), 1);
     assert.equal(f.feeQuotes(), 1);
+    await f.flow.check();
     assert.equal(f.flow.ready, true);
     assert.equal((await f.flow.verifyReady()).amount, original.amount);
+});
+
+test('currency switches complete locally while balance and expired fee checks remain unresolved', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('0.01', 'eth');
+    const principal = f.flow.intent.amount;
+    f.advance(30_000);
+    let statusReads = 0;
+    let feeReads = 0;
+    f.wallet.getStatus = () => { statusReads++; return new Promise(() => {}); };
+    f.wallet.getDepositFeeQuote = () => { feeReads++; return new Promise(() => {}); };
+    f.client.refreshEthUsdPrice = () => assert.fail('toggle must use the cached validated price');
+    for (const currency of ['usd', 'eth', 'usd']) {
+        const result = await Promise.race([
+            f.flow.setCurrency(currency),
+            new Promise(resolve => setImmediate(() => resolve('blocked')))
+        ]);
+        assert.equal(result, true, `${currency} toggle must not await blockchain reads`);
+        assert.equal(f.saved().inputCurrency, currency);
+        assert.equal(f.saved().amount, principal);
+        assert.equal(f.flow.changingCurrency, false);
+        assert.equal(f.flow.ready, false);
+    }
+    assert.equal(statusReads, 3);
+    assert.equal(feeReads, 3);
+    await assert.rejects(f.flow.verifyReady(), /Wait until/);
+});
+
+test('a draft USD edit can commit from the cached price without waiting for any network call', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.client.nativePriceQuote.answer = '123456789000';
+    f.client.quoteDepositUsd = () => assert.fail('cached input conversion must not refresh the price');
+    f.client.refreshEthUsdPrice = () => assert.fail('cached input conversion must not refresh the price');
+    f.wallet.getStatus = () => assert.fail('draft flush must leave checking to the subsequent unit change');
+    f.wallet.getDepositFeeQuote = () => assert.fail('draft flush must leave checking to the subsequent unit change');
+    assert.equal(await f.flow.setAmount(' 0010.000001 ', 'usd', { check: false, useCachedPrice: true }), true);
+    assert.equal(f.flow.intent.inputAmount, '10.000001');
+    assert.equal(f.flow.intent.amount, '8100001');
+    assert.equal(f.flow.intent.ethAmount, '0.008100001');
+    assert.equal(f.flow.intent.depositWei, '8100001000000000');
+    assert.equal(f.saved().priceUpdatedAt, 10);
+    assert.equal(f.flow.fee, null);
+    assert.equal(f.flow.ready, false);
+    await assert.rejects(f.flow.verifyReady(), /Wait until/);
+});
+
+test('cached USD conversion preserves gwei rounding and rejects unsafe or imprecise amounts', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const options = { check: false, useCachedPrice: true };
+    f.client.quoteDepositUsd = () => assert.fail('cached conversions must not call the remote quote');
+    f.client.nativePriceQuote.answer = '123456789000';
+    assert.equal(await f.flow.setAmount('0.000001', 'usd', options), true);
+    assert.equal(f.saved().amount, '1');
+    f.client.nativePriceQuote.answer = '100000000000';
+    assert.equal(await f.flow.setAmount('9007199254.740991', 'usd', options), true);
+    assert.equal(f.saved().amount, String(Number.MAX_SAFE_INTEGER));
+    const original = structuredClone(f.saved());
+    for (const value of ['0', '-1', '0.0000001', '1e-3', '9007199254.740992', 'NaN', '', '.', '1'.repeat(129)]) {
+        assert.equal(await f.flow.setAmount(value, 'usd', options), false, value);
+        assert.deepEqual(f.saved(), original, value);
+        assert.equal(f.flow.ready, false, value);
+    }
+});
+
+test('a cached USD conversion without a valid price fails locally and leaves its saved principal intact', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const original = structuredClone(f.saved());
+    f.client.refreshEthUsdPrice = () => assert.fail('missing cached price must fail without blocking on RPC');
+    f.client.quoteDepositUsd = () => assert.fail('missing cached price must fail without blocking on RPC');
+    for (const price of [null, { answer: '0', decimals: 8 }, { answer: '100000000000', decimals: 18 }]) {
+        f.client.nativePriceQuote = price;
+        assert.equal(await f.flow.setAmount('20', 'usd', { check: false, useCachedPrice: true }), false);
+        assert.deepEqual(f.saved(), original);
+        assert.match(f.flow.error, /price is unavailable/);
+        assert.equal(f.flow.ready, false);
+    }
+});
+
+test('a cached edit wins over an older pending remote USD quote', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    let resolveQuote;
+    f.client.quoteDepositUsd = () => new Promise(resolve => { resolveQuote = resolve; });
+    const old = f.flow.setAmount('20');
+    assert.equal(await f.flow.setAmount('30', 'usd', { check: false, useCachedPrice: true }), true);
+    resolveQuote({ amount: '20000000', ethAmount: '0.02', depositWei: '20000000000000000', usdAmount: '20' });
+    assert.equal(await old, false);
+    assert.equal(f.saved().usdAmount, '30');
+    assert.equal(f.saved().amount, '30000000');
+    assert.equal(f.flow.ready, false);
 });
 
 test('ETH-origin USD reference rounds only its display and never changes the ETH principal on roundtrips', async t => {
@@ -420,19 +515,17 @@ test('ETH-origin USD reference rounds only its display and never changes the ETH
     assert.equal(f.quotes(), 0);
 });
 
-test('ETH-to-USD display conversion refreshes the validated price and fails safely when unavailable', async t => {
+test('ETH-to-USD display conversion uses only a validated cached price and fails immediately when unavailable', async t => {
     const f = fixture(t);
     await f.flow.start('0.01', 'eth');
     f.client.nativePriceQuote = null;
-    let refreshes = 0;
-    f.client.refreshEthUsdPrice = async () => { refreshes++; return { answer: '100000000000', decimals: 8 }; };
+    f.client.refreshEthUsdPrice = () => assert.fail('a currency toggle must not fetch a price');
     assert.equal(await f.flow.setCurrency('usd'), false);
     assert.equal(f.flow.intent.inputCurrency, 'eth');
     assert.match(f.flow.error, /price is unavailable/);
-    f.client.refreshEthUsdPrice = async () => { refreshes++; f.client.nativePriceQuote = { answer: '200000000000', decimals: 8 }; };
+    f.client.nativePriceQuote = { answer: '200000000000', decimals: 8 };
     assert.equal(await f.flow.setCurrency('usd'), true);
     assert.equal(f.flow.intent.inputAmount, '20');
-    assert.equal(refreshes, 2);
 });
 
 test('reopening ETH-origin intent restores its chosen input denomination without repricing', async t => {
@@ -497,35 +590,36 @@ test('a display toggle cannot overwrite a newer principal saved by another tab',
     assert.match(f.flow.error, /another tab/);
 });
 
-test('a late price conversion cannot replace a newer ETH edit or revive readiness while switching', async t => {
+test('a late display commit cannot replace a newer ETH edit or revive readiness while switching', async t => {
     const f = fixture(t);
     f.setBalance('99000000000000000');
     await f.flow.start('0.01', 'eth');
-    f.client.nativePriceQuote = null;
-    let resolvePrice;
-    f.client.refreshEthUsdPrice = () => new Promise(resolve => { resolvePrice = resolve; });
+    const compareAndSwap = f.store.compareAndSwap;
+    let finishWrite;
+    f.store.compareAndSwap = (scope, expected, value) => new Promise(resolve => {
+        finishWrite = async () => resolve(await compareAndSwap(scope, expected, value));
+    });
     const toggle = f.flow.setCurrency('usd');
+    await new Promise(resolve => setImmediate(resolve));
     await f.flow.check();
     assert.equal(f.flow.ready, false);
     await assert.rejects(f.flow.verifyReady(), /Wait until/);
-    assert.equal(await f.flow.setAmount('0.02', 'eth'), true);
-    f.client.nativePriceQuote = { answer: '100000000000', decimals: 8 };
-    resolvePrice();
+    const edit = f.flow.setAmount('0.02', 'eth');
+    await finishWrite();
     assert.equal(await toggle, false);
+    assert.equal(await edit, true);
     assert.equal(f.flow.intent.inputCurrency, 'eth');
     assert.equal(f.saved().amount, '20000000');
 });
 
-test('closing during a currency conversion cannot persist or publish its late result', async t => {
+test('closing before a queued currency commit cannot persist or publish its late result', async t => {
     const f = fixture(t);
     await f.flow.start('0.01', 'eth');
-    f.client.nativePriceQuote = null;
-    let resolvePrice;
-    f.client.refreshEthUsdPrice = () => new Promise(resolve => { resolvePrice = resolve; });
+    let resolvePrevious;
+    f.flow.writes = new Promise(resolve => { resolvePrevious = resolve; });
     const toggle = f.flow.setCurrency('usd');
     f.flow.stop();
-    f.client.nativePriceQuote = { answer: '100000000000', decimals: 8 };
-    resolvePrice();
+    resolvePrevious();
     assert.equal(await toggle, false);
     assert.equal(f.saved().inputCurrency, 'eth');
     assert.equal(f.flow.ready, false);

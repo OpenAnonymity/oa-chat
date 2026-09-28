@@ -1,3 +1,21 @@
+## 2026-09-27: Immediate deposit currency switching
+
+- Currency switching waited for `AddressDepositFlow.check()`, including public
+  balance reads and sometimes a full fee simulation. The unit input now updates
+  after local persistence, with chain checks continuing in the background.
+- A just-edited draft uses the loaded, SDK-validated ETH/USD price and skips its
+  fee check before switching. This avoids a second blocking price request and
+  duplicate fee work. Missing or stale pricing reports immediately; it never
+  substitutes an old price or changes an existing principal to force conversion.
+- Atomic intent comparisons, exact ETH principal, and the fresh fee/readiness
+  checks before Next remain required.
+- Validation: 886 core and 495 payment tests pass (1,381 total), including
+  unresolved RPC tests proving switches finish before balance/fee responses.
+  Fresh adversarial review approved the diff. Browser measurements were
+  11–18 ms for six repeated switches (same exact principal) and 6 ms for
+  editing an ETH draft immediately before switching; the previous build's
+  sampled switch took 516 ms even with a fresh fee quote.
+
 ## 2026-09-27: USD/ETH entry for address deposits
 
 - The amount input has a USD/ETH currency button. ETH input accepts up to nine

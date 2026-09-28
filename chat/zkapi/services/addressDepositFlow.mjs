@@ -21,6 +21,26 @@ function ethUnits(value) {
     return units;
 }
 
+function cachedUsdQuote(value, price) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (text.length > 128 || !/^\d+(?:\.\d{0,6})?$/.test(text)) {
+        throw new Error('Enter a positive amount with no more than 6 decimal places.');
+    }
+    const [whole, fraction = ''] = text.split('.');
+    const micros = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0'));
+    // Match the SDK's nativeUnitsForUsd: six USD decimals, eight price-feed
+    // decimals, and whole gwei rounded up. The SDK getter validates the price.
+    const numerator = micros * 100_000_000_000n;
+    const denominator = BigInt(price.answer);
+    const amount = (numerator + denominator - 1n) / denominator;
+    if (micros <= 0n || amount <= 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('Choose a smaller positive deposit amount.');
+    }
+    return { amount: String(amount), ethAmount: formatDecimal(amount, 9),
+        depositWei: String(amount * 1_000_000_000n), usdAmount: formatDecimal(micros, 6),
+        priceUpdatedAt: price.updated_at };
+}
+
 function validateIntent(value, scope) {
     if (!value || value.version !== 1 || value.scope !== scope
         || !positiveInteger(value.amount) || !positiveInteger(value.depositWei)
@@ -169,10 +189,9 @@ export class AddressDepositFlow {
         return write;
     }
 
-    async currentPrice() {
-        if (!this.client.nativePriceQuote) await this.client.refreshEthUsdPrice();
+    currentPrice() {
         // The SDK getter validates the oracle, deployment and freshness. Never
-        // use the unvalidated refresh result directly for an input conversion.
+        // wait for a remote refresh during a presentation-only currency change.
         const price = this.client.nativePriceQuote;
         if (!price || !positiveInteger(String(price.answer)) || price.decimals !== 8) {
             throw new Error('The current ETH price is unavailable. Try again shortly.');
@@ -180,7 +199,7 @@ export class AddressDepositFlow {
         return price;
     }
 
-    async setAmount(value, currency = 'usd') {
+    async setAmount(value, currency = 'usd', { check = true, useCachedPrice = false } = {}) {
         if (this.client.config?.pending_deposit) {
             this.ready = false;
             this.error = 'The saved deposit amount cannot change while it is in progress.';
@@ -203,7 +222,8 @@ export class AddressDepositFlow {
                 quote = { amount: String(amount), ethAmount: formatDecimal(amount, 9),
                     depositWei: String(amount * 1_000_000_000n), usdAmount: null,
                     source: 'eth-input', priceUpdatedAt: this.client.nativePriceQuote?.updated_at };
-            } else quote = await this.client.quoteDepositUsd(value);
+            } else quote = useCachedPrice ? cachedUsdQuote(value, this.currentPrice())
+                : await this.client.quoteDepositUsd(value);
             if (!this.running || generation !== this.generation || edit !== this.editGeneration) return false;
             const intent = validateIntent({ version: 1, scope: this.scope,
                 amount: String(quote.amount), ethAmount: quote.ethAmount,
@@ -216,7 +236,10 @@ export class AddressDepositFlow {
             if (!await this.commitIntent(intent, generation, edit)) return false;
             this.intent = intent;
             this.dirty = false;
-            await this.check();
+            // A currency toggle can flush the current input locally, then run
+            // one background check after persisting the selected display unit.
+            if (check) await this.check();
+            else this.changed();
             return this.running && generation === this.generation && edit === this.editGeneration;
         } catch (error) {
             if (generation === this.generation && edit === this.editGeneration) {
@@ -240,7 +263,7 @@ export class AddressDepositFlow {
             if (currency === 'usd') {
                 inputAmount = previous.usdAmount;
                 if (inputAmount === null) {
-                    const price = await this.currentPrice();
+                    const price = this.currentPrice();
                     // Round the reference display up to a USD micro so even a
                     // one-gwei principal has a positive input. This value never
                     // feeds back into the fixed ETH principal on a unit toggle.
@@ -253,7 +276,10 @@ export class AddressDepositFlow {
             if (!await this.commitIntent(intent, generation, edit, previous)) return false;
             this.intent = intent;
             this.changingCurrency = false;
-            await this.check();
+            this.changed();
+            // Balance and fee RPCs must not hold the unit button busy. Next
+            // stays disabled until this fresh check completes successfully.
+            void this.check();
             return this.running && generation === this.generation && edit === this.editGeneration;
         } catch (error) {
             if (generation === this.generation && edit === this.editGeneration) {
