@@ -29,6 +29,7 @@ class PreparationTests(unittest.TestCase):
             protocol.mkdir()
             git(protocol, "init", "-q")
             (protocol / "transport.txt").write_text("original transport\n")
+            (protocol / "unchanged.txt").write_text("unchanged protocol\n")
             git(protocol, "add", ".")
             git(protocol, "commit", "-qm", "fixture protocol")
             protocol_commit = git(protocol, "rev-parse", "HEAD")
@@ -37,6 +38,7 @@ class PreparationTests(unittest.TestCase):
             source.mkdir()
             git(source, "init", "-q")
             (source / "main.txt").write_text("original companion\n")
+            (source / "unchanged.txt").write_text("unchanged companion\n")
             git(source, "add", ".")
             git(source, "-c", "protocol.file.allow=always", "submodule", "add", "-q", protocol.as_uri(), "protocol")
             git(source, "commit", "-qm", "fixture companion")
@@ -75,6 +77,8 @@ class PreparationTests(unittest.TestCase):
             self.assertEqual(git(prepared / "protocol", "ls-files", "--others", "--exclude-standard"), "")
             self.assertEqual((prepared / "withdrawal.txt").read_text(), "new withdrawal implementation\n")
             self.assertEqual((prepared / "protocol/bridge.txt").read_text(), "new bridge implementation\n")
+            self.assertEqual(git(prepared, "ls-files", "--error-unmatch", "unchanged.txt"), "unchanged.txt")
+            self.assertEqual(git(prepared / "protocol", "ls-files", "--error-unmatch", "unchanged.txt"), "unchanged.txt")
 
             command = ["python3", str(scripts / "verify-zkapi-source.py"),
                        str(prepared), companion_commit, protocol_commit]

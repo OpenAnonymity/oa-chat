@@ -1,3 +1,26 @@
+## 2026-09-28: Current Linux package runtime trials
+
+- Docker on `rockypika` built current daemon source `d22c80d` into a fresh
+  Linux AMD64 `0.0.0` validation bundle. Fresh source preparation reproduced
+  Git 2.43 replacing the index during `git apply --intent-to-add`; applying
+  both patches with `--index` fixes it while retaining exact full-source
+  verification. The regression preserves unchanged tracked paths and passed
+  Git 2.43/2.55; fresh build and Linux Go race passed.
+- Actual Arch/pacman, Linux Homebrew, Nix profile, and real-HTTPS one-command
+  installation trials passed. Arch and Homebrew managed user-service startup/
+  shutdown passed, as did unmodified NixOS/Home Manager generated units in a
+  minimal systemd container. Arch reinstall/removal, Nix generation refresh/
+  removal, and installer reinstall preserved private state. Homebrew reinstall
+  was not tested. Every route also passed automatic companion/proof discovery,
+  unfunded Sepolia startup, private permissions, and joint shutdown.
+- Native coverage is Linux AMD64 only. Nonhost archive slots used for manifest
+  generation are explicit fixtures/cached artifacts; they do not certify
+  macOS/ARM64 builds. Nix generated-unit checks do not certify a complete NixOS
+  boot. No funded inference, transactions, or package publication occurred.
+  Trial containers/images were removed and unrelated Docker workloads retained.
+  See [Docker trial details](../daemon/docs/CLI_PACKAGING.md#rockypika-docker-package-trials-2026-09-28)
+  and [sanitized evidence](../daemon/packaging/validation/rockypika-packages-20260928.json).
+
 ## 2026-09-28: Daemon distribution preparation
 
 - Arch/AUR preserves the reviewed executable payloads (`!strip`), declares
@@ -18,8 +41,9 @@
   wallet, modifies shell profiles, or starts a service.
 - Fresh companion preparation previously left the patch-added withdrawal
   source untracked, causing exact-source verification to reject every new
-  release build. `git apply --intent-to-add` now includes new files in the
-  complete patch diff, and preparation verifies both patches before returning.
+  release build. `git apply --index` now stages the complete patches, includes
+  new files, and preserves unchanged index entries on Git 2.43. Preparation
+  verifies both complete patches before returning.
   An offline regression exercises added files in the parent and submodule
   and rejects unexpected source changes.
 - Release CI gates draft creation on native piped installation/reinstallation,

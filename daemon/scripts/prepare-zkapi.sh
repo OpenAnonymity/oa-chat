@@ -18,9 +18,11 @@ git -C "$destination" checkout --detach "$OA_COMPANION_COMMIT"
 git -C "$destination" submodule update --init --recursive --depth=1
 test "$(git -C "$destination" rev-parse HEAD)" = "$OA_COMPANION_COMMIT"
 test "$(git -C "$destination/protocol" rev-parse HEAD)" = "$OA_PROTOCOL_COMMIT"
-git -C "$destination" apply --check "$repo_dir/daemon/internal/zkapi/companion.patch"
-git -C "$destination" apply --intent-to-add "$repo_dir/daemon/internal/zkapi/companion.patch"
-git -C "$destination/protocol" apply --check "$repo_dir/daemon/internal/zkapi/protocol-transport.patch"
-git -C "$destination/protocol" apply --intent-to-add "$repo_dir/daemon/internal/zkapi/protocol-transport.patch"
+# Apply to the complete index as well as the working tree. Git 2.43's
+# --intent-to-add path can replace the index with only the patched files.
+git -C "$destination" apply --check --index "$repo_dir/daemon/internal/zkapi/companion.patch"
+git -C "$destination" apply --index "$repo_dir/daemon/internal/zkapi/companion.patch"
+git -C "$destination/protocol" apply --check --index "$repo_dir/daemon/internal/zkapi/protocol-transport.patch"
+git -C "$destination/protocol" apply --index "$repo_dir/daemon/internal/zkapi/protocol-transport.patch"
 python3 "$script_dir/verify-zkapi-source.py" "$destination" "$OA_COMPANION_COMMIT" "$OA_PROTOCOL_COMMIT"
 echo "Prepared pinned ZKAPI companion at $destination"

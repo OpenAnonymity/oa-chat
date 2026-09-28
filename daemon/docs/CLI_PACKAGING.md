@@ -285,7 +285,12 @@ The build requires Go matching `daemon/go.mod`, Rust/Cargo, Python 3,
 `pkg-config`, C/C++ build tools, OpenSSL headers, and CMake. Linux packaging
 uses nFPM pinned to `v2.47.0`. The native build verifies both source revisions
 and both complete source diffs against their maintained patches; unexpected
-source edits or missing proof keys fail the build. Archive order, timestamps, ownership, and gzip
+source edits or missing proof keys fail the build. Preparation applies both
+patches to the index and working tree with `git apply --index`; this preserves
+unchanged tracked files on Ubuntu 24.04's Git 2.43 as well as tracking the
+patch-added withdrawal source. Exact-source verification still compares the
+complete working tree with the pinned revisions and maintained patches.
+Archive order, timestamps, ownership, and gzip
 headers are normalized; `SOURCE_DATE_EPOCH` sets the archive timestamp. Cargo
 and Go toolchain versions, source commits, dirty-source status, and patch hashes
 are recorded in `share/oa-chat/build-info.json`. Dependency license declarations
@@ -390,9 +395,57 @@ and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
 These checks prepare the source and release workflow for publication; they do
 not publish a release, tap, or AUR package. The complete new four-platform CI
 matrix must pass for the selected version before its draft is publishable.
-Native Nix builds on macOS/ARM64 Linux, current-source Linux/Intel bundles,
-actual Linux user-service boot, and funded inference were not rerun here.
-The historical `0.1.0` Linux checks certify packaging mechanics only.
+At that preparation checkpoint, current-source Linux builds and Linux
+user-service boot had not been rerun. The supplemental Docker trials below
+cover those paths on Linux AMD64. Native macOS/ARM64 Linux builds and funded
+inference still require separate checks. The historical `0.1.0` Linux checks
+certify packaging mechanics only.
+
+## Rockypika Docker package trials (2026-09-28)
+
+Fresh Linux AMD64 binaries from daemon source `d22c80d`, with the reviewed
+Git 2.43 preparation fix, were built in Ubuntu 24.04 with Go 1.26.1 and
+Rust 1.97.1. Exact pinned companion/protocol patch verification passed before
+and after compilation, as did the Linux Go race suite. The test version was
+`0.0.0`; nothing was published. See the [sanitized trial record](../packaging/validation/rockypika-packages-20260928.json).
+
+- Arch: native makepkg and `.SRCINFO` parity, exact binary/proof/notice
+  preservation, real pacman installation (713 files, zero alterations), and
+  the original systemd user unit passed. The service ran as UID 1000 with its
+  declared hardening, returned health, required API authentication, and stopped
+  cleanly. Reinstallation and removal preserved private state; restart after
+  reinstallation passed. The official Docker image's documentation exclusion
+  was removed inside the disposable container for the full integrity check.
+- Homebrew on Ubuntu 24.04: actual formula installation, expanded `brew test`,
+  OpenSSL linkage, foreground startup/shutdown, and real Homebrew systemd
+  user-service startup/shutdown passed. Private configuration modes passed.
+  Actual `brew reinstall` state preservation was not exercised.
+- Nix: the locked generated flake passed native autoPatchelf build, both
+  executable/proof checks, and real NixOS/Home Manager module evaluation.
+  Non-root profile installation, a same-release generation refresh, removal
+  with private-state preservation, and foreground startup/shutdown passed.
+  Unmodified module-generated units also passed in a minimal systemd container:
+  skipped before initialization, accepted spaced private paths, enforced the
+  NixOS user allowlist, applied hardening/private modes, and stopped cleanly.
+  Home Manager login enable/disable passed. This validates the generated user
+  services; it is not a full NixOS distribution boot.
+- One-command installer: real native piped install/reinstall passed. A second
+  trial used real curl over HTTPS to a local TLS test server with test-only
+  connection routing and a private test CA. It retained private configuration,
+  checked the installed executables/assets, passed health and unauthenticated
+  API rejection, and shut down cleanly. Published GitHub download availability
+  was not part of this local transport test.
+- All four installation routes found their bundled companion/proving setup
+  without binary/setup overrides, started an unfunded Sepolia companion,
+  preserved private permissions, and stopped the daemon and companion together.
+  There were no funding, withdrawal, or inference calls.
+
+Only Linux AMD64 was executed. The four-slot assembly included explicitly
+non-executable metadata fixtures for Darwin AMD64/Linux ARM64 and a cached real
+Darwin ARM64 archive; their URL/hash checks do not provide native runtime
+coverage. The complete native release matrix must still pass before publication.
+Systemd containers used private cgroup namespaces and no host filesystem mounts
+or published ports; all trial containers and derived images were removed.
 
 ## Published prerelease validation (2026-09-22)
 
