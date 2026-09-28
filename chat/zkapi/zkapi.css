@@ -1725,39 +1725,34 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-qr { display: grid; justify-items: center; gap: 10px; margin: 18px 0 4px; text-align: center; }
 .zkapi-funding-qr svg { display: block; width: 192px; height: auto; max-width: 100%; border-radius: 8px; background: #fff; }
 .zkapi-funding-qr figcaption { font-size: 12px; line-height: 1.5; color: hsl(var(--color-foreground)); }
-.zkapi-funding-progress { margin: 16px 0; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
-.zkapi-funding-progress-available { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 12px; }
+.zkapi-funding-progress { margin: 0 0 16px; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.zkapi-funding-progress-available { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; margin-bottom: 10px; }
 .zkapi-funding-progress-available > span { color: hsl(var(--color-muted-foreground)); }
 .zkapi-funding-progress-available strong { min-width: 0; max-width: 100%; overflow-wrap: anywhere; font-weight: 600; }
 .zkapi-funding-progress-available strong span,
 .zkapi-funding-progress dd span { color: hsl(var(--color-muted-foreground)); font-weight: 400; }
-.zkapi-funding-progress-chart { position: relative; padding-bottom: 22px; }
-.zkapi-funding-progress-track { height: 18px; overflow: hidden; border: 1px solid hsl(var(--color-foreground) / .25); border-radius: 5px; background: hsl(var(--color-background)); }
-.zkapi-funding-progress-segments { display: flex; width: 100%; height: 100%; }
-.zkapi-funding-progress-segment { position: relative; display: block; flex-shrink: 0; height: 100%; background: hsl(var(--color-muted)); }
-.zkapi-funding-progress-segment + .zkapi-funding-progress-segment { border-left: 1px solid hsl(var(--color-foreground) / .35); }
-.zkapi-funding-progress-received { display: block; height: 100%; background: var(--funding-segment-color); }
-.zkapi-funding-progress-segment-label { position: absolute; top: 50%; left: 50%; min-width: 12px; height: 12px; padding: 0 2px; transform: translate(-50%, -50%); border-radius: 2px; background: hsl(var(--color-popover)); color: hsl(var(--color-foreground)); font-size: 9px; font-weight: 700; line-height: 12px; text-align: center; }
-.zkapi-funding-progress-deposit { --funding-segment-color: var(--zkapi-bar); }
-.zkapi-funding-progress-fee { --funding-segment-color: hsl(var(--color-foreground) / .55); }
-.zkapi-funding-progress-buffer { --funding-segment-color: hsl(var(--color-foreground) / .3); }
-.zkapi-funding-progress-buffer .zkapi-funding-progress-received,
-.zkapi-funding-progress-key.zkapi-funding-progress-buffer { background-image: repeating-linear-gradient(135deg, transparent, transparent 3px, hsl(var(--color-background) / .55) 3px, hsl(var(--color-background) / .55) 5px); }
-.zkapi-funding-progress-required { position: absolute; top: -3px; bottom: 0; left: var(--funding-required-position); border-left: 2px solid hsl(var(--color-foreground)); }
-.zkapi-funding-progress-required > span { position: absolute; top: 24px; color: hsl(var(--color-foreground)); font-size: 10px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
-.zkapi-funding-progress-required-start > span { left: 3px; }
-.zkapi-funding-progress-required-middle > span { transform: translateX(-50%); }
-.zkapi-funding-progress-required-end > span { right: 3px; }
-.zkapi-funding-progress .zkapi-funding-progress-caption { margin: 1px 0 12px; color: hsl(var(--color-muted-foreground)); font-size: 11px; }
+.zkapi-funding-progress .zkapi-funding-progress-percentage { margin: 0 0 6px; font-size: 11px; font-weight: 600; }
+.zkapi-funding-progress-chart { position: relative; margin: 0 1px; }
+.zkapi-funding-progress-track { position: relative; height: 14px; overflow: hidden; border: 1px solid hsl(var(--color-foreground) / .25); border-radius: 4px; background: hsl(var(--color-foreground) / .07); }
+/* One fill represents the whole public balance, including leftovers. Costs are not wallet buckets. */
+.zkapi-funding-progress-received { position: absolute; inset: 0 auto 0 0; display: block; background: var(--zkapi-bar); }
+.zkapi-funding-progress-optional,
+.zkapi-funding-progress-optional-key { background-image: repeating-linear-gradient(135deg, transparent, transparent 3px, hsl(var(--color-foreground) / .22) 3px, hsl(var(--color-foreground) / .22) 5px); }
+.zkapi-funding-progress-optional { position: absolute; top: 0; bottom: 0; }
+.zkapi-funding-progress-required { position: absolute; top: -2px; bottom: -2px; left: var(--funding-required-position); border-left: 2px solid hsl(var(--color-foreground)); transform: translateX(-1px); }
+.zkapi-funding-progress-chart-key { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 10px; color: hsl(var(--color-muted-foreground)); }
+.zkapi-funding-progress-chart-key > span { display: inline-flex; align-items: center; gap: 6px; }
+.zkapi-funding-progress-required-key { width: 2px; height: 12px; background: hsl(var(--color-foreground)); }
+.zkapi-funding-progress-optional-key { width: 14px; height: 12px; border: 1px solid hsl(var(--color-foreground) / .25); border-radius: 2px; }
+.zkapi-funding-progress .zkapi-funding-progress-caption { margin: 8px 0 14px; color: hsl(var(--color-muted-foreground)); font-size: 11px; }
 .zkapi-funding-progress-legend,
 .zkapi-funding-progress-totals { display: grid; gap: 10px; margin: 0; }
+/* Wrap the amount onto its own line before long exact ETH values become cramped. */
 .zkapi-funding-progress-item,
-.zkapi-funding-progress-totals > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 1.4fr); align-items: start; gap: 4px 10px; }
-.zkapi-funding-progress-item dt { display: flex; align-items: flex-start; gap: 7px; }
+.zkapi-funding-progress-totals > div { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+.zkapi-funding-progress dt { flex: 1 1 120px; }
 .zkapi-funding-progress-item dt small { display: block; color: hsl(var(--color-muted-foreground)); font-size: 10px; }
-.zkapi-funding-progress-key { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; width: 16px; height: 16px; margin-top: 1px; border: 1px solid hsl(var(--color-foreground) / .3); border-radius: 3px; background-color: var(--funding-segment-color); color: hsl(var(--color-background)); font-size: 10px; font-weight: 700; line-height: 1; }
-.zkapi-funding-progress-key.zkapi-funding-progress-buffer { color: hsl(var(--color-foreground)); }
-.zkapi-funding-progress dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
+.zkapi-funding-progress dd { min-width: 0; max-width: 100%; margin: 0 0 0 auto; text-align: right; overflow-wrap: anywhere; }
 .zkapi-funding-progress-totals { margin-top: 12px; padding-top: 10px; border-top: 1px solid hsl(var(--color-border)); }
 .zkapi-funding-progress-totals > div:first-child { font-weight: 600; }
 .zkapi-funding-progress-totals > div:last-child dt { color: hsl(var(--color-muted-foreground)); }

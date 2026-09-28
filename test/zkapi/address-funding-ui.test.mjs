@@ -138,10 +138,10 @@ test('ordinary native funding keeps the fee breakdown available and enables Next
     const waiting = controls.renderFundingAccount(owner);
     assert.match(waiting, /Amount to add to your wallet/);
     assert.match(waiting, /0\.005 ETH/);
-    assert.match(waiting, /Amount added to private balance/);
-    assert.match(waiting, /Estimated network fee<\/dt><dd>0\.0004 ETH/);
-    assert.match(waiting, /Optional fee buffer<\/dt><dd>0\.00005 ETH/);
-    assert.match(waiting, /Recommended ETH to send<\/dt><dd>0\.0055 ETH/);
+    assert.match(waiting, /data-funding-progress/);
+    assert.match(waiting, /Estimated actual network fee<\/dt><dd>0\.0004 ETH/);
+    assert.match(waiting, /Optional buffer/);
+    assert.match(waiting, /Amount to send<\/dt><dd>0\.0055 ETH/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
     assert.match(waiting, /sending wallet charges its own transfer fee separately/);
@@ -164,9 +164,10 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Recommended to send 0\.0015 ETH more/);
-    assert.match(html, /Available toward this deposit<\/dt><dd>− 0\.004 ETH/);
-    assert.match(html, /Recommended ETH to send<\/dt><dd>0\.0015 ETH/);
+    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send 0\.0015 ETH more/);
+    assert.match(html, /Already at this address/);
+    assert.match(html, /0\.004 ETH/);
+    assert.match(html, /Amount to send<\/dt><dd>0\.0015 ETH/);
     assert.doesNotMatch(html, /Received/);
 });
 
@@ -177,11 +178,11 @@ test('covering required fees enables Next without asking for the remaining optio
     }) });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Ready to deposit/);
-    assert.match(html, /Ready to continue\. The fee buffer is optional/);
+    assert.match(html, /Ready to continue\./);
     assert.match(html, /0\.00545 ETH/);
     assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number/);
-    assert.match(html, /Optional buffer still to fund/);
+    assert.match(html, /Optional buffer remaining/);
 });
 
 test('a fee outage retains the independently checked funding-address balance', () => {
@@ -209,6 +210,14 @@ test('the visible send amount shows USD for the remaining transfer including fee
     assert.match(heading, /zkapi-funding-send-usd">≈ \$3\.00 USD/);
     assert.doesNotMatch(heading, /\$10\.00|\$11\.00/);
     assert.match(html, /data-funding-help-panel[^>]+hidden/);
+    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
+    assert.ok(details, 'cost details are in the collapsed question-mark panel');
+    assert.match(details[1], /data-funding-progress/);
+    assert.match(details[1], /Already at this address/);
+    assert.doesNotMatch(html.replace(details[1], ''), /data-funding-progress|Already at this address|Estimated actual network fee|Optional buffer/);
+    assert.doesNotMatch(html, /Recommended to send|more is required for the deposit and network fee allowance/);
+    owner.fundingHelpOpen = 'quote';
+    assert.doesNotMatch(controls.renderFundingAccount(owner), /data-funding-help-panel[^>]+hidden/);
 });
 
 test('an unavailable USD conversion keeps exact ETH visible without a zero dollar estimate', () => {
@@ -249,7 +258,7 @@ test('a missing balance never presents the full funding requirement as a known t
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ remainingWei: null, status: null }) });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Checking your funding address/);
-    assert.match(html, /Recommended ETH to send<\/dt><dd>— ETH/);
+    assert.match(html, /Amount to send<\/dt><dd>— ETH/);
     assert.doesNotMatch(html, /<h3>Send/);
     assert.match(html, /data-funding-next[^>]*disabled/);
 });
@@ -275,7 +284,7 @@ test('a definitely unsubmitted saved deposit refreshes its quote with the origin
     assert.match(html, /data-funding-usd[^>]*value="10" readonly/);
     assert.doesNotMatch(html, /value="999"/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
-    assert.match(html, /Estimated network fee/);
+    assert.match(html, /Estimated actual network fee/);
     assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
 });
 
@@ -289,7 +298,7 @@ test('a saved ETH deposit from MetaMask shows its fixed principal and current US
     assert.match(html, /aria-label="Saved deposit amount"/);
     assert.match(html, /data-funding-eth[^>]*value="0\.005" readonly/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
-    assert.match(html, /Estimated network fee/);
+    assert.match(html, /Estimated actual network fee/);
     assert.doesNotMatch(html, /data-funding-usd|value="999"|value="" readonly/);
     owner.fundingFlow.intent = null;
     const loading = controls.renderFundingAccount(owner);
@@ -385,7 +394,7 @@ for (const pending of [
             config: { funding: {}, pending_deposit: pending } } });
         Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ ready: true }) });
         const html = controls.renderFundingAccount(owner);
-        assert.doesNotMatch(html, /data-funding-usd|data-funding-next|Estimated network fee/);
+        assert.doesNotMatch(html, /data-funding-usd|data-funding-next|Estimated actual network fee/);
     });
 }
 
@@ -409,7 +418,7 @@ test('stale USD pricing leaves exact ETH fees visible without a fictitious conve
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '—' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Estimated network fee<\/dt><dd>0\.0004 ETH<\/dd>/);
+    assert.match(html, /Estimated actual network fee<\/dt><dd>0\.0004 ETH<\/dd>/);
     assert.doesNotMatch(html, /≈ —|NaN|undefined/);
 });
 

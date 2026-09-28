@@ -1,3 +1,17 @@
+## 2026-09-28: Compact funding instructions and clearer existing balance
+
+- The funding screen leads with "Send" and the remaining amount including the
+  optional buffer, after subtracting ETH already at the address. The entire
+  balance bar and fee breakdown live in the question-mark panel, closed by
+  default. The extra minimum-shortfall sentence is removed.
+- The bar uses one continuous blue fill for the current address balance,
+  including leftovers from earlier deposits. It no longer colors that balance
+  as separate deposit/fee buckets. A required-total marker and hatched optional
+  range explain the target; exact ETH/USD amounts and the cost breakdown remain
+  available in the panel. Opening the panel persists through read-only refreshes.
+- Readiness still requires principal plus the required fee allowance; incomplete
+  optional buffer never blocks Next. See [funding behavior](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address).
+
 ## 2026-09-28: Sepolia chat startup blocked by verifier TLS outage
 
 - Around 21:15 UTC, investigation of a reported "Failed to fetch" on private

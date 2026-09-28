@@ -36,42 +36,42 @@ export function renderFundingProgress({ availableWei, depositWei, requiredFeeWei
     if (recommended > MAX_WEI || required === 0n) return '';
 
     const requiredPosition = ratio(required, recommended);
-    const receivedPercent = percent(ratio(available, recommended));
-    const markerAlignment = requiredPosition > 800_000n ? 'end' : requiredPosition < 200_000n ? 'start' : 'middle';
+    const fundedRatio = ratio(available, recommended);
+    const receivedPercent = percent(fundedRatio);
+    const displayedPercent = available > 0n && fundedRatio < 1_000n
+        ? '&lt;0.1'
+        : percent(fundedRatio / 1_000n * 1_000n);
     const requiredCovered = available >= required;
     const labels = ['Deposit', 'Network fee', 'Optional buffer'];
-    const kinds = ['deposit', 'fee', 'buffer'];
     const portions = [deposit, fee, buffer];
-    let allocated = 0n;
-    const segments = portions.map((amount, index) => {
-        if (amount === 0n) return '';
-        const width = ratio(allocated + amount, recommended) - ratio(allocated, recommended);
-        const received = available > allocated ? available - allocated : 0n;
-        allocated += amount;
-        // At narrow dialog widths, an 8% segment still fits a small numbered
-        // key. Smaller portions retain their exact width and the visible legend.
-        const key = width >= 80_000n ? `<span class="zkapi-funding-progress-segment-label">${index + 1}</span>` : '';
-        return `<span class="zkapi-funding-progress-segment zkapi-funding-progress-${kinds[index]}" data-funding-part="${kinds[index]}" title="${labels[index]}" style="width:${percent(width)}%"><span class="zkapi-funding-progress-received" style="width:${percent(ratio(received, amount))}%"></span>${key}</span>`;
-    }).join('');
-    const legend = portions.map((amount, index) => `<div class="zkapi-funding-progress-item">
-        <dt><span class="zkapi-funding-progress-key zkapi-funding-progress-${kinds[index]}" aria-hidden="true">${index + 1}</span><span>${labels[index]}${index === 1 ? '<small>Required allowance</small>' : ''}</span></dt>
+    const breakdown = portions.map((amount, index) => `<div class="zkapi-funding-progress-item">
+        <dt>${labels[index]}${index === 1 ? '<small>Required allowance</small>' : ''}</dt>
         <dd>${renderAmount(amount.toString())}</dd>
     </div>`).join('');
-    const progressText = `${ethText(available)} available. ${ethText(required)} required for the deposit and network fee. ${ethText(buffer)} optional buffer. ${requiredCovered ? 'Required amount covered.' : `${ethText(required - available)} still required.`}`;
+    const progressText = `${ethText(available)} already at this address, including any ETH left from earlier deposits. ${ethText(required)} required for the deposit and network fee. ${ethText(buffer)} optional buffer. ${ethText(recommended)} total including buffer. ${requiredCovered ? 'Required amount covered.' : `${ethText(required - available)} still required.`}`;
+    const optionalRange = buffer > 0n
+        ? `<span class="zkapi-funding-progress-optional" style="left:${percent(requiredPosition)}%;width:${percent(PERCENT_SCALE - requiredPosition)}%" aria-hidden="true"></span>`
+        : '';
+    const optionalKey = buffer > 0n
+        ? '<span><i class="zkapi-funding-progress-optional-key" aria-hidden="true"></i>Optional buffer</span>'
+        : '';
 
     return `<section class="zkapi-funding-progress" data-funding-progress data-required-covered="${requiredCovered}" aria-label="Address funding">
-        <div class="zkapi-funding-progress-available"><span>Available at this address</span><strong>${renderAmount(available.toString())}</strong></div>
+        <div class="zkapi-funding-progress-available"><span>Already at this address</span><strong>${renderAmount(available.toString())}</strong></div>
+        <p class="zkapi-funding-progress-percentage">${displayedPercent}% of total including buffer</p>
         <div class="zkapi-funding-progress-chart" style="--funding-required-position:${percent(requiredPosition)}%">
-            <div class="zkapi-funding-progress-track" role="progressbar" aria-label="Address funding received" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${receivedPercent}" aria-valuetext="${progressText}">
-                <span class="zkapi-funding-progress-segments" aria-hidden="true">${segments}</span>
+            <div class="zkapi-funding-progress-track" role="progressbar" aria-label="Address balance toward deposit funding" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${receivedPercent}" aria-valuetext="${progressText}">
+                <span class="zkapi-funding-progress-received" style="width:${receivedPercent}%" aria-hidden="true"></span>
+                ${optionalRange}
             </div>
-            <span class="zkapi-funding-progress-required zkapi-funding-progress-required-${markerAlignment}" aria-hidden="true"><span>Required</span></span>
+            <span class="zkapi-funding-progress-required" aria-hidden="true"></span>
         </div>
-        <p class="zkapi-funding-progress-caption">Filled areas show funds received.</p>
-        <dl class="zkapi-funding-progress-legend">${legend}</dl>
+        <div class="zkapi-funding-progress-chart-key" aria-hidden="true"><span><i class="zkapi-funding-progress-required-key"></i>Required total</span>${optionalKey}</div>
+        <p class="zkapi-funding-progress-caption">Blue shows the current balance, including any ETH left from earlier deposits.</p>
+        <dl class="zkapi-funding-progress-legend">${breakdown}</dl>
         <dl class="zkapi-funding-progress-totals">
             <div><dt>Required total</dt><dd>${renderAmount(required.toString())}</dd></div>
-            <div><dt>With optional buffer</dt><dd>${renderAmount(recommended.toString())}</dd></div>
+            <div><dt>Total including buffer</dt><dd>${renderAmount(recommended.toString())}</dd></div>
         </dl>
         <p class="zkapi-funding-progress-note">The network fee is an allowance; the actual fee can be lower. The extra buffer is optional. Unused ETH stays here.</p>
     </section>`;

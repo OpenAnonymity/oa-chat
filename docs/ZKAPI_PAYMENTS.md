@@ -251,14 +251,21 @@ The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
-The screen recommends an exact ETH transfer including an optional fee buffer,
-with its current USD estimate and funding address. A visible progress bar shows
-ETH already at the address against labelled Deposit, Network fee and Optional
-buffer segments, with exact required and recommended totals. The optional
-buffer is extra on top of the required network fee allowance. A clickable
-question mark beside the send amount explains the estimated actual fee versus
-the required allowance, the buffer, and browser storage. These details start
-closed; they are not hover text. ETH already held at
+The screen says **Send** above the exact remaining ETH transfer including the
+optional fee buffer, with its current USD estimate and funding address. The
+question mark beside that amount reveals the entire address-balance bar and
+cost breakdown. These details start closed; they are not hover text, and their
+open state survives read-only refreshes. There is no separate numeric minimum
+shortfall below the QR.
+The bar uses one blue fill for all ETH already at the address, explicitly
+including leftovers from previous deposits. The rest is unfilled; a marker
+shows the required total and a hatched tail marks the optional buffer. Balance
+is not visually allocated into deposit and fee buckets. The exact ETH/USD
+balance, funded percentage of the total including buffer, and plain breakdown
+of deposit, network fee allowance, optional buffer and totals stay in the panel.
+The optional buffer is extra on top of the required network fee allowance.
+The panel also explains the estimated actual fee versus the required allowance
+and browser storage. ETH already held at
 the funding address reduces the requested transfer. A five-second read-only
 loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
 and durably stores a note draft independently of `pending_deposit`; no funding

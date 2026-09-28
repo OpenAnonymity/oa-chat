@@ -342,36 +342,31 @@ export function renderFundingAccount(owner) {
     const availableKnown = /^\d+$/.test(String(available));
     const recommendedRemaining = /^\d+$/.test(String(remaining)) ? BigInt(remaining) : null;
     const ready = flow?.ready && freshQuote;
-    const requiredRemaining = flow?.requiredRemainingWei;
     const balanceLine = `<p class="zkapi-helper zkapi-funding-available">Available at this address: ${availableKnown ? renderFundingWei(owner, available) : 'Checking balance…'}</p>`;
     const fundingLoading = flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…';
     const sendUsd = fundingUsdValue(remaining);
     const sendUsdReference = `<span class="zkapi-funding-send-usd">${sendUsd ? `≈ ${escape(sendUsd)} USD` : 'USD estimate unavailable'}</span>`;
     const sendHeading = ready ? 'Ready to deposit' : recommendedRemaining == null ? 'Checking your funding address…' : recommendedRemaining === 0n ? 'Funds available'
-        : `<span class="zkapi-funding-send-label">Recommended to send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(formatFundingAmount(remaining, 18))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
+        : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(formatFundingAmount(remaining, 18))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
     const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
     const address = `<div class="zkapi-funding-address"><input data-funding-address readonly aria-label="Funding address" value="${escape(wallet.address)}" /><button data-funding-copy class="zkapi-secondary-button" type="button">Copy</button></div>`;
     return `<section class="zkapi-funding-account" aria-label="Funding address">
         ${funding ? `
         ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. The network fee estimate refreshes before you continue.</p>' : ''}
-        ${intent && flow.totalWei && !flow.dirty && freshQuote ? `${fundingHelp(owner, 'quote', sendHeading, `<dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
-            <div><dt>Amount added to private balance</dt><dd>${renderFundingWei(owner, intent.depositWei)}</dd></div>
-            <div><dt>Estimated network fee</dt><dd>${renderFundingWei(owner, flow.fee.expectedFeeWei)}</dd></div>
-            <div><dt>Required network fee allowance</dt><dd>${renderFundingWei(owner, flow.fee.requiredFeeWei)}</dd></div>
-            <div><dt>Optional fee buffer</dt><dd>${renderFundingWei(owner, flow.fee.feeBufferWei)}</dd></div>
-            ${availableKnown && BigInt(available) > 0n ? `<div><dt>Available toward this deposit</dt><dd>− ${renderFundingWei(owner, BigInt(available) > BigInt(flow.totalWei) ? flow.totalWei : available)}</dd></div>` : ''}
-            <div class="zkapi-funding-total"><dt>${ready ? 'Optional buffer still to fund' : 'Recommended ETH to send'}</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
-        </dl>
-        <p class="zkapi-note">The required allowance covers the transaction's gas limit at the current fee quote. The actual network fee can be lower. The optional buffer is extra for fee increases; any unused ETH stays at this address. Fees are checked again when you click Next. Your sending wallet charges its own transfer fee separately.</p>
-        <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser. No account or Google sign-in is required.</p>`)}
-        ${availableKnown ? renderFundingProgress({ availableWei: available, depositWei: intent.depositWei,
+        ${intent && flow.totalWei && !flow.dirty && freshQuote ? `${fundingHelp(owner, 'quote', sendHeading, `${availableKnown ? renderFundingProgress({ availableWei: available, depositWei: intent.depositWei,
             requiredFeeWei: flow.fee.requiredFeeWei, feeBufferWei: flow.fee.feeBufferWei,
             renderAmount: value => renderFundingWei(owner, value) }) : balanceLine}
+        <dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
+            <div><dt>Estimated actual network fee</dt><dd>${renderFundingWei(owner, flow.fee.expectedFeeWei)}</dd></div>
+            <div class="zkapi-funding-total"><dt>${ready ? 'Optional buffer remaining' : 'Amount to send'}</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
+        </dl>
+        <p class="zkapi-note">Fees are checked again when you click Next. Your sending wallet charges its own transfer fee separately.</p>
+        <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser. No account or Google sign-in is required.</p>`)}
         ${address}
         ${!ready && remaining != null && BigInt(remaining) > 0n ? renderFundingPaymentQr({ address: wallet.address,
             chainId: Number(zkapiClient.config?.funding?.chain_id), amountWei: remaining }) : ''}
-        <p class="zkapi-helper zkapi-funding-status" role="status">${ready ? 'Ready to continue. The fee buffer is optional.' : /^\d+$/.test(String(requiredRemaining)) && BigInt(requiredRemaining) > 0n ? `${renderFundingWei(owner, requiredRemaining)} more is required for the deposit and network fee allowance.` : 'Waiting for funds…'}</p>
-        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `${fundingHelp(owner, 'quote', fundingLoading, '<p class="zkapi-note" role="status">The amount and breakdown will appear when the estimate is ready.</p>')}${balanceLine}${address}`}
+        <p class="zkapi-helper zkapi-funding-status" role="status">${ready ? 'Ready to continue.' : 'Waiting for funds…'}</p>
+        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `${fundingHelp(owner, 'quote', fundingLoading, `${balanceLine}<p class="zkapi-note" role="status">The amount and breakdown will appear when the estimate is ready.</p>`)}${address}`}
         ${flow?.error ? `<p class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`
         : `${fundingHelp(owner, 'receipt', 'Your funding address', renderFundingReceipt(owner))}${address}
         ${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`}
