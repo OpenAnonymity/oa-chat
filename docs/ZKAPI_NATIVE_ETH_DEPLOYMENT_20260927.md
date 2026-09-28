@@ -1,8 +1,8 @@
 # Native ETH deployment work, 2026-09-27
 
 Status: **Sepolia published; live deposit, recovery, chat and withdrawal passed**.
-**Mainnet contracts and backend are live; frontend publication is underway.**
-Finalized contract pins and the public backend have passed independent verification. Existing ERC20 browser
+**Native ETH Mainnet is published; unfunded canonical browser checks passed.**
+Finalized contracts, public backend and all published files have passed independent verification. Existing ERC20 browser
 origins and services are preserved for matching wallet recovery.
 
 ## Mainnet preparation resumed, 2026-09-28
@@ -27,8 +27,7 @@ deployment fees are **0.001069970517280939 ETH**, leaving a verified
 The combined signed maximum fee liability was 0.00207723344839807 ETH,
 below the 0.005 ETH limit. No further deployment signing is planned.
 The coordinated executor alone owns deployer nonces; never replace saved
-signed bytes or use another nonce as a retry. Runtime activation is complete as described below; frontend publication is
-still underway.
+signed bytes or use another nonce as a retry. Runtime and frontend publication are complete as described below.
 
 The user subsequently sent **0.005 ETH to each prepared account**. At
 07:37:28 UTC, block 26074503, latest balances were exactly 0.005 ETH for
@@ -99,10 +98,64 @@ SDK Mainnet configuration and its guard removal passed independent review,
 `cf56d67e0c1dd4bc3f3c32392478ce242c746446` is pushed on
 `codex/native-eth-review-integration-20260928` and pinned in both host package
 files, with matching installed dependency resolution. Mainnet Vercel publication
-and canonical browser verification are the remaining frontend steps at this revision.
+and canonical unfunded browser verification are complete.
 The existing legacy Mainnet recovery origin and native Sepolia application have
 not been republished. Backend source provenance remains separate from the new
 SDK configuration commit.
+
+### Published Mainnet frontend
+
+The OA Vercel project `oa-wallet-eth-mainnet` now serves
+**https://oa-wallet-eth-mainnet.vercel.app**. Deployment
+`dpl_EfvfCXhrcPYR5DVh8aQ8UCb5HXso` is READY, build `K2DVDIBU`, with app
+`c81405722608a32f2883c115a8ed8e522e6ba12b` and immutable SDK
+`cf56d67e0c1dd4bc3f3c32392478ce242c746446`. It uses the staging org through
+same-origin routes, the new native Mainnet backend and the real pinned verifier.
+The Mainnet migration guard is removed. This publication changes neither the
+native Sepolia app nor the separate USDC Mainnet recovery app.
+
+The complete app suite passed **1,400 tests**. Independent prepublication review
+verified exact metadata, all 486 local file hashes and complete directory
+coverage, OA project/routing, native Mainnet pins and absence of credential files.
+Public verification at **08:58:52 UTC** then matched all 486 canonical file hashes
+and build metadata. The real SDK validated the served manifest and trust pins;
+health, attestation and indexer root agreed, and the native quote matched the
+finalized ETH/USD oracle. Private routes remained 404. These are public/read-only
+checks, not a paid Mainnet deposit/inference/withdrawal test.
+
+Immediately before publication the Mainnet challenger checkpoint reached
+26074894 with zero pending obligations, its full 0.005 ETH reserve and all five
+services running. The sampled maximum 10M-gas fee liability had moved to
+0.00253192496 ETH, illustrating why reserves require ongoing monitoring.
+Canonical browser smoke passed without funding, signing, login or inference:
+
+- MetaMask is first and Send to an address is second. The accountless flow shows
+  Ethereum Mainnet, exact ETH and approximate USD totals, address/Copy, collapsed
+  fee help and disabled Next while unfunded.
+- Four USD/ETH switches took 9.3–15.5 ms, preserving 0.003783612 ETH principal
+  and restoring the initial $10 input. Custom input 0.002345678 ETH survived
+  page reload and a full browser close/reopen, including its ETH denomination
+  and exact funding address. Read-only RPC balance and both nonces stayed zero.
+- No visible alerts or uncaught JavaScript page errors were observed. Initial
+  and final console samples were clean, but an intervening restart recorded
+  two console errors and one warning without retained message text. The cause
+  was not established by that sample. A bounded reopen/reload reproduced no
+  console errors or uncaught page errors, but did reproduce the handled warning
+  `Cannot disable proxy while requests are in progress` from existing proxy
+  preference synchronization, caught in `chat/app.js`. Both loads still restored
+  the exact custom amount, displayed a fresh quote, kept Next disabled and showed
+  no alerts. The browser was closed. This does not establish the cause of the
+  earlier two errors or verify proxy reliability; the observed warning is
+  non-blocking for this unfunded funding/recovery acceptance.
+- The screenshot was visually inspected and the browser closed. Its unfunded
+  protected profile is retained for reproduction. Coverage excludes paid
+  Mainnet deposit/inference/withdrawal, MetaMask extension confirmations,
+  Google login and the outstanding live escape-challenge acceptance.
+
+Public browser evidence and screenshot are retained in the protected rollout's
+`browser-smoke-20260928` directory. The immutable deployed source revisions
+above remain the publication identity; later documentation commits do not
+change the deployed app or SDK.
 
 The original **0.03 ETH per account** proposal was a conservative reserve,
 not an expected transaction cost or a protocol minimum. It used the padded

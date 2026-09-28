@@ -1,4 +1,4 @@
-## 2026-09-28: Mainnet contracts and backend live; frontend activation underway
+## 2026-09-28: Native ETH Mainnet public deployment
 
 - User explicitly authorized public Mainnet deposits after funding 0.005 ETH
   each to the deployer and dedicated challenger. This supersedes the earlier
@@ -16,7 +16,9 @@
   indexer root, proof hashes and finalized ETH/USD quote passed live checks.
 - Dedicated challenger `0x667F2BB2aC6f56516B2e064B8be91526E86A6fF3` retains
   0.005 ETH. Startup checkpoint advanced to 26074834 with no pending obligations;
-  the sampled 10M-gas fee liability was 0.00183578607 ETH. Health alone does
+  the startup 10M-gas fee liability was 0.00183578607 ETH. Before publication,
+  checkpoint reached 26074894, still with zero pending obligations and the full
+  reserve; the refreshed maximum fee liability was 0.00253192496 ETH. Health alone does
   not establish funding adequacy; monitor fees, obligations and reserves.
 - Mainnet CloudFront `E301WJL60HXXBI` now uses authenticated HTTPS through
   `/mainnet` on the existing TLS origin, retaining disabled caching, all query
@@ -35,8 +37,20 @@
 - SDK Mainnet pins and guard removal passed fresh review and focused tests.
   Both app package files now pin `cf56d67e0c1dd4bc3f3c32392478ce242c746446`
   from `OpenAnonymity/zkapi`; installed dependency resolution matches.
-  Frontend publication to `oa-wallet-eth-mainnet.vercel.app` is still underway;
-  do not confuse the live backend with completed browser acceptance.
+  Mainnet is published at `https://oa-wallet-eth-mainnet.vercel.app`, app
+  `c81405722608a32f2883c115a8ed8e522e6ba12b`, build `K2DVDIBU`, Vercel
+  `dpl_EfvfCXhrcPYR5DVh8aQ8UCb5HXso` (READY). All 1,400 app tests pass.
+  Independent canonical verification matched all 486 published file hashes,
+  native config/trust checks, API identity and finalized billing quote. The
+  Mainnet migration guard is absent. Canonical unfunded browser smoke passed
+  both choices, ETH/USD totals, collapsed help and disabled Next. Four unit
+  switches took 9.3–15.5 ms without changing principal. Exact custom ETH amount,
+  input denomination and address survived reload and full browser restart.
+  No uncaught page errors occurred. A bounded reopen/reload reproduced one
+  handled proxy-preference sync warning: disabling was prevented while requests
+  were active (`chat/app.js` catches this warning). Funding/recovery stayed
+  correct. Two earlier console errors did not reproduce and lack retained
+  message text; do not claim a completely clean run or verified proxy reliability.
 - This remains an experimental, single-party proof setup with unaudited
   integration and incomplete live escape-challenge acceptance. No Mainnet paid
   browser transaction has been tested. The vault is unpaused and has no TVL cap;
