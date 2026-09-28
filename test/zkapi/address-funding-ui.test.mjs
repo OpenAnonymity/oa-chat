@@ -61,7 +61,7 @@ function quotedFlow(overrides = {}) {
     };
 }
 
-test('ordinary native funding itemizes principal, estimated fee, buffer and total, then enables Next only when funded', () => {
+test('ordinary native funding keeps the fee breakdown available and enables Next only when funded', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const waiting = controls.renderFundingAccount(owner);
@@ -71,7 +71,7 @@ test('ordinary native funding itemizes principal, estimated fee, buffer and tota
     assert.match(waiting, /Estimated network fee<\/dt><dd>0\.0004 ETH/);
     assert.match(waiting, /Additional fee buffer<\/dt><dd>0\.0001 ETH/);
     assert.match(waiting, /Total ETH to send<\/dt><dd>0\.0055 ETH/);
-    assert.match(waiting, /Low network fee\. Confirmation may take longer\./);
+    assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
     assert.match(waiting, /sending wallet charges its own transfer fee separately/);
     assert.match(waiting, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
@@ -81,7 +81,7 @@ test('ordinary native funding itemizes principal, estimated fee, buffer and tota
     assert.doesNotMatch(waiting, /<details[^>]*open/);
     Object.assign(owner.fundingFlow, { ready: true, remainingWei: '0', status: { ethBalance: '5500000000000000' } });
     const ready = controls.renderFundingAccount(owner);
-    assert.match(ready, /Funds available\. Choose Next/);
+    assert.match(ready, /Ready to continue/);
     assert.doesNotMatch(ready, /Send 0(?:\.0)? ETH|Received/);
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
     assert.match(ready, /Its USD value changes with the ETH price/);
@@ -93,7 +93,7 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Send 0\.0015 ETH more/);
+    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send 0\.0015 ETH more/);
     assert.match(html, /Available toward this deposit<\/dt><dd>− 0\.004 ETH/);
     assert.match(html, /Total ETH to send<\/dt><dd>0\.0015 ETH/);
     assert.doesNotMatch(html, /Received/);
@@ -345,8 +345,7 @@ test('a saved transaction disables method switching and retains recovery control
     assert.match(method, /data-wallet-method="address"[^>]*disabled/);
     const account = controls.renderFundingAccount(owner);
     assert.match(account, /data-funding-recover/);
-    assert.match(account, /New transactions use low network fees and may take longer to confirm\./);
-    assert.match(account, /New transfers use low network fees and may take longer to confirm\./);
+    assert.doesNotMatch(account, /low network fees|take longer|slow/i);
 });
 
 test('legacy migration captures the existing password locally and never stores it on the owner', async () => {

@@ -1,3 +1,23 @@
+## 2026-09-27: Compact send-to-address deposit screen
+
+- The deposit screen emphasizes the exact ETH still needed and the funding
+  address. The USD input, network, Copy, brief funding status and Next remain
+  visible. Principal, estimated fee, buffer, existing ETH and total appear only
+  after clicking the question-mark help beside the send amount.
+- Fee explanations and browser/ETH-value context live inside that disclosure;
+  the Low policy remains active without slow-confirmation explanatory copy.
+  Blocking errors and saved-deposit constraints remain visible. Pricing,
+  polling, fee authorization and signing behavior are unchanged.
+- Help is a keyboard-accessible click disclosure, not hover text. Outside
+  click dismisses it; the first Escape closes help and the next closes the
+  dialog. Open state and toggle focus survive balance and quote refreshes.
+  While the quote refreshes, open help shows a loading state instead of stale
+  payment amounts or Next. Closing the dialog or changing wallet method resets it.
+- Validation: 129 focused funding/recovery/UI tests pass. Fresh adversarial
+  review approved the final diff. Actual browser checks covered collapsed and
+  expanded details, keyboard and outside-click dismissal, a full fee-quote
+  refresh with retained focus, and desktop/mobile amount layout.
+
 ## 2026-09-27: Native ETH versus earlier token gas comparison
 
 - Fresh canonical Sepolia receipt comparison found no asset-switch gas
@@ -30,7 +50,7 @@
   checks and a 120-second age limit. Malformed/unavailable history fails closed;
   there is no fallback to an expensive generic RPC tip. An all-empty valid
   history uses the minimum tip. Quotes and actual signing use the same policy.
-- UI says low fees can take longer. Existing signed journals replay unchanged,
+- The Low fee policy can take longer. Existing signed journals replay unchanged,
   even if created under the earlier pricing policy. No automatic fee bump or
   wallet connection is introduced; MetaMask continues to choose its own fees.
 - This mainly lowers the maximum amount requested at current Sepolia prices:

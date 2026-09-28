@@ -156,8 +156,12 @@ stale asynchronous reads cannot re-enable it.
 The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing fails closed.
 
-The screen separates ETH principal added to the private balance, estimated
-network fee, additional fee buffer and total ETH to send. ETH already held at
+The screen emphasizes the exact ETH to send, network and funding address,
+with a USD deposit input and short waiting/ready status. A clickable question
+mark beside the send amount reveals the breakdown: ETH principal added to the
+private balance, estimated network fee, additional fee buffer and total ETH to
+send, together with the estimate and browser-storage explanations. These details
+start closed; they are not hover text. ETH already held at
 the funding address reduces the requested transfer. A five-second read-only
 loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
 and durably stores a note draft independently of `pending_deposit`; no funding
@@ -404,7 +408,7 @@ distinguishes test assets from actual-value Mainnet transactions.
 ## Low-fee address transactions (2026-09-27)
 
 Low is the default for new Send-to-an-address deposits, withdrawals and public
-returns. The UI explains that confirmation can take longer. It is an OA policy,
+returns. The compact funding UI omits slow-confirmation explanations. It is an OA policy,
 not a claim to reproduce MetaMask's remotely supplied Low estimates exactly.
 See [MetaMask gas customization](https://support.metamask.io/configure/transactions/how-to-customize-gas-settings/),
 [MetaMask fee controller](https://github.com/MetaMask/core/blob/main/packages/gas-fee-controller/src/determineGasFeeCalculations.ts),
