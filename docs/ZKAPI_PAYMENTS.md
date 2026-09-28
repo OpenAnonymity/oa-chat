@@ -471,3 +471,32 @@ ETH out of the current EOA or pay its transaction gas without additional
 execution/authorization architecture. Any such change needs a separate design
 and review, preserving browser-local note secrets and avoiding account identity
 or inference data in sponsorship requests. Sponsorship is a separate design and is not implemented by the fee-quote change.
+
+## Review merge and deposit outcome reporting (2026-09-27)
+
+The note-bound SDK/backend review fixes are merged with native ETH. See the
+[acceptance matrix](ZKAPI_REVIEW_MERGE_20260927.md) for each protocol finding,
+optional execution mode, manual UI observation and remaining coverage limit.
+
+An interrupted receipt wait is not evidence of a failed deposit. Account and
+welcome dialogs use neutral pending copy only when the SDK has both a saved
+submission phase and evidence that broadcast may have happened. Confirmed reverts
+and receipt/note mismatches remain errors. Indexer lag ends the transient activity
+as pending while durable SDK recovery still controls whether another deposit is
+allowed. No host UI infers success from an unrelated existing note. Accountless
+use is stated inside existing collapsed help, leaving the compact address screen
+unchanged.
+
+Once the SDK has atomically saved the exact confirmed deposit and its history,
+`confirmDeposit` returns that operation's confirmed outcome. The receipt and
+vault-recovery paths publish durable history/plan clearance before refreshing
+the balance display. If that display refresh fails, the result remains
+`status: 'confirmed'` with `balanceRefreshPending: true`; ordinary status polling
+recovers it without another transaction. Worker proof, indexer, note mismatch
+and persistence failures before the commit still fail. This boundary must stay
+inside the SDK; host UI must not guess confirmation from an existing balance.
+Account and welcome surfaces preserve the SDK's refresh-pending outcome: they
+show confirmed deposit / refreshing balance, without claiming ready-to-chat or
+formatting a missing projection as zero. Their transient UI guard suppresses
+new funding/quote controls and clears only when the exact confirmed note ID
+arrives from the SDK. Wallet persistence and eligibility remain SDK-owned.

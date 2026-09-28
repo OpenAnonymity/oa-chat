@@ -1,3 +1,32 @@
+## 2026-09-27: Merge the zkAPI review repairs into native ETH
+
+- Merged incoming review branch `2eda8f3` into native SDK/backend commit
+  `2e9647c`, now pinned in both app package files from `OpenAnonymity/zkapi`.
+  The merge preserves native protocol `8b2d4e3`, vault/config pins, request-bound
+  OA issuance, active-lease challenge evidence and native billing recovery.
+- Incorporated proxy concurrency coordination and durable direct OpenRouter
+  retirement. A merge-specific regression protects challenge evidence during
+  retiring/disabled/revoking phases. These optional-mode limitations and all
+  review acceptance results are tracked in
+  [review merge acceptance](ZKAPI_REVIEW_MERGE_20260927.md).
+- Exact deposit confirmation is now independent of subsequent worker/status
+  refresh: durable success returns `confirmed` with `balanceRefreshPending` when
+  needed, publishes history/plan clearance, and ordinary polling recovers display.
+  Pre-commit worker/indexer/storage failures remain errors. Welcome/account
+  dialogs keep a transient exact-note refresh guard: no false zero/ready copy
+  or new funding quote appears until that note's projection arrives.
+- Pending submitted deposits and indexer lag now use recoverable status instead
+  of failed activity. Real reverts and note mismatches stay errors. Collapsed
+  funding help explains that account/Google login is optional; default screen
+  density, currency switching and signing rules are unchanged.
+- Validation: 1,400 app tests (886 core + 514 payment), 305 SDK tests, 141
+  integration Rust tests, 82 protocol Rust tests, 27 Solidity tests, two real
+  shipped-WASM proofs, 11 signer tests and four launcher tests pass. Fresh
+  independent reviews approved both final diffs; Rust formatting/Clippy pass.
+- Do not confuse the newly merged ERC20 AWS/CLI acceptance examples with this
+  native deployment. Full Google login and native Mainnet publication remain
+  outside the completed acceptance coverage.
+
 ## 2026-09-27: Immediate deposit currency switching
 
 - Currency switching waited for `AddressDepositFlow.check()`, including public

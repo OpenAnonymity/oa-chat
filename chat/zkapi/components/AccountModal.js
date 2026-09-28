@@ -3,7 +3,7 @@ import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { settlePrivateAccess } from '../services/privateAccessSettlement.js';
 import { walletErrorMessage } from '@openanonymity/zkapi-browser-sdk/wallet-error';
-import { explainZkapiError, isIndexerLag } from '../services/zkapiErrorCopy.mjs';
+import { explainZkapiError, isIndexerLag, pendingDepositMessage } from '../services/zkapiErrorCopy.mjs';
 import { updateZkapiBalanceControl } from './ZkapiStateExperience.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 import { walletJourney } from '../domain/walletJourney.js';
@@ -30,6 +30,8 @@ const CANCELED_LINE = 'Canceled in MetaMask. Nothing moved.';
 const RUNNING_MODAL_KEY = 'oa-zkapi-running-modal';
 const RESTORABLE_VIEWS = ['balance', 'fund', 'withdraw', 'withdrawals'];
 const IN_MOTION_PHASES = ['submitted', 'awaiting_wallet', 'dropped_or_pending', 'ambiguous'];
+const CONFIRMED_REFRESHING_LINE = 'Deposit confirmed and saved. Refreshing your private balance…';
+const DEPOSIT_READY_LINE = 'Deposit confirmed. Your private balance is ready.';
 const CONFIRMING_LINE = 'Waiting for confirmation. Usually under a minute; this updates on its own.';
 // Wallet work narrates in the dialog — the steps while it runs, one line
 // with the outcome when it ends. No toasts: with the dialog closed, the
@@ -53,6 +55,8 @@ export default class AccountModal {
         this.status = '';
         this.statusError = false;
         this.depositAmount = null;
+        this.depositBalanceRefreshPending = false;
+        this.confirmedDepositNoteId = null;
         this.fundingDestination = null;
         this.fundingError = '';
         this.walletMethodReady = false;
@@ -64,6 +68,7 @@ export default class AccountModal {
         this.escapeHandler = null;
         this.unsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
             if (detail?.reason === 'clock') return;
+            this.syncConfirmedDepositBalance();
             this.updateTabIndicator();
             this.restorePendingOperation();
             // An unfunded modal contains an editable amount. Rebuilding it on
@@ -410,12 +415,18 @@ export default class AccountModal {
                 || /(?:user|wallet).*(?:reject|denied|cancel)|request rejected/i.test(error?.message || '');
             // An indexer that has not caught up is a wait, not a fault.
             const indexerLag = isIndexerLag(error);
+            const depositPending = activityDetails?.kind === 'deposit'
+                ? pendingDepositMessage(error, zkapiClient.config?.pending_deposit) : null;
+            const recoverable = fundingSaved || indexerLag || Boolean(depositPending);
             explainZkapiError(error);
-            this.setStatus(fundingWaitStopped ? error.message : fundingSaved ? 'Your funding transaction is saved. Use Check saved transaction to resume it safely.' : rejected ? CANCELED_LINE : walletErrorMessage(error),
-                !rejected && !confirmationPending && !indexerLag && !fundingSaved);
+            this.setStatus(fundingWaitStopped ? error.message : fundingSaved ? 'Your funding transaction is saved. Use Check saved transaction to resume it safely.' : rejected ? CANCELED_LINE : depositPending || walletErrorMessage(error),
+                !rejected && !confirmationPending && !recoverable);
             if (activityId) {
-                if (fundingSaved) zkapiClient.completeActivity(activityId, {
-                    title: fundingWaitStopped ? 'Stopped waiting for funds' : 'Funding transaction saved', phase: 'waiting', message: this.status
+                if (recoverable) zkapiClient.updateActivity(activityId, {
+                    title: fundingWaitStopped ? 'Stopped waiting for funds' : indexerLag ? 'Waiting for balance update'
+                        : depositPending ? 'Deposit status pending' : 'Funding transaction saved',
+                    status: 'pending', phase: 'waiting', message: this.status,
+                    finishedAt: Date.now(), blocksSend: false, error: null
                 });
                 else if (confirmationPending) zkapiClient.completeActivity(activityId, {
                     title: 'Withdrawal transaction mined',
@@ -428,7 +439,7 @@ export default class AccountModal {
             // Closing a wallet prompt is an ordinary user decision. The
             // durable recovery path above has already put the operation into a
             // safe retry/canceled state, so do not present it as an app error.
-            this.outcome = { message: this.status, tone: fundingSaved || confirmationPending || indexerLag || rejected ? 'info' : 'error', canceled: rejected };
+            this.outcome = { message: this.status, tone: recoverable || confirmationPending || rejected ? 'info' : 'error', canceled: rejected };
         } finally {
             this.rememberRunningModal(false);
             this.busy = false;
@@ -443,28 +454,47 @@ export default class AccountModal {
         }
     }
 
+    syncConfirmedDepositBalance() {
+        if (this.depositBalanceRefreshPending && zkapiClient.note
+            && Number(zkapiClient.note.note_id) === this.confirmedDepositNoteId) {
+            this.depositBalanceRefreshPending = false;
+            this.confirmedDepositNoteId = null;
+            if (this.status === CONFIRMED_REFRESHING_LINE) this.status = DEPOSIT_READY_LINE;
+            if (this.outcome?.message === CONFIRMED_REFRESHING_LINE) this.outcome.message = DEPOSIT_READY_LINE;
+        }
+    }
+
+    recordDepositConfirmation(result) {
+        this.depositBalanceRefreshPending = result?.balanceRefreshPending === true;
+        this.confirmedDepositNoteId = this.depositBalanceRefreshPending ? Number(result.noteId) : null;
+        this.syncConfirmedDepositBalance();
+        this.view = 'balance';
+        this.setStatus(this.depositBalanceRefreshPending ? CONFIRMED_REFRESHING_LINE : DEPOSIT_READY_LINE);
+    }
+
     async submitAddressDeposit() {
+        if (this.depositBalanceRefreshPending) return;
         const flow = this.fundingFlow;
         await this.run(async report => {
-            await zkapiClient.deposit(this.fundingDepositIntent.ethAmount, report,
+            const result = await zkapiClient.deposit(this.fundingDepositIntent.ethAmount, report,
                 { preparedOperationId: this.fundingDepositIntent.preparedOperationId });
             await flow.complete();
             this.fundingUsdAmount = null;
             this.fundingInputAmount = null;
             this.fundingInputCurrency = null;
-            this.view = 'balance';
-            this.setStatus('Deposit confirmed. Your ETH wallet is ready.');
+            this.recordDepositConfirmation(result);
         }, { kind: 'deposit', title: 'Adding ETH', phase: 'wallet', message: 'Checking funds…', blocksSend: true });
     }
 
     async prepareAddressDepositRetry() {
         await this.run(async report => {
-            await zkapiClient.prepareDepositRetry(report);
+            const result = await zkapiClient.prepareDepositRetry(report);
             stopFundingFlow(this);
-            this.view = zkapiClient.note ? 'balance' : 'fund';
-            this.setStatus(zkapiClient.note
-                ? 'Deposit confirmed. Your ETH wallet is ready.'
-                : 'Your saved deposit is ready to review. Check the updated fee estimate before choosing Next.');
+            if (result?.status === 'confirmed') this.recordDepositConfirmation(result);
+            else {
+                this.view = 'fund';
+                this.setStatus('Your saved deposit is ready to review. Check the updated fee estimate before choosing Next.');
+            }
         }, { kind: 'deposit', title: 'Reviewing saved deposit', phase: 'local', message: 'Checking the saved deposit…', blocksSend: true });
     }
 
@@ -768,6 +798,16 @@ export default class AccountModal {
     }
 
     renderBalance(fundingSetup = null) {
+        this.syncConfirmedDepositBalance();
+        if (this.depositBalanceRefreshPending) return `<div class="zkapi-stack">
+            <section class="zkapi-section" aria-label="Deposit confirmed">
+                <p class="zkapi-balance-caption">Deposit confirmed</p>
+                <p class="zkapi-helper" role="status">Refreshing your private balance…</p>
+                <p class="zkapi-note">Your deposit is saved in this browser.</p>
+            </section>
+            ${this.busy ? this.renderProgress(this.status) : '<button id="zkapi-refresh-btn" class="zkapi-secondary-button w-full" type="button">Refresh balance</button>'}
+            ${this.renderWithdrawalStatusLink()}
+        </div>`;
         const note = zkapiClient.note;
         const pendingDeposit = zkapiClient.config?.pending_deposit;
         if (!note) {
@@ -1031,6 +1071,7 @@ export default class AccountModal {
 
     render() {
         if (!this.overlay) return;
+        this.syncConfirmedDepositBalance();
         if (this.outcome?.view && this.outcome.view !== this.view) this.outcome = null;
         if (this.view === 'withdraw' && this.shouldShowClaimedBalance()) this.view = 'balance';
         this.disposeFundingDisclosures?.();
@@ -1100,10 +1141,9 @@ export default class AccountModal {
                 const pending = zkapiClient.config?.pending_deposit;
                 const deposit = pending ? zkapiClient.formatBillingAmount(pending.amount)
                     : zkapiClient.isNativeEthFunding ? (await zkapiClient.quoteDepositUsd(amount)).ethAmount : amount;
-                await zkapiClient.deposit(deposit, report);
+                const result = await zkapiClient.deposit(deposit, report);
                 this.depositAmount = null;
-                this.view = 'balance';
-                this.setStatus('Deposit confirmed. Your private balance is ready.');
+                this.recordDepositConfirmation(result);
             }, { kind: 'deposit', title: 'Adding funds', phase: 'wallet', message: 'Connecting to MetaMask…', blocksSend: true });
         });
         this.overlay.querySelector('#zkapi-discard-deposit-btn')?.addEventListener('click', () => this.run(async () => {
@@ -1116,7 +1156,8 @@ export default class AccountModal {
         }, { kind: 'deposit', title: 'Cancelling deposit', phase: 'local', message: 'Discarding the saved deposit…', blocksSend: false }));
         this.overlay.querySelector('#zkapi-check-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             const result = await zkapiClient.recoverBrowserDeposit(report);
-            if (result?.status !== 'confirmed') this.setStatus('Your deposit is not confirmed yet. If MetaMask shows a pending transaction, wait for it to finish.');
+            if (result?.status === 'confirmed') this.recordDepositConfirmation(result);
+            else this.setStatus('Your deposit is not confirmed yet. If MetaMask shows a pending transaction, wait for it to finish.');
         }, { kind: 'deposit', title: 'Checking deposit', phase: 'syncing', blocksSend: true }));
         this.overlay.querySelector('#zkapi-recover-deposit-btn')?.addEventListener('click', () => this.run(async (report) => {
             await zkapiClient.recoverUnknownDeposit(report);
@@ -1125,19 +1166,17 @@ export default class AccountModal {
             if (getWalletMethod() === 'address') return this.prepareAddressDepositRetry();
             if (!globalThis.confirm('Only try again if MetaMask is closed and Check payment status still finds no deposit. This asks MetaMask to submit the same saved deposit again.')) return;
             return this.run(async (report) => {
-                await zkapiClient.retryUnknownDeposit(report);
+                const result = await zkapiClient.retryUnknownDeposit(report);
                 this.depositAmount = null;
-                this.view = 'balance';
-                this.setStatus('Deposit confirmed. Your private balance is ready.');
+                this.recordDepositConfirmation(result);
             }, { kind: 'deposit', title: 'Retrying deposit', phase: 'wallet', blocksSend: true });
         });
         this.overlay.querySelector('#zkapi-retry-dropped-deposit-btn')?.addEventListener('click', () => {
             if (!globalThis.confirm('Resubmit the exact same deposit with its original account nonce? MetaMask may charge a replacement gas fee, but only one transaction at that nonce can execute.')) return;
             return this.run(async (report) => {
-                await zkapiClient.retryDroppedDeposit(report);
+                const result = await zkapiClient.retryDroppedDeposit(report);
                 this.depositAmount = null;
-                this.view = 'balance';
-                this.setStatus('Deposit confirmed. Your private balance is ready.');
+                this.recordDepositConfirmation(result);
             }, { kind: 'deposit', title: 'Replacing pending deposit', phase: 'wallet', blocksSend: true });
         });
         this.overlay.querySelectorAll('[data-view-current-deposit]').forEach(button => {

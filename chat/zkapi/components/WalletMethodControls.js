@@ -61,7 +61,7 @@ function canFund(owner) {
     // Welcome hands all saved work to the balance dialog. Only the SDK can
     // declare a saved deposit definitely unsubmitted and safe to quote again.
     const quotableSaved = !owner.resumeSavedDeposit && canQuotePendingAddressDeposit();
-    return getWalletMethod() === 'address' && owner.isOpen && !zkapiClient.note
+    return getWalletMethod() === 'address' && owner.isOpen && !owner.depositBalanceRefreshPending && !zkapiClient.note
         && (!pending || quotableSaved) && !['withdraw', 'withdrawals'].includes(owner.view)
         && owner.step !== 'success' && owner.walletMethodReady !== false;
 }
@@ -261,7 +261,7 @@ export function renderFundingAccount(owner) {
             <div class="zkapi-funding-total"><dt>Total ETH to send</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
         </dl>
         <p class="zkapi-note">This estimate refreshes automatically and is checked again when you click Next. The buffer covers changes in network fees; any unused ETH stays at this address. Your sending wallet charges its own transfer fee separately.</p>
-        <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser.</p>`)}
+        <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser. No account or Google sign-in is required.</p>`)}
         <p class="zkapi-helper">On <strong>${escape(network)}</strong> to this address:</p>${address}
         <p class="zkapi-helper zkapi-funding-status" role="status">${ready ? 'Ready to continue.' : 'Waiting for funds…'}</p>
         <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `${fundingHelp(owner, 'quote', fundingLoading, '<p class="zkapi-note" role="status">The amount and breakdown will appear when the estimate is ready.</p>')}<p class="zkapi-helper">${escape(network)}</p>${address}`}

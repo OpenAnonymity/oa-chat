@@ -12,6 +12,17 @@ export function isIndexerLag(error) {
         || /indexer is still catching up/i.test(error?.message || error?.shortMessage || '');
 }
 
+/** A transport failure after submission does not establish that the deposit
+ * failed. Use only SDK submission evidence plus the saved recovery plan; a
+ * reverted receipt or a validation failure must keep its actual error. */
+export function pendingDepositMessage(error, plan) {
+    if (!plan || !['submitted', 'dropped_or_pending', 'awaiting_wallet', 'ambiguous'].includes(plan.phase)
+        || error?.transactionReceipt || error?.broadcastPossible === false) return null;
+    const receiptWait = /Timed out waiting for transaction/i.test(error?.message || '');
+    if (error?.broadcastPossible !== true && !receiptWait) return null;
+    return 'Your deposit status is not yet confirmed. Its progress is saved in this browser. Check payment status before trying again.';
+}
+
 /** Rewrites a caught error's message in place so every surface — toast,
  *  activity log, panel — says the same clear thing. Returns the error. */
 export function explainZkapiError(error) {

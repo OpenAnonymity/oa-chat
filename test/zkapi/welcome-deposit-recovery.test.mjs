@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { isIndexerLag, pendingDepositMessage, zkapiErrorMessage } from '../../chat/zkapi/services/zkapiErrorCopy.mjs';
 
 const source = fs.readFileSync(new URL('../../chat/zkapi/components/WelcomePanel.js', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '').replace('export default class WelcomePanel', 'class WelcomePanel');
@@ -17,6 +18,7 @@ function fixture(method, phase) {
         quoteDepositUsd() { assert.fail('A saved deposit must never be repriced'); }
     };
     const context = {
+        isIndexerLag, pendingDepositMessage, zkapiErrorMessage,
         zkapiClient: client,
         addressFundingWallet: { pending: null },
         getWalletMethod: () => method,
@@ -32,6 +34,42 @@ function fixture(method, phase) {
         app: { accountModal: { openFunding() { actions.push('open-funding'); } } }
     });
     return { welcome, actions, client, context };
+}
+
+for (const failureKind of ['receipt', 'indexer', 'reverted', 'mismatch']) {
+    test(`Welcome preserves the saved deposit and correctly presents ${failureKind} interruption`, async () => {
+        const { welcome, client, context, actions } = fixture('metamask', null);
+        client.config.pending_deposit = null;
+        client.quoteDepositUsd = async () => ({ ethAmount: '0.005' });
+        context.prepareWalletMethod = async () => {};
+        const plan = { phase: 'submitted', amount: '4000000', operation_id: 'original-operation' };
+        const error = failureKind === 'indexer' ? Object.assign(new Error('Indexer catching up'), { code: 'indexer_root_lag' })
+            : failureKind === 'mismatch' ? new Error('The mined deposit did not match this browser’s durable private note.')
+                : Object.assign(new Error(failureKind === 'reverted' ? 'Transaction reverted.' : 'RPC connection lost'), {
+                    broadcastPossible: true, transactionStage: 'receipt',
+                    ...(failureKind === 'reverted' ? { transactionReceipt: { status: '0x0' } } : {})
+                });
+        let calls = 0;
+        client.deposit = async () => { calls++; client.config.pending_deposit = plan; throw error; };
+        Object.assign(welcome, { overlay: { querySelector: () => ({ value: '10' }) }, render() {} });
+        await welcome.fund();
+        assert.equal(calls, 1);
+        assert.equal(client.config.pending_deposit, plan, 'Presentation never modifies the SDK recovery plan');
+        assert.deepEqual(actions, [], 'Failure never automatically resubmits or opens a wallet');
+        const html = welcome.renderWelcome();
+        assert.match(html, /Continue saved deposit/);
+        assert.doesNotMatch(html, /id="welcome-fund-btn"/);
+        if (['receipt', 'indexer'].includes(failureKind)) {
+            assert.equal(welcome.error, '');
+            assert.ok(welcome.notice);
+            assert.match(html, /role="status"/);
+            assert.doesNotMatch(html, /text-destructive/);
+        } else {
+            assert.equal(welcome.notice, '');
+            assert.equal(welcome.error, error.message);
+            assert.match(html, /text-destructive/);
+        }
+    });
 }
 
 for (const method of ['address', 'metamask']) {
@@ -78,3 +116,59 @@ for (const method of ['address', 'metamask']) {
         });
     }
 }
+
+for (const method of ['address', 'metamask']) {
+    test(`Welcome keeps a confirmed ${method} deposit successful while its exact balance refresh is pending`, async () => {
+        const { welcome, client, context } = fixture(method, null);
+        client.config.pending_deposit = null;
+        client.quoteDepositUsd = async () => ({ ethAmount: '0.005' });
+        context.prepareWalletMethod = async () => {};
+        let deposits = 0;
+        const result = { status: 'confirmed', balanceRefreshPending: true, noteId: 7, amount: 4_000_000 };
+        client.deposit = async () => { deposits++; return result; };
+        context.runAddressAction = async (owner, details, report, action) => {
+            owner.fundingDepositIntent = { ethAmount: '0.005', preparedOperationId: 'operation' };
+            return action();
+        };
+        let handedOff;
+        welcome.app.accountModal.recordDepositConfirmation = value => { handedOff = value; };
+        Object.assign(welcome, { overlay: { querySelector: () => ({ value: '10' }) }, render() {} });
+        await welcome.fund();
+        assert.equal(welcome.step, 'success');
+        assert.equal(welcome.error, '');
+        assert.equal(handedOff, result, 'opening Private balance retains the same pending projection');
+        assert.match(welcome.renderSuccess(), /Deposit confirmed|Refreshing your private balance/);
+        assert.doesNotMatch(welcome.renderSuccess(), /ready to chat|Start chatting|Private balance:|\$0/);
+        client.note = { note_id: 6, current_balance: '4000000' };
+        assert.match(welcome.renderSuccess(), /Refreshing your private balance/);
+        assert.equal(welcome.depositBalanceRefreshPending, true, 'an unrelated note cannot clear the outcome');
+        await welcome.fund();
+        assert.equal(deposits, 1, 'a pending projection never permits rebroadcast');
+        client.note = { note_id: 7, current_balance: '4000000' };
+        assert.match(welcome.renderSuccess(), /You’re ready to chat/);
+        assert.match(welcome.renderSuccess(), /\$12\.00/);
+        assert.equal(welcome.depositBalanceRefreshPending, false);
+    });
+}
+
+test('Welcome rerenders the success view when the exact confirmed note becomes available', () => {
+    const { client, context } = fixture('metamask', null);
+    let notify;
+    client.subscribe = fn => { notify = fn; return () => {}; };
+    context.document = { getElementById: () => null };
+    context.addressFundingWallet.subscribe = () => () => {};
+    context.subscribeWalletMethod = () => () => {};
+    const Panel = vm.runInNewContext(`${source}\nWelcomePanel;`, { ...context });
+    const panel = new Panel({});
+    let renders = 0;
+    Object.assign(panel, { isOpen: true, step: 'success', depositBalanceRefreshPending: true,
+        confirmedDepositNoteId: 7, render() { renders++; } });
+    client.hasNote = true;
+    client.note = { note_id: 6 };
+    notify({}, { reason: 'runtime' });
+    assert.equal(renders, 0);
+    client.note = { note_id: 7 };
+    notify({}, { reason: 'runtime' });
+    assert.equal(renders, 1);
+    assert.equal(panel.depositBalanceRefreshPending, false);
+});

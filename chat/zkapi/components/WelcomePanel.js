@@ -4,6 +4,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { runAddressAction } from '../services/addressFunding.js';
+import { isIndexerLag, pendingDepositMessage, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import { getWalletMethod, initWalletClient, prepareWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
 import { attachWalletMethodControls, captureWalletView, refreshWalletView, renderFundingAccount, renderWalletMethod, restoreWalletView, stopFundingFlow } from './WalletMethodControls.js';
 
@@ -19,7 +20,10 @@ export default class WelcomePanel {
         this.busy = false;
         this.status = '';
         this.error = '';
+        this.notice = '';
         this.depositAmount = null;
+        this.depositBalanceRefreshPending = false;
+        this.confirmedDepositNoteId = null;
         this.fundingDestination = null;
         this.fundingError = '';
         const renderFundingUpdate = () => refreshWalletView(this);
@@ -29,7 +33,9 @@ export default class WelcomePanel {
         this.escapeHandler = null;
         this.unsubscribe = zkapiClient.subscribe((_snapshot, detail) => {
             if (detail?.reason === 'clock') return;
-            if (this.isOpen && zkapiClient.hasNote && !this.busy && this.step !== 'success') {
+            const wasRefreshing = this.depositBalanceRefreshPending;
+            this.syncConfirmedDepositBalance();
+            if (this.isOpen && zkapiClient.hasNote && !this.busy && (this.step !== 'success' || (wasRefreshing && !this.depositBalanceRefreshPending))) {
                 this.step = 'success';
                 this.render();
             }
@@ -55,9 +61,11 @@ export default class WelcomePanel {
     open() {
         if (!this.overlay || this.isOpen) return;
         this.isOpen = true;
-        this.step = zkapiClient.hasNote ? 'success' : 'welcome';
+        this.syncConfirmedDepositBalance();
+        this.step = zkapiClient.hasNote || this.depositBalanceRefreshPending ? 'success' : 'welcome';
         this.status = '';
         this.error = '';
+        this.notice = '';
         this.returnFocusEl = document.activeElement;
         this.render();
         showSurface(this.overlay);
@@ -93,8 +101,16 @@ export default class WelcomePanel {
         if (element) element.textContent = walletMethodText(message);
     }
 
+    syncConfirmedDepositBalance() {
+        if (this.depositBalanceRefreshPending && zkapiClient.note
+            && Number(zkapiClient.note.note_id) === this.confirmedDepositNoteId) {
+            this.depositBalanceRefreshPending = false;
+            this.confirmedDepositNoteId = null;
+        }
+    }
+
     async fund() {
-        if (this.busy || this.fundingBusy) return;
+        if (this.busy || this.fundingBusy || this.depositBalanceRefreshPending) return;
         // The balance dialog owns every durable deposit phase, including a
         // prepared plan that never reached the signer. Never reprice it here.
         if (zkapiClient.config?.pending_deposit) return this.resumeSavedDeposit();
@@ -104,6 +120,7 @@ export default class WelcomePanel {
         this.step = 'redeeming';
         this.status = 'Connecting to MetaMask…';
         this.error = '';
+        this.notice = '';
         this.render();
         try {
             await prepareWalletMethod();
@@ -112,10 +129,14 @@ export default class WelcomePanel {
             const action = async () => {
                 const deposit = getWalletMethod() === 'address' ? this.fundingDepositIntent.ethAmount
                     : zkapiClient.isNativeEthFunding ? (await zkapiClient.quoteDepositUsd(amount)).ethAmount : amount;
-                if (getWalletMethod() === 'address') {
-                    await zkapiClient.deposit(deposit, report,
-                        { preparedOperationId: this.fundingDepositIntent.preparedOperationId });
-                } else await zkapiClient.deposit(deposit, report);
+                const result = getWalletMethod() === 'address'
+                    ? await zkapiClient.deposit(deposit, report,
+                        { preparedOperationId: this.fundingDepositIntent.preparedOperationId })
+                    : await zkapiClient.deposit(deposit, report);
+                this.depositBalanceRefreshPending = result?.balanceRefreshPending === true;
+                this.confirmedDepositNoteId = this.depositBalanceRefreshPending ? Number(result.noteId) : null;
+                this.syncConfirmedDepositBalance();
+                if (this.depositBalanceRefreshPending) this.app.accountModal.recordDepositConfirmation?.(result);
                 if (flow) await flow.complete();
                 this.fundingUsdAmount = null;
                 this.fundingInputAmount = null;
@@ -128,8 +149,10 @@ export default class WelcomePanel {
             this.render();
         } catch (error) {
             this.step = 'welcome';
+            const pending = pendingDepositMessage(error, zkapiClient.config?.pending_deposit);
+            this.notice = pending || (isIndexerLag(error) ? zkapiErrorMessage(error) : '');
             if (error?.code === 'address_wait_stopped') this.fundingNotice = error.message;
-            this.error = error?.code === 'address_wait_stopped' ? '' : error?.code === 4001
+            this.error = this.notice || error?.code === 'address_wait_stopped' ? '' : error?.code === 4001
                 ? 'Canceled in MetaMask. Nothing moved.'
                 : error.shortMessage || error.message || String(error);
             this.render();
@@ -176,6 +199,7 @@ export default class WelcomePanel {
                 </label>`}
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
                 ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(walletMethodText(this.error))}</p>` : ''}
+                ${this.notice ? `<p class="mt-3 text-xs text-muted-foreground" role="status">${this.escapeHtml(walletMethodText(this.notice))}</p>` : ''}
                 ${pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with MetaMask')}</button>`}
                 <button id="welcome-skip-btn" class="btn-ghost-hover mt-2 w-full rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground" type="button">Not now</button>
                 <p class="mt-4 text-center text-[10px] leading-relaxed text-muted-foreground/70">The note secret and chat history stay on this device.</p>
@@ -195,15 +219,17 @@ export default class WelcomePanel {
     }
 
     renderSuccess() {
+        this.syncConfirmedDepositBalance();
+        const refreshing = this.depositBalanceRefreshPending;
         return `
             <div role="dialog" aria-modal="true" class="${MODAL_CLASSES}" style="width:420px;max-width:94vw;padding:32px">
                 <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-full badge-status-success">
                     <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
                 </div>
-                <h2 class="mt-4 text-center text-lg font-semibold text-foreground">You’re ready to chat</h2>
-                <p class="mt-2 text-center text-sm text-muted-foreground">Private balance: <strong class="text-foreground">${zkapiClient.formatMoney(zkapiClient.note?.current_balance)}</strong></p>
-                <p class="mt-3 text-center text-xs leading-relaxed text-muted-foreground">Everything else works like OA Chat. Payment state is available from <strong>Private balance</strong> in the top-right toolbar.</p>
-                <button id="welcome-start-btn" class="zkapi-primary-button mt-6 w-full" type="button">Start chatting</button>
+                <h2 class="mt-4 text-center text-lg font-semibold text-foreground">${refreshing ? 'Deposit confirmed' : 'You’re ready to chat'}</h2>
+                ${refreshing ? '<p class="mt-2 text-center text-sm text-muted-foreground" role="status">Refreshing your private balance…</p>' : `<p class="mt-2 text-center text-sm text-muted-foreground">Private balance: <strong class="text-foreground">${zkapiClient.formatMoney(zkapiClient.note?.current_balance)}</strong></p>`}
+                <p class="mt-3 text-center text-xs leading-relaxed text-muted-foreground">${refreshing ? 'Your deposit is saved in this browser. Check its balance from <strong>Private balance</strong> in the top-right toolbar.' : 'Everything else works like OA Chat. Payment state is available from <strong>Private balance</strong> in the top-right toolbar.'}</p>
+                <button id="welcome-start-btn" class="zkapi-primary-button mt-6 w-full" type="button">${refreshing ? 'Done' : 'Start chatting'}</button>
             </div>`;
     }
 

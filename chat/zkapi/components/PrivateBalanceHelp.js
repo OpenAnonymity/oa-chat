@@ -4,7 +4,7 @@ const HELP = {
     billing: {
         label: 'How private billing works',
         title: 'How private billing works',
-        text: 'Your deposit becomes a private prepaid balance. Each chat gets a temporary key with a spending cap; your device proves the balance covers it without revealing the amount. Only verified usage is deducted, and your wallet address never reaches a model request.'
+        text: 'No account or Google sign-in is required to fund your wallet or chat with zkAPI. Your deposit becomes a private prepaid balance. Each chat gets a temporary key with a spending cap; your device proves the balance covers it without revealing the amount. Only verified usage is deducted, and your wallet address never reaches a model request.'
     },
     expiry: {
         label: 'What happens when my private balance expires?',
@@ -60,7 +60,7 @@ export function privateBalanceHelpContent(scope, kind, open = false) {
 export function privateBalanceGuide(kind, open = false) {
     const help = HELP[kind];
     const text = kind === 'billing'
-        ? 'Your deposit funds a private prepaid balance that is charged only for verified usage, while your wallet address stays separate from the requests sent to models.'
+        ? 'No account or Google sign-in is required to fund your wallet or chat with zkAPI. Your deposit funds a private prepaid balance that is charged only for verified usage, while your wallet address stays separate from the requests sent to models.'
         : help.text;
     return fundingDisclosure({ key: kind, label: help.label, open,
         attributes: `data-zkapi-help-guide="${kind}"`, body: `<p class="zkapi-guide-lead">${text}</p>` });

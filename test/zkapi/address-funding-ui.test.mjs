@@ -793,9 +793,11 @@ test('both wallet surfaces present stopped funding as a neutral outcome', async 
     const context = {
         prepareWalletMethod: async () => {}, getWalletMethod: () => 'address', walletMethodText: value => value,
         runAddressAction: async () => { throw stopped; }, isIndexerLag: () => false, explainZkapiError: () => {},
+        pendingDepositMessage: () => null,
         walletErrorMessage: error => error.message,
         zkapiClient: {
-            beginActivity: () => 'activity', completeActivity: (...args) => completed.push(args),
+            beginActivity: () => 'activity', updateActivity: (...args) => completed.push(args),
+            completeActivity: () => assert.fail('stopping a funding wait is not a completed deposit'),
             failActivity: () => assert.fail('stopping a funding wait is not an error activity')
         }
     };
@@ -813,6 +815,7 @@ test('both wallet surfaces present stopped funding as a neutral outcome', async 
     assert.equal(account.outcome.tone, 'info');
     assert.equal(account.busy, false);
     assert.equal(completed[0][1].title, 'Stopped waiting for funds');
+    assert.equal(completed[0][1].status, 'pending');
 
     const welcome = Object.create(loadClass('WelcomePanel').prototype);
     Object.assign(welcome, { busy: false, overlay: { querySelector: () => ({ value: '2' }) }, render() {} });
@@ -886,4 +889,15 @@ test('public status retries after a storage failure clears cached custody', asyn
     assert.equal(calls, 2);
     assert.equal(f.owner.fundingStatus.ethBalance, '42');
     assert.equal(f.owner.fundingStatusError, '');
+});
+
+test('a committed deposit waiting for its balance projection cannot offer another address deposit', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
+    Object.assign(owner, { view: 'balance', isOpen: true, depositBalanceRefreshPending: true,
+        fundingInputCurrency: 'eth', fundingInputAmount: '0.005', fundingFlow: quotedFlow() });
+    const html = controls.renderFundingAccount(owner);
+    assert.doesNotMatch(html, /Amount to add to your wallet|data-funding-next|data-funding-amount/);
+    assert.equal(owner.fundingInputCurrency, 'eth');
+    assert.equal(owner.fundingInputAmount, '0.005');
+    assert.match(html, /Your funding address/);
 });
