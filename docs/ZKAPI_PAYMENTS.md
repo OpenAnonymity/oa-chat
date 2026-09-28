@@ -50,6 +50,24 @@ OA_DEPLOYMENT_ORG_ORIGIN=https://org-staging.openanonymity.ai \
 ```
 
 Select `mainnet` in both commands to build the SDK-pinned Mainnet configuration.
+The fresh September 28 servers are selected explicitly in both the asset build
+and route generator with `OA_ZKAPI_DEPLOYMENT=fresh-20260928`. For example:
+
+```sh
+OA_ORG_SAME_ORIGIN=true OA_ZKAPI_NETWORK=mainnet \
+  OA_ZKAPI_DEPLOYMENT=fresh-20260928 npm run build
+OA_DEPLOYMENT_ORG_ORIGIN=https://org-staging.openanonymity.ai \
+  OA_ZKAPI_NETWORK=mainnet OA_ZKAPI_DEPLOYMENT=fresh-20260928 \
+  node scripts/generate-zkapi-vercel-config.mjs vercel.generated.json
+```
+
+The selector accepts only repository-reviewed profiles, requires an explicit
+network, and verifies the selected chain, circuit and proof hashes before
+publishing. Browser configuration, SDK asset hashes, build provenance and
+same-origin proxy routing use the same selected profile. Unset retains the
+SDK defaults. The Commercial staging composition explicitly selects the fresh
+Mainnet profile; see [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260928.md).
+
 SDK `cf56d67` enables the verified native-ETH Mainnet configuration following
 the September 28 rollout; the earlier `migration_required` guard is removed.
 Building alone does not deploy or fund backend infrastructure. The generator

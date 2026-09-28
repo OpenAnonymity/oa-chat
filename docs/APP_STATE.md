@@ -1,3 +1,20 @@
+## 2026-09-28: Staging cutover to the fresh Mainnet deployment
+
+- `OA_ZKAPI_DEPLOYMENT=fresh-20260928` selects reviewed public pins for either
+  explicit network. The builder verifies the proof artifacts, replaces the
+  public browser config, and updates SDK/outer integrity manifests together.
+  The Vercel route generator resolves the same profile. Unset preserves the
+  SDK defaults; no dependency, protocol or wallet-storage migration is added.
+- Staging is deployed from `OpenAnonymity-FPL/oa-commercial`, not this repo
+  directly. Its release updates the core gitlink and source-snapshot pin and
+  selects fresh Mainnet in both Git and fallback build paths. The existing
+  staging org, passkey relay and verifier policy continue to be used.
+- The user explicitly requested a direct switch from old USDC staging without
+  backward compatibility. No legacy route or automatic note conversion is
+  introduced. Mainnet challenger funding remains deferred as previously agreed.
+- See [fresh deployment details](ZKAPI_FRESH_DEPLOYMENT_20260928.md) and
+  [build configuration](ZKAPI_PAYMENTS.md#build).
+
 ## 2026-09-28: Fresh Mainnet and Sepolia infrastructure
 
 - User requested fresh latest-main zkAPI deployments with new Ethereum

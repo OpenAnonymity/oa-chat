@@ -160,9 +160,17 @@ to the bounded signer; successful challenges require its gas reserve.
 Each API serves its public manifest at `/config.json` and status at `/health`.
 Client trust configurations are saved under the protected root at
 `public-verification/mainnet-browser-config.json` and
-`public-verification/sepolia-browser-config.json`. This rollout does not
-republish OA Chat or change its existing deployment defaults; integrations
-must explicitly select the fresh manifest and corresponding trust pins.
+`public-verification/sepolia-browser-config.json`. The initial infrastructure
+rollout did not republish the frontend. The following staging release adds
+the repository profile `OA_ZKAPI_DEPLOYMENT=fresh-20260928` and selects it with
+`OA_ZKAPI_NETWORK=mainnet` in the Commercial staging composition. Its browser
+configuration and same-origin proxy both use the fresh Mainnet deployment.
+SDK defaults remain available when the profile is unset.
+Staging is the Vercel project `oa-staging-main`, serving
+`https://staging.openanonymity.ai`, from `OpenAnonymity-FPL/oa-commercial` main.
+The core gitlink and `scripts/oa-chat-revision.json` must be updated together.
+The user explicitly excluded backward compatibility with the old USDC setup;
+this cutover introduces no legacy route or automatic note conversion.
 The final infrastructure and credential-permission audit is saved at
 `final-infrastructure-runtime-sanity-public-20260928T1726Z.json` under that root.
 It confirms both AWS instance checks, pinned live images, external HTTPS,

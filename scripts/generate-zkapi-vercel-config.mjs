@@ -1,15 +1,12 @@
 import fs from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDemoVercelConfig } from './generate-demo-vercel-config.mjs';
-import { resolveZkapiNetwork } from './zkapiBuild.mjs';
+import { readZkapiBuildConfig } from './zkapiBuild.mjs';
 
-export function buildZkapiVercelConfig({ orgOrigin, network }) {
-    if (!resolveZkapiNetwork({ OA_ZKAPI_NETWORK: network })) throw new Error('An explicit zkAPI network is required.');
-    // Route to the same immutable deployment pinned by the browser SDK.
-    const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
-    const pins = JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/config', `${network}.json`), 'utf8'));
+export function buildZkapiVercelConfig({ orgOrigin, network, deployment: selectedDeployment = process.env.OA_ZKAPI_DEPLOYMENT || '' }) {
+    // Asset emission and routing must select the same reviewed deployment.
+    const pins = readZkapiBuildConfig({ network, deployment: selectedDeployment });
     const deployment = new URL(pins.trusted_deployment.protocol_server_url);
     if (deployment.protocol !== 'https:' || deployment.username || deployment.password
         || deployment.pathname !== '/' || deployment.search || deployment.hash) {
@@ -18,8 +15,9 @@ export function buildZkapiVercelConfig({ orgOrigin, network }) {
     const config = buildDemoVercelConfig(orgOrigin, false);
     return {
         ...config,
-        buildCommand: `OA_ZKAPI_NETWORK=${network} ${config.buildCommand}`,
-        build: { env: { ...config.build.env, OA_ZKAPI_NETWORK: network } },
+        buildCommand: `OA_ZKAPI_NETWORK=${network}${selectedDeployment ? ` OA_ZKAPI_DEPLOYMENT=${selectedDeployment}` : ''} ${config.buildCommand}`,
+        build: { env: { ...config.build.env, OA_ZKAPI_NETWORK: network,
+            ...(selectedDeployment ? { OA_ZKAPI_DEPLOYMENT: selectedDeployment } : {}) } },
         rewrites: [
             { source: '/zkapi-deployment/:path*', destination: `${deployment.origin}/:path*` },
             { source: '/zkapi-model-catalog', destination: 'https://openrouter.ai/api/v1/models' },
@@ -37,7 +35,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (!process.argv[2]) throw new Error('Provide a destination for the generated Vercel configuration.');
     const config = buildZkapiVercelConfig({
         orgOrigin: process.env.OA_DEPLOYMENT_ORG_ORIGIN,
-        network: process.env.OA_ZKAPI_NETWORK
+        network: process.env.OA_ZKAPI_NETWORK,
+        deployment: process.env.OA_ZKAPI_DEPLOYMENT || ''
     });
     await fs.writeFile(path.resolve(process.argv[2]), `${JSON.stringify(config, null, 2)}\n`);
 }

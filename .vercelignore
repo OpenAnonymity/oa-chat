@@ -12,6 +12,14 @@
 !/local_inference/**
 !/scripts
 !/scripts/**
+!/deployments
+/deployments/*
+!/deployments/zkapi
+/deployments/zkapi/*
+!/deployments/zkapi/fresh-20260928
+/deployments/zkapi/fresh-20260928/*
+!/deployments/zkapi/fresh-20260928/mainnet.json
+!/deployments/zkapi/fresh-20260928/sepolia.json
 !/package.json
 !/package-lock.json
 !/vercel.json
