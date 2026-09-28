@@ -1,5 +1,11 @@
 ## 2026-09-27: Browser custody and native ETH funding (Sepolia live)
 
+- Gas UX investigation: the current 0.02 ETH prefunding reserve is the signing
+  ceiling, not an expected fee. It caused a 0.01247 ETH remainder in the live
+  deposit test. A closer quote needs an SDK prepare/quote split before funding,
+  verified simulation of an unfunded payable call, and fresh Merkle-path/gas
+  checks before submission. This improvement is proposed, not implemented.
+  See the gas-quote design notes in [payment details](ZKAPI_PAYMENTS.md).
 - User confirmed: hold ETH and show its floating current USD value, rather than
   fixed USD credit. Native ETH requires new vault/server/SDK deployment pins;
   the existing live ERC20 vaults cannot accept payable ETH deposits.

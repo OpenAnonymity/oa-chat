@@ -311,3 +311,41 @@ withdrawal navigation, and layout. Mainnet UI checks require no transaction.
 ## Recovery presentation (2026-09-21)
 
 Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.
+
+## Gas-quote design findings (2026-09-27; proposed improvements)
+
+The address flow currently asks for the intended ETH principal plus the fixed
+0.02 ETH signer spending ceiling. This is a maximum reserve, not an estimate
+of the deposit's expected gas cost. Actual signing estimates the prepared call
+and checks its maximum fee liability; the chain charges actual gas at the
+inclusion-time effective price. Unused ETH remains in the public funding
+account, separately from the private note. The live deposit used
+0.007528036291476899 ETH in fees, leaving 0.012471963708523101 ETH from that
+reserve. These are test observations, not estimates for every future deposit.
+
+The suggested incremental change is a short-lived quote for the actual prepared
+deposit: distinguish estimated cost, maximum allowance and total to send; retain
+the exact requested principal, recheck before explicit Next, and explain reuse
+or return of unused public ETH. Never call the current `deposit()` merely to
+obtain a quote: it can submit. The SDK has durable local `prepareDeposit`, but
+its current orchestration checks the funding balance before preparing. A
+prepare/quote API must preserve note ownership, refresh the Merkle path when
+chain state changes, and simulate an unfunded payable call using a verified
+mechanism (RPC balance-override support has not been established). No signing
+or broadcast belongs in quote generation or polling.
+
+Exact future contract gas charges cannot be reliably guaranteed while the user
+is still sending funds. Depositing balance minus maximum fees still leaves
+unused allowance, changes the promised principal, and encounters the native
+note's integer-gwei rounding. Refunds are additional transactions with their
+own fee; never infer a refund destination from the incoming sender, which may
+be an exchange or other intermediary.
+
+For an exact user-facing invoice, a browser-controlled smart account/deposit
+contract and sponsored execution could quote principal plus a disclosed fixed
+service fee while the sponsor bears gas variance. A plain relayer cannot move
+ETH out of the current EOA or pay its transaction gas without additional
+execution/authorization architecture. Any such change needs a separate design
+and review, preserving browser-local note secrets and avoiding account identity
+or inference data in sponsorship requests. No quote or sponsorship change has
+been implemented by this investigation.
