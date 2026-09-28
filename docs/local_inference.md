@@ -256,11 +256,13 @@ WebLLM uses the browser Cache Storage by default (on disk). You can delete model
 - Default base URL: `https://inference.tinfoil.sh`
 - Default model: `gpt-oss-120b`
 - Tab-Tab and Memory share the allowlist in
-  `chat/services/confidentialModelConfig.js`. As of 2026-09-10 it includes all
+  `chat/services/confidentialModelConfig.js`. As of 2026-09-28 it includes all
   seven chat models confirmed by Tinfoil's public `/v1/models` catalog:
-  `kimi-k3`, `glm-5-3`, `glm-5-3-flash`, `deepseek-v4-flash`, `gemma4-31b`,
+  `kimi-k3`, `glm-5-3`, `glm-5-3-flash`, `deepseek-v4-1-flash`, `gemma4-31b`,
   `gpt-oss-120b`, and `llama3-3-70b`. Retired `kimi-k2-5` and
-  `gpt-oss-safeguard-120b` entries are removed. Saved unavailable selections
+  `gpt-oss-safeguard-120b` entries are removed. The stale `deepseek-v4-flash`
+  entry is replaced by V4.1 Flash, which Tinfoil marks experimental. Saved
+  unavailable selections
   fall back to each feature's default; Tab-Tab also writes back the fallback.
 - Defaults remain GPT-OSS 120B for Tab-Tab and Gemma 4 31B for Memory. Adding
   choices does not change key issuance, expiry, token/spend caps, or transport.

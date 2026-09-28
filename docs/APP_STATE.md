@@ -1,3 +1,8 @@
+## 2026-09-28: Tinfoil DeepSeek V4.1 Flash catalog update
+
+- Memory and Tab-Tab now offer `deepseek-v4-1-flash` instead of the stale `deepseek-v4-flash`, matching Tinfoil's public catalog. Tinfoil marks V4.1 Flash experimental; live inference quality has not been validated here.
+- Existing unavailable-selection handling restores the feature default for saved V4 Flash selections (Gemma 4 31B for Memory, GPT-OSS 120B for Tab-Tab). Issuance, transport, and defaults are unchanged. See [Tinfoil configuration](local_inference.md#65-tinfoil-hosted-openai-compatible).
+
 ## 2026-09-28: Staging cutover to the fresh Mainnet deployment
 
 - `OA_ZKAPI_DEPLOYMENT=fresh-20260928` selects reviewed public pins for either

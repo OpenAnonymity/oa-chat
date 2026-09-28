@@ -7,7 +7,7 @@ export const ALLOWED_CONFIDENTIAL_MODELS = new Set([
     'kimi-k3',
     'glm-5-3',
     'glm-5-3-flash',
-    'deepseek-v4-flash',
+    'deepseek-v4-1-flash',
     'llama3-3-70b'
 ]);
 
