@@ -48,7 +48,7 @@ function memoryStore() {
     };
 }
 
-test('real EVM accepts high quoted fees, enforces the approved allowance, and accounts for the actual fee and remainder', { timeout: 30_000 }, async t => {
+test('real EVM accepts a deposit without its optional fee buffer and preserves the approved ceiling and remainder', { timeout: 30_000 }, async t => {
     if (spawnSync('anvil', ['--version'], { stdio: 'ignore' }).status !== 0) {
         t.skip('Anvil is not installed; deterministic provider fee tests still run.');
         return;
@@ -133,7 +133,8 @@ test('real EVM accepts high quoted fees, enforces the approved allowance, and ac
     assert(BigInt(quote.feeReserveWei) < BigInt(quote.gasLimit) * (2n * BigInt(quoteBlock.baseFeePerGas) + BigInt(quote.maxPriorityFeePerGas)));
     assert(BigInt(quote.expectedFeeWei) > 0n);
     assert(BigInt(quote.feeBufferWei) > 0n);
-    assert.equal(BigInt(quote.expectedFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));
+    assert(BigInt(quote.requiredFeeWei) >= BigInt(quote.expectedFeeWei));
+    assert.equal(BigInt(quote.requiredFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));
     const estimateCall = calls.find(call => call.method === 'eth_estimateGas');
     assert.deepEqual(Object.keys(estimateCall.params[2]), [OWN]);
     assert.deepEqual(Object.keys(estimateCall.params[2][OWN]), ['balance']);
@@ -162,6 +163,11 @@ test('real EVM accepts high quoted fees, enforces the approved allowance, and ac
     // authorization is needed to spend within its original total allowance.
     await rpc('anvil_setNextBlockBaseFeePerGas', [`0x${(BigInt(beforeFeesRise.baseFeePerGas) * 11n / 10n).toString(16)}`]);
     await rpc('anvil_mine', ['0x1']);
+    const refreshed = await provider.getDepositFeeQuote(INTENT);
+    assert(BigInt(refreshed.feeReserveWei) > BigInt(quote.feeReserveWei), 'recommended buffer increased');
+    assert(BigInt(refreshed.requiredFeeWei) < BigInt(quote.feeReserveWei), 'original ceiling still covers current required fees');
+    const fundedFee = BigInt(refreshed.requiredFeeWei);
+    await rpc('anvil_setBalance', [OWN, `0x${(BigInt(INTENT.depositWei) + fundedFee).toString(16)}`]);
     const hash = await send(authorization);
     assert.deepEqual(broadcastErrors, [], 'the local node accepted the signed transaction');
     let receipt = await rpc('eth_getTransactionReceipt', [hash]);
@@ -177,14 +183,14 @@ test('real EVM accepts high quoted fees, enforces the approved allowance, and ac
     assert.equal(signed.value, BigInt(INTENT.depositWei));
     assert.equal(signed.data, prepared.transaction.data);
     assert.equal(signed.gasLimit, BigInt(quote.gasLimit));
-    assert.equal(signed.maxFeePerGas, BigInt(quote.feeReserveWei) / signed.gasLimit);
+    assert.equal(signed.maxFeePerGas, fundedFee / signed.gasLimit);
     assert(signed.gasLimit * signed.maxFeePerGas <= BigInt(quote.feeReserveWei));
     assert(actualFee <= BigInt(quote.feeReserveWei));
     assert.equal(BigInt(await rpc('eth_getBalance', [VAULT, 'latest'])), BigInt(INTENT.depositWei));
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), BigInt(INTENT.depositWei));
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x1', 'latest'])), BigInt(plan.commitment));
-    assert.equal(BigInt(await rpc('eth_getBalance', [OWN, 'latest'])), BigInt(quote.feeReserveWei) - actualFee,
-        'the remainder is exactly the unused quoted network-fee allowance');
+    assert.equal(BigInt(await rpc('eth_getBalance', [OWN, 'latest'])), fundedFee - actualFee,
+        'the remainder is exactly the unused funded network-fee allowance');
 
     const restored = new AddressFundingProvider(init);
     await restored.init();

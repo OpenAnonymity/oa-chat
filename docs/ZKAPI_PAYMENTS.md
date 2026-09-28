@@ -223,16 +223,20 @@ The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
-The screen emphasizes the exact ETH still to send and its current USD estimate
-and funding address, with a short waiting/ready status. A clickable question
-mark beside the send amount reveals the breakdown: ETH principal added to the
-private balance, estimated network fee, additional fee buffer and total ETH to
-send, together with the estimate and browser-storage explanations. These details
-start closed; they are not hover text. ETH already held at
+The screen recommends an exact ETH transfer including an optional fee buffer,
+with its current USD estimate and funding address. A visible progress bar shows
+ETH already at the address against labelled Deposit, Network fee and Optional
+buffer segments, with exact required and recommended totals. The optional
+buffer is extra on top of the required network fee allowance. A clickable
+question mark beside the send amount explains the estimated actual fee versus
+the required allowance, the buffer, and browser storage. These details start
+closed; they are not hover text. ETH already held at
 the funding address reduces the requested transfer. A five-second read-only
 loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
 and durably stores a note draft independently of `pending_deposit`; no funding
 quote connects MetaMask, authorizes a signer, or broadcasts a transaction.
+An independent successful balance read remains visible if the fee quote fails;
+a failed balance read clears availability instead of preserving stale readiness.
 The provider simulates the exact payable deposit with only the sender's balance
 overridden, then estimates its gas. RPCs lacking state-override support fail
 closed instead of substituting a fixed reserve.
@@ -244,22 +248,31 @@ funding address, configured chain ID and exact remaining transfer in wei:
 principal plus the fee allowance, less funds already held at that address.
 It is not a QR for only the private-note principal. Editing the amount hides
 the old QR immediately; missing, stale or failed fee estimates and a zero
-remaining transfer do not show a payable code. The SVG and encoder are bundled
+remaining transfer do not show a payable code. Once the required amount is
+covered, the QR and recommended top-up are hidden even if the optional buffer
+is not fully funded. The SVG and encoder are bundled
 locally, with a fixed white quiet zone in both themes. No QR service, private
 key, recovery material, account identity or inference content is involved.
 
 Expected fee is estimated gas multiplied by current base fee plus priority fee.
-The maximum allowance uses the SDK's padded gas limit and current EIP-1559
-maximum price; their difference is the additional buffer. There is no fixed
+The **required allowance** uses the SDK's padded gas limit multiplied by the
+next-block base-fee bound plus priority fee. This is upfront transaction
+affordability, not a promise that the entire allowance will be charged.
+The recommended maximum uses the same gas limit and the current EIP-1559 price
+with additional headroom. The **optional buffer** is that recommended maximum
+minus the required allowance, not minus the estimated actual fee. There is no fixed
 gas-price or total-ETH fee ceiling: users review the current quote and choose
 whether to proceed. The user's approved allowance still limits the signed deposit.
-**Next** requires enough ETH for principal plus the allowance, forces a fresh
+**Next** requires enough ETH for principal plus the required allowance, forces a fresh
 quote and checks the saved amount before and after the asynchronous reads.
-An increased allowance requires reviewing the new quote and another explicit
-click. Submission binds the exact prepared operation, commitment, principal and
+A higher recommended buffer alone does not block progress: the approved fee
+limit is bounded by the displayed recommendation, refreshed recommendation and
+actual address balance after the unchanged principal. Only a required fee that
+no longer fits these bounds requires reviewing the new quote or more funds.
+Submission binds the exact prepared operation, commitment, principal and
 fee ceiling, then rechecks simulation, fees and expiry before signing.
 Fresh maximum price can be clamped to that approved total allowance divided by
-actual padded gas, so modest increases consume the existing buffer instead of
+actual padded gas and the freshly available address balance, so modest increases consume the existing buffer instead of
 requiring a larger allowance. The current next-block base fee plus tip must
 still fit, and the signer never exceeds the amount already approved.
 

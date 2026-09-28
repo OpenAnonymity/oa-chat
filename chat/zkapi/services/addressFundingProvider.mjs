@@ -529,7 +529,7 @@ export class AddressFundingProvider {
             : uint(approvedFeeLimit, 'authorized fee') / gasLimit;
         if (feeCap < minimumFee) throw this.paymentFailure('address_fee_quote_changed');
         const maxFeePerGas = desiredFee < feeCap ? desiredFee : feeCap;
-        return { fees: { type: 2, maxFeePerGas, maxPriorityFeePerGas },
+        return { fees: { type: 2, maxFeePerGas, maxPriorityFeePerGas }, minimumFeePerGas: minimumFee,
             expectedFeePerGas: baseFee + maxPriorityFeePerGas };
     }
 
@@ -588,15 +588,19 @@ export class AddressFundingProvider {
         const estimate = uint(await this.rpc(ctx, 'eth_estimateGas', [input, 'pending', overrides]), 'transaction gas', MAX_GAS);
         if (estimate < 21_000n) throw fail('Invalid transaction gas estimate.');
         const gasLimit = BigInt(bufferedGasLimit(estimate));
-        const { fees, expectedFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit);
+        const { fees, expectedFeePerGas, minimumFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit);
         const expectedFeeWei = estimate * expectedFeePerGas;
+        // Ethereum requires the full gas-limit liability up front. Keep that
+        // current requirement separate from optional extra price headroom.
+        const requiredFeeWei = gasLimit * minimumFeePerGas;
         const feeReserveWei = gasLimit * fees.maxFeePerGas;
         uint(depositWei + feeReserveWei, 'deposit and network fee');
         await this.assertChain(ctx);
         const quotedAt = Date.now();
         return { operationId: prepared.operationId, depositCommitment: prepared.commitment, address: own,
             amount: amount.toString(), depositWei: depositWei.toString(), chainId: Number(ctx.chainId), contractAddress: ctx.vault,
-            expectedFeeWei: expectedFeeWei.toString(), feeBufferWei: (feeReserveWei - expectedFeeWei).toString(),
+            expectedFeeWei: expectedFeeWei.toString(), requiredFeeWei: requiredFeeWei.toString(),
+            feeBufferWei: (feeReserveWei - requiredFeeWei).toString(),
             feeReserveWei: feeReserveWei.toString(), estimatedGas: estimate.toString(), gasLimit: gasLimit.toString(),
             maxFeePerGas: fees.maxFeePerGas.toString(), maxPriorityFeePerGas: fees.maxPriorityFeePerGas.toString(),
             reserveKind: 'estimated_transaction', feePolicy: 'low',
@@ -751,19 +755,28 @@ export class AddressFundingProvider {
             const gasLimit = maxEthReturn ? 21_000n : input.gas == null ? (estimate * 120n + 99n) / 100n : uint(input.gas, 'gas limit', MAX_GAS);
             if (gasLimit < estimate || gasLimit > MAX_GAS) throw fail('The gas limit is outside the allowed range.', 'transaction_gas_limit_exceeded');
             const approvedFeeLimit = authorization.kind === 'deposit' && ctx.native ? authorization.feeLimitWei : null;
-            const fees = await this.transactionFees(ctx, gasLimit, approvedFeeLimit);
-            const reserve = fees.maxFeePerGas * gasLimit;
+            const { fees, minimumFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit, approvedFeeLimit);
+            let reserve = fees.maxFeePerGas * gasLimit;
             if (authorization.kind === 'deposit' && ctx.native && authorization.feeLimitWei != null
                 && (reserve > uint(authorization.feeLimitWei, 'authorized fee')
                     || (authorization.feeQuoteExpiresAt != null && BigInt(Date.now()) >= uint(authorization.feeQuoteExpiresAt, 'quote expiry', MAX_NONCE)))) {
                 throw this.paymentFailure('address_fee_quote_changed');
             }
             const balance = uint(await this.rpc(ctx, 'eth_getBalance', [record.address, 'pending']), 'ETH balance');
-            const insufficient = required => this.paymentFailure('address_insufficient_eth', {
+            const insufficient = (required, requiredFee = reserve) => this.paymentFailure('address_insufficient_eth', {
                 address: record.address, chainId: Number(ctx.chainId), balanceWei: balance.toString(),
-                feeReserveWei: reserve.toString(), requiredWei: required.toString(),
+                feeReserveWei: requiredFee.toString(), requiredWei: required.toString(),
                 shortfallWei: (required - balance).toString()
             });
+            if (authorization.kind === 'deposit' && ctx.native && balance < transaction.value + reserve) {
+                const minimumReserve = gasLimit * minimumFeePerGas;
+                const minimumRequired = uint(transaction.value + minimumReserve, 'transaction value and network fee');
+                if (balance < minimumRequired) throw insufficient(minimumRequired, minimumReserve);
+                // The extra buffer is optional. Fit the signed maximum fee to
+                // available ETH without reducing principal or gas execution room.
+                fees.maxFeePerGas = (balance - transaction.value) / gasLimit;
+                reserve = fees.maxFeePerGas * gasLimit;
+            }
             if (maxEthReturn) {
                 if (balance <= reserve) throw insufficient(reserve + 1n);
                 transaction.value = balance - reserve;

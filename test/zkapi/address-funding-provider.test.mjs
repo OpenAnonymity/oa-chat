@@ -866,7 +866,9 @@ test('unfunded deposit quotes simulate the exact prepared call with only its sen
     const gasLimit = BigInt(bufferedGasLimit(estimate));
     assert.equal(quote.expectedFeeWei, (estimate * (BigInt(h.rpc.baseFee) + BigInt(h.rpc.priorityFee))).toString());
     assert.equal(quote.feeReserveWei, (gasLimit * ((BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee))).toString());
-    assert.equal(BigInt(quote.expectedFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));
+    assert.equal(quote.requiredFeeWei, (gasLimit * (BigInt(h.rpc.baseFee) + BigInt(h.rpc.baseFee) / 8n + BigInt(h.rpc.priorityFee))).toString());
+    assert(BigInt(quote.requiredFeeWei) > BigInt(quote.expectedFeeWei));
+    assert.equal(BigInt(quote.requiredFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));
     assert.equal(quote.gasLimit, gasLimit.toString());
     assert.equal(quote.estimatedGas, estimate.toString());
     assert.equal(quote.reserveKind, 'estimated_transaction');
@@ -1034,6 +1036,55 @@ test('approved deposit pricing rejects an exhausted quote buffer at any market p
     assert.equal(h.sent.length, 0);
 });
 
+test('native deposits sign with only the required fee and partial buffers without shrinking principal or gas', async () => {
+    for (const extraWei of [0n, 1n, 1_000_000n]) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+        const prepared = await h.provider.prepareDepositQuote(NATIVE_INTENT.ethAmount, { from: OWN });
+        const context = { ...CONTEXT, kind: 'deposit', operationId: prepared.operationId,
+            submissionId: 'partial-buffer-sub', amount: prepared.amount, commitment: prepared.commitment };
+        const authorization = { kind: 'deposit', amount: prepared.amount, feeLimitWei: quote.feeReserveWei,
+            preparedOperationId: quote.operationId, depositCommitment: quote.depositCommitment, feeQuoteExpiresAt: quote.expiresAt };
+        const affordableFee = BigInt(quote.requiredFeeWei) + extraWei;
+        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + affordableFee).toString(16)}`;
+        await h.send({ ...prepared.transaction, gas: `0x${BigInt(quote.gasLimit).toString(16)}` }, context, authorization);
+        const signed = Transaction.from(h.sent[0]);
+        assert.equal(signed.value, BigInt(NATIVE_INTENT.depositWei));
+        assert.equal(signed.gasLimit, BigInt(quote.gasLimit));
+        assert.equal(signed.maxFeePerGas, affordableFee / signed.gasLimit);
+        assert(signed.gasLimit * signed.maxFeePerGas >= BigInt(quote.requiredFeeWei));
+        assert(signed.gasLimit * signed.maxFeePerGas <= affordableFee);
+        assert(signed.gasLimit * signed.maxFeePerGas < BigInt(quote.feeReserveWei));
+        const restored = new AddressFundingProvider(h.init);
+        await restored.init();
+        assert.equal(restored.pending.hash, signed.hash);
+        await restored.recoverPending();
+        assert.deepEqual(h.sent, [signed.serialized, signed.serialized], 'recovery keeps the exact affordable signed transaction');
+    }
+});
+
+test('one wei below the required native fee reports the exact shortage without signing', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    await h.ready();
+    const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+    const prepared = await h.provider.prepareDepositQuote(NATIVE_INTENT.ethAmount, { from: OWN });
+    const context = { ...CONTEXT, kind: 'deposit', operationId: prepared.operationId,
+        submissionId: 'short-buffer-sub', amount: prepared.amount, commitment: prepared.commitment };
+    const authorization = { kind: 'deposit', amount: prepared.amount, feeLimitWei: quote.feeReserveWei,
+        preparedOperationId: quote.operationId, depositCommitment: quote.depositCommitment, feeQuoteExpiresAt: quote.expiresAt };
+    const required = BigInt(NATIVE_INTENT.depositWei) + BigInt(quote.requiredFeeWei);
+    h.rpc.balance = `0x${(required - 1n).toString(16)}`;
+    await assert.rejects(h.send({ ...prepared.transaction, gas: `0x${BigInt(quote.gasLimit).toString(16)}` }, context, authorization), error => {
+        assert.equal(error.addressCode, 'address_insufficient_eth');
+        assert.equal(error.fundingRequirement.requiredWei, required.toString());
+        assert.equal(error.fundingRequirement.shortfallWei, '1');
+        return true;
+    });
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.provider.pending, null);
+});
+
 test('funded native deposit uses its actual gas at reproduced Sepolia fees and retains the approved quote allowance', async () => {
     const h = harness({ config: NATIVE_FUNDING });
     await h.ready();
@@ -1088,7 +1139,7 @@ test('both networks quote, explicitly authorize and recover deposits above both 
         h.rpc.baseFee = `0x${(baseFee * 2n).toString(16)}`;
         await assert.rejects(h.send(input, context, authorization), { code: 4100, addressCode: 'address_fee_quote_changed' });
         h.rpc.baseFee = `0x${baseFee.toString(16)}`;
-        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + reserve - 1n).toString(16)}`;
+        h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + BigInt(quote.requiredFeeWei) - 1n).toString(16)}`;
         await assert.rejects(h.send(input, context, authorization), { code: 4100, addressCode: 'address_insufficient_eth' });
         assert.equal(h.sent.length, 0, 'higher market prices never bypass approval or affordability');
         h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + reserve).toString(16)}`;
@@ -1151,7 +1202,7 @@ test('prefunding reserve never bypasses actual native fee, fee-data or affordabi
             h.rpc.baseFee = undefined;
             addressCode = 'address_fee_data';
         } else {
-            const exactLiability = BigInt(gas) * ((BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee));
+            const exactLiability = BigInt(quote.requiredFeeWei);
             h.rpc.balance = `0x${(principal + exactLiability - 1n).toString(16)}`;
             addressCode = 'address_insufficient_eth';
         }

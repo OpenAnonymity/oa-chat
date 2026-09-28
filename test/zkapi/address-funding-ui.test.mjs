@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { DepositAmount } from '../../chat/zkapi/services/depositAmount.mjs';
 import { renderFundingPaymentQr } from '../../chat/zkapi/components/FundingPaymentQr.js';
+import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../../chat/zkapi/services/addressFunding.js';
 
 const recipient = '0x2222222222222222222222222222222222222222';
@@ -17,7 +18,7 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         config: { funding: { demo_billing_token_address: '0x4444444444444444444444444444444444444444' } }, ...client };
     const microtasks = [];
     const timers = new Map();
-    const context = { DepositAmount, renderFundingPaymentQr, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
+    const context = { DepositAmount, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
         walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
         formatFundingAmount, confirm,
@@ -119,7 +120,13 @@ function quotedFlow(overrides = {}) {
     return {
         intent: { usdAmount: '10', amount: '5000000', ethAmount: '0.005', depositWei: '5000000000000000' },
         totalWei: '5500000000000000', remainingWei: '5500000000000000',
-        fee: { expectedFeeWei: '400000000000000', feeBufferWei: '100000000000000',
+        requiredWei: '5450000000000000',
+        get requiredRemainingWei() {
+            if (!/^\d+$/.test(String(this.status?.ethBalance))) return null;
+            return String(BigInt(this.requiredWei) > BigInt(this.status.ethBalance)
+                ? BigInt(this.requiredWei) - BigInt(this.status.ethBalance) : 0n);
+        },
+        fee: { expectedFeeWei: '400000000000000', requiredFeeWei: '450000000000000', feeBufferWei: '50000000000000',
             feeReserveWei: '500000000000000', quotedAt: Date.now(), expiresAt: Date.now() + 60000 },
         status: { ethBalance: '0' }, ready: false, ...overrides
     };
@@ -133,8 +140,8 @@ test('ordinary native funding keeps the fee breakdown available and enables Next
     assert.match(waiting, /0\.005 ETH/);
     assert.match(waiting, /Amount added to private balance/);
     assert.match(waiting, /Estimated network fee<\/dt><dd>0\.0004 ETH/);
-    assert.match(waiting, /Additional fee buffer<\/dt><dd>0\.0001 ETH/);
-    assert.match(waiting, /Total ETH to send<\/dt><dd>0\.0055 ETH/);
+    assert.match(waiting, /Optional fee buffer<\/dt><dd>0\.00005 ETH/);
+    assert.match(waiting, /Recommended ETH to send<\/dt><dd>0\.0055 ETH/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
     assert.match(waiting, /sending wallet charges its own transfer fee separately/);
@@ -157,10 +164,36 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send 0\.0015 ETH more/);
+    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Recommended to send 0\.0015 ETH more/);
     assert.match(html, /Available toward this deposit<\/dt><dd>− 0\.004 ETH/);
-    assert.match(html, /Total ETH to send<\/dt><dd>0\.0015 ETH/);
+    assert.match(html, /Recommended ETH to send<\/dt><dd>0\.0015 ETH/);
     assert.doesNotMatch(html, /Received/);
+});
+
+test('covering required fees enables Next without asking for the remaining optional buffer', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
+        ready: true, remainingWei: '50000000000000', status: { ethBalance: '5450000000000000' }
+    }) });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /Ready to deposit/);
+    assert.match(html, /Ready to continue\. The fee buffer is optional/);
+    assert.match(html, /0\.00545 ETH/);
+    assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
+    assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number/);
+    assert.match(html, /Optional buffer still to fund/);
+});
+
+test('a fee outage retains the independently checked funding-address balance', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '—' } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
+        fee: null, ready: false, totalWei: null, remainingWei: null,
+        status: { ethBalance: '1234567890123456' }, error: 'Fee estimate unavailable.'
+    }) });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /Available at this address: 0\.001234567890123456 ETH/);
+    assert.match(html, /Fee estimate unavailable/);
+    assert.doesNotMatch(html, /data-funding-next|data-funding-payment-qr|role="progressbar"/);
 });
 
 
@@ -216,7 +249,7 @@ test('a missing balance never presents the full funding requirement as a known t
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ remainingWei: null, status: null }) });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Checking your funding address/);
-    assert.match(html, /Total ETH to send<\/dt><dd>— ETH/);
+    assert.match(html, /Recommended ETH to send<\/dt><dd>— ETH/);
     assert.doesNotMatch(html, /<h3>Send/);
     assert.match(html, /data-funding-next[^>]*disabled/);
 });

@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { DepositAmount, ethUnits } from '../../chat/zkapi/services/depositAmount.mjs';
 import { AddressDepositFlow } from '../../chat/zkapi/services/addressDepositFlow.mjs';
 import { formatFundingAmount } from '../../chat/zkapi/services/addressFunding.js';
+import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
 import { parseTokenAmount } from '@openanonymity/zkapi-browser-sdk/wallet';
 
 const source = name => fs.readFileSync(new URL(`../../chat/zkapi/components/${name}.js`, import.meta.url), 'utf8')
@@ -35,7 +36,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
         async getStatus() { return { ethBalance: '0' }; },
         async getDepositFeeQuote(intent) { return {
             amount: intent.amount, depositWei: intent.depositWei, chainId: 1, contractAddress: vault, address,
-            expectedFeeWei: '100', feeBufferWei: '50', feeReserveWei: '150',
+            expectedFeeWei: '100', requiredFeeWei: '120', feeBufferWei: '30', feeReserveWei: '150',
             operationId: 'operation', depositCommitment: 'commitment', quotedAt: Date.now(), expiresAt: Date.now() + 60_000
         }; },
         request() { assert.fail('amount entry cannot request a wallet'); }
@@ -44,7 +45,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
     const element = () => ({ events: {}, addEventListener(type, handler) { this.events[type] = handler; } });
     for (const name of ['amount', 'currency']) fields.set(`[data-funding-${name}]`, element());
     const methods = ['metamask', 'address'].map(value => Object.assign(element(), { dataset: { walletMethod: value } }));
-    const context = { formatFundingAmount, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
+    const context = { formatFundingAmount, renderFundingProgress, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
         addressFundingWallet: wallet, getWalletMethod: () => method, walletMethodActionBusy: () => false, setWalletMethod: value => { method = value; },
         canQuotePendingAddressDeposit: () => Boolean(client.config.pending_deposit?.funding_quote_available),
         chatDB: { getSetting: async key => records.get(key) ?? null,

@@ -1,3 +1,18 @@
+## 2026-09-28: Optional funding buffer and address progress
+
+- Send to an address separates the required transaction allowance from an
+  optional fee buffer. Next requires the fixed principal plus the required
+  allowance, not the entire recommended buffer. A rising recommendation can
+  consume the already-shown budget without blocking or increasing authorization.
+- The visible funding bar shows the public address balance against Deposit,
+  Network fee and Optional buffer, with required and recommended totals. Once
+  required funds are present, the QR and suggested top-up disappear even if the
+  optional buffer is incomplete. Fee errors retain an independently checked
+  address balance while suppressing stale payment instructions.
+- The required fee allowance still covers the padded gas limit at a viable
+  next-block fee rate, as required for upfront affordability; it differs from
+  the estimated fee actually spent. See [funding behavior](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address).
+
 ## 2026-09-28: ETH in balance details
 
 - Native balance details show exact ETH beneath the existing USD available
