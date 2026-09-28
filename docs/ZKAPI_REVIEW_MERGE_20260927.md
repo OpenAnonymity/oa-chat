@@ -36,9 +36,9 @@ pricing configuration or be treated as acceptance of this hosted native app.
 | App 1. Excess wallet confirmations | Native ETH removes token mint/approval. Existing step UI explains the deposit; send-to-address has an explicit Next after funding. | User's external funding transfer remains separate. Full MetaMask extension acceptance on this merge is not claimed. |
 | App 2. Deposit reported failed although it later appears | Saved, potentially submitted deposits report pending/recoverable status. Indexer lag no longer produces failed activity. Reverted receipts and mismatched notes still report errors. | The original untraced September 22 incident is not claimed as diagnosed. Exact durable confirmation now remains successful even if the later balance display refresh fails; pre-commit worker/indexer/storage errors still fail. |
 | App 3. Public test-token mint confused with private balance | Native configuration disables the legacy demo-token action. Confirmed native deposits appear in persistent payment history. | Legacy ERC20 mint history is not redesigned. That action does not add private balance. |
-| App 4. OA key issuance 503 | Prior native deployment fixed the station loopback/allowlist incident; exact saved issuance then completed a real response, signed settlement and refund. Recovery tests cover retryable 503 without losing the saved request. | Historical live evidence is in the native deployment doc. Public health reads alone do not prove current provider availability. |
-| App 5. Google return origin rejected; account requirement unclear | Prior deployment added the canonical origins to staging CORS/OAuth return allowlists. Existing collapsed funding help now explicitly says account/Google login is optional. Anonymous protocol traffic remains credential-free and wallet state stays outside account sync. | Full Google login/passkey end-to-end acceptance remains outstanding. |
-| App 6. Mainnet requires USDC | Native ETH code and Sepolia deployment are retained. | Native Mainnet remains guarded and unpublished pending separate deployment review. Existing ERC20 origin remains available for wallet recovery. |
+| App 4. OA key issuance 503 | Prior native deployment fixed the station loopback/allowlist incident. Fresh merged-backend browser acceptance completed a real GPT-4o-mini response, signed settlement and exact refund. Recovery tests cover retryable 503 without losing the saved request. | Fresh and historical live evidence are in the native deployment doc. Public health reads alone do not prove provider availability. |
+| App 5. Google return origin rejected; account requirement unclear | Prior deployment added the canonical origins to staging CORS/OAuth return allowlists. Existing collapsed funding help now explicitly says account/Google login is optional. Anonymous protocol traffic remains credential-free and wallet state stays outside account sync. | User explicitly deferred Google login for the follow-up rollout. |
+| App 6. Mainnet requires USDC | Native ETH code and Sepolia deployment are retained. | User explicitly chose to keep native Mainnet guarded for now. Existing ERC20 origin remains available for wallet recovery. |
 
 ## Verification
 
@@ -81,9 +81,10 @@ Vercel production deployment `dpl_B7BXWut3W6uYnupsjwX3CAacAzjo` (READY).
 All 486 published file hashes match the reviewed build; public config, health
 and billing-quote checks return HTTP 200. Both final app network builds pass;
 Mainnet remains `migration_required`.
-The live AWS backend remains `dfa0e42`; optional backend-mode changes are merged
-and tested in source, not newly deployed. Contracts, keys and protocol pins did
-not change.
+The follow-up deployed the merged AWS backend `2e9647c`; image/provenance and
+live browser acceptance are recorded below. Optional proxy/direct-key modes
+remain covered by their focused tests, not this native OA happy path. Contracts,
+keys and protocol pins did not change.
 
 The final canonical browser smoke verified `IPB766G3` / app `5255a23` / SDK
 `2e9647c`, accountless native ETH/USD funding, initially closed help and optional
@@ -96,10 +97,49 @@ SDK and host regressions, not by a new funded browser transaction.
 
 ## Release boundaries
 
-This source merge does not itself update a live daemon or establish a new hosted
-provider/Google-login happy path. Keep source acceptance, published browser build,
-and backend deployment identities separate. See
+The source merge, published frontend and follow-up backend deployment have
+separate provenance. The fresh native provider happy path is verified below;
+Google login is explicitly deferred. See
 [native Sepolia deployment evidence](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md)
 for prior live deposit/reload/inference/settlement/withdrawal, infrastructure and
 allowlist evidence. No Mainnet readiness or independent security-audit approval
 is implied by the passing regression suites.
+
+## Follow-up backend and funded browser acceptance
+
+The user authorized the merged native Sepolia backend rollout and fresh funded
+acceptance, while explicitly deferring Google login and keeping Mainnet guarded.
+The backend image was built from exact source `2e9647c` and native protocol
+`8b2d4e3`. A corrected rebuild refreshed verified source timestamps to prevent
+Cargo from reusing older workspace binaries from its dependency cache. All ten
+relevant workspace/protocol crates compiled afresh; four isolated startup checks
+and all eleven binary/launcher/proof artifact hashes passed independent review.
+The immutable image is
+`sha256:d833ea7c4e9246f0f521fe4832b01477f8490ed03b944a845b2baa681bca4859`.
+The existing native launcher, vault, keys, proof setup, signer and TLS identities
+are retained. Rollout backups are recovery evidence; rollback restores images
+and configuration without rewinding live databases or challenger checkpoints.
+
+The controlled browser funding address recovered its exact principal and address
+after full browser closure, with no automatic deposit: nonce remained 5 until
+explicit Next. Two confirmed Sepolia funding transfers provide the displayed
+deposit amount and a separate withdrawal gas allowance. The merged backend
+was verified live at 2026-09-28 04:43:09 UTC, with health, config and quote
+returning 200 and the challenger checkpoint advancing.
+
+The browser completed a 744,884-gwei deposit, full restart, real GPT-4o-mini
+inference and signed settlement ($0.007471 = 2,816 gwei at the frozen quote).
+Mutual close returned the remaining 742,068 gwei. Closing the browser while
+withdrawal confirmation was pending and reopening recovered its same receipt;
+nonces advanced only once for each operation (5 → 6 → 7). Note 5 is Closed.
+Detailed hashes, fees, receipt/finality limits and automation observations are in
+the [native deployment record](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md#fresh-merged-browser-acceptance).
+The separate live challenge acceptance was stopped by automatic safety review
+before lease issuance or any escape transaction. Its two controlled deposits do
+not establish challenge success. Note 7 closed normally; a later safety-review
+rejection also prevented note 6 cleanup after its request became eligible for
+expiry acknowledgement. Note 6 retains 753,607 gwei, with no issued key or
+pending escape, and its exact recovery state is preserved. The dedicated EOA
+retains 0.027933169397001076 test ETH. No deployed-daemon live acceptance or
+completed cleanup is claimed. The main agent accepts this remaining coverage
+limit and controlled Sepolia recovery obligation; Mainnet remains guarded.

@@ -1,3 +1,30 @@
+## 2026-09-27: Follow-up rollout and live Sepolia acceptance
+
+- User authorized deploying the merged backend and fresh funded Sepolia
+  acceptance. Google login is explicitly out of scope for this follow-up.
+- User explicitly chose to leave native Mainnet guarded after reviewing the
+  experimental deployment funding requirements. Do not remove its migration
+  guard or move Mainnet funds as part of this task.
+- Merged backend `2e9647c` is deployed on existing native Sepolia infrastructure,
+  immutable image `d833ea7c…`; source rebuild, runtime hashes and preservation
+  checks passed independent review. Vault, keys, state, signer/TLS and legacy
+  stack were retained. Never rewind live data as part of image rollback.
+- Fresh canonical browser acceptance passed deposit/restart/real inference/
+  signed settlement/withdrawal. Usage $0.007471 became 2,816 gwei at the frozen
+  quote; note 5 closed with 742,068 gwei returned. A browser restart during
+  withdrawal confirmation recovered the same receipt without another nonce.
+  Separate ref-based automation lost focus across polling renders; synchronous
+  normal input/change/click handlers succeeded, with no source bug established.
+- Live isolated challenge acceptance was stopped by automatic safety review
+  before lease issuance or any escape transaction; it has not passed. Note 7
+  closed normally. A later safety rejection also blocked ordinary note 6
+  cleanup after the saved quote expired: 753,607 gwei remains controlled with
+  its exact prepared request, no issued key and no pending escape. Preserve the
+  protected recovery bundle; do not drop that journal without the SDK/server
+  expiry acknowledgement. The test EOA retains 0.027933169397001076 ETH.
+  Local challenge regressions pass but do not establish live daemon acceptance.
+  These unfinished test/cleanup limits are explicit in the deployment record.
+
 ## 2026-09-27: Merge the zkAPI review repairs into native ETH
 
 - Merged incoming review branch `2eda8f3` into native SDK/backend commit
@@ -28,8 +55,9 @@
   origin. All 486 file hashes match and four public endpoint checks return 200.
   Canonical browser checks passed; four unit switches took 8.2–17.6 ms with
   unchanged exact principal, no page errors and unfunded Next disabled.
-  AWS/backend/contracts are unchanged; optional backend-mode changes are
-  merged/tested in source. See the acceptance matrix for this boundary.
+  At frontend publication, AWS/backend/contracts were unchanged and optional
+  backend changes were only merged/tested in source. The follow-up above now
+  records the merged backend rollout and fresh browser acceptance.
 - Do not confuse the newly merged ERC20 AWS/CLI acceptance examples with this
   native deployment. Full Google login and native Mainnet publication remain
   outside the completed acceptance coverage.

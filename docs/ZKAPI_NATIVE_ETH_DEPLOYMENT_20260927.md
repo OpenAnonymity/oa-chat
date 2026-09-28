@@ -8,13 +8,14 @@ The native protocol work is isolated in `codex/native-eth-wallet` in the
 `zkapi-EF-collab` repository. Native implementation commit `abfd3a7` passed its
 initial independent review, but the deployment audit found inherited legacy
 protocol weaknesses. The rollout incorporated the separate
-note-bound circuit repair and durable challenge service before publication. The deployed backend source is independently approved at
-`dfa0e42ca6dfec46e20dcb7ffd6ac44c2ccbebea`, with protocol
+note-bound circuit repair and durable challenge service before publication. The initial backend source was independently approved at
+`dfa0e42ca6dfec46e20dcb7ffd6ac44c2ccbebea`; the merged backend below now runs
+`2e9647cecec78e1258b34f8be1bc85ea2378cd66`, with unchanged protocol
 `8b2d4e3da921f956e1eb6b93afbf722a877c060c`. It also namespaces upstream key
 replay by the complete accepted request/deployment, supports delayed issuance
 replay, and challenges active leases without waiting for final usage accounting.
 
-## Review merge: current Sepolia frontend
+## Review merge: current Sepolia frontend and backend
 
 The canonical origin **https://oa-wallet-eth-sepolia.vercel.app** serves app
 `5255a23d3373d45e679d97499e6bcb28bedbe2f8`, immutable SDK
@@ -38,12 +39,129 @@ accountless ETH/USD funding, collapsed help and disabled unfunded Next. Four
 unit switches took 8.2–17.6 ms without changing principal; no JavaScript page
 errors appeared. The browser was closed without signing or inference.
 
-This frontend release does **not** replace the live AWS daemon, org, station,
-challenger or contracts. The optional proxy/direct-OpenRouter backend changes
-are merged and tested in source; the deployed native OA flow already uses the
-note-bound protocol, historical-root repair and v2 active-lease challenger from
-`dfa0e42`. No new live funding, provider inference or challenge was submitted
-for this merge; prior live acceptance below remains historical evidence.
+The follow-up rollout deployed merged backend `2e9647c` at 2026-09-28
+04:43:09 UTC (September 27 PDT). Server, indexer and challenger use immutable
+image `sha256:d833ea7c4e9246f0f521fe4832b01477f8490ed03b944a845b2baa681bca4859`.
+A corrected source-timestamp rebuild explicitly recompiled all ten relevant
+workspace/protocol crates, avoiding stale Cargo workspace outputs. All eleven
+binary/launcher/proof hashes and four isolated startup checks passed independent
+review. The installed SDK validated the live manifest; 34 native gateway,
+proof, secret-boundary and launcher checks passed.
+
+The native vault, proof setup, public signing identities, secrets, database,
+launcher, signer and TLS service were preserved. All five legacy containers
+retained their identities, images and ports. Public config, health and native
+quote returned 200; private routes stayed unavailable. The challenger checkpoint
+advanced from 11798184 to 11798194 with zero pending obligations. Stopped-state
+backups were retained, and rollback restores images/configuration without
+rewinding live state. Org, station and contracts were not redeployed.
+
+### Fresh merged browser acceptance
+
+A controlled accountless browser on the canonical origin completed this flow
+with the merged frontend, SDK and backend, using GPT-4o-mini directly through
+the existing verifier-gated OA issuance path. Network proxy was off; this run
+does not establish proxy routing or a MetaMask extension happy path.
+
+- The saved principal was 744,884 gwei (0.000744884 ETH), originally entered as
+  $2. The current USD display was about $1.98 because the wallet holds ETH.
+  Exact displayed funding of 0.004435565428170351 ETH was sent in
+  `0xc89f126894e6132b382730eaa8b15cdf6c05b2a14c05fd508a3fa9dfa37a3b0e`.
+  A refreshed gas quote correctly kept Next disabled when more was needed.
+  A separate 0.01 ETH test allowance for quote movement and later withdrawal
+  gas arrived in `0x56ceb9b4de347dc9864e70879fd7173c15ebc945dd7873a935705c19def0df9b`.
+  Full browser closure/reopening retained the address and exact principal;
+  no automatic deposit occurred and the account nonce remained 5.
+- Explicit Next submitted exactly one deposit,
+  `0xa6d32578c1adcd357e83de59ff84a97d85f06caa90dc9a4ceaa155cd9eb5ab93`,
+  block 11798202, nonce 5. It used 6,742,199 gas and paid
+  0.007517556651734693 ETH. The confirmed balance/history survived another
+  full browser restart. This deposit confirmed before the browser was closed;
+  pending-deposit interruption coverage remains the earlier run below plus
+  current recovery regressions.
+- A new real GPT-4o-mini session returned “Merged native ETH acceptance passed.”
+  Exactly one new OA lease was issued after rollout. Its signed station/org
+  receipt finalized $0.007471 as 2,816 gwei, independently matching the
+  request's frozen 2653.90512925 USD/ETH quote. The remaining private principal
+  was 742,068 gwei.
+- Mutual withdrawal
+  `0xf4490c5c058602fc970d6cfd2b53ca9ae79e66e7c586b35fdaca708572069fab`
+  mined in block 11798262 at nonce 6. It used 7,051,101 gas and paid
+  0.007919450102739153 ETH, returning exactly 742,068 gwei to the controlled
+  operator. Note 5 is Closed. The browser was closed with confirmed/pending
+  nonces 6/7; reopening recovered the same transaction and returned-history
+  entry. Both nonces became 7, with no duplicate withdrawal.
+- The initial withdrawal automation lost input/focus across polling renders.
+  A synchronous input/change/click sequence through normal form handlers
+  succeeded without bypassing authorization, simulation or signing checks.
+  Independent investigation found no source defect; no code change was made.
+  The known refresh/checkbox-reset UX limitation remains a follow-up.
+
+The browser funding address retains 0.004691996028635259 test ETH for future
+gas. No sweep was requested. At the receipt check, latest block was 11798268
+and finalized block 11798196: both new receipts were mined successfully but
+were not yet Ethereum-finalized. A follow-up at 05:21:23 UTC independently
+matched both receipt block hashes to canonical blocks below finalized block
+11798292, confirming both browser transactions finalized. Public-only evidence
+and screenshots are in
+the protected deployment bundle's `review-merge-e2e-20260928/`; the signed
+settlement projection is in `merge-rollout-2e9647c/browser-settlement-latest.json`.
+Mainnet remains guarded at the user's explicit request; Google login is outside
+this follow-up's scope.
+
+### Live challenge acceptance stopped; ordinary cleanup
+
+The separate live challenge test did **not** complete. Automatic safety review
+rejected its continuation for possible cybersecurity risk after two ordinary
+deposits and local preparation of one request. No request was issued, no escape
+transaction was submitted, and no deployed challenge success is claimed.
+An exact-ID read-only server query confirmed zero lease/nullifier records for
+the prepared request. Local real-proof historical-root and v2 daemon regression
+coverage remains valid; this follow-up does not replace it with live evidence.
+The main agent accepts this remaining limit for the Sepolia test deployment.
+Mainnet remains guarded, and this is not production readiness approval.
+
+The dedicated controlled EOA received 0.05 Sepolia ETH in
+`0xf747cecf2ed688912ed551985897e95fc058121b0893ab07707c2c1629062927`.
+Preparation and ordinary cleanup produced these transactions:
+
+| Operation | Note | Block | Transaction |
+| --- | --- | --- | --- |
+| Deposit 753,607 gwei | 6 | 11798275 | `0x8b4f5aec1c274e4b3e8e201ef98bc49b2b32516ef2574cc60d3b3d1a37c1d382` |
+| Deposit 50,000 gwei | 7 | 11798281 | `0xee1bf39ceac64bed219d3d7da525427eaa2fc6ab7bf899c0012ad2063f05b519` |
+| Normal mutual close; 50,000 gwei refunded | 7 | 11798302 | `0x060367f2686ba41b60fe1b11a3643b8a5964e87028883f84d3a2af8dc4e66f12` |
+
+Note 6 remains under controlled custody with **753,607 gwei** and its exact
+locally prepared request. No key was issued. Merely observing no issued lease
+does not authorize deleting that request. The reviewed cleanup adapter uses
+the SDK's existing `/expire` recovery and preserves the ID, payload and journal
+until a server acknowledgement binds an `expired` or `superseded` outcome
+under the issuance lock. An unrelated tree-root change does not satisfy this
+native quote recovery rule.
+
+The read-only watcher observed eligibility after the saved quote expired at
+2026-09-28 05:32:36 UTC. Automatic safety review then also rejected the cleanup
+agent's continuation for possible cybersecurity risk. **The expiry acknowledgement
+and note 6 mutual withdrawal were not executed.** No alternate mutation path was
+used. The main agent accepts retaining this controlled Sepolia recovery obligation
+and reports it explicitly; cleanup is unfinished.
+
+An independent check at block 11798448 confirmed note 6 Active, note 7 Closed,
+no pending escape for either, and no escape initiation/challenge/finalization
+events for either note since deposit. The dedicated EOA
+`0xAa0235A3c22d772a04bBf1B942013080d2220b35` holds
+**0.027933169397001076 Sepolia ETH**, with confirmed/pending nonces 3/3.
+Final public checks at 05:35:13 UTC returned 200 for config, health and native
+quote, with source `2e9647c` and finalized price round `18446744073709588006`.
+The remaining private note and public ETH remain recoverable controlled test
+funds; no public sweep was made. Completing the supported expiry acknowledgement
+and ordinary mutual close remains a follow-up, not a passed acceptance step.
+
+Public-only evidence and protected custody/recovery state are retained in
+`review-rollout-challenge-20260928/` inside the deployment bundle. Do not delete
+its wallet, prepared request, proof or transaction journals. The browser's
+separate deposit/inference/settlement/withdrawal acceptance above is complete;
+the live challenge test and this final cleanup are not.
 
 ## Unused first test vault
 
@@ -381,10 +499,10 @@ relaxed. New USD quotes/leases fail closed during it; existing ETH ownership and
 withdrawal/return recovery do not depend on it. The final public verification
 at 23:29:40 recorded matching artifacts and 200 health/config/quote responses.
 
-This run does not constitute a live malicious-escape challenge test, a full
+This initial run did not include a live malicious-escape challenge test, a full
 MetaMask extension test, an account/passkey relay test, or a Mainnet test.
-The native real-proof/contract challenge tests passed locally, while a separate
-isolated native Sepolia challenge acceptance plan remains unexecuted.
+The native real-proof/contract challenge tests passed locally; the separate
+follow-up challenge acceptance is tracked in the current release section above.
 
 Mainnet remains guarded and unpublished. Both deployment and dedicated
 challenger accounts hold zero Mainnet ETH. Publication needs an explicit
