@@ -177,6 +177,7 @@ export function renderFundingAccount(owner) {
             ${availableKnown && BigInt(available) > 0n ? `<div><dt>Available toward this deposit</dt><dd>− ${renderFundingWei(owner, BigInt(available) > BigInt(flow.totalWei) ? flow.totalWei : available)}</dd></div>` : ''}
             <div class="zkapi-funding-total"><dt>Total ETH to send</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
         </dl>
+        <p class="zkapi-note">Low network fee. Confirmation may take longer.</p>
         <p class="zkapi-note">This estimate refreshes automatically and is checked again when you click Next. The buffer covers changes in network fees; any unused ETH stays at this address. Your sending wallet charges its own transfer fee separately.</p>
         <p class="zkapi-helper" role="status">${ready ? 'Funds available. Choose Next to add the ETH to your private balance.' : `Checking for funds… Currently at this address: ${escape(formatFundingAmount(available, 18))} ETH.`}</p>
         <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `<p class="zkapi-helper" role="status">${flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…'}</p>${address}`}
@@ -184,11 +185,12 @@ export function renderFundingAccount(owner) {
         <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser.</p>`
         : `<h3>Your funding address</h3><p class="zkapi-helper">${escape(network)}</p>${address}
         ${renderFundingReceipt(owner)}
+        <p class="zkapi-note">New transactions use low network fees and may take longer to confirm.</p>
         ${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`}
         ${owner.view === 'withdraw' ? `<label class="zkapi-funding-field">Withdrawal destination on ${escape(network)}<input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label><p class="zkapi-note">${savedDestination ? 'This withdrawal keeps its saved destination.' : 'Choose an address you control. Your funding address pays the network fee.'}</p>` : ''}
         ${wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><button data-funding-recover class="zkapi-primary-button" type="button" ${disabled}>Check saved transaction</button></div>` : ''}
         <details data-funding-details="return"><summary>Return funds held at this address</summary>
-            <p class="zkapi-note">These public funds are separate from your private wallet balance. Keep enough ETH here to pay withdrawal fees.</p>
+            <p class="zkapi-note">These public funds are separate from your private wallet balance. Keep enough ETH here to pay withdrawal fees. New transfers use low network fees and may take longer to confirm.</p>
             <label class="zkapi-funding-field">Destination on ${escape(network)}<input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
             ${!native ? `<label class="zkapi-funding-field">${escape(token)} amount<input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
             <label class="zkapi-funding-field">ETH amount (optional)<input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="Leave blank for remaining ETH" value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>

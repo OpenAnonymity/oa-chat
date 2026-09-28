@@ -8,7 +8,11 @@ const UINT256_MAX = (1n << 256n) - 1n;
 const MAX_NONCE = BigInt(Number.MAX_SAFE_INTEGER);
 const MAX_GAS_PRICE = 300_000_000_000n;
 const MAX_TRANSACTION_FEE = 20_000_000_000_000_000n; // 0.02 ETH; no automatic fee escalation.
-const MIN_PRIORITY_FEE = 1_000_000n; // 0.001 gwei; retain a tip when the RPC suggests zero.
+const MIN_PRIORITY_FEE = 1_000_000n; // 0.001 gwei; also retained for existing journal validation.
+const LOW_FEE_HISTORY_BLOCKS = 20;
+const LOW_FEE_REWARD_PERCENTILE = 10;
+const MAX_FEE_BLOCK_AGE_SECONDS = 120n;
+const MAX_FEE_BLOCK_FUTURE_SECONDS = 30n;
 const NATIVE_WEI_PER_UNIT = 1_000_000_000n; // The native vault's private ledger uses gwei.
 const FEE_QUOTE_LIFETIME_MS = 30_000;
 const KDF_ITERATIONS = 600_000;
@@ -38,6 +42,37 @@ function uint(value, label, maximum = UINT256_MAX) {
     const result = BigInt(value);
     if (result < 0n || result > maximum) throw fail(`Invalid ${label}.`);
     return result;
+}
+function feeQuantity(value, maximum = UINT256_MAX) {
+    // JSON-RPC quantities must be bounded hexadecimal strings, including zero.
+    if (typeof value !== 'string' || !/^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i.test(value)) throw fail('Invalid network fee data.');
+    return uint(value, 'network fee data', maximum);
+}
+function lowPriorityFee(history, blockNumber, baseFee) {
+    const count = Number(blockNumber + 1n < BigInt(LOW_FEE_HISTORY_BLOCKS) ? blockNumber + 1n : BigInt(LOW_FEE_HISTORY_BLOCKS));
+    if (!history || typeof history !== 'object'
+        || !Array.isArray(history.reward) || history.reward.length !== count
+        || !Array.isArray(history.baseFeePerGas) || history.baseFeePerGas.length !== count + 1
+        || !Array.isArray(history.gasUsedRatio) || history.gasUsedRatio.length !== count
+        || feeQuantity(history.oldestBlock, MAX_NONCE) + BigInt(count) - 1n !== blockNumber) throw fail('Invalid network fee history.');
+    const bases = history.baseFeePerGas.map(value => feeQuantity(value));
+    if (bases[count - 1] !== baseFee) throw fail('Mismatched network fee history.');
+    const rewards = [];
+    for (let index = 0; index < count; index += 1) {
+        const row = history.reward[index];
+        const ratio = history.gasUsedRatio[index];
+        if (!Array.isArray(row) || row.length !== 1 || typeof ratio !== 'number'
+            || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) throw fail('Invalid network fee history.');
+        const reward = feeQuantity(row[0]);
+        if (ratio === 0 && reward !== 0n) throw fail('Invalid empty-block reward.');
+        // Empty blocks report zero rewards but provide no evidence of low bids.
+        if (ratio > 0) rewards.push(reward);
+    }
+    if (!rewards.length) return MIN_PRIORITY_FEE;
+    rewards.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    const middle = Math.floor(rewards.length / 2);
+    const median = rewards.length % 2 ? rewards[middle] : (rewards[middle - 1] + rewards[middle]) / 2n;
+    return median < MIN_PRIORITY_FEE ? MIN_PRIORITY_FEE : median;
 }
 function address(value) {
     try {
@@ -456,32 +491,35 @@ export class AddressFundingProvider {
     }
 
     async transactionFeeQuote(ctx, gasLimit, approvedFeeLimit = null) {
-        const [block, suggestedTip] = await Promise.all([
-            this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]),
-            this.rpc(ctx, 'eth_maxPriorityFeePerGas')
-        ]);
         let baseFee;
-        let priorityFee;
+        let maxPriorityFeePerGas;
         try {
-            baseFee = uint(block?.baseFeePerGas, 'network base fee');
-            priorityFee = uint(suggestedTip, 'network priority fee');
+            const block = await this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]);
+            const blockNumber = feeQuantity(block?.number, MAX_NONCE);
+            const timestamp = feeQuantity(block?.timestamp, MAX_NONCE);
+            baseFee = feeQuantity(block?.baseFeePerGas);
+            const history = await this.rpc(ctx, 'eth_feeHistory', [hex(BigInt(LOW_FEE_HISTORY_BLOCKS)), hex(blockNumber), [LOW_FEE_REWARD_PERCENTILE]]);
+            maxPriorityFeePerGas = lowPriorityFee(history, blockNumber, baseFee);
+            const now = BigInt(Math.floor(Date.now() / 1000));
+            if (timestamp + MAX_FEE_BLOCK_AGE_SECONDS < now || timestamp > now + MAX_FEE_BLOCK_FUTURE_SECONDS) throw fail('Stale network fee history.');
         } catch {
             throw this.paymentFailure('address_fee_data');
         }
-        const maxPriorityFeePerGas = priorityFee < MIN_PRIORITY_FEE ? MIN_PRIORITY_FEE : priorityFee;
         // EIP-1559 bounds a full block's base-fee increase to 12.5%, with
-        // a one-wei minimum. Reserve two base fees where the safety cap allows.
+        // a one-wei minimum. Low pricing uses recent low bids and only 25%
+        // base-fee headroom; gas limits and signing safety caps stay unchanged.
         const nextBaseFee = baseFee + (baseFee / 8n || 1n);
         const minimumFee = nextBaseFee + maxPriorityFeePerGas;
-        const desiredFee = (baseFee * 2n > nextBaseFee ? baseFee * 2n : nextBaseFee) + maxPriorityFeePerGas;
+        const lowBaseFee = (baseFee * 5n + 3n) / 4n;
+        const desiredFee = (lowBaseFee > nextBaseFee ? lowBaseFee : nextBaseFee) + maxPriorityFeePerGas;
         const budgetCap = MAX_TRANSACTION_FEE / gasLimit;
         const safetyCap = budgetCap < MAX_GAS_PRICE ? budgetCap : MAX_GAS_PRICE;
         if (safetyCap < minimumFee) {
             throw this.paymentFailure('address_fee_limit');
         }
         // A quote already reserves price headroom. Let that approved buffer
-        // cover modest fee/gas changes instead of demanding a fresh 2x-base
-        // reserve on every send. Never spend more than its total allowance.
+        // cover modest fee/gas changes instead of demanding a fresh reserve
+        // on every send. Never spend more than its total allowance.
         const approvedCap = approvedFeeLimit == null ? safetyCap
             : uint(approvedFeeLimit, 'authorized fee', MAX_TRANSACTION_FEE) / gasLimit;
         const feeCap = approvedCap < safetyCap ? approvedCap : safetyCap;
@@ -558,7 +596,7 @@ export class AddressFundingProvider {
             expectedFeeWei: expectedFeeWei.toString(), feeBufferWei: (feeReserveWei - expectedFeeWei).toString(),
             feeReserveWei: feeReserveWei.toString(), estimatedGas: estimate.toString(), gasLimit: gasLimit.toString(),
             maxFeePerGas: fees.maxFeePerGas.toString(), maxPriorityFeePerGas: fees.maxPriorityFeePerGas.toString(),
-            reserveKind: 'estimated_transaction',
+            reserveKind: 'estimated_transaction', feePolicy: 'low',
             quotedAt, expiresAt: quotedAt + FEE_QUOTE_LIFETIME_MS };
     }
 

@@ -46,6 +46,12 @@ function locks() {
         return run;
     } };
 }
+function sampleFeeHistory(rpc) {
+    const count = Number(BigInt(rpc.latest) + 1n < 20n ? BigInt(rpc.latest) + 1n : 20n);
+    return { oldestBlock: `0x${(BigInt(rpc.latest) - BigInt(count) + 1n).toString(16)}`,
+        baseFeePerGas: Array(count + 1).fill(rpc.baseFee), gasUsedRatio: Array(count).fill(0.5),
+        reward: Array.from({ length: count }, () => [rpc.priorityFee]) };
+}
 function harness(options = {}) {
     const store = options.store || memoryStore();
     const lockManager = options.locks || locks();
@@ -54,7 +60,7 @@ function harness(options = {}) {
     const resumes = [];
     const rpc = { chain: '0x1', nonce: '0x0', balance: '0xde0b6b3a7640000', gas: '0x186a0',
         gasPrice: '0x3b9aca00', baseFee: '0x1dcd6500', priorityFee: '0x5f5e100', receipt: null, ambiguous: false, simulationFails: false,
-        code: '0x', finalized: '0x20', blockHash: `0x${'77'.repeat(32)}` };
+        code: '0x', finalized: '0x20', latest: '0x100', timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}`, blockHash: `0x${'77'.repeat(32)}` };
     let generated = 0;
     let provider;
     const config = { ...FUNDING, ...options.config };
@@ -78,14 +84,15 @@ function harness(options = {}) {
             else if (request.method === 'eth_getTransactionCount') result = rpc.nonce;
             else if (request.method === 'eth_getBalance') result = rpc.balance;
             else if (request.method === 'eth_gasPrice') result = rpc.gasPrice;
-            else if (request.method === 'eth_maxPriorityFeePerGas') result = rpc.priorityFee;
+            else if (request.method === 'eth_maxPriorityFeePerGas') result = rpc.suggestedPriorityFee ?? rpc.priorityFee;
+            else if (request.method === 'eth_feeHistory') result = Object.hasOwn(rpc, 'feeHistory') ? rpc.feeHistory : sampleFeeHistory(rpc);
             else if (request.method === 'eth_estimateGas') result = rpc.gas;
             else if (request.method === 'eth_getCode') result = rpc.code;
             else if (request.method === 'eth_call') {
                 if (rpc.simulationFails) throw new Error(`revert private details ${KEY}`);
                 result = '0x1e8480';
             } else if (request.method === 'eth_getTransactionReceipt') result = rpc.receipt;
-            else if (request.method === 'eth_getBlockByNumber') result = { number: request.params[0] === 'finalized' ? rpc.finalized : request.params[0], hash: rpc.blockHash, baseFeePerGas: rpc.baseFee };
+            else if (request.method === 'eth_getBlockByNumber') result = { number: request.params[0] === 'finalized' ? rpc.finalized : request.params[0] === 'latest' ? rpc.latest : request.params[0], hash: rpc.blockHash, baseFeePerGas: rpc.baseFee, timestamp: rpc.timestamp };
             else if (request.method === 'eth_getTransactionByHash') {
                 const raw = sent.find(value => Transaction.from(value).hash === request.params[0]);
                 const tx = raw && Transaction.from(raw);
@@ -305,7 +312,7 @@ test('transaction is exactly signed and saved before broadcast; only SDK acknowl
     assert.equal(decoded.chainId, 1n);
     assert.equal(decoded.type, 2);
     assert.equal(decoded.maxPriorityFeePerGas, BigInt(h.rpc.priorityFee));
-    assert.equal(decoded.maxFeePerGas, BigInt(h.rpc.baseFee) * 2n + BigInt(h.rpc.priorityFee));
+    assert.equal(decoded.maxFeePerGas, (BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee));
     assert.equal(decoded.nonce, 0);
     assert.equal(decoded.to.toLowerCase(), TOKEN);
     assert.equal(decoded.data, approve(2000000).data);
@@ -341,7 +348,7 @@ test('broadcast ambiguity survives automatic browser restore without signing or 
     assert.equal(h.sent.length, 2);
     assert.equal(h.sent[0], h.sent[1]);
     assert.equal(Transaction.from(h.sent[1]).type, 2);
-    assert.equal(h.calls.filter(call => call.method === 'eth_maxPriorityFeePerGas').length, 1, 'recovery never requotes fees');
+    assert.equal(h.calls.filter(call => call.method === 'eth_feeHistory').length, 1, 'recovery never requotes fees');
     assert.deepEqual(recovered[0].context, CONTEXT);
     assert.equal(recovered[0].transaction.nonce, '0x0');
     assert.equal(provider.pending, null);
@@ -359,7 +366,7 @@ test('a restored legacy encrypted journal replays its original signed bytes with
     assert.deepEqual(restored.sent, [legacy.raw]);
     assert.equal(Transaction.from(restored.sent[0]).type, 0);
     assert.equal(restored.provider.pending, null);
-    assert.equal(restored.calls.some(call => ['eth_gasPrice', 'eth_maxPriorityFeePerGas', 'eth_getBlockByNumber'].includes(call.method)), false);
+    assert.equal(restored.calls.some(call => ['eth_gasPrice', 'eth_maxPriorityFeePerGas', 'eth_feeHistory', 'eth_getBlockByNumber'].includes(call.method)), false);
 });
 
 test('encrypted journals reject unsupported transaction types and unsafe type-2 fee fields', async () => {
@@ -401,7 +408,125 @@ test('missing or malformed fee data fails before signing without a legacy fallba
     assert.equal(h.calls.some(call => call.method === 'eth_gasPrice'), false);
 });
 
-test('zero fee suggestions retain a small tip and enough room for the next block', async () => {
+test('low pricing uses median tenth-percentile rewards from anchored recent blocks, ignoring expensive RPC suggestions', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    await h.ready();
+    h.rpc.suggestedPriorityFee = '0x174876e800'; // 100 gwei would overpay on this quiet chain.
+    const history = sampleFeeHistory(h.rpc);
+    history.reward = Array.from({ length: 20 }, () => ['0x0']);
+    history.gasUsedRatio = Array(20).fill(0);
+    for (const [index, reward] of [2_000_000n, 4_000_000n, 6_000_000n, 300_000_000_000n].entries()) {
+        history.reward[index] = [`0x${reward.toString(16)}`];
+        history.gasUsedRatio[index] = 0.5;
+    }
+    h.rpc.feeHistory = history;
+    const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+    assert.equal(quote.feePolicy, 'low');
+    assert.equal(quote.maxPriorityFeePerGas, '5000000');
+    assert.equal(quote.maxFeePerGas, '630000000');
+    assert.equal(quote.expectedFeeWei, (BigInt(h.rpc.gas) * 505_000_000n).toString());
+    assert.equal(BigInt(quote.feeReserveWei), BigInt(quote.gasLimit) * 630_000_000n);
+    assert(BigInt(quote.feeReserveWei) < BigInt(quote.gasLimit) * (2n * BigInt(h.rpc.baseFee) + BigInt(h.rpc.suggestedPriorityFee)));
+    assert.deepEqual(h.calls.find(call => call.method === 'eth_feeHistory').params, ['0x14', '0x100', [10]]);
+    assert.equal(h.calls.some(call => ['eth_gasPrice', 'eth_maxPriorityFeePerGas'].includes(call.method)), false);
+    const prepared = await h.provider.prepareDepositQuote(NATIVE_INTENT.ethAmount, { from: OWN });
+    await h.send({ ...prepared.transaction, gas: `0x${BigInt(quote.gasLimit).toString(16)}` },
+        { ...CONTEXT, kind: 'deposit', operationId: prepared.operationId, submissionId: 'low-fee-sub',
+            amount: prepared.amount, commitment: prepared.commitment },
+        { kind: 'deposit', amount: prepared.amount, preparedOperationId: quote.operationId,
+            depositCommitment: quote.depositCommitment, feeLimitWei: quote.feeReserveWei, feeQuoteExpiresAt: quote.expiresAt });
+    const signed = Transaction.from(h.sent[0]);
+    assert.equal(signed.maxPriorityFeePerGas, 5_000_000n);
+    assert.equal(signed.maxFeePerGas, 630_000_000n);
+    assert.equal(signed.gasLimit, BigInt(quote.gasLimit), 'low pricing never reduces execution gas');
+});
+
+test('empty blocks retain the minimum tip and short histories are allowed only near genesis', async () => {
+    const h = harness();
+    h.rpc.latest = '0x3';
+    h.rpc.feeHistory = sampleFeeHistory(h.rpc);
+    h.rpc.feeHistory.reward = Array.from({ length: 4 }, () => ['0x0']);
+    h.rpc.feeHistory.gasUsedRatio = Array(4).fill(0);
+    const quote = await h.provider.transactionFees(await h.provider.context(), 21_000n);
+    assert.equal(quote.maxPriorityFeePerGas, 1_000_000n);
+    assert.equal(quote.maxFeePerGas, 626_000_000n);
+    assert.deepEqual(h.calls.find(call => call.method === 'eth_feeHistory').params, ['0x14', '0x3', [10]]);
+    h.rpc.latest = '0x100';
+    h.rpc.feeHistory.oldestBlock = '0xfd';
+    await assert.rejects(h.provider.transactionFees(await h.provider.context(), 21_000n), { code: 'address_fee_data' });
+});
+
+test('malformed, stale and unanchored fee histories cannot authorize a signature or invoke an expensive fallback', async () => {
+    const mutations = [
+        rpc => { rpc.feeHistory = undefined; },
+        rpc => { rpc.feeHistory = null; },
+        rpc => { rpc.feeHistory.oldestBlock = '0xec'; },
+        rpc => { rpc.feeHistory.oldestBlock = '0xee'; },
+        rpc => { rpc.feeHistory.reward.pop(); },
+        rpc => { rpc.feeHistory.reward.push(['0x1']); },
+        rpc => { rpc.feeHistory.reward[0] = []; },
+        rpc => { rpc.feeHistory.reward[0] = ['0x1', '0x2']; },
+        rpc => { rpc.feeHistory.reward[0] = [1]; },
+        rpc => { rpc.feeHistory.reward[0] = [`0x1${'0'.repeat(64)}`]; },
+        rpc => { rpc.feeHistory.baseFeePerGas.pop(); },
+        rpc => { rpc.feeHistory.baseFeePerGas[19] = '0x1'; },
+        rpc => { rpc.feeHistory.baseFeePerGas[20] = null; },
+        rpc => { rpc.feeHistory.gasUsedRatio.pop(); },
+        rpc => { rpc.feeHistory.gasUsedRatio[0] = -0.1; },
+        rpc => { rpc.feeHistory.gasUsedRatio[0] = 1.1; },
+        rpc => { rpc.feeHistory.gasUsedRatio[0] = NaN; },
+        rpc => { rpc.feeHistory.gasUsedRatio[0] = '0.5'; },
+        rpc => { rpc.feeHistory.gasUsedRatio[0] = 0; }, // Empty blocks cannot have a reward.
+        rpc => { rpc.latest = 'latest'; },
+        rpc => { rpc.timestamp = undefined; },
+        rpc => { rpc.timestamp = `0x${(Math.floor(Date.now() / 1000) - 121).toString(16)}`; },
+        rpc => { rpc.timestamp = `0x${(Math.floor(Date.now() / 1000) + 60).toString(16)}`; }
+    ];
+    for (const mutate of mutations) {
+        const h = harness();
+        await h.ready();
+        h.rpc.feeHistory = sampleFeeHistory(h.rpc);
+        mutate(h.rpc);
+        await assert.rejects(h.send(), { code: 4100, addressCode: 'address_fee_data' });
+        assert.equal(h.sent.length, 0);
+        assert.equal(h.provider.pending, null);
+        assert.equal(h.calls.some(call => ['eth_gasPrice', 'eth_maxPriorityFeePerGas'].includes(call.method)), false);
+        assert.equal((await h.provider.read(await h.provider.context(), true)).transactions.length, 0);
+    }
+});
+
+test('unsupported fee history fails with fixed public copy and no RPC suggestion fallback', async () => {
+    const h = harness();
+    await h.ready();
+    h.provider.transport = async (url, options) => {
+        if (JSON.parse(options.body).method === 'eth_feeHistory') throw new Error(`Unsupported private details ${KEY}`);
+        return h.init.transport(url, options);
+    };
+    await assert.rejects(h.send(), error => {
+        assert.equal(error.addressCode, 'address_fee_data');
+        assert.match(error.message, /could not be read reliably/);
+        assert(!error.message.includes(KEY));
+        return true;
+    });
+    assert.equal(h.sent.length, 0);
+    assert.equal(h.calls.some(call => ['eth_gasPrice', 'eth_maxPriorityFeePerGas'].includes(call.method)), false);
+});
+
+test('a preexisting conservative type-2 journal replays identical bytes without applying low pricing', async () => {
+    const h = harness();
+    await h.ready();
+    const original = await saveSignedFixture(h, { type: 2, maxFeePerGas: 1_100_000_000n, maxPriorityFeePerGas: 100_000_000n });
+    h.rpc.baseFee = undefined;
+    h.rpc.feeHistory = null;
+    const restored = new AddressFundingProvider(h.init);
+    await restored.init();
+    await restored.recoverPending();
+    assert.deepEqual(h.sent, [original.raw]);
+    assert.equal(Transaction.from(h.sent[0]).maxFeePerGas, 1_100_000_000n);
+    assert.equal(h.calls.some(call => ['eth_feeHistory', 'eth_maxPriorityFeePerGas', 'eth_getBlockByNumber'].includes(call.method)), false);
+});
+
+test('zero historical rewards retain a small tip and enough room for the next block', async () => {
     const h = harness();
     await h.ready();
     h.rpc.baseFee = '0x0';
@@ -410,6 +535,18 @@ test('zero fee suggestions retain a small tip and enough room for the next block
     const transaction = Transaction.from(h.sent[0]);
     assert.equal(transaction.maxPriorityFeePerGas, 1000000n);
     assert.equal(transaction.maxFeePerGas, 1000001n);
+});
+
+test('low base-fee headroom rounds up to whole wei without lowering the next-block minimum', async () => {
+    const h = harness();
+    const ctx = await h.provider.context();
+    h.rpc.priorityFee = '0x0';
+    for (const [base, maximum] of [[0n, 1n], [1n, 2n], [5n, 7n], [8n, 10n]]) {
+        h.rpc.baseFee = `0x${base.toString(16)}`;
+        const fees = await h.provider.transactionFees(ctx, 21_000n);
+        assert.equal(fees.maxFeePerGas, maximum + 1_000_000n);
+        assert(fees.maxFeePerGas >= base + (base / 8n || 1n) + fees.maxPriorityFeePerGas);
+    }
 });
 
 test('the total fee ceiling clips headroom but rejects a quote that cannot cover the next block and tip', async () => {
@@ -432,7 +569,7 @@ test('the per-gas price ceiling clips headroom and is enforced independently of 
     const h = harness();
     await h.ready();
     h.rpc.gas = '0x5208';
-    h.rpc.baseFee = `0x${200000000000n.toString(16)}`;
+    h.rpc.baseFee = `0x${240000000000n.toString(16)}`;
     h.rpc.priorityFee = `0x${10000000000n.toString(16)}`;
     await h.send();
     const transaction = Transaction.from(h.sent[0]);
@@ -574,7 +711,7 @@ test('ETH max sweep reserves the signed maximum fee using one quote on an ordina
     assert.equal(hash, transaction.hash);
     assert.equal(transaction.value + transaction.gasLimit * transaction.maxFeePerGas, BigInt(h.rpc.balance));
     assert.equal(transaction.gasLimit, 21000n);
-    assert.equal(h.calls.filter(call => call.method === 'eth_maxPriorityFeePerGas').length, 1);
+    assert.equal(h.calls.filter(call => call.method === 'eth_feeHistory').length, 1);
     assert.equal(h.calls.filter(call => call.method === 'eth_getBlockByNumber' && call.params[0] === 'latest').length, 1);
     assert.equal(h.calls.filter(call => call.method === 'eth_gasPrice').length, 0);
 });
@@ -588,7 +725,7 @@ test('ETH max return refuses contract recipients and insufficient fee reserves w
     h.rpc.code = '0x6000';
     await assert.rejects(send(), { code: 'address_sweep_contract' });
     h.rpc.code = '0x';
-    h.rpc.balance = `0x${(21000n * (BigInt(h.rpc.baseFee) * 2n + BigInt(h.rpc.priorityFee))).toString(16)}`;
+    h.rpc.balance = `0x${(21000n * ((BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee))).toString(16)}`;
     await assert.rejects(send(), { code: 'address_insufficient_eth' });
     assert.equal(h.sent.length, 0);
 });
@@ -734,7 +871,7 @@ test('unfunded deposit quotes simulate the exact prepared call with only its sen
     const estimate = BigInt(h.rpc.gas);
     const gasLimit = BigInt(bufferedGasLimit(estimate));
     assert.equal(quote.expectedFeeWei, (estimate * (BigInt(h.rpc.baseFee) + BigInt(h.rpc.priorityFee))).toString());
-    assert.equal(quote.feeReserveWei, (gasLimit * (2n * BigInt(h.rpc.baseFee) + BigInt(h.rpc.priorityFee))).toString());
+    assert.equal(quote.feeReserveWei, (gasLimit * ((BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee))).toString());
     assert.equal(BigInt(quote.expectedFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));
     assert.equal(quote.gasLimit, gasLimit.toString());
     assert.equal(quote.estimatedGas, estimate.toString());
@@ -829,10 +966,11 @@ test('deposit quotes enforce buffered gas, valid fee data and the existing trans
     const capped = harness({ config: NATIVE_FUNDING });
     await capped.ready();
     capped.rpc.gas = `0x${6_897_262n.toString(16)}`;
-    capped.rpc.baseFee = `0x${1_500_000_000n.toString(16)}`;
+    capped.rpc.baseFee = `0x${2_000_000_000n.toString(16)}`;
     const quote = await capped.provider.getDepositFeeQuote(NATIVE_INTENT);
     assert(BigInt(quote.feeReserveWei) <= 20_000_000_000_000_000n);
-    assert(BigInt(quote.maxFeePerGas) < 2n * BigInt(capped.rpc.baseFee) + BigInt(capped.rpc.priorityFee));
+    assert.equal(BigInt(quote.maxFeePerGas), 20_000_000_000_000_000n / BigInt(quote.gasLimit));
+    assert(BigInt(quote.maxFeePerGas) < (5n * BigInt(capped.rpc.baseFee) + 3n) / 4n + BigInt(capped.rpc.priorityFee));
     assert(BigInt(quote.feeBufferWei) > 0n);
 });
 
@@ -878,8 +1016,8 @@ test('approved deposit fee buffer covers modest fee or gas changes without incre
             amount: prepared.amount, commitment: prepared.commitment };
         const authorization = { kind: 'deposit', amount: prepared.amount, feeLimitWei: quote.feeReserveWei,
             preparedOperationId: quote.operationId, depositCommitment: quote.depositCommitment, feeQuoteExpiresAt: quote.expiresAt };
-        if (changed !== 'gas') h.rpc.baseFee = `0x${(BigInt(h.rpc.baseFee) * 11n / 10n).toString(16)}`;
-        if (changed !== 'fee') h.rpc.gas = `0x${(BigInt(h.rpc.gas) * 11n / 10n).toString(16)}`;
+        if (changed !== 'gas') h.rpc.baseFee = `0x${(BigInt(h.rpc.baseFee) * 105n / 100n).toString(16)}`;
+        if (changed !== 'fee') h.rpc.gas = `0x${(BigInt(h.rpc.gas) * 105n / 100n).toString(16)}`;
         h.rpc.balance = `0x${(BigInt(NATIVE_INTENT.depositWei) + BigInt(quote.feeReserveWei)).toString(16)}`;
         const gasLimit = BigInt(bufferedGasLimit(BigInt(h.rpc.gas)));
         await h.send({ ...prepared.transaction, gas: `0x${gasLimit.toString(16)}` }, context, authorization);
@@ -932,7 +1070,7 @@ test('funded native deposit uses its actual gas at reproduced Sepolia fees and r
     const signed = Transaction.from(h.sent[0]);
     assert.equal(signed.value, principal);
     assert.equal(signed.gasLimit, BigInt(gas));
-    assert.equal(signed.maxFeePerGas, BigInt(h.rpc.baseFee) * 2n + BigInt(h.rpc.priorityFee));
+    assert.equal(signed.maxFeePerGas, (BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee));
     assert(signed.gasLimit * signed.maxFeePerGas <= BigInt(quote.feeReserveWei));
     assert(h.calls.some(call => call.method === 'eth_estimateGas'));
     assert(h.calls.some(call => call.method === 'eth_getBlockByNumber' && call.params[0] === 'latest'));
@@ -963,7 +1101,7 @@ test('prefunding reserve never bypasses actual native fee, fee-data or affordabi
             h.rpc.baseFee = undefined;
             addressCode = 'address_fee_data';
         } else {
-            const exactLiability = BigInt(gas) * (BigInt(h.rpc.baseFee) * 2n + BigInt(h.rpc.priorityFee));
+            const exactLiability = BigInt(gas) * ((BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee));
             h.rpc.balance = `0x${(principal + exactLiability - 1n).toString(16)}`;
             addressCode = 'address_insufficient_eth';
         }
@@ -1005,12 +1143,12 @@ test('withdrawal reports the exact safe top-up after SDK error handling and only
         assert.equal(error.addressCode, 'address_insufficient_eth');
         assert.equal(error.withdrawalNeedsAction, true);
         assert.equal(error.broadcastPossible, false);
-        assert.match(error.shortMessage, /0\.000122 ETH more/);
+        assert.match(error.shortMessage, /0\.000077 ETH more/);
         assert.match(error.shortMessage, new RegExp(OWN));
         assert.match(error.shortMessage, /Ethereum Mainnet, then retry the action/);
         assert.equal(error.message, error.shortMessage);
         assert.deepEqual(error.fundingRequirement, { address: OWN, chainId: 1, balanceWei: '10000000000000',
-            feeReserveWei: '132000000000000', requiredWei: '132000000000000', shortfallWei: '122000000000000' });
+            feeReserveWei: '87000000000000', requiredWei: '87000000000000', shortfallWei: '77000000000000' });
         assert(!error.shortMessage.includes(input.data));
         assert(!JSON.stringify(error.fundingRequirement).includes(KEY));
         return true;
@@ -1019,7 +1157,7 @@ test('withdrawal reports the exact safe top-up after SDK error handling and only
     assert.equal(h.provider.action, null, 'the explanation is not retained between actions');
     assert.equal(h.provider.pending, null);
     assert.equal(h.sent.length, 0);
-    h.rpc.balance = '0x780de2874000'; // The exact 0.000132 ETH quoted liability.
+    h.rpc.balance = `0x${87_000_000_000_000n.toString(16)}`; // The exact 0.000087 ETH quoted liability.
     await h.provider.getStatus();
     assert.equal(h.sent.length, 0, 'a top-up and status check never resubmit');
     await h.send(input, context, authorization);
@@ -1210,17 +1348,31 @@ test('local Anvil executes native deposit value, signed approval, exact recovery
     // A payable EVM fixture records msg.value. It verifies native execution and
     // durable signer restart, while the full vault/proof flow has separate E2E.
     await rpc('anvil_setCode', [VAULT, '0x34600055600160005260206000f3']);
-    await rpc('anvil_setBalance', [OWN, '0xde0b6b3a7640000']);
+    await rpc('anvil_setBalance', [OWN, '0x0']);
     const native = harness({ config: { ...NATIVE_FUNDING, demo_rpc_url: url }, transport: h.init.transport });
     await native.ready();
     const plan = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
     const amount = 2_000_000n;
     const depositWei = amount * 1_000_000_000n;
-    const context = { ...CONTEXT, kind: 'deposit', operationId: 'native-op', submissionId: 'native-sub',
+    const nativeBaseFee = BigInt((await rpc('eth_getBlockByNumber', ['latest', false])).baseFeePerGas);
+    const nativeQuote = await native.provider.getDepositFeeQuote(NATIVE_INTENT);
+    assert.equal(nativeQuote.feePolicy, 'low');
+    assert.equal(BigInt(await rpc('eth_getBalance', [OWN, 'latest'])), 0n, 'quoting never funds or signs');
+    assert(BigInt(nativeQuote.maxFeePerGas) < 2n * nativeBaseFee + BigInt(nativeQuote.maxPriorityFeePerGas),
+        'the real EVM quote uses less fee headroom than the old conservative policy');
+    await rpc('anvil_setBalance', [OWN, `0x${(depositWei + BigInt(nativeQuote.feeReserveWei)).toString(16)}`]);
+    const context = { ...CONTEXT, kind: 'deposit', operationId: nativeQuote.operationId, submissionId: 'native-sub',
         amount: amount.toString(), commitment: plan.commitment };
     const depositHash = await native.send({ from: OWN, to: VAULT, data: codec.encodeDeposit(plan, amount),
-        value: `0x${depositWei.toString(16)}` }, context, { kind: 'deposit', amount: amount.toString() });
-    assert.equal((await rpc('eth_getTransactionReceipt', [depositHash])).status, '0x1');
+        gas: `0x${BigInt(nativeQuote.gasLimit).toString(16)}`, value: `0x${depositWei.toString(16)}` }, context,
+        { kind: 'deposit', amount: amount.toString(), preparedOperationId: nativeQuote.operationId,
+            depositCommitment: nativeQuote.depositCommitment, feeLimitWei: nativeQuote.feeReserveWei,
+            feeQuoteExpiresAt: nativeQuote.expiresAt });
+    const nativeReceipt = await rpc('eth_getTransactionReceipt', [depositHash]);
+    assert.equal(nativeReceipt.status, '0x1');
+    const nativeActualFee = BigInt(nativeReceipt.gasUsed) * BigInt(nativeReceipt.effectiveGasPrice);
+    assert(nativeActualFee <= BigInt(nativeQuote.feeReserveWei));
+    assert.equal(BigInt(await rpc('eth_getBalance', [OWN, 'latest'])), BigInt(nativeQuote.feeReserveWei) - nativeActualFee);
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), depositWei);
     assert.equal(BigInt(await rpc('eth_getBalance', [VAULT, 'latest'])), depositWei);
     const nativeRestored = new AddressFundingProvider(native.init);

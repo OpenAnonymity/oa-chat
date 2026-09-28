@@ -1,3 +1,28 @@
+## 2026-09-27: Low fees for the address option
+
+- New address deposits, withdrawals and public returns share a Low fee policy.
+  Tip = integer median of 10th-percentile rewards from nonempty blocks within
+  the latest 20 blocks, floored at 0.001 gwei. Maximum price uses 1.25x current base fee plus
+  tip, replacing 2x headroom. Gas-limit padding and signing caps are unchanged.
+- Fee history is pinned to the sampled latest block with exact window/base-fee
+  checks and a 120-second age limit. Malformed/unavailable history fails closed;
+  there is no fallback to an expensive generic RPC tip. An all-empty valid
+  history uses the minimum tip. Quotes and actual signing use the same policy.
+- UI says low fees can take longer. Existing signed journals replay unchanged,
+  even if created under the earlier pricing policy. No automatic fee bump or
+  wallet connection is introduced; MetaMask continues to choose its own fees.
+- This mainly lowers the maximum amount requested at current Sepolia prices:
+  the previous test's 0.001-gwei tip was already only 0.0943% of its actual fee.
+  Do not promise a 37.5% reduction in the charged fee; that comparison applies
+  to the maximum allowance when base fee dominates, not the receipt charge.
+  See [payment details](ZKAPI_PAYMENTS.md) for policy and primary references.
+- Validation: 886 core + 454 payment tests pass (1,340 total), including 63
+  provider/real-EVM checks. Fresh adversarial review approved the final change.
+  A same-block Sepolia comparison at block 11797083 reduced the maximum fee
+  reserve from 0.01565140231992339 to 0.009785179194182595 ETH (37.48%) for
+  the same gas limit and unchanged 0.001-gwei tip. This is a read-only quote
+  comparison, not a claimed reduction in the actual transaction charge.
+
 ## 2026-09-27: Browser custody and native ETH funding (Sepolia live)
 
 - Native address deposits now prepare a durable SDK note draft and simulate the

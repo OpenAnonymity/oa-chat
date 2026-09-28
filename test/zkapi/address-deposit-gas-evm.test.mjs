@@ -109,12 +109,18 @@ test('real EVM quotes an unfunded payable deposit, enforces its cap, and account
     await provider.ensureAddress();
     await assert.rejects(rpc('eth_call', [prepared.transaction, 'pending']), 'the native value cannot execute from an unfunded account');
 
+    const quoteBlock = await rpc('eth_getBlockByNumber', ['latest', false]);
     const quote = await provider.getDepositFeeQuote(INTENT);
     assert.equal(signedBytes.length, 0);
     assert.equal(await rpc('eth_getTransactionCount', [OWN, 'pending']), '0x0');
     assert.equal(await rpc('eth_getBalance', [OWN, 'latest']), '0x0', 'state override did not fund the real account');
     assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), 0n, 'simulation did not alter contract state');
     assert.equal(quote.gasLimit, BigInt(bufferedGasLimit(quote.estimatedGas)).toString());
+    assert.equal(quote.feePolicy, 'low');
+    assert.deepEqual(calls.find(call => call.method === 'eth_feeHistory').params, ['0x14', quoteBlock.number, [10]]);
+    assert.equal(calls.some(call => call.method === 'eth_maxPriorityFeePerGas'), false);
+    assert.equal(BigInt(quote.maxFeePerGas), (BigInt(quoteBlock.baseFeePerGas) * 5n + 3n) / 4n + BigInt(quote.maxPriorityFeePerGas));
+    assert(BigInt(quote.feeReserveWei) < BigInt(quote.gasLimit) * (2n * BigInt(quoteBlock.baseFeePerGas) + BigInt(quote.maxPriorityFeePerGas)));
     assert(BigInt(quote.expectedFeeWei) > 0n);
     assert(BigInt(quote.feeBufferWei) > 0n);
     assert.equal(BigInt(quote.expectedFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));

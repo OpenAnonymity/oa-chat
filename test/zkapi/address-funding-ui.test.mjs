@@ -71,6 +71,7 @@ test('ordinary native funding itemizes principal, estimated fee, buffer and tota
     assert.match(waiting, /Estimated network fee<\/dt><dd>0\.0004 ETH/);
     assert.match(waiting, /Additional fee buffer<\/dt><dd>0\.0001 ETH/);
     assert.match(waiting, /Total ETH to send<\/dt><dd>0\.0055 ETH/);
+    assert.match(waiting, /Low network fee\. Confirmation may take longer\./);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
     assert.match(waiting, /sending wallet charges its own transfer fee separately/);
     assert.match(waiting, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
@@ -342,7 +343,10 @@ test('a saved transaction disables method switching and retains recovery control
     const method = controls.renderWalletMethod(owner);
     assert.match(method, /data-wallet-method="metamask"[^>]*disabled/);
     assert.match(method, /data-wallet-method="address"[^>]*disabled/);
-    assert.match(controls.renderFundingAccount(owner), /data-funding-recover/);
+    const account = controls.renderFundingAccount(owner);
+    assert.match(account, /data-funding-recover/);
+    assert.match(account, /New transactions use low network fees and may take longer to confirm\./);
+    assert.match(account, /New transfers use low network fees and may take longer to confirm\./);
 });
 
 test('legacy migration captures the existing password locally and never stores it on the owner', async () => {

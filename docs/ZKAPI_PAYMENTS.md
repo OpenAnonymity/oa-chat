@@ -225,8 +225,19 @@ New browser records use AES-256-GCM with a non-extractable browser key. Legacy
 records retain PBKDF2-SHA-256 until explicit conversion. The encrypted journal
 envelope has a 4 MiB limit. The signer uses the SDK’s EIP-7825 ceiling of 16,777,216 gas, with
 additional caps of 300 gwei and 0.02 ETH in gas fees. New transactions use
-EIP-1559: twice the latest base fee plus the suggested priority fee, clipped to
-both caps. The quote must still cover a full next block's base-fee increase and
+EIP-1559 with the app's **Low** policy: 1.25 times the latest base fee (rounded
+up) plus a priority fee estimated from recent low bids, clipped to both caps.
+The tip is the integer median of the gas-weighted 10th-percentile rewards in
+nonempty blocks within the latest 20 blocks, with the existing 0.001-gwei minimum. Empty blocks
+are excluded; an entirely empty history uses that minimum. This avoids blindly
+accepting an expensive `eth_maxPriorityFeePerGas` default. Quotes and all newly
+signed address transactions use the same policy; MetaMask remains wallet-owned.
+
+`eth_feeHistory` is pinned to the exact sampled latest block number. Its window,
+array lengths, unsigned quantities, gas-used ratios and last sampled base fee
+must match that header; the header must be no older than 120 seconds and no more
+than 30 seconds in the future. Invalid, unavailable or inconsistent history
+fails closed instead of falling back to a higher-priced default. The quote must still cover a full next block's base-fee increase and
 the priority fee, otherwise signing stops. Missing or malformed fee data also
 stops signing. Affordability uses the maximum possible fee, while the chain
 charges the actual fee. Existing legacy and type-2 recovery records replay
@@ -331,6 +342,24 @@ withdrawal navigation, and layout. Mainnet UI checks require no transaction.
 ## Recovery presentation (2026-09-21)
 
 Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.
+
+## Low-fee address transactions (2026-09-27)
+
+Low is the default for new Send-to-an-address deposits, withdrawals and public
+returns. The UI explains that confirmation can take longer. It is an OA policy,
+not a claim to reproduce MetaMask's remotely supplied Low estimates exactly.
+See [MetaMask gas customization](https://support.metamask.io/configure/transactions/how-to-customize-gas-settings/),
+[MetaMask fee controller](https://github.com/MetaMask/core/blob/main/packages/gas-fee-controller/src/determineGasFeeCalculations.ts),
+and the [Ethereum fee-history method](https://ethereum.github.io/execution-apis/api/methods/eth_feeHistory/).
+
+The former 2x base-fee allowance was conservative. Reducing it to 1.25x lowers
+maximum prefunding by about 37.5% when base fee dominates and other inputs match.
+This reduces the maximum reserved amount; it does not reduce Ethereum's actual
+base fee or the contract's gas consumption. In the prior live deposit, 6,742,196
+gas at 1.059659586-gwei base fee cost 0.007144432622090856 ETH; its already-low
+0.001-gwei tip added only 0.000006742196 ETH (0.0943% of the total). A lower tip
+could not substantially reduce that transaction's actual charge. Contract-gas
+optimizations or waiting for a cheaper network base fee are separate changes.
 
 ## Gas estimates and remaining ETH (2026-09-27)
 
