@@ -1,10 +1,56 @@
+## 2026-09-28: Mainnet contracts and backend live; frontend activation underway
+
+- User explicitly authorized public Mainnet deposits after funding 0.005 ETH
+  each to the deployer and dedicated challenger. This supersedes the earlier
+  deferral; do not ask for activation approval again. No PRs are requested.
+- Native vault `0x9e5570ae0F1FCB087c2dD0eac521aC067a6b6F42` (block 26074671)
+  and adapter `0x7C530D1eeab639FB78DAefCEdb4E0AA046727898` (block 26074584)
+  are finalized. Exact runtime, constructors and public signing identities
+  match. Total receipt fees were 0.001069970517280939 ETH; finalized deployer
+  balance was 0.003930029482719061 ETH, nonce 2. The two CREATE transactions
+  completed the authorized contract work; do not replay their signed journals.
+- Mainnet backend is live at `https://d3hmaz52qw22t.cloudfront.net`, using
+  backend source `2e9647c`, protocol `8b2d4e3` and immutable image `d833ea7c…`.
+  Deployment ID is `zkapi-native-eth-mainnet-note-bound-v1-20260928`, with
+  independent keys, data and challenger state. Its native ETH manifest, server,
+  indexer root, proof hashes and finalized ETH/USD quote passed live checks.
+- Dedicated challenger `0x667F2BB2aC6f56516B2e064B8be91526E86A6fF3` retains
+  0.005 ETH. Startup checkpoint advanced to 26074834 with no pending obligations;
+  the sampled 10M-gas fee liability was 0.00183578607 ETH. Health alone does
+  not establish funding adequacy; monitor fees, obligations and reserves.
+- Mainnet CloudFront `E301WJL60HXXBI` now uses authenticated HTTPS through
+  `/mainnet` on the existing TLS origin, retaining disabled caching, all query
+  strings and required methods. Six missing/wrong/cross-network credential
+  checks passed. Private signer/environment/dashboard endpoints return 404.
+- The shared TLS service was intentionally recreated; existing Sepolia and
+  legacy application containers/state were preserved. Independent public checks
+  at 08:50 UTC found native Sepolia and legacy Mainnet builds/configs unchanged,
+  with both backends healthy. Retain `oa-wallet-mainnet.vercel.app` and its USDC
+  deployment for old wallet recovery; do not reinterpret old notes as ETH.
+- Runtime installation required two reviewed validation repairs: canonicalize
+  Docker mount array ordering, and run the disposable nginx check as the actual
+  gateway user 101:101. The first failure preceded installation; the second
+  preceded service startup. Original journals and all installed secrets/state
+  were retained. Final installer SHA-256 is `9cde6ca9aa82300c372bf8fdf9cae69646da92e2897a0dde62ac4112bfb0db3f`.
+- SDK Mainnet pins and guard removal passed fresh review and focused tests.
+  Both app package files now pin `cf56d67e0c1dd4bc3f3c32392478ce242c746446`
+  from `OpenAnonymity/zkapi`; installed dependency resolution matches.
+  Frontend publication to `oa-wallet-eth-mainnet.vercel.app` is still underway;
+  do not confuse the live backend with completed browser acceptance.
+- This remains an experimental, single-party proof setup with unaudited
+  integration and incomplete live escape-challenge acceptance. No Mainnet paid
+  browser transaction has been tested. The vault is unpaused and has no TVL cap;
+  pausing also blocks mutual close and escape initiation. Never rewind durable
+  state or stop challenge coverage while notes/leases remain active.
+- See [deployment evidence and funding clarification](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md#mainnet-preparation-resumed-2026-09-28).
+
 ## 2026-09-27: Follow-up rollout and live Sepolia acceptance
 
 - User authorized deploying the merged backend and fresh funded Sepolia
   acceptance. Google login is explicitly out of scope for this follow-up.
-- User explicitly chose to leave native Mainnet guarded after reviewing the
-  experimental deployment funding requirements. Do not remove its migration
-  guard or move Mainnet funds as part of this task.
+- At that stage, user chose to leave native Mainnet guarded after reviewing
+  the experimental deployment funding requirements. The September 28 request
+  above resumes preparation; it does not establish completed deployment.
 - Merged backend `2e9647c` is deployed on existing native Sepolia infrastructure,
   immutable image `d833ea7c…`; source rebuild, runtime hashes and preservation
   checks passed independent review. Vault, keys, state, signer/TLS and legacy

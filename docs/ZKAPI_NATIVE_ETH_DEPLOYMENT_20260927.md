@@ -1,8 +1,142 @@
 # Native ETH deployment work, 2026-09-27
 
-Status: **Sepolia published; live deposit, recovery, chat and withdrawal passed**. Mainnet remains
-guarded and undeployed. Existing ERC20 browser
+Status: **Sepolia published; live deposit, recovery, chat and withdrawal passed**.
+**Mainnet contracts and backend are live; frontend publication is underway.**
+Finalized contract pins and the public backend have passed independent verification. Existing ERC20 browser
 origins and services are preserved for matching wallet recovery.
+
+## Mainnet preparation resumed, 2026-09-28
+
+The user subsequently requested a Mainnet deployment, funded the two accounts,
+and explicitly selected **enable public Mainnet deposits** after reviewing the
+limitations. This supersedes the earlier deferral and pending activation choice.
+The approved rollout is underway; do not request the same approval again.
+
+Adapter creation at deployer nonce 0 was submitted as
+`0xa0c3097513d8eaddb4e1c3ef2cadb23b69405289523c44b0015ff5a5cbf1c1c6`,
+at `0x7C530D1eeab639FB78DAefCEdb4E0AA046727898`. It finalized in block
+26074584, using 1,459,069 gas and costing 0.000235550335345579 ETH.
+Vault creation at nonce 1 mined in block 26074671 as
+`0x80a3bcd5303a841ebe8ce42661ce0ebb9eeaf19425acb8867d8dd164dd8cb1e7`,
+at `0x9e5570ae0F1FCB087c2dD0eac521aC067a6b6F42`. Runtime and all
+constructor getters match. Both receipts are finalized; the vault was
+verified below finalized head 26074697.
+It used 5,485,664 gas and cost 0.00083442018193536 ETH. Total actual
+deployment fees are **0.001069970517280939 ETH**, leaving a verified
+0.003930029482719061 ETH deployer balance and latest/pending nonce 2.
+The combined signed maximum fee liability was 0.00207723344839807 ETH,
+below the 0.005 ETH limit. No further deployment signing is planned.
+The coordinated executor alone owns deployer nonces; never replace saved
+signed bytes or use another nonce as a retry. Runtime activation is complete as described below; frontend publication is
+still underway.
+
+The user subsequently sent **0.005 ETH to each prepared account**. At
+07:37:28 UTC, block 26074503, latest balances were exactly 0.005 ETH for
+deployer `0x5f8BD2eF77f58601a700af3deB7c2aaa0a3ebBDA` and challenger
+`0x667F2BB2aC6f56516B2e064B8be91526E86A6fF3`. Both latest/pending nonces
+were zero; finalized balances were still zero at finalized block 26074410.
+These transfers were observed but not yet finalized at that check. The
+deployment expected fee was about 0.001046 ETH and padded allowance about
+0.002539 ETH. Refresh before signing and keep the challenger reserve separate.
+Later finalized block 26074506 confirmed the deployer's 0.005 ETH balance and
+nonce 0. This is recorded separately from adapter confirmation/finality.
+
+Contract deployment preparation is independently reviewed. The protected
+`mainnet-rollout-20260928/deploy-mainnet.mjs` helper has SHA-256
+`21c720d1aee783cd685c37cbf671ad8a921ada00ffaa8a262ea515052166df41` and
+its immutable public manifest has SHA-256
+`39ad35ada347b4b7fb9b9588c241ca3bb8496392ab8a50a7227fdfe6648206a1`.
+It checks exact release artifacts, constructors, fresh simulation/nonces and
+balance, caps aggregate signed deployment fees at 0.005 ETH, durably saves and
+revalidates exact signed bytes before broadcast, and records finalized evidence
+separately. Both reviewed CREATE transactions and their durable signed journals are complete.
+Never publish signed bytes or signing credentials, and do not replay completed
+transactions. No further contract signing is part of this rollout.
+
+### Live Mainnet backend and routing
+
+The isolated native Mainnet runtime is installed and healthy. Server, indexer
+and challenger use immutable image
+`sha256:d833ea7c4e9246f0f521fe4832b01477f8490ed03b944a845b2baa681bca4859`,
+backend source `2e9647cecec78e1258b34f8be1bc85ea2378cd66` and protocol
+`8b2d4e3da921f956e1eb6b93afbf722a877c060c`. It has independent prepared
+signing secrets and fresh data/checkpoint directories; no Sepolia state was copied.
+
+The reviewed installer stopped before mutation on unordered Docker mount
+metadata, then before startup when the disposable nginx validator ran as root
+without CHOWN capability. Two narrow independently reviewed fixes canonicalize
+mount ordering and run validation as the actual gateway user 101:101. All
+substantive container/mount checks and isolation remain. Original journals and
+installed bytes were preserved; subsequent install, validation and startup passed.
+Final installer SHA-256 is
+`9cde6ca9aa82300c372bf8fdf9cae69646da92e2897a0dde62ac4112bfb0db3f`; final
+19-file bundle seal is
+`d89b436e38cd90cee59c2c9eca7cd92808a6257829979c36da606168a3432aac`.
+
+The challenger advanced to checkpoint 26074834 with zero pending obligations.
+Its balance remained 0.005 ETH, above the sampled 10,000,000-gas liability of
+0.00183578607 ETH. The private runtime's health, attestation, on-chain/indexer
+root, native quote and proof hashes matched the finalized deployment.
+
+CloudFront `E301WJL60HXXBI` is deployed with the reviewed Mainnet-only origin
+change: HTTPS443 at `52.53.106.195.sslip.io`, `/mainnet` prefix, distinct origin
+credential, disabled caching, forwarded queries and required protocol methods.
+The additive TLS change intentionally recreated the shared TLS container while
+preserving its certificates and the existing Sepolia route. Six negative-auth
+checks rejected missing, incorrect and cross-network credentials with 403.
+
+Independent public verification at **2026-09-28 08:49:18 UTC** confirmed the
+manifest at `https://d3hmaz52qw22t.cloudfront.net/config.json` exactly matches the
+reviewed deployment, passes actual SDK manifest/trust validation, and agrees with
+health/attestation/tree state. The native quote was checked against the finalized
+Mainnet Chainlink round. Private signer, environment and dashboard paths returned
+404. No signing, user deposit or paid inference occurred in these checks.
+At 08:50 UTC, native Sepolia and legacy Mainnet USDC public builds/configs were
+byte-identical to their pre-rollout baseline and both backends remained healthy.
+
+SDK Mainnet configuration and its guard removal passed independent review,
+24 focused tests and artifact verification. Commit
+`cf56d67e0c1dd4bc3f3c32392478ce242c746446` is pushed on
+`codex/native-eth-review-integration-20260928` and pinned in both host package
+files, with matching installed dependency resolution. Mainnet Vercel publication
+and canonical browser verification are the remaining frontend steps at this revision.
+The existing legacy Mainnet recovery origin and native Sepolia application have
+not been republished. Backend source provenance remains separate from the new
+SDK configuration commit.
+
+The original **0.03 ETH per account** proposal was a conservative reserve,
+not an expected transaction cost or a protocol minimum. It used the padded
+deployment gas limit at a hard 3-gwei ceiling (0.02550786 ETH) and a separate
+10,000,000-gas challenger ceiling at 3 gwei (0.03 ETH).
+
+A fresh read-only sample at **07:27:28 UTC, Mainnet block 26074453** returned
+0.19360558 gwei with a zero suggested priority fee. The two exact deployment
+estimates total 7,002,184 gas, implying about **0.001356 ETH** at that sampled
+price. Padded limits total 8,502,620 gas; twice the sampled price gives an
+upfront allowance of **0.003292309 ETH**. Funding should follow refreshed
+transaction estimates plus an explicit modest buffer, not automatically the
+hard ceiling. Deployment figures exclude browser test principal/fees and any
+separate owner pause transaction. A fee cap is not the actual fee paid.
+
+The challenger needs an independent operating balance to contest invalid
+escape withdrawals. Its 10,000,000-gas ceiling at the sampled price represents
+0.001936056 ETH; the previously measured roughly 7-million-gas proof is only
+a comparison, not a successful live Mainnet challenge measurement. Code review
+confirms the daemon requests estimated gas plus 20%, and the signer uses the
+current RPC gas price subject to the ceiling. No fixed 0.03 ETH balance is
+required. At the sampled fees, **0.005 ETH per account** is a smaller proposed
+initial allocation; refresh estimates before use and monitor for top-ups.
+This does not establish indefinite coverage: 10,000,000 gas costs more than
+0.005 ETH above 0.5 gwei, and multiple challenges can exhaust the balance.
+Signer health checks chain identity without checking balance, so healthy does
+not establish the ability to submit a challenge. Unused funding remains in
+the respective account; it is not automatically spent.
+
+The vault has no total-deposit cap, so an operator gas budget does not bound
+funds accepted by an active public deployment. It starts unpaused; an owner
+pause is a separate transaction and also blocks mutual close and initiation
+of escape withdrawals. The live challenge acceptance gap, single-party proof
+setup and unaudited integration remain material limitations. The separately reviewed Mainnet route is now active.
 
 The native protocol work is isolated in `codex/native-eth-wallet` in the
 `zkapi-EF-collab` repository. Native implementation commit `abfd3a7` passed its
@@ -30,7 +164,8 @@ Source validation passed 1,400 app tests, 305 SDK tests, 141 integration Rust
 tests, 82 protocol Rust tests, 27 Solidity tests, two real shipped-WASM proofs,
 11 restricted signer tests and four launcher smoke checks. Fresh independent
 reviews approved the final SDK/backend and host diffs. Both app network builds
-pass; Mainnet still reports `migration_required` and is not published.
+passed at that stage; Mainnet then reported `migration_required`. The September
+28 rollout above supersedes that earlier Mainnet status.
 
 Independent verification matched all 486 published artifact hashes; public
 browser configuration, deployment configuration, health and billing quote all
