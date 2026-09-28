@@ -1151,6 +1151,15 @@ export class VerifierAttestationModal {
     }
 
     getZeroTrustPresentation(evidence = {}) {
+        if (evidence?.submitKeyProof?.status === 'verifier-unavailable') {
+            return {
+                localLoopbackBypass: false,
+                summaryTone: 'warn',
+                summaryTitle: 'Key not verified',
+                summaryBody: 'Verification was unavailable when this key was issued. Chat can continue, but ownership and account privacy settings have not been verified for this key.',
+                sectionIntro: 'A station appearing in the broadcast or a healthy verifier does not verify this individual key. The evidence below does not replace key verification.'
+            };
+        }
         const localLoopbackBypass = evidence?.submitKeyProof?.status ===
             LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS;
         const disposableDemo = evidence?.submitKeyProof?.detail ===
@@ -1434,6 +1443,17 @@ export class VerifierAttestationModal {
                 description: 'Production broadcast state is not used to approve or ban this loopback development key.',
                 proves: 'The local bypass remains separate from production verifier state.'
             });
+        }
+
+        if (evidence?.submitKeyProof?.status === 'verifier-unavailable') {
+            for (const step of steps) step.tone = 'neutral';
+            Object.assign(steps[1], {
+                title: 'Key ownership not verified',
+                description: 'The verifier was unavailable for this key. Chat continued under the outage policy.',
+                proves: 'No ownership or account privacy claim is made for this key.'
+            });
+            steps[2].proves = 'Signatures are present in the issuance response; verifier validation was unavailable.';
+            steps[3].proves = 'Cached station records do not establish ownership or privacy settings for this individual key.';
         }
 
         const summaryClasses = this.getStepToneClasses(presentation.summaryTone);

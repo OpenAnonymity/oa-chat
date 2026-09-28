@@ -111,7 +111,7 @@ import { ExtensionHost } from './extensions/extensionHost.js';
 import { toExtensionAccountSnapshot } from './extensions/extensionAccountSnapshot.js';
 import { normalizeTicketKeyId, ticketPublicKeyId } from './domain/ticketKeys.js';
 import {
-    hasExplicitVerifierApprovalForAccessInfo,
+    hasUsableVerifierApprovalForAccessInfo,
     isVerifierResultApproved
 } from './services/inference/verifiedAccess.js';
 import { COUNCIL_MODE_FEATURE_FLAG, ORG_API_BASE } from './config.js';
@@ -4287,6 +4287,12 @@ class ChatApp {
             }
         });
 
+        window.addEventListener('access-verification-updated', (event) => {
+            if (event.detail?.sessionId === this.getCurrentSession()?.id) {
+                this.rightPanel?.loadSessionData();
+            }
+        });
+
         // Start periodic broadcast checks
         verifier.startBroadcastCheck(() => this.getCurrentSession(), { immediate: false });
     }
@@ -7611,7 +7617,7 @@ class ChatApp {
         const accessId = verifier?.getAccessId?.(accessInfo?.info);
         if (verifier?.supports &&
             accessId &&
-            hasExplicitVerifierApprovalForAccessInfo(accessInfo?.info)) {
+            hasUsableVerifierApprovalForAccessInfo(accessInfo?.info)) {
             const stationState = verifier.getAccessState(accessId);
             // Also check cached broadcast data directly
             const isBannedInCache = verifier.isAccessBanned(accessId);
@@ -8364,7 +8370,7 @@ class ChatApp {
         const accessId = verifier?.getAccessId?.(accessInfo?.info);
         if (!verifier?.supports ||
             !accessId ||
-            !hasExplicitVerifierApprovalForAccessInfo(accessInfo?.info)) {
+            !hasUsableVerifierApprovalForAccessInfo(accessInfo?.info)) {
             return null;
         }
 

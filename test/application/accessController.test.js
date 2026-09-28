@@ -708,3 +708,20 @@ test('acquireSessionAccess rejects an aborted signal before network calls', asyn
     assert.equal(harness.savedSessions.length, 0);
     assert.deepEqual(harness.networkSessions, []);
 });
+
+test('outage access activates once, persists its warning state, and consumes no extra ticket', async () => {
+    const harness = createAccessHarness({ verification: { status: 'verifier-unavailable', detail: 'verification_unavailable_at_issuance' } });
+    const token = await acquireSessionAccess({
+        session: harness.session,
+        models: [{ id: 'model-a', name: 'Model A' }],
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        chatDB: harness.chatDB,
+        getTicketCost: harness.getTicketCost,
+        ...harness.callbacks
+    });
+    assert.equal(token, 'secret-key');
+    assert.equal(harness.requested.length, 1);
+    assert.equal(harness.verificationInputs[0].activeKeyDuringVerification, null);
+    assert.equal(harness.savedSessions[0].apiKeyInfo.verifierSubmitKeyProof.status, 'verifier-unavailable');
+});

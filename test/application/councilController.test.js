@@ -2055,3 +2055,68 @@ test('regenerating a routed lane clears old attribution and requests Auto Router
         assert.equal(updated.model, nextModel ? 'Claude' : 'Auto Router');
     }
 });
+
+test('Council uses outage access but still respects later cached bans', async () => {
+    let banned = false;
+    const saved = [];
+    const controller = createController({
+        ticketCount: 1,
+        chatDB: { saveSession: async session => saved.push(JSON.parse(JSON.stringify(session))) },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            requestAccess: async () => ({ key: 'outage-child', stationId: 'station-a', expiresAt: new Date(Date.now() + 60000).toISOString() }),
+            getVerificationAdapter: () => ({ supports: true, getAccessId: () => 'station-a', isAccessBanned: () => banned }),
+            verifyAccess: async () => ({ status: 'verifier-unavailable' }),
+            setCurrentAccess: () => {}
+        }
+    });
+    const session = { id: 'outage-session' };
+    const lane = await controller.requestLaneAccess(session, { laneId: 'primary', id: 'model-a', name: 'Model A' }, null);
+    assert.equal(lane.apiKeyInfo.verifierSubmitKeyProof.status, 'verifier-unavailable');
+    assert.equal(controller.isLaneAccessUsable(session, lane), true);
+    assert.equal(saved.length, 1);
+    banned = true;
+    assert.equal(controller.isLaneAccessUsable(session, lane), false);
+});
+
+test('a newly issued outage lane registers recovery before any later use check', async () => {
+    const { applyVerifierRetryResult } = await import('../../chat/application/verifierRecovery.js');
+    const order = [];
+    let saved;
+    let recover;
+    const controller = createController({
+        ticketCount: 1,
+        chatDB: { saveSession: async session => { saved = structuredClone(session); order.push('saved'); } },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            requestAccess: async () => ({ key: 'new-outage-lane', stationId: 'station-a', expiresAt: new Date(Date.now() + 60000).toISOString() }),
+            getVerificationAdapter: () => ({
+                supports: true,
+                trackPendingAccess(info, session) {
+                    order.push('tracked');
+                    recover = result => {
+                        applyVerifierRetryResult(session, info, result);
+                        applyVerifierRetryResult(saved, info, result);
+                    };
+                }
+            }),
+            verifyAccess: async () => ({ status: 'verifier-unavailable' })
+        }
+    });
+    const session = { id: 'new-outage-lane-session' };
+    await controller.requestLaneAccess(session, { laneId: 'secondary', id: 'model-b', name: 'Model B' }, null);
+    assert.deepEqual(order, ['tracked', 'saved']);
+    // Do not call isLaneAccessUsable: that used to be the only path which
+    // attached an observer, leaving initial lane retry outcomes unhandled.
+    recover({ status: 'rejected', error: new Error('ownership mismatch') });
+    assert.equal(controller.getLaneAccess(session, 'secondary'), null);
+    assert.equal(saved.councilAccess, undefined);
+});
+
+test('the existing local development bypass still ignores production station bans', () => {
+    const controller = createController({ inferenceService: {
+        getVerificationAdapter: () => ({ supports: true, allowsLocalBypass: () => true, getAccessId: () => 'local-station', isAccessBanned: () => true })
+    } });
+    const lane = { apiKey: 'local-key', apiKeyInfo: { verifierSubmitKeyProof: { status: 'local-loopback-bypass' } } };
+    assert.equal(controller.getBannedLaneAccessInfo({}, lane), null);
+});

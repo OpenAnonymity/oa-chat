@@ -271,6 +271,33 @@ class ChatDatabase {
         });
     }
 
+    // Mutate only an existing row, atomically with the read. Background results
+    // must not recreate deleted chats or overwrite unrelated session edits.
+    async updateExistingSession(sessionId, update) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readwrite');
+            const store = transaction.objectStore('sessions');
+            let changed = false;
+            transaction.oncomplete = () => {
+                if (changed) this.emitStorageEvent('sessions-updated', { sessionId });
+                resolve(changed);
+            };
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('Session update aborted'));
+            const request = store.get(sessionId);
+            request.onsuccess = () => {
+                if (!request.result) return;
+                try {
+                    changed = update(request.result) === true;
+                    if (changed) store.put(request.result);
+                } catch (error) {
+                    transaction.abort();
+                    reject(error);
+                }
+            };
+        });
+    }
+
     async saveSessionWithMessages(session, messages) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');

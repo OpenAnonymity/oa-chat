@@ -1,6 +1,5 @@
 import {
-    isVerifierProofApproved,
-    isVerifierResultApproved,
+    isVerifierResultUsable,
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
 } from '../services/inference/verifiedAccess.js';
 import { getCreditLimitSource, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
@@ -287,7 +286,7 @@ export async function acquireVerifiedAccess(options = {}) {
         }
 
         const proof = buildVerifierSubmitKeyProof(verifyResult, result);
-        if (!isVerifierResultApproved(verifyResult)) {
+        if (!isVerifierResultUsable(verifyResult)) {
             throw createVerificationFailure(verifyResult, proof);
         }
 
@@ -315,7 +314,7 @@ export async function acquireSessionAccess(options = {}) {
     let result;
     try {
         // An explicitly composed access implementation owns its acquisition policy.
-        // Standalone/ticket products still use the unchanged fail-closed verifier.
+        // Standalone/ticket products use the verifier and its explicit outage policy.
         const acquireAccess = options.acquireAccess || acquireVerifiedAccess;
         if (typeof acquireAccess !== 'function') {
             throw new Error('The configured access acquisition must be a function.');
@@ -340,7 +339,7 @@ export async function acquireSessionAccess(options = {}) {
     delete session.lastVerifierSubmitKeyProof;
     inferenceService.setAccessInfo(session, result);
     if (inferenceService.getVerificationAdapter(session)?.supports &&
-        isVerifierProofApproved(result?.verifierSubmitKeyProof)) {
+        isVerifierResultUsable(result?.verifierSubmitKeyProof)) {
         inferenceService.setCurrentAccess(session, result);
     }
 

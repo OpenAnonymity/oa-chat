@@ -202,3 +202,16 @@ test('verified OpenRouter keys and non-OpenRouter credentials are preserved', ()
     assert.equal(clearUnverifiedOpenRouterAccess(providerDirect), false);
     assert.equal(providerDirect.apiKey, 'user-key');
 });
+
+test('outage access survives reload without being approved or shareable; Council bans still clear it', () => {
+    const info = { key: 'outage-child', verifierSubmitKeyProof: { status: 'verifier-unavailable' } };
+    const session = { apiKey: info.key, apiKeyInfo: info };
+    assert.equal(hasUsableVerifierApproval(session), true);
+    assert.equal(hasExplicitVerifierApproval(session), false);
+    assert.equal(clearUnverifiedOpenRouterAccess(session), false);
+    assert.equal(buildExplicitlyVerifiedOpenRouterSharePayload(info), null);
+    session.councilAccess = { primary: { apiKey: info.key, apiKeyInfo: info, expiresAt: new Date(Date.now() + 60000).toISOString() } };
+    assert.equal(clearUnsafeOpenRouterCouncilAccess(session), false);
+    assert.equal(clearUnsafeOpenRouterCouncilAccess(session, { isBanned: () => true }), true);
+    assert.equal(session.councilAccess, undefined);
+});

@@ -193,6 +193,30 @@ The client submits the key to the verifier for station compliance verification:
 Even if the verifier retained the key, it could not link it to a user identity
 because the key was issued through blind signatures with no user identity attached.
 
+Clients submit newly issued keys to the verifier before inference. An explicit,
+matching `verified` result records approval. Under the operator-approved policy
+matching existing production, transport failures/timeouts and transient HTTP
+errors (408, 500, 502, 503, 504) may activate an unexpired key as
+`verifier-unavailable` only when issuance reports `recentlyAttested === true`.
+HTTP 429 and the exact 503 `unverified` / `ownership_check_error` response may
+also continue with retries. Explicit refusals, known bans, invalid responses, and
+ownership/privacy violations remain blocked. The orange RHS indicator never
+labels this fallback state verified.
+
+**Outage tradeoff:** recent station attestation is not verification of this new
+key. These keys temporarily lack ownership and provider-account privacy checks.
+Blind ticket issuance and direct inference transport are unchanged, but station
+compliance and shadow-account protections cannot be claimed for an outage key.
+Availability was explicitly prioritized for this case. A minimal credential
+snapshot stays in browser memory for bounded per-key retries, without tickets or
+user identity. A matching successful response upgrades the key; rejection clears
+it. A healthy broadcast alone never promotes it. Pending saved keys resume on
+use after reload; exhausted retries remain visibly unverified until expiry or
+replacement. Outage keys cannot enter shared-chat access payloads.
+
+Ticket spending commits before the browser verification check. A hard verification
+failure still discards the bounded child key without restoring the ticket.
+
 ### 5. Optional account sign-in and encrypted sync
 
 Random account-number passkeys remain the identity-free account option. A user

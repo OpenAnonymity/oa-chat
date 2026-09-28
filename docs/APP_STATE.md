@@ -2181,6 +2181,40 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
 
 ## Current Notes
 
+- 2026-09-27: Verifier outage release validation was integrated onto main `33d44f1`
+  in a separate worktree. The original `538aa9c` branch predates the current
+  shared access-acquisition controller. Council now uses that existing controller
+  for outage admission; current account, payment, and inference recovery behavior
+  is retained. Newly acquired Council keys immediately register retry observers
+  so a rejection cannot be lost before the next prompt. Regression checks cover
+  live/stored rejection, deleted chats, replacement keys, and metadata preservation.
+  Browser fixtures verified light/dark warnings and real IndexedDB persistence
+  through reload, approval, and rejection without sending real requests. Retry deadlines are serviced by the existing broadcast polling
+  interval rather than a dedicated five-second timer.
+
+- 2026-09-27: Verifier outage behavior follows the deployed production client
+  (`app-AU5ENDBB.js` inspected read-only), with explicit key-response binding.
+  - Ordinary transport/timeouts and transient HTTP failures permit
+    `verifier-unavailable` access only when issuance says `recentlyAttested === true`.
+    As in production, HTTP 429 and the exact 503 `ownership_check_error` response
+    can also continue while retrying. Explicit refusals, bans, invalid keys, and
+    unknown/pending responses block; arbitrary exceptions are not outage approval.
+  - Single-model and Council RHS cards show an orange warning. The key remains
+    unverified until a matching successful per-key response arrives; a healthy
+    broadcast alone cannot upgrade it. Expiry, credit limits, cached bans, and
+    sharing restrictions still apply.
+  - Broadcast polling processes bounded background retries: three total attempts
+    for ordinary outages, ten for rate limiting/temporary ownership-check errors,
+    with exponential backoff. Only retry fields are retained in browser memory.
+    Using a saved pending key resumes retries after reload. Exhausted retries are
+    persisted as `verification_retry_exhausted`, with an honest warning and no
+    automatic requeue. Successful verification removes the warning; rejection
+    clears the matching key. Late responses cannot replace renewed keys, and
+    persistence updates existing rows atomically without recreating deleted chats.
+  - Admin email delivery, station failover, deployment, and ticket-redemption
+    changes are outside this change. The operator accepted the temporary loss of
+    ownership/privacy verification described in PRIVACY_MODEL.md.
+
 - 2026-08-30: Math rendering accepts conservative single-dollar inline delimiters.
   - `chat/services/mathRendering.js` is the shared KaTeX entry point for chat,
     reasoning, Quick Ask, navigation, and share previews. Keep new message

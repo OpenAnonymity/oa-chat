@@ -1,3 +1,5 @@
+import { applyVerifierRetryResult } from '../../../application/verifierRecovery.js';
+import { chatDB } from '../../../db.js';
 import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
 import networkProxy from '../../networkProxy.js';
@@ -9,8 +11,8 @@ import {
 import {
     buildExplicitlyVerifiedOpenRouterSharePayload,
     clearUnverifiedOpenRouterAccess,
-    hasExplicitVerifierApprovalForAccessInfo,
-    hasUsableVerifierApproval
+    hasUsableVerifierApproval,
+    hasUsableVerifierApprovalForAccessInfo
 } from '../verifiedAccess.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
@@ -31,6 +33,18 @@ function hasUsableAccess(session) {
     return hasUsableVerifierApproval(session, {
         allowLocalBypass: allowsLocalVerifierBypass()
     });
+}
+
+function trackPendingAccess(accessInfo, session) {
+    if (!session?.id) return;
+    stationVerifier.trackPendingAccess(accessInfo, session.id, async (result) => {
+        // Update live state immediately; merge only the key-bound result into
+        // the latest stored row, without restoring a deleted chat.
+        if (applyVerifierRetryResult(session, accessInfo, result)) {
+            window.dispatchEvent(new CustomEvent('access-verification-updated', { detail: { sessionId: session.id } }));
+        }
+        await chatDB.updateExistingSession(session.id, stored => applyVerifierRetryResult(stored, accessInfo, result));
+    }).catch(() => console.warn('Could not register verification retry'));
 }
 
 const openRouterBackend = {
@@ -72,6 +86,7 @@ const openRouterBackend = {
         ),
     getAccessInfo(session) {
         if (!session) return null;
+        trackPendingAccess(session.apiKeyInfo, session);
         const approved = hasUsableAccess(session);
         return {
             token: approved ? (session.apiKey || null) : null,
@@ -91,7 +106,7 @@ const openRouterBackend = {
         return clearUnverifiedOpenRouterAccess(session, {
             allowLocalBypass: allowsLocalVerifierBypass(),
             isBanned: (accessInfo) => {
-                if (!hasExplicitVerifierApprovalForAccessInfo(accessInfo)) return false;
+                if (!hasUsableVerifierApprovalForAccessInfo(accessInfo)) return false;
                 const stationId = accessInfo?.stationId || accessInfo?.station_id || accessInfo?.station_name || null;
                 return stationId ? stationVerifier.isStationBanned(stationId) : false;
             }
@@ -147,6 +162,7 @@ const openRouterBackend = {
     },
     verification: {
         supports: true,
+        trackPendingAccess,
         allowsLocalBypass: () => allowsLocalVerifierBypass(),
         getLocalBypassDetail: () => getVerifierBypassDetail(),
         init: () => stationVerifier.init(),
@@ -154,6 +170,7 @@ const openRouterBackend = {
         setBannedWarningCallback: (callback) => stationVerifier.setBannedWarningCallback(callback),
         submitAccess: (accessInfo) => stationVerifier.submitKey(accessInfo),
         setCurrentAccess: (accessInfo, session) => {
+            trackPendingAccess(accessInfo, session);
             if (accessInfo?.stationId) {
                 stationVerifier.setCurrentStation(accessInfo.stationId, session);
             }

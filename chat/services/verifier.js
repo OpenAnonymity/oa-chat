@@ -7,6 +7,7 @@ import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import { VERIFIER_URL } from '../config.js';
 import { chatDB } from '../db.js';
+import { VERIFIER_UNAVAILABLE_STATUS } from './inference/verifiedAccess.js';
 
 // Staleness thresholds
 const STALE_WARNING_MS = 60 * 1000;      // 1 minute - show orange indicator
@@ -26,7 +27,8 @@ const HIGH_ACTIVITY_THRESHOLD = 2;       // 2+ requests = high activity
  */
 function isHardFailure(error, response, data) {
     // Banned station = hard failure
-    if (data?.status === 'banned') return true;
+    if (['banned', 'rejected', 'unverified', 'denied', 'invalid'].includes(data?.status)) return true;
+    if (data?.banned_station || data?.ownership_passed === false || data?.ownership?.ownership_passed === false) return true;
     if (error?.status === 'banned') return true;
 
     // Explicit hard failures from verifier (request/validation/auth/ban/not found)
@@ -35,16 +37,23 @@ function isHardFailure(error, response, data) {
     }
 
     // Signature/validation errors from verifier = hard failure
-    const errorMsg = (error?.message || data?.detail || data?.error || '').toLowerCase();
+    const errorMsg = JSON.stringify([error?.message, data?.detail, data?.error, data?.message]).toLowerCase();
     if (errorMsg.includes('invalid signature') ||
         errorMsg.includes('signature mismatch') ||
         errorMsg.includes('expired') ||
-        errorMsg.includes('invalid key')) {
+        errorMsg.includes('invalid key') ||
+        /privacy|logging|training|ownership.*(?:mismatch|failed)|banned/.test(errorMsg)) {
         return true;
     }
 
     // Everything else (network errors, timeouts, 5xx, 429) = soft failure
     return false;
+}
+
+function isVerifierTransportUnavailable(error) {
+    if (error?.isUserAbort || error?.isCancelled) return false;
+    if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return true;
+    return /failed to fetch|fetch failed|networkerror|network (?:unavailable|request failed)|load failed|timed out/i.test(error?.message || '');
 }
 
 function redactVerifierLogValue(value, childKey, fieldName = '') {
@@ -106,6 +115,9 @@ export class StationVerifier {
 
         // Completion request tracking for dynamic interval
         this.completionRequests = []; // timestamps of recent completion requests
+        // Browser-memory-only retry queue; credentials never enter logs or events.
+        this.pendingSubmissions = new Map();
+        this.processingPending = false;
 
     }
 
@@ -709,24 +721,107 @@ export class StationVerifier {
         }
     }
 
+    recordUnavailableKey(keyData, keyHash, detail = 'recently_attested_outage', queue = true) {
+        const temporaryCheck = ['rate_limited', 'ownership_check_error'].includes(detail);
+        if ((!temporaryCheck && keyData.recentlyAttested !== true) ||
+            this.isStationBanned(keyData.stationId) ||
+            !Number.isFinite(Number(keyData.expiresAtUnix)) ||
+            Number(keyData.expiresAtUnix) * 1000 <= Date.now()) {
+            return { status: 'rejected', error: new Error('Verification required: station not recently attested, banned, or key expired') };
+        }
+        networkLogger.logRequest({
+            type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
+            status: VERIFIER_UNAVAILABLE_STATUS,
+            request: { station_id: keyData.stationId },
+            detail: VERIFIER_UNAVAILABLE_STATUS
+        });
+        if (queue) this.queuePendingSubmission(keyData, keyHash, detail);
+        return { status: VERIFIER_UNAVAILABLE_STATUS, detail, keyHash };
+    }
+
+    queuePendingSubmission(keyData, keyHash, detail) {
+        if (this.pendingSubmissions.has(keyHash)) return;
+        this.pendingSubmissions.set(keyHash, {
+            // Retain only the fields required to retry, not wallet/ticket metadata.
+            keyData: {
+                stationId: keyData.stationId, key: keyData.key,
+                expiresAtUnix: keyData.expiresAtUnix,
+                stationSignature: keyData.stationSignature, orgSignature: keyData.orgSignature,
+                recentlyAttested: keyData.recentlyAttested === true
+            },
+            attempts: 1, maxAttempts: detail === 'recently_attested_outage' ? 3 : 10,
+            nextRetryAt: Date.now() + 5000, detail, observers: new Map()
+        });
+    }
+
+    async trackPendingAccess(accessInfo, observerId, onResult) {
+        const proof = accessInfo?.verifierSubmitKeyProof;
+        if (proof?.status !== VERIFIER_UNAVAILABLE_STATUS ||
+            !['recently_attested_outage', 'rate_limited', 'ownership_check_error'].includes(proof.detail) ||
+            (accessInfo.recentlyAttested !== true && proof.detail === 'recently_attested_outage') ||
+            !accessInfo.key || !accessInfo.stationSignature || !accessInfo.orgSignature ||
+            !Number.isFinite(Number(accessInfo.expiresAtUnix)) ||
+            Number(accessInfo.expiresAtUnix) * 1000 <= Date.now()) return;
+        const keyHash = await this._hashKey(accessInfo.key);
+        if (!keyHash || accessInfo.verifierSubmitKeyProof !== proof) return;
+        this.queuePendingSubmission(accessInfo, keyHash, proof.detail);
+        const entry = this.pendingSubmissions.get(keyHash);
+        if (entry.keyData.key === accessInfo.key && entry.keyData.stationId === accessInfo.stationId) {
+            entry.observers.set(observerId, onResult);
+        }
+    }
+
+    async processPendingSubmissions() {
+        if (this.processingPending) return;
+        this.processingPending = true;
+        try {
+            for (const [keyHash, entry] of this.pendingSubmissions) {
+                if (Date.now() < entry.nextRetryAt) continue;
+                let result;
+                if (Number(entry.keyData.expiresAtUnix) * 1000 <= Date.now() || this.isStationBanned(entry.keyData.stationId)) {
+                    result = { status: 'rejected', detail: 'key_expired_or_station_banned' };
+                } else {
+                    try { result = await this.submitKey(entry.keyData, { queueOnFailure: false, outageDetail: entry.detail }); }
+                    catch { result = { status: 'rejected', detail: 'verification_retry_failed' }; }
+                    entry.attempts += 1;
+                    if (result.status === VERIFIER_UNAVAILABLE_STATUS && entry.attempts < entry.maxAttempts) {
+                        entry.nextRetryAt = Date.now() + Math.min(5000 * 2 ** (entry.attempts - 1), 300000);
+                        continue;
+                    }
+                    if (result.status === VERIFIER_UNAVAILABLE_STATUS) {
+                        result = { ...result, detail: 'verification_retry_exhausted' };
+                    }
+                }
+                // Delete credentials before notifying observers. A stale result must
+                // never replace a newly issued key; each observer checks that binding.
+                this.pendingSubmissions.delete(keyHash);
+                for (const observer of entry.observers.values()) {
+                    try { await observer(result); }
+                    catch { console.warn('Could not persist verifier retry result'); }
+                }
+            }
+        } finally { this.processingPending = false; }
+    }
+
     /**
      * Submit key data to verifier for validation before AI inference
      * POST /submit_key
      *
      * Returns a status object:
      * - { status: 'verified', data: {...} } - Success (or trusted station skip)
-     * - { status: 'pending', ... } - Soft failure, not approved for key use
+     * - { status: 'verifier-unavailable', ... } - Outage fallback; usable, NOT verified
+     * - { status: 'pending', ... } - Pending response, not approved for key use
      * - { status: 'unverified', detail?: string, data?: {...} } - Policy refusal
      * - { status: 'rejected', error: Error, bannedStation?: {...} } - Hard failure
      *
-     * Temporary verifier responses may be reported as pending, but no raw key is
-     * retained for background retry. Callers must activate only an explicitly
-     * verified key.
+     * Eligible temporary failures retain a minimal key payload in browser memory
+     * for bounded background retries; explicit refusals still block.
      *
      * @param {object} keyData - Key data from org's /request_key response
-     * @returns {Promise<{status: 'verified'|'pending'|'unverified'|'rejected', ...}>}
+     * @returns {Promise<{status: 'verified'|'verifier-unavailable'|'pending'|'unverified'|'rejected', ...}>}
      */
-    async submitKey(keyData) {
+    async submitKey(keyData, { queueOnFailure = true, outageDetail = 'recently_attested_outage' } = {}) {
+
         if (!keyData?.stationId ||
             !keyData?.key ||
             !keyData?.expiresAtUnix ||
@@ -736,6 +831,10 @@ export class StationVerifier {
                 status: 'rejected',
                 error: new Error('Invalid API key response. Please request a new key.')
             };
+        }
+
+        if (this.isStationBanned(keyData.stationId)) {
+            return { status: 'rejected', error: new Error('Station is banned') };
         }
 
         const requestBody = {
@@ -759,53 +858,47 @@ export class StationVerifier {
 
         try {
             // submitKey is idempotent (validation only, no state change) - safe to retry
-            const { response, data } = await networkProxy.fetchWithRetryJson(
-                `${VERIFIER_URL}/submit_key`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(requestBody)
-                },
-                {
-                    context: 'Verifier submit_key',
-                    maxAttempts: 1,
-                    timeoutMs: 5000,
-                    proxyConfig: { bypassProxy: true }
+            let result;
+            try {
+                result = await networkProxy.fetchWithRetryJson(
+                    `${VERIFIER_URL}/submit_key`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody)
+                    },
+                    {
+                        context: 'Verifier submit_key',
+                        maxAttempts: 1,
+                        timeoutMs: 5000,
+                        proxyConfig: { bypassProxy: true }
+                    }
+                );
+            } catch (error) {
+                if (isVerifierTransportUnavailable(error)) {
+                    return this.recordUnavailableKey(keyData, keyHash, outageDetail, queueOnFailure);
                 }
-            );
+                throw error;
+            }
+            const { response, data } = result;
             const logData = redactVerifierLogValue(data, keyData.key);
 
-            const isOwnershipCheckError = response.status === 503 &&
-                data?.status === 'unverified' &&
-                data?.detail === 'ownership_check_error';
-            const isRateLimited = response.status === 429;
-
             if (!response.ok) {
-                if (isOwnershipCheckError) {
-                    console.warn('⚠️ Ownership verification temporarily unavailable; key remains inactive');
-                    networkLogger.logRequest({
-                        type: 'verification',
-                        method: 'POST',
-                        url: `${VERIFIER_URL}/submit_key`,
-                        status: 'pending',
-                        request: { station_id: keyData.stationId },
-                        response: { message: 'Verification temporarily unavailable. The disposable key was discarded and remains inactive.' },
-                        detail: 'ownership_check_error'
-                    });
-                    return { status: 'pending', detail: 'ownership_check_error', keyHash };
+                // Production treats this specific response as temporary, not a
+                // failed ownership verdict. Other unverified/refused results block.
+                const ownershipUnavailable = response.status === 503 &&
+                    data?.status === 'unverified' && data?.detail === 'ownership_check_error';
+                const temporaryDetail = ownershipUnavailable ? 'ownership_check_error' :
+                    (response.status === 429 ? 'rate_limited' : null);
+                const temporaryData = ownershipUnavailable
+                    ? { ...data, status: 'error', detail: '' } : data;
+                if (temporaryDetail && !isHardFailure(null, response, temporaryData)) {
+                    return this.recordUnavailableKey(keyData, keyHash, temporaryDetail, queueOnFailure);
                 }
-                if (isRateLimited) {
-                    console.warn('⚠️ Verifier rate limited the request; key remains inactive');
-                    networkLogger.logRequest({
-                        type: 'verification',
-                        method: 'POST',
-                        url: `${VERIFIER_URL}/submit_key`,
-                        status: 'pending',
-                        request: { station_id: keyData.stationId },
-                        response: { message: 'Verifier rate limited this request. The disposable key was discarded and remains inactive.' },
-                        detail: 'rate_limited'
-                    });
-                    return { status: 'pending', detail: 'rate_limited', keyHash };
+                const outageStatus = [408, 429, 500, 502, 503, 504].includes(response.status);
+                if (outageStatus && (!data?.status || ['error', 'unavailable'].includes(data.status)) &&
+                    !isHardFailure(null, response, data)) {
+                    return this.recordUnavailableKey(keyData, keyHash, outageDetail, queueOnFailure);
                 }
 
                 const errorMessage = redactVerifierLogValue(
@@ -845,21 +938,7 @@ export class StationVerifier {
                     return { status: 'rejected', error };
                 }
 
-                // A soft failure still cannot retain or activate a provisional key.
-                if (keyData.recentlyAttested) {
-                    console.warn('⚠️ Key verification soft failure; key remains inactive:', errorMessage);
-                    networkLogger.logRequest({
-                        type: 'verification',
-                        method: 'POST',
-                        url: `${VERIFIER_URL}/submit_key`,
-                        status: 'pending',
-                        request: { station_id: keyData.stationId },
-                        response: { message: 'The verifier is currently unreachable. The disposable key was discarded and remains inactive.' }
-                    });
-                    return { status: 'pending', keyHash };
-                }
-
-                // Non-recently attested station - all failures are hard failures
+                // Other failures do not establish a verifier outage.
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
@@ -1009,6 +1088,7 @@ export class StationVerifier {
         }
 
         const checkBroadcast = async () => {
+            await this.processPendingSubmissions();
             // Only check broadcast if we have a current station
             if (!this.currentStationId) {
                 try {

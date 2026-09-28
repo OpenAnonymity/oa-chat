@@ -14,7 +14,6 @@ import {
 } from '../domain/councilConfig.js';
 import { findModelByNameOrId, resolveResponseModelName, resolveSecondaryModelNameForModels } from '../domain/modelSelection.js';
 import {
-    hasExplicitVerifierApprovalForAccessInfo,
     hasUsableVerifierApprovalForAccessInfo
 } from '../services/inference/verifiedAccess.js';
 
@@ -409,7 +408,7 @@ export default class CouncilController {
             allowLocalBypass: verifier?.allowsLocalBypass?.() === true
         });
         if (token && verifier?.supports && !usableProof) {
-            throw new Error('Refusing to persist a Council lane key without verifier approval or an explicit loopback bypass.');
+            throw new Error('Refusing to persist a Council lane key without an allowed verification state.');
         }
         container[laneId] = {
             apiKey: token,
@@ -449,6 +448,7 @@ export default class CouncilController {
 
     isLaneAccessUsable(session, laneAccess, entry = null) {
         if (!laneAccess?.apiKey) return false;
+        this.inferenceService.getVerificationAdapter?.(session)?.trackPendingAccess?.(laneAccess.apiKeyInfo, session);
         if (!this.isLaneAccessVerified(session, laneAccess)) return false;
         if (this.isLaneAccessExpired(laneAccess)) return false;
         if (this.isLaneAccessBanned(session, laneAccess)) return false;
@@ -460,7 +460,7 @@ export default class CouncilController {
         if (!laneAccess?.apiKeyInfo) return null;
         const verifier = this.inferenceService.getVerificationAdapter?.(session);
         if (!verifier?.supports) return null;
-        if (!hasExplicitVerifierApprovalForAccessInfo(laneAccess.apiKeyInfo) &&
+        if (!hasUsableVerifierApprovalForAccessInfo(laneAccess.apiKeyInfo) &&
             verifier.allowsLocalBypass?.() === true) {
             return null;
         }
@@ -619,7 +619,7 @@ export default class CouncilController {
         this.inferenceService.setAccessInfo(session, accessInfo);
         const verifier = this.inferenceService.getVerificationAdapter?.(session);
         const shouldSetVerifierCurrentAccess = !verifier?.supports ||
-            hasExplicitVerifierApprovalForAccessInfo(accessInfo);
+            hasUsableVerifierApprovalForAccessInfo(accessInfo);
         if (shouldSetVerifierCurrentAccess &&
             typeof this.inferenceService.setCurrentAccess === 'function') {
             this.inferenceService.setCurrentAccess(session, accessInfo);
@@ -698,6 +698,9 @@ export default class CouncilController {
             modelId: entry.id,
             ticketsConsumed: result.ticketsConsumed || result.tickets_consumed || result.ticketsUsed?.length || ticketsRequired
         });
+        // Subscribe as soon as the lane owns the key so a background verdict
+        // cannot be lost before the next prompt checks lane usability.
+        this.inferenceService.getVerificationAdapter?.(session)?.trackPendingAccess?.(laneAccess.apiKeyInfo, session);
         await this.chatDB.saveSession(session);
 
         if (this.app.floatingPanel) {

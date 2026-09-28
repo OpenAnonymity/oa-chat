@@ -20,7 +20,7 @@ export function getHostFromUrl(url) {
 export function getStatusIcon(status, isAborted = false) {
     if (isAborted) {
         return '⊗'; // Interrupted/stopped icon
-    } else if (status === 'queued' || status === 'pending') {
+    } else if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
         return '◎'; // Queued/pending icon
     } else if (status >= 200 && status < 300) {
         return '✓';
@@ -35,7 +35,7 @@ export function getStatusIcon(status, isAborted = false) {
 export function getStatusClass(status, isAborted = false) {
     if (isAborted) {
         return 'text-orange-600'; // Orange for user-interrupted
-    } else if (status === 'queued' || status === 'pending') {
+    } else if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
         return 'text-amber-600'; // Amber for queued/pending
     } else if (status >= 200 && status < 300) {
         return 'text-status-success'; // Success status color
@@ -50,7 +50,7 @@ export function getStatusClass(status, isAborted = false) {
 export function getStatusDotClass(status, isAborted = false, detail = '') {
     if (isAborted) {
         return 'bg-orange-500'; // Orange dot for user-interrupted
-    } else if (status === 'queued' || status === 'pending') {
+    } else if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
         return 'bg-amber-500'; // Amber dot for queued/pending
     } else if (detail === 'key_near_expiry') {
         return 'bg-amber-500'; // Amber dot for unverified policy case
@@ -342,10 +342,15 @@ export function getActivityDescription(log, detailed = false) {
         // Verifier endpoint - station integrity verification
         if (type === 'verification' || urlObj.host === 'verifier2.openanonymity.ai' || urlObj.host.includes('localhost')) {
             const verificationDetail = log.detail || response?.detail;
+            if (verificationDetail === 'verifier-unavailable') {
+                return detailed
+                    ? 'Verification was unavailable when this key was issued. Chat continues using an unverified key.'
+                    : 'Verification unavailable — chat continues';
+            }
             const isAttestationRequest = path.includes('/attestation');
             if (!detailed) {
                 if (isAttestationRequest) {
-                    if (status === 'queued' || status === 'pending') {
+                    if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
                         return 'Attesting verifier';
                     } else if (status >= 200 && status < 300) {
                         return 'Verifier attested';
@@ -359,7 +364,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (verificationDetail === 'key_near_expiry') {
                     return 'Key expires too soon to verify';
                 }
-                if (status === 'queued' || status === 'pending') {
+                if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
                     return 'Verifying station integrity';
                 } else if (status >= 200 && status < 300) {
                     return 'Verified station integrity';
@@ -369,7 +374,7 @@ export function getActivityDescription(log, detailed = false) {
                 return 'Verifying station integrity';
             } else {
                 if (isAttestationRequest) {
-                    if (status === 'queued' || status === 'pending') {
+                    if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
                         return 'Requesting fresh hardware attestation proof from the verifier.';
                     } else if (status >= 200 && status < 300) {
                         return 'Successfully attested the verifier.';
@@ -379,7 +384,7 @@ export function getActivityDescription(log, detailed = false) {
                     return 'Attesting verifier hardware and policy integrity.';
                 }
                 if (verificationDetail === 'verifier_unreachable_uncertified') {
-                    return 'The verifier could not be <a href="https://verifier2.openanonymity.ai/health" target="_blank" rel="noopener noreferrer" class="underline hover:text-amber-700 dark:hover:text-amber-300">reached</a> to verify this station, the key is rejected.';
+                    return 'The verifier could not complete verification. This key was not activated.';
                 } else if (verificationDetail === 'ownership_check_error') {
                     return 'Verification was temporarily unavailable, so the provisional key stayed inactive and was discarded. A later send can request and verify a new key.';
                 } else if (verificationDetail === 'rate_limited') {
@@ -387,7 +392,7 @@ export function getActivityDescription(log, detailed = false) {
                 } else if (verificationDetail === 'key_near_expiry') {
                     return 'The API key expires too soon to perform ownership verification. This is expected behavior for keys near their expiry time. This should not occur unless the app delays verification or has been modified.';
                 }
-                if (status === 'queued' || status === 'pending') {
+                if (status === 'queued' || status === 'pending' || status === 'verifier-unavailable') {
                     return 'The verifier did not explicitly approve this key, so it stayed inactive and was discarded. A later send can request and verify a new key.';
                 } else if (status >= 200 && status < 300) {
                     return 'Successfully verified the integrity of the key issuing station.';
@@ -583,7 +588,7 @@ export function renderNetworkLog(log, isExpanded = false, isMinimal = false) {
                                 log.status === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
                                 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                             }">
-                                ${log.isAborted ? 'INTERRUPTED' : (log.status === 'queued' || log.status === 'pending') ? 'PENDING' : (log.status || 'ERROR')}
+                                ${log.status === 'verifier-unavailable' ? 'UNVERIFIED' : log.isAborted ? 'INTERRUPTED' : (log.status === 'queued' || log.status === 'pending') ? 'PENDING' : (log.status || 'ERROR')}
                             </span>
                         </div>
                         <div class="flex items-center gap-1">

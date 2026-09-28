@@ -1,3 +1,13 @@
+export const VERIFIER_UNAVAILABLE_STATUS = 'verifier-unavailable';
+
+export function isVerifierUnavailable(proof) {
+    return proof?.status === VERIFIER_UNAVAILABLE_STATUS;
+}
+
+export function isVerifierResultUsable(result) {
+    return isVerifierProofApproved(result) || isVerifierUnavailable(result);
+}
+
 export const LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS = 'local-loopback-bypass';
 
 export function isVerifierProofApproved(proof) {
@@ -21,7 +31,7 @@ export function isLocalLoopbackVerifierBypassProof(proof) {
 }
 
 export function isVerifierProofUsable(proof, options = {}) {
-    return isVerifierProofApproved(proof) ||
+    return isVerifierResultUsable(proof) ||
         (options.allowLocalBypass === true && isLocalLoopbackVerifierBypassProof(proof));
 }
 

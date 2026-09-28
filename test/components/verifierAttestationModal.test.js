@@ -27,3 +27,12 @@ test('verified access retains the normal attestation presentation', () => {
     assert.equal(presentation.summaryTone, 'success');
     assert.equal(presentation.summaryTitle, 'Key issuance verification');
 });
+
+test('an outage key never gets a verified-chain summary even when broadcast is healthy', () => {
+    const presentation = new VerifierAttestationModal().getZeroTrustPresentation({
+        submitKeyProof: { status: 'verifier-unavailable' }, stationVerifiedInBroadcast: true
+    });
+    assert.equal(presentation.summaryTone, 'warn');
+    assert.equal(presentation.summaryTitle, 'Key not verified');
+    assert.match(presentation.summaryBody, /have not been verified/);
+});
