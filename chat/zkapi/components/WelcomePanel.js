@@ -118,6 +118,8 @@ export default class WelcomePanel {
                 } else await zkapiClient.deposit(deposit, report);
                 if (flow) await flow.complete();
                 this.fundingUsdAmount = null;
+                this.fundingInputAmount = null;
+                this.fundingInputCurrency = null;
             };
             if (getWalletMethod() === 'address') await runAddressAction(this, { kind: 'deposit', phase: 'wallet' }, report, action);
             else await action();

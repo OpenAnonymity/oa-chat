@@ -1,3 +1,28 @@
+## 2026-09-27: USD/ETH entry for address deposits
+
+- The amount input has a USD/ETH currency button. ETH input accepts up to nine
+  decimal places, matching the private ledger's whole-gwei units. Switching
+  units preserves the exact saved ETH principal; only an explicit amount edit
+  creates a new principal. Input currency and value live in the existing
+  browser-only, chain/vault/address-scoped deposit intent, outside account sync.
+- The prominent ETH amount to send also shows its current approximate USD
+  value. This values the remaining transfer including fees and buffer, after
+  subtracting ETH already at the funding address. Fee details stay behind the
+  question mark. A missing price never substitutes a made-up zero USD value.
+- Unit-specific input IDs prevent a focused USD node from being reused as an
+  ETH field. Currency-button focus survives polling; pending amount edits are
+  resolved before switching, and saved SDK deposits keep their amount locked.
+  Older intents without a currency field remain readable.
+- Currency-only updates and legacy-intent migration compare and write inside
+  one IndexedDB settings transaction. A stale tab cannot overwrite a newer
+  principal while saving its selected unit. Failed comparisons require reopening
+  the screen; explicit amount edits keep the existing durable write path.
+- Validation: 886 core and 490 payment tests pass (1,376 total), with fresh
+  adversarial approval. Browser checks cover exact ETH/USD round trips, restored
+  input currency, mobile layout, immediate removal of stale transfer instructions,
+  invalid precision, and concurrent settings writes using real IndexedDB.
+- See [payment details](ZKAPI_PAYMENTS.md) for conversion and recovery behavior.
+
 ## 2026-09-27: Compact send-to-address deposit screen
 
 - The deposit screen emphasizes the exact ETH still needed and the funding

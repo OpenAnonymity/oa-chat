@@ -145,19 +145,24 @@ Nothing is synchronized with an OA account. Existing version-1 password accounts
 are never overwritten; a one-time password conversion retains their exact key,
 address, nonce and signed journal. New account setup never offers a password.
 
-The user enters the desired wallet deposit in USD. The SDK reads a pinned,
+The user can enter the desired wallet deposit in USD or ETH using the currency
+button beside the amount input. For USD entry, the SDK reads a pinned,
 fresh finalized Chainlink ETH/USD reference price and computes an exact integer-gwei principal,
-rounding up by at most one gwei. The host durably saves this intent through
+rounding up by at most one gwei. ETH entry is exact, with up to nine decimal
+places to match the native ledger's gwei precision. The host durably saves this intent through
 `chatDB` settings under a chain/vault/address scope before displaying payment
 instructions. The ETH principal stays fixed across price updates and reloads;
-editing the dollar input explicitly replaces it. Current USD display continues
+switching the input currency changes its presentation without repricing the
+deposit. Explicit amount edits replace the principal. The selected input unit
+is saved with the intent and restored when reopening. Current USD display continues
 to float with the oracle price. Amount edits invalidate Next immediately, and
 stale asynchronous reads cannot re-enable it.
 The reference uses the latest finalized round, with a 4,500-second age limit,
-and can lag the chain head. Unavailable or stale pricing fails closed.
+and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
+exact ETH amounts remain visible without an invented dollar value.
 
-The screen emphasizes the exact ETH to send, network and funding address,
-with a USD deposit input and short waiting/ready status. A clickable question
+The screen emphasizes the exact ETH still to send and its current USD estimate,
+network and funding address, with a USD/ETH deposit input and short waiting/ready status. A clickable question
 mark beside the send amount reveals the breakdown: ETH principal added to the
 private balance, estimated network fee, additional fee buffer and total ETH to
 send, together with the estimate and browser-storage explanations. These details

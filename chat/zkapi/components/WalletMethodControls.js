@@ -13,6 +13,8 @@ export function stopFundingFlow(owner) {
     clearTimeout(owner.fundingEditTimer);
     owner.fundingFlow?.stop();
     owner.fundingFlow = null;
+    owner.fundingInputAmount = null;
+    owner.fundingInputCurrency = null;
     stopFundingStatus(owner);
     owner.fundingStatus = null;
     owner.fundingHelpOpen = null;
@@ -78,17 +80,18 @@ function ensureFundingFlow(owner) {
         wallet: addressFundingWallet, client: zkapiClient,
         store: {
             read: scope => chatDB.getSetting(`oa-eth-deposit:${scope}`),
-            write: (scope, value) => chatDB.updateSettings([{ key: `oa-eth-deposit:${scope}`, value }])
+            write: (scope, value) => chatDB.updateSettings([{ key: `oa-eth-deposit:${scope}`, value }]),
+            compareAndSwap: (scope, expected, value) => chatDB.compareAndSetSetting(`oa-eth-deposit:${scope}`, expected, value)
         },
         changed: () => {
             if (owner.fundingFlow !== flow || !owner.isOpen) return;
             owner.fundingStatus = flow.status;
-            if (owner.fundingUsdAmount == null && flow.intent) owner.fundingUsdAmount = flow.intent.usdAmount;
+            if (flow.intent && owner.fundingInputAmount == null && !flow.dirty) syncFundingInput(owner, flow.intent);
             if (!owner.busy && !owner.fundingBusy) owner.render();
         }
     });
     owner.fundingFlow = flow;
-    void flow.start(owner.fundingUsdAmount || '10');
+    void flow.start(owner.fundingInputAmount ?? owner.fundingUsdAmount ?? '10', owner.fundingInputCurrency || 'usd');
 }
 
 export function renderWalletMethod(owner) {
@@ -103,17 +106,36 @@ export function renderWalletMethod(owner) {
     </section>`;
 }
 
-export function renderFundingWei(owner, value) {
-    let usd = '';
+function fundingUsdValue(value) {
+    let usd = null;
     // ETH stays exact. USD is only a current reference value; native accounting
     // uses whole gwei, so discard sub-gwei dust for this approximate display.
     if (zkapiClient.isNativeEthFunding && /^\d+$/.test(String(value))) {
         try {
             const formatted = zkapiClient.formatMoney((BigInt(value) / 1_000_000_000n).toString());
-            if (formatted && formatted !== '—') usd = ` <span>(≈ ${owner.escapeHtml(formatted)})</span>`;
+            if (formatted && formatted !== '—') usd = formatted;
         } catch { /* A price outage must not hide the exact ETH amount. */ }
     }
-    return `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH${usd}`;
+    return usd;
+}
+
+export function renderFundingWei(owner, value) {
+    const usd = fundingUsdValue(value);
+    return `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH${usd ? ` <span>(≈ ${owner.escapeHtml(usd)})</span>` : ''}`;
+}
+
+function intentCurrency(intent) {
+    return intent?.inputCurrency || (intent?.usdAmount === null ? 'eth' : 'usd');
+}
+
+function intentInputAmount(intent) {
+    return intent?.inputAmount ?? (intentCurrency(intent) === 'eth' ? intent?.ethAmount : intent?.usdAmount);
+}
+
+function syncFundingInput(owner, intent) {
+    owner.fundingInputCurrency = intentCurrency(intent);
+    owner.fundingInputAmount = intentInputAmount(intent);
+    owner.fundingUsdAmount = intent.usdAmount;
 }
 
 function fundingQuoteFresh(fee) {
@@ -214,15 +236,20 @@ export function renderFundingAccount(owner) {
     const additionalRequired = /^\d+$/.test(String(remaining)) ? BigInt(remaining) : null;
     const ready = flow?.ready && freshQuote;
     const fundingLoading = flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…';
+    const sendUsd = fundingUsdValue(remaining);
+    const sendUsdReference = `<span class="zkapi-funding-send-usd">${sendUsd ? `≈ ${escape(sendUsd)} USD` : 'USD estimate unavailable'}</span>`;
     const sendHeading = additionalRequired == null ? 'Checking your funding address…' : additionalRequired === 0n ? 'Funds available'
-        : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(formatFundingAmount(remaining, 18))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>`;
+        : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(formatFundingAmount(remaining, 18))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
     const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
     const address = `<div class="zkapi-funding-address"><input data-funding-address readonly aria-label="Funding address" value="${escape(wallet.address)}" /><button data-funding-copy class="zkapi-secondary-button" type="button">Copy</button></div>`;
+    const inputCurrency = savedFunding ? intentCurrency(intent) : owner.fundingInputCurrency || intentCurrency(intent);
+    const currencyLabel = inputCurrency.toUpperCase();
+    const inputAmount = savedFunding ? intentInputAmount(intent) : owner.fundingInputAmount ?? intentInputAmount(intent) ?? owner.fundingUsdAmount ?? '10';
     const amountControl = savedFunding && !intent
         ? '<p class="zkapi-helper" role="status">Loading your saved deposit…</p>'
-        : savedFunding && intent.usdAmount === null
+        : savedFunding && intent.usdAmount === null && intent.source !== 'eth-input'
             ? `<dl class="zkapi-funding-breakdown" aria-label="Saved deposit amount"><div><dt>Saved deposit</dt><dd>${renderFundingWei(owner, intent.depositWei)}</dd></div></dl>`
-            : `<label class="zkapi-funding-field">Amount to add to your wallet (USD)<div class="zkapi-funding-usd"><span aria-hidden="true">$</span><input data-funding-usd id="funding-usd" inputmode="decimal" autocomplete="off" aria-label="Amount to add in USD" value="${escape(savedFunding ? intent?.usdAmount ?? '' : owner.fundingUsdAmount ?? intent?.usdAmount ?? '10')}" ${savedFunding ? 'readonly' : ''} ${disabled} /></div></label>`;
+            : `<div class="zkapi-funding-field"><label for="funding-${inputCurrency}">Amount to add to your wallet</label><div class="zkapi-funding-amount-input">${inputCurrency === 'usd' ? '<span aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${inputCurrency} id="funding-${inputCurrency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${currencyLabel}" value="${escape(inputAmount)}" ${savedFunding ? 'readonly' : ''} ${disabled} /><button data-funding-currency id="funding-currency" class="zkapi-funding-currency" type="button" aria-label="Switch amount to ${inputCurrency === 'usd' ? 'ETH' : 'USD'}" ${disabled || savedFunding || wallet.hasPendingTransaction || (!flow?.intent && !flow?.requestedAmount) ? 'disabled' : ''}>${currencyLabel}<span aria-hidden="true">⇄</span></button></div></div>`;
     return `<section class="zkapi-funding-account" aria-label="Funding address">
         ${funding ? `${amountControl}
         ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. The network fee estimate refreshes before you continue.</p>' : ''}
@@ -279,13 +306,58 @@ export function attachWalletMethodControls(owner) {
     for (const [name, property] of [['withdrawal-destination', 'fundingDestination'], ['return-destination', 'fundingReturnDestination'], ['return-amount', 'fundingReturnAmount'], ['return-eth-amount', 'fundingReturnEthAmount']]) {
         input(name)?.addEventListener('input', event => { owner[property] = event.target.value; });
     }
-    input('usd')?.addEventListener('input', event => {
-        if (zkapiClient.config?.pending_deposit) return;
-        owner.fundingUsdAmount = event.target.value;
-        owner.fundingFlow?.invalidate();
+    input('amount')?.addEventListener('input', event => {
+        if (owner.busy || owner.fundingBusy || zkapiClient.config?.pending_deposit) return;
+        const currency = owner.fundingInputCurrency || intentCurrency(owner.fundingFlow?.intent);
+        const amount = event.target.value;
+        const flow = owner.fundingFlow;
+        owner.fundingInputCurrency = currency;
+        owner.fundingInputAmount = amount;
+        if (currency === 'usd') owner.fundingUsdAmount = amount;
+        flow?.invalidate();
         if (input('next')) input('next').disabled = true;
         clearTimeout(owner.fundingEditTimer);
-        owner.fundingEditTimer = setTimeout(() => { void owner.fundingFlow?.setAmount(owner.fundingUsdAmount); }, 450);
+        owner.fundingEditTimer = setTimeout(() => {
+            owner.fundingEditTimer = null;
+            if (owner.fundingFlow === flow) void flow?.setAmount(amount, currency);
+        }, 450);
+        // Hide old payment instructions immediately, while retaining the actual
+        // focused input node so typing and composition are not interrupted.
+        refreshWalletView(owner);
+    });
+    on('currency', async () => {
+        const flow = owner.fundingFlow;
+        if (!flow || owner.busy || owner.fundingBusy || zkapiClient.config?.pending_deposit || addressFundingWallet.hasPendingTransaction) return;
+        const currency = owner.fundingInputCurrency || intentCurrency(flow.intent);
+        const amount = owner.fundingInputAmount ?? intentInputAmount(flow.intent) ?? '10';
+        const focusToggle = globalThis.document?.activeElement === input('currency');
+        clearTimeout(owner.fundingEditTimer);
+        owner.fundingEditTimer = null;
+        await perform(async () => {
+            if (!flow.intent) {
+                // A failed initial USD quote must not block direct ETH entry.
+                // Waiting until initial restoration finishes prevents a later
+                // startup default from replacing this empty user-selected draft.
+                if (!flow.requestedAmount) return;
+                const nextCurrency = currency === 'usd' ? 'eth' : 'usd';
+                flow.invalidate();
+                await flow.setAmount('', nextCurrency);
+                if (owner.fundingFlow === flow && owner.isOpen) {
+                    owner.fundingInputCurrency = nextCurrency;
+                    owner.fundingInputAmount = '';
+                    flow.error = '';
+                }
+                return;
+            }
+            // Commit a just-typed draft before converting its display. The
+            // controller changes units without ever repricing the principal.
+            if (flow.dirty && !await flow.setAmount(amount, currency)) return;
+            if (owner.fundingFlow !== flow || !owner.isOpen || flow.dirty) return;
+            if (await flow.setCurrency(currency === 'usd' ? 'eth' : 'usd') && owner.fundingFlow === flow && owner.isOpen) {
+                syncFundingInput(owner, flow.intent);
+            }
+        });
+        if (focusToggle && owner.isOpen && owner.fundingFlow === flow) input('currency')?.focus?.({ preventScroll: true });
     });
     on('next', () => owner.submitAddressDeposit?.());
     on('migrate', () => {
@@ -328,10 +400,10 @@ export function captureWalletView(owner) {
     const root = owner.overlay;
     const active = globalThis.document?.activeElement;
     return {
-        id: root.contains?.(active) && active?.matches?.('input:not([type=password]), textarea, [data-funding-help-toggle]') ? active.id : null,
+        id: root.contains?.(active) && active?.matches?.('input:not([type=password]), textarea, [data-funding-help-toggle], [data-funding-currency]') ? active.id : null,
         // Keep the actual editable node through balance refreshes. Replacing a
         // focused input between composition/typing events can lose keystrokes.
-        preservedInput: root.contains?.(active) && active?.id === 'funding-usd' ? active : null,
+        preservedInput: root.contains?.(active) && ['funding-usd', 'funding-eth'].includes(active?.id) ? active : null,
         start: active?.selectionStart, end: active?.selectionEnd,
         scroll: root.querySelector('[data-funding-scroll]')?.scrollTop,
         details: Array.from(root.querySelectorAll?.('[data-funding-details][open]') || [], element => element.dataset.fundingDetails)

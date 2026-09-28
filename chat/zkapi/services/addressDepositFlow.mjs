@@ -1,5 +1,25 @@
 const positiveInteger = value => typeof value === 'string' && /^[1-9]\d*$/.test(value);
 const nonNegativeInteger = value => typeof value === 'string' && /^\d+$/.test(value);
+const depositChanged = 'The deposit amount changed in another tab. Reopen this screen to use the saved amount.';
+
+function formatDecimal(units, decimals) {
+    const scale = 10n ** BigInt(decimals);
+    const fraction = String(units % scale).padStart(decimals, '0').replace(/0+$/, '');
+    return `${units / scale}${fraction ? `.${fraction}` : ''}`;
+}
+
+function ethUnits(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (text.length > 128 || !/^(?:\d+(?:\.\d{0,9})?|\.\d{1,9})$/.test(text)) {
+        throw new Error('Enter an ETH amount with up to 9 decimal places.');
+    }
+    const [whole, fraction = ''] = text.split('.');
+    const units = BigInt(whole || '0') * 1_000_000_000n + BigInt(fraction.padEnd(9, '0'));
+    if (units <= 0n || units > BigInt(Number.MAX_SAFE_INTEGER)) {
+        throw new Error('Choose a smaller positive ETH deposit amount.');
+    }
+    return units;
+}
 
 function validateIntent(value, scope) {
     if (!value || value.version !== 1 || value.scope !== scope
@@ -7,7 +27,7 @@ function validateIntent(value, scope) {
         || BigInt(value.depositWei) !== BigInt(value.amount) * 1_000_000_000n
         || BigInt(value.amount) > BigInt(Number.MAX_SAFE_INTEGER)
         || !/^\d+(?:\.\d{1,9})?$/.test(value.ethAmount)
-        || (!(value.usdAmount === null && value.source === 'saved-deposit')
+        || (!(value.usdAmount === null && ['saved-deposit', 'eth-input'].includes(value.source))
             && !/^\d+(?:\.\d{1,6})?$/.test(value.usdAmount))) {
         throw new Error('The saved deposit could not be read. Your funding address is unchanged.');
     }
@@ -15,7 +35,21 @@ function validateIntent(value, scope) {
     if (BigInt(whole) * 1_000_000_000n + BigInt(fraction.padEnd(9, '0')) !== BigInt(value.amount)) {
         throw new Error('The saved ETH deposit amount does not match.');
     }
+    if (value.inputCurrency !== undefined || value.inputAmount !== undefined) {
+        if (!['usd', 'eth'].includes(value.inputCurrency) || typeof value.inputAmount !== 'string'
+            || (value.inputCurrency === 'eth' && ethUnits(value.inputAmount) !== BigInt(value.amount))
+            || (value.inputCurrency === 'usd' && (!/^\d+(?:\.\d{1,6})?$/.test(value.inputAmount)
+                || !/[1-9]/.test(value.inputAmount)))) {
+            throw new Error('The saved deposit input could not be read. Your funding address is unchanged.');
+        }
+    }
     return value;
+}
+
+function withInput(intent) {
+    if (intent.inputCurrency) return intent;
+    return { ...intent, inputCurrency: intent.usdAmount === null ? 'eth' : 'usd',
+        inputAmount: intent.usdAmount ?? intent.ethAmount };
 }
 
 function validateFeeQuote(fee, intent, funding, address, now) {
@@ -53,10 +87,11 @@ export class AddressDepositFlow {
         this.writes = Promise.resolve();
     }
 
-    async start(suggestedUsd = '10') {
+    async start(suggestedAmount = '10', currency = 'usd') {
         if (this.running) return;
         this.running = true;
         const generation = ++this.generation;
+        const edit = this.editGeneration;
         try {
             if (!this.client.isNativeEthFunding) throw new Error('This deployment does not yet support ETH deposits.');
             const address = await this.wallet.ensureAddress();
@@ -77,16 +112,20 @@ export class AddressDepositFlow {
                 // USD intent. The SDK principal is authoritative: never reprice
                 // or replace it when changing funding methods or resuming.
                 const units = BigInt(amount);
-                const restored = saved?.amount === amount ? validateIntent(saved, this.scope)
+                const restored = withInput(saved?.amount === amount ? validateIntent(saved, this.scope)
                     : validateIntent({ version: 1, scope: this.scope, amount,
                         ethAmount: `${units / 1_000_000_000n}.${String(units % 1_000_000_000n).padStart(9, '0')}`,
                         depositWei: String(units * 1_000_000_000n), usdAmount: null,
-                        source: 'saved-deposit', createdAt: this.now() }, this.scope);
-                await this.store.write(this.scope, restored);
+                        source: 'saved-deposit', createdAt: this.now() }, this.scope));
+                if (!await this.commitIntent(restored, generation, edit, saved ?? null)) return;
+                this.intent = restored;
+            } else if (saved) {
+                const restored = withInput(validateIntent(saved, this.scope));
+                if (restored !== saved && !await this.commitIntent(restored, generation, edit, saved)) return;
                 if (!this.running || generation !== this.generation) return;
                 this.intent = restored;
-            } else this.intent = saved ? validateIntent(saved, this.scope) : null;
-            if (!this.intent) await this.setAmount(suggestedUsd);
+            } else this.intent = null;
+            if (!this.intent) await this.setAmount(suggestedAmount, currency);
             if (!this.running || generation !== this.generation) return;
             await this.check();
         } catch (error) {
@@ -112,39 +151,117 @@ export class AddressDepositFlow {
         this.fee = null;
     }
 
-    async setAmount(usd) {
+    async commitIntent(intent, generation, edit, expected) {
+        const current = () => this.running && generation === this.generation && edit === this.editGeneration;
+        const write = this.writes.catch(() => {}).then(async () => {
+            if (!current()) return false;
+            if (expected !== undefined) {
+                // Display changes and legacy migration must compare and write
+                // inside one storage transaction, not race another tab's edit.
+                if (typeof this.store.compareAndSwap !== 'function') {
+                    throw new Error('Safe deposit storage is unavailable. Reopen this screen to try again.');
+                }
+                if (await this.store.compareAndSwap(this.scope, expected, intent) !== true) throw new Error(depositChanged);
+            } else await this.store.write(this.scope, intent);
+            return current();
+        });
+        this.writes = write;
+        return write;
+    }
+
+    async currentPrice() {
+        if (!this.client.nativePriceQuote) await this.client.refreshEthUsdPrice();
+        // The SDK getter validates the oracle, deployment and freshness. Never
+        // use the unvalidated refresh result directly for an input conversion.
+        const price = this.client.nativePriceQuote;
+        if (!price || !positiveInteger(String(price.answer)) || price.decimals !== 8) {
+            throw new Error('The current ETH price is unavailable. Try again shortly.');
+        }
+        return price;
+    }
+
+    async setAmount(value, currency = 'usd') {
         if (this.client.config?.pending_deposit) {
             this.ready = false;
             this.error = 'The saved deposit amount cannot change while it is in progress.';
             this.changed();
-            return;
+            return false;
         }
-        this.requestedUsd = usd;
+        this.requestedAmount = { value, currency };
         const edit = ++this.editGeneration;
         const generation = this.generation;
         this.ready = false;
         this.dirty = true;
+        this.changingCurrency = false;
         this.error = '';
         this.fee = null;
         try {
-            const quote = await this.client.quoteDepositUsd(usd);
-            if (!this.running || generation !== this.generation || edit !== this.editGeneration) return;
+            if (!['usd', 'eth'].includes(currency)) throw new Error('Choose USD or ETH for the deposit amount.');
+            let quote;
+            if (currency === 'eth') {
+                const amount = ethUnits(value);
+                quote = { amount: String(amount), ethAmount: formatDecimal(amount, 9),
+                    depositWei: String(amount * 1_000_000_000n), usdAmount: null,
+                    source: 'eth-input', priceUpdatedAt: this.client.nativePriceQuote?.updated_at };
+            } else quote = await this.client.quoteDepositUsd(value);
+            if (!this.running || generation !== this.generation || edit !== this.editGeneration) return false;
             const intent = validateIntent({ version: 1, scope: this.scope,
                 amount: String(quote.amount), ethAmount: quote.ethAmount,
                 depositWei: String(quote.depositWei), usdAmount: quote.usdAmount,
+                ...(quote.source ? { source: quote.source } : {}),
+                inputCurrency: currency, inputAmount: currency === 'eth' ? quote.ethAmount : quote.usdAmount,
                 createdAt: this.now(), priceUpdatedAt: quote.priceUpdatedAt }, this.scope);
             // Serialize writes so an earlier slow edit cannot replace the last
             // completed intent. Publish the receiving instructions after commit.
-            this.writes = this.writes.catch(() => {}).then(() => this.store.write(this.scope, intent));
-            await this.writes;
-            if (!this.running || generation !== this.generation || edit !== this.editGeneration) return;
+            if (!await this.commitIntent(intent, generation, edit)) return false;
             this.intent = intent;
             this.dirty = false;
             await this.check();
+            return this.running && generation === this.generation && edit === this.editGeneration;
         } catch (error) {
             if (generation === this.generation && edit === this.editGeneration) {
                 this.error = error.message; this.ready = false; this.changed();
             }
+            return false;
+        }
+    }
+
+    async setCurrency(currency) {
+        if (!this.running || !this.intent || this.dirty || this.verifying) return false;
+        const previous = this.intent;
+        const generation = this.generation;
+        const edit = ++this.editGeneration;
+        this.ready = false;
+        this.changingCurrency = true;
+        this.error = '';
+        try {
+            if (!['usd', 'eth'].includes(currency)) throw new Error('Choose USD or ETH for the deposit amount.');
+            let inputAmount = previous.ethAmount;
+            if (currency === 'usd') {
+                inputAmount = previous.usdAmount;
+                if (inputAmount === null) {
+                    const price = await this.currentPrice();
+                    // Round the reference display up to a USD micro so even a
+                    // one-gwei principal has a positive input. This value never
+                    // feeds back into the fixed ETH principal on a unit toggle.
+                    const numerator = BigInt(previous.amount) * BigInt(price.answer);
+                    const micros = (numerator + 100_000_000_000n - 1n) / 100_000_000_000n;
+                    inputAmount = formatDecimal(micros, 6);
+                }
+            }
+            const intent = validateIntent({ ...previous, inputCurrency: currency, inputAmount }, this.scope);
+            if (!await this.commitIntent(intent, generation, edit, previous)) return false;
+            this.intent = intent;
+            this.changingCurrency = false;
+            await this.check();
+            return this.running && generation === this.generation && edit === this.editGeneration;
+        } catch (error) {
+            if (generation === this.generation && edit === this.editGeneration) {
+                this.error = error.message; this.ready = false; this.changed();
+            }
+            return false;
+        } finally {
+            if (generation === this.generation && edit === this.editGeneration) this.changingCurrency = false;
         }
     }
 
@@ -152,14 +269,14 @@ export class AddressDepositFlow {
         clearTimeout(this.timer);
         this.timer = setTimeout(async () => {
             try {
-                if (!this.intent && this.requestedUsd != null) await this.setAmount(this.requestedUsd);
+                if (!this.intent && this.requestedAmount) await this.setAmount(this.requestedAmount.value, this.requestedAmount.currency);
                 else await this.check();
             } finally { if (this.running) this.schedule(); }
         }, this.interval);
     }
 
     async check({ forceQuote = false, explicit = false } = {}) {
-        if (!this.running || !this.intent || this.dirty || (this.verifying && !explicit)) return;
+        if (!this.running || !this.intent || this.dirty || this.changingCurrency || (this.verifying && !explicit)) return;
         const generation = this.generation;
         const edit = this.editGeneration;
         const intent = this.intent;
@@ -201,7 +318,7 @@ export class AddressDepositFlow {
     }
 
     async verifyReady() {
-        if (!this.running || !this.intent || !this.ready || !this.fee || this.verifying) throw new Error('Wait until the ETH has arrived before choosing Next.');
+        if (!this.running || !this.intent || !this.ready || !this.fee || this.verifying || this.changingCurrency) throw new Error('Wait until the ETH has arrived before choosing Next.');
         const intent = this.intent;
         const edit = this.editGeneration;
         const displayedLimit = BigInt(this.fee.feeReserveWei);
@@ -211,7 +328,7 @@ export class AddressDepositFlow {
                 const saved = await this.store.read(this.scope);
                 if (!saved || JSON.stringify(saved) !== JSON.stringify(intent)) {
                     this.ready = false;
-                    throw new Error('The deposit amount changed in another tab. Reopen this screen to use the saved amount.');
+                    throw new Error(depositChanged);
                 }
             };
             await verifyStoredIntent();

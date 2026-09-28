@@ -65,7 +65,7 @@ test('ordinary native funding keeps the fee breakdown available and enables Next
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const waiting = controls.renderFundingAccount(owner);
-    assert.match(waiting, /Amount to add to your wallet \(USD\)/);
+    assert.match(waiting, /Amount to add to your wallet/);
     assert.match(waiting, /0\.005 ETH/);
     assert.match(waiting, /Amount added to private balance/);
     assert.match(waiting, /Estimated network fee<\/dt><dd>0\.0004 ETH/);
@@ -97,6 +97,54 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
     assert.match(html, /Available toward this deposit<\/dt><dd>− 0\.004 ETH/);
     assert.match(html, /Total ETH to send<\/dt><dd>0\.0015 ETH/);
     assert.doesNotMatch(html, /Received/);
+});
+
+
+test('the visible send amount shows USD for the remaining transfer including fees and existing ETH', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true,
+        formatMoney: amount => ({ '1500000': '$3.00', '5000000': '$10.00', '5500000': '$11.00' })[amount] || '$0.00' } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
+        remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
+    }) });
+    const html = controls.renderFundingAccount(owner);
+    const heading = html.match(/<h3 class="zkapi-funding-send-amount">([\s\S]*?)<\/h3>/)[1];
+    assert.match(heading, /0\.0015/);
+    assert.match(heading, /zkapi-funding-send-usd">≈ \$3\.00 USD/);
+    assert.doesNotMatch(heading, /\$10\.00|\$11\.00/);
+    assert.match(html, /data-funding-help-panel[^>]+hidden/);
+});
+
+test('an unavailable USD conversion keeps exact ETH visible without a zero dollar estimate', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '—' } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /0\.0055/);
+    assert.match(html, /zkapi-funding-send-usd">USD estimate unavailable/);
+    assert.doesNotMatch(html, /≈ \$0/);
+});
+
+test('ETH-origin deposits render an exact editable ETH amount and a USD switch', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
+    const flow = quotedFlow();
+    flow.intent = { ...flow.intent, usdAmount: null, source: 'eth-input', inputCurrency: 'eth', inputAmount: '0.005000001' };
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: flow });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /data-funding-amount data-funding-eth[^>]*value="0\.005000001"/);
+    assert.match(html, /data-funding-currency[^>]*aria-label="Switch amount to USD"/);
+    assert.doesNotMatch(html, /data-funding-eth[^>]*readonly|data-funding-usd|Saved deposit/);
+    assert.match(html, /zkapi-funding-send-usd">≈ \$10\.00 USD/);
+});
+
+test('a saved ETH-origin deposit locks both its exact amount and denomination control', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true,
+        config: { pending_deposit: { phase: 'prepared', funding_quote_available: true } } } });
+    const flow = quotedFlow();
+    flow.intent = { ...flow.intent, usdAmount: null, source: 'eth-input', inputCurrency: 'eth', inputAmount: '0.005' };
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingInputAmount: '999', fundingInputCurrency: 'usd', fundingFlow: flow });
+    const html = controls.renderFundingAccount(owner);
+    assert.match(html, /data-funding-eth[^>]*value="0\.005" readonly/);
+    assert.match(html, /data-funding-currency[^>]*disabled/);
+    assert.doesNotMatch(html, /value="999"|data-funding-usd/);
 });
 
 test('a missing balance never presents the full funding requirement as a known transfer amount', () => {
@@ -301,7 +349,7 @@ test('closing a private note leaves public ETH return controls accessible in the
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, note: null, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: { ethBalance: '15208600000000000' } });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Amount to add to your wallet \(USD\)/);
+    assert.match(html, /Amount to add to your wallet/);
     assert.match(html, /Return funds held at this address/);
     assert.match(html, /data-funding-return-eth/);
     assert.doesNotMatch(html, /<details[^>]*open/);
@@ -469,8 +517,8 @@ test('editing USD disables Next immediately and debounces quote calculation with
     const f = fixture();
     const amounts = [];
     let invalidated = 0;
-    f.owner.fundingFlow = { invalidate() { invalidated++; }, setAmount(value) { amounts.push(value); } };
-    const usd = f.field('usd', '10');
+    f.owner.fundingFlow = { invalidate() { invalidated++; }, setAmount(value, currency) { amounts.push([value, currency]); } };
+    const usd = f.field('amount', '10');
     const next = f.field('next');
     next.disabled = false;
     f.controls.attachWalletMethodControls(f.owner);
@@ -481,14 +529,186 @@ test('editing USD disables Next immediately and debounces quote calculation with
     assert.deepEqual(amounts, []);
     assert.equal(f.timers.size, 1);
     [...f.timers.values()][0]();
-    assert.deepEqual(amounts, ['12.50']);
+    assert.deepEqual(amounts, [['12.50', 'usd']]);
+});
+
+
+
+test('editing an amount immediately hides stale transfer instructions before the debounce finishes', () => {
+    const f = fixture({ client: { isNativeEthFunding: true } });
+    Object.assign(f.owner, { isOpen: true, view: 'fund', fundingFlow: quotedFlow({
+        invalidate() { this.dirty = true; this.ready = false; this.fee = null; }
+    }) });
+    const amount = f.field('amount');
+    const renders = [];
+    f.owner.render = () => renders.push(f.controls.renderFundingAccount(f.owner));
+    f.controls.attachWalletMethodControls(f.owner);
+    amount.events.input({ target: { value: '12' } });
+    assert.equal(renders.length, 1);
+    assert.match(renders[0], /Updating the ETH amount/);
+    assert.doesNotMatch(renders[0], /zkapi-funding-send-number|data-funding-next|0\.0055 ETH/);
+    assert.equal(f.timers.size, 1);
+});
+
+test('an unavailable initial USD quote can switch to a blank ETH draft without a ten ETH default', async () => {
+    const f = fixture();
+    const calls = [];
+    const flow = { intent: null, dirty: true, requestedAmount: { value: '10', currency: 'usd' },
+        invalidate() { calls.push('invalidate'); },
+        async setAmount(value, currency) { calls.push([value, currency]); this.error = 'Enter ETH'; return false; },
+        setCurrency() { assert.fail('there is no principal to convert yet'); } };
+    Object.assign(f.owner, { isOpen: true, fundingFlow: flow, fundingInputCurrency: 'usd', fundingInputAmount: '10' });
+    const button = f.field('currency');
+    f.controls.attachWalletMethodControls(f.owner);
+    await button.events.click();
+    assert.deepEqual(calls, ['invalidate', ['', 'eth']]);
+    assert.equal(f.owner.fundingInputCurrency, 'eth');
+    assert.equal(f.owner.fundingInputAmount, '');
+    assert.equal(flow.error, '');
+});
+
+test('ETH edits debounce in their selected unit without going through the USD quote path', () => {
+    const f = fixture();
+    const calls = [];
+    f.owner.fundingInputCurrency = 'eth';
+    f.owner.fundingFlow = { invalidate() {}, setAmount(...args) { calls.push(args); } };
+    const amount = f.field('amount');
+    f.controls.attachWalletMethodControls(f.owner);
+    amount.events.input({ target: { value: '0.005000001' } });
+    [...f.timers.values()][0]();
+    assert.deepEqual(calls, [['0.005000001', 'eth']]);
+    assert.equal(f.owner.fundingInputAmount, '0.005000001');
+});
+
+test('a clean currency switch changes display only, preserves the exact principal and restores keyboard focus', async () => {
+    const f = fixture();
+    const calls = [];
+    const flow = quotedFlow({ dirty: false,
+        setAmount() { assert.fail('unit switching must not reprice a valid principal'); },
+        async setCurrency(currency) {
+            calls.push(currency);
+            this.intent = { ...this.intent, inputCurrency: currency, inputAmount: this.intent.ethAmount };
+            return true;
+        } });
+    Object.assign(f.owner, { isOpen: true, fundingFlow: flow, fundingInputCurrency: 'usd', fundingInputAmount: '10' });
+    const button = f.field('currency');
+    let focuses = 0;
+    button.focus = () => focuses++;
+    f.context.document.activeElement = button;
+    f.controls.attachWalletMethodControls(f.owner);
+    await button.events.click();
+    assert.deepEqual(calls, ['eth']);
+    assert.equal(flow.intent.depositWei, '5000000000000000');
+    assert.equal(f.owner.fundingInputCurrency, 'eth');
+    assert.equal(f.owner.fundingInputAmount, '0.005');
+    assert.equal(f.owner.fundingBusy, false);
+    assert.equal(focuses, 1);
+});
+
+test('switching immediately after typing flushes that draft before conversion and cancels its debounce', async () => {
+    const f = fixture();
+    const calls = [];
+    let finishQuote;
+    const flow = quotedFlow({ dirty: false,
+        invalidate() { this.dirty = true; },
+        setAmount(amount, currency) {
+            calls.push(['amount', amount, currency]);
+            return new Promise(resolve => { finishQuote = () => {
+                this.dirty = false;
+                this.intent = { ...this.intent, usdAmount: amount, ethAmount: '0.00625' };
+                resolve(true);
+            }; });
+        },
+        async setCurrency(currency) {
+            calls.push(['currency', currency]);
+            this.intent = { ...this.intent, inputCurrency: currency, inputAmount: this.intent.ethAmount };
+            return true;
+        } });
+    Object.assign(f.owner, { isOpen: true, fundingFlow: flow });
+    const amount = f.field('amount');
+    const button = f.field('currency');
+    f.controls.attachWalletMethodControls(f.owner);
+    amount.events.input({ target: { value: '12.50' } });
+    const switched = button.events.click();
+    assert.deepEqual(calls, [['amount', '12.50', 'usd']]);
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.owner.fundingBusy, true);
+    await button.events.click();
+    assert.equal(calls.length, 1, 'a second click cannot race the active conversion');
+    finishQuote();
+    await switched;
+    assert.deepEqual(calls, [['amount', '12.50', 'usd'], ['currency', 'eth']]);
+    assert.equal(f.owner.fundingInputAmount, '0.00625');
+    assert.equal(f.owner.fundingInputCurrency, 'eth');
+});
+
+test('an invalid draft does not switch units or fall back to a previous valid amount', async () => {
+    const f = fixture();
+    const flow = quotedFlow({ dirty: true,
+        async setAmount(amount, currency) { assert.equal(amount, 'invalid'); assert.equal(currency, 'eth'); return false; },
+        setCurrency() { assert.fail('invalid drafts must not convert the previous principal'); } });
+    Object.assign(f.owner, { isOpen: true, fundingFlow: flow, fundingInputCurrency: 'eth', fundingInputAmount: 'invalid' });
+    const button = f.field('currency');
+    f.controls.attachWalletMethodControls(f.owner);
+    await button.events.click();
+    assert.equal(f.owner.fundingInputCurrency, 'eth');
+    assert.equal(f.owner.fundingInputAmount, 'invalid');
+    assert.equal(f.owner.fundingBusy, false);
+});
+
+test('a late unit conversion cannot write its display into a replaced or closed flow', async () => {
+    const f = fixture();
+    let finish;
+    const flow = quotedFlow({ dirty: false, setCurrency() { return new Promise(resolve => { finish = resolve; }); } });
+    Object.assign(f.owner, { isOpen: true, fundingFlow: flow, fundingInputCurrency: 'usd', fundingInputAmount: '10' });
+    const button = f.field('currency');
+    f.controls.attachWalletMethodControls(f.owner);
+    const switched = button.events.click();
+    f.owner.isOpen = false;
+    f.owner.fundingFlow = null;
+    flow.intent = { ...flow.intent, inputCurrency: 'eth', inputAmount: '0.005' };
+    finish(true);
+    await switched;
+    assert.equal(f.owner.fundingInputCurrency, 'usd');
+    assert.equal(f.owner.fundingInputAmount, '10');
+});
+
+test('hydration restores the persisted denomination and exact input without a new amount edit', () => {
+    const f = fixture();
+    let changes;
+    f.context.AddressDepositFlow = class {
+        constructor({ changed }) { changes = changed; }
+        start() {
+            this.intent = { ...quotedFlow().intent, usdAmount: null, source: 'eth-input', inputCurrency: 'eth', inputAmount: '0.005000001' };
+            changes();
+        }
+    };
+    Object.assign(f.owner, { view: 'fund', isOpen: true, fundingUsdAmount: '99' });
+    f.controls.attachWalletMethodControls(f.owner);
+    f.flushMicrotasks();
+    assert.equal(f.owner.fundingInputCurrency, 'eth');
+    assert.equal(f.owner.fundingInputAmount, '0.005000001');
+    assert.equal(f.owner.fundingUsdAmount, null);
+});
+
+test('currency-specific input IDs prevent preserving a USD node after an ETH switch', () => {
+    const f = fixture();
+    const oldInput = { id: 'funding-usd', matches: () => true, value: '10' };
+    f.context.document.activeElement = oldInput;
+    f.owner.overlay.contains = () => true;
+    const saved = f.controls.captureWalletView(f.owner);
+    assert.equal(saved.preservedInput, oldInput);
+    const eth = { id: 'funding-eth', value: '0.005', replaceWith() { assert.fail('old USD input must not replace ETH input'); } };
+    f.owner.overlay.querySelector = selector => selector === '#funding-eth' ? eth : null;
+    f.controls.restoreWalletView(f.owner, saved);
+    assert.equal(eth.value, '0.005');
 });
 
 test('a saved deposit ignores amount edits, including dispatched input events on its readonly field', () => {
     const f = fixture({ client: { config: { pending_deposit: { funding_quote_available: true } } } });
     f.owner.fundingUsdAmount = '10';
     f.owner.fundingFlow = { invalidate() { assert.fail('saved amount must stay fixed'); } };
-    const input = f.field('usd', '10');
+    const input = f.field('amount', '10');
     f.controls.attachWalletMethodControls(f.owner);
     input.events.input({ target: { value: '20' } });
     assert.equal(f.owner.fundingUsdAmount, '10');

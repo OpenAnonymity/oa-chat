@@ -450,6 +450,8 @@ export default class AccountModal {
                 { preparedOperationId: this.fundingDepositIntent.preparedOperationId });
             await flow.complete();
             this.fundingUsdAmount = null;
+            this.fundingInputAmount = null;
+            this.fundingInputCurrency = null;
             this.view = 'balance';
             this.setStatus('Deposit confirmed. Your ETH wallet is ready.');
         }, { kind: 'deposit', title: 'Adding ETH', phase: 'wallet', message: 'Checking funds…', blocksSend: true });

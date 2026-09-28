@@ -11,6 +11,8 @@ function fixture(t, options = {}) {
     const client = {
         isNativeEthFunding: true,
         config: { funding: { chain_id: 11155111, contract_address: '0xVAULT' } },
+        nativePriceQuote: { answer: '100000000000', decimals: 8, updated_at: 10 },
+        async refreshEthUsdPrice() { return this.nativePriceQuote; },
         async quoteDepositUsd(usd) {
             quotes++;
             if (!/^\d+$/.test(usd)) throw new Error('Enter a valid dollar amount.');
@@ -34,7 +36,12 @@ function fixture(t, options = {}) {
     };
     const store = {
         async read() { return structuredClone(saved); },
-        async write(_scope, value) { saved = structuredClone(value); }
+        async write(_scope, value) { saved = structuredClone(value); },
+        async compareAndSwap(_scope, expected, value) {
+            if (JSON.stringify(saved) !== JSON.stringify(expected)) return false;
+            saved = structuredClone(value);
+            return true;
+        }
     };
     const flow = new AddressDepositFlow({ wallet, client, store, interval: 60_000, now: () => now });
     t.after(() => flow.stop());
@@ -336,4 +343,297 @@ test('a MetaMask prepared deposit can switch to address funding without a prior 
     assert.equal(f.flow.intent.usdAmount, null);
     assert.equal(f.saved().source, 'saved-deposit');
     assert.equal(f.flow.error, '');
+});
+
+test('ETH input preserves every gwei without requiring a dollar price quote', async t => {
+    const f = fixture(t);
+    f.client.nativePriceQuote = null;
+    f.client.refreshEthUsdPrice = () => assert.fail('ETH principal needs no price conversion');
+    await f.flow.start('0.123456789', 'eth');
+    assert.equal(f.quotes(), 0);
+    assert.equal(f.flow.intent.amount, '123456789');
+    assert.equal(f.flow.intent.depositWei, '123456789000000000');
+    assert.equal(f.flow.intent.usdAmount, null);
+    assert.equal(f.flow.intent.source, 'eth-input');
+    assert.equal(f.saved().inputCurrency, 'eth');
+    assert.equal(f.saved().inputAmount, '0.123456789');
+});
+
+test('ETH accepts exact smallest and largest supported principals and normalizes decimal input', async t => {
+    const f = fixture(t);
+    await f.flow.start('.000000001', 'eth');
+    assert.equal(f.flow.intent.amount, '1');
+    assert.equal(f.flow.intent.inputAmount, '0.000000001');
+    assert.equal(await f.flow.setAmount('9007199.254740991', 'eth'), true);
+    assert.equal(f.flow.intent.amount, String(Number.MAX_SAFE_INTEGER));
+    assert.equal(await f.flow.setAmount(' 000.0100 ', 'eth'), true);
+    assert.equal(f.flow.intent.inputAmount, '0.01');
+});
+
+test('invalid or imprecise ETH input cannot enable Next or replace the durable principal', async t => {
+    const invalid = ['0', '-1', '1e-3', '0.0000000001', '9007199.254740992', '1,000', 'NaN', '', '.', '1'.repeat(129)];
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('0.01', 'eth');
+    const original = structuredClone(f.saved());
+    for (const value of invalid) {
+        assert.equal(await f.flow.setAmount(value, 'eth'), false, value);
+        await f.flow.check();
+        assert.equal(f.flow.ready, false, value);
+        assert.equal(f.flow.dirty, true, value);
+        assert.deepEqual(f.saved(), original, value);
+    }
+});
+
+test('USD and ETH display toggles preserve original principal, fee commitment and original dollar input', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('10');
+    const original = structuredClone(f.flow.intent);
+    const fee = f.flow.fee;
+    assert.equal(await f.flow.setCurrency('eth'), true);
+    assert.equal(f.flow.intent.inputCurrency, 'eth');
+    assert.equal(f.flow.intent.inputAmount, original.ethAmount);
+    f.client.nativePriceQuote.answer = '987654321001';
+    assert.equal(await f.flow.setCurrency('usd'), true);
+    assert.equal(f.flow.intent.inputAmount, '10');
+    assert.equal(f.flow.intent.amount, original.amount);
+    assert.equal(f.flow.intent.depositWei, original.depositWei);
+    assert.equal(f.flow.fee, fee);
+    assert.equal(f.quotes(), 1);
+    assert.equal(f.feeQuotes(), 1);
+    assert.equal(f.flow.ready, true);
+    assert.equal((await f.flow.verifyReady()).amount, original.amount);
+});
+
+test('ETH-origin USD reference rounds only its display and never changes the ETH principal on roundtrips', async t => {
+    const f = fixture(t);
+    f.client.nativePriceQuote.answer = '123456789000';
+    await f.flow.start('0.000000001', 'eth');
+    assert.equal(await f.flow.setCurrency('usd'), true);
+    assert.equal(f.flow.intent.inputAmount, '0.000002');
+    assert.equal(f.flow.intent.usdAmount, null);
+    assert.equal(f.flow.intent.source, 'eth-input');
+    assert.equal(await f.flow.setCurrency('eth'), true);
+    assert.equal(f.flow.intent.inputAmount, '0.000000001');
+    assert.equal(f.saved().amount, '1');
+    assert.equal(f.quotes(), 0);
+});
+
+test('ETH-to-USD display conversion refreshes the validated price and fails safely when unavailable', async t => {
+    const f = fixture(t);
+    await f.flow.start('0.01', 'eth');
+    f.client.nativePriceQuote = null;
+    let refreshes = 0;
+    f.client.refreshEthUsdPrice = async () => { refreshes++; return { answer: '100000000000', decimals: 8 }; };
+    assert.equal(await f.flow.setCurrency('usd'), false);
+    assert.equal(f.flow.intent.inputCurrency, 'eth');
+    assert.match(f.flow.error, /price is unavailable/);
+    f.client.refreshEthUsdPrice = async () => { refreshes++; f.client.nativePriceQuote = { answer: '200000000000', decimals: 8 }; };
+    assert.equal(await f.flow.setCurrency('usd'), true);
+    assert.equal(f.flow.intent.inputAmount, '20');
+    assert.equal(refreshes, 2);
+});
+
+test('reopening ETH-origin intent restores its chosen input denomination without repricing', async t => {
+    const first = fixture(t);
+    await first.flow.start('0.123456789', 'eth');
+    await first.flow.setCurrency('usd');
+    const f = fixture(t, { saved: first.saved() });
+    f.client.nativePriceQuote.answer = '300000000000';
+    await f.flow.start('99');
+    assert.equal(f.flow.intent.inputCurrency, 'usd');
+    assert.equal(f.flow.intent.inputAmount, '123.456789');
+    assert.equal(f.flow.intent.amount, '123456789');
+    assert.equal(f.quotes(), 0);
+    assert.equal(await f.flow.setCurrency('eth'), true);
+    assert.equal(f.flow.intent.inputAmount, '0.123456789');
+});
+
+test('legacy USD intent migrates input metadata durably before readiness verification', async t => {
+    const first = fixture(t);
+    await first.flow.start('10');
+    const legacy = { ...first.saved() };
+    delete legacy.inputCurrency;
+    delete legacy.inputAmount;
+    const f = fixture(t, { saved: legacy });
+    f.setBalance('99000000000000000');
+    await f.flow.start();
+    assert.equal(f.flow.intent.inputCurrency, 'usd');
+    assert.equal(f.saved().inputAmount, '10');
+    assert.equal((await f.flow.verifyReady()).amount, legacy.amount);
+});
+
+test('prepared deposit can change display currency but cannot edit its principal', async t => {
+    const f = fixture(t);
+    f.client.config.pending_deposit = { amount: 1234567, funding_quote_available: true };
+    await f.flow.start();
+    assert.equal(await f.flow.setCurrency('usd'), true);
+    assert.equal(f.flow.intent.inputAmount, '1.234567');
+    assert.equal(f.flow.intent.source, 'saved-deposit');
+    assert.equal(await f.flow.setAmount('0.02', 'eth'), false);
+    assert.equal(f.saved().amount, '1234567');
+    assert.equal(f.quotes(), 0);
+});
+
+test('a currency toggle refuses dirty inputs without silently replacing them', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.flow.invalidate();
+    assert.equal(await f.flow.setCurrency('eth'), false);
+    assert.equal(f.flow.intent.inputCurrency, 'usd');
+    assert.equal(f.flow.dirty, true);
+});
+
+test('a display toggle cannot overwrite a newer principal saved by another tab', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const other = { ...f.saved(), usdAmount: '20' };
+    await f.store.write(f.flow.scope, other);
+    assert.equal(await f.flow.setCurrency('eth'), false);
+    assert.deepEqual(f.saved(), other);
+    assert.equal(f.flow.intent.inputCurrency, 'usd');
+    assert.equal(f.flow.ready, false);
+    assert.match(f.flow.error, /another tab/);
+});
+
+test('a late price conversion cannot replace a newer ETH edit or revive readiness while switching', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('0.01', 'eth');
+    f.client.nativePriceQuote = null;
+    let resolvePrice;
+    f.client.refreshEthUsdPrice = () => new Promise(resolve => { resolvePrice = resolve; });
+    const toggle = f.flow.setCurrency('usd');
+    await f.flow.check();
+    assert.equal(f.flow.ready, false);
+    await assert.rejects(f.flow.verifyReady(), /Wait until/);
+    assert.equal(await f.flow.setAmount('0.02', 'eth'), true);
+    f.client.nativePriceQuote = { answer: '100000000000', decimals: 8 };
+    resolvePrice();
+    assert.equal(await toggle, false);
+    assert.equal(f.flow.intent.inputCurrency, 'eth');
+    assert.equal(f.saved().amount, '20000000');
+});
+
+test('closing during a currency conversion cannot persist or publish its late result', async t => {
+    const f = fixture(t);
+    await f.flow.start('0.01', 'eth');
+    f.client.nativePriceQuote = null;
+    let resolvePrice;
+    f.client.refreshEthUsdPrice = () => new Promise(resolve => { resolvePrice = resolve; });
+    const toggle = f.flow.setCurrency('usd');
+    f.flow.stop();
+    f.client.nativePriceQuote = { answer: '100000000000', decimals: 8 };
+    resolvePrice();
+    assert.equal(await toggle, false);
+    assert.equal(f.saved().inputCurrency, 'eth');
+    assert.equal(f.flow.ready, false);
+});
+
+test('a currency display is published only after durable commit and failed writes do not change it', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const compareAndSwap = f.store.compareAndSwap;
+    let finishWrite;
+    f.store.compareAndSwap = (scope, expected, value) => new Promise(resolve => {
+        finishWrite = async () => resolve(await compareAndSwap(scope, expected, value));
+    });
+    const toggle = f.flow.setCurrency('eth');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.flow.intent.inputCurrency, 'usd');
+    await finishWrite();
+    assert.equal(await toggle, true);
+    assert.equal(f.flow.intent.inputCurrency, 'eth');
+    f.store.compareAndSwap = async () => { throw new Error('Storage unavailable'); };
+    assert.equal(await f.flow.setCurrency('usd'), false);
+    assert.equal(f.flow.intent.inputCurrency, 'eth');
+    assert.equal(f.saved().inputCurrency, 'eth');
+    assert.match(f.flow.error, /Storage unavailable/);
+});
+
+test('a paused currency update cannot overwrite another tab editing the deposit before its atomic commit', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const other = fixture(t);
+    other.flow.store = f.store;
+    await other.flow.start();
+    const compareAndSwap = f.store.compareAndSwap;
+    let commitToggle;
+    f.store.compareAndSwap = (scope, expected, value) => new Promise(resolve => {
+        commitToggle = async () => resolve(await compareAndSwap(scope, expected, value));
+    });
+    const toggle = f.flow.setCurrency('eth');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(await other.flow.setAmount('20'), true);
+    await commitToggle();
+    assert.equal(await toggle, false);
+    assert.equal(f.saved().amount, '20000000');
+    assert.equal(f.saved().inputCurrency, 'usd');
+    assert.match(f.flow.error, /another tab/);
+    assert.equal(f.flow.ready, false);
+});
+
+test('legacy metadata migration cannot overwrite a principal updated after its initial read', async t => {
+    const first = fixture(t);
+    await first.flow.start('10');
+    const legacy = { ...first.saved() };
+    delete legacy.inputCurrency;
+    delete legacy.inputAmount;
+    const latest = { ...first.saved(), amount: '20000000', ethAmount: '0.02',
+        depositWei: '20000000000000000', usdAmount: '20', inputAmount: '20' };
+    const f = fixture(t, { saved: legacy });
+    const compareAndSwap = f.store.compareAndSwap;
+    f.store.compareAndSwap = async (scope, expected, value) => {
+        await f.store.write(scope, latest);
+        return compareAndSwap(scope, expected, value);
+    };
+    await f.flow.start();
+    assert.deepEqual(f.saved(), latest);
+    assert.equal(f.flow.intent, null);
+    assert.equal(f.flow.ready, false);
+    assert.match(f.flow.error, /another tab/);
+});
+
+test('restoring a prepared SDK deposit cannot overwrite a concurrent host intent update', async t => {
+    const f = fixture(t);
+    f.client.config.pending_deposit = { amount: 1234567, funding_quote_available: true };
+    const compareAndSwap = f.store.compareAndSwap;
+    const concurrent = { version: 1, scope: '11155111:0xvault:0xaccount',
+        amount: '20000000', ethAmount: '0.02', depositWei: '20000000000000000',
+        usdAmount: '20', inputCurrency: 'usd', inputAmount: '20' };
+    f.store.compareAndSwap = async (scope, expected, value) => {
+        assert.equal(expected, null);
+        await f.store.write(scope, concurrent);
+        return compareAndSwap(scope, expected, value);
+    };
+    await f.flow.start();
+    assert.deepEqual(f.saved(), concurrent);
+    assert.equal(f.flow.intent, null);
+    assert.equal(f.flow.ready, false);
+    assert.match(f.flow.error, /another tab/);
+});
+
+test('currency changes fail closed if atomic storage is unavailable rather than falling back to unsafe writes', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const original = structuredClone(f.saved());
+    delete f.store.compareAndSwap;
+    f.store.write = () => assert.fail('display changes must never use an unconditional write');
+    assert.equal(await f.flow.setCurrency('eth'), false);
+    assert.deepEqual(f.saved(), original);
+    assert.equal(f.flow.ready, false);
+    assert.match(f.flow.error, /Safe deposit storage is unavailable/);
+});
+
+test('tampered currency metadata fails closed instead of showing a mismatched ETH input', async t => {
+    const first = fixture(t);
+    await first.flow.start('0.01', 'eth');
+    for (const metadata of [{ inputAmount: '0.02' }, { inputCurrency: 'other' }, { inputCurrency: 'usd', inputAmount: '0' }]) {
+        const f = fixture(t, { saved: { ...first.saved(), ...metadata } });
+        await f.flow.start();
+        assert.equal(f.flow.intent, null);
+        assert.equal(f.flow.ready, false);
+        assert.match(f.flow.error, /saved deposit input/);
+    }
 });

@@ -1693,6 +1693,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-heading h3 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .zkapi-funding-help[data-funding-help="quote"] .zkapi-funding-heading { position: relative; display: block; }
 .zkapi-funding-heading .zkapi-funding-send-amount { padding-right: 36px; font-size: 14px; line-height: 1.4; }
+.zkapi-funding-send-usd { display: block; margin-top: 4px; color: hsl(var(--color-muted-foreground)); font-size: 12px; font-weight: 400; }
 .zkapi-funding-help[data-funding-help="quote"] .zkapi-funding-help-toggle { position: absolute; top: 0; right: 0; }
 .zkapi-funding-send-label { display: block; min-height: 26px; }
 /* The exact number gets the full card width; only its ETH suffix may wrap. */
@@ -1720,8 +1721,13 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-account summary:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 3px; }
 .zkapi-funding-error { margin: 12px 0; font-size: 12px; line-height: 1.6; color: hsl(var(--color-destructive)); }
 .zkapi-funding-pending { margin-top: 12px; }
-.zkapi-funding-usd { display: flex; align-items: center; gap: 8px; }
-.zkapi-funding-usd > span { font-size: 20px; }
+.zkapi-funding-amount-input { display: flex; align-items: center; gap: 8px; }
+.zkapi-funding-amount-input > span { font-size: 20px; }
+.zkapi-funding-currency { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; min-height: 42px; padding: 8px 10px; border: 1px solid hsl(var(--color-border)); border-radius: 8px; background: hsl(var(--color-muted)); color: hsl(var(--color-foreground)); font-size: 12px; font-weight: 600; cursor: pointer; }
+.zkapi-funding-currency span { color: hsl(var(--color-muted-foreground)); font-size: 16px; }
+.zkapi-funding-currency:hover { background: hsl(var(--color-accent)); }
+.zkapi-funding-currency:disabled { cursor: default; opacity: .6; }
+.zkapi-funding-currency:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
 .zkapi-funding-breakdown { display: grid; gap: 10px; margin: 18px 0 10px; font-size: 12px; line-height: 1.6; }
 .zkapi-funding-breakdown > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
 .zkapi-funding-breakdown dt { color: hsl(var(--color-muted-foreground)); }
