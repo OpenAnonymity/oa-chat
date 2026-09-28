@@ -1,3 +1,25 @@
+## 2026-09-27: Native ETH versus earlier token gas comparison
+
+- Fresh canonical Sepolia receipt comparison found no asset-switch gas
+  regression: earlier address/token deposit used 6,753,103 gas and paid
+  0.007452555980880150 ETH; native deposit used 6,742,196 gas and paid
+  0.007151174818090856 ETH. Earlier MetaMask/token deposit used 6,897,262 gas
+  and paid 0.007803390250469292 ETH. These are our recorded test transactions,
+  not a claim about an unidentified user transaction or historical Mainnet fee.
+- Both assets share unchanged, expensive on-chain Merkle/Poseidon hashing.
+  Deposit does not verify a Groth16 proof. Controlled current Forge tests
+  attribute 95.68% of native deposit gas to root hashing; native avoids ERC20
+  transferFrom and approval. Optimizing equivalent hashing is the meaningful
+  contract cost target; switching back to tokens does not remove it.
+- Sepolia and Mainnet gas markets differ. A simultaneous read put Sepolia at
+  about 10.7x Mainnet per-gas cost; this is a timestamped observation, not a
+  fixed ratio or Mainnet deployment quote. The funding UI applies the ETH/USD
+  reference to test ETH too. A follow-up should label Sepolia dollar amounts
+  explicitly as test/reference values, not real Mainnet costs. Keep expected
+  fees distinct from the additional buffer and total requested transfer.
+- Details, transaction links, benchmark limitations and sampling timestamps:
+  [ETH/token fee comparison](ZKAPI_PAYMENTS.md#native-eth-versus-token-cost-comparison-2026-09-27).
+
 ## 2026-09-27: Low fees for the address option
 
 - New address deposits, withdrawals and public returns share a Low fee policy.

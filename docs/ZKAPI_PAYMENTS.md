@@ -343,6 +343,64 @@ withdrawal navigation, and layout. Mainnet UI checks require no transaction.
 
 Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.
 
+## Native ETH versus token cost comparison (2026-09-27)
+
+The user's report of higher costs prompted a receipt and contract comparison.
+Fresh public RPC reads verified successful canonical receipts for these Sepolia
+deposits; gas fees are denominated in ETH for both asset types:
+
+| Completed deposit | Gas used | Effective price (gwei) | Actual fee (ETH) |
+| --- | ---: | ---: | ---: |
+| [Earlier MetaMask/test token](https://sepolia.etherscan.io/tx/0x009ffd6f2535789e2c699e54910b5183e8eabb0aa81981ac7982c769c58c6d1c) | 6,897,262 | 1.131375066 | 0.007803390250469292 |
+| [Earlier address/test token](https://sepolia.etherscan.io/tx/0xf3a41c990f742e3e30171c5d08e2a7d7b92814b26831b7ec63772c54b649b781) | 6,753,103 | 1.103575050 | 0.007452555980880150 |
+| [Current address/native ETH](https://sepolia.etherscan.io/tx/0x74cb011fc5fec292e89658ce18e99343c3beead542ed99258d2d4b6679cab3a9) | 6,742,196 | 1.060659586 | 0.007151174818090856 |
+
+Native used 0.1615% less gas than the earlier address/token deposit and paid
+4.0440% less in those recorded transactions. Repricing native at the exact
+older gas price gives 0.007440519287809800 ETH: the asset switch itself does
+not explain materially higher costs. The earlier token approval was a separate
+45,921-gas transaction costing 0.000044138983382823 ETH; do not compare an
+approval-only wallet quote with the whole deposit. No known historical Mainnet
+user receipt was supplied, so these are not assertions about that user's own
+Mainnet transactions.
+
+The same comparison for withdrawal shows 7,057,861 gas / 0.007476799452342588
+ETH previously and 7,043,946 gas / 0.007545454436185302 ETH now. Gas usage fell
+0.1972%, while the actual fee rose 0.9182% because the inclusion gas price rose.
+
+At 2026-09-28 01:55:11-12 UTC, Sepolia block 11797356 had base fee
+1.011009441 gwei and Mainnet block 26072794 had 0.093624413 gwei. With the
+same sampled Low tip of 0.001 gwei, 6,742,196 gas would cost respectively
+0.006823166005072436 and 0.000637976338830948 ETH (about 10.7x). This is a
+read-only price comparison using identical assumed gas, not a native Mainnet
+simulation or transaction. Future block prices vary independently.
+
+Source comparison of protocol `b542b1b` (ERC20) to `8b2d4e3` (current) found
+no changes in `contracts/src/libraries/Bn254Poseidon.sol` or
+`MerkleUpdateLib.sol`. `ZkApiVault.deposit` computes the note leaf and calls
+`verifyAndUpdate`; it never invokes Groth16 verification. The 32-level update
+hashes both old and new roots (64 node hashes). The native branch validates
+`msg.value` and skips ERC20 `safeTransferFrom`.
+
+Existing Forge tests under the current compiler config measured native deposit
+6,015,645 gas versus mock-ERC20 deposit 6,045,270 gas. Root hashing alone used
+5,756,030 gas (95.68% of native). These are controlled call measurements, not
+live receipt totals; their withdrawal fixtures mock proof verification and must
+not be cited as production withdrawal costs. The meaningful optimization target
+is implementation-equivalent Poseidon code with identical constants, domains
+and outputs, differential tests and review. Immutable linked deployments would
+require a new vault rollout; no contract or deployment was changed in this
+investigation.
+
+Presentation caveat: `renderFundingWei` currently converts Sepolia test ETH
+using the real ETH/USD reference too. Such dollars are an illustrative test
+value, not the market value of the test asset or a Mainnet gas quote. Explicit
+test/reference labeling is a UI follow-up. The total requested funding also
+includes an additional buffer that is not necessarily spent. Ethereum's
+[gas documentation](https://ethereum.org/developers/docs/gas/) explains the
+gas-times-price calculation, and its [network documentation](https://ethereum.org/developers/docs/networks/)
+distinguishes test assets from actual-value Mainnet transactions.
+
 ## Low-fee address transactions (2026-09-27)
 
 Low is the default for new Send-to-an-address deposits, withdrawals and public
