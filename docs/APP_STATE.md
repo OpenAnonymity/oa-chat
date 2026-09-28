@@ -15,6 +15,11 @@
   11–18 ms for six repeated switches (same exact principal) and 6 ms for
   editing an ETH draft immediately before switching; the previous build's
   sampled switch took 516 ms even with a fresh fee quote.
+- Published on `oa-wallet-eth-sepolia.vercel.app`, app `1b5252b`, SDK
+  `6f12f3b`, build `5TAGD2MP`, deployment `dpl_GhCDeBXNj3eDamsQr7HEos9nGzyp`.
+  All 486 artifact hashes match and all four public config/health/quote checks
+  returned 200. Four canonical browser switches took 9–18 ms, preserved the
+  original USD input and produced no alerts. No transaction was signed.
 
 ## 2026-09-27: USD/ETH entry for address deposits
 
