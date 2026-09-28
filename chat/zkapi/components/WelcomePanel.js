@@ -6,7 +6,7 @@ import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { runAddressAction } from '../services/addressFunding.js';
 import { isIndexerLag, pendingDepositMessage, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import { getWalletMethod, initWalletClient, prepareWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
-import { attachWalletMethodControls, captureWalletView, refreshWalletView, renderFundingAccount, renderWalletMethod, restoreWalletView, stopFundingFlow } from './WalletMethodControls.js';
+import { attachWalletMethodControls, captureWalletView, refreshWalletView, renderDepositAmount, prepareDepositAmount, renderFundingAccount, renderWalletMethod, restoreWalletView, stopFundingFlow } from './WalletMethodControls.js';
 
 const DISMISSED_KEY = 'zkapi-oa-welcome-dismissed';
 const MODAL_CLASSES = 'rounded-2xl border border-border shadow-lg flex flex-col zkapi-welcome-dialog';
@@ -114,8 +114,22 @@ export default class WelcomePanel {
         // The balance dialog owns every durable deposit phase, including a
         // prepared plan that never reached the signer. Never reprice it here.
         if (zkapiClient.config?.pending_deposit) return this.resumeSavedDeposit();
-        const amount = this.overlay.querySelector('#welcome-deposit-amount')?.value;
+        const amount = this.overlay.querySelector('[data-funding-amount]')?.value
+            ?? this.overlay.querySelector('#welcome-deposit-amount')?.value ?? this.fundingInputAmount;
         this.depositAmount = amount;
+        let selectedDeposit = amount;
+        if (getWalletMethod() !== 'address' && zkapiClient.isNativeEthFunding) {
+            if (this.fundingInputAmount !== amount) {
+                this.depositAmountFlow?.invalidate();
+                this.sharedDepositIntent = null;
+                this.fundingInputAmount = amount;
+            }
+            this.fundingBusy = true;
+            this.render();
+            try { selectedDeposit = await prepareDepositAmount(this); }
+            catch (error) { this.error = error.message; return; }
+            finally { this.fundingBusy = false; if (this.isOpen) this.render(); }
+        }
         this.busy = true;
         this.step = 'redeeming';
         this.status = 'Connecting to MetaMask…';
@@ -128,7 +142,7 @@ export default class WelcomePanel {
             const flow = this.fundingFlow;
             const action = async () => {
                 const deposit = getWalletMethod() === 'address' ? this.fundingDepositIntent.ethAmount
-                    : zkapiClient.isNativeEthFunding ? (await zkapiClient.quoteDepositUsd(amount)).ethAmount : amount;
+                    : selectedDeposit;
                 const result = getWalletMethod() === 'address'
                     ? await zkapiClient.deposit(deposit, report,
                         { preparedOperationId: this.fundingDepositIntent.preparedOperationId })
@@ -138,6 +152,7 @@ export default class WelcomePanel {
                 this.syncConfirmedDepositBalance();
                 if (this.depositBalanceRefreshPending) this.app.accountModal.recordDepositConfirmation?.(result);
                 if (flow) await flow.complete();
+                stopFundingFlow(this);
                 this.fundingUsdAmount = null;
                 this.fundingInputAmount = null;
                 this.fundingInputCurrency = null;
@@ -187,10 +202,11 @@ export default class WelcomePanel {
                     <p class="text-sm font-medium text-foreground">Private access, funded with your wallet</p>
                     <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">OA Chat uses a private prepaid balance for access. Deposit once, then chat normally. Each chat reuses one bounded ephemeral key for its title, response, and follow-ups.</p>
                 </div>
+                ${renderDepositAmount(this)}
                 ${renderWalletMethod(this, { scope: 'welcome' })}
                 ${renderFundingAccount(this)}
                 ${getWalletMethod() === 'address' ? '' : `<div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, nativeEth: zkapiClient.isNativeEthFunding, open: fundingSetup?.open, scope: 'welcome' })}</div>`}
-                ${pendingDeposit ? `<p class="mt-4 text-sm text-foreground">Saved deposit: ${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="mt-1 text-xs text-muted-foreground">Your original amount and progress are saved. Continue to check or resume this deposit.</p>` : getWalletMethod() === 'address' ? '' : `<label class="mt-4 block">
+                ${pendingDeposit ? `<p class="mt-4 text-sm text-foreground">Saved deposit: ${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="mt-1 text-xs text-muted-foreground">Your original amount and progress are saved. Continue to check or resume this deposit.</p>` : getWalletMethod() === 'address' || zkapiClient.isNativeEthFunding ? '' : `<label class="mt-4 block">
                     <span class="text-xs font-medium text-foreground">Starting balance</span>
                     <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
                         <span class="text-sm text-muted-foreground">$</span>

@@ -2,12 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { DepositAmount } from '../../chat/zkapi/services/depositAmount.mjs';
+import { renderFundingPaymentQr } from '../../chat/zkapi/components/FundingPaymentQr.js';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../../chat/zkapi/services/addressFunding.js';
 
 const recipient = '0x2222222222222222222222222222222222222222';
 const escapeHtml = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 const source = fs.readFileSync(new URL('../../chat/zkapi/components/WalletMethodControls.js', import.meta.url), 'utf8')
-    .replace(/^import .*;\n/gm, '').replaceAll('export function ', 'function ');
+    .replace(/^import .*;\n/gm, '').replaceAll('export function ', 'function ').replaceAll('export async function ', 'async function ');
 
 function fixture({ method = 'address', wallet = {}, client = {}, confirm = () => true } = {}) {
     const addressFundingWallet = { exists: true, address: recipient, unlocked: true, hasPendingTransaction: false, ...wallet };
@@ -15,7 +17,7 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         config: { funding: { demo_billing_token_address: '0x4444444444444444444444444444444444444444' } }, ...client };
     const microtasks = [];
     const timers = new Map();
-    const context = { addressFundingWallet, zkapiClient, getWalletMethod: () => method,
+    const context = { DepositAmount, renderFundingPaymentQr, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
         setWalletMethod: async value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
         formatFundingAmount, confirm,
@@ -24,7 +26,9 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         clearTimeout: id => timers.delete(id),
         chatDB: { getSetting() {}, updateSettings() {} },
         navigator: { clipboard: { writeText: async () => {} } }, document: { activeElement: null } };
-    const controls = vm.runInNewContext(`${source}\n({ renderWalletMethod, renderFundingAccount, attachWalletMethodControls, captureWalletView, restoreWalletView, refreshWalletView });`, context);
+    const controls = vm.runInNewContext(`${source}\n({ renderWalletMethod, renderDepositAmount, renderFundingAccount, attachWalletMethodControls, captureWalletView, restoreWalletView, refreshWalletView });`, context);
+    const renderAddress = controls.renderFundingAccount;
+    controls.renderFundingAccount = owner => controls.renderDepositAmount(owner) + renderAddress(owner);
     const fields = new Map();
     const field = (name, value = '') => {
         const element = { value, events: {}, addEventListener(type, listener) { this.events[type] = listener; } };
@@ -197,7 +201,7 @@ test('ETH-origin deposits render an exact editable ETH amount and a USD switch',
 
 test('a saved ETH-origin deposit locks both its exact amount and denomination control', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true,
-        config: { pending_deposit: { phase: 'prepared', funding_quote_available: true } } } });
+        config: { pending_deposit: { phase: 'prepared', amount: 5000000, funding_quote_available: true } } } });
     const flow = quotedFlow();
     flow.intent = { ...flow.intent, usdAmount: null, source: 'eth-input', inputCurrency: 'eth', inputAmount: '0.005' };
     Object.assign(owner, { view: 'fund', isOpen: true, fundingInputAmount: '999', fundingInputCurrency: 'usd', fundingFlow: flow });
@@ -250,19 +254,19 @@ test('a saved ETH deposit from MetaMask shows its fixed principal and current US
     Object.assign(owner, { view: 'fund', isOpen: true, fundingUsdAmount: '999', fundingFlow: flow });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /aria-label="Saved deposit amount"/);
-    assert.match(html, /Saved deposit<\/dt><dd>0\.005 ETH <span>\(≈ \$12\.50\)/);
+    assert.match(html, /data-funding-eth[^>]*value="0\.005" readonly/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
     assert.match(html, /Estimated network fee/);
     assert.doesNotMatch(html, /data-funding-usd|value="999"|value="" readonly/);
     owner.fundingFlow.intent = null;
     const loading = controls.renderFundingAccount(owner);
-    assert.match(loading, /Loading your saved deposit/);
+    assert.match(loading, /data-funding-eth[^>]*value="0\.005" readonly/);
     assert.doesNotMatch(loading, /data-funding-usd/);
 });
 
 test('a quotable saved address deposit omits the legacy resume button that lacks its displayed fee limit', () => {
     const f = fixture({ client: { isNativeEthFunding: true,
-        config: { pending_deposit: { phase: 'prepared', funding_quote_available: true } } } });
+        config: { pending_deposit: { phase: 'prepared', amount: 5000000, funding_quote_available: true } } } });
     const text = fs.readFileSync(new URL('../../chat/zkapi/components/AccountModal.js', import.meta.url), 'utf8')
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
     const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
@@ -308,7 +312,7 @@ test('explicit address retry preparation cannot sign and returns to the quoted f
 
 test('an exact saved retry cannot proceed when its original transaction no longer simulates', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true,
-        config: { pending_deposit: { phase: 'retry_exact', funding_quote_available: true } } } });
+        config: { pending_deposit: { phase: 'retry_exact', amount: 5000000, funding_quote_available: true } } } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
         fee: null, totalWei: null, remainingWei: null, ready: false,
         error: 'The saved deposit could not be simulated. Check payment status before retrying.'
@@ -354,7 +358,7 @@ for (const pending of [
 
 test('a saved signed transaction overrides the SDK unsubmitted flag and keeps its recovery controls', () => {
     const { controls, owner } = fixture({ wallet: { hasPendingTransaction: true }, client: { isNativeEthFunding: true,
-        config: { funding: {}, pending_deposit: { phase: 'prepared', funding_quote_available: true } } } });
+        config: { funding: {}, pending_deposit: { phase: 'prepared', amount: 5000000, funding_quote_available: true } } } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ ready: true }) });
     const html = controls.renderFundingAccount(owner);
     assert.doesNotMatch(html, /data-funding-next|data-funding-usd/);
@@ -363,7 +367,7 @@ test('a saved signed transaction overrides the SDK unsubmitted flag and keeps it
 
 test('Welcome keeps saved deposits on its balance-dialog handoff instead of starting a second quote flow', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true,
-        config: { funding: {}, pending_deposit: { phase: 'prepared', funding_quote_available: true } } } });
+        config: { funding: {}, pending_deposit: { phase: 'prepared', amount: 5000000, funding_quote_available: true } } } });
     Object.assign(owner, { view: undefined, isOpen: true, resumeSavedDeposit() {}, fundingFlow: quotedFlow({ ready: true }) });
     assert.doesNotMatch(controls.renderFundingAccount(owner), /data-funding-next|data-funding-usd/);
 });
@@ -556,7 +560,7 @@ test('hydration and received-funds renders never submit; only an explicit Next c
     let submits = 0;
     f.context.AddressDepositFlow = class {
         constructor() { this.ready = true; }
-        start(value) { starts++; assert.equal(value, '10'); }
+        start(value) { starts++; assert.equal(value, '10.00'); }
     };
     f.owner.submitAddressDeposit = async () => { submits++; };
     const button = f.field('next');
@@ -963,4 +967,39 @@ test('a committed deposit waiting for its balance projection cannot offer anothe
     assert.equal(owner.fundingInputCurrency, 'eth');
     assert.equal(owner.fundingInputAmount, '0.005');
     assert.match(html, /Your funding address/);
+});
+
+test('correcting the shared amount clears its validation outcome and preserved accessibility error state', () => {
+    const f = fixture({ client: { isNativeEthFunding: true } });
+    const field = f.field('amount', '0.005');
+    f.owner.outcome = { field: 'deposit', message: 'Enter a valid amount.' };
+    f.owner.fundingFlow = { invalidate() {}, setAmount() {} };
+    f.controls.attachWalletMethodControls(f.owner);
+    field.events.input({ target: field });
+    assert.equal(f.owner.outcome, null);
+    const attributes = new Map([['aria-invalid', 'true'], ['aria-describedby', 'zkapi-deposit-error']]);
+    const preserved = { focus() {}, setSelectionRange() {}, removeAttribute: name => attributes.delete(name),
+        setAttribute: (name, value) => attributes.set(name, value) };
+    f.owner.overlay.querySelector = selector => selector === '#funding-usd'
+        ? { disabled: false, readOnly: false, getAttribute: () => null, replaceWith() {} } : null;
+    f.controls.restoreWalletView(f.owner, { id: 'funding-usd', preservedInput: preserved });
+    assert.equal(attributes.size, 0);
+});
+
+test('quote expiry repaints stale instructions even during a disclosure or pending wallet action', () => {
+    const f = fixture({ client: { isNativeEthFunding: true } });
+    Object.assign(f.owner, { view: 'fund', isOpen: true });
+    let changed;
+    f.context.AddressDepositFlow = class {
+        constructor(options) { changed = options.changed; }
+        start() {}
+    };
+    let renders = 0;
+    f.owner.render = () => { renders++; };
+    f.controls.attachWalletMethodControls(f.owner);
+    f.flushMicrotasks();
+    f.owner.disclosureAnimating = true;
+    f.owner.fundingBusy = true;
+    changed({ expired: true });
+    assert.equal(renders, 1, 'expiry does not wait for another RPC or animation');
 });

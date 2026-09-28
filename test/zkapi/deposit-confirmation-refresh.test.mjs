@@ -16,7 +16,7 @@ function fixture() {
     const noop = () => {};
     const context = {
         parseTokenAmount, zkapiClient: client, getWalletMethod: () => 'metamask', walletMethodText: value => value,
-        renderWalletMethod: () => '', renderFundingAccount: () => '', attachWalletMethodControls: noop,
+        renderDepositAmount: () => '', prepareDepositAmount: async () => '0.005', renderWalletMethod: () => '', renderFundingAccount: () => '', attachWalletMethodControls: noop,
         captureWalletView: noop, restoreWalletView: noop, captureFundingDisclosureView: noop,
         restoreFundingDisclosureView: noop, capturePrivateBalanceHelpFocus: noop,
         restorePrivateBalanceHelpFocus: noop, captureFundingSetupView: noop,

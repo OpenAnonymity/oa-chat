@@ -23,7 +23,8 @@ function fixture(method, phase) {
         addressFundingWallet: { pending: null },
         getWalletMethod: () => method,
         walletMethodText: value => value,
-        renderWalletMethod: () => '', renderFundingAccount: () => '', fundingSetupGuide: () => '',
+        renderDepositAmount: () => '', prepareDepositAmount: async () => '0.005', renderWalletMethod: () => '', renderFundingAccount: () => '', fundingSetupGuide: () => '',
+        stopFundingFlow() {},
         prepareWalletMethod() { assert.fail('Opening saved progress cannot request wallet access'); }
     };
     const WelcomePanel = vm.runInNewContext(`${source}\nWelcomePanel;`, context);

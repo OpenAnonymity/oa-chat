@@ -177,8 +177,15 @@ Nothing is synchronized with an OA account. Existing version-1 password accounts
 are never overwritten; a one-time password conversion retains their exact key,
 address, nonce and signed journal. New account setup never offers a password.
 
-The user can enter the desired wallet deposit in USD or ETH using the currency
-button beside the amount input. For USD entry, the SDK reads a pinned,
+The balance and welcome dialogs share one deposit amount field above the
+MetaMask / Send to an address choice. Both methods use the same USD/ETH currency
+button and keep the exact ETH principal when switching methods or display
+units. MetaMask's amount control does not create a browser funding account;
+only selecting Send to an address starts that method's address and fee checks.
+An edited draft follows the method switch instead of being replaced by an older
+address-scoped amount. An in-progress SDK deposit always keeps its saved amount.
+
+For USD entry, the SDK reads a pinned,
 fresh finalized Chainlink ETH/USD reference price and computes an exact integer-gwei principal,
 rounding up by at most one gwei. ETH entry is exact, with up to nine decimal
 places to match the native ledger's gwei precision. The host durably saves this intent through
@@ -198,7 +205,7 @@ and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
 The screen emphasizes the exact ETH still to send and its current USD estimate,
-network and funding address, with a USD/ETH deposit input and short waiting/ready status. A clickable question
+network and funding address, with a short waiting/ready status. A clickable question
 mark beside the send amount reveals the breakdown: ETH principal added to the
 private balance, estimated network fee, additional fee buffer and total ETH to
 send, together with the estimate and browser-storage explanations. These details
@@ -210,6 +217,16 @@ quote connects MetaMask, authorizes a signer, or broadcasts a transaction.
 The provider simulates the exact payable deposit with only the sender's balance
 overridden, then estimates its gas. RPCs lacking state-override support fail
 closed instead of substituting a fixed reserve.
+
+Valid address-payment instructions also display a locally generated QR code.
+Its [ERC-681 URI](https://eips.ethereum.org/EIPS/eip-681) binds the public
+funding address, configured chain ID and exact remaining transfer in wei:
+principal plus the fee allowance, less funds already held at that address.
+It is not a QR for only the private-note principal. Editing the amount hides
+the old QR immediately; missing, stale or failed fee estimates and a zero
+remaining transfer do not show a payable code. The SVG and encoder are bundled
+locally, with a fixed white quiet zone in both themes. No QR service, private
+key, recovery material, account identity or inference content is involved.
 
 Expected fee is estimated gas multiplied by current base fee plus priority fee.
 The maximum allowance uses the SDK's padded gas limit and current EIP-1559

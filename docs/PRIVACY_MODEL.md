@@ -569,6 +569,12 @@ are bound into the same prompt-free authorization as the coarse USD spending
 cap; no public funding address, exact wallet balance, account identity or chat
 content is added to the private lease request.
 
+Address-payment QR codes are encoded entirely in the browser using bundled
+code. They contain only the public funding address, chain ID and exact public
+ETH transfer amount, including its fee allowance. No external QR service sees
+the address or amount, and signing keys and private-note data never enter the
+QR. Scanning it gives the sending wallet those public payment instructions.
+
 Configured-chain RPC reads and signed broadcasts use the existing SDK transport
 with account cookies omitted. Public funding addresses, incoming transfers,
 approvals, deposits and withdrawals remain visible to the chain/RPC; the extra

@@ -1,0 +1,245 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import { DepositAmount, ethUnits } from '../../chat/zkapi/services/depositAmount.mjs';
+import { AddressDepositFlow } from '../../chat/zkapi/services/addressDepositFlow.mjs';
+import { formatFundingAmount } from '../../chat/zkapi/services/addressFunding.js';
+import { parseTokenAmount } from '@openanonymity/zkapi-browser-sdk/wallet';
+
+const source = name => fs.readFileSync(new URL(`../../chat/zkapi/components/${name}.js`, import.meta.url), 'utf8')
+    .replace(/^import[\s\S]*?;\n/gm, '').replace(/export (async )?function /g, '$1function ')
+    .replace(/export default class /g, 'class ');
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const address = '0x2222222222222222222222222222222222222222';
+const vault = '0x4444444444444444444444444444444444444444';
+
+function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}) {
+    const effects = { quotes: 0, addresses: 0, authorizations: 0, deposits: [], qr: [] };
+    const records = new Map();
+    const client = { isNativeEthFunding: true, suggestedDeposit: 10, note: null,
+        config: { funding: { chain_id: 1, contract_address: vault } },
+        nativePriceQuote: { answer: '300000000000', decimals: 8, updated_at: 1 },
+        networkName: () => 'Ethereum Mainnet', formatMoney: () => '$10.00',
+        async quoteDepositUsd(value) {
+            effects.quotes++;
+            const model = new DepositAmount({ client: this });
+            model.running = true; model.scope = 'quote';
+            if (!await model.setAmount(value, 'usd', { useCachedPrice: true })) throw new Error(model.error);
+            return model.intent;
+        },
+        async deposit(amount) { effects.deposits.push(amount); return { status: 'confirmed' }; }
+    };
+    const wallet = { address: null, unlocked: true, exists: false, hasPendingTransaction: false,
+        async ensureAddress() { effects.addresses++; this.address = address; return address; },
+        async getStatus() { return { ethBalance: '0' }; },
+        async getDepositFeeQuote(intent) { return {
+            amount: intent.amount, depositWei: intent.depositWei, chainId: 1, contractAddress: vault, address,
+            expectedFeeWei: '100', feeBufferWei: '50', feeReserveWei: '150',
+            operationId: 'operation', depositCommitment: 'commitment', quotedAt: Date.now(), expiresAt: Date.now() + 60_000
+        }; },
+        request() { assert.fail('amount entry cannot request a wallet'); }
+    };
+    const fields = new Map();
+    const element = () => ({ events: {}, addEventListener(type, handler) { this.events[type] = handler; } });
+    for (const name of ['amount', 'currency']) fields.set(`[data-funding-${name}]`, element());
+    const methods = ['metamask', 'address'].map(value => Object.assign(element(), { dataset: { walletMethod: value } }));
+    const context = { formatFundingAmount, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
+        addressFundingWallet: wallet, getWalletMethod: () => method, setWalletMethod: async value => { method = value; },
+        canQuotePendingAddressDeposit: () => Boolean(client.config.pending_deposit?.funding_quote_available),
+        chatDB: { getSetting: async key => records.get(key) ?? null,
+            updateSettings: async values => { for (const { key, value } of values) records.set(key, value); },
+            compareAndSetSetting: async (key, expected, value) => {
+                if (JSON.stringify(records.get(key) ?? null) !== JSON.stringify(expected)) return false;
+                records.set(key, value); return true;
+            } },
+        renderFundingPaymentQr: options => { effects.qr.push(options); return '<svg data-test-qr></svg>'; },
+        prepareWalletMethod: async () => { effects.authorizations++; }, walletMethodText: value => value,
+        fundingSetupGuide: () => '', pendingDepositMessage: () => '', isIndexerLag: () => false,
+        document: { activeElement: null }, queueMicrotask, setTimeout, clearTimeout
+    };
+    const controls = vm.runInNewContext(`${source('WalletMethodControls')}\n({ renderDepositAmount, renderFundingAccount, renderWalletMethod, attachWalletMethodControls, stopFundingFlow, prepareDepositAmount });`, context);
+    const Account = vm.runInNewContext(`(() => { ${source('AccountModal')}\nreturn AccountModal; })()`, context);
+    const Welcome = vm.runInNewContext(`(() => { ${source('WelcomePanel')}\nreturn WelcomePanel; })()`, context);
+    const owner = { isOpen: true, view: 'fund', step: 'welcome', busy: false, fundingBusy: false,
+        fundingInputAmount: input, fundingInputCurrency: currency, escapeHtml: String, render() {},
+        overlay: { querySelector: key => fields.get(key) ?? null,
+            querySelectorAll: key => key === '[data-wallet-method]' ? methods : [], contains: () => false } };
+    t.after(() => controls.stopFundingFlow(owner));
+    const hydrate = async () => { controls.attachWalletMethodControls(owner); await tick(); };
+    const changeMethod = async value => { await methods.find(button => button.dataset.walletMethod === value).events.click(); await hydrate(); };
+    const edit = value => { const input = fields.get('[data-funding-amount]'); input.value = value; input.events.input({ target: input }); };
+    const toggle = async () => { await fields.get('[data-funding-currency]').events.click(); await tick(); };
+    return { owner, controls, effects, client, wallet, records, hydrate, changeMethod, edit, toggle, Account, Welcome, context };
+}
+
+test('one shared amount precedes method choice in both native deposit dialogs', async t => {
+    const f = fixture(t);
+    await f.hydrate();
+    const welcome = Object.assign(Object.create(f.Welcome.prototype), f.owner);
+    const html = welcome.renderWelcome();
+    assert.equal((html.match(/data-funding-amount\b/g) || []).length, 1);
+    assert.ok(html.indexOf('data-funding-amount') < html.indexOf('data-wallet-method'));
+    assert.doesNotMatch(html, /welcome-deposit-amount/);
+    const accountSource = source('AccountModal');
+    assert.ok(accountSource.indexOf('${renderDepositAmount(this)}') < accountSource.indexOf('${renderWalletMethod(this)}'));
+    const account = Object.assign(Object.create(f.Account.prototype), f.owner, {
+        renderOutcome: () => '', renderWithdrawalStatusLink: () => '', justCanceled: () => false,
+        privateBalanceHelpOpen: {}
+    });
+    f.context.privateBalanceGuide = () => '';
+    assert.doesNotMatch(account.renderBalance(), /zkapi-deposit-amount/);
+    assert.equal(f.effects.addresses, 0, 'MetaMask amount hydration never creates a local address');
+    assert.equal(f.effects.authorizations, 0);
+});
+
+test('USD to ETH and both method switches keep the exact quoted principal through Account submission', async t => {
+    const f = fixture(t);
+    await f.hydrate();
+    assert.equal(f.owner.depositAmountFlow.intent.amount, '3333334');
+    await f.toggle();
+    assert.equal(f.owner.fundingInputAmount, '0.003333334');
+    f.client.nativePriceQuote.answer = '400000000000';
+    await f.changeMethod('address');
+    assert.equal(f.owner.fundingFlow.intent.amount, '3333334');
+    await f.toggle();
+    assert.equal(f.owner.fundingInputCurrency, 'usd');
+    await f.changeMethod('metamask');
+    assert.equal(f.owner.depositAmountFlow.intent.amount, '3333334');
+    assert.equal(f.effects.quotes, 1, 'presentation changes do not request a new price');
+    const account = Object.assign(Object.create(f.Account.prototype), f.owner, {
+        run: action => action(() => {}), recordDepositConfirmation() {}
+    });
+    await account.startDeposit(account.fundingInputAmount);
+    assert.deepEqual(f.effects.deposits, ['0.003333334']);
+    assert.equal(f.effects.quotes, 1);
+});
+
+test('an exact ETH input reaches Welcome MetaMask submission without an address or USD oracle', async t => {
+    const f = fixture(t, { input: '0.000000001', currency: 'eth' });
+    f.client.nativePriceQuote = null;
+    await f.hydrate();
+    const welcome = Object.assign(Object.create(f.Welcome.prototype), f.owner, {
+        syncConfirmedDepositBalance() {}, app: { accountModal: {} }
+    });
+    await welcome.fund();
+    assert.deepEqual(f.effects.deposits, ['0.000000001']);
+    assert.equal(f.effects.authorizations, 1);
+    assert.equal(f.effects.addresses, 0);
+    assert.equal(f.effects.quotes, 0);
+    assert.equal(welcome.step, 'success');
+});
+
+test('invalid native amounts fail before either dialog can authorize a wallet', async t => {
+    const f = fixture(t, { input: '0.0000000001', currency: 'eth' });
+    await f.hydrate();
+    const welcome = Object.assign(Object.create(f.Welcome.prototype), f.owner);
+    await welcome.fund();
+    assert.match(welcome.error, /9 decimal/);
+    const account = Object.assign(Object.create(f.Account.prototype), f.owner, { run() { assert.fail('wallet action'); } });
+    await account.startDeposit('0.0000000001');
+    assert.match(account.outcome.message, /9 decimal/);
+    assert.equal(f.effects.authorizations, 0);
+    assert.equal(f.effects.addresses, 0);
+    assert.deepEqual(f.effects.deposits, []);
+});
+
+test('a dirty draft survives a method switch and replaces an older address-scoped intent', async t => {
+    const f = fixture(t);
+    await f.hydrate();
+    await f.changeMethod('address');
+    const original = f.owner.fundingFlow.intent;
+    await f.changeMethod('metamask');
+    f.edit('23');
+    await f.changeMethod('address');
+    assert.equal(f.owner.fundingInputAmount, '23');
+    assert.equal(f.owner.fundingFlow.intent.usdAmount, '23');
+    assert.notEqual(f.owner.fundingFlow.intent.amount, original.amount);
+    assert.equal([...f.records.values()][0].usdAmount, '23');
+});
+
+test('QR uses the remaining exact wei and disappears immediately on edits, stale quotes and full funding', async t => {
+    const f = fixture(t, { method: 'address', input: '0.005', currency: 'eth' });
+    await f.hydrate();
+    f.owner.fundingFlow.status = { ethBalance: '4000000000000000' };
+    let html = f.controls.renderFundingAccount(f.owner);
+    assert.match(html, /data-test-qr/);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.effects.qr.at(-1))), {
+        address, chainId: 1, amountWei: '1000000000000150', network: 'Ethereum Mainnet'
+    });
+    f.edit('0.006');
+    assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
+    await f.owner.fundingFlow.setAmount('0.006', 'eth');
+    f.owner.fundingFlow.fee.expiresAt = Date.now() - 1;
+    assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
+    f.owner.fundingFlow.fee.expiresAt = Date.now() + 60_000;
+    f.owner.fundingFlow.status = { ethBalance: f.owner.fundingFlow.totalWei };
+    assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
+});
+
+test('closing while USD resolution is pending never proceeds to wallet authorization', async t => {
+    const f = fixture(t);
+    let finish;
+    f.client.quoteDepositUsd = () => new Promise(resolve => { finish = resolve; });
+    await f.hydrate();
+    const promise = f.controls.prepareDepositAmount(f.owner);
+    f.owner.isOpen = false;
+    f.controls.stopFundingFlow(f.owner);
+    finish({ amount: '100', ethAmount: '0.0000001', depositWei: '100000000000', usdAmount: '10' });
+    await assert.rejects(promise, /changed|amount/);
+    assert.equal(f.effects.authorizations, 0);
+    assert.deepEqual(f.effects.deposits, []);
+});
+
+for (const dialog of ['Account', 'Welcome']) {
+    test(`${dialog} locks the visible input and methods before a pending price read`, async t => {
+        const f = fixture(t);
+        let finish;
+        f.client.quoteDepositUsd = () => new Promise(resolve => { finish = resolve; });
+        await f.hydrate();
+        const renders = [];
+        const owner = Object.assign(Object.create(f[dialog].prototype), f.owner, {
+            render() { renders.push(f.controls.renderDepositAmount(this) + f.controls.renderWalletMethod(this)); },
+            run: action => action(() => {}), recordDepositConfirmation() {}, syncConfirmedDepositBalance() {},
+            app: { accountModal: {} }
+        });
+        const submission = dialog === 'Account' ? owner.startDeposit('10') : owner.fund();
+        assert.equal(owner.fundingBusy, true);
+        assert.match(renders[0], /data-funding-amount[^>]*disabled/);
+        assert.match(renders[0], /data-wallet-method="metamask"[^>]*disabled/);
+        assert.equal(f.effects.authorizations, 0);
+        finish({ amount: '3333334', ethAmount: '0.003333334', depositWei: '3333334000000000', usdAmount: '10' });
+        await submission;
+        assert.deepEqual(f.effects.deposits, ['0.003333334']);
+    });
+}
+
+test('an explicit ETH draft switches units before its debounce without losing its principal', async t => {
+    const f = fixture(t);
+    let finish;
+    f.client.quoteDepositUsd = () => new Promise(resolve => { finish = resolve; });
+    await f.hydrate();
+    await f.toggle(); // Unavailable initial USD quote permits direct ETH entry.
+    assert.equal(f.owner.fundingInputCurrency, 'eth');
+    f.edit('0.000000001');
+    await f.toggle();
+    assert.equal(f.owner.fundingInputCurrency, 'usd');
+    assert.equal(f.owner.depositAmountFlow.intent.amount, '1');
+    assert.equal(f.owner.fundingInputAmount, '0.000003');
+    finish({ amount: '3333334', ethAmount: '0.003333334', depositWei: '3333334000000000', usdAmount: '10' });
+    await tick();
+    assert.equal(f.owner.depositAmountFlow.intent.amount, '1', 'late initial quote cannot replace the edit');
+    await f.toggle();
+    assert.equal(f.owner.fundingInputAmount, '0.000000001');
+});
+
+test('a failed initial USD read can retry the same input after the oracle recovers', async t => {
+    const f = fixture(t);
+    const quote = f.client.quoteDepositUsd;
+    f.client.quoteDepositUsd = async () => { throw new Error('Temporary price read failure.'); };
+    await f.hydrate();
+    assert.match(f.owner.depositAmountFlow.error, /Temporary/);
+    f.client.quoteDepositUsd = quote;
+    assert.equal(await f.controls.prepareDepositAmount(f.owner), '0.003333334');
+    assert.equal(f.effects.authorizations, 0);
+});

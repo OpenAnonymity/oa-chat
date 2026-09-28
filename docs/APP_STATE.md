@@ -1,3 +1,25 @@
+## 2026-09-28: Shared deposit amount and payment QR
+
+- Balance and welcome funding screens put one USD/ETH amount control before
+  the payment method choice. Method changes retain the exact integer-gwei
+  principal or current edited draft; switching the display currency never
+  reprices an already resolved principal. MetaMask amount entry does not create
+  a local funding address. Saved SDK deposits remain authoritative.
+- Address instructions render a local QR with the configured chain and exact
+  remaining ETH transfer, including fees and subtracting the current address
+  balance. Hide it with stale payment instructions on edits, quote failures,
+  expiration or a fully funded address. The encoder is bundled; no remote QR
+  service or private data is used. Decoder tests cover both networks.
+- See [wallet methods](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address)
+  for amount persistence, quote boundaries and QR semantics.
+- Regression coverage includes locking both dialogs before asynchronous price
+  resolution, correcting field errors without stale accessibility attributes,
+  retrying an initial price failure, and expiring the QR even while a balance
+  read stalls. Independent review passed 168 targeted checks. Local browser
+  checks confirmed exact amount/method/currency continuity, restored address
+  intent, QR rendering, and no horizontal overflow at 375px. These checks did
+  not connect an external wallet or submit a payment.
+
 ## 2026-09-28: Staging cutover to the fresh Mainnet deployment
 
 - `OA_ZKAPI_DEPLOYMENT=fresh-20260928` selects reviewed public pins for either
