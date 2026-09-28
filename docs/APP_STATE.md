@@ -1,3 +1,23 @@
+## 2026-09-28: Sepolia chat startup blocked by verifier TLS outage
+
+- Around 21:15 UTC, investigation of a reported "Failed to fetch" on private
+  chat startup identified a verifier outage that blocks new keys. Deployment
+  health, manifest, tree snapshot, billing quote and public RPC checks passed.
+  Browser requests to `verifier2.openanonymity.ai` failed, while independent
+  workstation and Sepolia EC2 probes timed out during the TLS handshake.
+  This failure precedes CORS checks; a frontend origin allowlist does not fix it.
+- Fresh Azure diagnostics at 21:18 UTC reported both `oa-verifier` and
+  `skr-sidecar` in `Waiting` with no start time, despite the container group
+  reporting `Running`. A group `DeploymentTimeout` event occurred at 19:53 UTC.
+  See [diagnostic run 36485142008](https://github.com/OpenAnonymity/oa-verifier/actions/runs/36485142008).
+- The SDK verifies each newly issued key before allowing inference. A failed
+  verification retains the prepared-request journal; preserve site storage and
+  use the existing recovery path after service restoration. Do not bypass key
+  verification. Mainnet shares this verifier and may also be affected; a funded
+  Mainnet chat was not tested. Recovery was not confirmed at investigation time.
+- Public deployment and asset-integrity checks alone do not establish live
+  verifier or inference readiness. See [runtime troubleshooting](ZKAPI_PAYMENTS.md#private-chat-startup-troubleshooting).
+
 ## 2026-09-28: Optional funding buffer and address progress
 
 - Send to an address separates the required transaction allowance from an

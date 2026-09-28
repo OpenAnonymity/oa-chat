@@ -169,6 +169,34 @@ blocked: the server has reserved the note's nullifier, and a client cannot safel
 assume that a missing response means no key was issued. No automatic refund or
 force-reset is performed.
 
+### Private chat startup troubleshooting
+
+On 2026-09-28 around 21:15 UTC, investigation of Sepolia's reported "Failed to
+fetch" identified an outage of the required key-verification service at
+`https://verifier2.openanonymity.ai` that blocks private chat startup. Browser
+requests failed; independent workstation and Sepolia EC2 probes timed out during
+TLS negotiation. The user's specific funded request was not reproduced.
+The Sepolia deployment's health, manifest, tree snapshot and billing quote
+were reachable and the public RPC preflight succeeded. The
+failure occurred before HTTP/CORS, so it was not evidence of a Sepolia origin
+allowlist mismatch. Fresh Azure diagnostics at 21:18 UTC showed both the
+`oa-verifier` and `skr-sidecar` containers stuck in `Waiting`, with no start
+time, while the overall group misleadingly reported `Running`. The group also
+had a `DeploymentTimeout` warning from 19:53 UTC. The read-only evidence is in
+[diagnostic run 36485142008](https://github.com/OpenAnonymity/oa-verifier/actions/runs/36485142008).
+No verifier restart or redeployment was performed in this investigation.
+The SDK requests a lease through the same-origin
+`/zkapi-deployment/` route, then posts its verification evidence to the pinned
+verifier's `/submit_key`; inference starts only after a verified response.
+Transport errors from this step can surface as the browser's bare "Failed to
+fetch" message. The prepared-request journal remains saved, so preserve site
+storage and recover the existing request after the service returns rather than
+resetting the wallet or bypassing verification. Mainnet pins the same verifier
+and may also be affected, but no funded Mainnet chat was tested during this
+investigation. Service recovery was not confirmed at that time. Public asset
+and deployment checks must be distinguished from live verifier and inference
+readiness checks.
+
 ## Wallet methods: MetaMask and Send to an address
 
 The web app offers exactly two choices: **MetaMask** first, then **Send to an
