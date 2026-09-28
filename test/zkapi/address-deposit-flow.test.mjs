@@ -731,3 +731,91 @@ test('tampered currency metadata fails closed instead of showing a mismatched ET
         assert.match(f.flow.error, /saved deposit input/);
     }
 });
+
+test('a draft typed while address storage is loading wins over saved restoration', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const saved = structuredClone(f.saved());
+    f.flow.stop();
+    let read;
+    f.store.read = () => new Promise(resolve => { read = resolve; });
+    const loading = f.flow.start('10');
+    await new Promise(resolve => setImmediate(resolve));
+    f.flow.invalidate();
+    f.flow.requestedAmount = { value: '0.000000001', currency: 'eth' };
+    read(saved);
+    await loading;
+    assert.equal(f.flow.intent.amount, '1');
+    assert.equal(f.flow.intent.inputCurrency, 'eth');
+    assert.equal(f.saved().amount, '1');
+});
+
+test('an expired fee hides payment instructions before awaiting a stalled replacement quote', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.setBalance(f.flow.totalWei);
+    await f.flow.check();
+    assert.equal(f.flow.ready, true);
+    f.advance(30_001);
+    let finish;
+    f.wallet.getDepositFeeQuote = () => new Promise(resolve => { finish = resolve; });
+    let invalidations = 0;
+    f.flow.changed = () => {
+        if (f.flow.fee === null) {
+            invalidations++;
+            assert.equal(f.flow.totalWei, null);
+            assert.equal(f.flow.ready, false);
+        }
+    };
+    const checking = f.flow.check();
+    assert.equal(invalidations, 1, 'render invalidation precedes RPC completion');
+    assert.equal(f.flow.remainingWei, null);
+    await assert.rejects(f.flow.verifyReady(), /Wait until/);
+    finish(null);
+    await checking;
+    assert.equal(f.flow.ready, false);
+    assert.equal(f.flow.fee, null);
+});
+
+test('quote expiry invalidates readiness while a balance-only RPC remains unresolved', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.setBalance(f.flow.totalWei);
+    await f.flow.check();
+    const quoteReads = f.feeQuotes();
+    let finish;
+    f.wallet.getStatus = () => new Promise(resolve => { finish = resolve; });
+    const checking = f.flow.check();
+    assert.equal(f.feeQuotes(), quoteReads, 'a fresh cached fee starts only a balance read');
+    let expiryEvents = 0;
+    f.flow.changed = event => { if (event?.expired) expiryEvents++; };
+    f.advance(30_001);
+    t.mock.timers.tick(30_001);
+    assert.equal(expiryEvents, 1);
+    assert.equal(f.flow.fee, null);
+    assert.equal(f.flow.remainingWei, null);
+    assert.equal(f.flow.ready, false);
+    finish({ ethBalance: '999999999999999999' });
+    await checking;
+    assert.equal(f.flow.ready, false, 'a late read cannot restore an expired quote');
+});
+
+test('editing and stopping cancel the quote expiry callback', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = fixture(t);
+    await f.flow.start('10');
+    let expired = 0;
+    f.flow.changed = event => { if (event?.expired) expired++; };
+    f.flow.invalidate();
+    assert.equal(f.flow.quoteExpiryTimer, null);
+    f.advance(30_001);
+    t.mock.timers.tick(30_001);
+    assert.equal(expired, 0);
+    await f.flow.setAmount('0.01', 'eth');
+    f.flow.stop();
+    assert.equal(f.flow.quoteExpiryTimer, null);
+    f.advance(30_001);
+    t.mock.timers.tick(30_001);
+    assert.equal(expired, 0);
+});

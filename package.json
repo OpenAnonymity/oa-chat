@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.27.2",
+    "jsqr": "1.4.0",
     "tailwindcss": "^3.4.17",
     "terser": "^5.31.0"
   },
@@ -36,6 +37,7 @@
   "dependencies": {
     "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#cf56d67e0c1dd4bc3f3c32392478ce242c746446",
     "ethers": "6.17.0",
+    "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0"
   }
 }

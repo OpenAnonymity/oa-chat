@@ -2,6 +2,8 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { chatDB } from '../../db.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { AddressDepositFlow } from '../services/addressDepositFlow.mjs';
+import { DepositAmount } from '../services/depositAmount.mjs';
+import { renderFundingPaymentQr } from './FundingPaymentQr.js';
 import { getWalletMethod, setWalletMethod } from '../services/walletMethod.mjs';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
 
@@ -16,12 +18,26 @@ export function refreshWalletView(owner, { immediate = false } = {}) {
     owner.render();
 }
 
-export function stopFundingFlow(owner) {
+function amountFlow(owner) {
+    return getWalletMethod() === 'address' ? owner.fundingFlow : owner.depositAmountFlow;
+}
+
+export function stopFundingFlow(owner, { preserveAmount = false } = {}) {
+    const selected = amountFlow(owner);
+    if (preserveAmount) {
+        owner.sharedDepositIntent = selected?.intent && !selected.dirty ? selected.intent : null;
+        owner.preferDepositInput = true;
+    } else {
+        owner.sharedDepositIntent = null;
+        owner.preferDepositInput = false;
+        owner.fundingInputAmount = null;
+        owner.fundingInputCurrency = null;
+    }
+    owner.depositAmountFlow?.stop();
+    owner.depositAmountFlow = null;
     clearTimeout(owner.fundingEditTimer);
     owner.fundingFlow?.stop();
     owner.fundingFlow = null;
-    owner.fundingInputAmount = null;
-    owner.fundingInputCurrency = null;
     stopFundingStatus(owner);
     owner.fundingStatus = null;
     owner.fundingHelpOpen = null;
@@ -73,6 +89,57 @@ function canFund(owner) {
         && owner.step !== 'success' && owner.walletMethodReady !== false;
 }
 
+function canSelectAmount(owner) {
+    return zkapiClient.isNativeEthFunding && !zkapiClient.note && !owner.depositBalanceRefreshPending
+        && !['withdraw', 'withdrawals'].includes(owner.view) && !['success', 'redeeming'].includes(owner.step);
+}
+
+function suggestedAmount(owner) {
+    const suggested = zkapiClient.suggestedDeposit ?? 10;
+    return owner.fundingInputAmount ?? owner.depositAmount ?? owner.fundingUsdAmount
+        ?? suggested.toFixed(suggested < 0.01 ? 6 : 2);
+}
+
+function ensureDepositAmount(owner) {
+    if (getWalletMethod() === 'address') return ensureFundingFlow(owner);
+    if (!canSelectAmount(owner) || zkapiClient.config?.pending_deposit || owner.depositAmountFlow) return;
+    const flow = new DepositAmount({ client: zkapiClient, changed: () => {
+        if (owner.depositAmountFlow !== flow || !owner.isOpen) return;
+        if (flow.intent && owner.fundingInputAmount == null && !flow.dirty) syncFundingInput(owner, flow.intent);
+        if (!owner.busy && !owner.fundingBusy) refreshWalletView(owner);
+    } });
+    owner.depositAmountFlow = flow;
+    const starting = flow.start(suggestedAmount(owner), owner.fundingInputCurrency || 'usd', { initialIntent: owner.sharedDepositIntent });
+    flow.startEdit = flow.editGeneration;
+    flow.starting = starting.finally(() => { flow.starting = null; });
+}
+
+// Resolve and validate the selected principal before any wallet authorization.
+// A display-only currency/method switch must never reprice an existing intent.
+export async function prepareDepositAmount(owner) {
+    ensureDepositAmount(owner);
+    const flow = amountFlow(owner);
+    if (!flow) throw new Error('The deposit amount is still loading. Try again shortly.');
+    if (flow.starting && flow.startEdit === flow.editGeneration) {
+        await flow.starting;
+        if (flow.error) throw new Error(flow.error);
+    }
+    if (amountFlow(owner) !== flow || owner.isOpen === false || !flow.running) {
+        throw new Error('The deposit amount changed. Review it before continuing.');
+    }
+    if (!flow.intent || flow.dirty) {
+        clearTimeout(owner.fundingEditTimer);
+        owner.fundingEditTimer = null;
+        if (!await flow.setAmount(suggestedAmount(owner), owner.fundingInputCurrency || 'usd', { check: false })) {
+            throw new Error(flow.error || 'Check the deposit amount before continuing.');
+        }
+    }
+    if (amountFlow(owner) !== flow || owner.isOpen === false || !flow.running || flow.dirty) {
+        throw new Error('The deposit amount changed. Review it before continuing.');
+    }
+    return flow.intent.ethAmount;
+}
+
 function ensureFundingFlow(owner) {
     if (!canFund(owner)) {
         clearTimeout(owner.fundingEditTimer);
@@ -90,15 +157,21 @@ function ensureFundingFlow(owner) {
             write: (scope, value) => chatDB.updateSettings([{ key: `oa-eth-deposit:${scope}`, value }]),
             compareAndSwap: (scope, expected, value) => chatDB.compareAndSetSetting(`oa-eth-deposit:${scope}`, expected, value)
         },
-        changed: () => {
-            if (owner.fundingFlow !== flow || !owner.isOpen) return;
+        changed: event => {
+            if (amountFlow(owner) !== flow || !owner.isOpen) return;
             owner.fundingStatus = flow.status;
             if (flow.intent && owner.fundingInputAmount == null && !flow.dirty) syncFundingInput(owner, flow.intent);
-            if (!owner.busy && !owner.fundingBusy) refreshWalletView(owner);
+            // Expiry is a payment boundary: hide instructions even if a fee
+            // RPC or disclosure animation is still pending. Render preserves
+            // the actual focused amount node and disclosure state.
+            if (event?.expired) owner.render();
+            else if (!owner.busy && !owner.fundingBusy) refreshWalletView(owner);
         }
     });
     owner.fundingFlow = flow;
-    void flow.start(owner.fundingInputAmount ?? owner.fundingUsdAmount ?? '10', owner.fundingInputCurrency || 'usd');
+    void flow.start(suggestedAmount(owner), owner.fundingInputCurrency || 'usd', {
+        initialIntent: owner.sharedDepositIntent, preferInput: owner.preferDepositInput
+    });
 }
 
 export function renderWalletMethod(owner) {
@@ -216,6 +289,32 @@ function renderFundingReceipt(owner) {
         ${hasFee ? '<p class="zkapi-note">Any unused fee buffer remains here, separate from your private balance. This address may also hold ETH from other transfers. You can keep it for future fees or return it below; returning ETH also costs a network fee.</p>' : ''}`;
 }
 
+export function renderDepositAmount(owner) {
+    if (!canSelectAmount(owner)) return '';
+    const pending = zkapiClient.config?.pending_deposit;
+    if (pending && (owner.resumeSavedDeposit || !['prepared', 'retry_exact'].includes(pending.phase)
+        || (getWalletMethod() === 'address' && !canQuotePendingAddressDeposit())
+        || !/^[1-9]\d*$/.test(String(pending.amount)))) return '';
+    const flow = amountFlow(owner);
+    const saved = Boolean(pending);
+    let intent = flow?.intent;
+    if (saved && String(intent?.amount) !== String(pending.amount)) {
+        const units = BigInt(pending.amount);
+        const fraction = String(units % 1_000_000_000n).padStart(9, '0').replace(/0+$/, '');
+        intent = { inputCurrency: 'eth', inputAmount: `${units / 1_000_000_000n}${fraction ? `.${fraction}` : ''}` };
+    }
+    const currency = saved ? intentCurrency(intent) : owner.fundingInputCurrency || intentCurrency(intent);
+    const amount = saved ? intentInputAmount(intent) : owner.fundingInputAmount ?? intentInputAmount(intent) ?? suggestedAmount(owner);
+    const disabled = owner.busy || owner.fundingBusy || owner.walletMethodReady === false;
+    const label = currency.toUpperCase();
+    return `<section class="zkapi-deposit-amount" aria-label="${saved ? 'Saved deposit amount' : 'Deposit amount'}">
+        <div class="zkapi-funding-field"><label for="funding-${currency}">${saved ? 'Saved deposit amount' : 'Amount to add to your wallet'}</label>
+        <div class="zkapi-funding-amount-input">${currency === 'usd' ? '<span aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${currency} id="funding-${currency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${label}" ${owner.outcome?.field === 'deposit' ? 'aria-invalid="true" aria-describedby="zkapi-deposit-error"' : ''} value="${owner.escapeHtml(amount)}" ${saved ? 'readonly' : ''} ${disabled ? 'disabled' : ''} />
+        <button data-funding-currency id="funding-currency" class="zkapi-funding-currency" type="button" aria-label="Switch amount to ${currency === 'usd' ? 'ETH' : 'USD'}" ${disabled || saved || addressFundingWallet.hasPendingTransaction ? 'disabled' : ''}>${label}<span aria-hidden="true">⇄</span></button></div></div>
+        ${!saved && getWalletMethod() !== 'address' && flow?.error ? `<p class="zkapi-funding-error" role="alert">${owner.escapeHtml(flow.error)}</p>` : ''}
+    </section>`;
+}
+
 export function renderFundingAccount(owner) {
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
@@ -249,16 +348,8 @@ export function renderFundingAccount(owner) {
         : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(formatFundingAmount(remaining, 18))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
     const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
     const address = `<div class="zkapi-funding-address"><input data-funding-address readonly aria-label="Funding address" value="${escape(wallet.address)}" /><button data-funding-copy class="zkapi-secondary-button" type="button">Copy</button></div>`;
-    const inputCurrency = savedFunding ? intentCurrency(intent) : owner.fundingInputCurrency || intentCurrency(intent);
-    const currencyLabel = inputCurrency.toUpperCase();
-    const inputAmount = savedFunding ? intentInputAmount(intent) : owner.fundingInputAmount ?? intentInputAmount(intent) ?? owner.fundingUsdAmount ?? '10';
-    const amountControl = savedFunding && !intent
-        ? '<p class="zkapi-helper" role="status">Loading your saved deposit…</p>'
-        : savedFunding && intent.usdAmount === null && intent.source !== 'eth-input'
-            ? `<dl class="zkapi-funding-breakdown" aria-label="Saved deposit amount"><div><dt>Saved deposit</dt><dd>${renderFundingWei(owner, intent.depositWei)}</dd></div></dl>`
-            : `<div class="zkapi-funding-field"><label for="funding-${inputCurrency}">Amount to add to your wallet</label><div class="zkapi-funding-amount-input">${inputCurrency === 'usd' ? '<span aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${inputCurrency} id="funding-${inputCurrency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${currencyLabel}" value="${escape(inputAmount)}" ${savedFunding ? 'readonly' : ''} ${disabled} /><button data-funding-currency id="funding-currency" class="zkapi-funding-currency" type="button" aria-label="Switch amount to ${inputCurrency === 'usd' ? 'ETH' : 'USD'}" ${disabled || savedFunding || wallet.hasPendingTransaction || (!flow?.intent && !flow?.requestedAmount) ? 'disabled' : ''}>${currencyLabel}<span aria-hidden="true">⇄</span></button></div></div>`;
     return `<section class="zkapi-funding-account" aria-label="Funding address">
-        ${funding ? `${amountControl}
+        ${funding ? `
         ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. The network fee estimate refreshes before you continue.</p>' : ''}
         ${intent && flow.totalWei && !flow.dirty && freshQuote ? `${fundingHelp(owner, 'quote', sendHeading, `<dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
             <div><dt>Amount added to private balance</dt><dd>${renderFundingWei(owner, intent.depositWei)}</dd></div>
@@ -270,6 +361,8 @@ export function renderFundingAccount(owner) {
         <p class="zkapi-note">This estimate refreshes automatically and is checked again when you click Next. The buffer covers changes in network fees; any unused ETH stays at this address. Your sending wallet charges its own transfer fee separately.</p>
         <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser. No account or Google sign-in is required.</p>`)}
         <p class="zkapi-helper">On <strong>${escape(network)}</strong> to this address:</p>${address}
+        ${remaining != null && BigInt(remaining) > 0n ? renderFundingPaymentQr({ address: wallet.address,
+            chainId: Number(zkapiClient.config?.funding?.chain_id), amountWei: remaining, network }) : ''}
         <p class="zkapi-helper zkapi-funding-status" role="status">${ready ? 'Ready to continue.' : 'Waiting for funds…'}</p>
         <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `${fundingHelp(owner, 'quote', fundingLoading, '<p class="zkapi-note" role="status">The amount and breakdown will appear when the estimate is ready.</p>')}<p class="zkapi-helper">${escape(network)}</p>${address}`}
         ${flow?.error ? `<p class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`
@@ -305,9 +398,8 @@ export function attachWalletMethodControls(owner) {
     };
     const on = (name, action) => input(name)?.addEventListener('click', action);
     root.querySelectorAll('[data-wallet-method]').forEach(button => button.addEventListener('click', () => perform(async () => {
-        stopFundingFlow(owner);
+        stopFundingFlow(owner, { preserveAmount: true });
         await setWalletMethod(button.dataset.walletMethod);
-        owner.fundingUsdAmount = null;
         if (getWalletMethod() === 'address' && addressFundingWallet.address) owner.fundingStatus = await addressFundingWallet.getStatus();
     })));
     for (const [name, property] of [['withdrawal-destination', 'fundingDestination'], ['return-destination', 'fundingReturnDestination'], ['return-amount', 'fundingReturnAmount'], ['return-eth-amount', 'fundingReturnEthAmount']]) {
@@ -315,25 +407,31 @@ export function attachWalletMethodControls(owner) {
     }
     input('amount')?.addEventListener('input', event => {
         if (owner.busy || owner.fundingBusy || zkapiClient.config?.pending_deposit) return;
-        const currency = owner.fundingInputCurrency || intentCurrency(owner.fundingFlow?.intent);
+        if (!amountFlow(owner)) ensureDepositAmount(owner);
+        const currency = owner.fundingInputCurrency || intentCurrency(amountFlow(owner)?.intent);
         const amount = event.target.value;
-        const flow = owner.fundingFlow;
+        const flow = amountFlow(owner);
+        owner.sharedDepositIntent = null;
+        owner.preferDepositInput = true;
         owner.fundingInputCurrency = currency;
         owner.fundingInputAmount = amount;
         if (currency === 'usd') owner.fundingUsdAmount = amount;
+        if (owner.outcome?.field === 'deposit') owner.outcome = null;
         flow?.invalidate();
+        if (flow) flow.requestedAmount = { value: amount, currency };
         if (input('next')) input('next').disabled = true;
         clearTimeout(owner.fundingEditTimer);
         owner.fundingEditTimer = setTimeout(() => {
             owner.fundingEditTimer = null;
-            if (owner.fundingFlow === flow) void flow?.setAmount(amount, currency);
+            if (amountFlow(owner) === flow && !flow?.initializing) void flow?.setAmount(amount, currency);
         }, 450);
         // Hide old payment instructions immediately, while retaining the actual
         // focused input node so typing and composition are not interrupted.
         refreshWalletView(owner, { immediate: true });
     });
     on('currency', async () => {
-        const flow = owner.fundingFlow;
+        if (!amountFlow(owner)) ensureDepositAmount(owner);
+        const flow = amountFlow(owner);
         if (!flow || owner.busy || owner.fundingBusy || zkapiClient.config?.pending_deposit || addressFundingWallet.hasPendingTransaction) return;
         const currency = owner.fundingInputCurrency || intentCurrency(flow.intent);
         const amount = owner.fundingInputAmount ?? intentInputAmount(flow.intent) ?? '10';
@@ -341,15 +439,20 @@ export function attachWalletMethodControls(owner) {
         clearTimeout(owner.fundingEditTimer);
         owner.fundingEditTimer = null;
         await perform(async () => {
+            if (!flow.intent && owner.preferDepositInput && !flow.initializing) {
+                // An explicit draft gets the same exact conversion as a settled
+                // amount, even if it was typed before the first quote finished.
+                if (!await flow.setAmount(amount, currency, { check: false, useCachedPrice: true })) return;
+            }
             if (!flow.intent) {
                 // A failed initial USD quote must not block direct ETH entry.
                 // Waiting until initial restoration finishes prevents a later
                 // startup default from replacing this empty user-selected draft.
-                if (!flow.requestedAmount) return;
+                if (flow.initializing) return;
                 const nextCurrency = currency === 'usd' ? 'eth' : 'usd';
                 flow.invalidate();
                 await flow.setAmount('', nextCurrency, { check: false, useCachedPrice: true });
-                if (owner.fundingFlow === flow && owner.isOpen) {
+                if (amountFlow(owner) === flow && owner.isOpen) {
                     owner.fundingInputCurrency = nextCurrency;
                     owner.fundingInputAmount = '';
                     flow.error = '';
@@ -359,12 +462,14 @@ export function attachWalletMethodControls(owner) {
             // Convert a just-typed draft with the loaded price. Only local
             // persistence precedes the unit change; chain reads run afterward.
             if (flow.dirty && !await flow.setAmount(amount, currency, { check: false, useCachedPrice: true })) return;
-            if (owner.fundingFlow !== flow || !owner.isOpen || flow.dirty) return;
-            if (await flow.setCurrency(currency === 'usd' ? 'eth' : 'usd') && owner.fundingFlow === flow && owner.isOpen) {
+            if (amountFlow(owner) !== flow || !owner.isOpen || flow.dirty) return;
+            if (await flow.setCurrency(currency === 'usd' ? 'eth' : 'usd') && amountFlow(owner) === flow && owner.isOpen) {
                 syncFundingInput(owner, flow.intent);
+                owner.sharedDepositIntent = flow.intent;
+                owner.preferDepositInput = true;
             }
         });
-        if (focusToggle && owner.isOpen && owner.fundingFlow === flow) input('currency')?.focus?.({ preventScroll: true });
+        if (focusToggle && owner.isOpen && amountFlow(owner) === flow) input('currency')?.focus?.({ preventScroll: true });
     });
     on('next', () => owner.submitAddressDeposit?.());
     on('migrate', () => {
@@ -400,7 +505,7 @@ export function attachWalletMethodControls(owner) {
     on('return-token', () => transfer('token'));
     on('return-eth', () => transfer('eth'));
     // Defer hydration until the current render has attached every control.
-    queueMicrotask(() => { if (owner.isOpen) ensureFundingFlow(owner); });
+    queueMicrotask(() => { if (owner.isOpen) ensureDepositAmount(owner); });
 }
 
 export function captureWalletView(owner) {
@@ -428,6 +533,11 @@ export function restoreWalletView(owner, saved) {
         if (input && saved.preservedInput) {
             saved.preservedInput.disabled = input.disabled;
             saved.preservedInput.readOnly = input.readOnly;
+            for (const name of ['aria-invalid', 'aria-describedby']) {
+                const value = input.getAttribute?.(name);
+                if (value != null) saved.preservedInput.setAttribute?.(name, value);
+                else saved.preservedInput.removeAttribute?.(name);
+            }
             if (input.readOnly) saved.preservedInput.value = input.value;
             input.replaceWith(saved.preservedInput);
             input = saved.preservedInput;

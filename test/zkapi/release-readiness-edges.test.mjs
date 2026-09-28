@@ -63,7 +63,7 @@ test('native USD validation precedes quoting and keeps the confirmed display-pen
     const deposited = [];
     t.mock.method(zkapiClient, 'quoteDepositUsd', async amount => {
         quoted.push(amount);
-        return { ethAmount: '0.003333334' };
+        return { amount: '3333334', ethAmount: '0.003333334', depositWei: '3333334000000000', usdAmount: '10' };
     });
     t.mock.method(zkapiClient, 'deposit', async amount => {
         deposited.push(amount);
