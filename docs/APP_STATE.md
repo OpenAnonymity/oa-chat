@@ -1,3 +1,14 @@
+## 2026-09-28: Safe username switching and stale login windows
+
+- Username sign-in now authenticates the requested account instead of rejecting it against the locally remembered username. Landing handoffs retain the old account until the native prompt succeeds and suppress that account's Google/legacy auto-unlock surface.
+- Canceling the native prompt preserves the original session, keys, tickets and settings. Successful login publishes the new binding and non-extractable keys atomically, then activates the account's own ticket/preferences snapshot without adopting the old wallet.
+- Shared-cookie exchanges hold the same origin-wide lock as encrypted sync. A persisted pending-login marker prevents old-account sync and key restoration after an uncertain response; a later successful authentication clears it. Other windows lock memory only and can restore the new saved account on reload. See [username switching](USERNAME_PASSKEYS.md#switching-accounts-across-windows-2026-09-28).
+
+## 2026-09-28: Verification outage notice placement
+
+- The unavailable-verification timeline icon now places a small orange dot inside a neutral shield. Successful verification retains its checkmark; pending, interrupted, and rejected states do not acquire the outage dot. Typed verification events use the shield with custom verifier hosts as well as the default host.
+- Removed the duplicate outage banner from single-model and Council key cards. The Activity Timeline heading is now "Verification not available"; its expanded explanation still identifies the key as unverified. Security Details retains verification status. Issuance, retry and rejection behavior are unchanged. This supersedes the key-card warning presentation described in the September 27 outage notes below.
+
 ## 2026-09-28: Tinfoil DeepSeek V4.1 Flash catalog update
 
 - Memory and Tab-Tab now offer `deepseek-v4-1-flash` instead of the stale `deepseek-v4-flash`, matching Tinfoil's public catalog. Tinfoil marks V4.1 Flash experimental; live inference quality has not been validated here.

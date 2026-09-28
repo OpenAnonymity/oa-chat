@@ -125,7 +125,7 @@ test('new SSO keyring setup adopts the existing device wallet', async () => {
         await accountService.initializeSync(true);
         assert.deepEqual(activation, {
             accountId: '4444444444444444',
-            options: { adoptUnscoped: true }
+            options: { adoptUnscoped: true, checkBinding: true }
         });
         assert.deepEqual(credentialOptions, {
             identityBacked: true

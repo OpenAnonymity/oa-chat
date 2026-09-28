@@ -141,6 +141,8 @@ test('an invalidated pull cannot apply parsed blobs or publish sync metadata', a
 });
 
 test('an invalidated sync does not overwrite replacement-account UI state', async () => {
+    const originalGetSetting = chatDB.getSetting;
+    chatDB.getSetting = async key => key === 'account-settings' ? { accountId: 'account-a' } : null;
     const originalBuild = syncService._buildIdMapping;
     const originalScopeCheck = syncService.isAccountScopeActive;
     const originalNotify = syncService.notify;
@@ -186,6 +188,7 @@ test('an invalidated sync does not overwrite replacement-account UI state', asyn
         assert.deepEqual(events, []);
         assert.equal(syncService.syncInProgress, false);
     } finally {
+        chatDB.getSetting = originalGetSetting;
         syncService._buildIdMapping = originalBuild;
         syncService.isAccountScopeActive = originalScopeCheck;
         syncService.notify = originalNotify;

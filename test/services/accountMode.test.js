@@ -184,6 +184,8 @@ test('username normalization is canonical and rejects identifying email syntax',
 });
 
 test('username login returns the exact opaque challenge transaction ID', async () => {
+    const originalSaveSetting = chatDB.saveSetting;
+    chatDB.saveSetting = async () => {};
     const originalState = { ...accountService.state };
     const originalFetch = sessionService.fetch;
     const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
@@ -257,6 +259,7 @@ test('username login returns the exact opaque challenge transaction ID', async (
         assert.equal(requests[0].body.username, 'winter-owl');
         assert.equal(requests[1].body.challengeId, challengeId);
     } finally {
+        chatDB.saveSetting = originalSaveSetting;
         sessionService.fetch = originalFetch;
         Object.assign(accountService.state, originalState);
         if (originalNavigator) {

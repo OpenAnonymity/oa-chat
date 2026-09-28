@@ -53,7 +53,6 @@ class AccountModal {
         this.identifierMode = null;
         this.usernameContinuePending = false;
         this.usernameHandoffPending = false;
-        this.usernameAccountCleanupPending = false;
         this.usernameUnlockReady = false;
         this.usernamePasskeyBusy = false;
         this.passkeyAutoPromptAttempted = false;
@@ -443,7 +442,7 @@ class AccountModal {
     /** One automatic ceremony per open; cancellations leave an explicit retry. */
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
-        if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending || this.usernameAccountCleanupPending) return;
+        if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending || this.usernameLoginIntent) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         if (state.oauthRecoveryRequired || state.oauthLegacyPasskeyRequired) return;
         const setup = state.oauthSetupRequired === true;
@@ -476,19 +475,19 @@ class AccountModal {
         }, this.remainingPasskeyIntroMs()));
     }
 
-    async openForUsername(username, returnFocusEl = null, { autoContinue = false, beforeContinue = null, onBlocked = null } = {}) {
+    async openForUsername(username, returnFocusEl = null, { autoContinue = false, onBlocked = null } = {}) {
         const blocked = () => {
             if (!onBlocked) return;
             onBlocked();
             this.app?.showToast?.('Finish the current sign-in, then reload to switch accounts.', 'info');
         };
-        if (!this.overlay || this.usernameAccountCleanupPending || this.usernameHandoffPending ||
+        if (!this.overlay || this.usernameHandoffPending ||
             this.usernameContinuePending || this.usernamePasskeyBusy || this.oauthHandoffPending) return blocked();
-        if (beforeContinue && (this.authenticationExitPending || this.accountState?.busy ||
-            (this.recoveryStep !== 'idle' && this.recoveryStep !== undefined))) return blocked();
+        if (this.authenticationExitPending || this.accountState?.busy ||
+            (this.recoveryStep !== 'idle' && this.recoveryStep !== undefined)) return blocked();
         // A bootstrap subscription may already have opened the idle form.
         // Reuse that surface for an explicit account switch, never an active ceremony.
-        if (this.isOpen && (!beforeContinue || this.creationStep !== 'idle')) return blocked();
+        if (this.isOpen && this.creationStep !== 'idle') return blocked();
         if (this.isOpen) {
             // An explanatory timer has not started a ceremony yet. Retire it
             // before reusing the surface so it cannot prompt for the old owner.
@@ -497,38 +496,18 @@ class AccountModal {
             this.oauthIntroPending = false;
         }
         this.dismissOverlaySidebar();
+        this.usernameLoginIntent = true;
         this.identifierMode = 'username';
         this.usernameInputValue = String(username || '')
             .normalize('NFKC')
             .trim()
             .toLowerCase();
-        if (beforeContinue) {
-            this.usernameAccountCleanupPending = true;
-            this.usernameHandoffPending = true;
-            this.usernameUnlockReady = false;
-            if (!this.isOpen) this.open(returnFocusEl);
-            else this.render();
-            const viewVersion = this.loginViewVersion;
-            try {
-                await beforeContinue();
-            } catch {
-                this.usernameHandoffPending = false;
-                this.accountService.setError('Could not finish switching accounts. Please try again.');
-                if (this.isOpen) this.render();
-                return;
-            } finally {
-                this.usernameAccountCleanupPending = false;
-            }
-            if (!this.isOpen || viewVersion !== this.loginViewVersion) return;
-        }
         const state = this.accountState || {};
-        // Only a submitted landing username skips the form. Preserve saved
-        // legacy/Google recovery and unlock surfaces, and unsupported browsers.
+        // An explicit username owns this ceremony; remembered Google/legacy
+        // unlock flags belong to the old account, not the requested username.
         this.usernameHandoffPending = autoContinue && Boolean(this.usernameInputValue) &&
             this.getIdentifierMode() === 'username' && !state.busy &&
-            state.passkeySupported !== false &&
-            !state.oauthRecoveryRequired && !state.oauthKeyringRequired &&
-            !state.oauthSetupRequired && !state.oauthLegacyPasskeyRequired;
+            state.passkeySupported !== false;
         if (!this.isOpen) this.open(returnFocusEl);
         else this.render();
         if (!this.usernameHandoffPending) {
@@ -610,7 +589,7 @@ class AccountModal {
 
     handleCloseAttempt() {
         // Log out owns the page until the account is cleared.
-        if (this.loggingOut || this.usernameAccountCleanupPending) return;
+        if (this.loggingOut) return;
         if (this.mustStaySignedIn()) {
             // Cancelling a half-done sign-up is still allowed; it returns to
             // the form rather than to the page behind.
@@ -641,6 +620,7 @@ class AccountModal {
     close({ afterAuthentication = false } = {}) {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
+        this.usernameLoginIntent = false;
         this.loginViewVersion += 1;
         this.usernameHandoffPending = false;
         this.usernameUnlockReady = false;
@@ -748,6 +728,7 @@ class AccountModal {
     }
 
     async handleOAuthAuthentication(provider, { completionToken = null } = {}) {
+        this.usernameLoginIntent = false;
         this.oauthProvider = provider;
         this.passkeyAutoPromptAttempted = false;
         this.creationStep = 'oauth_authorizing';
@@ -1007,6 +988,7 @@ class AccountModal {
     // =========================================================================
 
     getIdentifierMode() {
+        if (this.usernameLoginIntent) return 'username';
         const state = this.accountState || {};
         // Preserve a remembered legacy account's unlock/recovery path for
         // callers that have not already cleared a mismatched account binding.
@@ -1817,18 +1799,18 @@ class AccountModal {
             return this.renderRecoveryCompleteUI();
         }
 
-        if (
+        if (!this.usernameLoginIntent && (
             state.oauthRecoveryRequired ||
             state.oauthKeyringRequired ||
             state.oauthSetupRequired ||
             state.oauthLegacyPasskeyRequired
-        ) {
+        )) {
             return this.renderOAuthUnlockUI();
         }
 
         // Logged in state - don't show errors here since login was successful
         if (
-            accountId &&
+            !this.usernameLoginIntent && accountId &&
             state.sessionVerified &&
             (
                 state.status === 'unlocked' ||

@@ -156,22 +156,15 @@ export async function routeAuthenticationIntent({
     }
 
     if (intent === USERNAME_AUTH_INTENT && accountModal?.openForUsername) {
-        // Own the waiting surface before clearing the old account: its
-        // subscriber otherwise opens a second sign-in form and drops the handoff.
-        let cleanup;
+        // Keep the saved account until the submitted username authenticates.
+        // The modal owns the handoff even if an idle restoration form is open.
         let blocked = false;
         accountModal.openForUsername(username, null, {
             autoContinue: true,
-            ...(clearPreviousAccount ? { onBlocked: () => { blocked = true; }, beforeContinue: () => {
-                cleanup = accountService.clearLocalAccount();
-                return cleanup;
-            } } : {})
+            onBlocked: () => { blocked = true; }
         });
         if (blocked) return Object.freeze({ handled: true, action: 'blocked' });
         clearAuthenticationIntent(locationImpl, historyImpl);
-        // Keep account-scoped startup behind cleanup, but never behind the
-        // native passkey prompt. The modal presents cleanup failures.
-        if (cleanup) await cleanup;
         return Object.freeze({
             handled: true,
             action: clearPreviousAccount || account?.sessionVerified !== true ? 'sign-in' : 'unlock'

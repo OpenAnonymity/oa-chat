@@ -990,15 +990,12 @@ test('a cancelled automatic username prompt restores focus to Try again', async 
     }
 });
 
-test('landing auto-continue preserves missing-name, unsupported, busy, legacy and Google surfaces', async () => {
+test('landing auto-continue preserves missing-name and unsupported surfaces', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = { activeElement: null };
     try {
         for (const state of [
-            { passkeySupported: false }, { busy: true },
-            { accountId: '1234567890123456', encryptionMode: 'LEGACY_PASSKEY' },
-            { oauthRecoveryRequired: true }, { oauthKeyringRequired: true },
-            { oauthSetupRequired: true }, { oauthLegacyPasskeyRequired: true }, {}
+            { passkeySupported: false }, {}
         ]) {
             const { modal, calls, frames } = landingContinuationModal();
             Object.assign(modal.accountState, state);

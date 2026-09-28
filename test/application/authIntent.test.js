@@ -195,7 +195,8 @@ test('signed-out username intent starts the passkey handoff without blocking Cha
     assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
     assert.equal(harness.opens, 0);
     assert.deepEqual(harness.usernameOpens, ['winter-owl']);
-    assert.deepEqual(harness.usernameOptions, [{ autoContinue: true }]);
+    assert.equal(harness.usernameOptions[0].autoContinue, true);
+    assert.equal(typeof harness.usernameOptions[0].onBlocked, 'function');
     assert.equal(harness.clears, 0);
     assert.deepEqual(harness.replacements, [[
         { preserved: true },
@@ -221,7 +222,7 @@ test('remembered unlocked username account consumes the handoff without opening 
     assert.deepEqual(harness.replacements, [[{ preserved: true }, '', '/chat/']]);
 });
 
-test('username intent signs out a different remembered username before its handoff', async () => {
+test('username intent preserves a different remembered username until authentication', async () => {
     const harness = createHarness({
         accountId: 'summer-fox-account',
         username: 'summer-fox',
@@ -232,12 +233,12 @@ test('username intent signs out a different remembered username before its hando
     harness.releaseBootstrap();
 
     assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
-    assert.equal(harness.clears, 1);
+    assert.equal(harness.clears, 0);
     assert.equal(harness.opens, 0);
     assert.deepEqual(harness.usernameOpens, ['winter-owl']);
 });
 
-test('username intent signs out a remembered Google account before its handoff', async () => {
+test('username intent preserves a remembered Google account until authentication', async () => {
     const harness = createHarness({
         accountId: 'google-account',
         googleLinked: true,
@@ -248,7 +249,7 @@ test('username intent signs out a remembered Google account before its handoff',
     harness.releaseBootstrap();
 
     assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
-    assert.equal(harness.clears, 1);
+    assert.equal(harness.clears, 0);
     assert.deepEqual(harness.usernameOpens, ['winter-owl']);
 });
 

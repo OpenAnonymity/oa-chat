@@ -10150,23 +10150,3 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
 
 /* Account recovery and passkey errors must remain legible in dark themes. */
 .dark #account-modal .text-destructive { color: #fca5a5; }
-/* Keep outage access visibly distinct from verified access in either key panel. */
-.verifier-availability-warning {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    margin-top: 0.5rem;
-    border: 1px solid #fb923c;
-    border-radius: 0.375rem;
-    font-size: 11px;
-    line-height: 1.5;
-}
-.verifier-availability-dot {
-    width: 8px;
-    height: 8px;
-    margin-top: 4px;
-    flex-shrink: 0;
-    border-radius: 50%;
-    background-color: #f97316;
-}

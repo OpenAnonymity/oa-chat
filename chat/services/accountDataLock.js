@@ -32,3 +32,6 @@ export function withAccountDataLock(handler, options = {}) {
 }
 
 export const ACCOUNT_DATA_LOCK = ACCOUNT_DATA_LOCK_NAME;
+
+// Blocks old credentials while a passkey login may be replacing shared cookies.
+export const ACCOUNT_LOGIN_PENDING_KEY = 'account-login-pending';

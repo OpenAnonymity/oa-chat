@@ -38,11 +38,12 @@ import {
     unlockEncryptionKeyring,
     unlockEncryptionKeyringFromPrf
 } from './encryptionPasskey.js';
-import { withAccountDataLock } from './accountDataLock.js';
+import { withAccountDataLock, ACCOUNT_LOGIN_PENDING_KEY } from './accountDataLock.js';
 
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
 // Cross-tab storage event: one tab logged out; the session is gone for all.
 export const ACCOUNT_SIGNED_OUT_EVENT = 'account-signed-out';
+export const ACCOUNT_LOGIN_EVENT = 'account-login-started';
 const ACCOUNT_KEY_BUNDLE = 'account-key-bundle-v1';
 const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
 const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Legacy; removed after migration
@@ -875,7 +876,7 @@ class AccountService {
     async persistMasterKey(
         masterKeyBytes,
         accountId = this.state.accountId,
-        { isCurrent = null } = {}
+        { isCurrent = null, authenticated = false } = {}
     ) {
         if (!chatDB) return;
         const normalizedAccountId = normalizeAccountId(accountId);
@@ -912,7 +913,8 @@ class AccountService {
             cryptoKey,
             syncDerivationKey,
             syncIdKey,
-            isCurrent
+            isCurrent,
+            authenticated
         );
         if (persisted === false || (isCurrent && !isCurrent())) return false;
         this.cryptoKey = cryptoKey;
@@ -926,9 +928,11 @@ class AccountService {
         cryptoKey,
         syncDerivationKey,
         syncIdKey,
-        isCurrent = null
+        isCurrent = null,
+        authenticated = false
     ) {
         return withAccountDataLock(async () => {
+            if (!authenticated && await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)) return false;
             const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
             if (
                 normalizeAccountId(settings?.accountId) !==
@@ -954,7 +958,8 @@ class AccountService {
                     ACCOUNT_MASTER_CRYPTO_KEY,
                     ACCOUNT_MASTER_KEY_BYTES,
                     ACCOUNT_SYNC_DERIVATION_KEY,
-                    ACCOUNT_SYNC_ID_KEY
+                    ACCOUNT_SYNC_ID_KEY,
+                    ACCOUNT_LOGIN_PENDING_KEY
                 ]
             );
             return true;
@@ -968,8 +973,9 @@ class AccountService {
      */
     async loadMasterKey() {
         if (!chatDB) return false;
-        
+        const generation = this.syncInitializationGeneration;
         try {
+            if (await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)) return false;
             const [
                 bundle,
                 cryptoKey,
@@ -984,6 +990,8 @@ class AccountService {
                 chatDB.getSetting(ACCOUNT_MASTER_KEY_BYTES)
             ]);
 
+            if (generation !== this.syncInitializationGeneration ||
+                await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)) return false;
             const expectedAccountId = normalizeAccountId(this.state.accountId);
             if (
                 bundle?.accountId === expectedAccountId &&
@@ -1011,12 +1019,14 @@ class AccountService {
                 syncDerivationKey instanceof CryptoKey &&
                 syncIdKey instanceof CryptoKey
             ) {
-                await this.persistCryptoKeyBundle(
+                const persisted = await this.persistCryptoKeyBundle(
                     expectedAccountId,
                     cryptoKey,
                     syncDerivationKey,
-                    syncIdKey
+                    syncIdKey,
+                    () => generation === this.syncInitializationGeneration
                 );
+                if (persisted === false) return false;
                 this.cryptoKey = cryptoKey;
                 this.syncDerivationKey = syncDerivationKey;
                 this.syncIdKey = syncIdKey;
@@ -1031,8 +1041,10 @@ class AccountService {
             ) {
                 const migrated = new Uint8Array(legacyKeyBytes);
                 try {
-                    await this.persistMasterKey(migrated, expectedAccountId);
-                    return true;
+                    return await this.persistMasterKey(migrated, expectedAccountId, {
+                        authenticated: false,
+                        isCurrent: () => generation === this.syncInitializationGeneration
+                    }) !== false;
                 } finally {
                     migrated.fill(0);
                 }
@@ -1047,11 +1059,12 @@ class AccountService {
      * Clear the persisted master key from IndexedDB.
      * Called during logout to fully clear the session.
      */
-    async clearPersistedMasterKey(accountId = this.state.accountId) {
+    async clearPersistedMasterKey(accountId = this.state.accountId, { isCurrent = null } = {}) {
         if (!chatDB) return;
         
         try {
             await withAccountDataLock(async () => {
+                if (isCurrent && !isCurrent()) return;
                 const expectedAccountId = normalizeAccountId(accountId);
                 const bundle = await chatDB.getSetting(ACCOUNT_KEY_BUNDLE);
                 if (
@@ -1076,9 +1089,11 @@ class AccountService {
         } catch (error) {
             console.warn('Failed to delete master key from IndexedDB:', error);
         }
-        this.cryptoKey = null;
-        this.syncDerivationKey = null;
-        this.syncIdKey = null;
+        if (this.state.accountId === accountId && (!isCurrent || isCurrent())) {
+            this.cryptoKey = null;
+            this.syncDerivationKey = null;
+            this.syncIdKey = null;
+        }
     }
 
     getFormattedAccountId() {
@@ -1163,7 +1178,8 @@ class AccountService {
                     : null;
 
                 // Try to restore session from persisted CryptoKey.
-                const hasKey = await this.loadMasterKey();
+                const loginPending = await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY);
+                const hasKey = !loginPending && await this.loadMasterKey();
                 if (hasKey) {
                     // Expose the cached identity immediately, but keep the
                     // account control non-interactive until verification ends.
@@ -1189,6 +1205,10 @@ class AccountService {
             this.updateStatus();
             this.notify();
 
+            if (await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)) {
+                this.completeAuthBootstrap();
+                return;
+            }
             if (this.state.accountId && this.state.googleLinked) {
                 void this.restoreOAuthLockedSession()
                     .catch(() => false)
@@ -1206,9 +1226,11 @@ class AccountService {
     async verifySessionInBackground() {
         try {
             const expectedAccountId = normalizeAccountId(this.state.accountId);
+            const generation = this.syncInitializationGeneration;
             const sessionVerified = await sessionService.verifySession().catch(() => false);
             if (
                 !sessionVerified ||
+                generation !== this.syncInitializationGeneration ||
                 !expectedAccountId ||
                 normalizeAccountId(this.state.accountId) !== expectedAccountId
             ) return;
@@ -1237,7 +1259,7 @@ class AccountService {
                 this.state.sessionVerified !== true ||
                 normalizeAccountId(this.state.accountId) !== expectedAccountId
             ) return;
-            await this.persistSettings();
+            await this.persistSettings({ onlyIfCurrent: true });
             this.notify();
             // Initialize sync for restored session
             this.initializeSync(false).catch(() => {});
@@ -1376,7 +1398,7 @@ class AccountService {
         return anyLinked;
     }
 
-    async persistSettings() {
+    async persistSettings({ onlyIfCurrent = false } = {}) {
         if (!chatDB) return;
         const payload = {
             accountId: this.state.accountId,
@@ -1390,7 +1412,12 @@ class AccountService {
             oauthEmail: this.state.oauthEmail,
             updatedAt: Date.now()
         };
-        await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
+        await withAccountDataLock(async () => {
+            if (onlyIfCurrent) {
+                await syncService.assertAccountBinding(payload.accountId);
+            }
+            await chatDB.saveSetting(ACCOUNT_SETTINGS_KEY, payload);
+        });
     }
 
     clearErrors() {
@@ -1648,7 +1675,7 @@ class AccountService {
 
         await this.persistSettings();
         // Persist only after account settings bind the bundle to this account.
-        await this.persistMasterKey(masterKey);
+        await this.persistMasterKey(masterKey, this.state.accountId, { authenticated: true });
         this.updateStatus();
         this.notify();
 
@@ -1703,7 +1730,8 @@ class AccountService {
                 // device with an existing wallet adopts that wallet. Returning
                 // accounts adopt only when local continuity proves ownership.
                 adoptUnscoped: enableForNewAccount ||
-                    this.localAccountContinuity
+                    this.localAccountContinuity,
+                checkBinding: true
             });
             assertInitializationCurrent();
             accountScopeActivated = true;
@@ -2154,7 +2182,7 @@ class AccountService {
                 const persisted = await this.persistMasterKey(
                     masterKey,
                     expectedAccountId,
-                    { isCurrent: unlockIsCurrent }
+                    { isCurrent: unlockIsCurrent, authenticated: true }
                 );
                 if (persisted === false) return false;
             } catch (cause) {
@@ -2458,7 +2486,7 @@ class AccountService {
             
             await this.persistSettings();
             // Persist only after account settings bind the bundle to this account.
-            await this.persistMasterKey(masterKey);
+            await this.persistMasterKey(masterKey, this.state.accountId, { authenticated: true });
             this.updateStatus();
             this.notify();
             
@@ -2510,6 +2538,7 @@ class AccountService {
             return false;
         }
 
+        const loginGeneration = this.loginGeneration || 0;
         this.setState({ busy: true, action, error: null, recoveryRequired: false });
         try {
             const credentialMatchesIdentifier = normalizedUsername
@@ -2531,16 +2560,7 @@ class AccountService {
             if (normalizedUsername && !challengeId) {
                 throw new Error('Authentication failed');
             }
-            if (
-                normalizedUsername &&
-                this.state.accountId &&
-                accountId !== this.state.accountId
-            ) {
-                throw new Error(
-                    'This username does not match the OA account saved on this device'
-                );
-            }
-            if (challengeData?.wrappedKeyRecovery) {
+            if (!normalizedUsername && challengeData?.wrappedKeyRecovery) {
                 this.recoveryPayload = normalizeWrappedKeyPayload(challengeData.wrappedKeyRecovery);
             }
 
@@ -2572,6 +2592,13 @@ class AccountService {
                 return false;
             }
             this.state.prfSupported = true;
+
+            if (normalizedUsername) {
+                await this.completeUsernameLogin({ accountId, username: normalizedUsername, challengeId, assertion, prfBytes, loginGeneration });
+                this.clearRateLimit();
+                this.setState({ busy: false, action: null, error: null });
+                return true;
+            }
 
             const loginData = await fetchJson('/auth/login', {
                 accountId,
@@ -2611,7 +2638,7 @@ class AccountService {
             await this.refreshOAuthLinkStatuses();
             await this.persistSettings();
             // Persist only after account settings bind the bundle to this account.
-            await this.persistMasterKey(masterKey);
+            await this.persistMasterKey(masterKey, this.state.accountId, { authenticated: true });
             this.updateStatus();
             this.notify();
             
@@ -2646,6 +2673,84 @@ class AccountService {
                 this.setState({ busy: false, action: null });
             }
             return false;
+        }
+    }
+
+    /** Authenticate before replacing the browser's saved account. Native cancellation
+     * never enters this method. The same lock used by ticket/sync writers keeps
+     * old-account requests out of the shared-cookie transition. */
+    async completeUsernameLogin({ accountId, username, challengeId, assertion, prfBytes, loginGeneration }) {
+        let masterKey;
+        let started = false;
+        const assertCurrent = () => {
+            if ((this.loginGeneration || 0) !== loginGeneration) {
+                throw new Error('Account changed in another window. Please try again.');
+            }
+        };
+        try {
+            await withAccountDataLock(async () => {
+                assertCurrent();
+                started = true;
+                ++this.syncInitializationGeneration;
+                syncService.clearCredentials();
+                this.setState({ sessionVerified: false, accountScopeReady: false, ticketSyncReady: false });
+                // Leave this marker on uncertain failure (including a lost login
+                // response). Reload must not restore X's keys with Y's cookies.
+                await chatDB.saveSetting(ACCOUNT_LOGIN_PENDING_KEY, { accountId });
+                storageEvents.init();
+                storageEvents.broadcast(ACCOUNT_LOGIN_EVENT, { accountId });
+                const loginData = await fetchJson('/auth/login', {
+                    accountId, username, challengeId, credentialId: assertion.id,
+                    assertion: assertionToJSON(assertion)
+                });
+                const wrapped = decodeWrappedKey(loginData?.wrappedKeyPasskey);
+                if (!wrapped?.ciphertext || !wrapped?.iv) throw new Error('Passkey unwrap data missing.');
+                masterKey = await decryptBytes(await importAesKey(prfBytes), wrapped);
+                if (!await sessionService.doesSessionExist()) throw new Error('Sign-in could not be confirmed. Please try again.');
+                const [cryptoKey, derivationKey, idKey] = await Promise.all([
+                    crypto.subtle.importKey('raw', masterKey, 'AES-GCM', false, ['encrypt', 'decrypt']),
+                    crypto.subtle.importKey('raw', masterKey, 'HKDF', false, ['deriveKey']),
+                    crypto.subtle.importKey('raw', masterKey, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+                ]);
+                assertCurrent();
+                // One transaction binds the identity and non-extractable keys.
+                // Old account tickets remain in their scope until activation below.
+                await chatDB.updateSettings([
+                    { key: ACCOUNT_SETTINGS_KEY, value: {
+                        accountId, username, credentialId: assertion.id,
+                        encryptionMode: 'LEGACY_PASSKEY', updatedAt: Date.now()
+                    } },
+                    { key: ACCOUNT_KEY_BUNDLE, value: { accountId, cryptoKey, derivationKey, idKey, version: 1 } }
+                ], [ACCOUNT_LOGIN_PENDING_KEY, ACCOUNT_MASTER_CRYPTO_KEY, ACCOUNT_MASTER_KEY_BYTES,
+                    ACCOUNT_SYNC_DERIVATION_KEY, ACCOUNT_SYNC_ID_KEY]);
+                this.masterKey?.fill(0);
+                this.masterKey = masterKey;
+                this.cryptoKey = cryptoKey;
+                this.syncDerivationKey = derivationKey;
+                this.syncIdKey = idKey;
+                this.localAccountContinuity = false;
+                this.recoveryPayload = null;
+                this.keyringWrappers = [];
+                Object.assign(this.state, {
+                    accountId, username, credentialId: assertion.id, encryptionCredentialId: null,
+                    encryptionMode: 'LEGACY_PASSKEY', sessionVerified: true,
+                    googleLinked: false, oauthProvider: null, oauthEmail: null,
+                    oauthSetupRequired: false, oauthRecoveryRequired: false,
+                    oauthKeyringRequired: false, oauthLegacyPasskeyRequired: false,
+                    recoveryConfirmed: false, recoveryCode: null, recoveryRequired: false
+                });
+            });
+            assertCurrent();
+            if (!await this.initializeSync(false)) {
+                throw new Error('Account changed while signing in. Please try again.');
+            }
+            assertCurrent();
+        } catch (error) {
+            masterKey?.fill(0);
+            if (started) this.lock();
+            throw error;
+        } finally {
+            prfBytes.fill(0);
         }
     }
 
@@ -2743,7 +2848,7 @@ class AccountService {
             await this.refreshOAuthLinkStatuses();
             await this.persistSettings();
             // Persist only after account settings bind the bundle to this account.
-            await this.persistMasterKey(masterKey);
+            await this.persistMasterKey(masterKey, this.state.accountId, { authenticated: true });
             this.updateStatus();
             this.notify();
 
@@ -2775,43 +2880,27 @@ class AccountService {
      * Called by the SuperTokens session event when refresh is expired/revoked.
      */
     async handleTokenInvalidation() {
-        console.warn('[AccountService] Token invalidated - clearing session');
-        this.syncInitializationGeneration += 1;
-
+        const accountId = this.state.accountId;
+        this.lock({ accountChanged: true });
+        // A stale signed-out window has no account data it is entitled to clear.
+        if (!accountId) return;
+        const generation = this.syncInitializationGeneration;
         try {
-            await syncService.clearAll();
+            await syncService.deactivateAccountScope(accountId);
+            await this.clearPersistedMasterKey(accountId, {
+                isCurrent: () => this.syncInitializationGeneration === generation
+            });
         } catch (error) {
-            console.warn('[AccountService] Failed to stop sync after session expiry:', error);
+            console.warn('[AccountService] Failed to clear expired account data:', error);
         }
-        
-        syncService.clearCredentials();
-        await syncService.deactivateAccountScope(this.state.accountId).catch(() => {});
-
-        // Clear in-memory state
-        if (this.masterKey) {
-            this.masterKey.fill(0);
-        }
-        this.masterKey = null;
-        this.cryptoKey = null;
-        this.syncDerivationKey = null;
-        this.syncIdKey = null;
-        this.state.sessionVerified = false;
-        this.state.accountScopeReady = false;
-        this.state.ticketSyncReady = false;
-        
-        // Clear persisted CryptoKey from IndexedDB
-        await this.clearPersistedMasterKey();
-        
-        // Update status to 'locked' and notify UI
-        this.updateStatus();
-        this.notify();
     }
 
     /**
      * Lock the account - clears keys from memory but keeps persisted data.
      * User can re-unlock with passkey without needing to re-login to server.
      */
-    lock() {
+    lock({ accountChanged = false } = {}) {
+        this.loginGeneration = (this.loginGeneration || 0) + 1;
         this.syncInitializationGeneration += 1;
         if (this.masterKey) {
             this.masterKey.fill(0);
@@ -2823,11 +2912,15 @@ class AccountService {
         this.state.sessionVerified = false;
         this.state.accountScopeReady = false;
         this.state.ticketSyncReady = false;
+        if (accountChanged) {
+            this.state.oauthSetupRequired = false;
+            this.state.oauthRecoveryRequired = false;
+        }
         this.state.oauthKeyringRequired =
-            this.state.encryptionMode === 'PRF' &&
+            !accountChanged && this.state.encryptionMode === 'PRF' &&
             this.state.googleLinked;
         this.state.oauthLegacyPasskeyRequired =
-            this.state.encryptionMode === 'LEGACY_PASSKEY' &&
+            !accountChanged && this.state.encryptionMode === 'LEGACY_PASSKEY' &&
             this.state.googleLinked;
         syncService.clearCredentials();
         syncService.stopPeriodicSync();
@@ -2843,6 +2936,7 @@ class AccountService {
      * - Requires full passkey re-authentication to log back in
      */
     async logout() {
+        this.loginGeneration = (this.loginGeneration || 0) + 1;
         this.syncInitializationGeneration += 1;
         // Other tabs share this browser's ticket store but not this object:
         // tell them the session is ending before anything shared is cleared,
@@ -2921,7 +3015,12 @@ class AccountService {
         if (this.signOutElsewhereUnsubscribe) return;
         try {
             storageEvents.init();
-            this.signOutElsewhereUnsubscribe = storageEvents.on(ACCOUNT_SIGNED_OUT_EVENT, payload => {
+            const stopLoginListener = storageEvents.on(ACCOUNT_LOGIN_EVENT, () => {
+                // This is a different window's sign-in, not a request to unlock
+                // our old Google account. Never auto-open its passkey sheet.
+                this.lock({ accountChanged: true });
+            });
+            const stopLogoutListener = storageEvents.on(ACCOUNT_SIGNED_OUT_EVENT, payload => {
                 const accountId = payload?.accountId;
                 if (!accountId || this.state.accountId !== accountId) return;
                 if (!this.state.sessionVerified && this.state.status !== 'unlocked') return;
@@ -2929,6 +3028,7 @@ class AccountService {
                 // an expired session here (locked, keys cleared, UI notified).
                 void this.handleTokenInvalidation();
             });
+            this.signOutElsewhereUnsubscribe = () => { stopLoginListener(); stopLogoutListener(); };
         } catch (error) {
             console.warn('[AccountService] Could not listen for sign-out in other tabs:', error);
         }

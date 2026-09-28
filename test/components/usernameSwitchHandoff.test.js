@@ -50,49 +50,24 @@ function fixture(t, { fail = false } = {}) {
     return { modal, calls, frames, notices, replacements, release, cleanup, routing, state: () => state };
 }
 
-test('Google to username arrival waits through cleanup and continues once without a second form', async t => {
+test('Google to username arrival authenticates once without clearing the old account', async t => {
     const f = fixture(t);
-    const routed = f.routing();
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.deepEqual(f.calls, ['clear']);
-    assert.ok(f.frames.length > 0 && f.frames.every(frame => frame === 'waiting'));
-    await f.modal.openForUsername('duplicate', null, { autoContinue: true, beforeContinue: () => { throw new Error('duplicate cleanup'); } });
-    assert.equal(f.modal.usernameInputValue, 'winter-owl');
-    f.release();
-    await routed;
+    await f.routing();
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(f.calls, ['clear', 'continue:winter-owl']);
-    assert.equal(f.modal.usernameAccountCleanupPending, false);
+    assert.deepEqual(f.calls, ['continue:winter-owl']);
+    assert.equal(f.state().accountId, 'old-google');
+    assert.equal(f.state().sessionVerified, true);
+    assert.equal(f.frames[0], 'waiting');
 });
 
-test('failed previous-account cleanup never starts the new username authentication', async t => {
-    const f = fixture(t, { fail: true });
-    const routed = assert.rejects(f.routing(), /cleanup failed/);
-    await Promise.resolve();
-    f.release();
-    await routed;
-    await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(f.calls, ['clear']);
-    assert.match(f.state().error, /Could not finish switching accounts/);
-    assert.equal(f.modal.usernameHandoffPending, false);
-    assert.equal(f.modal.usernameAccountCleanupPending, false);
-});
-
-test('an idle form opened by restoration is reused and cannot be dismissed during account cleanup', async t => {
+test('an idle restoration form is reused for the submitted username', async t => {
     const f = fixture(t);
     f.modal.isOpen = true;
-    const routed = f.routing();
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.equal(f.modal.usernameAccountCleanupPending, true);
-    f.modal.handleCloseAttempt();
-    assert.equal(f.modal.isOpen, true);
-    assert.ok(f.frames.length > 0 && f.frames.every(frame => frame === 'waiting'));
-    f.release();
-    await routed;
+    await f.routing();
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(f.calls, ['clear', 'continue:winter-owl']);
+    assert.deepEqual(f.calls, ['continue:winter-owl']);
+    assert.equal(f.modal.getIdentifierMode(), 'username');
+    assert.equal(f.frames[0], 'waiting');
 });
 
 for (const active of ['authenticationExitPending', 'busy']) {
@@ -125,5 +100,5 @@ test('reusing an idle restoration dialog retires its scheduled old-account expla
     f.release();
     await routed;
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(f.calls, ['clear', 'continue:winter-owl']);
+    assert.deepEqual(f.calls, ['continue:winter-owl']);
 });

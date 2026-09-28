@@ -16,7 +16,7 @@ import { ORG_API_BASE } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { fetchRetry } from './fetchRetry.js';
 import storageEvents from './storageEvents.js';
-import { withAccountDataLock } from './accountDataLock.js';
+import { withAccountDataLock, ACCOUNT_LOGIN_PENDING_KEY } from './accountDataLock.js';
 import sessionService from './sessionService.js';
 import {
     filterTicketsByTombstones,
@@ -301,7 +301,16 @@ export class SyncService {
         return this.localScopeAccountId;
     }
 
+    async assertAccountBinding(accountId) {
+        const pending = await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY);
+        const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+        if (pending || (accountId && settings?.accountId && settings.accountId !== accountId)) {
+            throw new Error('Account changed in another window. Sign in to continue.');
+        }
+    }
+
     async assertAccountDataAccess() {
+        await this.assertAccountBinding(this.localScopeAccountId);
         const persistedAccountId = (
             await chatDB.getSetting(SYNC_ACCOUNT_SCOPE_KEY)
         ) || null;
@@ -365,9 +374,10 @@ export class SyncService {
      * Older builds had no scope marker. On the first activation after upgrade,
      * existing live values are adopted by the already-authenticated account.
      */
-    async activateAccountScope(accountId, { adoptUnscoped = false } = {}) {
+    async activateAccountScope(accountId, { adoptUnscoped = false, checkBinding = false } = {}) {
         if (!accountId) throw new Error('Cannot activate an empty account scope');
         return this.withSyncLock(async () => {
+            if (checkBinding) await this.assertAccountBinding(accountId);
             const currentAccountId = await chatDB.getSetting(
                 SYNC_ACCOUNT_SCOPE_KEY
             );
@@ -748,6 +758,7 @@ export class SyncService {
 
         try {
             this.assertCredentialsCurrent(credentialGeneration);
+            await this.assertAccountBinding(accountId);
             if (!await this.isAccountScopeActive(accountId)) {
                 throw new Error('Sync account scope changed');
             }

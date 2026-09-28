@@ -13,7 +13,6 @@ import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
 import { COUNCIL_OUTPUT_SYNTHESIS } from '../domain/councilConfig.js';
 import { SLOT_NAMES } from '../extensions/extensionHost.js';
-import { renderVerifierAvailability } from './verifierAvailability.js';
 
 // Layout constant for toolbar overlay prediction
 const RIGHT_PANEL_WIDTH = 288; // 18rem = 288px
@@ -1934,7 +1933,6 @@ class RightPanel {
                         </div>
                     </div>
                     <div class="text-[10px] font-mono break-all ${hasKey ? 'text-foreground' : 'text-muted-foreground'}">${this.escapeHtml(displayMask)}</div>
-                    ${hasKey ? renderVerifierAvailability(access.apiKeyInfo) : ''}
                     ${station ? `
                         <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-border/60">
                             <span class="text-[10px] text-muted-foreground">Issuing Station</span>
@@ -2038,7 +2036,6 @@ class RightPanel {
 
                 <div class="space-y-2 ${embedded ? '' : 'mb-3'}">
 
-                    ${renderVerifierAvailability(this.apiKeyInfo)}
                     ${(this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name) ? `
                         <div class="oa-key-detail-row flex items-center justify-between p-2 bg-background rounded-md border border-border">
                             <span class="text-[10px] text-muted-foreground">Issuing Station</span>

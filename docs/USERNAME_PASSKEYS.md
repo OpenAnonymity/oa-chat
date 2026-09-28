@@ -28,13 +28,15 @@ legacy recovery-code migration and legacy-passkey cards keep a heading. Lookup
 failures restore the editable form. A remembered verified,
 unlocked username account continues directly into Chat only when its normalized
 username matches the submitted username. A different remembered username,
-Google account, or legacy account is logged out and its saved local binding is
-cleared before the submitted username handoff proceeds; there is no separate
-switch confirmation. The route is only a UI handoff; it does not authenticate
-the username or bypass the passkey proof.
+Google account, or legacy account stays saved while the submitted username's
+passkey is requested. Cancellation preserves the old session and wallet. After
+successful passkey authentication and local key unwrap, the new account binding
+and non-extractable keys are saved atomically and its scoped wallet is activated.
+There is no separate switch confirmation. The route is only a UI handoff; it does
+not authenticate the username or bypass the passkey proof.
 
-Missing usernames, unsupported passkeys, or an already-busy account retain the
-normal form. A missing username does not clear any saved account binding.
+Missing usernames and unsupported passkeys retain the normal form. An already
+active ceremony refuses another handoff and retains the requested URL intent. A missing username does not clear any saved account binding.
 The prompt runs independently of the rest of Chat startup; closing during lookup
 invalidates the pending handoff and cannot start a late passkey prompt.
 
@@ -93,8 +95,8 @@ login dialog no longer displays that explanatory copy.
   registration challenge immediately before WebAuthn. A name claimed meanwhile
   produces an actionable setup error, not an automatic login or another passkey.
   The service's older immediate-continuation contract is retained for compatibility.
-  Saved local accounts bypass initialization and use their existing login and
-  account-mismatch checks. The username retry card uses **Back** and has no title;
+  Saved local accounts bypass initialization and authenticate the submitted
+  username rather than rejecting it for differing from the saved account. The username retry card uses **Back** and has no title;
   Google's matching returning card is also untitled and has no logout action.
   Since username authentication has not happened yet, Back returns to the form
   without clearing a saved account. Duplicate submissions are blocked, and closing the
@@ -167,3 +169,20 @@ traffic. Reusing an identifying handle can therefore let the org or an observer
 associate the account with an external identity. Existing random account-number
 accounts remain supported without gaining a chosen public label; the new-account
 UI offers either a pseudonymous username or Google.
+
+## Switching accounts across windows (2026-09-28)
+
+Username login serializes the server session exchange with the origin-wide
+account-data lock. A local pending-login marker blocks old credential sync and
+wallet access while cookies may be changing, including when the login response
+is lost. It clears atomically with the newly authenticated identity/key bundle.
+An uncertain failure leaves both wallets preserved but requires another sign-in;
+reload must not restore the previous keys against an uncertain server session.
+A successful later passkey/keyring unlock can clear that marker.
+
+Other windows receive a credential-free notification and lock their in-memory
+account. They do not clear shared storage, revoke the new session, or adopt its
+wallet using the old keys. Reload restores the new account from the saved bundle.
+Scope activation and encrypted sync also check the saved binding under the data
+lock, so safety does not depend on prompt BroadcastChannel delivery. A superseded
+native ceremony is refused before it can replace the shared session.
