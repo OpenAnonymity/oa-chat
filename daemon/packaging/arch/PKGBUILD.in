@@ -6,8 +6,9 @@ pkgdesc='Local inference API with Open Anonymity ticket and ZKAPI access'
 arch=('x86_64' 'aarch64')
 url='https://github.com/OpenAnonymity/oa-chat'
 license=('MIT')
-depends=('ca-certificates' 'glibc>=2.39' 'gcc-libs' 'openssl')
+depends=('ca-certificates' 'glibc>=2.39' 'gcc-libs' 'openssl>=3')
 optdepends=('systemd: user service management' 'xdg-utils: open the funding browser')
+options=('!strip') # Preserve the reviewed release binaries and their provenance.
 provides=('oa-chat')
 conflicts=('oa-chat')
 source_x86_64=("oa-chat_${pkgver}_linux_amd64.tar.gz::@@BASE_URL@@/oa-chat_${pkgver}_linux_amd64.tar.gz")

@@ -143,7 +143,8 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(list(self.download_temp.iterdir()), [], "Installer left temporary downloads:\n" + output)
 
     def fixture(self, version="1.2.3", operating_system="linux", architecture="amd64",
-                missing=(), extras=(), payload_version=None, runtime_fail=None):
+                missing=(), extras=(), payload_version=None, runtime_fail=None,
+                binary_version=None):
         directory = self.artifacts / version
         directory.mkdir(parents=True, exist_ok=True)
         filename = f"oa-chat_{version}_{operating_system}_{architecture}.tar.gz"
@@ -158,7 +159,7 @@ class InstallerTests(unittest.TestCase):
         }
         for name in PROOF_FILES:
             files["share/oa-chat/proof-setup/" + name] = b"fixture proof asset\n"
-        for executable, argument, output in (("oa-chat", "version", "oa-chat " + version),
+        for executable, argument, output in (("oa-chat", "version", "oa-chat " + (binary_version or version)),
                                              ("oa-zkapi", "--help", "zkAPI fixture help")):
             files[executable] = (
                 '#!/bin/sh\n'
@@ -221,6 +222,9 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(os.access(launcher, os.X_OK))
         for name in PROOF_FILES:
             self.assertTrue((current / "share/oa-chat/proof-setup" / name).is_file())
+        for name in ("VERSION", "LICENSE", "CLI_PACKAGING.md", "oa-chat.service",
+                     "share/oa-chat/build-info.json", "share/oa-chat/third-party/dependencies.json"):
+            self.assertTrue((current / name).is_file(), name)
         output = subprocess.run([str(prefix / "bin/oa-chat"), "version"], env=self.env,
                                 capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(output, "oa-chat " + version)
@@ -275,7 +279,10 @@ class InstallerTests(unittest.TestCase):
         self.fixture()
         self.assert_success(self.run_installer())
         self.fixture(version="1.2.4")
-        self.assert_success(self.run_installer(version="1.2.4"), version="1.2.4")
+        upgrade = self.run_installer(version="1.2.4")
+        self.assert_success(upgrade, version="1.2.4")
+        self.assertIn("Restart any running daemon", upgrade.stdout)
+        self.assertNotIn("For a new configuration", upgrade.stdout)
         self.assert_success(self.run_installer(version="1.2.4"), version="1.2.4")
 
     def test_release_script_pins_default_version(self):
@@ -298,6 +305,18 @@ class InstallerTests(unittest.TestCase):
 
     def test_source_script_requires_explicit_version(self):
         self.assert_rejected(self.run_installer(version=None))
+        self.assertFalse(self.curl_log.exists())
+
+    def test_truncated_piped_installer_does_not_start(self):
+        source = INSTALLER.read_text()
+        # A connection failure while downloading the function must leave its
+        # body unexecuted, even when Bash consumes the script directly on stdin.
+        self.last_result = subprocess.run(
+            ["/bin/bash", "-s", "--", "--version", "1.2.3"],
+            input=source[:source.index("    printf 'Downloading")],
+            env=self.env, capture_output=True, text=True, timeout=30, cwd=self.root)
+        self.assert_rejected(self.last_result)
+        self.assertFalse(self.prefix.exists())
         self.assertFalse(self.curl_log.exists())
 
     def test_failed_downloads_and_checksums_preserve_previous_install(self):
@@ -324,6 +343,9 @@ class InstallerTests(unittest.TestCase):
                 self.fixture(version="1.2.4", runtime_fail=executable)
                 self.assertNotEqual(self.run_installer(version="1.2.4").returncode, 0)
                 self.assertEqual(self.snapshot_install(), expected)
+        self.fixture(version="1.2.4", binary_version="1.2.3")
+        self.assertNotEqual(self.run_installer(version="1.2.4").returncode, 0)
+        self.assertEqual(self.snapshot_install(), expected)
 
     def test_activation_failure_rolls_back_launchers_and_preserves_upgrade(self):
         self.fixture()
@@ -395,8 +417,22 @@ class InstallerTests(unittest.TestCase):
                 self.assertFalse(self.exec_log.exists(), "Unvalidated payload was executed")
                 self.assertFalse((self.root / "escaped").exists())
 
+    def test_duplicate_and_noncanonical_archive_paths_are_rejected(self):
+        for name in ("oa-chat", "share/", "./share/extra", "share//extra", "share/./extra"):
+            with self.subTest(name=name):
+                info = tarfile.TarInfo(name)
+                content = b"ambiguous replacement file\n"
+                if name == "share/":
+                    info.type = tarfile.DIRTYPE
+                    content = None
+                else:
+                    info.size = len(content)
+                self.fixture(extras=[(info, content)])
+                self.assert_rejected(self.run_installer())
+                self.assertFalse(self.exec_log.exists(), "Ambiguous payload was executed")
+
     def test_incomplete_and_wrong_version_payloads_are_rejected(self):
-        for missing in ("oa-chat", "oa-zkapi", "VERSION",
+        for missing in ("oa-chat", "oa-zkapi", "VERSION", "oa-chat.service",
                         *("share/oa-chat/proof-setup/" + name for name in PROOF_FILES)):
             with self.subTest(missing=missing):
                 self.fixture(missing=[missing])
@@ -426,6 +462,20 @@ class InstallerTests(unittest.TestCase):
                 self.assert_rejected(self.run_installer())
                 self.assertFalse(self.curl_log.exists())
                 self.env = original
+
+    def test_nixos_is_rejected_with_package_guidance_before_download(self):
+        # Redirect only the system marker into the fixture, leaving production
+        # detection independent of user-controlled environment variables.
+        marker = self.root / "NIXOS"
+        marker.touch()
+        script = self.root / "nixos-install.sh"
+        script.write_text(INSTALLER.read_text().replace("/etc/NIXOS", str(marker)))
+        result = self.run_installer(script=script)
+        self.assert_rejected(result)
+        self.assertIn("NixOS", result.stderr)
+        self.assertIn("Nix flake package", result.stderr)
+        self.assertFalse(self.curl_log.exists())
+        self.assertFalse(self.prefix.exists())
 
     def test_bad_arguments_fail_before_download(self):
         for options in ({"version": "../../bad"}, {"version": "latest"},

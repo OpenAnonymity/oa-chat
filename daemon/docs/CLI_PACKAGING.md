@@ -103,7 +103,8 @@ PREFIX/lib/oa-chat/releases/RELEASE_DIRECTORY/
 The companion resolves symlinks and finds proving assets relative to its real
 `bin` directory. Keep binaries and `share` together. Launcher links use the
 absolute prefix; reinstall with `--prefix` to change the installation location.
-The shell installer does not install the package's systemd unit, whose
+The shell installer retains the package's systemd unit as release metadata but
+does not register it with systemd. Its
 `ExecStart` uses `/usr/bin/oa-chat`; use foreground `oa-chat serve` or configure
 a user service with the chosen prefix and PATH.
 
@@ -133,6 +134,12 @@ Restart after changing configuration with `brew services restart oa-chat`.
 If a custom configuration is required for a managed service, use the service
 manager's environment configuration; shell exports are not automatically
 inherited by a login service.
+
+The formula includes the matching Rust companion, proof assets, and dependency
+notices. macOS requires Ventura (13) or newer. Linux uses the release's glibc
+2.39 baseline and adds the brewed OpenSSL 3 library directory to the companion's
+runtime search path; `patchelf` is needed only during installation. `brew test`
+checks both executables and all five proof assets.
 
 ## Debian, Ubuntu, Fedora, and other RPM distributions
 
@@ -175,6 +182,63 @@ packaging archive, enter its `aur` directory, inspect `PKGBUILD`, and run
 `makepkg -si`. Manage the installed service with the same systemd user commands.
 The repository does not claim an AUR package already exists.
 
+The binary package declares OpenSSL 3 and glibc 2.39 runtime requirements and
+disables stripping so makepkg retains the reviewed executable payloads.
+The generated `.SRCINFO` is checked against both `PKGBUILD` and native
+`makepkg --printsrcinfo` before a draft release is created.
+
+## Nix / NixOS
+
+Release assembly generates `nix/package.nix` from the same four native archive
+URLs and SHA-256 hashes. It includes a locked flake, overlay, NixOS user-service
+module, and Linux Home Manager user-service module. The standalone
+`oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
+Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
+
+After the **new** release is published, select its exact version:
+
+```sh
+release_version=MAJOR.MINOR.PATCH # Replace with the newly published daemon version.
+oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
+nix profile install "$oa_flake"
+oa-chat init
+oa-chat serve
+```
+
+The published `daemon-v0.1.0` predates this packaging and has no Nix flake asset.
+Do not use the template directory in the source checkout as an installable
+flake; its archive hashes are filled only during release assembly.
+Linux binaries are patched to Nix's ELF interpreter and OpenSSL/libgcc paths.
+The daemon wrapper supplies the bundled companion on PATH and Nix CA
+certificates; the companion stays unwrapped so its symlink-resolved proof path
+remains `../share/oa-chat/proof-setup`. Nix installs public binaries/assets only.
+Configuration, local API/management tokens, tickets, and wallets stay in the
+user's private runtime directory, outside the Nix store.
+
+For a NixOS flake configuration, add the exact release URL as an `oa-chat`
+input, then import its module:
+
+```nix
+imports = [ inputs.oa-chat.nixosModules.default ];
+services.oa-chat = {
+  enable = true;
+  users = [ "alice" ]; # Select existing non-root login users explicitly.
+  startAtLogin = false;
+};
+```
+
+For Home Manager on Linux, import `inputs.oa-chat.homeManagerModules.default`
+and enable `services.oa-chat`; it runs as that Home Manager user. Both modules
+default to manual startup, require separately initialized `config.json`, and
+use `UMask=0077`. After applying NixOS configuration, run
+`oa-chat --config-dir "$HOME/.config/oa-chat" init`, then
+`systemctl --user start oa-chat`. Home Manager uses its configured XDG directory.
+Set `startAtLogin = true` to opt into login startup. A custom `configDir` must
+be an absolute runtime path (NixOS also accepts `%h/`); use the same directory
+with `oa-chat --config-dir PATH init`. Never put credentials or wallet contents
+in declarative Nix configuration. On macOS, the Nix package supports foreground
+`oa-chat serve`; use Homebrew for managed launchd services.
+
 ## ZKAPI companion and proof assets
 
 The daemon uses the existing ZKAPI Rust cryptographic implementation in a
@@ -204,7 +268,8 @@ commands from the repository root:
 
 ```sh
 daemon/scripts/prepare-zkapi.sh /tmp/oa-zkapi-source
-daemon/scripts/build-native.sh 0.1.0 /tmp/oa-chat-release /tmp/oa-zkapi-source
+release_version=MAJOR.MINOR.PATCH # Select a new, unused daemon release version.
+daemon/scripts/build-native.sh "$release_version" /tmp/oa-chat-release /tmp/oa-zkapi-source
 ```
 
 Run the native build on each of Linux/macOS and AMD64/ARM64, collect all four
@@ -212,7 +277,8 @@ archives in one directory, then generate the pinned installer and installable
 manifests:
 
 ```sh
-python3 daemon/scripts/assemble-release.py 0.1.0 /tmp/oa-chat-release
+python3 daemon/scripts/assemble-release.py "$release_version" /tmp/oa-chat-release
+python3 daemon/scripts/test-packages.py --artifacts /tmp/oa-chat-release
 ```
 
 The build requires Go matching `daemon/go.mod`, Rust/Cargo, Python 3,
@@ -236,6 +302,39 @@ installer or Homebrew/AUR manifests. The first release was published as a
 GitHub prerelease at `daemon-v0.1.0`; its exact-tag installer URL is available.
 Only a stable daemon release marked as latest enables the optional
 `latest/download` command.
+
+The workflow can also be dispatched with an explicit version to build and
+validate artifacts without creating a release. Tag-triggered runs create a
+draft only after native piped install/reinstall checks, generated-manifest and
+package-payload checks, native Homebrew checks, a native Arch makepkg build,
+and Nix package/module checks pass. Local native checks are available as:
+
+```sh
+python3 daemon/scripts/test-native-install.py /tmp/oa-chat-release/oa-chat_VERSION_OS_ARCH.tar.gz
+python3 daemon/scripts/test-packages.py --artifacts /tmp/oa-chat-release --homebrew
+python3 daemon/scripts/test-packages.py --artifacts /tmp/oa-chat-release --homebrew-install
+python3 daemon/scripts/test-packages.py --artifacts /tmp/oa-chat-release --makepkg
+python3 daemon/scripts/test-nix.py /tmp/oa-chat-release
+```
+
+Use the archive's native host for executable checks. The Homebrew checks
+refuse an existing `oa-chat` installation and use a temporary local tap and
+private configuration. `--homebrew` checks the actual user-service lifecycle;
+`--homebrew-install` checks Linux installation/linkage and foreground startup
+without requiring a user systemd manager. `--makepkg` requires a non-root Arch
+builder and compares the packaged binaries/assets with the native archive.
+Nix checks use checksum-verified local archives so draft-release URLs are not
+required. These checks never import tickets or fund a wallet.
+
+After reviewing the successful build, publish the GitHub draft so all pinned
+download URLs become available. Copy `homebrew/oa-chat.rb` to `Formula/oa-chat.rb`
+in the intended Homebrew tap, and copy `aur/PKGBUILD` plus `aur/.SRCINFO` to the
+`oa-chat-bin` AUR repository. Publish those repositories separately; release
+CI never pushes them. The standalone Nix flake is installable directly from
+the published GitHub asset; a Nixpkgs submission is a separate optional step.
+Stop running services before upgrades and restart them afterward; keep the
+existing private configuration directory. Do not reuse or replace the
+published `daemon-v0.1.0` tag/assets to distribute newer source changes.
 
 Run `python3 daemon/scripts/test-install.py` for deterministic installer tests
 against local release fixtures. The installer workflow runs these checks on
@@ -263,6 +362,37 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Distribution preparation validation (2026-09-28)
+
+- All 21 installer regressions passed on macOS (Bash 3.2/BSD tools) and
+  Ubuntu 24.04 x86_64 (Bash/GNU tools). All 11 package-generation/handoff
+  regressions and the offline companion-preparation regression passed.
+  Bash syntax, ShellCheck, workflow actionlint, the Go race suite, `go vet`,
+  and diff checks passed. Fresh adversarial review approved the final diff.
+- Fresh pinned companion preparation exposed and fixed the patch-added
+  withdrawal source tracking issue. Current source then built a real macOS
+  ARM64 bundle with both binaries and proof assets. Its validation-only
+  version `0.0.0` passed piped installation/reinstallation with a prefix
+  containing spaces and retained complete metadata without modifying private
+  state. A temporary Homebrew tap passed installation, expanded formula tests,
+  isolated user-service health, shutdown, and cleanup on that current bundle.
+- Real published Linux AMD64 `0.1.0` archives were used to test the new package
+  mechanics separately from current-source builds. Native Arch makepkg passed
+  metadata parity, exact executable/proof/notice preservation, both executable
+  checks, and static systemd unit verification. Linux Homebrew on Ubuntu 24.04
+  passed install, formula tests, library-linkage checks, isolated foreground
+  health, and shutdown. Nix built/executed on x86_64 Linux with ELF interpreter
+  and library patching, checked all four archive URLs/hashes and standalone
+  flake contents, and evaluated real NixOS/Home Manager modules and private
+  state restrictions. Package smoke checks did not create wallet state.
+
+These checks prepare the source and release workflow for publication; they do
+not publish a release, tap, or AUR package. The complete new four-platform CI
+matrix must pass for the selected version before its draft is publishable.
+Native Nix builds on macOS/ARM64 Linux, current-source Linux/Intel bundles,
+actual Linux user-service boot, and funded inference were not rerun here.
+The historical `0.1.0` Linux checks certify packaging mechanics only.
 
 ## Published prerelease validation (2026-09-22)
 

@@ -3,6 +3,12 @@ name: OA daemon release
 on:
   push:
     tags: ['daemon-v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Unpublished MAJOR.MINOR.PATCH version to build and validate (no release is created)'
+        required: true
+        type: string
 permissions:
   contents: read
 jobs:
@@ -22,6 +28,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'
+      OA_RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -45,23 +52,29 @@ jobs:
         run: go test -race ./...
       - name: Test shell installer
         run: python3 daemon/scripts/test-install.py
+      - name: Test package generation and source preparation
+        run: |
+          python3 daemon/scripts/test-packages.py
+          python3 daemon/scripts/test-prepare-zkapi.py
       - name: Build native bundle and Linux packages
         shell: bash
         run: |
-          version=${GITHUB_REF_NAME#daemon-v}
-          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          version=${OA_RELEASE_VERSION:-${GITHUB_REF_NAME#daemon-v}}
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
           daemon/scripts/prepare-zkapi.sh "$RUNNER_TEMP/oa-zkapi-source"
           daemon/scripts/build-native.sh "$version" "$RUNNER_TEMP/artifacts" "$RUNNER_TEMP/oa-zkapi-source"
       - name: Check native archive executables and runtime libraries
         shell: bash
         run: |
-          version=${GITHUB_REF_NAME#daemon-v}
+          version=${OA_RELEASE_VERSION:-${GITHUB_REF_NAME#daemon-v}}
           target=${{ matrix.target }}
           smoke="$RUNNER_TEMP/oa-chat-smoke"
           mkdir -p "$smoke"
           tar -xzf "$RUNNER_TEMP/artifacts/oa-chat_${version}_${target/-/_}.tar.gz" -C "$smoke"
           test "$("$smoke/oa-chat" version)" = "oa-chat $version"
           "$smoke/oa-zkapi" --help >/dev/null
+          python3 daemon/scripts/test-native-install.py "$RUNNER_TEMP/artifacts/oa-chat_${version}_${target/-/_}.tar.gz"
           if [[ "$RUNNER_OS" = macOS ]]; then
             otool -L "$smoke/oa-zkapi"
           else
@@ -75,19 +88,73 @@ jobs:
   assemble:
     needs: native
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+    env:
+      OA_RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release
           merge-multiple: true
-      - name: Generate pinned installer, Homebrew, and AUR manifests
+      - name: Generate pinned installer, Homebrew, AUR, and Nix manifests
         shell: bash
         run: |
-          version=${GITHUB_REF_NAME#daemon-v}
+          version=${OA_RELEASE_VERSION:-${GITHUB_REF_NAME#daemon-v}}
           python3 daemon/scripts/assemble-release.py "$version" release
+          python3 daemon/scripts/test-packages.py --artifacts release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assembled-release
+          path: release/
+          if-no-files-found: error
+          include-hidden-files: true # AUR's .SRCINFO is part of the reviewed handoff.
+  packages:
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: assembled-release
+          path: release
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - name: Build Nix package and evaluate user services
+        run: python3 daemon/scripts/test-nix.py release
+      - name: Install and check Homebrew package and user service
+        if: runner.os == 'macOS'
+        run: python3 daemon/scripts/test-packages.py --artifacts release --homebrew
+      - uses: Homebrew/actions/setup-homebrew@e99025eb970cfa124b8284a35463d87426917478
+        if: matrix.runner == 'ubuntu-24.04'
+      - name: Install and check Linux Homebrew package
+        if: matrix.runner == 'ubuntu-24.04'
+        run: python3 daemon/scripts/test-packages.py --artifacts release --homebrew-install
+      - name: Build Arch package with makepkg
+        if: matrix.runner == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD:/work:ro" archlinux:base-devel bash -euc '
+            pacman -Syu --noconfirm python ruby systemd
+            useradd --create-home builder
+            cp -R /work/release /home/builder/release
+            chown -R builder:builder /home/builder/release
+            runuser -u builder -- python /work/daemon/scripts/test-packages.py --artifacts /home/builder/release --makepkg
+          '
+  draft:
+    needs: packages
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: assembled-release
+          path: release
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}

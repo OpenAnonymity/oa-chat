@@ -6,6 +6,7 @@ class OaChat < Formula
   license "MIT"
 
   on_macos do
+    depends_on macos: :ventura
     on_arm do
       url "@@BASE_URL@@/oa-chat_@@VERSION@@_darwin_arm64.tar.gz"
       sha256 "@@DARWIN_ARM64_SHA256@@"
@@ -18,6 +19,7 @@ class OaChat < Formula
 
   on_linux do
     depends_on "openssl@3"
+    depends_on "patchelf" => :build
     on_arm do
       url "@@BASE_URL@@/oa-chat_@@VERSION@@_linux_arm64.tar.gz"
       sha256 "@@LINUX_ARM64_SHA256@@"
@@ -33,6 +35,13 @@ class OaChat < Formula
     (share/"doc/oa-chat").install "CLI_PACKAGING.md"
     prefix.install "LICENSE"
     share.install "share/oa-chat"
+
+    # Release ELF binaries use OpenSSL's SONAME; brewed libraries are keg-only.
+    # Put the managed dependency in RUNPATH so services need no loader variables.
+    if OS.linux?
+      system Formula["patchelf"].opt_bin/"patchelf", "--add-rpath",
+             Formula["openssl@3"].opt_lib, bin/"oa-zkapi"
+    end
   end
 
   service do
@@ -57,5 +66,10 @@ class OaChat < Formula
 
   test do
     assert_match "oa-chat #{version}", shell_output("#{bin}/oa-chat version")
+    assert_match "Usage:", shell_output("#{bin}/oa-zkapi --help")
+    %w[request.pk request.vk withdrawal.pk withdrawal.vk manifest.json].each do |asset|
+      assert_predicate share/"oa-chat/proof-setup"/asset, :file?
+      assert_operator (share/"oa-chat/proof-setup"/asset).size, :>, 0
+    end
   end
 end

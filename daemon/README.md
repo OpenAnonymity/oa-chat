@@ -248,10 +248,15 @@ lock prevents two daemons sharing a config directory.
 
 `.github/workflows/oa-daemon-release.yml` builds native macOS/Linux ARM64 and
 AMD64 bundles, Debian/RPM packages, a version-pinned shell installer, and
-checksum-pinned Homebrew/AUR metadata
+checksum-pinned Homebrew/AUR/Nix metadata
 for `daemon-vMAJOR.MINOR.PATCH` tags. It creates a draft GitHub release.
-Publishing a tap, AUR package, or distribution repository is a separate
-release action; none has been published by this implementation.
+The generated Nix release flake includes its pinned inputs and NixOS/Home
+Manager user-service modules. Release validation checks the installer,
+package manifests/payloads, native Homebrew and Arch packaging, and Nix
+packages/modules before creating the draft. A manual workflow dispatch builds
+and validates without creating a release. Publishing a tap, AUR package, or
+distribution repository is a separate release action; none has been published
+by this implementation. See the [publication handoff](docs/CLI_PACKAGING.md#building-a-release).
 
 ## Privacy and stream handling
 

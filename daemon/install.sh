@@ -58,6 +58,7 @@ The published script defaults to its own release version. The source script
 requires --version. The default prefix is $HOME/.local; commands go in its bin/.
 Requires macOS 13+ or Linux with glibc 2.39+, curl, tar, and SHA-256 tooling.
 Linux also needs OpenSSL 3, libgcc, and CA certificates.
+On NixOS, use the Nix flake package instead of the native archive installer.
 Does not run sudo, edit shell profiles, initialize wallets, or start services.
 HELP
                 return ;;
@@ -90,6 +91,10 @@ HELP
             (( BASH_REMATCH[1] >= 13 )) || fail 'The native release requires macOS 13 or newer.' ;;
         Linux)
             platform=linux
+            # NixOS uses store-specific ELF interpreters and library paths.
+            # A new glibc alone does not make the native archive runnable there.
+            [[ ! -e /etc/NIXOS ]] ||
+                fail 'On NixOS, install the Nix flake package instead of this native archive (see daemon/docs/CLI_PACKAGING.md in the repository).'
             libc_version=$(getconf GNU_LIBC_VERSION 2>/dev/null) ||
                 fail 'The native Linux release requires glibc 2.39 or newer (musl/Alpine is unsupported).'
             [[ "$libc_version" =~ ^glibc[[:space:]]([0-9]+)\.([0-9]+)$ ]] || fail 'Cannot determine the glibc version.'
@@ -161,8 +166,14 @@ HELP
         [[ "$entry" =~ $safe_path ]] || fail 'The release archive contains an invalid path.'
         case "$entry" in
             /*|..|../*|*/../*|*/..) fail 'The release archive contains an unsafe path.' ;;
+            .|./*|*/./*|*/.|*//*) fail 'The release archive contains a noncanonical path.' ;;
         esac
     done < "$temporary/files"
+    # Trailing slashes on directories are normal tar output. Apart from that,
+    # each destination must be unique so later members cannot replace files
+    # already inspected under the same name.
+    awk '{ name=$0; sub(/\/$/, "", name); if (seen[name]++) exit 1 }' "$temporary/files" ||
+        fail 'The release archive contains duplicate paths.'
     tar -tvzf "$temporary/archive.tar.gz" > "$temporary/types" || fail 'Cannot inspect the release archive.'
     while IFS= read -r mode; do
         case "$mode" in
@@ -172,7 +183,7 @@ HELP
     done < "$temporary/types"
     mkdir "$temporary/unpacked"
     tar -xzf "$temporary/archive.tar.gz" --no-same-owner --no-same-permissions -C "$temporary/unpacked" || fail 'Cannot extract the release archive.'
-    for entry in oa-chat oa-zkapi VERSION LICENSE CLI_PACKAGING.md \
+    for entry in oa-chat oa-zkapi VERSION LICENSE CLI_PACKAGING.md oa-chat.service \
         share/oa-chat/build-info.json share/oa-chat/third-party/dependencies.json \
         share/oa-chat/proof-setup/request.pk share/oa-chat/proof-setup/request.vk \
         share/oa-chat/proof-setup/withdrawal.pk share/oa-chat/proof-setup/withdrawal.vk \
@@ -185,7 +196,7 @@ HELP
     chmod 755 "$release_dir"
     mkdir "$release_dir/bin"
     mv "$temporary/unpacked/oa-chat" "$temporary/unpacked/oa-zkapi" "$release_dir/bin/"
-    mv "$temporary/unpacked/share" "$temporary/unpacked/LICENSE" "$temporary/unpacked/CLI_PACKAGING.md" "$temporary/unpacked/VERSION" "$release_dir/"
+    mv "$temporary/unpacked/share" "$temporary/unpacked/LICENSE" "$temporary/unpacked/CLI_PACKAGING.md" "$temporary/unpacked/oa-chat.service" "$temporary/unpacked/VERSION" "$release_dir/"
     chmod 755 "$release_dir/bin/oa-chat" "$release_dir/bin/oa-zkapi"
     [[ "$("$release_dir/bin/oa-chat" version)" = "oa-chat $release_version" ]] || fail 'The downloaded oa-chat executable could not report the expected version.'
     "$release_dir/bin/oa-zkapi" --help > "$temporary/companion-help" 2>&1 ||
@@ -216,9 +227,10 @@ HELP
     if [[ -n "$target" && "$target" != "$prefix/bin/oa-chat" ]]; then
         printf 'Your PATH currently selects %s. Put %s/bin first to use this installation.\n' "$target" "$prefix"
     fi
-    printf 'Next: oa-chat init, then oa-chat serve. For zkAPI: oa-chat init --backend zkapi.\n'
     if [[ -n "$current_target" ]]; then
         printf 'Restart any running daemon to use the new version. Previous release retained at %s/%s.\n' "$install_root" "$current_target"
+    else
+        printf 'For a new configuration: oa-chat init, then oa-chat serve. For zkAPI: oa-chat init --backend zkapi.\n'
     fi
     cleanup
     trap - EXIT

@@ -1,3 +1,58 @@
+## 2026-09-28: Daemon distribution preparation
+
+- Arch/AUR preserves the reviewed executable payloads (`!strip`), declares
+  OpenSSL 3, and validates generated `.SRCINFO` against native makepkg output.
+  Homebrew checks the companion/proof assets and adds the brewed OpenSSL
+  library path to the Linux companion's RUNPATH. Both remain generated from
+  actual native archive hashes; public tap/AUR publication is separate.
+- Release assembly now emits a locked four-system Nix binary package, overlay,
+  NixOS/Home Manager user-service modules, and standalone `oa-chat-nix.tar.gz`.
+  Linux ELF paths are fixed with autoPatchelf. The daemon wrapper puts the
+  bundled companion first on PATH; the companion stays unwrapped for its
+  resolved `../share/oa-chat/proof-setup` lookup. Only public package assets
+  enter the Nix store. Services require separately initialized private state,
+  selected non-root users, and explicit login-start opt-in.
+- The shell installer rejects NixOS with Nix-package guidance, rejects
+  duplicate/noncanonical archive paths, preserves the service metadata, and
+  prints restart guidance on upgrades. It still never initializes/funds a
+  wallet, modifies shell profiles, or starts a service.
+- Fresh companion preparation previously left the patch-added withdrawal
+  source untracked, causing exact-source verification to reject every new
+  release build. `git apply --intent-to-add` now includes new files in the
+  complete patch diff, and preparation verifies both patches before returning.
+  An offline regression exercises added files in the parent and submodule
+  and rejects unexpected source changes.
+- Release CI gates draft creation on native piped installation/reinstallation,
+  manifest/payload checks, Homebrew validation, native Arch makepkg, and Nix
+  package/module checks. Manual dispatch requires an explicit version and
+  creates no release. See [release preparation](../daemon/docs/CLI_PACKAGING.md#building-a-release).
+- These source changes do not replace the published `daemon-v0.1.0` binaries.
+  A new reviewed tag/build and publication are still needed to distribute
+  current funding/withdrawal, direct-network defaults, and logging behavior.
+- Validation passed: 21 installer regressions on macOS/Ubuntu, 11 package
+  regressions, preparation regression, Go race/vet, Bash/ShellCheck, workflow
+  lint, and fresh review. Current macOS ARM64 source passed native build,
+  piped install/reinstall, and Homebrew service lifecycle. New Arch, Linux
+  Homebrew, and Nix packaging passed with real published Linux AMD64 archives;
+  those mechanics checks do not certify current-source Linux behavior. The
+  new four-platform CI matrix, actual Linux service boot, and funded inference
+  remain separate. See [dated validation](../daemon/docs/CLI_PACKAGING.md#distribution-preparation-validation-2026-09-28).
+
+## 2026-09-27: CLI package distribution status
+
+- Homebrew and Arch/AUR manifests are generated from the native release
+  archives with actual checksums. Public GitHub/AUR checks still found only
+  the `daemon-v0.1.0` daemon prerelease, no official Homebrew tap, and no
+  `oa-chat` or `oa-chat-bin` AUR entry. Publishing those package repositories
+  remains separate from the draft-release workflow.
+- The recorded macOS ARM64 Homebrew install/test/service lifecycle passed;
+  Arch installation and Linux service boot remain unverified. Nix packaging
+  is absent: no derivation, flake, service module, or Nix CI. See
+  [packaging status](../daemon/docs/CLI_PACKAGING.md#nix--nixos).
+- The published prerelease predates address-based funding/withdrawal,
+  opt-in CLI relay defaults, and foreground status/logging. Package manifest
+  generation does not publish newer source changes.
+
 ## 2026-09-28: Merge native ETH work into main
 
 - User authorized merging the completed branches into each repository's `main`
@@ -513,6 +568,7 @@
   `/tmp/oa-address-deploy-20260922/task-state.json` to resume. No Mainnet funds
   were used. The newer note-bound Sepolia server requires a separate matching
   SDK/artifact migration and is not selected for these deployments.
+
 ## 2026-09-27: CLI foreground status and logs
 
 - `oa-chat serve` sends timestamped startup/shutdown, API request start/end,

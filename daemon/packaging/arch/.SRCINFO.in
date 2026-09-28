@@ -9,9 +9,10 @@ pkgbase = oa-chat-bin
 	depends = ca-certificates
 	depends = glibc>=2.39
 	depends = gcc-libs
-	depends = openssl
+	depends = openssl>=3
 	optdepends = systemd: user service management
 	optdepends = xdg-utils: open the funding browser
+	options = !strip
 	provides = oa-chat
 	conflicts = oa-chat
 	source_x86_64 = oa-chat_@@VERSION@@_linux_amd64.tar.gz::@@BASE_URL@@/oa-chat_@@VERSION@@_linux_amd64.tar.gz
