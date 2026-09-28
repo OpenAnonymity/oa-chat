@@ -156,17 +156,33 @@ stale asynchronous reads cannot re-enable it.
 The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing fails closed.
 
-The screen shows the ETH principal, a maximum contract-fee reserve, total ETH
-and receiving address on the chosen network. The reserve is the signer's fixed
-0.02 ETH transaction spending ceiling, not an estimated charge or a fee quote
-for a hypothetical maximum-gas call. A five-second read-only loop checks balance
-and the reserve's network. It never submits a transaction when funds arrive.
-**Next** is enabled only when the account can cover principal plus this reserve;
-clicking it rechecks storage ownership and funds before authorizing one payable
-deposit. The signer then simulates the exact call, checks current fees and
-enforces its unchanged gas, per-gas price and total-fee limits. High fees can
-still stop submission without spending. Unused fee reserve stays at the funding address. The external
-sender also pays their own transfer fee in addition to the amount sent.
+The screen separates ETH principal added to the private balance, estimated
+network fee, additional fee buffer and total ETH to send. ETH already held at
+the funding address reduces the requested transfer. A five-second read-only
+loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
+and durably stores a note draft independently of `pending_deposit`; no funding
+quote connects MetaMask, authorizes a signer, or broadcasts a transaction.
+The provider simulates the exact payable deposit with only the sender's balance
+overridden, then estimates its gas. RPCs lacking state-override support fail
+closed instead of substituting a fixed reserve.
+
+Expected fee is estimated gas multiplied by current base fee plus priority fee.
+The maximum allowance uses the SDK's padded gas limit and current EIP-1559
+maximum price; their difference is the additional buffer. The unchanged 300-gwei
+and 0.02-ETH caps are signing safety limits, not the normal prefunding amount.
+**Next** requires enough ETH for principal plus the allowance, forces a fresh
+quote and checks the saved amount before and after the asynchronous reads.
+An increased allowance requires reviewing the new quote and another explicit
+click. Submission binds the exact prepared operation, commitment, principal and
+fee ceiling, then rechecks simulation, fees and expiry before signing.
+
+After confirmation, canonical receipt gas usage/effective price yields an actual
+fee in SDK deposit history. The UI labels the current public address balance
+separately; it can include unrelated incoming transfers, so it is not described
+as a guaranteed refund. Old records with unavailable fee metadata do not show a
+made-up zero fee. Unused ETH remains at the funding address for future fees or
+an explicit return. The external sender pays its own transfer fee in addition
+to the amount sent.
 Closing the dialog stops polling; reopening restores the same intent/address
 and resumes reads. Signed-transaction and private-note recovery remain in their
 existing durable journals, and reopening never authorizes new signing.
@@ -312,27 +328,30 @@ withdrawal navigation, and layout. Mainnet UI checks require no transaction.
 
 Normal MetaMask waiting is a neutral status line. Unknown deposits offer “Check payment status” and a secondary “Try again in MetaMask”; the latter retains explicit confirmation and the SDK’s saved-deposit safeguards. These UI refinements do not change transaction submission, polling, persistence, or recovery ownership. Funding disclosures use matched 420ms transitions with deferred scrolling and a stable scrollbar gutter.
 
-## Gas-quote design findings (2026-09-27; proposed improvements)
+## Gas estimates and remaining ETH (2026-09-27)
 
-The address flow currently asks for the intended ETH principal plus the fixed
-0.02 ETH signer spending ceiling. This is a maximum reserve, not an estimate
-of the deposit's expected gas cost. Actual signing estimates the prepared call
-and checks its maximum fee liability; the chain charges actual gas at the
-inclusion-time effective price. Unused ETH remains in the public funding
-account, separately from the private note. The live deposit used
-0.007528036291476899 ETH in fees, leaving 0.012471963708523101 ETH from that
-reserve. These are test observations, not estimates for every future deposit.
+The former fixed 0.02 ETH reserve produced substantial overfunding: one live
+Sepolia deposit used 0.007528036291476899 ETH in fees, leaving
+0.012471963708523101 ETH from that reserve. These are historical observations,
+not quotes for future transactions. The implemented prepare/simulate flow above
+replaces that prefunding rule while preserving the signing caps.
 
-The suggested incremental change is a short-lived quote for the actual prepared
-deposit: distinguish estimated cost, maximum allowance and total to send; retain
-the exact requested principal, recheck before explicit Next, and explain reuse
-or return of unused public ETH. Never call the current `deposit()` merely to
-obtain a quote: it can submit. The SDK has durable local `prepareDeposit`, but
-its current orchestration checks the funding balance before preparing. A
-prepare/quote API must preserve note ownership, refresh the Merkle path when
-chain state changes, and simulate an unfunded payable call using a verified
-mechanism (RPC balance-override support has not been established). No signing
-or broadcast belongs in quote generation or polling.
+The SDK owns the durable quote draft, note secret and operation identity.
+Repeated quotes for the same amount retain the commitment and refresh its
+append path under the browser wallet lock. Next atomically promotes that exact
+draft. A definitely unsubmitted saved deposit can be requoted at its fixed
+amount; an already submitted or ambiguous operation cannot silently be replaced
+with a new note. Actual fee metadata is recorded only when the receipt and
+transaction match the deposit and its canonical block.
+
+An address retry after an ambiguous result first calls the SDK's explicit
+prepare-only retry API. It can recover a confirmed deposit, or mark an exact
+retry eligible for quoting without signing. The fee quote keeps the original
+saved Merkle path; it must not rebase a still-ambiguous operation. Only after the
+user reviews the resulting quote can Next authorize the matching operation.
+MetaMask retains its existing retry behavior. When a saved plan originated in
+MetaMask and has no address-scoped USD intent, the host rebuilds that intent
+from the fixed SDK gwei amount and shows current USD as a reference only.
 
 Exact future contract gas charges cannot be reliably guaranteed while the user
 is still sending funds. Depositing balance minus maximum fees still leaves
@@ -347,5 +366,4 @@ service fee while the sponsor bears gas variance. A plain relayer cannot move
 ETH out of the current EOA or pay its transaction gas without additional
 execution/authorization architecture. Any such change needs a separate design
 and review, preserving browser-local note secrets and avoiding account identity
-or inference data in sponsorship requests. No quote or sponsorship change has
-been implemented by this investigation.
+or inference data in sponsorship requests. Sponsorship is a separate design and is not implemented by the fee-quote change.

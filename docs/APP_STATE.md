@@ -1,11 +1,22 @@
 ## 2026-09-27: Browser custody and native ETH funding (Sepolia live)
 
-- Gas UX investigation: the current 0.02 ETH prefunding reserve is the signing
-  ceiling, not an expected fee. It caused a 0.01247 ETH remainder in the live
-  deposit test. A closer quote needs an SDK prepare/quote split before funding,
-  verified simulation of an unfunded payable call, and fresh Merkle-path/gas
-  checks before submission. This improvement is proposed, not implemented.
-  See the gas-quote design notes in [payment details](ZKAPI_PAYMENTS.md).
+- Native address deposits now prepare a durable SDK note draft and simulate the
+  actual payable call before funding. The screen separates private principal,
+  estimated network fee, additional fee buffer and total ETH to send, subtracting
+  ETH already at the public address. Quotes last 30 seconds; balances poll every
+  five seconds. The configured Sepolia RPC supports sender-balance-only state
+  overrides for `eth_call` and `eth_estimateGas`; unsupported RPCs fail closed.
+- Next forces a new quote and checks the durable amount again. A larger fee
+  allowance requires another explicit click; the signer is bound to the prepared
+  operation, commitment and displayed fee ceiling. Receipt-backed actual fee is
+  saved with deposit history and the remaining public ETH is polled separately.
+  Tiny leftovers remain possible; the estimate does not promise an exact charge.
+- Dynamic-quote validation: 886 core + 446 payment tests and 298 SDK tests pass,
+  including unfunded state-override simulation on a real local EVM, pre-sign fee
+  rejection, exact remaining-balance arithmetic, concurrent edits, browser-state
+  reloads and saved-plan method switching. Fresh adversarial review approved
+  the final source after fixing MetaMask-to-address intent reconstruction.
+  SDK pin: `6f12f3b520989d24c50fbeee33b4c42b761d5651`.
 - User confirmed: hold ETH and show its floating current USD value, rather than
   fixed USD credit. Native ETH requires new vault/server/SDK deployment pins;
   the existing live ERC20 vaults cannot accept payable ETH deposits.
@@ -18,12 +29,21 @@
   across reloads and price movement. Principal plus maximum network-fee reserve
   is shown before transfer. Next rechecks funds and durable intent, then allows
   the signer one native payment. A changed input immediately invalidates Next.
-- Prefunding reserves the fixed 0.02 ETH signing ceiling, not a hypothetical
-  16,777,216-gas transaction fee. The latter incorrectly blocked funding at
-  ordinary Sepolia fees even when the smaller actual deposit fit the ceiling.
-  Next still simulates and prices the actual call under unchanged signing caps;
-  the UI explains that final fees are checked then and unused reserve stays at
-  the funding address. Reserve reads check the chain but never authorize signing.
+- The 0.02 ETH ceiling remains a signing safety limit, not the prefunding amount.
+  Expected fee uses simulated gas at current base fee plus tip; the buffer is the
+  difference up to SDK-padded gas at the EIP-1559 maximum fee. Signing rechecks
+  gas/fees and expires the authorization before any signature if the quote is
+  stale. SDK quote drafts never become pending deposits until explicit Next.
+- Definitely unsubmitted prepared deposits can re-enter the same quote screen
+  with a fixed principal after reload or a pre-sign failure. The SDK alone
+  declares this state safe; host UI never infers it from missing public hashes.
+  Switching from a MetaMask-created prepared plan reconstructs the host intent
+  from the SDK's exact gwei amount; absent original USD is shown as a saved ETH
+  amount with current USD reference, not invented dollar input.
+  Ambiguous address retries first review status and explicitly prepare an exact
+  retry without submitting; they then show fees for the original saved path.
+  Signed transaction recovery continues to replay only the journaled bytes.
+  MetaMask keeps its existing flow.
 - Fee/affordability failures retain a fixed public-only explanation after SDK
   withdrawal bookkeeping replaces its generic error copy. The exact additional
   ETH, address and chain come from the current signing check; the retry remains

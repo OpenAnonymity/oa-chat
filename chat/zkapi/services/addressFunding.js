@@ -39,6 +39,11 @@ export function withdrawalDestination(owner, recordId = null) {
         || zkapiClient.withdrawal?.destination || owner.fundingDestination);
 }
 
+export function canQuotePendingAddressDeposit(client = zkapiClient, wallet = addressFundingWallet) {
+    return client.isNativeEthFunding && client.config?.pending_deposit?.funding_quote_available === true
+        && !wallet.hasPendingTransaction;
+}
+
 // An explicit UI action authorizes only that SDK operation. Opening, refreshing
 // or unlocking an address never authorizes signing or sending a transaction.
 export async function runAddressAction(owner, details, report, action) {
@@ -46,13 +51,25 @@ export async function runAddressAction(owner, details, report, action) {
     let authorization;
     if (kind === 'deposit' && details?.phase === 'wallet') {
         if (!addressFundingWallet.unlocked) throw new Error('Your funding address is not available in this browser.');
-        let amount = zkapiClient.config?.pending_deposit?.amount;
-        if (amount == null) {
-            if (!zkapiClient.isNativeEthFunding || !owner.fundingFlow) throw new Error('Prepare an ETH deposit before choosing Next.');
-            owner.fundingDepositIntent = await owner.fundingFlow.verifyReady();
-            amount = owner.fundingDepositIntent.amount;
+        const pending = zkapiClient.config?.pending_deposit;
+        if (zkapiClient.isNativeEthFunding) {
+            if (pending && !canQuotePendingAddressDeposit()) {
+                throw new Error('Check the saved deposit status before continuing.');
+            }
+            if (!owner.fundingFlow) throw new Error('Prepare an ETH deposit before choosing Next.');
+            const intent = await owner.fundingFlow.verifyReady();
+            if (pending && (String(pending.amount) !== intent.amount
+                || pending.operation_id !== intent.preparedOperationId)) {
+                throw new Error('The saved deposit changed. Reopen this screen before continuing.');
+            }
+            owner.fundingDepositIntent = intent;
+            authorization = { kind: 'deposit', amount: intent.amount,
+                preparedOperationId: intent.preparedOperationId, depositCommitment: intent.depositCommitment,
+                feeLimitWei: intent.feeLimitWei, feeQuoteExpiresAt: intent.feeQuoteExpiresAt };
+        } else {
+            if (pending?.amount == null) throw new Error('Prepare an ETH deposit before choosing Next.');
+            authorization = { kind: 'deposit', amount: String(pending.amount) };
         }
-        authorization = { kind: 'deposit', amount: String(amount) };
     } else if (kind === 'withdraw' || kind === 'escape') {
         const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : null;
         authorization = { kind: 'withdrawal', destination: withdrawalDestination(owner, details.withdrawalRecordId),

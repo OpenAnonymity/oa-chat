@@ -31,7 +31,35 @@ function fixture(method, phase) {
         close() { actions.push('close'); },
         app: { accountModal: { openFunding() { actions.push('open-funding'); } } }
     });
-    return { welcome, actions };
+    return { welcome, actions, client, context };
+}
+
+for (const method of ['address', 'metamask']) {
+    test(`Welcome passes the prepared operation only for a new ${method} deposit`, async () => {
+        const { welcome, client, context } = fixture(method, null);
+        const calls = [];
+        client.config.pending_deposit = null;
+        client.quoteDepositUsd = async amount => { assert.equal(amount, '10'); return { ethAmount: '0.005' }; };
+        client.deposit = async (...args) => { calls.push(args); };
+        context.prepareWalletMethod = async () => {};
+        context.runAddressAction = async (owner, details, report, action) => {
+            assert.equal(details.kind, 'deposit');
+            owner.fundingDepositIntent = { ethAmount: '0.005', preparedOperationId: 'quoted-deposit-operation' };
+            await action();
+        };
+        let completed = 0;
+        Object.assign(welcome, { overlay: { querySelector: () => ({ value: '10' }) },
+            render() {}, fundingFlow: { complete: async () => { completed++; } } });
+        await welcome.fund();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][0], '0.005');
+        assert.equal(typeof calls[0][1], 'function');
+        if (method === 'address') {
+            assert.deepEqual(JSON.parse(JSON.stringify(calls[0][2])), { preparedOperationId: 'quoted-deposit-operation' });
+        } else assert.equal(calls[0].length, 2, 'MetaMask call signature stays unchanged');
+        assert.equal(completed, 1);
+        assert.equal(welcome.step, 'success');
+    });
 }
 
 for (const method of ['address', 'metamask']) {

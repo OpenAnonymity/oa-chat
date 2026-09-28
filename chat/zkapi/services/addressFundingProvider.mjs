@@ -1,7 +1,7 @@
 import { Wallet, Transaction, getAddress, keccak256, formatEther } from 'ethers';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { browserSdkTransport } from '@openanonymity/zkapi-browser-sdk/configure';
-import { MAX_TRANSACTION_GAS_LIMIT as MAX_GAS } from '@openanonymity/zkapi-browser-sdk/gas';
+import { bufferedGasLimit, MAX_TRANSACTION_GAS_LIMIT as MAX_GAS } from '@openanonymity/zkapi-browser-sdk/gas';
 import { createAddressFundingStore, isBrowserCustodyKey } from './addressFundingStore.mjs';
 
 const UINT256_MAX = (1n << 256n) - 1n;
@@ -10,7 +10,7 @@ const MAX_GAS_PRICE = 300_000_000_000n;
 const MAX_TRANSACTION_FEE = 20_000_000_000_000_000n; // 0.02 ETH; no automatic fee escalation.
 const MIN_PRIORITY_FEE = 1_000_000n; // 0.001 gwei; retain a tip when the RPC suggests zero.
 const NATIVE_WEI_PER_UNIT = 1_000_000_000n; // The native vault's private ledger uses gwei.
-const FEE_QUOTE_LIFETIME_MS = 60_000;
+const FEE_QUOTE_LIFETIME_MS = 30_000;
 const KDF_ITERATIONS = 600_000;
 const MAX_BACKUP_BYTES = 4 * 1024 * 1024;
 const READ_METHODS = new Set([
@@ -68,11 +68,12 @@ export class AddressFundingProvider {
         locks = globalThis.navigator?.locks,
         crypto = globalThis.crypto,
         createWallet = () => Wallet.createRandom(),
+        prepareDepositQuote = (ethAmount, options) => zkapiClient.prepareDepositQuote(ethAmount, options),
         resumeTransaction = record => zkapiClient.resumeExternalTransaction(record),
         createChannel = () => globalThis.window?.BroadcastChannel
             ? new globalThis.window.BroadcastChannel('oa-zkapi-address-funding') : null
     } = {}) {
-        Object.assign(this, { getConfig, transport, store, locks, crypto, createWallet, resumeTransaction, createChannel });
+        Object.assign(this, { getConfig, transport, store, locks, crypto, createWallet, prepareDepositQuote, resumeTransaction, createChannel });
         this.state = { exists: false, unlocked: false, backedUp: false, address: null, pending: null, migrationRequired: false };
         this.listeners = new Set();
         this.session = null;
@@ -451,6 +452,10 @@ export class AddressFundingProvider {
     }
 
     async transactionFees(ctx, gasLimit) {
+        return (await this.transactionFeeQuote(ctx, gasLimit)).fees;
+    }
+
+    async transactionFeeQuote(ctx, gasLimit) {
         const [block, suggestedTip] = await Promise.all([
             this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]),
             this.rpc(ctx, 'eth_maxPriorityFeePerGas')
@@ -475,7 +480,8 @@ export class AddressFundingProvider {
         if (maxFeePerGas < minimumFee) {
             throw this.paymentFailure('address_fee_limit');
         }
-        return { type: 2, maxFeePerGas, maxPriorityFeePerGas };
+        return { fees: { type: 2, maxFeePerGas, maxPriorityFeePerGas },
+            expectedFeePerGas: baseFee + maxPriorityFeePerGas };
     }
 
     paymentFailure(code, requirement = null) {
@@ -488,6 +494,8 @@ export class AddressFundingProvider {
             message = 'Current Ethereum fees exceed the 0.02 ETH total-fee or 300 gwei gas-price limit. Wait for lower fees, then retry the action. This transaction was not sent.';
         } else if (code === 'address_fee_data') {
             message = 'Current Ethereum fees could not be read reliably. Check the network connection, then retry the action. This transaction was not sent.';
+        } else if (code === 'address_fee_quote_changed') {
+            message = 'The network fee quote changed or expired. Review the updated deposit quote and choose Next again. This transaction was not sent.';
         } else throw fail('Unsupported payment failure.');
         const error = fail(message, code);
         if (requirement) error.fundingRequirement = copy(requirement);
@@ -498,17 +506,52 @@ export class AddressFundingProvider {
         return error;
     }
 
-    async getDepositFeeQuote() {
+    async getDepositFeeQuote(intent) {
         const ctx = await this.context();
         if (!ctx.native) throw fail('A native ETH vault is required for this fee quote.', 'address_native_config');
+        await this.reload();
+        const own = this.address;
+        if (!own || !this.unlocked) throw fail('Create or restore a payment address first.', 'address_missing');
+        const amount = uint(intent?.amount, 'deposit amount', MAX_NONCE);
+        const depositWei = uint(intent?.depositWei, 'deposit ETH');
+        if (!amount || depositWei !== amount * ctx.weiPerUnit || typeof intent.ethAmount !== 'string') {
+            throw fail('The deposit amount could not be quoted.', 'address_fee_quote_invalid');
+        }
         await this.assertChain(ctx);
-        // Before the user funds the address there is no prepared private-note
-        // call to simulate. Reserve the signer's spending ceiling, not a fee
-        // estimate for a hypothetical maximum-gas transaction. The actual send
-        // still simulates, quotes fresh fees and enforces every signing cap.
+        const prepared = await this.prepareDepositQuote(intent.ethAmount, { from: own });
+        if (!prepared || typeof prepared.operationId !== 'string' || !prepared.operationId || prepared.operationId.length > 256
+            || uint(prepared.amount, 'prepared deposit amount') !== amount
+            || uint(prepared.depositWei, 'prepared deposit ETH') !== depositWei
+            || uint(prepared.chainId, 'prepared deposit network') !== ctx.chainId
+            || !sameAddress(prepared.contractAddress, ctx.vault)) {
+            throw fail('The prepared deposit does not match this payment address.', 'address_fee_quote_invalid');
+        }
+        // Validation is pure: this synthetic read-only context grants no signer
+        // permission and cannot enter the durable transaction journal.
+        const transaction = this.validateCall(ctx, own, prepared.transaction, {
+            version: 1, kind: 'deposit', deploymentId: 'fee-quote', chainId: Number(ctx.chainId), contractAddress: ctx.vault,
+            operationId: prepared.operationId, submissionId: 'fee-quote', amount: amount.toString(), commitment: prepared.commitment
+        }, { kind: 'deposit', amount: amount.toString() });
+        const input = { from: own, to: transaction.to, data: transaction.data, value: hex(transaction.value) };
+        // A new funding address has no ETH yet. Override only its simulated
+        // balance; contract code/storage, sender identity and payable value all
+        // remain real. Unsupported state overrides fail closed, without a guess.
+        const overrides = { [own]: { balance: hex(uint(depositWei + MAX_GAS * MAX_GAS_PRICE, 'simulation balance')) } };
+        await this.rpc(ctx, 'eth_call', [input, 'pending', overrides]);
+        const estimate = uint(await this.rpc(ctx, 'eth_estimateGas', [input, 'pending', overrides]), 'transaction gas', MAX_GAS);
+        if (estimate < 21_000n) throw fail('Invalid transaction gas estimate.');
+        const gasLimit = BigInt(bufferedGasLimit(estimate));
+        const { fees, expectedFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit);
+        const expectedFeeWei = estimate * expectedFeePerGas;
+        const feeReserveWei = gasLimit * fees.maxFeePerGas;
+        await this.assertChain(ctx);
         const quotedAt = Date.now();
-        const feeReserveWei = MAX_TRANSACTION_FEE.toString();
-        return { feeReserveWei, feeWei: feeReserveWei, reserveKind: 'transaction_fee_ceiling', chainId: Number(ctx.chainId),
+        return { operationId: prepared.operationId, depositCommitment: prepared.commitment, address: own,
+            amount: amount.toString(), depositWei: depositWei.toString(), chainId: Number(ctx.chainId), contractAddress: ctx.vault,
+            expectedFeeWei: expectedFeeWei.toString(), feeBufferWei: (feeReserveWei - expectedFeeWei).toString(),
+            feeReserveWei: feeReserveWei.toString(), estimatedGas: estimate.toString(), gasLimit: gasLimit.toString(),
+            maxFeePerGas: fees.maxFeePerGas.toString(), maxPriorityFeePerGas: fees.maxPriorityFeePerGas.toString(),
+            reserveKind: 'estimated_transaction',
             quotedAt, expiresAt: quotedAt + FEE_QUOTE_LIFETIME_MS };
     }
 
@@ -567,6 +610,13 @@ export class AddressFundingProvider {
                     || wordUint(1) !== uint(recovery.amount, 'recovery amount')
                     || wordUint(0) !== uint(recovery.commitment, 'commitment')
                     || (ctx.native && (!wordUint(1) || value !== wordUint(1) * ctx.weiPerUnit))) deny();
+                if (ctx.native && (authorization.preparedOperationId != null || authorization.depositCommitment != null
+                    || authorization.feeLimitWei != null)) {
+                    if (typeof authorization.preparedOperationId !== 'string' || !authorization.preparedOperationId
+                        || authorization.preparedOperationId !== recovery.operationId
+                        || uint(authorization.depositCommitment, 'authorized commitment') !== wordUint(0)
+                        || !uint(authorization.feeLimitWei, 'authorized fee', MAX_TRANSACTION_FEE)) deny();
+                }
             } else if (['7fca9c82', '9073639b'].includes(selector)) {
                 if (authorization.kind !== 'withdrawal' || !['withdrawal', 'background-withdrawal', 'background-replacement'].includes(recovery.kind)
                     || !exactWords(56) || !recovery.operationId || !recovery.submissionId
@@ -654,6 +704,11 @@ export class AddressFundingProvider {
             if (gasLimit < estimate || gasLimit > MAX_GAS) throw fail('The gas limit is outside the allowed range.', 'transaction_gas_limit_exceeded');
             const fees = await this.transactionFees(ctx, gasLimit);
             const reserve = fees.maxFeePerGas * gasLimit;
+            if (authorization.kind === 'deposit' && ctx.native && authorization.feeLimitWei != null
+                && (reserve > uint(authorization.feeLimitWei, 'authorized fee', MAX_TRANSACTION_FEE)
+                    || (authorization.feeQuoteExpiresAt != null && BigInt(Date.now()) >= uint(authorization.feeQuoteExpiresAt, 'quote expiry', MAX_NONCE)))) {
+                throw this.paymentFailure('address_fee_quote_changed');
+            }
             const balance = uint(await this.rpc(ctx, 'eth_getBalance', [record.address, 'pending']), 'ETH balance');
             const insufficient = required => this.paymentFailure('address_insufficient_eth', {
                 address: record.address, chainId: Number(ctx.chainId), balanceWei: balance.toString(),
@@ -667,6 +722,12 @@ export class AddressFundingProvider {
             }
             if (balance < transaction.value + reserve) throw insufficient(transaction.value + reserve);
             await this.assertChain(ctx);
+            // Balance/network reads may themselves be slow. Expiry must still
+            // hold at the signing boundary, not only at the earlier fee read.
+            if (authorization.kind === 'deposit' && ctx.native && authorization.feeQuoteExpiresAt != null
+                && BigInt(Date.now()) >= uint(authorization.feeQuoteExpiresAt, 'quote expiry', MAX_NONCE)) {
+                throw this.paymentFailure('address_fee_quote_changed');
+            }
             const raw = await new Wallet(record.privateKey).signTransaction({ ...transaction,
                 chainId: ctx.chainId, nonce: Number(nonce), gasLimit, ...fees });
             const hash = keccak256(raw).toLowerCase();

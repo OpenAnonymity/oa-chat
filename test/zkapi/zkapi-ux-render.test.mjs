@@ -1008,6 +1008,17 @@ test('payment history combines deposits and withdrawals by date without inventin
     } finally { Object.assign(zkapiClient, original); }
 });
 
+test('confirmed deposit history shows only receipt-backed ETH fees, including after reload', () => {
+    const modal = Object.create(AccountModal.prototype);
+    const record = { recordId: 'confirmed-fee', status: 'confirmed', amount: 2_000_000,
+        feeWei: '351234567890123', transactionHash: `0x${'ef'.repeat(32)}` };
+    const html = modal.renderDepositRecord(record);
+    assert.match(html, /Actual network fee: 0\.000351234567890123 ETH/);
+    assert.doesNotMatch(modal.renderDepositRecord({ ...record, feeWei: null }), /Actual network fee/);
+    assert.doesNotMatch(modal.renderDepositRecord({ ...record, feeWei: '<script>123</script>' }), /Actual network fee|<script>/);
+    assert.doesNotMatch(modal.renderDepositRecord({ ...record, status: 'pending' }), /Actual network fee/);
+});
+
 test('expiry history distinguishes a deadline from a verified payment, including after archival', () => {
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config,
         withdrawals: zkapiClient.withdrawals, deposits: zkapiClient.deposits };

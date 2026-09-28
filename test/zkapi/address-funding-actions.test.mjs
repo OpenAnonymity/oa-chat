@@ -67,14 +67,16 @@ test('Next rechecks the saved ETH intent before authorizing its exact native uni
     owner.fundingFlow = { async verifyReady() {
         assert.deepEqual(authorizations, [], 'balance and fee checks happen before signer authorization');
         verified = true;
-        return { amount: '1250000', ethAmount: '0.00125', depositWei: '1250000000000000', usdAmount: '2.50' };
+        return { amount: '1250000', ethAmount: '0.00125', depositWei: '1250000000000000', usdAmount: '2.50',
+            preparedOperationId: 'op-1', depositCommitment: 'commitment-1', feeLimitWei: '1234', feeQuoteExpiresAt: 42_000 };
     } };
     await runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {
         assert.equal(verified, true);
         assert.equal(owner.fundingDepositIntent.ethAmount, '0.00125');
         calls++;
     });
-    assert.deepEqual(authorizations, [{ kind: 'deposit', amount: '1250000' }]);
+    assert.deepEqual(authorizations, [{ kind: 'deposit', amount: '1250000', preparedOperationId: 'op-1',
+        depositCommitment: 'commitment-1', feeLimitWei: '1234', feeQuoteExpiresAt: 42_000 }]);
     assert.equal(calls, 1);
 });
 
@@ -166,5 +168,26 @@ test('explicit status checks authorize only recovery while an unlocked account i
 test('a normal private-balance refresh does not authorize transaction recovery or signing', async t => {
     const { owner, authorizations } = fixture(t);
     await runAddressAction(owner, { kind: 'refresh', phase: 'syncing' }, () => {}, async () => {});
+    assert.deepEqual(authorizations, []);
+});
+
+
+test('safe unsubmitted native resumes recheck and bind the same prepared operation and quoted fee', async t => {
+    const { owner, authorizations } = fixture(t, { config: { funding: { ...funding, billing_asset: 'native_eth' },
+        pending_deposit: { amount: 1250000, phase: 'prepared', operation_id: 'op-1', funding_quote_available: true } } });
+    owner.fundingFlow = { async verifyReady() { return { amount: '1250000', preparedOperationId: 'op-1',
+        depositCommitment: 'commitment-1', feeLimitWei: '1234', feeQuoteExpiresAt: 42_000 }; } };
+    await runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {});
+    assert.deepEqual(authorizations, [{ kind: 'deposit', amount: '1250000', preparedOperationId: 'op-1',
+        depositCommitment: 'commitment-1', feeLimitWei: '1234', feeQuoteExpiresAt: 42_000 }]);
+});
+
+test('unsafe native pending and changed prepared operations cannot fall back to an unquoted allowance', async t => {
+    const { owner, authorizations } = fixture(t, { config: { funding: { ...funding, billing_asset: 'native_eth' },
+        pending_deposit: { amount: 1250000, phase: 'prepared', operation_id: 'op-1' } } });
+    owner.fundingFlow = { async verifyReady() { return { amount: '1250000', preparedOperationId: 'different' }; } };
+    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /saved deposit status/);
+    zkapiClient.config.pending_deposit.funding_quote_available = true;
+    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /saved deposit changed/);
     assert.deepEqual(authorizations, []);
 });

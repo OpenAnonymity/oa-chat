@@ -6,6 +6,8 @@ function fixture(t, options = {}) {
     let saved = options.saved || null;
     let balance = '0';
     let quotes = 0;
+    let feeQuotes = 0;
+    let now = 12_000;
     const client = {
         isNativeEthFunding: true,
         config: { funding: { chain_id: 11155111, contract_address: '0xVAULT' } },
@@ -20,17 +22,24 @@ function fixture(t, options = {}) {
         hasPendingTransaction: false,
         async ensureAddress() { return '0xACCOUNT'; },
         async getStatus() { return { ethBalance: balance }; },
-        async getDepositFeeQuote() { return { feeReserveWei: '1000000000000000' }; },
+        async getDepositFeeQuote(intent) {
+            feeQuotes++;
+            return { expectedFeeWei: '600000000000000', feeBufferWei: '400000000000000',
+                feeReserveWei: '1000000000000000', amount: intent.amount, depositWei: intent.depositWei,
+                address: '0xACCOUNT', chainId: 11155111, contractAddress: '0xVAULT',
+                operationId: 'operation-1', depositCommitment: 'commitment-1',
+                quotedAt: now, expiresAt: now + 30_000 };
+        },
         request() { assert.fail('read-only funding flow must never request a transaction'); }
     };
     const store = {
         async read() { return structuredClone(saved); },
         async write(_scope, value) { saved = structuredClone(value); }
     };
-    const flow = new AddressDepositFlow({ wallet, client, store, interval: 60_000, now: () => 12_000 });
+    const flow = new AddressDepositFlow({ wallet, client, store, interval: 60_000, now: () => now });
     t.after(() => flow.stop());
     return { flow, wallet, client, store, setBalance(value) { balance = value; },
-        saved: () => saved, quotes: () => quotes };
+        saved: () => saved, quotes: () => quotes, feeQuotes: () => feeQuotes, advance(ms) { now += ms; } };
 }
 
 test('waiting continuously reads funds but never submits, then requires a fresh explicit readiness check', async t => {
@@ -151,7 +160,7 @@ test('a pending transaction and fee quote failure both block a fresh deposit', a
     assert.equal(f.flow.ready, false);
     f.wallet.hasPendingTransaction = false;
     f.wallet.getDepositFeeQuote = async () => { throw new Error('Fees unavailable'); };
-    await f.flow.check();
+    await f.flow.check({ forceQuote: true });
     assert.equal(f.flow.ready, false);
     assert.match(f.flow.error, /Fees unavailable/);
 });
@@ -172,4 +181,159 @@ test('tampered stored ETH units fail closed', async t => {
     await f.flow.start('10');
     assert.equal(f.flow.ready, false);
     assert.match(f.flow.error, /does not match/);
+});
+
+
+test('existing address ETH reduces the requested transfer without reducing the private principal', async t => {
+    const f = fixture(t);
+    f.setBalance('2000000000000000');
+    await f.flow.start('10');
+    assert.equal(f.flow.remainingWei, '9000000000000000');
+    assert.equal(f.flow.intent.depositWei, '10000000000000000');
+    f.setBalance('12000000000000000');
+    await f.flow.check();
+    assert.equal(f.flow.remainingWei, '0');
+    assert.equal(f.flow.ready, true);
+});
+
+test('polls reuse a fresh quote while checking funds, then renew it at expiry and on every Next', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    assert.equal(f.feeQuotes(), 1);
+    f.setBalance('99000000000000000');
+    await f.flow.check();
+    assert.equal(f.feeQuotes(), 1);
+    assert.equal(f.flow.ready, true);
+    f.advance(30_000);
+    await f.flow.check();
+    assert.equal(f.feeQuotes(), 2);
+    const verified = await f.flow.verifyReady();
+    assert.equal(f.feeQuotes(), 3);
+    assert.equal(verified.preparedOperationId, 'operation-1');
+    assert.equal(verified.depositCommitment, 'commitment-1');
+    assert.equal(verified.feeLimitWei, '1000000000000000');
+    assert.equal(verified.feeQuoteExpiresAt, 72_000);
+});
+
+test('an increased fee requires reviewing the new quote and another explicit click, even with enough ETH', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('10');
+    const original = f.wallet.getDepositFeeQuote;
+    f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
+        feeReserveWei: '1200000000000000', feeBufferWei: '600000000000000' });
+    await assert.rejects(f.flow.verifyReady(), /Network fees changed/);
+    assert.equal(f.flow.ready, true);
+    assert.equal(f.flow.totalWei, '11200000000000000');
+    assert.equal((await f.flow.verifyReady()).feeLimitWei, '1200000000000000');
+});
+
+test('a reduced fee is bound to the lower limit on Next', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('10');
+    const original = f.wallet.getDepositFeeQuote;
+    f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
+        feeReserveWei: '800000000000000', feeBufferWei: '200000000000000' });
+    assert.equal((await f.flow.verifyReady()).feeLimitWei, '800000000000000');
+});
+
+test('invalid quote amounts, scope, times and fee arithmetic fail closed', async t => {
+    const variants = [
+        { amount: '1' }, { depositWei: '1' }, { chainId: 1 }, { address: '0xOTHER' },
+        { contractAddress: '0xOTHER' }, { operationId: '' }, { depositCommitment: '' },
+        { quotedAt: 13_000 }, { expiresAt: 12_000 }, { feeBufferWei: '1' }, { expectedFeeWei: '-1' }
+    ];
+    for (const invalid of variants) {
+        const f = fixture(t);
+        const original = f.wallet.getDepositFeeQuote;
+        f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent), ...invalid });
+        await f.flow.start('10');
+        assert.equal(f.flow.ready, false, JSON.stringify(invalid));
+        assert.equal(f.flow.totalWei, null);
+        assert.match(f.flow.error, /could not be verified/);
+    }
+});
+
+test('out-of-order same-amount fee reads cannot replace a newer quote', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const original = f.wallet.getDepositFeeQuote;
+    const oldQuote = await original(f.flow.intent);
+    let resolveOld;
+    f.wallet.getDepositFeeQuote = () => new Promise(resolve => { resolveOld = resolve; });
+    const oldCheck = f.flow.check({ forceQuote: true });
+    f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
+        feeReserveWei: '1200000000000000', feeBufferWei: '600000000000000' });
+    await f.flow.check({ forceQuote: true });
+    resolveOld(oldQuote);
+    await oldCheck;
+    assert.equal(f.flow.fee.feeReserveWei, '1200000000000000');
+});
+
+test('an intent changed in storage during the explicit fee refresh cannot be authorized', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('10');
+    const original = f.wallet.getDepositFeeQuote;
+    f.wallet.getDepositFeeQuote = async intent => {
+        await f.store.write(f.flow.scope, { ...f.saved(), usdAmount: '20' });
+        return original(intent);
+    };
+    await assert.rejects(f.flow.verifyReady(), /another tab/);
+    assert.equal(f.flow.ready, false);
+});
+
+test('closing during explicit quote refresh cannot authorize the operation', async t => {
+    const f = fixture(t);
+    f.setBalance('99000000000000000');
+    await f.flow.start('10');
+    const original = f.wallet.getDepositFeeQuote;
+    f.wallet.getDepositFeeQuote = async intent => { f.flow.stop(); return original(intent); };
+    await assert.rejects(f.flow.verifyReady(), /needs more ETH/);
+    assert.equal(f.flow.ready, false);
+});
+
+test('a safe prepared deposit restores its fixed principal and prevents edits', async t => {
+    const first = fixture(t);
+    await first.flow.start('10');
+    const f = fixture(t, { saved: first.saved() });
+    f.client.config.pending_deposit = { amount: 10000000, funding_quote_available: true };
+    f.setBalance('99000000000000000');
+    await f.flow.start('99');
+    assert.equal(f.quotes(), 0);
+    assert.equal(f.flow.intent.amount, '10000000');
+    assert.equal(f.flow.ready, true);
+    await f.flow.setAmount('20');
+    assert.equal(f.flow.intent.amount, '10000000');
+    assert.equal(f.saved().amount, '10000000');
+    assert.match(f.flow.error, /cannot change/);
+});
+
+test('the SDK saved principal replaces a stale host intent without repricing', async t => {
+    const first = fixture(t);
+    await first.flow.start('10');
+    const f = fixture(t, { saved: first.saved() });
+    f.client.config.pending_deposit = { amount: 20000000, funding_quote_available: true };
+    await f.flow.start('99');
+    assert.equal(f.flow.intent.amount, '20000000');
+    assert.equal(f.flow.intent.ethAmount, '0.020000000');
+    assert.equal(f.flow.intent.usdAmount, null);
+    assert.equal(f.quotes(), 0);
+    assert.equal(f.saved().amount, '20000000');
+    assert.equal(f.flow.totalWei, '21000000000000000');
+});
+
+
+test('a MetaMask prepared deposit can switch to address funding without a prior USD intent', async t => {
+    const f = fixture(t);
+    f.client.config.pending_deposit = { amount: 1234567, funding_quote_available: true };
+    await f.flow.start('99');
+    assert.equal(f.quotes(), 0);
+    assert.equal(f.flow.intent.amount, '1234567');
+    assert.equal(f.flow.intent.ethAmount, '0.001234567');
+    assert.equal(f.flow.intent.depositWei, '1234567000000000');
+    assert.equal(f.flow.intent.usdAmount, null);
+    assert.equal(f.saved().source, 'saved-deposit');
+    assert.equal(f.flow.error, '');
 });

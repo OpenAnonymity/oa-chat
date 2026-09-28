@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Wallet, Transaction } from 'ethers';
+import { Wallet, Transaction, parseUnits } from 'ethers';
 import { AddressFundingProvider } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { createAddressFundingStore } from '../../chat/zkapi/services/addressFundingStore.mjs';
 import { ZkapiClient } from '@openanonymity/zkapi-browser-sdk/client';
@@ -20,6 +20,7 @@ const NATIVE_FUNDING = { billing_asset: 'native_eth', billing_unit: 'gwei',
     native_asset_wei_per_unit: '1000000000', demo_billing_token_address: null };
 const CONTEXT = { version: 1, deploymentId: 'fixture', chainId: 1, contractAddress: VAULT, kind: 'token' };
 const auth = { kind: 'deposit', amount: '2000000' };
+const NATIVE_INTENT = { amount: '2000000', depositWei: '2000000000000000', ethAmount: '0.002' };
 const approve = amount => ({ from: OWN, to: TOKEN, data: codec.callData(codec.ABI.approve, [codec.addressWord(VAULT), codec.abiWord(amount)]) });
 const gate = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 
@@ -60,6 +61,14 @@ function harness(options = {}) {
     const init = {
         store, locks: lockManager, getConfig: options.getConfig || (() => config), createChannel: () => null,
         createWallet: () => { generated += 1; return new Wallet(KEY); },
+        prepareDepositQuote: async (ethAmount, { from }) => {
+            const amount = parseUnits(ethAmount, 9);
+            const plan = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
+            return { operationId: 'deposit-op', commitment: plan.commitment, amount: amount.toString(),
+                depositWei: (amount * 1_000_000_000n).toString(), chainId: config.chain_id, contractAddress: config.contract_address,
+                transaction: { from, to: config.contract_address, data: codec.encodeDeposit(plan, amount),
+                    value: `0x${(amount * 1_000_000_000n).toString(16)}` } };
+        },
         resumeTransaction: async record => { resumes.push(record); await provider.acknowledgeTransaction(record.hash); return { status: 'submitted' }; },
         transport: async (url, requestOptions) => {
             const request = JSON.parse(requestOptions.body);
@@ -715,28 +724,148 @@ test('native status reads only ETH and conservatively exposes its whole gwei led
     assert.equal(h.sent.length, 0);
 });
 
-test('pre-funding ETH reserve uses the spending ceiling without authorizing hypothetical transaction fees', async () => {
+test('unfunded deposit quotes simulate the exact prepared call with only its sender balance overridden', async () => {
     const h = harness({ config: NATIVE_FUNDING });
-    for (const baseFee of [1_112_000_000n, 10_000_000_000n]) {
-        h.rpc.baseFee = `0x${baseFee.toString(16)}`;
-        const before = Date.now();
-        const quote = await h.provider.getDepositFeeQuote();
-        assert.equal(quote.feeReserveWei, '20000000000000000');
-        assert.equal(quote.feeWei, quote.feeReserveWei);
-        assert.equal(quote.reserveKind, 'transaction_fee_ceiling');
-        assert.equal(quote.chainId, 1);
-        assert.equal(Object.hasOwn(quote, 'gasLimit'), false);
-        assert.equal(Object.hasOwn(quote, 'maxFeePerGas'), false);
-        assert.equal(Object.hasOwn(quote, 'maxPriorityFeePerGas'), false);
-        assert(quote.quotedAt >= before && quote.quotedAt <= Date.now());
-        assert.equal(quote.expiresAt - quote.quotedAt, 60_000);
+    await h.ready();
+    const beforeRecord = structuredClone([...h.store.data]);
+    h.rpc.balance = '0x0';
+    const before = Date.now();
+    const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+    const estimate = BigInt(h.rpc.gas);
+    const gasLimit = BigInt(bufferedGasLimit(estimate));
+    assert.equal(quote.expectedFeeWei, (estimate * (BigInt(h.rpc.baseFee) + BigInt(h.rpc.priorityFee))).toString());
+    assert.equal(quote.feeReserveWei, (gasLimit * (2n * BigInt(h.rpc.baseFee) + BigInt(h.rpc.priorityFee))).toString());
+    assert.equal(BigInt(quote.expectedFeeWei) + BigInt(quote.feeBufferWei), BigInt(quote.feeReserveWei));
+    assert.equal(quote.gasLimit, gasLimit.toString());
+    assert.equal(quote.estimatedGas, estimate.toString());
+    assert.equal(quote.reserveKind, 'estimated_transaction');
+    assert.equal(quote.chainId, 1);
+    assert.equal(quote.operationId, 'deposit-op');
+    assert.equal(quote.depositCommitment, '0x123');
+    assert.equal(quote.address, OWN);
+    assert.equal(quote.amount, NATIVE_INTENT.amount);
+    assert.equal(quote.depositWei, NATIVE_INTENT.depositWei);
+    assert(quote.quotedAt >= before && quote.quotedAt <= Date.now());
+    assert.equal(quote.expiresAt - quote.quotedAt, 30_000);
+    for (const method of ['eth_call', 'eth_estimateGas']) {
+        const call = h.calls.find(call => call.method === method);
+        assert.deepEqual(Object.keys(call.params[0]), ['from', 'to', 'data', 'value']);
+        assert.equal(call.params[0].from, OWN);
+        assert.equal(call.params[0].to, VAULT);
+        assert.equal(BigInt(call.params[0].value), BigInt(NATIVE_INTENT.depositWei));
+        assert.equal(call.params[1], 'pending');
+        assert.deepEqual(call.params[2], { [OWN]: { balance: `0x${(BigInt(NATIVE_INTENT.depositWei) + MAX_TRANSACTION_GAS_LIMIT * 300_000_000_000n).toString(16)}` } });
+        assert.equal(call.options.credentials, 'omit');
     }
-    assert.equal(h.generated, 0);
-    assert.equal(h.store.data.size, 0);
+    assert.deepEqual([...h.store.data], beforeRecord, 'quote does not change funding custody or create a transaction journal');
     assert.equal(h.sent.length, 0);
-    assert(h.calls.every(call => call.method === 'eth_chainId'), 'a reserve read checks only network identity');
+    assert.equal(h.provider.action, null);
     h.rpc.chain = '0x2';
-    await assert.rejects(h.provider.getDepositFeeQuote(), { code: 'wrong_network' });
+    await assert.rejects(h.provider.getDepositFeeQuote(NATIVE_INTENT), { code: 'wrong_network' });
+});
+
+test('deposit quotes require existing custody and matching exact prepared principal, account, chain and vault', async () => {
+    const empty = harness({ config: NATIVE_FUNDING });
+    await assert.rejects(empty.provider.getDepositFeeQuote(NATIVE_INTENT), { code: 'address_missing' });
+    assert.equal(empty.generated, 0);
+    assert.equal(empty.calls.length, 0);
+    for (const change of [
+        quote => { quote.amount = '1'; },
+        quote => { quote.depositWei = '1'; },
+        quote => { quote.chainId = 11155111; },
+        quote => { quote.contractAddress = DESTINATION; },
+        quote => { quote.commitment = '0x999'; },
+        quote => { quote.operationId = ''; },
+        quote => { quote.transaction.value = '0x1'; },
+        quote => { quote.transaction.from = DESTINATION; },
+        quote => { quote.transaction.to = DESTINATION; },
+        quote => { quote.transaction.gasPrice = '0x1'; }
+    ]) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        const prepare = h.provider.prepareDepositQuote;
+        h.provider.prepareDepositQuote = async (...args) => { const quote = await prepare(...args); change(quote); return quote; };
+        await assert.rejects(h.provider.getDepositFeeQuote(NATIVE_INTENT));
+        assert.equal(h.calls.some(call => ['eth_call', 'eth_estimateGas'].includes(call.method)), false);
+        assert.equal(h.sent.length, 0);
+    }
+});
+
+test('unfunded simulation failures expose no RPC details and never fall back to a guessed fee', async () => {
+    for (const failedMethod of ['eth_call', 'eth_estimateGas']) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        const transport = h.provider.transport;
+        h.provider.transport = async (url, options) => {
+            const request = JSON.parse(options.body);
+            if (request.method === failedMethod) {
+                assert.equal(request.params.length, 3, 'simulation keeps the required balance override');
+                throw new Error(`unsupported override with sensitive calldata ${KEY}`);
+            }
+            return transport(url, options);
+        };
+        await assert.rejects(h.provider.getDepositFeeQuote(NATIVE_INTENT), error => {
+            assert.equal(error.code, 'address_rpc_error');
+            assert(!error.message.includes(KEY));
+            return true;
+        });
+        assert.equal(h.sent.length, 0);
+        assert.equal(h.calls.some(call => call.method === 'eth_maxPriorityFeePerGas'), false);
+    }
+});
+
+test('deposit quotes enforce buffered gas, valid fee data and the existing transaction caps', async () => {
+    for (const failure of ['gas', 'fee', 'malformed']) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        if (failure === 'gas') h.rpc.gas = `0x${MAX_TRANSACTION_GAS_LIMIT.toString(16)}`;
+        if (failure === 'fee') { h.rpc.gas = '0x693ea0'; h.rpc.baseFee = '0x2540be400'; }
+        if (failure === 'malformed') h.rpc.baseFee = undefined;
+        await assert.rejects(h.provider.getDepositFeeQuote(NATIVE_INTENT), {
+            code: failure === 'gas' ? 'transaction_gas_limit_exceeded' : failure === 'fee' ? 'address_fee_limit' : 'address_fee_data'
+        });
+        assert.equal(h.sent.length, 0);
+    }
+    const capped = harness({ config: NATIVE_FUNDING });
+    await capped.ready();
+    capped.rpc.gas = `0x${6_897_262n.toString(16)}`;
+    capped.rpc.baseFee = `0x${1_500_000_000n.toString(16)}`;
+    const quote = await capped.provider.getDepositFeeQuote(NATIVE_INTENT);
+    assert(BigInt(quote.feeReserveWei) <= 20_000_000_000_000_000n);
+    assert(BigInt(quote.maxFeePerGas) < 2n * BigInt(capped.rpc.baseFee) + BigInt(capped.rpc.priorityFee));
+    assert(BigInt(quote.feeBufferWei) > 0n);
+});
+
+test('native deposit cannot exceed the displayed fee cap or substitute a prepared note before signing', async () => {
+    for (const changed of ['fee', 'gas', 'expired', 'operation', 'commitment', 'missing-cap']) {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
+        const prepared = await h.provider.prepareDepositQuote(NATIVE_INTENT.ethAmount, { from: OWN });
+        const context = { ...CONTEXT, kind: 'deposit', operationId: prepared.operationId, submissionId: 'deposit-sub',
+            amount: prepared.amount, commitment: prepared.commitment };
+        const authorization = { kind: 'deposit', amount: prepared.amount, feeLimitWei: quote.feeReserveWei,
+            preparedOperationId: quote.operationId, depositCommitment: quote.depositCommitment, feeQuoteExpiresAt: quote.expiresAt };
+        if (changed === 'fee') h.rpc.baseFee = `0x${(BigInt(h.rpc.baseFee) * 2n).toString(16)}`;
+        if (changed === 'gas') h.rpc.gas = '0x30d40';
+        if (changed === 'expired') authorization.feeQuoteExpiresAt = Date.now() - 1;
+        if (changed === 'operation') authorization.preparedOperationId = 'other-operation';
+        if (changed === 'commitment') authorization.depositCommitment = '0x456';
+        if (changed === 'missing-cap') delete authorization.feeLimitWei;
+        const input = { ...prepared.transaction, gas: bufferedGasLimit(BigInt(h.rpc.gas)) };
+        await assert.rejects(h.send(input, context, authorization), error => {
+            assert.equal(error.code, 4100);
+            if (['fee', 'gas', 'expired'].includes(changed)) {
+                assert.equal(error.addressCode, 'address_fee_quote_changed');
+                assert.match(error.message, /Review the updated deposit quote/);
+            }
+            return true;
+        });
+        assert.equal(h.sent.length, 0);
+        assert.equal(h.provider.pending, null);
+        const record = await h.provider.read(await h.provider.context(), true);
+        assert.equal(record.transactions.length, 0);
+    }
 });
 
 test('funded native deposit uses its actual gas at reproduced Sepolia fees and retains the total fee cap', async () => {
@@ -747,7 +876,7 @@ test('funded native deposit uses its actual gas at reproduced Sepolia fees and r
     const gas = bufferedGasLimit(BigInt(h.rpc.gas));
     const amount = 2_000_000n;
     const principal = amount * 1_000_000_000n;
-    const quote = await h.provider.getDepositFeeQuote();
+    const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
     h.rpc.balance = `0x${(principal + BigInt(quote.feeReserveWei)).toString(16)}`;
     const plan = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
     const context = { ...CONTEXT, kind: 'deposit', operationId: 'deposit-op', submissionId: 'deposit-sub',
@@ -755,7 +884,8 @@ test('funded native deposit uses its actual gas at reproduced Sepolia fees and r
     const input = { from: OWN, to: VAULT, data: codec.encodeDeposit(plan, amount), gas, value: `0x${principal.toString(16)}` };
     await assert.rejects(h.provider.request({ method: 'eth_sendTransaction', params: [input], zkapiRecovery: context }),
         { code: 4100 }, 'getting a reserve never authorizes signing');
-    await h.send(input, context, { kind: 'deposit', amount: amount.toString() });
+    await h.send(input, context, { kind: 'deposit', amount: amount.toString(), preparedOperationId: quote.operationId,
+        depositCommitment: quote.depositCommitment, feeLimitWei: quote.feeReserveWei, feeQuoteExpiresAt: quote.expiresAt });
     const signed = Transaction.from(h.sent[0]);
     assert.equal(signed.value, principal);
     assert.equal(signed.gasLimit, BigInt(gas));
@@ -763,6 +893,8 @@ test('funded native deposit uses its actual gas at reproduced Sepolia fees and r
     assert(signed.gasLimit * signed.maxFeePerGas <= BigInt(quote.feeReserveWei));
     assert(h.calls.some(call => call.method === 'eth_estimateGas'));
     assert(h.calls.some(call => call.method === 'eth_getBlockByNumber' && call.params[0] === 'latest'));
+    await h.provider.reload();
+    assert.equal(h.provider.pending.hash, signed.hash, 'persisted quote bindings survive journal validation');
 });
 
 test('prefunding reserve never bypasses actual native fee, fee-data or affordability rejection', async () => {
@@ -774,7 +906,7 @@ test('prefunding reserve never bypasses actual native fee, fee-data or affordabi
         const gas = bufferedGasLimit(BigInt(h.rpc.gas));
         const amount = 2_000_000n;
         const principal = amount * 1_000_000_000n;
-        const quote = await h.provider.getDepositFeeQuote();
+        const quote = await h.provider.getDepositFeeQuote(NATIVE_INTENT);
         h.rpc.balance = `0x${(principal + BigInt(quote.feeReserveWei)).toString(16)}`;
         const plan = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
         const context = { ...CONTEXT, kind: 'deposit', operationId: 'deposit-op', submissionId: 'deposit-sub',

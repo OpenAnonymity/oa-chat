@@ -3,7 +3,7 @@ import { chatDB } from '../../db.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { AddressDepositFlow } from '../services/addressDepositFlow.mjs';
 import { getWalletMethod, setWalletMethod } from '../services/walletMethod.mjs';
-import { formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
+import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
 
 export function refreshWalletView(owner) {
     if (owner.isOpen && !owner.fundingBusy && globalThis.document?.activeElement?.type !== 'password') owner.render();
@@ -14,6 +14,7 @@ export function stopFundingFlow(owner) {
     owner.fundingFlow?.stop();
     owner.fundingFlow = null;
     stopFundingStatus(owner);
+    owner.fundingStatus = null;
 }
 
 function stopFundingStatus(owner) {
@@ -51,8 +52,12 @@ function ensureFundingStatus(owner) {
 }
 
 function canFund(owner) {
+    const pending = zkapiClient.config?.pending_deposit;
+    // Welcome hands all saved work to the balance dialog. Only the SDK can
+    // declare a saved deposit definitely unsubmitted and safe to quote again.
+    const quotableSaved = !owner.resumeSavedDeposit && canQuotePendingAddressDeposit();
     return getWalletMethod() === 'address' && owner.isOpen && !zkapiClient.note
-        && !zkapiClient.config?.pending_deposit && !['withdraw', 'withdrawals'].includes(owner.view)
+        && (!pending || quotableSaved) && !['withdraw', 'withdrawals'].includes(owner.view)
         && owner.step !== 'success' && owner.walletMethodReady !== false;
 }
 
@@ -95,6 +100,38 @@ export function renderWalletMethod(owner) {
     </section>`;
 }
 
+export function renderFundingWei(owner, value) {
+    let usd = '';
+    // ETH stays exact. USD is only a current reference value; native accounting
+    // uses whole gwei, so discard sub-gwei dust for this approximate display.
+    if (zkapiClient.isNativeEthFunding && /^\d+$/.test(String(value))) {
+        try {
+            const formatted = zkapiClient.formatMoney((BigInt(value) / 1_000_000_000n).toString());
+            if (formatted && formatted !== '—') usd = ` <span>(≈ ${owner.escapeHtml(formatted)})</span>`;
+        } catch { /* A price outage must not hide the exact ETH amount. */ }
+    }
+    return `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH${usd}`;
+}
+
+function fundingQuoteFresh(fee) {
+    return Number.isFinite(fee?.quotedAt) && Number.isFinite(fee?.expiresAt)
+        && fee.quotedAt <= Date.now() && fee.expiresAt > Date.now();
+}
+
+function renderFundingReceipt(owner) {
+    const noteId = zkapiClient.note?.note_id;
+    const record = noteId == null ? null : zkapiClient.deposits?.find(entry => entry.status === 'confirmed'
+        && entry.noteId === Number(noteId)
+        && entry.fundingAddress?.toLowerCase() === addressFundingWallet.address?.toLowerCase());
+    const hasFee = record && /^\d+$/.test(String(record.feeWei));
+    // A newly confirmed note can render before its prefunding controller has
+    // stopped. Never call that pre-transaction balance the remaining balance.
+    const balance = owner.fundingFlow ? null : owner.fundingStatus?.ethBalance;
+    return `${hasFee ? `<dl class="zkapi-funding-breakdown" aria-label="Confirmed deposit costs"><div><dt>Actual deposit network fee</dt><dd>${renderFundingWei(owner, record.feeWei)}</dd></div></dl>` : ''}
+        <p class="zkapi-helper">Currently at this address: ${renderFundingWei(owner, balance)}</p>
+        ${hasFee ? '<p class="zkapi-note">Any unused fee buffer remains here, separate from your private balance. This address may also hold ETH from other transfers. You can keep it for future fees or return it below; returning ETH also costs a network fee.</p>' : ''}`;
+}
+
 export function renderFundingAccount(owner) {
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
@@ -114,20 +151,39 @@ export function renderFundingAccount(owner) {
     if (!wallet.address) return `<section class="zkapi-funding-account"><p class="zkapi-helper" role="status">${escape(flow?.error || (native ? 'Preparing your address…' : 'ETH funding is not available on this deployment yet.'))}</p></section>`;
     const intent = flow?.intent;
     const funding = canFund(owner) && native;
+    const savedFunding = funding && Boolean(zkapiClient.config?.pending_deposit);
+    const freshQuote = fundingQuoteFresh(flow?.fee);
+    const remaining = flow?.remainingWei;
+    const available = flow?.status?.ethBalance;
+    const availableKnown = /^\d+$/.test(String(available));
+    const additionalRequired = /^\d+$/.test(String(remaining)) ? BigInt(remaining) : null;
+    const ready = flow?.ready && freshQuote;
     const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
     const address = `<div class="zkapi-funding-address"><input data-funding-address readonly aria-label="Funding address" value="${escape(wallet.address)}" /><button data-funding-copy class="zkapi-secondary-button" type="button">Copy</button></div>`;
+    const amountControl = savedFunding && !intent
+        ? '<p class="zkapi-helper" role="status">Loading your saved deposit…</p>'
+        : savedFunding && intent.usdAmount === null
+            ? `<dl class="zkapi-funding-breakdown" aria-label="Saved deposit amount"><div><dt>Saved deposit</dt><dd>${renderFundingWei(owner, intent.depositWei)}</dd></div></dl>`
+            : `<label class="zkapi-funding-field">Amount to add to your wallet (USD)<div class="zkapi-funding-usd"><span aria-hidden="true">$</span><input data-funding-usd id="funding-usd" inputmode="decimal" autocomplete="off" aria-label="Amount to add in USD" value="${escape(savedFunding ? intent?.usdAmount ?? '' : owner.fundingUsdAmount ?? intent?.usdAmount ?? '10')}" ${savedFunding ? 'readonly' : ''} ${disabled} /></div></label>`;
     return `<section class="zkapi-funding-account" aria-label="Funding address">
-        ${funding ? `<label class="zkapi-funding-field">Amount to add to your wallet (USD)<div class="zkapi-funding-usd"><span aria-hidden="true">$</span><input data-funding-usd id="funding-usd" inputmode="decimal" autocomplete="off" aria-label="Amount to add in USD" value="${escape(owner.fundingUsdAmount ?? intent?.usdAmount ?? '10')}" ${disabled} /></div></label>
-        ${intent && flow.totalWei && !flow.dirty ? `<h3>Send ${escape(formatFundingAmount(flow.totalWei, 18))} ETH</h3>
+        ${funding ? `${amountControl}
+        ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. The network fee estimate refreshes before you continue.</p>' : ''}
+        ${intent && flow.totalWei && !flow.dirty && freshQuote ? `<h3>${additionalRequired == null ? 'Checking your funding address…' : additionalRequired === 0n ? 'Funds available' : `Send ${escape(formatFundingAmount(remaining, 18))} ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}`}</h3>
         <p class="zkapi-helper">On <strong>${escape(network)}</strong> to this address:</p>${address}
-        <dl class="zkapi-funding-breakdown"><div><dt>Added to your wallet</dt><dd>${escape(intent.ethAmount)} ETH <span>(${escape(zkapiClient.formatMoney(intent.amount))})</span></dd></div><div><dt>Maximum contract fee reserve</dt><dd>${escape(formatFundingAmount(flow.fee.feeReserveWei, 18))} ETH</dd></div></dl>
-        <p class="zkapi-note">Final network fees are checked when you click Next. Unused fee reserve stays at this address. Your sending wallet charges its own transfer fee separately.</p>
-        <p class="zkapi-helper" role="status">${flow.ready ? 'Funds received. Choose Next to add the ETH to your wallet.' : `Checking for funds… Received ${escape(formatFundingAmount(flow.status?.ethBalance, 18))} ETH.`}</p>
-        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !flow.ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `<p class="zkapi-helper" role="status">${flow?.dirty ? 'Updating the ETH amount…' : 'Calculating the ETH amount and fee reserve…'}</p>${address}`}
+        <dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
+            <div><dt>Amount added to private balance</dt><dd>${renderFundingWei(owner, intent.depositWei)}</dd></div>
+            <div><dt>Estimated network fee</dt><dd>${renderFundingWei(owner, flow.fee.expectedFeeWei)}</dd></div>
+            <div><dt>Additional fee buffer</dt><dd>${renderFundingWei(owner, flow.fee.feeBufferWei)}</dd></div>
+            ${availableKnown && BigInt(available) > 0n ? `<div><dt>Already at this address</dt><dd>− ${renderFundingWei(owner, BigInt(available) > BigInt(flow.totalWei) ? flow.totalWei : available)}</dd></div>` : ''}
+            <div class="zkapi-funding-total"><dt>Total ETH to send</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
+        </dl>
+        <p class="zkapi-note">This estimate refreshes automatically and is checked again when you click Next. The buffer covers changes in network fees; any unused ETH stays at this address. Your sending wallet charges its own transfer fee separately.</p>
+        <p class="zkapi-helper" role="status">${ready ? 'Funds available. Choose Next to add the ETH to your private balance.' : `Checking for funds… Currently at this address: ${escape(formatFundingAmount(available, 18))} ETH.`}</p>
+        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Next</button>` : `<p class="zkapi-helper" role="status">${flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…'}</p>${address}`}
         ${flow?.error ? `<p class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}
         <p class="zkapi-note">Your wallet holds ETH. Its USD value changes with the ETH price. Progress is saved in this browser.</p>`
         : `<h3>Your funding address</h3><p class="zkapi-helper">${escape(network)}</p>${address}
-        <p class="zkapi-helper">Available here: ${escape(formatFundingAmount(owner.fundingStatus?.ethBalance, 18))} ETH</p>
+        ${renderFundingReceipt(owner)}
         ${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`}
         ${owner.view === 'withdraw' ? `<label class="zkapi-funding-field">Withdrawal destination on ${escape(network)}<input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label><p class="zkapi-note">${savedDestination ? 'This withdrawal keeps its saved destination.' : 'Choose an address you control. Your funding address pays the network fee.'}</p>` : ''}
         ${wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><button data-funding-recover class="zkapi-primary-button" type="button" ${disabled}>Check saved transaction</button></div>` : ''}
@@ -167,6 +223,7 @@ export function attachWalletMethodControls(owner) {
         input(name)?.addEventListener('input', event => { owner[property] = event.target.value; });
     }
     input('usd')?.addEventListener('input', event => {
+        if (zkapiClient.config?.pending_deposit) return;
         owner.fundingUsdAmount = event.target.value;
         owner.fundingFlow?.invalidate();
         if (input('next')) input('next').disabled = true;
@@ -234,6 +291,8 @@ export function restoreWalletView(owner, saved) {
         let input = owner.overlay.querySelector(`#${saved.id}`);
         if (input && saved.preservedInput) {
             saved.preservedInput.disabled = input.disabled;
+            saved.preservedInput.readOnly = input.readOnly;
+            if (input.readOnly) saved.preservedInput.value = input.value;
             input.replaceWith(saved.preservedInput);
             input = saved.preservedInput;
         }

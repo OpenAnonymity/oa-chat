@@ -112,7 +112,10 @@ export default class WelcomePanel {
             const action = async () => {
                 const deposit = getWalletMethod() === 'address' ? this.fundingDepositIntent.ethAmount
                     : zkapiClient.isNativeEthFunding ? (await zkapiClient.quoteDepositUsd(amount)).ethAmount : amount;
-                await zkapiClient.deposit(deposit, report);
+                if (getWalletMethod() === 'address') {
+                    await zkapiClient.deposit(deposit, report,
+                        { preparedOperationId: this.fundingDepositIntent.preparedOperationId });
+                } else await zkapiClient.deposit(deposit, report);
                 if (flow) await flow.complete();
                 this.fundingUsdAmount = null;
             };

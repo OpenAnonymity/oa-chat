@@ -1707,6 +1707,9 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-breakdown > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
 .zkapi-funding-breakdown dt { color: hsl(var(--color-muted-foreground)); }
 .zkapi-funding-breakdown dd { margin: 0; overflow-wrap: anywhere; }
+.zkapi-funding-breakdown dd span { color: hsl(var(--color-muted-foreground)); }
+.zkapi-funding-breakdown .zkapi-funding-total { padding-top: 10px; border-top: 1px solid hsl(var(--color-border)); font-weight: 600; }
+.zkapi-funding-breakdown .zkapi-funding-total dt { color: hsl(var(--color-foreground)); }
 .zkapi-funding-account .zkapi-note + .zkapi-helper { margin-top: 12px; }
 .zkapi-funding-account [data-funding-next] { width: 100%; margin-top: 12px; }
 .zkapi-welcome-dialog { overflow-anchor: none; scroll-behavior: auto; }
