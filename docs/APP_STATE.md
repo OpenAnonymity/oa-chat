@@ -18,6 +18,21 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 
 ## 2026-09-29: CLI terminal cancellation patch
 
+- [daemon-v0.3.1](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.1)
+  is published from `dba6cefd8fd60e235c0a9fc0283d1f05ab491778`, the latest
+  main when tagged.
+  All ten release jobs and all 12 uploaded asset comparisons passed. The original
+  macOS ARM64 pair passed live funded readiness, prompt cancellation, streamed
+  inference, and automatic 4-gwei settlement. An attached start waited until
+  settlement and returned ready. No new deposit was needed; the companion is
+  byte-identical to 0.3.0. Test processes stopped and wallet backups stayed private.
+  The public one-command 0.3.0 → 0.3.1 upgrade preserved config bytes, modes,
+  and the previous bundle, opened the live funding prompt, and canceled on Ctrl+C
+  without another keystroke. Its outer interrupted shell pipeline returned 1;
+  direct CLI cancellation returned 0. No transaction was signed by that check.
+  See [patch evidence](../daemon/packaging/validation/daemon-0.3.1-release-20260929.json)
+  and [release validation](../daemon/docs/CLI_PACKAGING.md#published-031-prompt-cancellation-validation-2026-09-29).
+
 - The final public 0.3.0 acceptance check exposed a macOS terminal edge case:
   Ctrl+C at an unanswered confirmation stopped the companion, but the CLI's
   buffered terminal read waited for Enter before returning. Funding state stayed

@@ -409,6 +409,40 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
 
+## Published 0.3.1 prompt-cancellation validation (2026-09-29)
+
+[daemon-v0.3.1](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.1)
+was published from `dba6cefd8fd60e235c0a9fc0283d1f05ab491778`, the latest
+main when tagged.
+All ten [release jobs](https://github.com/OpenAnonymity/oa-chat/actions/runs/36629581649)
+passed, including native builds and Nix/package service checks on all four
+platforms. All 12 uploaded assets match the independently verified assembled
+artifact. The 0.3.0 tag and assets were preserved.
+
+The public HTTPS one-command installer upgraded 0.3.0 to 0.3.1 and entered
+setup with the matching companion despite an older global binary on PATH.
+Existing configuration bytes and private permissions were unchanged; the prior
+bundle remained executable. The saved unsigned amount returned with fresh
+consent required. Ctrl+C at that prompt stopped setup without another keystroke
+or a signed transaction. The outer interrupted shell pipeline returned a
+nonzero status; direct CLI cancellation tests returned zero.
+
+Real terminal regressions cover Ctrl+C with empty or partially typed input,
+explicit yes/no, EOF, rejection of piped consent, and bounded idle retries.
+The original macOS ARM64 CI binary also canceled the live funding confirmation
+prompt without another keystroke, stopped its owned services, and preserved the
+unsigned intent. The full Go race suite and vet passed, followed by independent
+adversarial review.
+
+The same CI bundle reused the funded Sepolia profile, reached ready without
+another deposit, and streamed a new request with HTTP 200 and `[DONE]`. The
+recently-attested verifier-outage policy was exercised again. Automatic signed
+settlement charged 4 gwei; attached guided setup waited for settlement and then
+reported ready while leaving the original daemon running. The companion binary
+is byte-identical to 0.3.0, whose deposit validation is recorded below. Setup
+itself sent no test prompt. Test daemons were stopped and recovery state retained
+in private backups. See the [sanitized patch release record](../packaging/validation/daemon-0.3.1-release-20260929.json).
+
 ## Published 0.3.0 guided-setup validation (2026-09-29)
 
 [daemon-v0.3.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.0)
