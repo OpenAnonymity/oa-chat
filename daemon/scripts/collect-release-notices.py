@@ -83,7 +83,7 @@ for identifier in sorted(visited):
     "The OA ZKAPI companion and protocol declare MIT OR Apache-2.0 in their Cargo manifests;\n"
     "their pinned source trees do not provide top-level license text files. Those declarations\n"
     "are retained here without assigning them the OA Chat repository's copyright notice.\n"
-    "Companion source: https://github.com/OpenAnonymity/zkapi-EF-collab\n"
+    "Companion source: https://github.com/OpenAnonymity/zkapi\n"
     "Protocol source: https://github.com/mingyech/zkapi\n"
 )
 build_info = {

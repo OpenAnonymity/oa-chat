@@ -3,9 +3,7 @@ package zkapi
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,26 +14,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-//go:embed funding.html funding.js
-var fundingAssets embed.FS
-
 const depositEventTopic = "0x7c83dba8534bea9e30d6444f9ca6462dc906897f9938d220dbbe4358c1f7a063"
 
 type FundingHandler struct {
 	client    *Client
-	origin    string
 	statePath string
 	mu        sync.Mutex
-	sessions  map[[32]byte]time.Time
 }
 
 type fundingConfig struct {
+	DeploymentID    string `json:"deployment_id,omitempty"`
+	BillingAsset    string `json:"billing_asset,omitempty"`
+	BillingUnit     string `json:"billing_unit,omitempty"`
+	WeiPerUnit      string `json:"native_asset_wei_per_unit,omitempty"`
 	ChainID         uint64 `json:"chain_id"`
 	Contract        string `json:"contract_address"`
 	Token           string `json:"token_address"`
@@ -43,6 +39,10 @@ type fundingConfig struct {
 	DemoMintEnabled bool   `json:"demo_mint_enabled"`
 }
 type depositRecord struct {
+	DeploymentID    string   `json:"deployment_id,omitempty"`
+	BillingAsset    string   `json:"billing_asset,omitempty"`
+	BillingUnit     string   `json:"billing_unit,omitempty"`
+	WeiPerUnit      string   `json:"native_asset_wei_per_unit,omitempty"`
 	ChainID         uint64   `json:"chain_id"`
 	Contract        string   `json:"contract_address"`
 	Amount          uint64   `json:"amount"`
@@ -53,9 +53,7 @@ type depositRecord struct {
 	Active          bool     `json:"active,omitempty"`
 }
 
-// NewFundingHandler serves only self-hosted assets and a capability-scoped
-// funding API. The daemon's authenticated admin API calls NewSession; local
-// chat API credentials are never exposed to browser JavaScript.
+// NewFundingHandler manages local custody through the authenticated CLI admin API.
 func NewFundingHandler(client *Client, publicOrigin, stateDir string) (*FundingHandler, error) {
 	if client == nil {
 		return nil, errors.New("funding needs a zkAPI client")
@@ -76,126 +74,7 @@ func NewFundingHandler(client *Client, publicOrigin, stateDir string) (*FundingH
 	if err := syncDirectoryChain(stateDir); err != nil {
 		return nil, errors.New("cannot sync private funding directory")
 	}
-	return &FundingHandler{client: client, origin: strings.TrimRight(publicOrigin, "/"), statePath: filepath.Join(stateDir, "pending-deposit.json"), sessions: make(map[[32]byte]time.Time)}, nil
-}
-
-func (h *FundingHandler) NewSession() (string, error) {
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(nonce)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for hash, expiry := range h.sessions {
-		if time.Now().After(expiry) {
-			delete(h.sessions, hash)
-		}
-	}
-	h.sessions[sha256.Sum256([]byte(token))] = time.Now().Add(30 * time.Minute)
-	return h.origin + "/funding#" + token, nil
-}
-
-func (h *FundingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
-	defer cancel()
-	r = r.WithContext(ctx)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
-	origin, _ := url.Parse(h.origin)
-	if r.Host != origin.Host || (r.Header.Get("Origin") != "" && r.Header.Get("Origin") != h.origin) {
-		http.Error(w, "invalid funding origin", http.StatusForbidden)
-		return
-	}
-	if r.Method == http.MethodGet && (r.URL.Path == "/funding" || r.URL.Path == "/funding/" || r.URL.Path == "/funding/app.js") {
-		file, contentType := "funding.html", "text/html; charset=utf-8"
-		if r.URL.Path == "/funding/app.js" {
-			file, contentType = "funding.js", "text/javascript; charset=utf-8"
-		}
-		data, _ := fundingAssets.ReadFile(file)
-		w.Header().Set("Content-Type", contentType)
-		_, _ = w.Write(data)
-		return
-	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	expiry, ok := h.sessions[sha256.Sum256([]byte(token))]
-	if !ok || time.Now().After(expiry) {
-		http.Error(w, "funding session expired; run oa-chat fund again", http.StatusUnauthorized)
-		return
-	}
-	if r.Method == http.MethodPost && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		http.Error(w, "JSON required", http.StatusUnsupportedMediaType)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	var result any
-	var err error
-	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/address":
-		result, err = h.addressLocked(r.Context())
-	case r.Method == http.MethodPost && r.URL.Path == "/funding/api/address/deposit":
-		var body struct {
-			Amount uint64 `json:"amount"`
-		}
-		if err = decodeJSON(r.Body, &body); err == nil {
-			result, err = h.fundAddressLocked(r.Context(), body.Amount)
-		}
-	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/config":
-		result, err = h.config(r.Context())
-	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/path":
-		result, err = h.depositPath(r.Context())
-	case r.Method == http.MethodGet && r.URL.Path == "/funding/api/status":
-		var data json.RawMessage
-		data, err = h.client.WalletStatus(r.Context())
-		if err == nil {
-			var status struct {
-				HasNote bool `json:"has_note"`
-				Pending bool `json:"pending_request"`
-				Note    struct {
-					Balance json.Number `json:"current_balance"`
-				} `json:"note"`
-			}
-			if json.Unmarshal(data, &status) != nil {
-				err = errors.New("invalid wallet status")
-			} else {
-				result = map[string]any{"has_note": status.HasNote, "pending_request": status.Pending, "balance": status.Note.Balance}
-			}
-		}
-	case r.Method == http.MethodPost && r.URL.Path == "/funding/api/prepare":
-		var body struct {
-			Amount uint64 `json:"amount"`
-		}
-		if err = decodeJSON(r.Body, &body); err == nil {
-			result, err = h.prepare(r.Context(), body.Amount)
-		}
-	case r.Method == http.MethodPost && r.URL.Path == "/funding/api/confirm":
-		var body struct {
-			TransactionHash string `json:"transaction_hash"`
-		}
-		if err = decodeJSON(r.Body, &body); err == nil {
-			result, err = h.confirm(r.Context(), body.TransactionHash)
-		}
-	default:
-		http.NotFound(w, r)
-		return
-	}
-	if err != nil {
-		status := http.StatusBadGateway
-		var bridgeErr *Error
-		if errors.As(err, &bridgeErr) {
-			status = bridgeErr.Status
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(result)
+	return &FundingHandler{client: client, statePath: filepath.Join(stateDir, "pending-deposit.json")}, nil
 }
 
 func decodeJSON(r io.Reader, v any) error {
@@ -219,6 +98,10 @@ func (h *FundingHandler) config(ctx context.Context) (fundingConfig, error) {
 		return fundingConfig{}, err
 	}
 	var wire struct {
+		DeploymentID    string `json:"deployment_id"`
+		BillingAsset    string `json:"billing_asset"`
+		BillingUnit     string `json:"billing_unit"`
+		WeiPerUnit      string `json:"native_asset_wei_per_unit"`
 		ChainID         uint64 `json:"chain_id"`
 		Contract        string `json:"contract_address"`
 		Token           string `json:"demo_billing_token_address"`
@@ -230,12 +113,24 @@ func (h *FundingHandler) config(ctx context.Context) (fundingConfig, error) {
 	}
 	expected, _ := ChainID(h.client.config.Network)
 	rpc, err := url.Parse(wire.RPC)
-	if wire.ChainID != expected || !isHex(wire.Contract, 20) || !isHex(wire.Token, 20) || err != nil || rpc.Scheme != "https" || rpc.Host == "" || rpc.User != nil || rpc.Fragment != "" {
+	if wire.ChainID != expected || !isHex(wire.Contract, 20) || err != nil || rpc.Scheme != "https" || rpc.Host == "" || rpc.User != nil || rpc.Fragment != "" {
 		return fundingConfig{}, errors.New("invalid funding network or contract")
 	}
+	if wire.BillingAsset == "native_eth" {
+		deployment, _, deploymentErr := pinnedDeployment(h.client.config.Network)
+		if deploymentErr != nil || wire.DeploymentID != deployment.ID || wire.ChainID != deployment.ChainID || !strings.EqualFold(wire.Contract, deployment.Contract) || wire.BillingAsset != deployment.Asset || wire.BillingUnit != deployment.Unit {
+			return fundingConfig{}, errors.New("native funding configuration does not match the packaged deployment")
+		}
+		if wire.DeploymentID == "" || wire.Token != "" || wire.BillingUnit != "gwei" || wire.WeiPerUnit != "1000000000" {
+			return fundingConfig{}, errors.New("invalid native ETH funding units or deployment")
+		}
+	} else if (wire.BillingAsset != "" && wire.BillingAsset != "erc20") || !isHex(wire.Token, 20) || wire.WeiPerUnit != "" {
+		return fundingConfig{}, errors.New("invalid billing asset configuration")
+	}
 	return fundingConfig{
+		DeploymentID: wire.DeploymentID, BillingAsset: wire.BillingAsset, BillingUnit: wire.BillingUnit, WeiPerUnit: wire.WeiPerUnit,
 		ChainID: wire.ChainID, Contract: wire.Contract, Token: wire.Token, RPC: wire.RPC,
-		DemoMintEnabled: wire.DemoMintEnabled && wire.ChainID == 11155111,
+		DemoMintEnabled: wire.DemoMintEnabled && wire.ChainID == 11155111 && wire.BillingAsset != "native_eth",
 	}, nil
 }
 
@@ -255,9 +150,10 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 		return nil, err
 	}
 	var wallet struct {
-		HasNote bool `json:"has_note"`
+		HasNote *bool `json:"has_note"`
+		Pending bool  `json:"pending_request"`
 	}
-	if json.Unmarshal(status, &wallet) != nil {
+	if json.Unmarshal(status, &wallet) != nil || wallet.HasNote == nil {
 		return nil, errors.New("invalid wallet status")
 	}
 	var record depositRecord
@@ -266,10 +162,10 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 		if json.Unmarshal(raw, &record) != nil {
 			return nil, errors.New("pending deposit recovery data is invalid; preserve the file for recovery")
 		}
-		if record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+		if !depositDeploymentMatches(record, config) {
 			return nil, errors.New("pending deposit belongs to another deployment; preserve it for recovery")
 		}
-		if record.Active && !wallet.HasNote {
+		if record.Active && !*wallet.HasNote && !wallet.Pending {
 			// Keep completed recovery notes in a private archive rather than
 			// blocking every later deposit or deleting the old note secret.
 			digest := sha256.Sum256([]byte(record.TransactionHash))
@@ -288,17 +184,34 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 			}
 			record = depositRecord{}
 			err = os.ErrNotExist
-		} else {
-			if record.Amount != amount {
-				return nil, fmt.Errorf("a deposit for %s USDC is pending; resume that amount first", strconv.FormatFloat(float64(record.Amount)/1e6, 'f', 6, 64))
-			}
+		} else if record.Amount == amount {
 			return publicDeposit(record), nil
+		} else {
+			// An explicit amount edit may replace only a definitely unsigned
+			// native draft. Both journals must agree that no transaction exists.
+			if !config.nativeETH() || *wallet.HasNote || wallet.Pending || record.Active || record.TransactionHash != "" {
+				return nil, fmt.Errorf("a deposit for %d billing units is pending; resume that amount first", record.Amount)
+			}
+			address, addressErr := h.loadAddress(config)
+			if addressErr != nil || address.Pending != nil || (address.Phase != "ready" && address.Phase != "waiting_funds") {
+				return nil, fmt.Errorf("a deposit for %d billing units is pending; resume that amount first", record.Amount)
+			}
+			digest := sha256.Sum256([]byte(record.Commitment))
+			archive := h.statePath + ".unsigned-" + hex.EncodeToString(digest[:])
+			if err := os.Rename(h.statePath, archive); err != nil {
+				return nil, errors.New("cannot archive the previous unsigned deposit draft")
+			}
+			if err := syncDirectoryChain(filepath.Dir(h.statePath)); err != nil {
+				return nil, errors.New("cannot sync the previous unsigned deposit draft")
+			}
+			record = depositRecord{}
+			err = os.ErrNotExist
 		}
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("cannot read pending deposit recovery data")
 	}
-	if wallet.HasNote {
+	if *wallet.HasNote || wallet.Pending {
 		return nil, errors.New("a private note is already active; preserve or withdraw it before funding a new note")
 	}
 	body, _ := json.Marshal(map[string]uint64{"amount": amount})
@@ -315,6 +228,7 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 		}
 	}
 	record.ChainID, record.Contract = config.ChainID, config.Contract
+	record.DeploymentID, record.BillingAsset, record.BillingUnit, record.WeiPerUnit = config.DeploymentID, config.BillingAsset, config.BillingUnit, config.WeiPerUnit
 	if err := h.save(record); err != nil {
 		return nil, err
 	}
@@ -400,7 +314,7 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 		return nil, errors.New("no pending deposit to confirm")
 	}
 	var record depositRecord
-	if json.Unmarshal(raw, &record) != nil || record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+	if json.Unmarshal(raw, &record) != nil || !depositDeploymentMatches(record, config) {
 		return nil, errors.New("pending deposit does not match the deployment")
 	}
 	// Preserve the first submitted hash immediately for crash recovery. A
@@ -487,6 +401,7 @@ type ethReceipt struct {
 		Address string   `json:"address"`
 		Topics  []string `json:"topics"`
 		Data    string   `json:"data"`
+		Removed bool     `json:"removed"`
 	} `json:"logs"`
 }
 
@@ -526,8 +441,11 @@ func validateReceipt(receipt ethReceipt, record depositRecord) (uint32, uint64, 
 	if !ok {
 		return 0, 0, errors.New("invalid pending commitment")
 	}
+	var matchingNote uint32
+	var matchingExpiry uint64
+	matches := 0
 	for _, log := range receipt.Logs {
-		if !strings.EqualFold(log.Address, record.Contract) || len(log.Topics) != 3 || !strings.EqualFold(log.Topics[0], depositEventTopic) {
+		if log.Removed || !strings.EqualFold(log.Address, record.Contract) || len(log.Topics) != 3 || !strings.EqualFold(log.Topics[0], depositEventTopic) {
 			continue
 		}
 		if !isHex(log.Topics[1], 32) || !isHex(log.Topics[2], 32) || !isHex(log.Data, 96) {
@@ -543,9 +461,13 @@ func validateReceipt(receipt ethReceipt, record depositRecord) (uint32, uint64, 
 		if !note.IsUint64() || note.Uint64() > 0xffffffff || !amount.IsUint64() || amount.Uint64() != record.Amount || !expiry.IsUint64() || expiry.Uint64() <= uint64(time.Now().Unix()) {
 			return 0, 0, errors.New("deposit event values do not match the pending note")
 		}
-		return uint32(note.Uint64()), expiry.Uint64(), nil
+		matchingNote, matchingExpiry = uint32(note.Uint64()), expiry.Uint64()
+		matches++
 	}
-	return 0, 0, errors.New("deposit receipt has no event matching this private note")
+	if matches == 1 {
+		return matchingNote, matchingExpiry, nil
+	}
+	return 0, 0, errors.New("deposit receipt must contain exactly one event matching this private note")
 }
 
 // Deposit witnesses describe the current shared tree, not private wallet
@@ -598,3 +520,18 @@ func syncDirectoryChain(path string) error {
 		path = parent
 	}
 }
+
+// Old ERC-20 recovery files remain readable only under their original contract.
+// Native records require explicit deployment and unit binding: a chain match
+// alone must never reinterpret a private balance from another deployment.
+func depositDeploymentMatches(record depositRecord, config fundingConfig) bool {
+	if record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+		return false
+	}
+	if config.nativeETH() {
+		return record.DeploymentID == config.DeploymentID && record.BillingAsset == config.BillingAsset && record.BillingUnit == config.BillingUnit && record.WeiPerUnit == config.WeiPerUnit
+	}
+	return record.BillingAsset != "native_eth" && (record.DeploymentID == "" || record.DeploymentID == config.DeploymentID)
+}
+
+func (config fundingConfig) nativeETH() bool { return config.BillingAsset == "native_eth" }

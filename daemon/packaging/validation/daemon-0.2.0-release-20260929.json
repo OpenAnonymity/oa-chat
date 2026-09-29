@@ -1,0 +1,265 @@
+{
+  "date_utc": "2026-09-29",
+  "release": {
+    "draft": false,
+    "prerelease": true,
+    "verified_uploaded_asset_count": 12,
+    "tag": "daemon-v0.2.0",
+    "published_at": "2026-09-29T14:58:06Z",
+    "release_id": 399255307,
+    "url": "https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0",
+    "assets": [
+      {
+        "name": "install.sh",
+        "size": 13361,
+        "digest": "sha256:35a0a32a1fa7c6be7d69c0a00bd53e8b2584f5147774f4d3d6f2f3f71eeac77c"
+      },
+      {
+        "name": "oa-chat-nix.tar.gz",
+        "size": 5120,
+        "digest": "sha256:6d19a0ddf0ccfb769b9d1d399c7d69dbedd771648974e3b9abb8badfaf1cb56d"
+      },
+      {
+        "name": "oa-chat-packaging.tar.gz",
+        "size": 6469,
+        "digest": "sha256:4534b5db324ddea9f784018df1ea772b350c9671b86189ea0b71691327806266"
+      },
+      {
+        "name": "oa-chat_0.2.0_darwin_amd64.tar.gz",
+        "size": 23425276,
+        "digest": "sha256:5a427f03ba952567ef0523d1c6a4d68b2dc3b522df4c795e125739fec9274730"
+      },
+      {
+        "name": "oa-chat_0.2.0_darwin_arm64.tar.gz",
+        "size": 22808906,
+        "digest": "sha256:cec4a12e4fc4ff7099106e6d0cbf70071059aed78a813e21060406568fc66460"
+      },
+      {
+        "name": "oa-chat_0.2.0_linux_amd64.deb",
+        "size": 24008376,
+        "digest": "sha256:a26f815905da0b721ac64232a2f36c8d90c702b1f5c25de3bb3a40138c490ce8"
+      },
+      {
+        "name": "oa-chat_0.2.0_linux_amd64.rpm",
+        "size": 24020815,
+        "digest": "sha256:0a4b3d7353a0de777a2120304e466714b7ee463291fb96af3cd8395c0107fb05"
+      },
+      {
+        "name": "oa-chat_0.2.0_linux_amd64.tar.gz",
+        "size": 23726905,
+        "digest": "sha256:9251ee60723c36048065c1508fef5911a0596c01ffbf97ca5beaf04b11603d1c"
+      },
+      {
+        "name": "oa-chat_0.2.0_linux_arm64.deb",
+        "size": 23961606,
+        "digest": "sha256:d169126aaa8c2bc6152d67e4e381e737ba31db5bd478cb3ba4cd4738551dd19f"
+      },
+      {
+        "name": "oa-chat_0.2.0_linux_arm64.rpm",
+        "size": 23936461,
+        "digest": "sha256:95b1c6444c6ab36610eef74ad56f0291206338d4da74158adf710e62ef1d9c16"
+      },
+      {
+        "name": "oa-chat_0.2.0_linux_arm64.tar.gz",
+        "size": 23541988,
+        "digest": "sha256:127e4170fa044c8d757747d614f6e0a8e46c5074c7b4e879f19c8e2fe46427ce"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 1871,
+        "digest": "sha256:d90c59b9d6bd48818da8472e683b9459d33f482fc770ba6d6938f36d251e864d"
+      }
+    ]
+  },
+  "source_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+  "source_was_main_at_tag_creation": true,
+  "immutable_tag_preserved": true,
+  "assembled_artifact_id": 11041077866,
+  "assembled_checks": {
+    "tag": "daemon-v0.2.0",
+    "source_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+    "verified_files": [
+      "aur/.SRCINFO",
+      "aur/PKGBUILD",
+      "homebrew/oa-chat.rb",
+      "install.sh",
+      "nix/README.md",
+      "nix/flake.lock",
+      "nix/flake.nix",
+      "nix/home-manager-module.nix",
+      "nix/nixos-module.nix",
+      "nix/package.nix",
+      "nix/service-utils.nix",
+      "oa-chat-nix.tar.gz",
+      "oa-chat-packaging.tar.gz",
+      "oa-chat_0.2.0_darwin_amd64.tar.gz",
+      "oa-chat_0.2.0_darwin_arm64.tar.gz",
+      "oa-chat_0.2.0_linux_amd64.deb",
+      "oa-chat_0.2.0_linux_amd64.rpm",
+      "oa-chat_0.2.0_linux_amd64.tar.gz",
+      "oa-chat_0.2.0_linux_arm64.deb",
+      "oa-chat_0.2.0_linux_arm64.rpm",
+      "oa-chat_0.2.0_linux_arm64.tar.gz"
+    ],
+    "installer_pinned": true,
+    "bundles": [
+      {
+        "target": "darwin/amd64",
+        "sha256": "5a427f03ba952567ef0523d1c6a4d68b2dc3b522df4c795e125739fec9274730",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 darwin/amd64",
+          "oa_chat_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790692115"
+        }
+      },
+      {
+        "target": "darwin/arm64",
+        "sha256": "cec4a12e4fc4ff7099106e6d0cbf70071059aed78a813e21060406568fc66460",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 darwin/arm64",
+          "oa_chat_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790692115"
+        }
+      },
+      {
+        "target": "linux/amd64",
+        "sha256": "9251ee60723c36048065c1508fef5911a0596c01ffbf97ca5beaf04b11603d1c",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 linux/amd64",
+          "oa_chat_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790692115"
+        }
+      },
+      {
+        "target": "linux/arm64",
+        "sha256": "127e4170fa044c8d757747d614f6e0a8e46c5074c7b4e879f19c8e2fe46427ce",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 linux/arm64",
+          "oa_chat_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790692115"
+        }
+      }
+    ]
+  },
+  "original_workflow": {
+    "url": "https://github.com/OpenAnonymity/oa-chat/actions/runs/36582999421",
+    "head_sha": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+    "conclusion": "failure",
+    "native_and_assemble": "success",
+    "package_failure": "Nix 2.35 lazy flake metadata source path was not materialized before Python read; harness corrected without changing release assets"
+  },
+  "package_revalidation": {
+    "url": "https://github.com/OpenAnonymity/oa-chat/actions/runs/36585685844",
+    "harness_commit": "0e038636d57c8715a4195b260ea8a7537544300e",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "source",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15)",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04-arm)",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15-intel)",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04)",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "public_macos_arm64_upgrade_and_reinstall": {
+    "old_version": "0.1.0",
+    "installed_version": "0.2.0",
+    "public_https_piped_install": true,
+    "config_content_and_permissions_preserved": true,
+    "previous_bundle_retained": true,
+    "both_binary_launchers_match": true,
+    "proof_assets_present": true,
+    "source_commit": "ef888242c36860ccf8ec176b2b1eb724cee77456",
+    "same_version_public_reinstall": true,
+    "retained_bundle_count": 3,
+    "private_directory_mode": "0700"
+  },
+  "public_macos_arm64_sepolia_startup": {
+    "version": "0.2.0",
+    "network": "sepolia",
+    "bundled_companion_ready": true,
+    "custom_binary_or_proof_paths": false,
+    "transport": "direct_https",
+    "model_count": 393,
+    "example_model": "openai/gpt-4.1-mini",
+    "example_model_budget_micro_usd": 1000000,
+    "auth_checks": {
+      "no_key": 401,
+      "browser_origin": 403,
+      "browser_funding_removed": 404,
+      "inference_key_wallet_management": 403
+    },
+    "live_usd_deposit_quote": true,
+    "quote_chain_id": 11155111,
+    "quote_deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260928",
+    "quote_contract": "0x999f40773e47f7e07f435c0cc69225c409b64329",
+    "quote_principal_gwei": 735390,
+    "quote_input_micro_usd": 2000000,
+    "funds_sent": false,
+    "transaction_approved_or_broadcast": false,
+    "funded": false,
+    "pending_settlement": false,
+    "daemon_and_companion_stopped": true
+  },
+  "funded_acceptance": {
+    "record": "sepolia-cli-quotes-20260929.json",
+    "tested_source_commit": "84cc4632d79e6e65d74c6a556070a6e3b4a8b86d",
+    "daemon_runtime_and_companion_patches_unchanged_in_release": true,
+    "result": "pass",
+    "coverage": [
+      "quoted deposit",
+      "per-model budgets",
+      "live streaming during verifier outage",
+      "signed settlement",
+      "finalized withdrawal",
+      "restart recovery"
+    ],
+    "additional_funds_spent_during_release_validation": false
+  }
+}

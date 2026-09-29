@@ -1,3 +1,4 @@
+import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from '../../chat/zkapi/components/WalletModalView.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ function fixture() {
         return '$12.00';
     }, isNativeEthFunding: true, quoteDepositUsd: async () => ({ ethAmount: '0.005' }) };
     const noop = () => {};
-    const context = {
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false,
         parseTokenAmount, zkapiClient: client, getWalletMethod: () => 'metamask', walletMethodText: value => value,
         renderDepositAmount: () => '', prepareDepositAmount: async () => '0.005', renderWalletMethod: () => '', renderFundingAccount: () => '', attachWalletMethodControls: noop,
         captureWalletView: noop, restoreWalletView: noop, captureFundingDisclosureView: noop,

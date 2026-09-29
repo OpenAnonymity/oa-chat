@@ -66,7 +66,14 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 	if companion.StateDir == "" {
 		return nil, errors.New("zkAPI companion requires a private state directory")
 	}
-	stateDir := filepath.Join(companion.StateDir, config.Network)
+	deployment, manifest, err := pinnedDeployment(config.Network)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyProofSetup(companion.SetupDir, deployment.Proof); err != nil {
+		return nil, err
+	}
+	stateDir := filepath.Join(companion.StateDir, config.Network, deployment.ID)
 	if err := os.MkdirAll(stateDir, 0700); err != nil {
 		return nil, err
 	}
@@ -83,13 +90,16 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 	if err != nil || verifier.Scheme != "https" || verifier.Host == "" || verifier.User != nil || verifier.RawQuery != "" || verifier.Fragment != "" {
 		return nil, errors.New("zkAPI verifier must be HTTPS")
 	}
-	deployment, _ := Manifest(config.Network)
+	manifestPath, err := writeDeploymentManifest(stateDir, manifest)
+	if err != nil {
+		return nil, err
+	}
 	clientURL, _ := url.Parse(config.ClientURL)
-	args := []string{"--require-oa-org-key-source", "--oa-verifier-url", companion.VerifierURL, "--openrouter-inference-base", config.InferenceBaseURL, "client", "--deployment", deployment, "--mode", "direct-openrouter", "--no-fund", "--listen", clientURL.Host, "--state-dir", stateDir}
+	args := []string{"--require-oa-org-key-source", "--oa-verifier-url", companion.VerifierURL, "--openrouter-inference-base", config.InferenceBaseURL, "client", "--deployment", manifestPath, "--mode", "direct-openrouter", "--no-fund", "--listen", clientURL.Host, "--state-dir", stateDir}
 	cmd := exec.CommandContext(ctx, binary, args...)
 	// Explicit environment overrides prevent inherited testnet or legacy mode
 	// settings from silently changing the network and verification policy.
-	drop := []string{"OA_ZKAPI_BRIDGE_TOKEN=", "OA_ZKAPI_CHAIN_ID=", "ZKAPI_PROOF_SETUP_DIR=", "ZKAPI_REQUIRE_OA_ORG_KEY_SOURCE=", "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY=", "http_proxy=", "https_proxy=", "all_proxy=", "no_proxy="}
+	drop := []string{"OA_ZKAPI_BRIDGE_TOKEN=", "OA_ZKAPI_CHAIN_ID=", "OA_ZKAPI_REQUEST_LIMIT_MICRO_USD=", "ZKAPI_PROOF_SETUP_DIR=", "ZKAPI_REQUIRE_OA_ORG_KEY_SOURCE=", "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY=", "http_proxy=", "https_proxy=", "all_proxy=", "no_proxy="}
 	for _, entry := range os.Environ() {
 		keep := true
 		for _, prefix := range drop {

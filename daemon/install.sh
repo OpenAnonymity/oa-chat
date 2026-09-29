@@ -14,6 +14,7 @@ main() {
     local platform architecture os_version libc_version
     local archive_name base_url expected actual entry mode
     local executable target current_target=''
+    local setup=0 setup_network='' network_selected=0
 
     fail() { printf 'oa-chat installer: %s\n' "$*" >&2; exit 1; }
     cleanup() {
@@ -48,18 +49,29 @@ main() {
             --prefix)
                 [[ $# -ge 2 ]] || fail '--prefix requires an absolute directory.'
                 prefix=$2; shift 2 ;;
+            --setup)
+                setup=1; shift ;;
+            --network)
+                [[ $# -ge 2 ]] || fail '--network requires mainnet or sepolia.'
+                setup_network=$2; network_selected=1; shift 2 ;;
             --help|-h)
                 cat <<'HELP'
-Install the OA Chat CLI and its zkAPI companion for the current user.
+Install or update the OA Chat CLI and its zkAPI companion for the current user.
 
 Usage: bash install.sh [--version MAJOR.MINOR.PATCH] [--prefix ABSOLUTE_DIR]
+                       [--setup [--network mainnet|sepolia]]
 
 The published script defaults to its own release version. The source script
 requires --version. The default prefix is $HOME/.local; commands go in its bin/.
+Rerun with the same prefix to update; private configuration and wallets are kept.
+Add --setup to run guided configuration, funding, and startup after installation.
+--network requires --setup; omitted networks are selected during guided setup.
+Interactive answers come from your terminal, never the piped installer script.
 Requires macOS 13+ or Linux with glibc 2.39+, curl, tar, and SHA-256 tooling.
 Linux also needs OpenSSL 3, libgcc, and CA certificates.
 On NixOS, use the Nix flake package instead of the native archive installer.
-Does not run sudo, edit shell profiles, initialize wallets, or start services.
+Does not run sudo or edit shell profiles. Default installation does not initialize
+wallets or start services; --setup explicitly starts the foreground guided flow.
 HELP
                 return ;;
             *) fail "Unknown argument: $1 (see --help)." ;;
@@ -70,6 +82,10 @@ HELP
         fail 'Use a published release installer, or supply --version MAJOR.MINOR.PATCH.'
     [[ "$prefix" = /* && "$prefix" != / && "$prefix" != *:* && "$prefix" != *$'\n'* && "$prefix" != *$'\r'* ]] ||
         fail '--prefix must be an absolute directory without colons or newlines, other than /.'
+    if [[ "$network_selected" = 1 ]]; then
+        [[ "$setup" = 1 ]] || fail '--network requires --setup.'
+        [[ "$setup_network" = mainnet || "$setup_network" = sepolia ]] || fail '--network must be mainnet or sepolia.'
+    fi
     [[ "$(id -u)" != 0 ]] || fail 'Run this installer as your normal user, without sudo.'
 
     for executable in curl tar awk mktemp readlink chmod mkdir mv ln rm rmdir cat uname; do
@@ -228,12 +244,21 @@ HELP
         printf 'Your PATH currently selects %s. Put %s/bin first to use this installation.\n' "$target" "$prefix"
     fi
     if [[ -n "$current_target" ]]; then
+        printf 'Existing private configuration, tickets, and wallet state were preserved.\n'
         printf 'Restart any running daemon to use the new version. Previous release retained at %s/%s.\n' "$install_root" "$current_target"
-    else
-        printf 'For a new configuration: oa-chat init, then oa-chat serve. For zkAPI: oa-chat init --backend zkapi.\n'
     fi
+    [[ "$setup" = 1 ]] || printf 'Start guided setup: oa-chat start\n'
     cleanup
     trap - EXIT
+    if [[ "$setup" = 1 ]]; then
+        local start_arguments=(start)
+        [[ "$network_selected" = 0 ]] || start_arguments+=(--network "$setup_network")
+        # Guided startup discovers its matching companion through PATH. Keep
+        # this installation ahead of any older pair without editing profiles.
+        export PATH="$prefix/bin${PATH:+:$PATH}"
+        printf '\nStarting guided setup…\n'
+        exec "$prefix/bin/oa-chat" "${start_arguments[@]}"
+    fi
 }
 
 main "$@"

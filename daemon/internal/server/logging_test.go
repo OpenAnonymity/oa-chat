@@ -20,8 +20,10 @@ func TestRequestLogsContainOnlyAllowlistedMetadata(t *testing.T) {
 	}{
 		{"inference", http.MethodPost, "/v1/chat/completions?secret=query", "method=POST route=/v1/chat/completions"},
 		{"unknown", "SECRET-METHOD", "/private-secret?capability=query", "method=OTHER route=OTHER"},
-		{"funding", http.MethodGet, "/funding/private-secret?capability=query", "method=GET route=/funding/*"},
+		{"removed funding page", http.MethodGet, "/funding/private-secret?capability=query", "method=GET route=OTHER"},
 		{"address", http.MethodGet, "/admin/funding/address?secret=query", "method=GET route=/admin/funding/address"},
+		{"quote approval", http.MethodPost, "/admin/funding/approve?secret=query", "method=POST route=/admin/funding/approve"},
+		{"public return", http.MethodPost, "/admin/return/approve?secret=query", "method=POST route=/admin/return/approve"},
 		{"withdrawal", http.MethodPost, "/admin/withdrawal?secret=query", "method=POST route=/admin/withdrawal"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -189,5 +191,54 @@ func TestRequestLogsKeepImmediateSSEFlushing(t *testing.T) {
 	line, err := bufio.NewReader(response.Body).ReadString('\n')
 	if err != nil || line != "data: first\n" {
 		t.Fatalf("first SSE frame was buffered: %q, %v", line, err)
+	}
+}
+
+func TestVerifierOutageLogsOnlyFixedWarning(t *testing.T) {
+	const warning = "Verification unavailable: inference used an outage-eligible key; this key is not verified"
+	for _, test := range []struct {
+		name, status string
+		wantWarning  bool
+	}{
+		{"unavailable", "verifier-unavailable", true},
+		{"verified", "verified", false},
+		{"untrusted status", "verifier-unavailable provider-secret", false},
+		{"missing", "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, stream := range []bool{false, true} {
+				var output bytes.Buffer
+				handler := LogRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("X-OA-Verification-Status", test.status)
+					w.Header().Set("X-OA-Verification-Detail", "provider-secret prompt=private station=private-station")
+					w.WriteHeader(http.StatusOK)
+					if stream {
+						if err := http.NewResponseController(w).Flush(); err != nil {
+							t.Fatal(err)
+						}
+					}
+					_, _ = io.WriteString(w, "response-secret")
+				}), log.New(&output, "", 0))
+				r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions?secret=private-query", strings.NewReader("prompt-secret"))
+				r.Header.Set("X-OA-Verification-Status", "verifier-unavailable")
+				handler.ServeHTTP(httptest.NewRecorder(), r)
+				got := output.String()
+				wantCount := 0
+				if test.wantWarning {
+					wantCount = 1
+				}
+				if strings.Count(got, warning) != wantCount {
+					t.Fatalf("warning count mismatch: %q", got)
+				}
+				for _, secret := range []string{"provider-secret", "prompt=private", "private-station", "private-query", "prompt-secret", "response-secret"} {
+					if strings.Contains(got, secret) {
+						t.Fatalf("verification warning exposed %q", secret)
+					}
+				}
+				if !strings.Contains(got, "request finished method=POST route=/v1/chat/completions status=200") {
+					t.Fatal("warning replaced request completion logging")
+				}
+			}
+		})
 	}
 }

@@ -11,7 +11,6 @@ pkgbase = oa-chat-bin
 	depends = gcc-libs
 	depends = openssl>=3
 	optdepends = systemd: user service management
-	optdepends = xdg-utils: open the funding browser
 	options = !strip
 	provides = oa-chat
 	conflicts = oa-chat

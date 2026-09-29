@@ -6,17 +6,27 @@ The web app runs entirely in the browser. Each session uses a fresh ephemeral ac
 
 For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
-The daemon also includes a [one-command installer](daemon/docs/CLI_PACKAGING.md#one-command-installation)
-for macOS and Linux. Install the published
-[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0):
+The daemon includes [guided setup](daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
+that installs or updates the binaries, creates missing configuration, checks
+readiness, and walks you through funding. Use the `daemon-v0.3.0` installer for
+this guided flow:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
 ```
 
-It installs the binaries and proving assets for your user. Follow its PATH
-guidance, then run `oa-chat init` and configure tickets or zkAPI access as
-described in the [CLI guide](daemon/README.md). The exact-tag URL supports prereleases;
+Choose the private balance to add, approve its fixed amount and maximum fee,
+then send **Sepolia test ETH** to the displayed address. Setup waits for the
+transfer, deposits automatically, waits for finality, and prints your local
+inference endpoint. Leave the terminal running. On later runs, use
+`oa-chat start --network sepolia`; existing configuration and wallet state are
+reused. An existing ticket configuration can select `--backend zkapi`.
+
+Omit `--setup --network sepolia` for installation or updates only. Stop the daemon
+before upgrading, rerun with the same prefix, and restart afterward. Existing
+configuration, tickets, and wallet state are retained. See
+[installer options](daemon/docs/CLI_PACKAGING.md#one-command-installation) for
+PATH guidance and custom prefixes. Exact-tag URLs support prereleases;
 GitHub's `latest/download` URL excludes them. Public package repositories have
 not yet been published.
 

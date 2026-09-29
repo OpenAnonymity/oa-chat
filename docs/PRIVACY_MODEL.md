@@ -68,36 +68,58 @@ already disclosed to that UI.
 
 The local API key authenticates only the UI-to-daemon hop and never reaches OA
 services or the provider. Incoming cookies, identity headers, and top-level
-account/storage metadata are stripped. Ticket requests get distinct verified
-provider keys; zkAPI leases are single-use across API requests and process
+account/storage metadata are stripped. Ticket requests get distinct
+provider keys under the verification/outage policy below; zkAPI leases are single-use across API requests and process
 restarts. The daemon stores no chat history and creates no request-log files.
 Its foreground `serve` command emits operational metadata to stdout: local
 readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
 and lifecycle events. Shell redirection and service managers may retain that
 metadata. Prompts, responses, credentials, raw URLs, and private wallet/proof
 details never enter these logs. Its proof
-companion receives no prompts/responses. It always uses an authenticated
+companion receives no prompts/responses or model IDs. The daemon reads the
+public model-tier map and provider catalog anonymously and sends only the model's reviewed coarse
+USD spending bucket to the companion. Native ETH conversion uses the verified
+quote bound to that request; neither the exact wallet balance nor prompt size
+is used to choose a bucket. It always uses an authenticated
 loopback CONNECT bridge that rejects plaintext HTTP and HTTP downgrades. The
 bridge opens destination TCP directly by default, or carries destination TLS
 through opt-in Wisp. Environment proxy variables are ignored. Opt-in Wisp resolves
 destination DNS and hides the source IP from destination services, while the
 relay can observe connection metadata. A configured relay failure never falls
 back to direct HTTPS. Destination certificate validation, station/key binding,
-and verified access remain mandatory in either mode. See the CLI documentation
+and the same verification policy apply in either mode. The daemon matches the
+web outage eligibility described below and exposes `verifier-unavailable`
+response metadata plus a fixed operational warning. It checks each single-use
+key once; unlike retained browser sessions, it has no background retry queue. See the CLI documentation
 for deployed-service prerequisites and the zkAPI settlement constraint.
 
 The CLI's Ethereum address-funding route generates an Ethereum signing key
 locally and retains it in an owner-only file alongside its private recovery
 state. No external wallet connection or OA account identity is required.
-Withdrawal management uses a separate owner-only local credential; the
-inference API key shared with a UI cannot authorize a withdrawal destination.
+All funding, withdrawal, and public-return management uses a separate
+owner-only local credential; the inference API key shared with a UI cannot
+authorize wallet transactions. The authenticated runtime-mode status is the
+only admin endpoint available with the inference credential alone.
 Funding address balances, incoming transfers, approvals, vault deposits, and
 withdrawal amounts and destinations
 are public Ethereum activity visible to the configured RPC (accessed directly
 by default, or through opt-in Wisp) and chain observers. They are not made
-anonymous by removing a wallet connection. The signing key and private-note secret never enter the optional
-browser page, account synchronization, or inference requests. Backups of the
-private configuration directory control both public funds and private notes.
+anonymous by removing a wallet connection. Funding is command-line only:
+quoting prepares local recovery data. The explicit `fund --approve` command
+authorizes a saved quote's exact principal, destination, and fee allowance.
+Guided `start` instead asks once to authorize a fixed deposit and maximum
+network fee before waiting for incoming ETH. It refreshes short-lived quotes
+and may approve them automatically only for that same network, deployment,
+funding address, private-note commitment, principal, and nonce, within the
+accepted fee ceiling. A higher ceiling requires new confirmation. Piped
+installer text is never treated as consent; interactive answers come from the
+controlling terminal. Unsigned progress requires consent again after restart;
+signed progress reuses its original transaction. A reverted transaction is
+never retried automatically. The wizard checks only local readiness and public
+model policy; it does not send a test inference or acquire access merely to
+check setup. The signing key and private-note secret never enter account
+synchronization or inference requests. Backups of the private configuration
+directory control both public funds and private notes.
 
 ### 1. Ticket issuance (blind signatures)
 
@@ -273,11 +295,12 @@ for implementation details.
 
 ### 6. Verifier fail-closed policy
 
-The browser fails closed unless the verifier explicitly returns `verified` and
-binds that approval to the requested station and key hash. Pending, unknown,
-unverified, mismatched, and network-error results never activate the provisional
-child key. Because ticket spending commits before verification, a failed check
-discards the bounded child key but does not restore the ticket.
+The browser and daemon require matching station/key approval or the narrow,
+explicitly unverified outage exception in section 4. Pending, unknown,
+mismatched, malformed and explicit refusal results fail closed; transport
+failures qualify only under that exception. Because ticket spending commits
+before verification, a hard failed check discards the bounded child key but
+does not restore the ticket.
 
 The default development exception requires both the oa-chat page hostname and
 its configured oa-org hostname to be an exact loopback value (`localhost`,
@@ -287,7 +310,8 @@ routing. The build rejects OA production hostnames and never queries the
 production verifier. Both exceptions label the result as a bypass rather than
 `verified`, exclude the credential from shared-access payloads, and identify
 the reduced assurance in the security UI. Production and ordinary staging
-builds retain the fail-closed verifier path. See
+builds retain station/key checks and only the explicit outage exception from
+section 4. See
 [Disposable Demo Frontend Routing](DEMO_DEPLOYMENT.md).
 
 Commercial UI extensions receive only redacted aggregate ticket state through

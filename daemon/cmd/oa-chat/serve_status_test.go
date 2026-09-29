@@ -178,7 +178,7 @@ func (s *serveOutput) String() string {
 
 func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	if os.Getenv("OA_CHAT_SERVE_STDOUT_TEST_HELPER") == "1" {
-		if err := run([]string{"--config-dir", os.Getenv("OA_CHAT_SERVE_STDOUT_TEST_DIR"), "serve"}); err != nil {
+		if err := run([]string{"--config-dir", os.Getenv("OA_CHAT_SERVE_STDOUT_TEST_DIR"), "serve", "--backend", "ticket"}); err != nil {
 			log.Print(err)
 			os.Exit(1)
 		}
@@ -188,6 +188,11 @@ func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Ticket mode must work even when the saved default is zkAPI and its
+	// companion/proving assets are absent. Selecting a mode cannot mutate them.
+	c.Backend = "zkapi"
+	c.ZKAPI.Binary = filepath.Join(t.TempDir(), "missing-companion")
+	c.ZKAPI.ProofSetupDir = filepath.Join(t.TempDir(), "missing-proof-assets")
 	// Configuration requires a nonzero port; release a local ephemeral port just
 	// before starting the child. No configured remote service is contacted.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -198,6 +203,10 @@ func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "config")
 	if err := config.Init(dir, c); err != nil {
 		listener.Close()
+		t.Fatal(err)
+	}
+	savedConfig, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
 	listener.Close()
@@ -236,6 +245,10 @@ func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	}
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	defer client.CloseIdleConnections()
+	active, err := resolveActiveConfig(context.Background(), c)
+	if err != nil || active.Backend != "ticket" || active.ZKAPI != c.ZKAPI {
+		t.Fatalf("running mode did not override saved default safely: %v", err)
+	}
 	req, err := http.NewRequest(http.MethodGet, "http://"+c.Listen+"/v1/models?secret-query", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +281,16 @@ func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Errorf("successful serve wrote to stderr: %s", stderr.String())
+	}
+	afterConfig, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil || !bytes.Equal(savedConfig, afterConfig) {
+		t.Fatal("serve override changed the saved wallet configuration", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "zkapi")); !os.IsNotExist(err) {
+		t.Fatal("ticket mode touched zkAPI state")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "funding")); !os.IsNotExist(err) {
+		t.Fatal("ticket mode touched funding state")
 	}
 	for _, secret := range []string{c.APIKey, c.ZKAPI.BridgeToken, dir, "secret-query", "secret-client-token"} {
 		if strings.Contains(stdout.String(), secret) {

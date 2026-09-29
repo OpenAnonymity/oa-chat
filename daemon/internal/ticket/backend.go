@@ -5,16 +5,22 @@ package ticket
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -28,11 +34,15 @@ type Config struct {
 type Backend struct {
 	cfg    Config
 	client *http.Client
+	// A station explicitly banned during this process cannot regain outage access.
+	banned sync.Map
 }
 
 type Credential struct {
-	Key       string
-	ExpiresAt time.Time
+	Key                string
+	ExpiresAt          time.Time
+	VerificationStatus string
+	VerificationDetail string
 }
 
 func New(cfg Config) (*Backend, error) {
@@ -220,6 +230,7 @@ func (b *Backend) Acquire(ctx context.Context, model string) (Credential, error)
 		StationSignature string `json:"station_signature"`
 		OrgSignature     string `json:"org_signature"`
 		ExpiresAt        int64  `json:"expires_at_unix"`
+		RecentlyAttested bool   `json:"station_recently_attested"`
 	}
 	err = b.withWallet(ctx, func(w *wallet) error {
 		if w.Pending != nil && (w.Pending.Model != baseModel || len(w.Pending.Tickets) != cost) {
@@ -284,22 +295,143 @@ func (b *Backend) Acquire(ctx context.Context, model string) (Credential, error)
 	if key.Key == "" || strings.ContainsAny(key.Key, "\r\n") || key.StationID == "" || key.StationSignature == "" || key.OrgSignature == "" || key.ExpiresAt <= time.Now().Unix() {
 		return Credential{}, errors.New("OA returned an invalid or expired provisional key; tickets remain spent")
 	}
-	body, _ := json.Marshal(map[string]any{"station_id": key.StationID, "api_key": key.Key, "key_valid_till": key.ExpiresAt, "station_signature": key.StationSignature, "org_signature": key.OrgSignature})
-	var proof struct {
-		Status    string `json:"status"`
-		StationID string `json:"station_id"`
-		KeyHash   string `json:"key_hash"`
+	if _, banned := b.banned.Load(key.StationID); banned {
+		return Credential{}, errors.New("station is banned; tickets remain spent")
 	}
-	if err := b.request(ctx, "POST", b.cfg.VerifierURL+"/submit_key", body, "", &proof); err != nil {
+	body, _ := json.Marshal(map[string]any{"station_id": key.StationID, "api_key": key.Key, "key_valid_till": key.ExpiresAt, "station_signature": key.StationSignature, "org_signature": key.OrgSignature})
+	status, detail, err := b.verifyKey(ctx, body, key.StationID, key.Key, key.RecentlyAttested)
+	if err != nil {
 		return Credential{}, fmt.Errorf("key verification failed; tickets remain spent: %w", err)
 	}
-	if proof.Status != "verified" || proof.StationID != key.StationID || !verifierKeyHashMatches(proof.KeyHash, key.Key) {
-		return Credential{}, errors.New("verifier did not approve this exact station and key; tickets remain spent")
+	if err := ctx.Err(); err != nil {
+		return Credential{}, err
 	}
 	if key.ExpiresAt <= time.Now().Unix() {
 		return Credential{}, errors.New("ephemeral key expired during verification")
 	}
-	return Credential{Key: key.Key, ExpiresAt: time.Unix(key.ExpiresAt, 0)}, nil
+	if _, banned := b.banned.Load(key.StationID); banned {
+		return Credential{}, errors.New("station is banned; tickets remain spent")
+	}
+	return Credential{Key: key.Key, ExpiresAt: time.Unix(key.ExpiresAt, 0), VerificationStatus: status, VerificationDetail: detail}, nil
+}
+
+// verifyKey follows the browser's narrowly scoped availability policy. Each
+// credential serves one inference request, so the daemon does not retain a
+// background queue of keys after that request. A fresh key gets a fresh check.
+func (b *Backend) verifyKey(ctx context.Context, body []byte, stationID, key string, recentlyAttested bool) (string, string, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, b.cfg.VerifierURL+"/submit_key", bytes.NewReader(body))
+	if err != nil {
+		return "", "", errors.New("cannot construct verifier request")
+	}
+	req.Header.Set("User-Agent", "OA-Chat/1")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	response, err := b.client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		if recentlyAttested && verifierTransportUnavailable(err) {
+			return "verifier-unavailable", "recently_attested_outage", nil
+		}
+		return "", "", errors.New("verifier request failed")
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	if err != nil || len(data) > 1<<20 {
+		return "", "", errors.New("verifier response was interrupted or too large")
+	}
+	var proof verifierResponse
+	if json.Unmarshal(data, &proof) != nil || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return "", "", errors.New("verifier returned invalid JSON")
+	}
+	if proof.Status == "banned" || proof.hasBan() {
+		b.banned.Store(stationID, true)
+	}
+	return classifyVerifierResponse(response.StatusCode, proof, stationID, key, recentlyAttested)
+}
+
+type verifierResponse struct {
+	Status          string          `json:"status"`
+	StationID       string          `json:"station_id"`
+	KeyHash         string          `json:"key_hash"`
+	Detail          json.RawMessage `json:"detail"`
+	Error           json.RawMessage `json:"error"`
+	Message         json.RawMessage `json:"message"`
+	BannedStation   json.RawMessage `json:"banned_station"`
+	OwnershipPassed *bool           `json:"ownership_passed"`
+	Ownership       struct {
+		Passed *bool `json:"ownership_passed"`
+	} `json:"ownership"`
+}
+
+func (p verifierResponse) hasBan() bool {
+	value := string(bytes.TrimSpace(p.BannedStation))
+	return value != "" && value != "null" && value != "false"
+}
+
+var verifierRefusal = regexp.MustCompile(`(?i)invalid signature|signature mismatch|expired|invalid key|privacy|logging|training|ownership.*(?:mismatch|failed)|banned`)
+
+func classifyVerifierResponse(httpStatus int, proof verifierResponse, stationID, key string, recentlyAttested bool) (string, string, error) {
+	rejected := errors.New("verifier did not approve this exact station and key")
+	// Even an error response cannot authorize a different station or key.
+	if (proof.StationID != "" && proof.StationID != stationID) || (proof.KeyHash != "" && !verifierKeyHashMatches(proof.KeyHash, key)) {
+		return "", "", rejected
+	}
+	var detail string
+	_ = json.Unmarshal(proof.Detail, &detail)
+	ownershipUnavailable := httpStatus == 503 && proof.Status == "unverified" && detail == "ownership_check_error"
+	statusRefused := proof.Status == "banned" || proof.Status == "rejected" || proof.Status == "denied" || proof.Status == "invalid" || (proof.Status == "unverified" && !ownershipUnavailable)
+	if statusRefused || proof.hasBan() || (proof.OwnershipPassed != nil && !*proof.OwnershipPassed) || (proof.Ownership.Passed != nil && !*proof.Ownership.Passed) || verifierRefusal.Match(bytes.Join([][]byte{proof.Detail, proof.Error, proof.Message}, []byte(" "))) {
+		return "", "", rejected
+	}
+	if httpStatus >= 200 && httpStatus < 300 {
+		if proof.Status == "verified" && proof.StationID == stationID && verifierKeyHashMatches(proof.KeyHash, key) {
+			return "verified", "", nil
+		}
+		return "", "", rejected
+	}
+	// These two precise temporary responses match the production browser policy
+	// and do not require an issuer's recently-attested claim.
+	if httpStatus == 429 {
+		return "verifier-unavailable", "rate_limited", nil
+	}
+	if ownershipUnavailable {
+		return "verifier-unavailable", "ownership_check_error", nil
+	}
+	switch httpStatus {
+	case 408, 500, 502, 503, 504:
+		if recentlyAttested && (proof.Status == "" || proof.Status == "error" || proof.Status == "unavailable") {
+			return "verifier-unavailable", "recently_attested_outage", nil
+		}
+	}
+	return "", "", rejected
+}
+
+func verifierTransportUnavailable(err error) bool {
+	// A canceled caller and TLS authentication errors are never outage approval.
+	// Unwrap URL errors before classifying: *url.Error itself is a net.Error even
+	// when its underlying cause is an arbitrary policy or programming exception.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		err = urlErr.Err
+	}
+	var certErr *tls.CertificateVerificationError
+	var unknownCA x509.UnknownAuthorityError
+	var badName x509.HostnameError
+	var invalidCert x509.CertificateInvalidError
+	if errors.Is(err, context.Canceled) || errors.As(err, &certErr) || errors.As(err, &unknownCA) || errors.As(err, &badName) || errors.As(err, &invalidCert) {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var opErr *net.OpError
+	var dnsErr *net.DNSError
+	return errors.As(err, &opErr) || errors.As(err, &dnsErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.EPIPE)
 }
 
 // verifierKeyHashMatches checks the identifier in this key's /submit_key

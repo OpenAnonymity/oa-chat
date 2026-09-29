@@ -16,7 +16,7 @@ import (
 
 const testKey = "local-test-key-with-at-least-32-characters"
 
-func TestWithdrawalRequiresDistinctOwnerCredentialAlongsideInferenceKey(t *testing.T) {
+func TestWalletManagementRequiresDistinctOwnerCredentialAlongsideInferenceKey(t *testing.T) {
 	const managementToken = "private-management-token-not-shared-with-inference-clients"
 	api, err := New(&fakeBackend{}, testKey, 2)
 	if err != nil {
@@ -27,52 +27,61 @@ func TestWithdrawalRequiresDistinctOwnerCredentialAlongsideInferenceKey(t *testi
 		calls++
 		w.WriteHeader(http.StatusNoContent)
 	})
-	for _, method := range []string{http.MethodGet, http.MethodPost} {
-		for _, test := range []struct {
-			name, configured, token, key, origin, site string
-			status                                     int
-		}{
-			{"inference key alone", managementToken, "", testKey, "", "", 403},
-			{"incorrect management token", managementToken, "wrong", testKey, "", "", 403},
-			{"inference key as management token", managementToken, testKey, testKey, "", "", 403},
-			{"unset management token", "", "", testKey, "", "", 403},
-			{"same configured credentials", testKey, testKey, testKey, "", "", 403},
-			{"management token alone", managementToken, managementToken, "", "", "", 401},
-			{"owner", managementToken, managementToken, testKey, "", "", 204},
-			{"browser origin", managementToken, managementToken, testKey, "https://evil.example", "", 403},
-			{"cross site", managementToken, managementToken, testKey, "", "cross-site", 403},
-		} {
-			t.Run(method+"/"+test.name, func(t *testing.T) {
-				api.ManagementToken = test.configured
-				r := httptest.NewRequest(method, "/admin/withdrawal", nil)
-				r.Header.Set("Authorization", "Bearer "+test.key)
-				if test.token != "" {
-					r.Header.Set("X-OA-Management-Token", test.token)
-				}
-				r.Header.Set("Origin", test.origin)
-				r.Header.Set("Sec-Fetch-Site", test.site)
-				before := calls
-				w := httptest.NewRecorder()
-				api.ServeHTTP(w, r)
-				if w.Code != test.status {
-					t.Fatalf("status %d, want %d", w.Code, test.status)
-				}
-				if (calls != before) != (test.status == 204) {
-					t.Fatal("unauthorized request reached withdrawal handler")
-				}
-				if strings.Contains(w.Body.String(), managementToken) || strings.Contains(w.Body.String(), testKey) {
-					t.Fatal("response leaked a credential")
-				}
-			})
+	for _, path := range []string{"/admin/funding/address", "/admin/funding/deposit", "/admin/funding/quote", "/admin/withdrawal", "/admin/withdrawal/quote", "/admin/return", "/admin/return/quote"} {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			for _, test := range []struct {
+				name, configured, token, key, origin, site string
+				status                                     int
+			}{
+				{"inference key alone", managementToken, "", testKey, "", "", 403},
+				{"incorrect management token", managementToken, "wrong", testKey, "", "", 403},
+				{"inference key as management token", managementToken, testKey, testKey, "", "", 403},
+				{"unset management token", "", "", testKey, "", "", 403},
+				{"same configured credentials", testKey, testKey, testKey, "", "", 403},
+				{"management token alone", managementToken, managementToken, "", "", "", 401},
+				{"owner", managementToken, managementToken, testKey, "", "", 204},
+				{"browser origin", managementToken, managementToken, testKey, "https://evil.example", "", 403},
+				{"cross site", managementToken, managementToken, testKey, "", "cross-site", 403},
+			} {
+				t.Run(path+"/"+method+"/"+test.name, func(t *testing.T) {
+					api.ManagementToken = test.configured
+					r := httptest.NewRequest(method, path, nil)
+					r.Header.Set("Authorization", "Bearer "+test.key)
+					if test.token != "" {
+						r.Header.Set("X-OA-Management-Token", test.token)
+					}
+					r.Header.Set("Origin", test.origin)
+					r.Header.Set("Sec-Fetch-Site", test.site)
+					before := calls
+					w := httptest.NewRecorder()
+					api.ServeHTTP(w, r)
+					if w.Code != test.status {
+						t.Fatalf("status %d, want %d", w.Code, test.status)
+					}
+					if (calls != before) != (test.status == 204) {
+						t.Fatal("unauthorized request reached withdrawal handler")
+					}
+					if strings.Contains(w.Body.String(), managementToken) || strings.Contains(w.Body.String(), testKey) {
+						t.Fatal("response leaked a credential")
+					}
+				})
+			}
 		}
 	}
-	// Other management routes retain their existing inference-key policy.
+	// Future wallet management routes inherit the owner-only boundary.
 	r := httptest.NewRequest(http.MethodGet, "/admin/funding", nil)
 	r.Header.Set("Authorization", "Bearer "+testKey)
 	w := httptest.NewRecorder()
 	api.ServeHTTP(w, r)
-	if w.Code != http.StatusNoContent {
-		t.Fatal("changed unrelated management authorization")
+	if w.Code != http.StatusForbidden {
+		t.Fatal("unknown wallet management route bypassed owner authentication")
+	}
+	r.Header.Add("X-OA-Management-Token", managementToken)
+	r.Header.Add("X-OA-Management-Token", managementToken)
+	w = httptest.NewRecorder()
+	api.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatal("ambiguous repeated management credentials were accepted")
 	}
 }
 
@@ -125,7 +134,7 @@ func TestStreamingFlushesPartialFrameBeforeUpstreamFinishes(t *testing.T) {
 			case <-ctx.Done():
 			}
 		}()
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: reader}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "X-Oa-Verification-Status": {"verifier-unavailable"}, "X-Oa-Verification-Detail": {"recently_attested_outage"}}, Body: reader}, nil
 	}}
 	s := apiServer(t, b)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -147,6 +156,9 @@ func TestStreamingFlushesPartialFrameBeforeUpstreamFinishes(t *testing.T) {
 	case <-firstWritten:
 	case <-ctx.Done():
 		t.Fatal("upstream write did not reach client before completion")
+	}
+	if resp.Header.Get("X-OA-Verification-Status") != "verifier-unavailable" || resp.Header.Get("X-OA-Verification-Detail") != "recently_attested_outage" {
+		t.Fatal("outage warning did not reach client before the stream completed")
 	}
 	if resp.Header.Get("X-Accel-Buffering") != "no" {
 		t.Fatal("stream buffering protection missing")
@@ -267,5 +279,54 @@ func TestSafeSettlementErrorIsActionable(t *testing.T) {
 	data, _ := io.ReadAll(response.Body)
 	if response.StatusCode != 409 || !strings.Contains(string(data), "settlement_pending") {
 		t.Fatalf("wrong settlement error: %d %s", response.StatusCode, data)
+	}
+}
+
+func TestVerificationHeadersExposeOnlyLocalStatusEnums(t *testing.T) {
+	for _, test := range []struct {
+		name, status, detail, wantStatus, wantDetail string
+	}{
+		{"verified", "verified", "provider-private-detail", "verified", ""},
+		{"attested outage", "verifier-unavailable", "recently_attested_outage", "verifier-unavailable", "recently_attested_outage"},
+		{"rate limited", "verifier-unavailable", "rate_limited", "verifier-unavailable", "rate_limited"},
+		{"ownership unavailable", "verifier-unavailable", "ownership_check_error", "verifier-unavailable", "ownership_check_error"},
+		{"private outage detail", "verifier-unavailable", "provider-secret station=private", "verifier-unavailable", ""},
+		{"unknown status", "provider-secret", "recently_attested_outage", "", ""},
+		{"pending", "pending", "ownership_check_error", "", ""},
+		{"detail without status", "", "rate_limited", "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, upstreamStatus := range []int{200, 403} {
+				b := &fakeBackend{complete: func(context.Context, json.RawMessage) (*http.Response, error) {
+					header := make(http.Header)
+					header.Set("Content-Type", "application/json")
+					header.Set("X-OA-Verification-Status", test.status)
+					header.Set("X-OA-Verification-Detail", test.detail)
+					header.Set("X-OA-Station-Id", "private-station")
+					return &http.Response{StatusCode: upstreamStatus, Header: header, Body: io.NopCloser(strings.NewReader(`{"choices":[]}`))}, nil
+				}}
+				api, err := New(b, testKey, 1)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r := request(t, "http://localhost", `{"model":"test/model","messages":[{"role":"user","content":"hi"}]}`)
+				// A UI cannot assert verification by supplying response-like headers.
+				r.Header.Set("X-OA-Verification-Status", "verified")
+				r.Header.Set("X-OA-Verification-Detail", "injected-private-detail")
+				w := httptest.NewRecorder()
+				api.ServeHTTP(w, r)
+				response := w.Result()
+				defer response.Body.Close()
+				if response.StatusCode != upstreamStatus {
+					t.Fatalf("status = %d, want %d", response.StatusCode, upstreamStatus)
+				}
+				if response.Header.Get("X-OA-Verification-Status") != test.wantStatus || response.Header.Get("X-OA-Verification-Detail") != test.wantDetail {
+					t.Fatalf("wrong verification headers: %v", response.Header)
+				}
+				if response.Header.Get("X-OA-Station-Id") != "" {
+					t.Fatal("private station metadata reached local API response")
+				}
+			}
+		})
 	}
 }

@@ -20,6 +20,11 @@ import (
 // AddressWithdrawalStatus contains public progress only. Proofs, raw signed
 // transactions, note recovery secrets, and the signing key stay on disk.
 type AddressWithdrawalStatus struct {
+	ActualFeeWei    string `json:"actual_fee_wei,omitempty"`
+	DeploymentID    string `json:"deployment_id,omitempty"`
+	BillingAsset    string `json:"billing_asset,omitempty"`
+	BillingUnit     string `json:"billing_unit,omitempty"`
+	WeiPerUnit      string `json:"native_asset_wei_per_unit,omitempty"`
 	Address         string `json:"address"`
 	ChainID         uint64 `json:"chain_id"`
 	TokenAddress    string `json:"token_address"`
@@ -118,7 +123,7 @@ func (h *FundingHandler) AddressWithdrawal(ctx context.Context) (AddressWithdraw
 
 func (h *FundingHandler) withdrawalSnapshot(ctx context.Context) (fundingConfig, *addressFundingRecord, withdrawalWallet, AddressWithdrawalStatus, error) {
 	config, record, payment, err := h.addressSnapshot(ctx)
-	status := AddressWithdrawalStatus{Address: payment.Address, ChainID: payment.ChainID, TokenAddress: payment.TokenAddress, TokenDecimals: 6, ETHBalance: payment.ETHBalance}
+	status := AddressWithdrawalStatus{Address: payment.Address, ChainID: payment.ChainID, TokenAddress: payment.TokenAddress, TokenDecimals: payment.TokenDecimals, DeploymentID: payment.DeploymentID, BillingAsset: payment.BillingAsset, BillingUnit: payment.BillingUnit, WeiPerUnit: payment.WeiPerUnit, ETHBalance: payment.ETHBalance}
 	var wallet withdrawalWallet
 	if err != nil {
 		return config, record, wallet, status, err
@@ -153,6 +158,7 @@ func (h *FundingHandler) withdrawalSnapshot(ctx context.Context) (fundingConfig,
 		status.Phase, status.TransactionHash = withdrawal.Phase, withdrawal.TransactionHash
 		if record.Pending != nil && record.Pending.Kind == "withdrawal" {
 			status.TransactionHash = record.Pending.Hash
+			status.ActualFeeWei = record.Pending.ActualFeeWei
 		}
 		if withdrawal.SettlementHash != "" {
 			status.TransactionHash = withdrawal.SettlementHash
@@ -162,6 +168,13 @@ func (h *FundingHandler) withdrawalSnapshot(ctx context.Context) (fundingConfig,
 		}
 	} else if !*wallet.HasNote && payment.Phase == "recovery_required" {
 		status.Phase = "recovery_required"
+	}
+	if status.ActualFeeWei == "" && record.Withdrawal != nil {
+		for _, entry := range record.History {
+			if strings.EqualFold(entry.Hash, record.Withdrawal.TransactionHash) {
+				status.ActualFeeWei = entry.ActualFeeWei
+			}
+		}
 	}
 	setWithdrawalMessage(&status)
 	return config, record, wallet, status, nil
@@ -177,6 +190,8 @@ func setWithdrawalMessage(status *AddressWithdrawalStatus) {
 		status.Message = "Wait for the outstanding inference to settle, then rerun the same withdrawal command."
 	case "waiting_funds":
 		status.Message = "Withdrawal is reserved. Send ETH for network fees to the local payment address, then rerun the same command."
+	case "quoted":
+		status.Message = "Withdrawal destination and full private balance are reserved; review a current fee quote and explicitly approve before signing."
 	case "withdrawal_pending":
 		status.Message = "Withdrawal is reserved or awaiting Ethereum finality. Resume with the same destination; new inference is paused."
 	case "confirming":
@@ -226,9 +241,17 @@ func (h *FundingHandler) WithdrawAddress(ctx context.Context, destination string
 			status.Phase, status.TransactionHash = w.Phase, w.TransactionHash
 			if record.Pending != nil && record.Pending.Kind == "withdrawal" {
 				status.TransactionHash = record.Pending.Hash
+				status.ActualFeeWei = record.Pending.ActualFeeWei
 			}
 			if w.SettlementHash != "" {
 				status.TransactionHash = w.SettlementHash
+			}
+		}
+		if record.Withdrawal != nil && record.Pending == nil {
+			for _, entry := range record.History {
+				if strings.EqualFold(entry.Hash, record.Withdrawal.TransactionHash) {
+					status.ActualFeeWei = entry.ActualFeeWei
+				}
 			}
 		}
 		setWithdrawalMessage(&status)
@@ -260,7 +283,7 @@ func (h *FundingHandler) WithdrawAddress(ctx context.Context, destination string
 			record.History = append(record.History, *record.Pending)
 			record.Pending = nil
 		}
-		record.Withdrawal = &addressWithdrawalRecord{NoteID: wallet.Note.NoteID, Destination: destination, Phase: "withdrawal_pending"}
+		record.Withdrawal = &addressWithdrawalRecord{NoteID: wallet.Note.NoteID, Destination: destination, Phase: "quoted"}
 		record.Phase = "withdrawal_pending"
 		if err := h.saveAddress(record); err != nil {
 			return update(), err
@@ -282,6 +305,9 @@ func (h *FundingHandler) WithdrawAddress(ctx context.Context, destination string
 	if confirmationHash != "" && (record.Pending == nil || record.Pending.Kind != "withdrawal" || strings.EqualFold(confirmationHash, record.Pending.Hash)) {
 		return update(), errors.New("alternate payout confirmation must name a distinct transaction for the saved withdrawal")
 	}
+	if mode := quoteMode(ctx); mode != nil && mode.Capture != nil && record.Pending != nil && retryHash == "" {
+		return update(), errors.New("recover the signed withdrawal before requesting a new quote")
+	}
 	if record.Pending != nil {
 		if record.Pending.Kind != "withdrawal" {
 			return update(), errors.New("unexpected pending payment during withdrawal; preserve recovery files")
@@ -291,6 +317,9 @@ func (h *FundingHandler) WithdrawAddress(ctx context.Context, destination string
 			return update(), err
 		}
 		if !final {
+			if mode := quoteMode(ctx); mode != nil && mode.Capture != nil {
+				return update(), errors.New("recover the signed withdrawal before requesting a new quote")
+			}
 			if confirmationHash != "" {
 				return update(), errors.New("the local withdrawal must have a canonical finalized revert before an alternate payout can be confirmed")
 			}
@@ -298,6 +327,9 @@ func (h *FundingHandler) WithdrawAddress(ctx context.Context, destination string
 				h.broadcastAddress(ctx, config, record.Pending)
 			}
 			return update(), nil
+		}
+		if err := recordAddressActualFee(record.Pending, receipt); err != nil {
+			return update(), err
 		}
 		if confirmationHash != "" {
 			// Only a finalized local failure consumes this signer's nonce. An
@@ -386,13 +418,20 @@ func (h *FundingHandler) WithdrawAddress(ctx context.Context, destination string
 	if json.Unmarshal(raw, &reserved) != nil || reserved.Phase != "reserved" || !withdrawalStatusMatches(reserved, &expected) {
 		return update(), errors.New("withdrawal proof does not match its saved reservation")
 	}
-	w.Amount, w.Nullifier, w.Binding, w.Phase = expected.Amount, expected.Nullifier, binding, "withdrawal_pending"
+	w.Amount, w.Nullifier, w.Binding, w.Phase = expected.Amount, expected.Nullifier, binding, "quoted"
 	if retrying != nil {
 		w.Phase = "reverted"
 	}
 	if err := h.saveAddress(record); err != nil {
 		return update(), err
 	}
+	if mode := quoteMode(ctx); mode != nil && mode.Capture != nil && retrying != nil {
+		// Keep the finalized failed transaction in the durable journal while
+		// quoting its explicitly requested replacement. No nonce is released.
+		err := h.signAddressTransaction(ctx, config, record, "withdrawal", config.Contract, data)
+		return update(), err
+	}
+
 	if retrying != nil {
 		failed := *retrying
 		failed.FinalizedRevert = true

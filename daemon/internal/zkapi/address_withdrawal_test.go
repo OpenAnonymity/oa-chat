@@ -48,15 +48,23 @@ func withdrawalJSONResponse(r *http.Request, status int, value any) *http.Respon
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(raw)), Request: r}
 }
 
-func newWithdrawalFixture(t *testing.T) *withdrawalFixture {
+func newWithdrawalFixture(t *testing.T, native ...bool) *withdrawalFixture {
 	t.Helper()
-	f := newAddressFixture(t)
-	approval, err := f.h.FundAddress(context.Background(), 100000)
-	if err != nil {
-		t.Fatal(err)
+	f := newAddressFixture(t, native...)
+	if !f.native {
+		approval, err := f.h.FundAddress(context.Background(), 100000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.mine(t, approval.TransactionHash, false)
 	}
-	f.mine(t, approval.TransactionHash, false)
-	deposit, err := f.h.FundAddress(context.Background(), 100000)
+	var deposit AddressFundingStatus
+	var err error
+	if f.native {
+		deposit, err = f.fundNative(t, 100000)
+	} else {
+		deposit, err = f.h.FundAddress(context.Background(), 100000)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +85,9 @@ func newWithdrawalFixture(t *testing.T) *withdrawalFixture {
 			if !w.capability {
 				version = 0
 			}
-			return withdrawalJSONResponse(r, 200, map[string]any{"bridge_version": 1, "chain_id": 1, "mode": "direct_openrouter", "require_oa_org_key_source": true, "withdrawal_bridge_version": version}), nil
+			policy := testPolicy("mainnet")
+			policy["withdrawal_bridge_version"] = version
+			return withdrawalJSONResponse(r, 200, policy), nil
 		case "/wallet/status":
 			return withdrawalJSONResponse(r, 200, map[string]any{"has_note": f.active, "pending_request": w.pending, "note": map[string]any{"note_id": w.noteID, "deposit_amount": 100000, "current_balance": w.walletBalance, "expiry_ts": 2000000000, "current_anchor": "0x55", "current_commitment_x": "0x66", "current_commitment_y": "0x77"}}), nil
 		case "/funding/api/deposit/prepare":
@@ -208,7 +218,19 @@ func (f *withdrawalFixture) journal(t *testing.T) addressFundingRecord {
 
 func (f *withdrawalFixture) withdraw(t *testing.T, retryHash ...string) string {
 	t.Helper()
-	if _, err := f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, f.noteID, retryHash...); err != nil {
+	if f.native {
+		retry := ""
+		if len(retryHash) > 0 {
+			retry = retryHash[0]
+		}
+		quote, err := f.h.QuoteAddressWithdrawal(context.Background(), withdrawalTestDestination, f.noteID, retry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.h.ApproveAddressWithdrawal(context.Background(), quote.ID); err != nil {
+			t.Fatal(err)
+		}
+	} else if _, err := f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, f.noteID, retryHash...); err != nil {
 		t.Fatal(err)
 	}
 	record := f.journal(t)
@@ -906,5 +928,36 @@ func TestAddressWithdrawalStatusIsReadOnlyAndDoesNotExposeRecoveryMaterial(t *te
 	}
 	if before != len(f.submitted) || proofs != f.prepareCalls {
 		t.Fatal("withdrawal status caused proving or transaction broadcast")
+	}
+}
+
+func TestNativeWithdrawalKeepsGweiAmountAndZeroTransactionValue(t *testing.T) {
+	f := newWithdrawalFixture(t, true)
+	status, err := f.h.AddressWithdrawal(context.Background())
+	if err != nil || status.BillingAsset != "native_eth" || status.BillingUnit != "gwei" || status.TokenDecimals != 9 || status.PrivateBalance != 99999 {
+		t.Fatalf("native withdrawal status: %+v %v", status, err)
+	}
+	hash := f.withdraw(t)
+	tx := f.accepted[hash]
+	if tx == nil || tx.Value().Sign() != 0 || tx.Nonce() != 1 || len(f.accepted) != 2 {
+		t.Fatal("native withdrawal signed value or unexpected extra approval")
+	}
+	if err := validateSignedWithdrawal(tx.Data(), fundingConfig{ChainID: 1, Contract: addressTestVault}, f.journal(t).Withdrawal); err != nil {
+		t.Fatal(err)
+	}
+	f.mineWithdrawal(t, hash, withdrawalTestDestination, false)
+	f.finalized = "0x1"
+	if status, err := f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, 12, "", ""); err != nil || status.Phase == "complete" || f.confirmCalls != 0 {
+		t.Fatal("native withdrawal completed before finality")
+	}
+	f.finalized = "0x20"
+	status, err = f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, 12, "", "")
+	if err != nil || status.Phase != "complete" || status.Amount != 99999 || f.active || f.journal(t).Pending != nil {
+		t.Fatalf("native withdrawal did not complete: %+v %v", status, err)
+	}
+	f.h = &FundingHandler{client: f.h.client, statePath: f.h.statePath}
+	status, err = f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, 12, "", "")
+	if err != nil || status.Phase != "complete" || len(f.accepted) != 2 {
+		t.Fatal("native withdrawal repeated after restart")
 	}
 }

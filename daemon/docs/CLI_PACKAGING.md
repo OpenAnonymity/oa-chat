@@ -7,7 +7,9 @@ who imported tickets or funded the private balance.
 
 ## Local configuration
 
-Run `oa-chat init` before starting the service. Configuration is stored in
+Run `oa-chat start` for guided creation and readiness checks. For explicit
+service-manager setup, run `oa-chat init` before starting the service.
+Configuration is stored in
 `config.json` under Go's `os.UserConfigDir()/oa-chat`: normally
 `~/.config/oa-chat` on Linux and `~/Library/Application Support/oa-chat` on
 macOS. `OA_CHAT_CONFIG_DIR` or a global `--config-dir` selects a separate
@@ -26,12 +28,24 @@ retain their own transcripts under their own storage/privacy settings.
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Install the published
-[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0)
-with:
+AUR. Use version `0.3.0` to install or update and enter guided Sepolia setup:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+```
+
+`--setup` runs the installed `oa-chat start` after validation, activation, and
+installer cleanup. It puts the installed companion first on PATH for that
+process, including when another version is installed elsewhere. The guided
+flow creates missing default configuration, checks readiness, and asks before
+funding. It waits for incoming ETH and completes the approved deposit without
+manual quote refreshes. See the [Sepolia walkthrough](CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+Prompts read your controlling terminal, never the piped installer script.
+
+For installation or updates only, omit the setup flags:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash
 ```
 
 The published script is pinned to its own release version. It downloads the
@@ -43,28 +57,25 @@ runtime libraries with the distribution's package manager. Bash, `curl`,
 `tar`, and either `sha256sum` or `shasum` must be available. No compiler,
 Homebrew, Python, or root access is needed to run the installer.
 
-By default, launchers are installed in `~/.local/bin`. If needed, apply the
-PATH command printed by the installer to the current shell, then run:
-
-```sh
-oa-chat init
-oa-chat serve
-```
-
-Import/redeem tickets or follow the [zkAPI funding setup](../README.md#zkapi-and-funding)
-before sending inference requests. The installer does not initialize a
-configuration, import tickets, fund a wallet, start a daemon/service, or edit
-shell startup files.
+Launchers default to `~/.local/bin`. Follow the printed PATH guidance for
+future terminals, then use `oa-chat start` to run setup again. Omit `--network`
+with `--setup` to use an existing configuration's network or answer the new
+configuration's network prompt. `--network` is accepted only with `--setup`
+and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
+The default install-only command does not create configuration, initialize or
+fund wallets, start a daemon, register a service, or edit shell startup files.
+`--setup` starts a foreground process or attaches to a compatible daemon; it
+does not register a background service either.
 
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --prefix "$HOME/oa-tools" --setup --network sepolia
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version remain `daemon-v0.1.0` and `0.1.0`.
+metadata; the tag and installer version are `daemon-v0.3.0` and `0.3.0`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -76,15 +87,22 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/ins
 `--version MAJOR.MINOR.PATCH` can override the script's pinned version;
 `--help` lists the options. The source file `daemon/install.sh` requires an
 explicit `--version` because its release placeholder is filled only by
-`assemble-release.py`.
+`assemble-release.py`. Guided `start` requires version `0.3.0` or newer.
 
 Stop a running daemon before upgrading, rerun the installation command with
-the same prefix, and restart the daemon afterward. An upgrade retains the
+the same prefix, and restart afterward (`--setup` runs the guided restart).
+The installer does not terminate an existing daemon. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
-wallet balances remain in the separate private configuration directory.
-Launchers belonging to an unrelated installation are refused; use the existing
-package manager for a Homebrew/package upgrade or choose another prefix.
+wallet state remain in the separate private configuration directory.
+Reinitializing is unnecessary. `oa-chat version` should print `oa-chat 0.3.0`
+after this upgrade. A setup failure leaves the validated installation in place
+and returns the CLI's failure status so you can rerun `start` after addressing
+it. The installer does not migrate legacy ERC-20 notes to native ETH; retain
+their recovery directory and matching old client, and use a fresh config for
+the native deployment. Launchers belonging to an unrelated installation are
+refused; use its package manager for a Homebrew/package upgrade or choose
+another prefix.
 
 The managed layout is:
 
@@ -108,11 +126,10 @@ does not register it with systemd. Its
 `ExecStart` uses `/usr/bin/oa-chat`; use foreground `oa-chat serve` or configure
 a user service with the chosen prefix and PATH.
 
-Availability: `daemon-v0.1.0` was published as a GitHub prerelease on
-September 22, 2026, with its generated `install.sh` asset and native packages.
-The exact-tag commands above are available; `latest/download` excludes this
-prerelease. Public package repositories, including a Homebrew tap and an AUR
-package, have not yet been published.
+Use the exact-tag commands for this prerelease; GitHub's `latest/download`
+does not select it. The September 22 `0.1.0` publication record below is
+historical evidence. Public package repositories, including a Homebrew tap
+and an AUR package, have not yet been published.
 
 ## Homebrew
 
@@ -195,14 +212,13 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-After the **new** release is published, select its exact version:
+For the `0.3.0` release, select its exact version:
 
 ```sh
-release_version=MAJOR.MINOR.PATCH # Replace with the newly published daemon version.
+release_version=0.3.0
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
-oa-chat init
-oa-chat serve
+oa-chat start
 ```
 
 The published `daemon-v0.1.0` predates this packaging and has no Nix flake asset.
@@ -251,15 +267,26 @@ The Go API daemon owns incoming API requests and streaming responses.
 The companion and `share/oa-chat/proof-setup` are included in every native
 archive. Linux packages install them as `/usr/bin/oa-zkapi` and
 `/usr/share/oa-chat/proof-setup`. Homebrew installs them under its formula
-prefix. Address funding runs in the terminal with an optional local browser
-page. The Go daemon generates its own local signing key; no external wallet
-is required. `withdraw --to ADDRESS` uses that same key to withdraw the entire
-private balance to the specified address, after reserving it in the companion.
-The command requires the companion's `withdrawal_bridge_version: 1` capability;
-ship both binaries together. Only an explicit deposit or withdrawal command/action
-signs transactions; service startup and address checks never submit one. The published 0.1.0
-release predates this behavior and still uses MetaMask. User-facing configuration
-uses Ethereum mainnet; Sepolia must be selected explicitly for testing.
+prefix. One `init` configures both modes; `serve --backend ticket|zkapi` selects
+the running backend. Funding is command-line only. The Go daemon generates
+its own local signing key; no external wallet is required. `fund --amount ETH`
+or `fund --usd USD` prepares a deposit quote. `withdraw --to ADDRESS` prepares
+a quote for the full private balance after reserving it in the companion.
+`fund return --to ADDRESS [--amount ETH]` quotes a return of unused public ETH.
+These explicit commands sign only after the corresponding `--approve QUOTE_ID`;
+`--resume` recovers saved signed bytes without granting new authority. Guided
+`start` also supports deposits: after confirming a fixed principal and fee
+ceiling, it refreshes quotes and authorizes that same deposit automatically
+when funds arrive. Withdrawals and public returns retain explicit approvals.
+The companion must advertise `bridge_version: 3` for model-selected budgets
+and `withdrawal_bridge_version: 1`; ship both binaries together. `serve`, address
+checks, and quote preparation never broadcast a transaction. Version
+`0.2.0` introduced the explicit terminal quote flow; `0.3.0` adds guided
+startup and bounded automatic deposits. The historical `0.1.0` release used
+MetaMask.
+Advanced `init` defaults to Ethereum mainnet. Guided `start` asks for the
+network on first use and offers Sepolia; use `--network sepolia` to select it
+explicitly. Existing configurations retain their network.
 
 ## Building a release
 
@@ -331,6 +358,18 @@ builder and compares the packaged binaries/assets with the native archive.
 Nix checks use checksum-verified local archives so draft-release URLs are not
 required. These checks never import tickets or fund a wallet.
 
+When a test-harness incompatibility blocks otherwise successful native builds
+and assembly, the read-only [package revalidation workflow](../../.github/workflows/oa-daemon-package-check.yml)
+can check the original artifacts with the corrected harness. Dispatch it with
+the completed release run ID and its existing `daemon-vMAJOR.MINOR.PATCH` tag.
+It verifies the source workflow, tag commit, all four successful native jobs,
+and assembly, then checks every downloaded checksum and each native bundle's
+clean source commit before repeating the complete package matrix. It does not
+rebuild, retag, or publish anything. After all checks pass, a maintainer can
+create and publish the release with those original assembled assets. Keep
+both run URLs in the release evidence. Nix 2.35 requires `nix flake archive`
+before external tools read a source path returned by lazy flake metadata.
+
 After reviewing the successful build, publish the GitHub draft so all pinned
 download URLs become available. Copy `homebrew/oa-chat.rb` to `Formula/oa-chat.rb`
 in the intended Homebrew tap, and copy `aur/PKGBUILD` plus `aur/.SRCINFO` to the
@@ -367,6 +406,27 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Published 0.2.0 prerelease validation (2026-09-29)
+
+[daemon-v0.2.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)
+was published at 14:58 UTC with 12 assets from main commit
+`ef888242c36860ccf8ec176b2b1eb724cee77456`. The [native build and assembly](https://github.com/OpenAnonymity/oa-chat/actions/runs/36582999421)
+passed on all four targets. Its package stage exposed the Nix 2.35 lazy-source
+test assumption described above; [corrected package revalidation](https://github.com/OpenAnonymity/oa-chat/actions/runs/36585685844)
+passed every original Nix/Homebrew/Arch check against the same immutable
+artifacts. All 12 uploaded asset digests match the assembled files.
+
+The public exact-tag `curl | bash` command upgraded a real 0.1.0 macOS ARM64
+installation to 0.2.0 and reinstalled 0.2.0. It preserved private configuration
+bytes and permissions, all prior bundles, and the complete binary/proof pair.
+A fresh profile started the packaged Sepolia companion without custom binary
+or proof paths, returned 393 models with automatic budgets, enforced local
+authentication boundaries, and prepared a live $2 deposit quote. It stopped
+cleanly. This release check did not send funds or approve a transaction; the
+funded acceptance earlier on September 29 covered the unchanged daemon runtime
+and companion patches. See the [sanitized release record](../packaging/validation/daemon-0.2.0-release-20260929.json)
+and [installation-to-inference walkthrough](CLI_ZKAPI.md#sepolia-from-installation-to-inference).
 
 ## Distribution preparation validation (2026-09-28)
 

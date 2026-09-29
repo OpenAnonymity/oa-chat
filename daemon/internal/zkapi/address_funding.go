@@ -22,6 +22,11 @@ import (
 // AddressFundingStatus exposes only public funding data, never signing keys,
 // signed bytes, private-note secrets, or inference credentials.
 type AddressFundingStatus struct {
+	ActualFeeWei    string `json:"actual_fee_wei,omitempty"`
+	DeploymentID    string `json:"deployment_id,omitempty"`
+	BillingAsset    string `json:"billing_asset,omitempty"`
+	BillingUnit     string `json:"billing_unit,omitempty"`
+	WeiPerUnit      string `json:"native_asset_wei_per_unit,omitempty"`
 	Address         string `json:"address"`
 	ChainID         uint64 `json:"chain_id"`
 	TokenAddress    string `json:"token_address"`
@@ -61,22 +66,30 @@ func (h *FundingHandler) addressSnapshot(ctx context.Context) (fundingConfig, *a
 	if err := h.assertAddressChain(ctx, config); err != nil {
 		return config, nil, AddressFundingStatus{}, err
 	}
-	decimals, err := h.addressUintCall(ctx, config, config.Token, "0x313ce567", "latest")
-	if err != nil || decimals.Cmp(big.NewInt(6)) != 0 {
-		return config, nil, AddressFundingStatus{}, errors.New("the payment token must use exactly six decimals")
+	if !config.nativeETH() {
+		decimals, err := h.addressUintCall(ctx, config, config.Token, "0x313ce567", "latest")
+		if err != nil || decimals.Cmp(big.NewInt(6)) != 0 {
+			return config, nil, AddressFundingStatus{}, errors.New("the payment token must use exactly six decimals")
+		}
 	}
 	record, err := h.loadAddress(config)
 	if err != nil {
 		return config, nil, AddressFundingStatus{}, err
 	}
 	status := addressPublicStatus(record)
-	token, err := h.addressUintCall(ctx, config, config.Token, "0x70a08231"+addressABIWord(record.Address), "latest")
-	if err != nil {
-		return config, record, status, err
+	token := new(big.Int)
+	if !config.nativeETH() {
+		token, err = h.addressUintCall(ctx, config, config.Token, "0x70a08231"+addressABIWord(record.Address), "latest")
+		if err != nil {
+			return config, record, status, err
+		}
 	}
 	eth, err := h.addressQuantity(ctx, config, "eth_getBalance", []any{record.Address, "pending"})
 	if err != nil {
 		return config, record, status, err
+	}
+	if config.nativeETH() {
+		token.Quo(eth, big.NewInt(1_000_000_000))
 	}
 	status.TokenBalance, status.ETHBalance = token.String(), eth.String()
 	if record.Phase == "active" {
@@ -108,8 +121,13 @@ func (h *FundingHandler) addressHasNote(ctx context.Context) (bool, error) {
 
 func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 	status := AddressFundingStatus{Address: record.Address, ChainID: record.ChainID, TokenAddress: record.Token, TokenDecimals: 6, TokenBalance: "0", ETHBalance: "0", Amount: record.Amount, Phase: record.Phase}
+	status.DeploymentID, status.BillingAsset, status.BillingUnit, status.WeiPerUnit = record.DeploymentID, record.BillingAsset, record.BillingUnit, record.WeiPerUnit
+	if record.BillingAsset == "native_eth" {
+		status.TokenDecimals = 9
+	}
 	if record.Pending != nil {
 		status.TransactionHash = record.Pending.Hash
+		status.ActualFeeWei = record.Pending.ActualFeeWei
 	}
 	switch record.Phase {
 	case "ready":
@@ -133,6 +151,13 @@ func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 	default:
 		status.Message = "Payment recovery is required. Preserve the local funding files."
 	}
+	if record.BillingAsset == "native_eth" {
+		if record.Phase == "ready" {
+			status.Message = "Send ETH on the displayed network to this address, then choose a private deposit amount in ETH."
+		} else if record.Phase == "waiting_funds" {
+			status.Message = "Waiting for the selected ETH principal plus enough ETH for network fees."
+		}
+	}
 	return status
 }
 
@@ -148,6 +173,9 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 		next := addressPublicStatus(record)
 		next.TokenBalance, next.ETHBalance = status.TokenBalance, status.ETHBalance
 		return next
+	}
+	if record.Pending != nil && record.Pending.Kind != "deposit" && record.Pending.Kind != "approval" && record.Pending.Kind != "approval_reset" {
+		return update(), errors.New("a different public transaction is saved; resume its withdrawal or return command before funding")
 	}
 	if record.Withdrawal != nil && record.Withdrawal.Phase != "complete" {
 		return update(), errors.New("a withdrawal is saved; finish it with the same destination before funding again")
@@ -273,6 +301,9 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 			}
 			return update(), nil
 		}
+		if err := recordAddressActualFee(record.Pending, receipt); err != nil {
+			return update(), err
+		}
 		if receipt.Status == "0x0" {
 			record.Phase = "reverted"
 			if err := h.saveAddress(record); err != nil {
@@ -338,9 +369,12 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 	if err := h.saveAddress(record); err != nil {
 		return update(), err
 	}
-	allowance, err := h.addressAllowance(ctx, config, record.Address, "latest")
-	if err != nil {
-		return update(), err
+	allowance := new(big.Int).SetUint64(amount)
+	if !config.nativeETH() {
+		allowance, err = h.addressAllowance(ctx, config, record.Address, "latest")
+		if err != nil {
+			return update(), err
+		}
 	}
 	kind, to, data := "approval", config.Token, "0x095ea7b3"+addressABIWord(config.Contract)+fmt.Sprintf("%064x", amount)
 	if allowance.Cmp(new(big.Int).SetUint64(amount)) < 0 {
@@ -391,7 +425,7 @@ func (h *FundingHandler) readAddressDeposit(config fundingConfig) (*depositRecor
 		return nil, errors.New("cannot read the pending private deposit")
 	}
 	var record depositRecord
-	if json.Unmarshal(raw, &record) != nil || record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+	if json.Unmarshal(raw, &record) != nil || !depositDeploymentMatches(record, config) {
 		return nil, errors.New("pending private deposit belongs to another deployment or is invalid; preserve it for recovery")
 	}
 	return &record, nil
@@ -476,7 +510,7 @@ func (h *FundingHandler) addressAllowance(ctx context.Context, config fundingCon
 }
 
 func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fundingConfig, record *addressFundingRecord, kind, to, data string) error {
-	if record.Pending != nil {
+	if record.Pending != nil && !(quoteMode(ctx) != nil && quoteMode(ctx).Capture != nil && ((record.Pending.Kind == "withdrawal" && record.Withdrawal != nil && record.Withdrawal.Phase == "reverted") || (record.Pending.Kind == "deposit" && record.Phase == "reverted")) && strings.EqualFold(quoteMode(ctx).RetryHash, record.Pending.Hash)) {
 		return errors.New("a signed payment is still pending; no replacement was sent")
 	}
 	if err := h.assertAddressChain(ctx, config); err != nil {
@@ -489,36 +523,144 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 	if !nonce.IsUint64() || nonce.BitLen() > 53 {
 		return errors.New("invalid payment nonce")
 	}
+	confirmedNonce, err := h.addressQuantity(ctx, config, "eth_getTransactionCount", []any{record.Address, "latest"})
+	if err != nil {
+		return err
+	}
+	if confirmedNonce.Cmp(nonce) != 0 {
+		return errors.New("an unsettled public transaction exists; recover it before signing another")
+	}
 	for _, previous := range record.History {
 		if previous.Nonce >= nonce.Uint64() {
 			return errors.New("the payment RPC has not caught up with saved transactions; no new transaction was sent")
 		}
 	}
-	gas, err := h.addressQuantity(ctx, config, "eth_estimateGas", []any{map[string]string{"from": record.Address, "to": to, "data": data, "value": "0x0"}})
+	value := new(big.Int)
+	if config.nativeETH() && kind == "deposit" {
+		value.Mul(new(big.Int).SetUint64(record.Amount), big.NewInt(1_000_000_000))
+	}
+	if kind == "return" {
+		if record.Return == nil || !strings.EqualFold(record.Return.Destination, to) || data != "0x" {
+			return errors.New("public return intent is missing")
+		}
+		var ok bool
+		value, ok = new(big.Int).SetString(record.Return.AmountWei, 10)
+		if !ok || value.Sign() < 0 || value.BitLen() > 256 {
+			return errors.New("invalid public return value")
+		}
+		if record.Return.Sweep {
+			var code string
+			if err := h.addressRPC(ctx, config, "eth_getCode", []any{to, "pending"}, &code); err != nil {
+				return err
+			}
+			if code != "0x" {
+				return errors.New("choose an exact ETH amount when returning to a contract account")
+			}
+			if mode := quoteMode(ctx); mode != nil && mode.Capture != nil {
+				value.SetInt64(0)
+			}
+		}
+	}
+	mode := quoteMode(ctx)
+	if config.nativeETH() && mode == nil {
+		return errors.New("review and approve a current payment quote before signing")
+	}
+	input := map[string]string{"from": record.Address, "to": to, "data": data, "value": "0x" + value.Text(16)}
+	params := []any{input, "pending"}
+	if mode != nil && mode.Capture != nil {
+		// Override only this signer's balance; contract state and exact payable
+		// calldata stay real. Unsupported state overrides must fail closed.
+		simulationBalance := new(big.Int).Set(addressUint256Max)
+		if config.nativeETH() && kind == "withdrawal" {
+			if record.Withdrawal == nil {
+				return errors.New("withdrawal intent is missing; no transaction was sent")
+			}
+			// The authorized payout may go back to this same funding account.
+			// Leave room for that exact credit instead of making an otherwise
+			// valid self-withdrawal overflow a synthetic maximum balance.
+			payout := new(big.Int).Mul(new(big.Int).SetUint64(record.Withdrawal.Amount), big.NewInt(1_000_000_000))
+			simulationBalance.Sub(simulationBalance, payout)
+		}
+		params = append(params, map[string]any{record.Address: map[string]string{"balance": "0x" + simulationBalance.Text(16)}})
+	}
+	var simulated string
+	if err := h.addressRPC(ctx, config, "eth_call", params, &simulated); err != nil {
+		return errors.New("payment simulation failed; no transaction was sent")
+	}
+	gas, err := h.addressQuantity(ctx, config, "eth_estimateGas", params)
 	if err != nil {
-		return errors.New("payment simulation failed; check token and ETH balances before retrying")
+		return errors.New("payment simulation failed; no transaction was sent")
 	}
-	if !gas.IsUint64() || gas.Uint64() < 21000 || gas.Uint64() > 16_777_216 {
-		return errors.New("invalid payment gas estimate")
-	}
-	gasLimit := (gas.Uint64()*120+99)/100 + 50_000
-	if gasLimit > 16_777_216 {
-		return errors.New("payment gas limit exceeds Ethereum's transaction cap")
-	}
-	price, err := h.addressQuantity(ctx, config, "eth_gasPrice", []any{})
+	gasLimit, err := paddedAddressGas(gas)
 	if err != nil {
 		return err
 	}
-	fee := new(big.Int).Mul(new(big.Int).SetUint64(gasLimit), price)
-	if price.Sign() <= 0 || price.Cmp(big.NewInt(300_000_000_000)) > 0 || fee.Cmp(big.NewInt(20_000_000_000_000_000)) > 0 {
-		return errors.New("Ethereum fees exceed the safe payment limit; try again when fees are lower")
+	if kind == "return" && record.Return.Sweep {
+		if gas.Uint64() != 21000 {
+			return errors.New("maximum public return requires an ordinary Ethereum account")
+		}
+		gasLimit = 21000
+	}
+	fees, err := h.addressLowFees(ctx, config, gasLimit)
+	if err != nil {
+		return err
 	}
 	balance, err := h.addressQuantity(ctx, config, "eth_getBalance", []any{record.Address, "pending"})
 	if err != nil {
 		return err
 	}
-	if balance.Cmp(fee) < 0 {
-		return fmt.Errorf("%w (maximum transaction cost: %s ETH)", errAddressNeedsETH, new(big.Rat).SetFrac(fee, big.NewInt(1_000_000_000_000_000_000)).FloatString(18))
+	if mode != nil && mode.Capture != nil && kind == "return" && record.Return.Sweep {
+		reserve := new(big.Int).Mul(fees.Max, new(big.Int).SetUint64(gasLimit))
+		if balance.Cmp(reserve) <= 0 {
+			return errAddressNeedsETH
+		}
+		value.Sub(balance, reserve)
+		record.Return.AmountWei = value.String()
+	}
+	if mode != nil && mode.Capture != nil {
+		quote, err := h.savePaymentQuote(record, kind, to, value, balance, gas, gasLimit, nonce.Uint64(), fees, mode.RetryHash)
+		if err == nil {
+			*mode.Capture = quote
+		}
+		return err
+	}
+	var approved *AddressPaymentQuote
+	if mode != nil {
+		approved = mode.Approval
+	}
+	if config.nativeETH() {
+		if err := validatePaymentApproval(record, approved, kind, to, value, nonce.Uint64()); err != nil {
+			return err
+		}
+		ceiling, ok := new(big.Int).SetString(approved.FeeReserveWei, 10)
+		if !ok || ceiling.Sign() <= 0 || ceiling.BitLen() > 256 {
+			return errAddressQuoteChanged
+		}
+		cap := new(big.Int).Quo(ceiling, new(big.Int).SetUint64(gasLimit))
+		if cap.Cmp(fees.Minimum) < 0 {
+			return errAddressQuoteChanged
+		}
+		if fees.Max.Cmp(cap) > 0 {
+			fees.Max.Set(cap)
+		}
+	}
+	minimumFee := new(big.Int).Mul(new(big.Int).SetUint64(gasLimit), fees.Minimum)
+	minimumRequired := new(big.Int).Add(value, minimumFee)
+	if minimumRequired.BitLen() > 256 {
+		return errAddressFeeData
+	}
+	if balance.Cmp(minimumRequired) < 0 {
+		return fmt.Errorf("%w (send at least %s ETH more to %s on chain %d; no transaction was sent)", errAddressNeedsETH, new(big.Rat).SetFrac(new(big.Int).Sub(minimumRequired, balance), big.NewInt(1_000_000_000_000_000_000)).FloatString(18), record.Address, config.ChainID)
+	}
+	// The recommended buffer is optional: clamp the signed fee cap to the
+	// current balance without changing principal or approved total liability.
+	affordablePrice := new(big.Int).Quo(new(big.Int).Sub(balance, value), new(big.Int).SetUint64(gasLimit))
+	if fees.Max.Cmp(affordablePrice) > 0 {
+		fees.Max.Set(affordablePrice)
+	}
+	fee := new(big.Int).Mul(new(big.Int).SetUint64(gasLimit), fees.Max)
+	if new(big.Int).Add(value, fee).BitLen() > 256 {
+		return errAddressFeeData
 	}
 	if err := h.assertAddressChain(ctx, config); err != nil {
 		return err
@@ -531,8 +673,12 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 	if err != nil {
 		return errors.New("invalid payment call data")
 	}
-	unsigned := types.NewTransaction(nonce.Uint64(), common.HexToAddress(to), big.NewInt(0), gasLimit, price, calldata)
-	signed, err := types.SignTx(unsigned, types.NewEIP155Signer(new(big.Int).SetUint64(config.ChainID)), key)
+	if approved != nil && approved.ExpiresAt <= time.Now().UnixMilli() {
+		return errAddressQuoteChanged
+	}
+	destination := common.HexToAddress(to)
+	unsigned := types.NewTx(&types.DynamicFeeTx{ChainID: new(big.Int).SetUint64(config.ChainID), Nonce: nonce.Uint64(), To: &destination, Value: value, Gas: gasLimit, GasFeeCap: fees.Max, GasTipCap: fees.Tip, Data: calldata})
+	signed, err := types.SignTx(unsigned, types.LatestSignerForChainID(new(big.Int).SetUint64(config.ChainID)), key)
 	if err != nil {
 		return errors.New("cannot sign payment transaction")
 	}
@@ -541,6 +687,14 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 		return errors.New("cannot encode payment transaction")
 	}
 	record.Pending = &addressTransaction{Kind: kind, Raw: "0x" + hex.EncodeToString(raw), Hash: signed.Hash().Hex(), Nonce: nonce.Uint64()}
+	if kind == "return" {
+		record.Pending.ReturnDestination = to
+		record.Pending.ReturnValueWei = value.String()
+	}
+	if approved != nil {
+		record.Pending.ApprovedFeeWei = approved.FeeReserveWei
+	}
+	record.Quote = nil
 	record.Phase = "approval_pending"
 	if kind == "deposit" {
 		record.Phase = "deposit_pending"
@@ -551,6 +705,11 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 			return errors.New("withdrawal intent is missing; no transaction was sent")
 		}
 		record.Withdrawal.Phase, record.Withdrawal.TransactionHash = "withdrawal_pending", signed.Hash().Hex()
+	}
+	if kind == "return" {
+		record.Phase = "return_pending"
+		record.Return.Phase = "return_pending"
+		record.Return.TransactionHash = signed.Hash().Hex()
 	}
 	// From this point every retry uses these exact bytes, even if a broadcast
 	// fails or the daemon crashes before the RPC responds.
@@ -572,12 +731,14 @@ func (h *FundingHandler) broadcastAddress(ctx context.Context, config fundingCon
 }
 
 type addressReceipt struct {
-	Status          string `json:"status"`
-	TransactionHash string `json:"transactionHash"`
-	BlockHash       string `json:"blockHash"`
-	BlockNumber     string `json:"blockNumber"`
-	To              string `json:"to"`
-	Logs            []struct {
+	GasUsed           string `json:"gasUsed"`
+	EffectiveGasPrice string `json:"effectiveGasPrice"`
+	Status            string `json:"status"`
+	TransactionHash   string `json:"transactionHash"`
+	BlockHash         string `json:"blockHash"`
+	BlockNumber       string `json:"blockNumber"`
+	To                string `json:"to"`
+	Logs              []struct {
 		Address string   `json:"address"`
 		Topics  []string `json:"topics"`
 		Data    string   `json:"data"`
@@ -640,6 +801,19 @@ func (h *FundingHandler) addressFinalReceipt(ctx context.Context, config funding
 // The manual legacy recovery endpoint shares confirm(), so locally signed
 // deposits must retain the same finality policy there as in FundAddress.
 func (h *FundingHandler) confirmAddressFinality(ctx context.Context, config fundingConfig, hash string) error {
+	// Native deposits may also arrive through the manual confirmation route.
+	// Its finality requirement is independent of a local signed-transaction
+	// journal, so another matching receipt cannot bypass the activation wait.
+	if config.nativeETH() {
+		_, final, err := h.addressFinalReceipt(ctx, config, hash, true)
+		if err != nil {
+			return err
+		}
+		if !final {
+			return errors.New("the saved deposit is awaiting Ethereum finality; retry confirmation later")
+		}
+		return nil
+	}
 	if _, err := os.Lstat(h.addressStatePath()); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {
@@ -661,5 +835,43 @@ func (h *FundingHandler) confirmAddressFinality(ctx context.Context, config fund
 			return errors.New("the saved deposit is awaiting Ethereum finality; retry confirmation later")
 		}
 	}
+	return nil
+}
+
+// Receipt fee metadata is useful only after canonicality/finality and exact
+// transaction identity have been established by addressFinalReceipt. Older
+// records without both fields stay unknown, never a fabricated zero fee.
+func recordAddressActualFee(saved *addressTransaction, receipt *addressReceipt) error {
+	if receipt.GasUsed == "" && receipt.EffectiveGasPrice == "" {
+		return nil
+	}
+	invalid := errors.New("invalid canonical transaction fee metadata; preserve the saved transaction")
+	if saved == nil || !strings.EqualFold(saved.Hash, receipt.TransactionHash) {
+		return invalid
+	}
+	raw, err := hex.DecodeString(strings.TrimPrefix(saved.Raw, "0x"))
+	if err != nil {
+		return invalid
+	}
+	var tx types.Transaction
+	if tx.UnmarshalBinary(raw) != nil {
+		return invalid
+	}
+	gas, e1 := feeQuantity(receipt.GasUsed)
+	price, e2 := feeQuantity(receipt.EffectiveGasPrice)
+	if e1 != nil || e2 != nil || !gas.IsUint64() || gas.Uint64() < 21000 || gas.Uint64() > tx.Gas() || price.Cmp(tx.GasFeeCap()) > 0 {
+		return invalid
+	}
+	actual := new(big.Int).Mul(gas, price)
+	if actual.BitLen() > 256 {
+		return invalid
+	}
+	if saved.ApprovedFeeWei != "" {
+		approved, ok := new(big.Int).SetString(saved.ApprovedFeeWei, 10)
+		if !ok || actual.Cmp(approved) > 0 {
+			return invalid
+		}
+	}
+	saved.ActualFeeWei = actual.String()
 	return nil
 }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
+import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 
 function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, blockedStorage = false, withdrawals = [] } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals };
@@ -91,7 +92,7 @@ test('a finished JS action retains dialog intent if the wallet outcome is unreso
     assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
     zkapiClient.config.pending_deposit = null;
     f.notify();
-    assert.equal(f.storage.has('oa-zkapi-running-modal'), false, 'a resolved deposit clears intent');
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), true, 'an open dialog survives completion until dismissed');
 });
 
 test('explicit dialog intent is supplied to the shell after navigation is ready', async t => {
@@ -180,7 +181,7 @@ for (const view of ['fund', 'balance', 'withdraw', 'withdrawals']) {
         assert.equal(f.modal.view, view);
         assert.equal(f.modal.withdrawMode, 'escape');
         f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
-        assert.equal(f.storage.has('oa-zkapi-running-modal'), false, 'consume UI intent; SDK records own ongoing recovery');
+        assert.equal(f.storage.has('oa-zkapi-running-modal'), true, 'keep UI intent until the restored dialog is dismissed');
         f.modal.close();
         assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
         f.notify();
@@ -209,18 +210,18 @@ test('reload restores an in-flight USDC approval on a prepared deposit', async t
     f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
 });
 
-test('running action stores only the view and clears it on completion', async t => {
+test('running action stores UI state and retains it on completion', async t => {
     const f = setup(t);
     await f.load();
     f.modal.open('fund');
     let complete;
     const action = f.modal.run(() => new Promise(resolve => { complete = resolve; }));
-    assert.deepEqual(JSON.parse(f.storage.get('oa-zkapi-running-modal')), { view: 'fund', mode: 'mutual' });
+    assert.equal(JSON.parse(f.storage.get('oa-zkapi-running-modal')).view, 'fund');
     // Wallet actions re-read manual transaction ownership across tabs first.
     await new Promise(resolve => setImmediate(resolve));
     complete();
     await action;
-    assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
     assert.equal(f.modal.busy, false);
 });
 
@@ -240,13 +241,13 @@ test('invalid saved views are ignored', async t => {
     assert.equal(f.modal.isOpen, false);
 });
 
-test('a deposit settled during initialization opens its result once and consumes UI intent', async t => {
+test('a deposit settled during initialization preserves its open result through reload', async t => {
     const f = setup(t, { savedModal: { view: 'fund' }, note: { note_id: 7 } });
     await f.load();
     assert.equal(f.modal.isOpen, true);
-    assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
     f.notify();
-    assert.equal(f.storage.has('oa-zkapi-running-modal'), false);
+    assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
 });
 
 for (const phase of ['prepared', 'retry_exact', 'awaiting_wallet', 'submitted', 'ambiguous', 'dropped_or_pending']) {
@@ -310,4 +311,70 @@ test('an idle deposit plan does not hide a background withdrawal on reload', asy
     assert.equal(f.modal.isOpen, true);
     assert.equal(f.modal.view, 'withdrawals');
     f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+});
+
+for (const view of ['fund', 'withdraw', 'withdrawals']) {
+    test(`an idle ${view} dialog survives repeated reloads until explicitly dismissed`, async t => {
+        const f = setup(t);
+        await f.load();
+        f.modal.open(view);
+        f.modal.fundingInputAmount = '12.34';
+        f.modal.fundingInputCurrency = 'usd';
+        f.modal.fundingHelpOpen = 'quote';
+        f.modal.historyOpen = true;
+        f.modal.fundingDestination = '0xprivate-user-destination';
+        f.modal.rememberRunningModal();
+        const saved = JSON.parse(f.storage.get('oa-zkapi-running-modal'));
+        assert.equal(saved.view, view);
+        assert.equal(saved.help, 'quote');
+        assert.equal(JSON.stringify(saved).includes('destination'), false);
+        const second = setup(t, { savedModal: saved });
+        await second.load();
+        assert.equal(second.modal.isOpen, true);
+        assert.equal(second.modal.view, view);
+        assert.equal(second.modal.fundingInputAmount, '12.34');
+        assert.equal(second.modal.fundingHelpOpen, 'quote');
+        const third = setup(t, { savedModal: JSON.parse(second.storage.get('oa-zkapi-running-modal')) });
+        await third.load();
+        assert.equal(third.modal.view, view);
+        assert.equal(third.modal.isOpen, true);
+        third.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+        third.modal.close();
+        assert.equal(third.storage.has('oa-zkapi-running-modal'), false);
+    });
+}
+
+test('MetaMask cancellation clears an unused SDK draft and expires its notice after seven seconds', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const f = setup(t);
+    await f.load();
+    f.modal.open('fund');
+    f.modal.overlay.querySelector = () => null;
+    t.mock.method(zkapiClient, 'emitChange', () => {});
+    const original = { runtime: walletRuntime.runtime, manifest: walletRuntime.manifest, browserMode: zkapiClient.browserMode };
+    t.after(() => { walletRuntime.runtime = original.runtime; walletRuntime.manifest = original.manifest; zkapiClient.browserMode = original.browserMode; });
+    zkapiClient.browserMode = true;
+    walletRuntime.manifest = { deployment_id: 'test' };
+    walletRuntime.runtime = { pendingDeposit: null };
+    t.mock.method(walletRuntime, 'init', async () => {});
+    t.mock.method(walletRuntime, 'reload', async () => {});
+    t.mock.method(walletRuntime, 'commit', async state => { walletRuntime.runtime = state; });
+    f.modal.fundingInputAmount = '12';
+    f.modal.depositAmount = '12';
+    await f.modal.run(async report => {
+        walletRuntime.runtime.pendingDeposit = { operationId: 'new', phase: 'prepared', secret: 'unused' };
+        zkapiClient.config.pending_deposit = { operation_id: 'new', phase: 'prepared', amount: 12000000 };
+        report('Confirm in MetaMask');
+        throw Object.assign(new Error('Canceled'), { code: 4001, broadcastPossible: false });
+    }, { kind: 'deposit' });
+    assert.equal(walletRuntime.runtime.pendingDeposit, null);
+    assert.equal(zkapiClient.config.pending_deposit, null);
+    assert.equal(f.modal.depositAmount, null);
+    assert.equal(f.modal.fundingInputAmount, null);
+    assert.equal(f.modal.outcome.message, 'Deposit canceled.');
+    t.mock.timers.tick(6999);
+    assert.ok(f.modal.outcome);
+    t.mock.timers.tick(1);
+    assert.equal(f.modal.outcome, null);
+    assert.equal(f.modal.status, '');
 });

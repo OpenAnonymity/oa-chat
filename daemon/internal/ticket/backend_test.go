@@ -5,10 +5,14 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -19,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,6 +42,11 @@ type testIssuer struct {
 	proofStatus      string
 	proofStation     string
 	proofHash        string
+	proofHTTP        int
+	proofBody        string
+	recentlyAttested bool
+	expiresAt        int64
+	proofRequests    int
 	mu               sync.Mutex
 }
 
@@ -135,12 +145,24 @@ func (f *testIssuer) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		json.NewEncoder(w).Encode(map[string]any{"key": "test-ephemeral-key", "station_id": "station-1", "station_signature": "station-proof", "org_signature": "org-proof", "expires_at_unix": time.Now().Add(time.Hour).Unix()})
+		expiry := f.expiresAt
+		if expiry == 0 {
+			expiry = time.Now().Add(time.Hour).Unix()
+		}
+		json.NewEncoder(w).Encode(map[string]any{"key": "test-ephemeral-key", "station_id": "station-1", "station_signature": "station-proof", "org_signature": "org-proof", "expires_at_unix": expiry, "station_recently_attested": f.recentlyAttested})
 	case "/submit_key":
+		f.proofRequests++
 		var body map[string]any
 		json.NewDecoder(r.Body).Decode(&body)
 		if body["api_key"] != "test-ephemeral-key" || body["station_id"] != "station-1" || body["key_valid_till"] == nil || body["station_signature"] != "station-proof" || body["org_signature"] != "org-proof" {
 			f.t.Error("verifier payload mismatch")
+		}
+		if f.proofHTTP != 0 {
+			w.WriteHeader(f.proofHTTP)
+		}
+		if f.proofBody != "" {
+			fmt.Fprint(w, f.proofBody)
+			return
 		}
 		status, station, hash := f.proofStatus, f.proofStation, f.proofHash
 		if status == "" {
@@ -188,7 +210,7 @@ func TestIssueRedeemAndSpentImport(t *testing.T) {
 		t.Fatal("finalized wallet retains issuance metadata")
 	}
 	credential, err := b.Acquire(context.Background(), "test/model")
-	if err != nil || credential.Key != "test-ephemeral-key" {
+	if err != nil || credential.Key != "test-ephemeral-key" || credential.VerificationStatus != "verified" || credential.VerificationDetail != "" {
 		t.Fatalf("acquire: %v", err)
 	}
 	var export wallet
@@ -294,7 +316,7 @@ func TestVerifierAcceptsFullHashResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	credential, err := b.Acquire(context.Background(), "test/model")
-	if err != nil || credential.Key != "test-ephemeral-key" {
+	if err != nil || credential.Key != "test-ephemeral-key" || credential.VerificationStatus != "verified" || credential.VerificationDetail != "" {
 		t.Fatalf("full hash response rejected: %v", err)
 	}
 }
@@ -483,5 +505,181 @@ process.stdout.write(JSON.stringify({public_key:Buffer.from(pssKey).toString('ba
 	client, _ := blindrsa.NewClient(blindrsa.SHA384PSSDeterministic, public)
 	if err := client.Verify(browserToken[:98], browserToken[98:]); err != nil {
 		t.Fatal("Go rejected browser-issued token")
+	}
+}
+
+func TestVerifierTemporaryFailurePolicy(t *testing.T) {
+	const key = "test-ephemeral-key"
+	for _, test := range []struct {
+		name     string
+		http     int
+		body     string
+		attested bool
+		want     string
+	}{
+		{"attested 408", 408, `{}`, true, "recently_attested_outage"},
+		{"attested 500", 500, `{"status":"error"}`, true, "recently_attested_outage"},
+		{"attested 502", 502, `{"status":"unavailable"}`, true, "recently_attested_outage"},
+		{"attested 503", 503, `{}`, true, "recently_attested_outage"},
+		{"attested 504", 504, `{}`, true, "recently_attested_outage"},
+		{"unattested unavailable", 503, `{}`, false, ""},
+		{"rate limit", 429, `{}`, false, "rate_limited"},
+		{"temporary ownership", 503, `{"status":"unverified","detail":"ownership_check_error"}`, false, "ownership_check_error"},
+		{"unverified", 503, `{"status":"unverified"}`, true, ""},
+		{"ownership wrong status", 502, `{"status":"unverified","detail":"ownership_check_error"}`, true, ""},
+		{"ownership explicit failure", 503, `{"status":"unverified","detail":"ownership_check_error","ownership_passed":false}`, true, ""},
+		{"ownership nested failure", 503, `{"status":"unverified","detail":"ownership_check_error","ownership":{"ownership_passed":false}}`, true, ""},
+		{"rate limit refused", 429, `{"status":"rejected"}`, true, ""},
+		{"rate limit banned", 429, `{"banned_station":{"station_id":"station-1"}}`, true, ""},
+		{"rate limit invalid signature", 429, `{"detail":"invalid signature"}`, true, ""},
+		{"outage expired", 503, `{"detail":"key expired"}`, true, ""},
+		{"outage invalid key", 503, `{"error":"invalid key"}`, true, ""},
+		{"outage privacy failure", 503, `{"detail":"privacy check failed"}`, true, ""},
+		{"outage logging failure", 503, `{"message":"logging enabled"}`, true, ""},
+		{"outage training failure", 503, `{"error":"training enabled"}`, true, ""},
+		{"outage ownership failure", 503, `{"detail":"ownership mismatch"}`, true, ""},
+		{"outage unknown status", 503, `{"status":"unknown"}`, true, ""},
+		{"outage wrong station", 503, `{"station_id":"other"}`, true, ""},
+		{"outage wrong key", 503, `{"key_hash":"incorrect"}`, true, ""},
+		{"pending success", 200, `{"status":"pending"}`, true, ""},
+		{"empty success", 200, `{}`, true, ""},
+		{"rate limit success", 200, `{"status":"unverified","detail":"ownership_check_error"}`, true, ""},
+		{"unsigned approval", 200, `{"status":"verified"}`, true, ""},
+		{"not found", 404, `{}`, true, ""},
+		{"auth error", 401, `{}`, true, ""},
+		{"redirect", 307, `{}`, true, ""},
+		{"unsupported server error", 501, `{}`, true, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var proof verifierResponse
+			if err := json.Unmarshal([]byte(test.body), &proof); err != nil {
+				t.Fatal(err)
+			}
+			status, detail, err := classifyVerifierResponse(test.http, proof, "station-1", key, test.attested)
+			if test.want == "" {
+				if err == nil || status != "" || detail != "" {
+					t.Fatal("unsafe verifier response activated a credential")
+				}
+			} else if err != nil || status != "verifier-unavailable" || detail != test.want {
+				t.Fatalf("temporary policy: %q %q %v", status, detail, err)
+			}
+		})
+	}
+}
+
+func TestAcquireVerifierOutageAndKnownBan(t *testing.T) {
+	f := newTestIssuer(t)
+	f.recentlyAttested = true
+	f.proofHTTP = 503
+	f.proofBody = `{"status":"unavailable"}`
+	b := f.backend(t, filepath.Join(t.TempDir(), "tickets.json"))
+	if _, err := b.RedeemCode(context.Background(), code(4)); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := b.Acquire(context.Background(), "test/model")
+	if err != nil || credential.Key != "test-ephemeral-key" || credential.VerificationStatus != "verifier-unavailable" || credential.VerificationDetail != "recently_attested_outage" {
+		t.Fatalf("attested outage: %v %#v", err, credential)
+	}
+	if n, _ := b.Count(); n != 3 || f.proofRequests != 1 {
+		t.Fatal("outage did not consume exactly one ticket and verification attempt")
+	}
+	f.proofBody = `{"status":"banned","banned_station":{"station_id":"station-1"}}`
+	if _, err := b.Acquire(context.Background(), "test/model"); err == nil {
+		t.Fatal("banned station accepted")
+	}
+	f.proofBody = `{"status":"unavailable"}`
+	if _, err := b.Acquire(context.Background(), "test/model"); err == nil {
+		t.Fatal("known ban was cleared by an outage")
+	}
+	if f.proofRequests != 2 {
+		t.Fatal("known banned station reached verifier")
+	}
+	if n, _ := b.Count(); n != 1 {
+		t.Fatal("rejected keys restored spent tickets")
+	}
+}
+
+func TestAcquireOutageRejectsExpiredKey(t *testing.T) {
+	f := newTestIssuer(t)
+	f.recentlyAttested = true
+	f.expiresAt = time.Now().Add(-time.Second).Unix()
+	f.proofHTTP = 503
+	f.proofBody = `{}`
+	b := f.backend(t, filepath.Join(t.TempDir(), "tickets.json"))
+	if _, err := b.RedeemCode(context.Background(), code(1)); err != nil {
+		t.Fatal(err)
+	}
+	if credential, err := b.Acquire(context.Background(), "test/model"); err == nil || credential.Key != "" {
+		t.Fatal("expired outage key activated")
+	}
+	if f.proofRequests != 0 {
+		t.Fatal("expired key reached verifier")
+	}
+	if n, _ := b.Count(); n != 0 {
+		t.Fatal("expired key restored tickets")
+	}
+}
+
+type verifierRoundTrip func(*http.Request) (*http.Response, error)
+
+func (fn verifierRoundTrip) RoundTrip(req *http.Request) (*http.Response, error) { return fn(req) }
+
+func TestVerifierTransportFailureClassification(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"connection refused", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, true},
+		{"DNS", &net.DNSError{Err: "no such host", Name: "test.invalid"}, true},
+		{"timeout", context.DeadlineExceeded, true},
+		{"TLS EOF", io.EOF, true},
+		{"reset", syscall.ECONNRESET, true},
+		{"canceled", context.Canceled, false},
+		{"unknown exception", errors.New("unexpected programming failure"), false},
+		{"certificate", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, false},
+		{"wrapped certificate", &net.OpError{Op: "dial", Err: x509.HostnameError{}}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := verifierTransportUnavailable(&url.Error{Op: "Post", URL: "https://secret.invalid", Err: test.err}); got != test.want {
+				t.Fatalf("unavailable = %v", got)
+			}
+		})
+	}
+}
+
+func TestVerifierTransportOutageCannotIgnoreCallerCancellation(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		for _, attested := range []bool{false, true} {
+			ctx, cancel := context.WithCancel(context.Background())
+			b := &Backend{cfg: Config{VerifierURL: "https://verifier.invalid"}, client: &http.Client{Transport: verifierRoundTrip(func(*http.Request) (*http.Response, error) {
+				if canceled {
+					cancel()
+				}
+				return nil, io.EOF
+			})}}
+			status, detail, err := b.verifyKey(ctx, []byte(`{}`), "station-1", "test-key", attested)
+			cancel()
+			if !canceled && attested {
+				if err != nil || status != "verifier-unavailable" || detail != "recently_attested_outage" {
+					t.Fatal("attested transport outage rejected")
+				}
+			} else if err == nil || status != "" || detail != "" {
+				t.Fatal("canceled or unattested transport failure activated a key")
+			}
+		}
+	}
+}
+
+func TestVerifierMalformedResponsesFailClosed(t *testing.T) {
+	for _, body := range []string{`null`, `[]`, `{"status":"verified"`, `{"status":false}`, `{"status":"error","ownership_passed":"false"}`, `<html>unavailable</html>`} {
+		for _, httpStatus := range []int{200, 429, 503} {
+			b := &Backend{cfg: Config{VerifierURL: "https://verifier.invalid"}, client: &http.Client{Transport: verifierRoundTrip(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: httpStatus, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}}
+			if status, _, err := b.verifyKey(context.Background(), []byte(`{}`), "station-1", "test-key", true); err == nil || status != "" {
+				t.Fatal("invalid response activated a key")
+			}
+		}
 	}
 }

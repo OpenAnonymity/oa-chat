@@ -950,7 +950,7 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
         assert.match(html, /Before resuming, check MetaMask for a pending transaction\./);
         assert.match(html, /value="5" readonly/);
         assert.doesNotMatch(html, /value="99"/);
-        assert.match(html, /Resume with Ethereum wallet/);
+        assert.match(html, /Resume with MetaMask/);
     } finally {
         zkapiClient.wallet = originalWallet;
         zkapiClient.config = originalConfig;
@@ -972,7 +972,7 @@ test('balance views keep funding and payment history while omitting redundant wa
             const html = modal.renderBalance();
             assert.match(html, /Payment history/);
             assert.doesNotMatch(html, /zkapi-watch-token-btn|Add USDC to MetaMask|<dt>Network|<dt>Request mode|<dt>Vault/);
-            assert.match(html, note ? /Withdraw/ : /Continue with Ethereum wallet/);
+            assert.match(html, note ? /Withdraw/ : /Continue with MetaMask/);
         }
         assert.match(modal.renderWithdrawalRecords(), /Your deposits and withdrawals will appear here/);
         assert.match(modal.renderWithdrawalRecords(), /Back to balance/);

@@ -73,7 +73,11 @@ def main():
     if flake_archive.is_file():
         metadata = json.loads(nix("flake", "metadata", "--json", "--no-write-lock-file", flake_archive.as_uri()))
         require(metadata["locks"] == json.loads(lock_before), "Standalone Nix archive changed the pinned flake inputs.")
-        unpacked = Path(metadata["path"])
+        # Nix 2.35 can report a lazy source path from metadata without copying
+        # it into the store. Materialize it before reading files through Python.
+        archived = json.loads(nix("flake", "archive", "--json", "--no-update-lock-file", flake_archive.as_uri()))
+        require(archived["path"] == metadata["path"], "Archiving changed the standalone Nix source path.")
+        unpacked = Path(archived["path"])
         for path in flake.iterdir():
             if path.is_file():
                 require((unpacked / path.name).read_bytes() == path.read_bytes(), f"Standalone Nix archive mismatches {path.name}.")

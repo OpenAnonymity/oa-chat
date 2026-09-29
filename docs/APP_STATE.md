@@ -12,6 +12,263 @@
 - The relay `HTTPSession` is shared by every proxied request. A request's own abort (a fetch timeout, Stop, a session switch) no longer closes it while another relayed request is in flight, and no longer marks the relay as failed; a guard timeout (`PROXY_TIMEOUT`) still recycles the session. Before this, any aborted relayed request ended a concurrent completion stream with "The operation was aborted" and flipped the System Panel to "Unavailable". An interrupted stream that nobody stopped now reads "The request was interrupted before the model replied: the connection to the relay or the provider closed. Retry sends a new request."
 - The assistant row for a turn is persisted (local-only, `pendingTurn: true`) before key acquisition and reused by the streaming placeholder. A reload before the first chunk therefore shows an interrupted reply with Retry rather than an unanswered user message; the row never enters model context, shares, memory or search. The first chunk clears the marker; an error, cancel or a turn that ends without a chunk removes the row (except during page unload, which keeps it for the next load). Retry sends a new request and may spend a new ticket.
 
+## 2026-09-29: Guided CLI setup and automatic funding
+
+- `oa-chat start` creates a missing configuration in the normal private OS
+  directory and keeps existing valid configuration and wallet state. New
+  guided configurations use zkAPI and ask for the network, offering Sepolia;
+  advanced `init` still defaults to Mainnet. Explicit network flags must match
+  an existing profile. Invalid or orphaned wallet state is never overwritten.
+- `install.sh --setup --network sepolia` installs/updates the native pair and
+  then runs the installed absolute CLI with its companion directory first on
+  PATH. It needs no separate PATH/init/serve/funding terminal for the first run.
+  Ordinary installation remains install-only. Active instructions target the
+  follow-up `daemon-v0.3.0`; publication is pending at this checkpoint.
+- Setup authenticates an existing daemon or starts and owns a foreground
+  daemon. It never stops a foreign process. Without an explicit backend flag,
+  an authenticated compatible running mode wins; otherwise the saved default
+  is used. `--backend` selects a mode without rewriting the saved configuration.
+  Startup waits through slow proof-file verification before declaring failure.
+- Funding asks for a USD principal and one interactive authorization for the
+  displayed fixed ETH amount and maximum fee. The terminal prompt reads
+  `/dev/tty`; piped scripts, EOF, and blank confirmation cannot approve spending.
+  Exact-amount quote refreshes retain wallet/network/deployment/commitment/nonce
+  bindings. Setup checks for arriving ETH, approves a fresh quote only within
+  the accepted fee ceiling, and waits for finalized activation. A fee increase
+  requires renewed consent. Unsigned restarts ask again; signed restarts only
+  recover the saved transaction. Lost responses require a successful journal
+  read before any further recovery call; reverts never trigger a new deposit.
+- Readiness checks model availability and its current native spending bound,
+  settlement, and both local and companion-only withdrawal reservations. An
+  existing note below the selected cap cannot be topped up in place. Setup
+  prefers `openai/gpt-4.1-mini`, then the cheapest available model; `--model`
+  overrides the readiness target. No test inference is sent or charged during
+  setup. Ticket mode guides private-file import/redemption and checks models.
+- The ready screen prints the API URL and an absolute, shell-quoted command
+  to retrieve the local API key, without printing the credential. Owned services
+  remain in the terminal; attaching to an existing service returns after checks.
+  See [the guided walkthrough](../daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+- Validation: full Go race suite/vet, Linux command cross-compilation, 26
+  installer regressions, and fresh adversarial review pass. Review fixes cover
+  companion PATH selection, slow-start readiness, and ambiguous recovery.
+  Live Sepolia acceptance and release publication are being recorded separately.
+
+## 2026-09-29: CLI 0.2.0 prerelease published
+
+- [daemon-v0.2.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)
+  was published at 14:58 UTC as a prerelease with 12 assets. Its source is
+  `ef888242c36860ccf8ec176b2b1eb724cee77456`, the latest main when tagged.
+  Subsequent main changes correct packaging validation and record evidence;
+  the tag and original native artifacts were not moved or rebuilt.
+- Original native builds and assembly passed; corrected package revalidation
+  `36585685844` passed Nix on all four platforms, both macOS Homebrew services,
+  Linux AMD64 Homebrew installation, and Arch makepkg. Every uploaded asset's
+  digest matches the assembled artifact. The exact-tag one-command installer
+  is now public and the active documentation points to it.
+- Public HTTPS installation on macOS ARM64 passed real 0.1.0 → 0.2.0 → 0.2.0
+  upgrade/reinstallation, preserving private configuration bytes/permissions
+  and all prior bundles. Fresh Sepolia startup used the packaged companion and
+  proofs without source-build overrides; 393 budgeted models, authentication
+  boundaries, and a live $2 deposit quote passed. No additional funds were sent.
+  The funded acceptance earlier today uses the unchanged runtime/patches.
+- [Release evidence](../daemon/packaging/validation/daemon-0.2.0-release-20260929.json)
+  distinguishes published-binary checks from the funded acceptance and links
+  both CI runs. All temporary test services stopped cleanly.
+
+## 2026-09-29: Release package revalidation
+
+- The `daemon-v0.2.0` tag at `ef888242c36860ccf8ec176b2b1eb724cee77456`
+  remains immutable. Its original release run `36582999421` passed all four
+  native builds/installations and release assembly, but all package jobs hit
+  a Nix 2.35 test-harness assumption: flake metadata can name a source path
+  before materializing it. The harness now explicitly archives the flake
+  before comparing its files; lock and payload checks remain intact.
+- The read-only package revalidation workflow checks the original run/tag,
+  successful build jobs, complete checksums, and all native source commits,
+  then repeats the original four-runner Nix/Homebrew/Arch checks. It never
+  builds, retags, or publishes. Publication remains gated on those checks.
+  See [packaging](../daemon/docs/CLI_PACKAGING.md#building-a-release).
+
+## 2026-09-29: CLI 0.2.0 prerelease preparation
+
+- Selected `daemon-v0.2.0` for the native CLI prerelease. Current install links
+  use its exact-tag `install.sh`; GitHub prerelease status is release metadata,
+  while the binary and installer version remain plain `0.2.0`. Publication and
+  public-download validation are pending at this checkpoint.
+- The same one-command installer updates a prior managed installation under
+  the same prefix, atomically switches the checked binary/proof bundle, and
+  retains the prior release and separate private state. Stop the daemon before
+  upgrading and restart it afterward. Existing compatible configs need no
+  reinitialization. An old ERC-20 note cannot be migrated to the native vault;
+  retain its matching client/recovery state separately.
+- [The Sepolia walkthrough](../daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
+  now covers install/PATH/version, explicit Sepolia initialization, consistent
+  `OA_CHAT_CONFIG_DIR` across terminals, quote/send/refresh/approve/finality,
+  status, model budget discovery, and streaming inference. API credentials go
+  to curl through stdin, and the guide distinguishes public ETH from private
+  credit and documents the settlement wait before another independent request.
+- Removed stale source-build-only guidance for the capabilities included in
+  this release; earlier validation records remain historical. Release evidence
+  must be added after the new native matrix and public installation checks.
+
+## 2026-09-29: Compact Send Ethereum funding view
+
+- Restored the compact deposit layout: Send total, address, QR, short funding
+  status and Deposit button. A numeric Deposit / Fee allowance line uses USD
+  estimates with exact ETH fallback. Fee allowance is the full `feeReserveWei`,
+  including the optional buffer; it does not claim an actual fee was charged.
+- The inline Transaction breakdown chevron replaces the deposit question mark.
+  It starts closed and contains the transfer instructions, network, saved-deposit
+  explanation, full balance progress bar and exact costs. The bar retains its
+  continuous balance fill, required-total marker and optional-buffer hatch.
+  Quote details keep their existing state across refresh/reload and remain open
+  on outside clicks; withdrawal receipt question-mark help keeps its own behavior.
+- The QR caption is Scan to pay. Waiting for ETH, the exact required shortfall,
+  and Funds received provide compact status. Existing fresh-quote checks,
+  optional-buffer readiness, cancellation reset and reload restoration remain
+  intact. See [funding presentation](ZKAPI_PAYMENTS.md#payment-flow-feedback-2026-09-28).
+- Validation: 162 focused tests and independent final-diff review pass. A 375px
+  browser preview with a live Sepolia quote confirmed the compact closed view
+  and the restored bar, required marker and optional-buffer hatch when expanded.
+
+## 2026-09-29: Shared CLI setup, automatic budgets, and terminal funding
+
+- One `oa-chat init` configures ticket and zkAPI capability. `serve --backend
+  ticket|zkapi` selects the running mode without rewriting the saved default or
+  touching the other wallet. Ticket commands remain usable in either mode.
+  CLI status and wallet commands discover the authenticated running mode,
+  including its network; an old saved default cannot redirect funding.
+- zkAPI chooses the same reviewed coarse model buckets as the web: ticket tiers
+  1/2 → $1, 3/8 → $2, 5 → $3, 25 → $4.50, 100 → $6. It requires the anonymous
+  live model map and excludes disabled/unreviewed tiers. Untiered models in the
+  public provider catalog use the web's fallback: opus/image names receive $2;
+  thinking/instant/default/reasoning fallbacks all map to $1. Exact live
+  assignments always win. Only the budget
+  crosses companion bridge v3, never a model ID or prompt. An existing pending
+  proof retains its original frozen quote and cap; switching models cannot
+  reinterpret it. Legacy configured global caps are ignored.
+- Funding is terminal-only; browser assets, capability routes, `--browser`, and
+  `--no-open` are removed. `fund --amount ETH` or `fund --usd USD` prepares a
+  durable fixed-principal quote. `fund --approve ID` authorizes that displayed
+  quote; `fund --resume` recovers saved signed bytes. A USD refresh retains the
+  original principal until the input is edited. ETH deposits use nine decimal
+  places; public returns can use all 18.
+- Low EIP-1559 fees match the web: pinned recent block/fee-history data, exact
+  payable simulation with a balance override, required allowance, optional
+  buffer, and exact remaining top-up after existing funds. Approval rechecks
+  the operation, balance, and fees against its displayed ceiling. There is no
+  fixed 0.02 ETH fee reserve. Optional buffer does not prevent proceeding when
+  the actual required allowance fits. Quoting never signs or broadcasts.
+  Withdrawal simulation must reserve headroom for the payout when the receiving
+  address is the local signer: overriding it with the maximum uint256 balance
+  makes the vault transfer overflow. Approval and signing use the real balance.
+- `withdraw --to ADDRESS` prepares a full private-balance quote;
+  `withdraw --approve ID` signs it. `fund return --to ADDRESS [--amount ETH]`
+  prepares a public ETH return; omit amount only for an EOA sweep. Private notes
+  and unsettled transactions must be resolved before returning their gas funds.
+  Management operations require the owner credential, separate from the API key
+  shared with inference clients. Back up the whole private config directory.
+- See [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md) for current commands and
+  recovery. Earlier sections below describe historical implementations and
+  acceptance runs; the previous native-flow result does not itself validate the
+  new fee-quote flow.
+- The new quoted flow passed live Sepolia acceptance: $2 fixed-principal deposit,
+  runtime mode switching and signed-transaction recovery, a blocked $6 model,
+  $1 model streaming during the verifier outage, signed 28-gwei settlement,
+  and finalized 731555-gwei withdrawal. Restart/resume retained completion with
+  no new nonce or active private note. Both actual fees fit the approved limits.
+  The full Go race suite/vet, Rust checks, native installation and Linux/macOS
+  installer CI passed. Public ETH return has automated coverage but was not
+  broadcast in this run. See the [sanitized evidence](../daemon/packaging/validation/sepolia-cli-quotes-20260929.json).
+
+## 2026-09-29: Payment feedback published to staging and Sepolia
+
+- Both public apps now include the reviewed payment fixes from core
+  `0e99a12e45aeac73539a335f9fb7a30f1f009bc2`.
+- [Staging](https://staging.openanonymity.ai) uses Commercial
+  `a84fb399ec3bfbc62644b902a0e28837382df0f2`, build `UVQ2UL6V`, deployment
+  `dpl_7UaSuvpWUfhHsd7LS5ZN5bjoQuYa`. Its Git release and live verification
+  workflows passed, including all nine public route/provenance checks.
+- [Sepolia](https://oa-wallet-eth-sepolia.vercel.app) uses build `3V62H6JR`,
+  deployment `dpl_4KV5LypB3hT63yjXBZbtxXzswiMC`. The Node 24 Vercel prebuilt
+  output matched all 489 manifest hashes. An independent authenticated check
+  matched ten deployed assets, including both proving keys and WASM, before
+  promotion. The canonical URL then reported the same build and healthy API.
+  An unfunded browser smoke test showed the new instructions, live fee/QR,
+  disabled Deposit, and the restored address, open details and scrolled view
+  after reload.
+- Both retain `fresh-20260928`, their respective Mainnet/Sepolia vaults, the
+  existing staging organization routes, and the pinned SDK/verifier policy.
+  Sepolia's deployment error-log scan was empty. Release verification did not
+  perform funded wallet transactions.
+
+
+## 2026-09-29: CLI native ETH deployment and verifier outage parity
+
+- The CLI source now embeds the fresh Mainnet/Sepolia manifests used by staging
+  and the Sepolia wallet frontend. Companion source is `20aa542`, protocol
+  `8b2d4e3`, and the circuit is `zkapi-v2-note-bound-v1`. Native principal and
+  private balances are integer gwei; public ETH remains exact wei. Local
+  funding submits one payable deposit, with no token approval.
+- Companion state includes deployment ID; funding journals bind vault, asset,
+  unit and scale. Legacy private notes are not migrated. Preserve old config
+  directories and use their matching release. Prepared requests preserve the
+  frozen quote and original cap across restart; settlement checks the same
+  quote. That revision defaulted new requests to a $1 cap; the automatic
+  model policy above now selects $1/$2/$3/$4.50/$6. Full details: [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md).
+- Both CLI backends support the browser's eligible verifier outage behavior.
+  Recent attestation permits transport/gateway outage continuation; 429 and
+  exact ownership-check errors follow the existing browser exception. Explicit
+  refusal, bad bindings/signatures/origins and malformed responses fail closed.
+  Outage keys remain unverified and produce fixed response headers and a safe
+  foreground warning. Single-use CLI keys have no retained-session retry queue.
+- Native macOS build/install/reinstall and independent source review passed.
+  Live Sepolia finalized deposit, real SSE (40 content events), actual
+  `verifier-unavailable` continuation, 409 key-reuse prevention, and signed
+  28-gwei settlement passed. The 749972-gwei withdrawal mined with exact payout,
+  treasury share, closed note and consumed nullifier. Withdrawal finalized at
+  checkpoint 11805799; restart/repeat retained completion with no new transaction
+  (chain nonce 2). No private note or pending settlement remains. Exact evidence:
+  [native CLI validation](../daemon/packaging/validation/sepolia-native-cli-20260929.json).
+  Deposit/withdrawal restart checks preserve signed bytes and nonce. Mainnet
+  passed read-only startup/catalog checks; no Mainnet transaction was sent.
+- Sepolia briefly returned `native_quote_expired` while a newer oracle round
+  awaited finality. It recovered naturally without changing the 4500-second
+  limit. A briefly underpriced saved withdrawal also mined without replacing
+  its bytes. Preserve pending journals through both timing conditions.
+
+## 2026-09-28: Payment feedback and reload continuity
+
+- Funding choices are MetaMask / Send Ethereum. Manual funding gives explicit
+  external-wallet send instructions, identifies this browser’s receiving address,
+  explains fees above the deposit amount, and replaces Next with Deposit. Missing
+  or insufficient ETH has visible status; cost details are shorter. Public
+  leftover ETH returns stay distinct from private-balance withdrawal.
+- Fee refresh retains the last estimate/QR and open help until a replacement is
+  ready. The display snapshot never authorizes signing; expiry disables Deposit,
+  errors suppress QR, edits discard it, and submission still validates a fresh
+  quote. See [payment feedback](ZKAPI_PAYMENTS.md#payment-flow-feedback-2026-09-28).
+- Both balance and first-time Welcome dialogs keep tab-local view/method/
+  disclosure/scroll and safe amount-draft
+  metadata until dismissed. Address amounts restore the existing durable ETH
+  intent. Wait for the full address/fee layout before consuming restored scroll;
+  a temporary loading screen can clamp it to zero. User interaction cancels
+  deferred restoration. No restore submits a transaction or opens a wallet prompt.
+- MetaMask cancellation clears only a provably unsubmitted matching SDK draft
+  under its wallet lock; approvals, submitted/uncertain work and other-tab changes
+  retain recovery. A seven-second notice returns to a fresh deposit form.
+- Withdrawal labels no longer imply completion before the payout. Verified
+  completion opens Payment history with brief confirmation; prepared withdrawals
+  keep their destination across method switches. Missing USD uses exact ETH.
+  Method switching clears transient feedback, never transaction journals.
+- Validation: 1,024 core and 660 zkAPI tests pass; fresh Sepolia production
+  build succeeds; independent final diff review approved. An unfunded local
+  browser displayed live Sepolia fees/QR, preserved fee help across refresh/reload,
+  and had no horizontal overflow at 375px. The final scroll recheck hit preview
+  networking failures (RPC connection errors and missing same-origin proxy routes
+  on the static preview server); browser-clamping regressions cover the fix in
+  both dialogs. No funded wallet transaction or deployment was performed.
+
 ## 2026-09-28: Restore switched accounts in existing windows
 
 - A completed username sign-in announces that its saved account is ready. Other windows discard old in-memory credentials and load the new account's non-extractable key bundle, verify the shared session, and activate its scoped ticket wallet without reloading or asking for a second passkey. Focus, visibility, and send preflight also reconcile the saved binding when a notification was missed.

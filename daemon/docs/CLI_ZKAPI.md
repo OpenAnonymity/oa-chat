@@ -1,55 +1,214 @@
 # zkAPI in the Go daemon
 
 The Go gateway supports the prompt-private OA-org key path of zkAPI. It runs
-an authenticated local Rust wallet/prover companion, obtains a verifier-backed
-provider key without sending a prompt to the companion, and forwards the
+an authenticated local Rust wallet/prover companion, obtains a provider key under the verification policy below without sending a prompt to the companion, and forwards the
 original OpenAI JSON and streaming response over direct HTTPS by default.
 A nonempty `relay_url` opts in to destination TLS through Wisp.
 The Rust companion is needed because the deployed Groth16 wallet and recovery
 implementation is Rust; this change does not claim to port those cryptographic
 primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md).
 
+## Sepolia: from installation to inference
+
+Use version `0.3.0` for guided setup. Stop any daemon you are upgrading,
+then run:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+```
+
+The same command installs or updates both binaries and proving assets. It then
+runs the installed CLI directly, with its matching companion on PATH. No
+separate initialization, environment variable, or funding terminal is needed.
+Use the original `--prefix` for an installation in a custom location.
+
+1. **Follow the setup prompts.** Missing configuration is created in the normal
+   private directory: `~/Library/Application Support/oa-chat` on macOS or
+   `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`. Existing
+   configuration, tickets, and wallet files are preserved. Setup starts the
+   local API and companion, or authenticates and reuses a compatible daemon
+   already running. It checks the selected network, companion policy, model
+   availability, private balance, settlement, and withdrawal state.
+
+2. **Fund only if needed.** Choose the private balance to add in USD. The
+   default is the selected model's cap plus $1, normally $2. The verified price
+   quote fixes its ETH principal once; network fees are additional. Review the
+   displayed network, funding address, principal, and maximum network fee,
+   then confirm automatic deposit. Send the displayed required or recommended
+   top-up in **Sepolia test ETH** to that funding address. The recommended
+   amount includes an optional fee buffer; the vault address is not the
+   transfer destination.
+
+   Keep the command running. It checks every five seconds, refreshes expired
+   fee quotes without changing the deposit, detects arriving ETH, submits the
+   deposit automatically, and waits for finality, usually around 15 minutes.
+   You do not need to copy a quote ID or run another funding command. If fees
+   exceed the approved ceiling, it asks before accepting a higher ceiling.
+   Any unused public ETH remains controlled by the saved funding key.
+
+3. **Use the printed connection details.** Setup reports **Ready for inference**
+   only after checking that the private balance covers the selected model's
+   current cap and no settlement or withdrawal reservation blocks it. It prints
+   the OpenAI base URL and the exact command to retrieve your local API key,
+   using the installed executable and configuration directory. The key is not
+   printed automatically. Configure your inference client with those details.
+   A newly started daemon stays in this terminal; leave it running for
+   inference and settlement. When setup attached to an existing daemon, it
+   returns after the checks and that daemon continues running.
+
+For later starts, follow the installer's PATH guidance and run:
+
+```sh
+oa-chat start --network sepolia
+```
+
+New guided configurations use zkAPI. Existing saved modes remain available;
+without an explicit mode override, a compatible running daemon's mode is used.
+Use `--backend zkapi` to choose zkAPI explicitly for an existing ticket profile,
+or `--backend ticket` for guided ticket setup. New unflagged `start` prompts
+for the network and offers Sepolia; an existing network is never silently
+changed. A Mainnet configuration needs a separate Sepolia directory, for
+example `oa-chat --config-dir "$HOME/.config/oa-chat-sepolia" start --network sepolia`.
+Invalid configuration or missing configuration beside existing wallet state
+requires recovery instead of reinitialization. Keep legacy ERC-20 recovery
+profiles separate from native ETH profiles.
+
+`--usd 2` supplies a preferred amount for a new deposit but does not skip
+spending confirmation. `--model MODEL_ID` selects which model's cap to check;
+otherwise setup prefers `openai/gpt-4.1-mini` when available, then an available
+model with the lowest cap. An active note below that cap must use a cheaper
+model or be closed before funding a replacement; it cannot be topped up in
+place. Public ETH alone is not private inference credit.
+
+Ctrl+C preserves progress. Rerun the same `start` command to continue: an
+unsigned deposit keeps its fixed amount and asks for consent again; a signed
+deposit resumes its saved transaction without authorizing another. A reverted
+transaction, conflicting operation, or withdrawal reservation requires explicit
+recovery. Back up the complete private configuration directory, including
+`funding/` and `zkapi/`; it controls both public funds and private credits.
+
+### Optional streaming request
+
+For a new default-prefix/default-directory setup, run this in another terminal
+while the daemon remains running. Use the printed API-key command and endpoint
+instead if you selected a custom prefix, directory, or listener:
+
+```sh
+OA_LOCAL_API_KEY=$("$HOME/.local/bin/oa-chat" api-key)
+printf 'Authorization: Bearer %s\n' "$OA_LOCAL_API_KEY" | \
+  curl --fail-with-body --silent --show-error --no-buffer --header @- \
+    -H 'Content-Type: application/json' \
+    http://127.0.0.1:8787/v1/chat/completions \
+    -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Say hello in one sentence."}],"stream":true,"max_tokens":64}'
+unset OA_LOCAL_API_KEY
+```
+
+Use an available model from `GET /v1/models`; each entry includes its current
+`oa_request_limit_micro_usd` (1,000,000 means a $1 cap). Success streams `data:`
+events followed by `data: [DONE]`. The cap is chosen automatically; actual
+usage is settled afterward. A second request can return `409 settlement_pending`
+for up to about five minutes. Keep the daemon running and retry after
+`oa-chat status` shows `pending_settlement: false`. `402 funding_required` means
+the private balance cannot cover the requested model's cap. An eligible
+trusted-station verifier outage may continue as `verifier-unavailable`;
+explicit verification refusals still block access.
+
+The lower-level `init`, `serve`, `fund`, withdrawal, and public ETH return
+commands remain available below for explicit management and recovery.
+
 ## Network and funding
 
-`oa-chat init --backend zkapi` selects Ethereum mainnet. Sepolia requires
-`--network sepolia`; a chain mismatch fails before the companion starts. The
-manifests are the existing deployment URLs:
+For guided setup, `oa-chat start` configures and checks the wallet as described
+above. The advanced `oa-chat init` command configures both ticket and zkAPI
+modes, with Ethereum mainnet as the wallet network. Sepolia requires
+`init --network sepolia`. Choose
+`serve --backend zkapi` when starting the daemon; stop it and use
+`serve --backend ticket` to switch back with the same configuration directory.
+`init --backend` only changes the default for an unqualified `serve`. Existing
+configurations need no reinitialization, and mode selection never rewrites a
+wallet. A chain mismatch fails before the companion starts. The
+packaged public manifests match the September 28 native ETH deployments used by
+[staging Mainnet](https://staging.openanonymity.ai/) and
+[Sepolia](https://oa-wallet-eth-sepolia.vercel.app/):
 
-- Mainnet: <https://d27v1dvkaxfc09.cloudfront.net/config.json>
-- Sepolia: <https://d33l4w2z2nh4cg.cloudfront.net/config.json>
+| Network | Manifest | Vault |
+| --- | --- | --- |
+| Mainnet | `https://54.67.93.98.sslip.io/config.json` | `0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41` |
+| Sepolia | `https://52.52.207.206.sslip.io/config.json` | `0x999F40773e47f7e07f435C0CC69225c409B64329` |
 
-Both use their configured six-decimal ERC-20 billing token, not native ETH for
-credits. ETH pays gas. The daemon verifies token decimals and the selected
-network. Sepolia address funding requires the configured test-token transfer;
-it does not automatically mint test tokens.
+The companion is pinned to source `20aa542ae98e767c0507133fd34b12a56f5ccd3d`
+and protocol `8b2d4e3da921f956e1eb6b93afbf722a877c060c`, with the deployed
+`zkapi-v2-note-bound-v1` proving assets. Full public manifests are embedded in
+the Go binary; a remote manifest change cannot silently redirect an existing
+wallet. Companion state is separated by network and deployment ID. A saved
+manifest or funding journal from a different deployment fails closed. Preserve
+legacy token wallets and use their matching old client with a separate config
+directory; this release does not migrate old private notes.
 
-Run `oa-chat fund` while the daemon is running. It creates a local Ethereum
-signing key once and prints its address, network, token contract and balances.
-No external wallet, browser, Foundry installation, private-key input, or wallet
-connection is needed. The key is internal client state; this does not remove
-Ethereum's need for a signer or ETH for gas.
+Both deployments use native ETH for principal and gas. Private balances and
+protocol amounts are integer **gwei** (1 unit = 1,000,000,000 wei), while the CLI
+shows ETH with up to nine decimals. Run `oa-chat fund` while the daemon runs to
+create a persistent local signing key and print its address and public balance.
+Send ETH on the displayed network to that address. Sending directly to the
+vault does not fund a private note.
 
-Send the displayed billing token (mainnet USDC, or the configured Sepolia test
-token) and ETH on the displayed network to that same address. A transfer to the
-vault itself does not fund a private note. Only the configured token counts;
-tokens on another network do not become credits.
+Run `oa-chat fund --amount 0.00075` to prepare a quote for that ETH principal,
+or `oa-chat fund --usd 2` to choose a USD amount converted through the verified
+billing quote. The exact
+integer parser rejects sub-gwei fractions, zero/negative amounts and amounts
+over 1,000 ETH. The displayed quote separates principal, expected fees, the
+required fee allowance, recommended buffer, and exact top-up needed at the
+funding address. Fee quotes expire after 30 seconds; refreshing a USD-selected
+deposit keeps its already chosen ETH principal fixed. `oa-chat fund --approve QUOTE_ID` authorizes one payable
+deposit with `value = amount × 1e9 wei` within those bounds, then waits for
+finalized activation. A stale or changed quote must be reviewed again. No token
+approval or mint is needed. Unused fee allowance remains at the local address.
+Ctrl+C stops waiting without deleting state; `oa-chat fund --resume` recovers
+saved signed transactions without authorizing a fresh deposit. Use the same
+`--config-dir` throughout. The amount remains fixed after authorization.
 
-Run `oa-chat fund --amount 0.10` to authorize a 0.10-USDC private deposit. The
-amount parser uses exact integer microcredits, accepts at most six decimal
-places, and rejects zero/negative amounts and amounts over 1,000,000 USDC.
-The command waits for funds and advances approval, deposit and activation;
-Ctrl+C stops waiting without deleting state. Repeat the same command and
-`--config-dir` to recover. Amounts cannot change while an attempt is saved.
+The selected model automatically determines its inference budget, matching
+the web wallet's reviewed ticket-tier map:
 
-The optional `fund --browser` page uses the same local signer. `--no-open`
-continues to print a short-lived page URL. Opening/reloading/checking the page
-and reading the address do not submit transactions. The deposit button is the
-explicit authorization. The page never needs `window.ethereum` and never
-receives the signing key or private-note secret.
+| Model ticket tier | Maximum request budget |
+| --- | --- |
+| 1 or 2 | $1 |
+| 3 or 8 | $2 |
+| 5 | $3 |
+| 25 | $4.50 |
+| 100 | $6 |
 
-The daemon reuses a sufficient token allowance or approves only the selected
-amount, refreshes the vault's empty-leaf Merkle witness, and signs the exact
-`deposit(bytes32,uint128,uint256[32])` call. Network and token-decimal checks,
+Before each request, the daemon anonymously fetches `/chat/model-tickets` and
+`/chat/pinned-models` from the issuer pinned in the deployment manifest. It
+rejects unknown, disabled, malformed, or unreviewed tiers before acquiring a
+lease. Explicit OA pricing takes precedence. A model confirmed in the provider's
+public catalog but absent from the OA map uses the web wallet's reviewed
+fallback policy. A metadata fetch failure never authorizes from stale policy. Only the
+trailing `:online` suffix is normalized; `:free` and `:batch` remain exact model
+identifiers. `/v1/models` lists eligible models and their integer
+`oa_request_limit_micro_usd` budgets. Legacy `zkapi.request_limit_micro_usd`
+config fields remain readable but no longer control new requests.
+
+The server's native minimum still applies. The companion obtains a frozen
+billing quote, independently checks its finalized Chainlink round through the
+pinned chain/RPC, and rounds the USD limit upward to native units before
+proving. A balance at least equal to this bound can obtain access, subject to
+pending settlement. Lease and settlement must retain that quote. A recovered
+prepared request keeps its original bound and rejects a different requested
+tier while pending. The cap is spending authority, not an immediate full-cap
+charge. Only the coarse USD bucket reaches the companion; model selection and
+prompts remain in the Go inference path. Bridge version 3 is required so an
+older companion cannot silently ignore the per-request limit.
+
+Funding is command-line only. The old `/funding` browser routes and
+`fund --browser`/`--no-open` flags are removed. Reading the address or requesting
+a quote never broadcasts a transaction. Returning unused public ETH uses
+`fund return --to ADDRESS [--amount ETH]` followed by
+`fund return --approve QUOTE_ID`; omitting the amount returns the available
+balance after reserving the reviewed gas allowance.
+
+The daemon refreshes the vault's empty-leaf Merkle witness, and signs the exact
+`deposit(bytes32,uint128,uint256[32])` call. Network, deployment and denomination checks,
 gas simulation, gas/fee limits, and receipt checks fail closed. Signed bytes,
 hash and nonce are saved durably **before** broadcast. Ambiguous submission
 replays those same bytes, rather than allocating another nonce. Confirmation
@@ -57,22 +216,117 @@ must bind the vault event to the saved private-note commitment and amount.
 Deposit activation waits for Ethereum's finalized block,
 [typically around 15 minutes](https://ethereum.org/roadmap/single-slot-finality)
 after mining; an unsupported finality response does not activate
-credits. Approval can progress from a canonical mined receipt. Gas limits use
-120% of the estimate plus 50,000 units, bounded by 16,777,216 units; legacy
-EIP-155 transaction fees are capped at 300 gwei and 0.02 ETH per transaction.
-These fees are additional to the token deposit amount.
+credits. Gas limits use the current simulation with bounded padding. New
+transactions use the web wallet's Low EIP-1559 fee policy and the approved quote's
+fee allowance rather than fixed 300-gwei/0.02-ETH ceilings. Fees are additional
+to the ETH deposit principal; the optional reserve buffer is not a minimum
+funding requirement. Previously signed legacy transactions are replayed with
+their original bytes and fee settings. After canonical finality, status shows
+the actual network fee derived from the receipt.
 
-Address funding is a source change after `daemon-v0.1.0`; that published release
-still uses MetaMask. Historical funded Sepolia checks below describe that
-older flow, not live validation of the new local signer.
+Version `0.2.0` includes this terminal flow. The older `daemon-v0.1.0` bundle
+used MetaMask; install both matching binaries from `0.2.0` or newer together. The acceptance
+records below distinguish the current terminal quote flow from earlier implementations.
+
+## Terminal quote validation (2026-09-29)
+
+The current Go/Rust build was exercised against the same Sepolia deployment as
+the web wallet. A $2 deposit selected exactly 731583 gwei, retained its principal
+through quote refresh, and produced a type-2 deposit transaction. Switching the
+same configuration to ticket mode and back preserved the signed transaction;
+`fund --resume` recovered it without a second nonce. Ticket mode rejected wallet
+management, and the saved default stayed unchanged.
+
+After finalized activation, a $6 model was rejected with `402 funding_required`
+without preparing a proof. A $1 `openai/gpt-4.1-mini` request streamed 40 content
+events and `[DONE]` (first content 15.235 seconds, total 15.668 seconds). The live
+verifier outage exercised `verifier-unavailable` / `recently_attested_outage`.
+The proof used exactly 365658 gwei under the frozen oracle quote. An immediate
+second request returned `409 settlement_pending`; signed settlement charged
+28 gwei and left 731555 gwei.
+
+The full remaining private balance was quoted and explicitly approved for
+withdrawal to the local funding address. Independent canonical receipt and
+block-balance checks confirmed its exact payout, 28-gwei treasury share, closed
+note, consumed nullifier, and fees within both approved ceilings. This live check
+caught a quote-simulation edge case: a synthetic maximum sender balance overflows
+when that sender also receives the withdrawal. Quotes now reserve the exact
+payout headroom; signing still checks the real balance. A regression test covers
+both simulation calls and the signing boundary.
+
+Withdrawal finalized at checkpoint 11808017. After restarting and waiting for
+companion readiness, `withdraw --resume` returned the saved completed result;
+the chain nonce stayed 4, signed bytes were unchanged, and no active private
+note or pending transaction remained. Both actual receipt fees survived restart.
+The test daemon was stopped and its private configuration backed up locally.
+Exactly 0.020387670172247908 Sepolia ETH remains at the local funding address.
+
+The full Go race suite and vet, 45 Rust clientd tests, 21 Rust CLI tests,
+all-target compilation, exact source/patch checks, and native package
+installation/reinstallation passed. GitHub's Linux/macOS installer workflow
+also passed for the implementation commit. Independent adversarial review
+approved the final code. See the [sanitized receipt and recovery record](../packaging/validation/sepolia-cli-quotes-20260929.json).
+Mainnet was checked read-only; public ETH return has automated coverage but no
+live broadcast in this run. This validates the local source and native test
+package, without publishing a new release.
+
+## Earlier native Sepolia acceptance (2026-09-29)
+
+The local Go/Rust build matches both current frontend profiles. Mainnet was
+checked read-only: companion identity and asset checks passed and the public
+model catalog returned HTTP 200. No Mainnet transaction was sent.
+
+This historical native run predates dual-mode selection, model-selected
+budgets, and command-line quote approval. It used direct HTTPS, a 0.00075 ETH
+principal, and a fixed $1 request cap. Deposit
+[`0xecedf3…f5848`](https://sepolia.etherscan.io/tx/0xecedf3ddf3f37639180422538ffd2d1f6cb04b3621806ea44c7be3ad9b3f5848)
+created note 10. Restart while waiting for finality preserved the exact signed
+bytes and nonce. Finalized activation produced 750000 gwei.
+
+One `openai/gpt-4.1-mini` request returned HTTP 200 with 40 incremental content
+events and `[DONE]`; first content arrived at 14.599 seconds and completion at
+15.117 seconds. The actual verifier outage exercised the recently-attested
+exception: headers reported `verifier-unavailable` /
+`recently_attested_outage`, and foreground logs emitted the fixed warning.
+An immediate independent request returned `409 settlement_pending`.
+
+The proof bound was 374611 gwei under frozen oracle round
+`18446744073709588031`. Automatic signed settlement charged 28 gwei and saved
+749972 gwei, with the pending journal removed. Restart preserved that reduced
+balance. Withdrawal
+[`0x0b3ad1…575e1`](https://sepolia.etherscan.io/tx/0x0b3ad15dce79ced74d1d4fc31aeb558021ea05250d54302caa99a3ddf6a575e1)
+mined successfully: independent receipt and block-balance checks matched the
+749972-gwei recipient payout and 28-gwei treasury charge; on-chain note state
+was closed and its nullifier consumed. Restart retained the same withdrawal
+bytes and nonce. Withdrawal finalized at checkpoint 11805799. A final restart
+and repeat returned the saved completed withdrawal without another transaction:
+chain nonce stayed 2, the journal contained exactly one deposit and one
+withdrawal, and no private note or pending settlement remained. The receiving
+address was unchanged. The test daemon was stopped and its completed wallet
+backed up locally; 0.035705078831276256 Sepolia ETH remains at that address.
+
+Two external timing conditions were observed without relaxing policy. A fresh
+oracle round existed at latest but not finalized, causing
+`native_quote_expired` until finality advanced; the quote recovered naturally.
+The withdrawal's fixed legacy gas price was briefly below the base fee, then
+mined when eligible. Pending signed transactions retain their bytes and nonce;
+this client does not automatically replace them with a higher-fee transaction.
+
+The full Go suite, race checks, vet, 41 funding UI tests, 43 Rust clientd tests,
+21 Rust CLI tests, workspace/all-target compilation, exact pinned-source checks,
+and macOS ARM64 package install/reinstall checks passed. The
+[sanitized validation record](../packaging/validation/sepolia-native-cli-20260929.json)
+contains exact transaction and accounting evidence. Independent adversarial
+review approved the source after verifier-refusal and proof-asset startup
+hardening. This is a local source/build validation, not a published release.
 
 ## Privacy boundaries
 
-The local API bearer key and the browser funding capability are distinct.
-Funding capabilities expire after 30 minutes and travel in a URL fragment,
-which the page removes before further navigation. API calls use an
-Authorization header. Funding routes enforce the literal loopback host and
-exact same origin; there is no wildcard CORS. The companion creates a fresh HTTP client for each remote call so neither
+The local inference API bearer key and owner-only `management-token` are
+distinct. All wallet management routes, including quotes and public-fund
+returns, require both credentials. The safe `/admin/status` mode metadata
+requires only the API key. Browser-origin requests are rejected and there is
+no wildcard CORS. The companion creates a fresh HTTP client for each remote call so neither
 pooled connections nor a previous client's TLS state group independent
 proof/lease requests. The companion authenticates every
 route, including reset, health, and its upstream funding UI.
@@ -90,22 +344,35 @@ fallback. See [transport configuration](../README.md#build-and-run-ticket-mode).
 
 Direct mode exposes the source IP to destination services and uses local DNS;
 fresh ephemeral keys do not prevent source-IP or timing correlation. HTTPS
-certificate validation and station/key verification remain required in either
-mode. The configured RPC and public chain can observe the funding address,
-incoming transfers, approval, and deposit. Generating the address locally does
+certificate validation and the same station/key verification policy apply in
+either mode. The configured RPC and public chain can observe the funding address,
+incoming transfers and deposit. Generating the address locally does
 not make public funding anonymous; the private-note proof and ephemeral
 inference-key boundaries remain unchanged.
 
 The companion requires `direct_openrouter` and `require_oa_org_key_source`.
-Before any key leaves the companion, the independently configured verifier
-must return `status: verified`, the exact station ID, and a matching SHA-256
-key fingerprint. The deployed verifier and OA Chat browser use the exact first
-16 lowercase hexadecimal characters (eight bytes); a full 64-character lowercase
-hash is also accepted and must match in full. Arbitrary truncation, a wrong full-hash suffix,
-pending status, a mismatched origin, a wrong chain, and missing evidence fail
-closed. The verifier validates the submitted raw key and signatures before
-returning this response; its intentional 16-character fingerprint is compatible
-with this daemon.
+Each key is submitted to the independently configured verifier. A matching
+`verified` result must bind the exact station and the first 16 lowercase hex
+characters of SHA-256(key), or a matching full 64-character digest.
+
+The daemon also implements the web client's explicit outage policy. Transport
+timeouts and HTTP 408/500/502/503/504 permit continuation only when issuance
+reports `recentlyAttested: true`. HTTP 429 and the exact HTTP 503
+`unverified` / `ownership_check_error` result are eligible without that flag,
+matching the browser policy. Keys remain **unverified** under this exception.
+Malformed responses, certificate failures, cancellation, explicit rejection,
+known banned stations, station/hash mismatches, expired keys, missing signatures
+and unexpected inference origins fail closed. Bans observed by a running
+process remain sticky for that process.
+
+Both ticket and zkAPI responses expose `X-OA-Verification-Status: verified` or
+`verifier-unavailable`; the latter has a fixed allowlisted
+`X-OA-Verification-Detail` reason and emits a fixed warning in foreground logs.
+Provider-supplied and caller-supplied verification headers cannot override this
+local decision. The CLI does one bounded check per single-use key and has no
+browser-style retained session/background retry queue. Outage continuation
+accepts the browser's documented risk of temporarily proceeding without a
+current per-key station ownership/privacy check; it never claims verification.
 
 The signed key validity must cover the advertised lease expiry by zero to
 60 seconds, matching the working browser SDK. The server deliberately subtracts
@@ -116,12 +383,11 @@ the Go gateway receives and enforces the shorter lease expiry. This does not
 extend either lifetime or loosen station, signature, origin, or key binding.
 
 The wallet secret is written to a mode-0600 recovery file before a deposit is
-sent. It never enters browser JavaScript. The browser receives the public
-commitment and Merkle path; receipt validation binds the successful transaction
+sent. Receipt validation binds the successful transaction
 to the configured vault, commitment, amount, note ID, and expiry. The secret is
 sent only to the authenticated loopback companion when activating the note.
 
-MetaMask can wrap a deposit in a transaction whose outer recipient is its
+Historical browser deposits could wrap a deposit in a transaction whose outer recipient is its
 execution contract. The receipt must be successful and contain the exact
 `NoteDeposited` event emitted by the configured vault, matching the pending
 commitment and amount; the outer transaction recipient is not the deposit
@@ -134,7 +400,7 @@ transaction hash and private recovery record.
 **The current deployed lease protocol does not provide immediate independent
 requests from one funded wallet.** A generic OpenAI request carries no trusted
 conversation boundary, so the Go daemon must not reuse a provider key across
-API calls. Each verified lease is durably marked as handed out once before its
+API calls. Each eligible lease is durably marked as handed out once before its
 key is returned. A repeated or concurrent call receives HTTP 409 until the
 previous private-state transition settles. This also prevents key reuse after
 a crash or a lost local HTTP reply.
@@ -146,7 +412,7 @@ inference finishes much earlier. Open WebUI background title/tag/follow-up
 requests also consume separate access and can encounter this limit. Immediate
 repeat requests remain an unresolved deployment requirement.
 
-**Observed billing is actual usage.** The successful streamed request settled
+**Historical ERC-20 validation (September 10), not native-release evidence.** The successful streamed request settled
 with `usage_usd: 0.000723` and `charge_applied: 723`, reducing the private balance
 from 100000 to 99277 microcredits (0.100000 to 0.099277 test USDC). The pending
 flag cleared automatically. Its advertised 0.05-USDC key limit was a cap, not
@@ -181,18 +447,17 @@ production relay was not changed and there was no direct-transport fallback.
 ## Recovery and refilling
 
 The Go recovery record is under `funding/<network>/pending-deposit.json` in the
-private configuration directory. It survives a browser close, service restart,
+private configuration directory. It survives a terminal close, service restart,
 and an ambiguous on-chain response. The local signer also retains its key and
 signed transaction journal in `funding/<network>/address-funding.json`. Resume
-with the same `fund --amount` command. Back up the complete private config
+with `fund --resume`. Back up the complete private config
 directory before sending funds; neither OA nor the sender can recover a lost
 local key. Never copy its secrets into support logs.
 
-Legacy browser-funded deposits can still be confirmed with their saved
-transaction hash in the optional funding page. A legacy pending record is
-never silently replaced with a new local-signer deposit. A mistyped pending
-hash can be replaced by a receipt that matches the private note; a mined reverted or unrelated transaction clears its retry
-hint without deleting the secret.
+Legacy browser funding pages are no longer exposed. A legacy pending record
+is never silently replaced with a new local-signer deposit. Preserve its
+recovery files and use its matching old client where necessary; the current
+native deployment cannot import an older vault's private note.
 
 Confirmation retries never reinitialize an already active note to its original
 balance. Activated recovery records are retained and are archived with a
@@ -206,49 +471,54 @@ ambiguous transactions always retain their original signed bytes and nonce.
 An activated journal whose companion note is missing requires recovery, not a
 second deposit. After a confirmed CLI withdrawal the journal retains the
 signing key and transaction history, archives the completed deposit recovery
-file, and permits a fresh `fund --amount` deposit. Excess public USDC and ETH
-remain controlled by the saved Ethereum key; this version has no public-asset
-sweep command, so preserve the full backup for recovery.
+file, and permits a fresh `fund --amount` quote. Excess public ETH remain
+controlled by the saved Ethereum key. `fund return --to ADDRESS` quotes a
+return with gas reserved, or add `--amount ETH` to return a fixed amount.
+Review and approve the saved quote with `fund return --approve QUOTE_ID`.
+This moves only public address funds; withdrawing private credits is separate.
 
 The current upstream wallet has one active note. Deposits do not increase an
-active note in place. The Go funding page therefore refuses to overwrite an
+active note in place. The CLI therefore refuses to overwrite an
 active note. Close it with the withdrawal command before funding another note.
 Preserve its wallet state when changing to a separate funded state directory.
 
 ## Withdraw without connecting a wallet
 
-Keep `oa-chat serve` running and use the same configuration directory:
+Keep `oa-chat serve --backend zkapi` running and use the same configuration directory:
 
 ```sh
 oa-chat withdraw
 oa-chat withdraw --to 0xYOUR_ETHEREUM_DESTINATION
+oa-chat withdraw --approve QUOTE_ID
 ```
 
 The first command only shows status. Replace the placeholder in the second
-command with the receiving address; that explicit command authorizes withdrawal
-of the **entire remaining private balance**. There is no partial-amount option.
+command with the receiving address to prepare the withdrawal and review its
+fee quote. The approval command authorizes withdrawal of the **entire remaining
+private balance** to that saved destination. There is no partial-amount option.
 The daemon generates the withdrawal proof and uses its existing local Ethereum
-key to submit `mutualClose`. No browser extension, wallet connection, seed
+key to submit `mutualClose` only after quote approval. No browser extension, wallet connection, seed
 phrase, or imported key is needed. ETH for gas must be available at the displayed
-local signing address, on the configured network. Existing fee limits apply:
-300 gwei and a maximum transaction cost of 0.02 ETH per signed transaction.
+local signing address, on the configured network. The displayed Low EIP-1559
+quote fixes the maximum approved fee allowance, expires after 30 seconds, and
+must be refreshed when stale. Finalized status shows the actual network fee.
 
-An outstanding inference must settle first. The companion saves a reservation
-before requesting clearance and blocks further inference on that note. The
+An outstanding inference must settle first. Preparing a withdrawal saves a
+reservation before requesting clearance and blocks further inference on that note. The
 destination cannot change after starting; there is no cancellation that resumes
 spending a reserved note. Proof preparation can take several minutes. Ctrl+C
-stops waiting, and rerunning the exact same command resumes saved progress.
+stops waiting; `oa-chat withdraw --resume` recovers saved signed progress.
 An uncertain broadcast reuses the identical signed transaction. Only a finalized
-revert permits a fresh transaction, following another explicit command, with
+revert permits a fresh transaction, following a new quote and approval, with
 the same note, destination, balance, and nullifier.
 
 Every request is bound to the originally selected note ID. A suspended terminal
 cannot resume against a later deposit, and concurrent polling cannot authorize
 a retry: only a new command that observes the failed transaction sends its exact
-hash as retry authorization. Withdrawal management additionally requires the
+hash as retry authorization. All wallet management requires the
 owner-only `management-token` file, automatically retained in the private config
 directory. The inference API key shared with an OpenAI-compatible client is
-insufficient to initiate or inspect withdrawals; the CLI supplies both credentials.
+insufficient to initiate or inspect wallet operations; the CLI supplies both credentials.
 An unsuccessful retry preserves the previous failed transaction until a
 replacement has been durably signed, so an already-relayed payout can still be
 confirmed after proof, simulation, or gas errors.
@@ -278,14 +548,18 @@ transaction must also be finalized so its signing nonce is safely retired.
 This command implements cooperative withdrawal, which requires the zkAPI
 server to issue clearance. The delayed escape/challenge workflow is not exposed
 by this CLI command. Public tokens or ETH left at the local address are separate
-from the private balance and are not swept by withdrawal. Withdrawal amount,
+from the private balance and are not swept by withdrawal; use `fund return`
+for public ETH. Withdrawal amount,
 destination, and transaction are public Ethereum data.
 
-Build both binaries from this revision: the companion must advertise
-`withdrawal_bridge_version: 1`. The published `daemon-v0.1.0` bundle predates
-the command and cannot run it with only a replaced Go executable.
+Install both binaries from the same `0.2.0` or newer bundle: the companion must advertise
+`bridge_version: 3` and `withdrawal_bridge_version: 1`. The older `daemon-v0.1.0`
+bundle predates the command and cannot run it with only a replaced Go executable.
 
-## Address-funding verification (2026-09-22)
+## Historical address-funding verification (2026-09-22)
+
+This section records the older ERC-20 flow and its browser tests. It does not
+validate the current native quote/approval commands.
 
 Withdrawal coverage includes exact ABI/signature binding, gas shortage, frozen
 note/destination/amount, concurrent polling, explicit failed-hash retries,
@@ -314,7 +588,7 @@ Temporary test services were stopped, with private state and backups retained.
 This verifies cooperative withdrawal on the pinned legacy Sepolia deployment;
 it does not imply a mainnet run or a newly published native release.
 
-The current change is covered by mocked JSON-RPC/companion integration tests:
+That change was covered by mocked JSON-RPC/companion integration tests:
 address persistence and file permissions, wrong-chain/token checks, exact
 signed calldata, approval/deposit ambiguity, restart and nonce rollback,
 canonical/finalized receipt checks, reorg recovery, explicit reverted retries,
@@ -323,13 +597,12 @@ amount parsing, read-only address display, explicit deposits and cancellation;
 37 browser-script tests cover address-only loading, explicit authorization,
 recovery, session expiry and balances without any injected wallet provider.
 
-Run from `daemon/` with a patched Go toolchain:
+Current Go checks run from `daemon/` with a patched Go toolchain:
 
 ```sh
 GOTOOLCHAIN=go1.26.6 go test -race ./...
 GOTOOLCHAIN=go1.26.6 go vet ./...
 GOTOOLCHAIN=go1.26.6 go build ./cmd/oa-chat
-node --test internal/zkapi/funding-ui.test.mjs
 ```
 
 The initial local Go 1.26.5 vulnerability scan reported fixed standard-library
@@ -337,7 +610,8 @@ issues; use Go 1.26.6 or a newer patched release for native builds.
 `govulncheck` with Go 1.26.6 reports no reachable vulnerabilities (one advisory
 in an unused required module). Signing uses pinned `go-ethereum` v1.17.5.
 The subsequent live acceptance below verifies the local signer on Sepolia.
-The optional browser page has script coverage but was not visually tested.
+The historical optional browser page had script coverage but was not visually tested;
+its implementation and test script have since been removed.
 
 ## Live address-funding acceptance (2026-09-22)
 
@@ -390,8 +664,8 @@ test-only injection seam.
 ## Reproducible companion and verification
 
 The companion source is pinned to
-[`OpenAnonymity/zkapi-EF-collab` at `b89365f7050e376f55e489c4d60b623cf224a4d8`](https://github.com/OpenAnonymity/zkapi-EF-collab/tree/b89365f7050e376f55e489c4d60b623cf224a4d8),
-with protocol submodule `e4efda23e6d416ee132938e4e67924fb0f7d4fe2`.
+[`OpenAnonymity/zkapi` at `20aa542ae98e767c0507133fd34b12a56f5ccd3d`](https://github.com/OpenAnonymity/zkapi/tree/20aa542ae98e767c0507133fd34b12a56f5ccd3d),
+with protocol submodule `8b2d4e3da921f956e1eb6b93afbf722a877c060c`.
 [`companion.patch`](../internal/zkapi/companion.patch) adds authenticated
 bridge routes, single-use reservations, the verifier’s exact fingerprint contract, network pinning,
 and installed proving-setup path support.

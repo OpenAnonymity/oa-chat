@@ -1,0 +1,66 @@
+{
+  "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928",
+  "network": "mainnet",
+  "chain_id": 1,
+  "rpc_url": "https://ethereum-rpc.publicnode.com",
+  "protocol_version": 2,
+  "contract_address": "0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41",
+  "billing_asset": "native_eth",
+  "billing_unit": "gwei",
+  "billing_token_address": null,
+  "native_asset_wei_per_unit": "1000000000",
+  "native_price_feed_address": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+  "native_price_feed_decimals": 8,
+  "native_price_max_age_seconds": 4500,
+  "demo_mint_enabled": false,
+  "proof_adapter_address": "0x1bf126FAAb86d494c9118c5b221dDB9E792F04A0",
+  "poseidon_library_address": "0xc6B55e86668d8c446B3D81273AAb9CBb20F28c7f",
+  "treasury_address": "0xD2de9A7E560227E5676c906eE1F1df35e6f281D5",
+  "deploy_block": 26077290,
+  "protocol_server_url": "https://54.67.93.98.sslip.io",
+  "indexer_url": "https://54.67.93.98.sslip.io",
+  "config_url": "https://54.67.93.98.sslip.io/config.json",
+  "request_charge_cap": 50000,
+  "note_ttl_seconds": 2592000,
+  "challenge_period_seconds": 86400,
+  "auth_scheme": "state-anchor",
+  "provider": "metered",
+  "upstreams": [
+    "openrouter"
+  ],
+  "proof_backend": "groth16_bn254",
+  "proof_setup": {
+    "repository_path": "protocol/setup/v2",
+    "circuit_id": "zkapi-v2-note-bound-v1",
+    "request_proving_key_sha256": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
+    "request_verifying_key_sha256": "8011244c99fa1a8524870906462d430fc86366b8ad821736c5fa726b479e6d97",
+    "withdrawal_proving_key_sha256": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
+    "withdrawal_verifying_key_sha256": "2a8ea7f07176e369a93d1d816124192a798d1466c99fd6dc47850ba82094b679"
+  },
+  "clearance_signing_key": {
+    "x": "0x16ebef22bba6d46f751082f5ff0c7f7001f41bd0e8f118756b47fb221a41d37d",
+    "y": "0x4c3f1557dc61534d2f6e9895f587859e4e29d82e700589c835b1a76ae043a93"
+  },
+  "state_signing_key": {
+    "x": "0x2f4349723c128a6be5929302522085d415f83047951103c7a226b4aca8696e99",
+    "y": "0x16e0cc2f4014e9719748326057d02ac360067d92656c63a3a9ce7ff4e57d0c10"
+  },
+  "privacy_mode": {
+    "ephemeral_key_source": "oa_org",
+    "issuer_url": "https://org-staging.openanonymity.ai",
+    "verifier_url": "https://verifier2.openanonymity.ai",
+    "openrouter_inference_base": "https://openrouter.ai/api/v1",
+    "lease_ttl_seconds": 300
+  },
+  "source": {
+    "zkapi_ef_sha": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+    "protocol_sha": "8b2d4e3da921f956e1eb6b93afbf722a877c060c"
+  },
+  "models": [],
+  "limitations": [
+    "Single-party development setup; circuit, Rust and Solidity integration are not production-audited.",
+    "Deposits are permissionless and no application-enforced deposit or TVL cap exists.",
+    "No live end-to-end or isolated escape-challenge acceptance is claimed by this deployment record.",
+    "ETH balances fluctuate in USD value; the latest finalized ETH/USD oracle round may lag the market."
+  ]
+}

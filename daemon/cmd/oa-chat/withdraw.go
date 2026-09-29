@@ -18,20 +18,37 @@ import (
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/zkapi"
 )
 
-var errWithdrawalWaitStopped = errors.New("stopped waiting; the withdrawal may still be progressing; rerun the same command with the same --config-dir to resume saved progress")
+var errWithdrawalWaitStopped = errors.New("stopped waiting; the withdrawal may still be progressing; inspect saved status")
 
-func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.Writer) error {
+func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.Writer) (result error) {
+	submitted := false
+	defer func() {
+		if errors.Is(result, errFundingWaitStopped) {
+			result = errWithdrawalWaitStopped
+		}
+		if result != nil && submitted {
+			result = fmt.Errorf("%w; recover saved progress with oa-chat withdraw --resume using the same --config-dir", result)
+		}
+	}()
 	flags := flag.NewFlagSet("withdraw", flag.ContinueOnError)
-	destinationText := flags.String("to", "", "Ethereum address receiving the full remaining private balance")
+	destinationText := flags.String("to", "", "destination for a full private-balance withdrawal quote, or saved transaction recovery")
 	confirmationText := flags.String("confirm", "", "confirm an independently submitted matching withdrawal after a finalized local revert")
+	approval := flags.String("approve", "", "approve the displayed withdrawal quote ID")
+	resume := flags.Bool("resume", false, "recover a saved signed withdrawal without authorizing a new transaction")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 {
-		return errors.New("unexpected withdraw arguments")
+	emptyApproval := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "approve" && f.Value.String() == "" {
+			emptyApproval = true
+		}
+	})
+	if emptyApproval {
+		return errors.New("approval ID cannot be empty")
 	}
-	if c.Backend != "zkapi" {
-		return errors.New("withdraw requires the zkapi backend")
+	if flags.NArg() != 0 || (*approval != "" && (*destinationText != "" || *confirmationText != "" || *resume)) || (*resume && (*destinationText != "" || *confirmationText != "")) {
+		return errors.New("use --to ADDRESS, --approve QUOTE_ID, or --resume separately")
 	}
 	destinationSet, confirmationSet := false, false
 	flags.Visit(func(f *flag.Flag) {
@@ -43,43 +60,46 @@ func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.W
 		}
 	})
 	if confirmationSet && (!destinationSet || !validWithdrawalTransactionHash(*confirmationText)) {
-		return errors.New("--confirm requires --to and a valid 32-byte transaction hash (0x followed by 64 hexadecimal characters)")
+		return errors.New("--confirm requires --to and a valid 32-byte transaction hash")
 	}
 	destination := ""
+	var err error
 	if destinationSet {
-		var err error
 		destination, err = zkapi.NormalizeWithdrawalDestination(*destinationText)
 		if err != nil {
 			return err
 		}
 	}
+	if *approval != "" && !validQuoteID(*approval) {
+		return errors.New("invalid quote ID")
+	}
+	c, err = activeFundingConfig(ctx, c)
+	if err != nil {
+		return err
+	}
 	state, err := requestWithdrawal(ctx, c, http.MethodGet, nil)
 	if err != nil {
 		return err
 	}
-	// Preserve the note selected by this command even if another process closes
-	// it and funds a new note while this command is suspended or polling.
 	noteID := state.NoteID
-	if confirmationSet {
-		resumingConfirmation := (state.Phase == "confirming" || state.Phase == "complete") && strings.EqualFold(*confirmationText, state.TransactionHash)
-		if state.Phase != "reverted" && !resumingConfirmation {
-			return errors.New("--confirm is available only after the saved local withdrawal transaction has finalized as reverted, or to resume the same saved confirmation transaction; run oa-chat withdraw to inspect saved status")
-		}
-	}
-	network, token := "Ethereum Mainnet", "USDC"
-	if state.ChainID == 11155111 {
-		network, token = "Ethereum Sepolia (test network)", "test billing tokens"
-	}
-	fmt.Fprintf(out, "%s withdrawal\nPrivate balance: %s %s\nToken contract: %s\n", network, fundingUnits(strconv.FormatUint(state.PrivateBalance, 10), 6), token, state.TokenAddress)
-	fmt.Fprintf(out, "Local signing address: %s\nAvailable for network fees: %s ETH\n", state.Address, fundingUnits(state.ETHBalance, 18))
-	printWithdrawalProgress(out, state, token)
-	if !destinationSet {
+	fmt.Fprintf(out, "%s withdrawal\nPrivate balance: %s ETH\nLocal signing address: %s\nAvailable for network fees: %s ETH\n", fundingNetwork(state.ChainID), fundingUnits(strconv.FormatUint(state.PrivateBalance, 10), 9), state.Address, fundingUnits(state.ETHBalance, 18))
+	printWithdrawalProgress(out, state, "ETH")
+	if !destinationSet && *approval == "" && !*resume {
 		withdrawalResumeInstructions(out, state)
 		return nil
 	}
+	if confirmationSet {
+		if state.Phase == "confirming" || state.Phase == "complete" {
+			if !strings.EqualFold(*confirmationText, state.TransactionHash) {
+				return errors.New("resume with the same saved confirmation transaction; existing evidence cannot be replaced")
+			}
+		} else if state.Phase != "reverted" {
+			return errors.New("--confirm is available only after the saved withdrawal finalized as reverted")
+		}
+	}
 	if state.Phase == "complete" {
-		if !strings.EqualFold(destination, state.Destination) {
-			return errors.New("the completed withdrawal went to its saved destination; no new private balance is ready to withdraw")
+		if destination != "" && !strings.EqualFold(destination, state.Destination) {
+			return errors.New("the completed withdrawal went to its saved destination; no new private balance is ready")
 		}
 		return nil
 	}
@@ -87,98 +107,123 @@ func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.W
 		return errors.New("there is no private balance to withdraw")
 	}
 	if state.Phase == "recovery_required" {
-		return errors.New("withdrawal requires recovery; preserve the local funding and companion files and follow the status message")
+		return errors.New("withdrawal requires recovery; preserve the local funding and companion files")
 	}
-	// A ready response describes the current note, even if a prior completed
-	// withdrawal belonged to a different note. Other saved destinations bind
-	// the pending authorization and cannot be replaced by this command.
-	if state.Phase != "ready" && state.Destination != "" && !strings.EqualFold(destination, state.Destination) {
-		return errors.New("a withdrawal to a different destination is already saved; rerun withdraw --to with the saved destination")
-	}
-	switch state.Phase {
-	case "ready", "waiting_settlement", "waiting_funds", "withdrawal_pending", "confirming", "reverted":
-	default:
-		return errors.New("unknown withdrawal status; no withdrawal request was submitted")
-	}
-	if confirmationSet {
-		fmt.Fprintf(out, "\nCheck transaction %s for the saved withdrawal to %s on %s. This does not authorize another transaction.\n", *confirmationText, destination, network)
-	} else {
-		fmt.Fprintf(out, "\nWithdraw the full remaining balance to %s on %s. This closes the private balance.\n", destination, network)
-		fmt.Fprintln(out, "The local signer spends ETH network fees, capped at 0.02 ETH per transaction. No wallet connection is needed.")
-		fmt.Fprintln(out, "Proof preparation may take several minutes. Press Ctrl+C to stop waiting; a submitted transaction is not canceled.")
-	}
-	// Only a fresh explicit command that observed this exact finalized revert
-	// may authorize its replacement. Polling clients never inherit permission
-	// from another client's update to the persisted phase.
-	retryHash := ""
-	if state.Phase == "reverted" && !confirmationSet {
-		if state.TransactionHash == "" {
-			return errors.New("the reverted withdrawal has no saved transaction hash; preserve recovery files and check status before retrying")
+	if *resume {
+		if (state.Phase != "withdrawal_pending" && state.Phase != "confirming") || state.Destination == "" || state.TransactionHash == "" {
+			return errors.New("no signed withdrawal to resume; use --to to prepare and approve a quote")
 		}
-		retryHash = state.TransactionHash
+		destination = state.Destination
 	}
-	confirmationHash := *confirmationText
-	previous := ""
-	for {
-		body := map[string]any{"destination": destination, "note_id": noteID}
-		if confirmationHash != "" {
-			body["confirmation_transaction_hash"] = confirmationHash
-			confirmationHash = "" // Receipt adoption is authorized once, never a resubmission.
-		}
-		if retryHash != "" {
-			body["retry_transaction_hash"] = retryHash
-			retryHash = "" // One request only, including when its reply is lost.
-		}
-		state, err = requestWithdrawal(ctx, c, http.MethodPost, body)
+	expectedAmount := state.Amount
+	if *approval != "" {
+		quote, err := requestPaymentQuote(ctx, c, http.MethodGet, "/admin/withdrawal/quote", "withdrawal", nil)
 		if err != nil {
 			return err
 		}
-		if state.NoteID != noteID {
-			return errors.New("the withdrawal response refers to a different private note; stopped without requesting further progress")
+		if quote.ID != *approval || quote.NoteID != noteID {
+			return errors.New("the saved quote or private note changed; review a fresh quote")
 		}
-		if state.Destination != "" && !strings.EqualFold(destination, state.Destination) {
-			return errors.New("the withdrawal response has a different destination; stopped without requesting further progress")
+		destination = quote.Destination
+		expectedAmount = quote.Amount
+		printPaymentQuote(out, quote, "oa-chat withdraw")
+		submitted = true
+		state, err = requestWithdrawalPath(ctx, c, http.MethodPost, "/admin/withdrawal/approve", map[string]string{"quote_id": *approval})
+		if err != nil {
+			return err
 		}
-		progress := state.Phase + ": " + state.Message + "\n" + state.TransactionHash
+	} else {
+		if state.Phase != "ready" && state.Destination != "" && !strings.EqualFold(destination, state.Destination) {
+			return errors.New("a withdrawal to a different destination is already saved; use the saved destination")
+		}
+		if confirmationSet {
+			fmt.Fprintln(out, "Confirming the saved receipt; this does not authorize another transaction.")
+			resuming := state.Phase == "confirming" && strings.EqualFold(*confirmationText, state.TransactionHash)
+			if state.Phase != "reverted" && !resuming {
+				return errors.New("--confirm is available only after the saved withdrawal finalized as reverted, or to resume its saved confirmation")
+			}
+			submitted = true
+			state, err = requestWithdrawal(ctx, c, http.MethodPost, map[string]any{"destination": destination, "note_id": noteID, "confirmation_transaction_hash": *confirmationText})
+			if err != nil {
+				return err
+			}
+		} else if state.Phase == "withdrawal_pending" || state.Phase == "confirming" {
+			submitted = true
+			state, err = requestWithdrawal(ctx, c, http.MethodPost, map[string]any{"destination": destination, "note_id": noteID})
+			if err != nil {
+				return err
+			}
+		} else {
+			switch state.Phase {
+			case "ready", "quoted", "waiting_settlement", "waiting_funds", "reverted":
+			default:
+				return errors.New("unknown withdrawal status; no request was submitted")
+			}
+			body := map[string]any{"destination": destination, "note_id": noteID}
+			if state.Phase == "reverted" {
+				if !validWithdrawalTransactionHash(state.TransactionHash) {
+					return errors.New("the reverted withdrawal has no valid saved transaction hash")
+				}
+				body["retry_transaction_hash"] = state.TransactionHash
+			}
+			quote, err := requestPaymentQuote(ctx, c, http.MethodPost, "/admin/withdrawal/quote", "withdrawal", body)
+			if err != nil {
+				return err
+			}
+			if quote.NoteID != noteID || !strings.EqualFold(quote.Destination, destination) {
+				return errors.New("withdrawal quote changed the selected note or destination")
+			}
+			printPaymentQuote(out, quote, "oa-chat withdraw")
+			return nil
+		}
+	}
+	previous := ""
+	for {
+		if state.NoteID != noteID || state.Amount != expectedAmount || (state.Destination != "" && !strings.EqualFold(destination, state.Destination)) {
+			return errors.New("withdrawal response changed the selected note, amount, or destination; stopped polling")
+		}
+		progress := state.Phase + state.Message + state.TransactionHash
 		if progress != previous {
-			printWithdrawalProgress(out, state, token)
+			printWithdrawalProgress(out, state, "ETH")
 			previous = progress
 		}
 		switch state.Phase {
 		case "complete":
 			return nil
-		case "waiting_settlement":
-			fmt.Fprintf(out, "After settlement, rerun oa-chat withdraw --to %s (keep the same --config-dir if used).\n", destination)
-			return errors.New("withdrawal is waiting for the active inference lease to settle; rerun the same command afterward")
-		case "waiting_funds":
-			fmt.Fprintf(out, "Send ETH on %s to the local signing address %s for withdrawal fees.\n", network, state.Address)
-			withdrawalResumeInstructions(out, state)
-			return errors.New("withdrawal is waiting for ETH network fees; rerun the same command after the funds arrive")
 		case "withdrawal_pending", "confirming":
-			// Only these defined states authorize continuation of this run.
+		case "waiting_settlement":
+			return errors.New("withdrawal is waiting for the inference lease to settle; rerun --to to prepare a fresh quote afterward")
+		case "waiting_funds":
+			return errors.New("withdrawal needs ETH for fees; fund the signing address, then rerun --to for a fresh quote")
 		case "reverted":
-			withdrawalResumeInstructions(out, state)
-			return errors.New("the withdrawal transaction reverted; progress is saved; another explicit command is required to retry")
+			return errors.New("withdrawal reverted; rerun --to to review and approve a fresh quote before another transaction")
 		default:
-			return errors.New("withdrawal stopped; preserve saved progress and follow the status message before retrying")
+			return errors.New("withdrawal stopped; preserve saved progress and follow the status message")
 		}
-		timer := time.NewTimer(5 * time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if err := waitFundingPoll(ctx); err != nil {
 			return errWithdrawalWaitStopped
-		case <-timer.C:
+		}
+		state, err = requestWithdrawal(ctx, c, http.MethodPost, map[string]any{"destination": destination, "note_id": noteID})
+		if err != nil {
+			return err
 		}
 	}
 }
 
 func printWithdrawalProgress(out io.Writer, state zkapi.AddressWithdrawalStatus, token string) {
+	decimals := 6
+	if state.BillingAsset == "native_eth" {
+		decimals = 9
+	}
 	if state.Destination != "" && state.Phase != "ready" {
-		fmt.Fprintf(out, "Saved withdrawal: %s %s to %s\n", fundingUnits(strconv.FormatUint(state.Amount, 10), 6), token, state.Destination)
+		fmt.Fprintf(out, "Saved withdrawal: %s %s to %s\n", fundingUnits(strconv.FormatUint(state.Amount, 10), decimals), token, state.Destination)
 	}
 	fmt.Fprintf(out, "%s: %s\n", state.Phase, state.Message)
 	if state.TransactionHash != "" {
 		fmt.Fprintln(out, "Transaction:", state.TransactionHash)
+	}
+	if state.ActualFeeWei != "" {
+		fmt.Fprintf(out, "Actual network fee: %s ETH\n", fundingUnits(state.ActualFeeWei, 18))
 	}
 }
 
@@ -188,14 +233,22 @@ func withdrawalResumeInstructions(out io.Writer, state zkapi.AddressWithdrawalSt
 		return
 	}
 	if state.Destination != "" && state.Phase != "ready" {
-		fmt.Fprintf(out, "To continue this saved withdrawal, run oa-chat withdraw --to %s (keep the same --config-dir if used).\n", state.Destination)
+		if state.Phase == "withdrawal_pending" || state.Phase == "confirming" {
+			fmt.Fprintln(out, "To recover this signed withdrawal, run oa-chat withdraw --resume (keep the same --config-dir if used).")
+		} else {
+			fmt.Fprintf(out, "To quote this saved withdrawal again, run oa-chat withdraw --to %s (keep the same --config-dir if used).\n", state.Destination)
+		}
 	} else {
-		fmt.Fprintln(out, "To withdraw the full remaining balance, run oa-chat withdraw --to ADDRESS, replacing ADDRESS with your Ethereum destination (keep the same --config-dir if used).")
+		fmt.Fprintln(out, "To quote withdrawal of the full remaining balance, run oa-chat withdraw --to ADDRESS, replacing ADDRESS with your Ethereum destination (keep the same --config-dir if used).")
 	}
 	fmt.Fprintln(out, "Showing this status does not authorize a transaction.")
 }
 
 func requestWithdrawal(ctx context.Context, c config.Config, method string, body any) (zkapi.AddressWithdrawalStatus, error) {
+	return requestWithdrawalPath(ctx, c, method, "/admin/withdrawal", body)
+}
+
+func requestWithdrawalPath(ctx context.Context, c config.Config, method, path string, body any) (zkapi.AddressWithdrawalStatus, error) {
 	var state zkapi.AddressWithdrawalStatus
 	var payload []byte
 	if body != nil {
@@ -212,7 +265,7 @@ func requestWithdrawal(ctx context.Context, c config.Config, method string, body
 	transport := &http.Transport{Proxy: nil}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(ctx, method, "http://"+c.Listen+"/admin/withdrawal", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, "http://"+c.Listen+path, bytes.NewReader(payload))
 	if err != nil {
 		return state, errors.New("invalid local withdrawal request")
 	}
@@ -224,7 +277,7 @@ func requestWithdrawal(ctx context.Context, c config.Config, method string, body
 		if ctx.Err() != nil {
 			return state, errWithdrawalWaitStopped
 		}
-		return state, errors.New("local withdrawal request did not complete; ensure oa-chat serve is running, then rerun the same command to recover saved progress")
+		return state, errors.New("local withdrawal request did not complete; inspect saved status before continuing")
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, (16<<10)+1))
@@ -244,7 +297,7 @@ func requestWithdrawal(ctx context.Context, c config.Config, method string, body
 		return state, errors.New("local withdrawal request failed; check saved status before retrying")
 	}
 	chain, err := zkapi.ChainID(c.ZKAPI.Network)
-	if err != nil || json.Unmarshal(raw, &state) != nil || state.ChainID != chain || state.TokenDecimals != 6 || !fundingAddress(state.Address) || !fundingAddress(state.TokenAddress) || !fundingBalance(state.ETHBalance) {
+	if err != nil || json.Unmarshal(raw, &state) != nil || state.ChainID != chain || !validBillingAsset(state.BillingAsset, state.BillingUnit, state.WeiPerUnit, state.TokenAddress, state.TokenDecimals) || !fundingAddress(state.Address) || !fundingBalance(state.ETHBalance) || (state.ActualFeeWei != "" && !fundingBalance(state.ActualFeeWei)) {
 		return state, errors.New("invalid local withdrawal address, token, or network")
 	}
 	if state.Destination != "" {

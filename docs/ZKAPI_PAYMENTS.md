@@ -1,3 +1,64 @@
+## Payment-flow feedback (2026-09-28)
+
+The two choices read **MetaMask** and **Send Ethereum**. MetaMask actions name
+MetaMask. The September 29 compact funding layout keeps the **Send** total,
+address, QR and **Deposit** action visible, with a short numeric summary such as
+`Deposit ≈ $5 · Fee allowance ≈ $X`. The fee allowance is the quoted maximum
+reserve including the optional buffer, not an actual fee charged. Exact ETH
+replaces a missing USD estimate. The status is **Waiting for ETH**, the exact
+additional amount still needed, or **Funds received**.
+
+A closed-by-default **Transaction breakdown** chevron disclosure contains the
+full funding progress bar, exact costs and send instructions. It explains
+opening the user's own wallet, selecting the configured Ethereum network,
+copying this browser's receiving address (or scanning its QR), and confirming
+the transfer there. Scanning only fills transfer details; the separate Deposit
+action adds received ETH to the private balance. Saved-deposit explanations
+also live in the disclosure. It remains open across read-only refreshes and
+reload, and does not close on an outside click. The withdrawal receipt's
+question-mark help is unchanged. **Return leftover ETH** remains distinct from
+withdrawing the private balance.
+
+Read-only polling renews fees before expiry. The last verified public transfer
+estimate and open details stay visible while a replacement loads, marked as
+updating after expiry. `displayQuote` is presentation only: expiration still
+clears signing readiness, and Deposit forces fresh scope, balance, amount and
+fee checks. A failed fee or balance read suppresses the QR and disables Deposit,
+while keeping cost details available. Required funding already received never
+becomes a request for the optional buffer merely because the quote expires.
+Amount edits clear the old estimate
+immediately; method changes/closing stop its controller. No refresh signs or
+broadcasts a transaction.
+
+Open wallet dialogs retain tab-scoped presentation intent until dismissed,
+including idle funding and withdrawal views, selected method, amount draft,
+disclosures and scroll in both the balance dialog and first-time Welcome. Scroll
+restoration waits for the full fee/QR layout, so the shorter loading view cannot
+clamp and overwrite the saved position; user interaction cancels that deferred
+restoration. Address funding restores its durable exact ETH principal,
+never reconverting a saved USD display. SDK transaction journals remain the only
+source of transaction progress. Restoration never reconnects an external wallet
+or submits a transaction. Restricted sessionStorage leaves SDK recovery available.
+
+A structured MetaMask deposit rejection resets only the exact unsubmitted draft.
+The pinned SDK lacks a public discard method, so `canceledDeposit.mjs` uses its
+existing wallet lock and reload/commit boundary, refusing cleanup for a changed
+operation, active note, submission claim/nonce/hash, attempts, approvals, ambiguity,
+legacy recovery or late attempts. Move this compatibility seam into the SDK when
+an equivalent API becomes available. Submitted or uncertain operations retain
+recovery. A clean cancellation returns directly to the initial MetaMask button;
+the neutral cancellation notice clears after seven seconds.
+
+Withdrawal amounts are prospective until the SDK verifies the matching payout.
+Missing USD pricing uses exact ETH instead of a dash. Prepared withdrawals say
+they are ready to continue and preserve their bound destination across payment
+method changes. A verified payout opens Payment history with a brief confirmation.
+A bare closed state can open history too, but keeps a neutral status rather than
+claiming a completed payout. Switching methods clears transient outcomes, and
+history omits unrelated funding controls. The browser’s
+receiving address pays manual withdrawal gas; the destination field identifies
+the user’s own wallet address separately.
+
 ## 2026-09-22: Repeated reloads during deposit confirmation
 
 - An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. Explicit same-tab intent can restore after navigation to an OA chat; unrelated SDK records still respect the zkAPI-mode gate. Restoration never submits or retries transactions.
@@ -199,8 +260,7 @@ readiness checks.
 
 ## Wallet methods: MetaMask and Send to an address
 
-The web app offers exactly two choices: **MetaMask** first, then **Send to an
-address**. Native-ETH deployments hold ETH and display its current USD value;
+The web app offers exactly two choices: **MetaMask** first, then **Send Ethereum**. Native-ETH deployments hold ETH and display its current USD value;
 this is not fixed dollar credit. MetaMask keeps the existing deposit/withdrawal
 flow, with a payable ETH deposit instead of token minting and approval.
 
@@ -216,10 +276,10 @@ are never overwritten; a one-time password conversion retains their exact key,
 address, nonce and signed journal. New account setup never offers a password.
 
 The balance and welcome dialogs share one deposit amount field above the
-MetaMask / Send to an address choice. Both methods use the same USD/ETH currency
+MetaMask / Send Ethereum choice. Both methods use the same USD/ETH currency
 button and keep the exact ETH principal when switching methods or display
 units. MetaMask's amount control does not create a browser funding account;
-only selecting Send to an address starts that method's address and fee checks.
+only selecting Send Ethereum starts that method's address and fee checks.
 An edited draft follows the method switch instead of being replaced by an older
 address-scoped amount. An in-progress SDK deposit always keeps its saved amount.
 Selecting a method changes the local UI immediately, independently of background
@@ -245,30 +305,45 @@ just-edited amount is converted with that same loaded price before switching.
 If no valid price is loaded, conversion reports this immediately instead of
 waiting for an RPC or using a stale price. Explicit amount edits replace the principal. The selected input unit
 is saved with the intent and restored when reopening. Current USD display continues
-to float with the oracle price. Amount edits invalidate Next immediately, and
+to float with the oracle price. Amount edits invalidate Deposit immediately, and
 stale asynchronous reads cannot re-enable it.
 The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
 The screen says **Send** above the exact remaining ETH transfer including the
-optional fee buffer, with its current USD estimate and funding address. The
-question mark beside that amount reveals the entire address-balance bar and
-cost breakdown. These details start closed; they are not hover text, and their
-open state survives read-only refreshes. There is no separate numeric minimum
-shortfall below the QR.
-The bar uses one blue fill for all ETH already at the address, explicitly
+optional fee buffer, with its current USD estimate and the address. A compact
+numeric line separates **Deposit** from **Fee allowance**; each uses a current
+USD estimate when available, otherwise exact ETH. Fee allowance means
+`feeReserveWei`, the full quoted reserve including its optional buffer. It is
+not the estimated actual fee or a deduction already made. ETH already held
+at the address reduces the Send amount, so that remaining transfer can be less
+than the deposit plus fee allowance shown in the summary. The address has no
+extra receiving-address caption, and the QR caption is simply **Scan to pay**.
+The short status below it reads **Waiting for ETH**, reports the exact required
+shortfall after a partial transfer, or says **Funds received**. Deposit still
+requires only the principal plus the required allowance, not the optional buffer.
+
+The inline **Transaction breakdown** chevron opens a disclosure, closed by
+default, containing the external-wallet transfer instructions and network,
+saved-deposit explanation when relevant, and the full progress bar and costs.
+It uses the existing `fundingHelpOpen` quote state to retain its open state
+across read-only refreshes and reload; outside clicks do not collapse it.
+Receipt help in withdrawal views retains its separate question-mark behavior.
+
+The full progress bar uses one blue fill for all ETH already at the address,
 including leftovers from previous deposits. The rest is unfilled; a marker
 shows the required total and a hatched tail marks the optional buffer. Balance
-is not visually allocated into deposit and fee buckets. The exact ETH/USD
-balance, funded percentage of the total including buffer, and plain breakdown
-of deposit, network fee allowance, optional buffer and totals stay in the panel.
-The optional buffer is extra on top of the required network fee allowance.
-The panel also explains the estimated actual fee versus the required allowance
-and browser storage. ETH already held at
-the funding address reduces the requested transfer. A five-second read-only
-loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
-and durably stores a note draft independently of `pending_deposit`; no funding
+is not visually allocated into deposit and fee buckets. Exact ETH/USD balance,
+funded percentage of the total including buffer, and the full breakdown of
+deposit, required network fee allowance, optional buffer and totals remain
+inside this disclosure. It distinguishes the estimated actual fee from the
+required allowance and explains browser custody and how to send from an external
+wallet. The optional buffer is extra on top of the required network fee allowance.
+
+A five-second read-only loop checks funds, reusing the fee quote for up to
+30 seconds. The SDK prepares and durably stores a note draft independently of
+`pending_deposit`; no funding
 quote connects MetaMask, authorizes a signer, or broadcasts a transaction.
 An independent successful balance read remains visible if the fee quote fails;
 a failed balance read clears availability instead of preserving stale readiness.
@@ -282,8 +357,9 @@ Its [ERC-681 URI](https://eips.ethereum.org/EIPS/eip-681) binds the public
 funding address, configured chain ID and exact remaining transfer in wei:
 principal plus the fee allowance, less funds already held at that address.
 It is not a QR for only the private-note principal. Editing the amount hides
-the old QR immediately; missing, stale or failed fee estimates and a zero
-remaining transfer do not show a payable code. Once the required amount is
+the old QR immediately. Missing or failed fee estimates and a zero remaining
+transfer do not show a payable code; an expired estimate stays marked as updating
+while a replacement loads, with Deposit disabled. Once the required amount is
 covered, the QR and recommended top-up are hidden even if the optional buffer
 is not fully funded. The SVG and encoder are bundled
 locally, with a fixed white quiet zone in both themes. No QR service, private
@@ -298,7 +374,7 @@ with additional headroom. The **optional buffer** is that recommended maximum
 minus the required allowance, not minus the estimated actual fee. There is no fixed
 gas-price or total-ETH fee ceiling: users review the current quote and choose
 whether to proceed. The user's approved allowance still limits the signed deposit.
-**Next** requires enough ETH for principal plus the required allowance, forces a fresh
+**Deposit** requires enough ETH for principal plus the required allowance, forces a fresh
 quote and checks the saved amount before and after the asynchronous reads.
 A higher recommended buffer alone does not block progress: the approved fee
 limit is bounded by the displayed recommendation, refreshed recommendation and

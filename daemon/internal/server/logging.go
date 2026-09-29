@@ -3,7 +3,6 @@ package server
 import (
 	"log"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -26,6 +25,9 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 		returned := false
 		logger.Printf("request started method=%s route=%s", method, route)
 		defer func() {
+			if response.Header().Get("X-OA-Verification-Status") == "verifier-unavailable" {
+				logger.Print("Verification unavailable: inference used an outage-eligible key; this key is not verified")
+			}
 			result := "finished"
 			if !returned || response.failed || r.Context().Err() != nil {
 				result = "aborted"
@@ -54,12 +56,11 @@ func logMethod(method string) string {
 
 func logRoute(path string) string {
 	switch path {
-	case "/healthz", "/v1/models", "/v1/chat/completions", "/admin/fund",
-		"/admin/withdrawal", "/admin/funding/address", "/admin/funding/deposit":
+	case "/healthz", "/v1/models", "/v1/chat/completions", "/admin/status",
+		"/admin/withdrawal", "/admin/withdrawal/quote", "/admin/withdrawal/approve",
+		"/admin/funding/address", "/admin/funding/deposit", "/admin/funding/quote", "/admin/funding/approve",
+		"/admin/return", "/admin/return/quote", "/admin/return/approve":
 		return path
-	}
-	if path == "/funding" || strings.HasPrefix(path, "/funding/") {
-		return "/funding/*"
 	}
 	return "OTHER"
 }

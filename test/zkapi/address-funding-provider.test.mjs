@@ -504,7 +504,7 @@ test('unsupported fee history fails with fixed public copy and no RPC suggestion
     };
     await assert.rejects(h.send(), error => {
         assert.equal(error.addressCode, 'address_fee_data');
-        assert.match(error.message, /could not be read reliably/);
+        assert.match(error.message, /Unable to check Ethereum fees/);
         assert(!error.message.includes(KEY));
         return true;
     });
@@ -982,7 +982,7 @@ test('native deposit cannot exceed the displayed fee cap or substitute a prepare
             assert.equal(error.code, 4100);
             if (['fee', 'gas', 'expired'].includes(changed)) {
                 assert.equal(error.addressCode, 'address_fee_quote_changed');
-                assert.match(error.message, /Review the updated deposit quote/);
+                assert.match(error.message, /Review the new estimate/);
             }
             return true;
         });
@@ -1268,8 +1268,8 @@ test('withdrawal reports the exact safe top-up after SDK error handling and only
 
 test('safe malformed-fee explanations survive generic SDK copy without RPC details', async () => {
     for (const scenario of [
-        { baseFee: `0x${UINT256_MAX.toString(16)}`, code: 'address_fee_data', text: /fees could not be read reliably/ },
-        { baseFee: undefined, code: 'address_fee_data', text: /fees could not be read reliably/ }
+        { baseFee: `0x${UINT256_MAX.toString(16)}`, code: 'address_fee_data', text: /Unable to check Ethereum fees/ },
+        { baseFee: undefined, code: 'address_fee_data', text: /Unable to check Ethereum fees/ }
     ]) {
         const h = harness();
         await h.ready();
@@ -1510,7 +1510,7 @@ test('actual SDK normalization keeps safe provider fee copy and pre-broadcast cl
         assert.equal(error.broadcastPossible, false);
         assert.equal(error.code, 4100);
         assert.equal(error.addressCode, 'address_fee_data');
-        assert.match(error.shortMessage, /Current Ethereum fees could not be read reliably/);
+        assert.match(error.shortMessage, /Unable to check Ethereum fees/);
         return true;
     });
     assert.equal(h.sent.length, 0);

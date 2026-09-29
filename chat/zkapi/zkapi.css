@@ -1700,17 +1700,20 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-heading { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0 10px; }
 .zkapi-funding-heading h3 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .zkapi-funding-help[data-funding-help="quote"] .zkapi-funding-heading { position: relative; display: block; }
-.zkapi-funding-heading .zkapi-funding-send-amount { padding-right: 36px; font-size: 14px; line-height: 1.4; }
+.zkapi-funding-heading .zkapi-funding-send-amount { font-size: 14px; line-height: 1.4; }
 .zkapi-funding-send-usd { display: block; margin-top: 4px; color: hsl(var(--color-muted-foreground)); font-size: 12px; font-weight: 400; }
-.zkapi-funding-help[data-funding-help="quote"] .zkapi-funding-help-toggle { position: absolute; top: 0; right: 0; }
 .zkapi-funding-send-label { display: block; min-height: 26px; }
 /* The exact number gets the full card width; only its ETH suffix may wrap. */
-.zkapi-funding-send-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .35em; width: calc(100% + 36px); margin-top: 5px; font-size: clamp(14px, 4.5vw, 20px); font-variant-numeric: tabular-nums; }
+.zkapi-funding-send-value { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .35em; width: 100%; margin-top: 5px; font-size: clamp(14px, 4.5vw, 20px); font-variant-numeric: tabular-nums; }
 .zkapi-funding-send-value > span { white-space: nowrap; overflow-wrap: normal; }
 .zkapi-funding-help-toggle { display: inline-flex; flex: 0 0 26px; align-items: center; justify-content: center; width: 26px; height: 26px; border: 1px solid hsl(var(--color-border)); border-radius: 50%; background: transparent; color: hsl(var(--color-muted-foreground)); font-size: 12px; cursor: pointer; }
 .zkapi-funding-help-toggle:hover,
 .zkapi-funding-help-toggle[aria-expanded="true"] { background: hsl(var(--color-muted)); color: hsl(var(--color-foreground)); }
 .zkapi-funding-help-toggle:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
+.zkapi-funding-summary { margin: 8px 0 4px; color: hsl(var(--color-muted-foreground)); font-size: 11px; line-height: 1.5; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.zkapi-funding-breakdown-toggle { gap: 6px; width: auto; height: auto; margin: 0 0 10px; padding: 5px 0; border: 0; border-radius: 4px; font-size: 11px; }
+.zkapi-funding-breakdown-toggle svg { width: 12px; height: 12px; }
+.zkapi-funding-breakdown-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 /* Keep the clicked explanation inside the scrollable dialog on narrow screens. */
 .zkapi-funding-help-panel { margin: 0 0 14px; padding: 12px; border: 1px solid hsl(var(--color-border)); border-radius: 10px; background: hsl(var(--color-muted) / .3); }
 .zkapi-funding-help-panel[hidden] { display: none; }

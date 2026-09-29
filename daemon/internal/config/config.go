@@ -24,6 +24,9 @@ type ZKAPI struct {
 	Binary            string `json:"binary,omitempty"`
 	ProofSetupDir     string `json:"proof_setup_dir,omitempty"`
 	ExternalCompanion bool   `json:"external_companion,omitempty"`
+	// Retained only to load older configurations. Each new request chooses its
+	// budget from the selected model; a saved fixed limit has no effect.
+	RequestLimitMicroUSD uint64 `json:"request_limit_micro_usd,omitempty"`
 }
 
 type Config struct {
@@ -32,7 +35,7 @@ type Config struct {
 	ManagementToken string `json:"-"`
 	Listen          string `json:"listen"`
 	APIKey          string `json:"api_key"`
-	Backend         string `json:"backend"`
+	Backend         string `json:"backend"` // default for serve; both wallets are always configured
 	OrgURL          string `json:"org_url"`
 	VerifierURL     string `json:"verifier_url"`
 	RelayURL        string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp

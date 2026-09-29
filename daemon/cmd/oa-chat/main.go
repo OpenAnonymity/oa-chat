@@ -13,10 +13,8 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -71,6 +69,13 @@ func run(args []string) error {
 	if args[0] == "init" {
 		return initialize(dir, args[1:])
 	}
+	if args[0] == "start" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		ui := &terminalSetupPrompter{out: os.Stdout}
+		defer ui.Close()
+		return runGuidedStart(ctx, dir, args[1:], ui, os.Stdout)
+	}
 	c, err := config.Load(dir)
 	if err != nil {
 		return err
@@ -79,8 +84,9 @@ func run(args []string) error {
 	defer cancel()
 	switch args[0] {
 	case "serve":
-		if len(args) != 1 {
-			return errors.New("serve accepts no arguments; configure config.json")
+		c, err = serveConfig(c, args[1:])
+		if err != nil {
+			return err
 		}
 		return serve(ctx, dir, c, os.Stdout)
 	case "api-key":
@@ -109,17 +115,26 @@ func help() {
        [--org-url HTTPS_ORIGIN] [--verifier-url HTTPS_ORIGIN]
        [--relay-url WSS_URL] [--listen 127.0.0.1:8787]
        [--zkapi-binary PATH] [--proof-setup-dir PATH]
-  serve                  Run the local API with status and logs on stdout
+  serve [--backend ticket|zkapi]  Select mode and run the local API
+  start [--network mainnet|sepolia] [--backend ticket|zkapi]
+        [--usd USD] [--model ID] [--listen 127.0.0.1:8787]
+                         Check setup, guide funding, and run the local API
   status                 Show service and private wallet readiness
   api-key                Print the local key to configure your client
   tickets import FILE|-  Import OA exported ticket JSON
   tickets redeem [--code-file FILE]  Read shared invite code from stdin/file
   fund                   Show your Ethereum funding address and balances
-  fund --amount USDC     Wait for funds and deposit that amount locally
-  fund --browser         Open the optional address funding page
-  fund --no-open         Print the optional funding page URL
+  fund --amount ETH      Prepare a quote to deposit that amount locally
+  fund --usd USD         Prepare a deposit quote from an exact USD value
+  fund --approve QUOTE_ID Approve the reviewed deposit quote
+  fund --resume          Recover a previously signed deposit
+  fund return --to ADDRESS [--amount ETH]  Quote a return of public address funds
+  fund return --approve QUOTE_ID  Approve the reviewed return quote
+  fund return [--resume] Show return status or recover a signed public return
   withdraw               Show private-balance withdrawal status
-  withdraw --to ADDRESS  Close the private balance and send it to ADDRESS
+  withdraw --to ADDRESS  Quote closing the private balance to ADDRESS
+  withdraw --approve QUOTE_ID  Approve the reviewed withdrawal quote
+  withdraw --resume      Recover a previously signed withdrawal
   withdraw --to ADDRESS --confirm TX_HASH  Confirm a matching withdrawal after a revert
   version
 
@@ -127,7 +142,10 @@ OpenAI base URL: http://127.0.0.1:8787/v1
 Config: OA_CHAT_CONFIG_DIR or the OS user config directory / oa-chat.
 Network proxy is off by default; --relay-url opts into the encrypted Wisp relay.
 No prompts or responses are stored by the daemon. The connected UI may store them.
-Ethereum mainnet is the default; Sepolia requires --network sepolia at init.`)
+One init configures both ticket and zkAPI wallets; serve selects the active mode.
+The saved backend is the default when serve omits --backend.
+init defaults to Ethereum mainnet. start asks for the network on first use.
+start preserves existing configuration; --network must match its saved network.`)
 }
 
 func initialize(dir string, args []string) error {
@@ -136,7 +154,7 @@ func initialize(dir string, args []string) error {
 		return err
 	}
 	f := flag.NewFlagSet("init", flag.ContinueOnError)
-	f.StringVar(&c.Backend, "backend", c.Backend, "ticket or zkapi")
+	f.StringVar(&c.Backend, "backend", c.Backend, "default serve mode: ticket or zkapi (both wallets are configured)")
 	f.StringVar(&c.ZKAPI.Network, "network", c.ZKAPI.Network, "mainnet or sepolia")
 	f.StringVar(&c.OrgURL, "org-url", c.OrgURL, "ticket organization HTTPS origin")
 	f.StringVar(&c.VerifierURL, "verifier-url", c.VerifierURL, "verifier HTTPS origin")
@@ -153,8 +171,24 @@ func initialize(dir string, args []string) error {
 	if err := config.Init(dir, c); err != nil {
 		return err
 	}
-	fmt.Printf("Initialized %s\nAPI base: http://%s/v1\nUse oa-chat api-key to configure your client's bearer key.\n", filepath.Join(dir, "config.json"), c.Listen)
+	fmt.Printf("Initialized ticket and zkAPI configuration at %s\nAPI base: http://%s/v1\nRun oa-chat serve --backend ticket or oa-chat serve --backend zkapi.\nUse oa-chat api-key to configure your client's bearer key.\n", filepath.Join(dir, "config.json"), c.Listen)
 	return nil
+}
+
+// Selecting a running mode never rewrites either wallet or its saved default.
+func serveConfig(c config.Config, args []string) (config.Config, error) {
+	f := flag.NewFlagSet("serve", flag.ContinueOnError)
+	f.StringVar(&c.Backend, "backend", c.Backend, "ticket or zkapi (default: saved backend)")
+	if err := f.Parse(args); err != nil {
+		return config.Config{}, err
+	}
+	if f.NArg() != 0 {
+		return config.Config{}, errors.New("unexpected serve arguments; use --backend ticket or --backend zkapi")
+	}
+	if err := config.Validate(c); err != nil {
+		return config.Config{}, err
+	}
+	return c, nil
 }
 
 func ticketBackend(dir string, c config.Config, client *http.Client) (*ticket.Backend, error) {
@@ -175,6 +209,14 @@ func (z zkInference) Complete(ctx context.Context, body json.RawMessage) (*http.
 	response, err := z.Client.Complete(ctx, body)
 	var remote *zkapi.Error
 	if errors.As(err, &remote) {
+		switch remote.Code {
+		case "invalid_model":
+			return nil, &server.BackendError{Status: 400, Code: "invalid_model", Message: "Select a model from /v1/models."}
+		case "model_budget_unavailable":
+			return nil, &server.BackendError{Status: 400, Code: "model_budget_unavailable", Message: "The model is unavailable or has no reviewed request budget. Select a model from /v1/models."}
+		case "model_policy_unavailable":
+			return nil, &server.BackendError{Status: 502, Code: "model_policy_unavailable", Message: "The current model policy could not be loaded. Retry when the model service is available."}
+		}
 		switch remote.Status {
 		case http.StatusPaymentRequired:
 			return nil, &server.BackendError{Status: 402, Code: "funding_required", Message: "The private balance needs funding. Run oa-chat fund."}
@@ -210,7 +252,16 @@ func (t *ticketInference) Complete(ctx context.Context, body json.RawMessage) (*
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("User-Agent", "OA-Chat/1")
-	return t.client.Do(req)
+	response, err := t.client.Do(req)
+	if response != nil {
+		response.Header.Del("X-OA-Verification-Status")
+		response.Header.Del("X-OA-Verification-Detail")
+		response.Header.Set("X-OA-Verification-Status", key.VerificationStatus)
+		if key.VerificationStatus == "verifier-unavailable" {
+			response.Header.Set("X-OA-Verification-Detail", key.VerificationDetail)
+		}
+	}
+	return response, err
 }
 
 func serve(ctx context.Context, dir string, c config.Config, out io.Writer) error {
@@ -298,20 +349,18 @@ func serve(ctx context.Context, dir string, c config.Config, out io.Writer) erro
 	if err != nil {
 		return err
 	}
+	api.Status = server.ServiceStatus{Backend: c.Backend}
+	if c.Backend == "zkapi" {
+		api.Status.Network = c.ZKAPI.Network
+		api.Status.RequestBudgetPolicy = "model"
+	}
 	if funding != nil {
-		// server.API enforces local bearer authentication and rejects browser
-		// origins before dispatching these management operations. Withdrawals
-		// additionally require the owner-only credential, never the inference key alone.
+		// server.API rejects browser origins and requires both the local bearer
+		// and owner-only credential before dispatching any wallet operation.
 		api.ManagementToken = c.ManagementToken
 		api.Admin = http.HandlerFunc(funding.ServeAdminHTTP)
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/", api)
-	if funding != nil {
-		mux.Handle("/funding", funding)
-		mux.Handle("/funding/", funding)
-	}
-	httpServer := &http.Server{Handler: server.LogRequests(mux, logger), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0), BaseContext: func(net.Listener) context.Context { return life }}
+	httpServer := &http.Server{Handler: server.LogRequests(api, logger), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 32 << 10, ErrorLog: log.New(io.Discard, "", 0), BaseContext: func(net.Listener) context.Context { return life }}
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- httpServer.Serve(listener) }()
 	transport := "direct HTTPS (network proxy off)"
@@ -420,9 +469,15 @@ func tickets(ctx context.Context, dir string, c config.Config, args []string) er
 func status(ctx context.Context, dir string, c config.Config) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	result := map[string]any{"backend": c.Backend, "api_base": "http://" + c.Listen + "/v1", "relay_required": c.RelayURL != ""}
-	_, err := localRequest(ctx, c, "GET", "/healthz")
+	result := map[string]any{"default_backend": c.Backend, "api_base": "http://" + c.Listen + "/v1", "relay_required": c.RelayURL != ""}
+	active, err := resolveActiveConfig(ctx, c)
 	result["service_running"] = err == nil
+	if err == nil {
+		c = active
+	} else if _, healthErr := localRequest(ctx, c, "GET", "/healthz"); healthErr == nil {
+		return errors.New("local service is running but its active mode could not be authenticated; restart it with the current client and configuration")
+	}
+	result["backend"] = c.Backend
 	client, _ := relay.NewClient(c.RelayURL)
 	if c.Backend == "ticket" {
 		wallet, err := ticketBackend(dir, c, client)
@@ -436,6 +491,9 @@ func status(ctx context.Context, dir string, c config.Config) error {
 		result["tickets"] = count
 	} else {
 		result["network"] = c.ZKAPI.Network
+		result["billing_asset"] = "native_eth"
+		result["billing_unit"] = "gwei"
+		result["request_budget_policy"] = "model"
 		wallet, err := zkapi.New(zkConfig(c, client))
 		if err != nil {
 			return err
@@ -462,8 +520,30 @@ func status(ctx context.Context, dir string, c config.Config) error {
 	return e.Encode(result)
 }
 
+// Management commands use the authenticated running mode, which may differ
+// from config.json's default. This copy does not migrate or modify wallet state.
+func resolveActiveConfig(ctx context.Context, c config.Config) (config.Config, error) {
+	data, err := localRequest(ctx, c, http.MethodGet, "/admin/status")
+	if err != nil {
+		return config.Config{}, err
+	}
+	var active server.ServiceStatus
+	if json.Unmarshal(data, &active) != nil ||
+		(active.Backend != "ticket" && active.Backend != "zkapi") ||
+		(active.Backend == "zkapi" && active.Network != "mainnet" && active.Network != "sepolia") ||
+		(active.Backend == "ticket" && active.Network != "") {
+		return config.Config{}, errors.New("local service returned invalid active-mode metadata; restart it with the current client")
+	}
+	c.Backend = active.Backend
+	if active.Backend == "zkapi" {
+		c.ZKAPI.Network = active.Network
+	}
+	return c, nil
+}
+
 func localRequest(ctx context.Context, c config.Config, method, path string) ([]byte, error) {
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	defer client.CloseIdleConnections()
 	r, err := http.NewRequestWithContext(ctx, method, "http://"+c.Listen+path, nil)
 	if err != nil {
 		return nil, err
@@ -478,15 +558,4 @@ func localRequest(ctx context.Context, c config.Config, method, path string) ([]
 		return nil, errors.New("local management request failed")
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-}
-
-func openBrowser(url string) error {
-	command := "xdg-open"
-	if runtime.GOOS == "darwin" {
-		command = "open"
-	}
-	cmd := exec.Command(command, url)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	return cmd.Run()
 }

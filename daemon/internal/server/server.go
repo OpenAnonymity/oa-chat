@@ -34,10 +34,19 @@ type API struct {
 	backend Backend
 	key     [32]byte
 	slots   chan struct{}
-	// Admin is optional local management. Withdrawal additionally requires the
-	// private CLI credential; an inference API key cannot authorize payouts.
+	// Admin is optional local wallet management. All of its routes require the
+	// private CLI credential; an inference API key cannot authorize wallet use.
 	Admin           http.Handler
 	ManagementToken string
+	Status          ServiceStatus
+}
+
+// ServiceStatus is safe local metadata, containing no wallet state or secrets.
+// It allows management commands to discover a serve-time backend override.
+type ServiceStatus struct {
+	Backend             string `json:"backend"`
+	Network             string `json:"network,omitempty"`
+	RequestBudgetPolicy string `json:"request_budget_policy,omitempty"`
 }
 
 func New(backend Backend, key string, concurrency int) (*API, error) {
@@ -70,15 +79,26 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "invalid_api_key", "A valid local OA Chat API key is required.")
 		return
 	}
+	if r.URL.Path == "/admin/status" {
+		if r.Method != http.MethodGet {
+			writeError(w, 405, "method_not_allowed", "Method not allowed.")
+			return
+		}
+		data, err := json.Marshal(a.Status)
+		if err != nil {
+			writeError(w, 500, "status_unavailable", "Service status is unavailable.")
+			return
+		}
+		writeJSON(w, 200, data)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/admin/") && a.Admin != nil {
-		if r.URL.Path == "/admin/withdrawal" {
-			provided := sha256.Sum256([]byte(r.Header.Get("X-OA-Management-Token")))
-			expected := sha256.Sum256([]byte(a.ManagementToken))
-			if len(a.ManagementToken) < 32 || subtle.ConstantTimeCompare(expected[:], a.key[:]) == 1 ||
-				len(r.Header.Values("X-OA-Management-Token")) != 1 || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
-				writeError(w, 403, "management_auth_required", "Withdrawal management requires the private local CLI credential.")
-				return
-			}
+		provided := sha256.Sum256([]byte(r.Header.Get("X-OA-Management-Token")))
+		expected := sha256.Sum256([]byte(a.ManagementToken))
+		if len(a.ManagementToken) < 32 || subtle.ConstantTimeCompare(expected[:], a.key[:]) == 1 ||
+			len(r.Header.Values("X-OA-Management-Token")) != 1 || subtle.ConstantTimeCompare(provided[:], expected[:]) != 1 {
+			writeError(w, 403, "management_auth_required", "Wallet management requires the private local CLI credential.")
+			return
 		}
 		a.Admin.ServeHTTP(w, r)
 		return
@@ -201,6 +221,18 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	// These headers are assigned by the local backend from its verifier result,
+	// replacing any provider-supplied value. Forward only the documented enum.
+	switch status := response.Header.Get("X-OA-Verification-Status"); status {
+	case "verified":
+		w.Header().Set("X-OA-Verification-Status", status)
+	case "verifier-unavailable":
+		w.Header().Set("X-OA-Verification-Status", status)
+		switch detail := response.Header.Get("X-OA-Verification-Detail"); detail {
+		case "recently_attested_outage", "rate_limited", "ownership_check_error":
+			w.Header().Set("X-OA-Verification-Detail", detail)
+		}
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		status := response.StatusCode
 		if status < 400 || status > 599 {

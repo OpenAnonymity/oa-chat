@@ -3,16 +3,30 @@
 The standalone Go module lives in `daemon/`. Its `internal/ticket` package
 implements the same public Blind RSA ticket protocol as the browser, without an
 account session, browser cookies, or billing credentials. The daemon's local
-OpenAI API obtains a fresh, verified provider credential for every request.
+OpenAI API obtains a fresh provider credential for every request under the
+verification policy below.
 
 ## Import and invitation redemption
 
-Initialize with `oa-chat init`, then either:
+One `oa-chat init` configures both ticket and zkAPI modes. Import or redeem
+tickets with either command:
 
 ```sh
 oa-chat tickets import exported-tickets.json
 oa-chat tickets redeem --code-file /path/to/private-invite.txt
 ```
+
+Start ticket inference with `oa-chat serve --backend ticket`. Stop that process
+and use `oa-chat serve --backend zkapi` to use the private ETH wallet from the
+same configuration directory. Omitting `--backend` uses the saved default;
+`init --backend` only selects that default. Existing configurations work without
+reinitialization. Both modes share the local API key and transport settings but
+retain separate ticket and private-note state. Ticket mode does not need an
+installed zkAPI companion or proving assets.
+
+Ticket import and redemption remain available regardless of the running mode.
+`oa-chat status` authenticates the daemon's selected mode before showing wallet
+readiness, and also reports the saved default.
 
 `tickets redeem` without `--code-file` reads stdin. The file contains only the
 24-character invitation code or the OA share URL containing `?tickets=...`.
@@ -51,13 +65,18 @@ revoke copies held elsewhere; redeeming the same ticket twice fails upstream.
    `InferenceTicket token=...` or `InferenceTicket tokens=...` to
    `/api/request_key`.
 6. Submit the provisional key and station/org signatures to `/submit_key`.
-   Activate it only after `status=verified`, the exact station ID, and the
-   requested key's SHA-256 identifier all match. The deployed verifier and OA
+   A verified credential requires `status=verified`, the exact station ID, and
+   the requested key's SHA-256 identifier to match. The deployed verifier and OA
    Chat use the first eight digest bytes (16 lowercase hex characters); a full
    64-character SHA-256 response is also accepted only when all 64 characters
    match. Other lengths, including arbitrary shorter prefixes, fail. Expired,
-   pending, unknown, mismatched, and failed responses discard the credential.
-   There is no staging verifier bypass.
+   pending, unknown, mismatched, malformed and explicit refusal responses
+   discard the credential. The narrow [web-compatible outage policy](CLI_ZKAPI.md#privacy-boundaries)
+   also applies: eligible unavailable verification is labelled unverified in
+   response headers and a fixed foreground warning. This is not blanket
+   staging trust. The daemon checks each single-use key once and retains no
+   browser-style retry queue. A hard verification failure does not restore
+   already spent tickets.
 
 The key identifier is a consistency check on the authenticated HTTPS
 `/submit_key` response for that same raw key and signatures, not a standalone

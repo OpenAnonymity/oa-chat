@@ -34,7 +34,7 @@ export function initWalletMethod() {
 // during every async operation, including harmless price and fee reads.
 // Wallet actions and scoped address quotes activate their provider separately.
 export function setWalletMethod(next) {
-    if (!['metamask', 'address'].includes(next)) throw new Error('Choose MetaMask or Send to an address.');
+    if (!['metamask', 'address'].includes(next)) throw new Error('Choose MetaMask or Send Ethereum.');
     if (next === method) return;
     if (walletAction) throw new Error('Finish the current transaction before changing payment methods.');
     if (addressFundingWallet.hasPendingTransaction) throw new Error('Check the saved funding transaction before changing methods.');
@@ -122,7 +122,7 @@ export function walletMethodText(value) {
         .replaceAll('Use MetaMask once', 'Fund your address once')
         .replaceAll('Install MetaMask to get started', 'Send ETH to your funding address')
         .replaceAll('MetaMask may still be open in this or another tab.', 'Check your saved funding transaction before retrying.')
-        .replaceAll('Continue with MetaMask', 'Next')
+        .replaceAll('Continue with MetaMask', 'Deposit')
         .replaceAll('Try again with MetaMask', 'Retry deposit')
         .replaceAll('Resume with MetaMask', 'Resume deposit')
         .replaceAll('Continue in MetaMask', 'Continue withdrawal')
@@ -132,5 +132,6 @@ export function walletMethodText(value) {
         .replaceAll('Return the remaining balance to MetaMask', 'Send the remaining balance to your withdrawal address')
         .replaceAll('MetaMask prompt was closed', 'Recover interrupted request')
         .replaceAll('Try again in MetaMask', 'Retry saved deposit')
+        .replaceAll('Open MetaMask from your browser toolbar to check the request. If its window closed, use “Recover withdrawal” below.', 'Check the saved withdrawal below. If you started it in a wallet extension, check its pending request before recovering.')
         .replaceAll('MetaMask', 'your funding account');
 }
