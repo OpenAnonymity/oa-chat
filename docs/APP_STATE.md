@@ -1,3 +1,19 @@
+## 2026-09-29: Separate CLI installation and guided first-time setup
+
+- The recommended flow is installation/update first, then `oa-chat start` for
+  setup and readiness. The optional installer `--setup` flag remains available.
+- New guided setup now offers Mainnet as the default, matching `init` and the
+  shared configuration default; Sepolia is an option in the prompt or through
+  `--network sepolia`. Existing profiles keep their saved network. The prior
+  Sepolia default was a testing convenience, not the intended product default.
+- Setup still creates missing configuration in the default private directory,
+  checks the wallet, asks for funding when needed, displays the address, waits
+  for ETH, deposits within the approved fee ceiling, and waits for finality.
+  Separating installation does not add manual funding or initialization steps.
+- Current instructions target `daemon-v0.3.2`. The earlier release validation
+  records remain historical evidence. The installation command selects no
+  network and creates no configuration.
+
 ## 2026-09-29: Combined release review follow-up
 
 - Access overwrite diagnostics enqueue the read before the write in one IDB transaction, but enqueue `put` synchronously so IndexedDB preserves the caller's save-time snapshot. A regression mutates the caller's session while the read is pending.
@@ -44,7 +60,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   readable canonical input; a cancellation-aware backoff prevents idle spinning.
   A real PTY regression covers cancellation, consent, refusal, and EOF separately
   from in-memory prompt fixtures.
-- Recommended installation instructions target `daemon-v0.3.1`. For subsequent
+- At this release, installation instructions targeted `daemon-v0.3.1`. For subsequent
   starts, the one-line PATH assignment selects both the installed daemon and
   companion, even when an older binary shadows them on the parent shell's PATH.
   The 0.3.0 tag and assets remain immutable; its successful build, funding,
@@ -70,7 +86,8 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 
 - `oa-chat start` creates a missing configuration in the normal private OS
   directory and keeps existing valid configuration and wallet state. New
-  guided configurations use zkAPI and ask for the network, offering Sepolia;
+  guided configurations use zkAPI and ask for the network, defaulting to Mainnet
+  since `0.3.2` and offering Sepolia as an option;
   advanced `init` still defaults to Mainnet. Explicit network flags must match
   an existing profile. Invalid or orphaned wallet state is never overwritten.
 - `install.sh --setup --network sepolia` installs/updates the native pair and

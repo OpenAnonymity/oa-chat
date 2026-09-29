@@ -6,30 +6,35 @@ The web app runs entirely in the browser. Each session uses a fresh ephemeral ac
 
 For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
-The daemon includes [guided setup](daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
-that installs or updates the binaries, creates missing configuration, checks
-readiness, and walks you through funding. Use the `daemon-v0.3.1` installer for
-this guided flow:
+Install or update the [command-line daemon](daemon/README.md) first:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
 ```
 
-Choose the private balance to add, approve its fixed amount and maximum fee,
-then send **Sepolia test ETH** to the displayed address. Setup waits for the
-transfer, deposits automatically, waits for finality, and prints your local
-inference endpoint. Leave the terminal running. On later runs, use
-`PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia` with the default install
-prefix; existing configuration and wallet state are
-reused. An existing ticket configuration can select `--backend zkapi`.
+Then run guided first-time setup (or check and resume an existing setup):
 
-Omit `--setup --network sepolia` for installation or updates only. Stop the daemon
-before upgrading, rerun with the same prefix, and restart afterward. Existing
-configuration, tickets, and wallet state are retained. See
+```sh
+PATH="$HOME/.local/bin:$PATH" oa-chat start
+```
+
+Setup creates missing configuration and asks which network to use, with
+**Mainnet as the default** and **Sepolia as an option**. For test ETH, choose
+Sepolia at the prompt or run `oa-chat start --network sepolia`. Existing
+configurations keep their saved network and mode.
+
+If funding is needed, choose the private balance to add, approve the fixed
+amount and maximum fee, then send ETH on the selected network to the displayed
+address. Setup waits for funds, deposits automatically, waits for finality, and
+prints your local inference endpoint. Leave the terminal running.
+
+Stop the daemon before upgrading and use the same installation prefix.
+Configuration, tickets, and wallet state are retained. See the
+[guided walkthrough](daemon/docs/CLI_ZKAPI.md#guided-first-time-setup) and
 [installer options](daemon/docs/CLI_PACKAGING.md#one-command-installation) for
-PATH guidance and custom prefixes. Exact-tag URLs support prereleases;
-GitHub's `latest/download` URL excludes them. Public package repositories have
-not yet been published.
+custom prefixes and optional combined installation/setup. Exact-tag URLs
+support prereleases; GitHub's `latest/download` URL excludes them. Public
+package repositories have not yet been published.
 
 ### Highlights
 - **Unlinkable inference**: Every session uses an ephemeral, blind-signature-backed access key. The inference provider sees anonymous requests with no way to identify the user behind them or link them across sessions.

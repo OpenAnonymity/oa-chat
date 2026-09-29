@@ -8,19 +8,25 @@ The Rust companion is needed because the deployed Groth16 wallet and recovery
 implementation is Rust; this change does not claim to port those cryptographic
 primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md).
 
-## Sepolia: from installation to inference
+## Guided first-time setup
 
-Use version `0.3.1` for guided setup and prompt cancellation fixes. Stop any daemon you are upgrading,
-then run:
+Install or update version `0.3.2` first. Stop any daemon you are upgrading:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
 ```
 
-The same command installs or updates both binaries and proving assets. It then
-runs the installed CLI directly, with its matching companion on PATH. No
-separate initialization, environment variable, or funding terminal is needed.
-Use the original `--prefix` for an installation in a custom location.
+Then run setup with the default installation prefix:
+
+```sh
+PATH="$HOME/.local/bin:$PATH" oa-chat start
+```
+
+The installation command updates both binaries and proving assets. The separate
+setup command creates or checks configuration and guides you until the local
+API is ready. A new setup asks for the network, with **Mainnet as the default**
+and **Sepolia as an option**. An existing setup keeps its saved network.
+For a custom installation prefix, substitute its `bin` directory in PATH.
 
 1. **Follow the setup prompts.** Missing configuration is created in the normal
    private directory: `~/Library/Application Support/oa-chat` on macOS or
@@ -35,7 +41,8 @@ Use the original `--prefix` for an installation in a custom location.
    quote fixes its ETH principal once; network fees are additional. Review the
    displayed network, funding address, principal, and maximum network fee,
    then confirm automatic deposit. Send the displayed required or recommended
-   top-up in **Sepolia test ETH** to that funding address. The recommended
+   top-up in **ETH on the selected network** to that funding address; use
+   Sepolia test ETH only when Sepolia was selected. The recommended
    amount includes an optional fee buffer; the vault address is not the
    transfer destination.
 
@@ -59,7 +66,7 @@ Use the original `--prefix` for an installation in a custom location.
 For later starts with the default install prefix, run:
 
 ```sh
-PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia
+PATH="$HOME/.local/bin:$PATH" oa-chat start
 ```
 
 For a custom prefix, substitute its `bin` directory in PATH. Keeping that
@@ -69,8 +76,8 @@ New guided configurations use zkAPI. Existing saved modes remain available;
 without an explicit mode override, a compatible running daemon's mode is used.
 Use `--backend zkapi` to choose zkAPI explicitly for an existing ticket profile,
 or `--backend ticket` for guided ticket setup. New unflagged `start` prompts
-for the network and offers Sepolia; an existing network is never silently
-changed. A Mainnet configuration needs a separate Sepolia directory, for
+for the network with Mainnet as the default and Sepolia as an option; an
+existing network is never silently changed. A Mainnet configuration needs a separate Sepolia directory, for
 example `oa-chat --config-dir "$HOME/.config/oa-chat-sepolia" start --network sepolia`.
 Invalid configuration or missing configuration beside existing wallet state
 requires recovery instead of reinitialization. Keep legacy ERC-20 recovery
@@ -89,6 +96,20 @@ deposit resumes its saved transaction without authorizing another. A reverted
 transaction, conflicting operation, or withdrawal reservation requires explicit
 recovery. Back up the complete private configuration directory, including
 `funding/` and `zkapi/`; it controls both public funds and private credits.
+
+## Sepolia: from installation to inference
+
+Use the same installation command above. For first-time setup with test funds,
+choose Sepolia in the network prompt, or select it explicitly:
+
+```sh
+PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia
+```
+
+Follow the same guided funding flow using Sepolia test ETH. Sepolia is optional;
+it is not the default network. A separate configuration directory is required
+if your existing profile is already configured for Mainnet. After setup reaches
+ready, you can send the optional streaming request below.
 
 ### Optional streaming request
 

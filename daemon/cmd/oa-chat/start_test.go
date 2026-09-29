@@ -101,6 +101,47 @@ func TestGuidedStartInitializesBothModesAndOwnerCredential(t *testing.T) {
 	}
 }
 
+func TestGuidedStartNetworkSelection(t *testing.T) {
+	for _, test := range []struct {
+		name, input, network string
+		args                 []string
+	}{
+		{name: "default", input: "\n", network: "mainnet"},
+		{name: "mainnet answer", input: "mainnet\n", network: "mainnet"},
+		{name: "sepolia answer", input: "sepolia\n", network: "sepolia"},
+		{name: "mainnet flag", args: []string{"--network", "mainnet"}, network: "mainnet"},
+		{name: "sepolia flag", args: []string{"--network", "sepolia"}, network: "sepolia"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			options, err := parseStartOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output strings.Builder
+			ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(test.input))}
+			dir := filepath.Join(t.TempDir(), "new")
+			c, err := prepareStartConfig(context.Background(), dir, options, ui)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.ZKAPI.Network != test.network {
+				t.Fatalf("network = %q, want %q", c.ZKAPI.Network, test.network)
+			}
+			if len(test.args) == 0 {
+				if !strings.Contains(output.String(), "mainnet (real ETH) or sepolia (test ETH) [mainnet]:") {
+					t.Fatal("network question did not show both options and the mainnet default")
+				}
+			} else if strings.Contains(output.String(), "Choose network") {
+				t.Fatal("explicit network flag still prompted for a network")
+			}
+			saved, err := config.Load(dir)
+			if err != nil || saved.ZKAPI.Network != test.network {
+				t.Fatalf("selected network was not saved: %v", err)
+			}
+		})
+	}
+}
+
 func TestGuidedStartReusesConfigWithoutMigration(t *testing.T) {
 	dir, original := startTestConfig(t)
 	before, _ := os.ReadFile(filepath.Join(dir, "config.json"))

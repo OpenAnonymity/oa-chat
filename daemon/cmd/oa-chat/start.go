@@ -228,9 +228,10 @@ func prepareStartConfig(ctx context.Context, dir string, options startOptions, u
 	if options.backend != "" {
 		c.Backend = options.backend
 	}
+	defaultNetwork := c.ZKAPI.Network
 	c.ZKAPI.Network = options.network
 	for c.ZKAPI.Network == "" {
-		answer, err := ui.Ask(ctx, "Choose network: sepolia (test ETH) or mainnet (real ETH)", "sepolia")
+		answer, err := ui.Ask(ctx, "Choose network: mainnet (real ETH) or sepolia (test ETH)", defaultNetwork)
 		if err != nil {
 			return c, err
 		}
@@ -238,7 +239,7 @@ func prepareStartConfig(ctx context.Context, dir string, options startOptions, u
 		case "mainnet", "sepolia":
 			c.ZKAPI.Network = strings.ToLower(answer)
 		default:
-			ui.Printf("Enter sepolia or mainnet.\n")
+			ui.Printf("Enter mainnet or sepolia.\n")
 		}
 	}
 	if options.listen != "" {
