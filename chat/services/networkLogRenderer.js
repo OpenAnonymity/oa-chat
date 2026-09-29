@@ -342,6 +342,11 @@ export function getActivityDescription(log, detailed = false) {
         // Verifier endpoint - station integrity verification
         if (type === 'verification' || urlObj.host === 'verifier2.openanonymity.ai' || urlObj.host.includes('localhost')) {
             const verificationDetail = log.detail || response?.detail;
+            if (verificationDetail === 'verifier-unverified-advisory') {
+                return detailed
+                    ? 'The verifier did not approve this station\u2019s key. Chat continues on an unverified key because this build\u2019s verifier policy allows it; the station\u2019s privacy settings were not confirmed for this key.'
+                    : 'Station not verified';
+            }
             if (verificationDetail === 'verifier-unavailable') {
                 return detailed
                     ? 'Verification was unavailable when this key was issued. Chat continues using an unverified key.'

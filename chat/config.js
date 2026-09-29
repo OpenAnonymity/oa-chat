@@ -34,6 +34,24 @@ export const VERIFIER_URL = disposableDemoVerifierBypass
     ? ORG_API_BASE
     : configuredVerifierOrigin || 'https://verifier2.openanonymity.ai';
 
+// Verifier outage policy -- what the client does when the verifier cannot give
+// an explicit approval for a freshly issued key. Set at build time with
+// OA_VERIFIER_OUTAGE_POLICY; tests and unbuilt sources default to strict.
+//   strict:   continue only when the org marked the station recently attested
+//             (or on a temporary 429 / ownership-check error); anything else blocks.
+//   tolerant: continue on any outage -- unreachable, timeout, 5xx, 429, pending
+//             or malformed reply -- whatever the attestation flag. An explicit
+//             "unverified" verdict from a reachable verifier still blocks.
+//   advisory: tolerant, plus an explicit "unverified" verdict continues too.
+// A banned station, an expired key and a station/key mismatch block under every
+// policy. Keys admitted this way are marked unverified in the Activity Timeline,
+// are re-verified in the background where that makes sense, and are never shared.
+export const VERIFIER_OUTAGE_POLICIES = Object.freeze(['strict', 'tolerant', 'advisory']);
+export const VERIFIER_OUTAGE_POLICY = (
+    typeof __OA_VERIFIER_OUTAGE_POLICY__ === 'string' &&
+    VERIFIER_OUTAGE_POLICIES.includes(__OA_VERIFIER_OUTAGE_POLICY__)
+) ? __OA_VERIFIER_OUTAGE_POLICY__ : 'strict';
+
 // WebSocket proxy -- a shared IP-hiding relay for all users (not a secret).
 // The "secret" parameter is a shared access token, not per-user. The proxy
 // operator sees connection metadata (timing, connecting IPs) but not request

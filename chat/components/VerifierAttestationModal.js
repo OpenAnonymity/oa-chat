@@ -1152,11 +1152,14 @@ export class VerifierAttestationModal {
 
     getZeroTrustPresentation(evidence = {}) {
         if (evidence?.submitKeyProof?.status === 'verifier-unavailable') {
+            const refused = evidence.submitKeyProof.detail === 'unverified_advisory';
             return {
                 localLoopbackBypass: false,
                 summaryTone: 'warn',
                 summaryTitle: 'Key not verified',
-                summaryBody: 'Verification was unavailable when this key was issued. Chat can continue, but ownership and account privacy settings have not been verified for this key.',
+                summaryBody: refused
+                    ? 'The verifier did not approve this key. Chat continues under this build\u2019s verifier policy, but ownership and account privacy settings were not confirmed for this key.'
+                    : 'Verification was unavailable when this key was issued. Chat can continue, but ownership and account privacy settings have not been verified for this key.',
                 sectionIntro: 'A station appearing in the broadcast or a healthy verifier does not verify this individual key. The evidence below does not replace key verification.'
             };
         }
@@ -1449,7 +1452,9 @@ export class VerifierAttestationModal {
             for (const step of steps) step.tone = 'neutral';
             Object.assign(steps[1], {
                 title: 'Key ownership not verified',
-                description: 'The verifier was unavailable for this key. Chat continued under the outage policy.',
+                description: evidence.submitKeyProof.detail === 'unverified_advisory'
+                    ? 'The verifier did not approve this key. Chat continued under the advisory verifier policy.'
+                    : 'The verifier was unavailable for this key. Chat continued under the outage policy.',
                 proves: 'No ownership or account privacy claim is made for this key.'
             });
             steps[2].proves = 'Signatures are present in the issuance response; verifier validation was unavailable.';
