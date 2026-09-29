@@ -26,7 +26,7 @@ function fixture(t, options = {}) {
         async getStatus() { return { ethBalance: balance }; },
         async getDepositFeeQuote(intent) {
             feeQuotes++;
-            return { expectedFeeWei: '600000000000000', feeBufferWei: '400000000000000',
+            return { expectedFeeWei: '600000000000000', requiredFeeWei: '800000000000000', feeBufferWei: '200000000000000',
                 feeReserveWei: '1000000000000000', amount: intent.amount, depositWei: intent.depositWei,
                 address: '0xACCOUNT', chainId: 11155111, contractAddress: '0xVAULT',
                 operationId: 'operation-1', depositCommitment: 'commitment-1',
@@ -60,7 +60,7 @@ test('waiting continuously reads funds but never submits, then requires a fresh 
     await f.flow.check();
     assert.equal(f.flow.ready, true);
     assert.equal((await f.flow.verifyReady()).ethAmount, '0.010');
-    f.setBalance('10999999999999999');
+    f.setBalance('10799999999999999');
     await assert.rejects(f.flow.verifyReady(), /needs more ETH/);
 });
 
@@ -222,13 +222,13 @@ test('polls reuse a fresh quote while checking funds, then renew it at expiry an
     assert.equal(verified.feeQuoteExpiresAt, 72_000);
 });
 
-test('an increased fee requires reviewing the new quote and another explicit click, even with enough ETH', async t => {
+test('a higher required fee beyond the displayed allowance requires another explicit click, even with enough ETH', async t => {
     const f = fixture(t);
     f.setBalance('99000000000000000');
     await f.flow.start('10');
     const original = f.wallet.getDepositFeeQuote;
     f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
-        feeReserveWei: '1200000000000000', feeBufferWei: '600000000000000' });
+        feeReserveWei: '1200000000000000', requiredFeeWei: '1100000000000000', feeBufferWei: '100000000000000' });
     await assert.rejects(f.flow.verifyReady(), /Network fees changed/);
     assert.equal(f.flow.ready, true);
     assert.equal(f.flow.totalWei, '11200000000000000');
@@ -241,15 +241,80 @@ test('a reduced fee is bound to the lower limit on Next', async t => {
     await f.flow.start('10');
     const original = f.wallet.getDepositFeeQuote;
     f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
-        feeReserveWei: '800000000000000', feeBufferWei: '200000000000000' });
+        feeReserveWei: '800000000000000', feeBufferWei: '0' });
     assert.equal((await f.flow.verifyReady()).feeLimitWei, '800000000000000');
+});
+
+test('exact required funds enable Next without requiring the optional buffer', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    assert.equal(f.flow.requiredWei, '10800000000000000');
+    assert.equal(f.flow.requiredRemainingWei, '10800000000000000');
+    f.setBalance('10799999999999999');
+    await f.flow.check();
+    assert.equal(f.flow.ready, false);
+    assert.equal(f.flow.requiredRemainingWei, '1');
+    f.setBalance('10800000000000000');
+    await f.flow.check();
+    assert.equal(f.flow.ready, true);
+    assert.equal(f.flow.requiredRemainingWei, '0');
+    assert.equal(f.flow.remainingWei, '200000000000000', 'recommended buffer still shows separately');
+    const approved = await f.flow.verifyReady();
+    assert.equal(approved.feeLimitWei, '800000000000000');
+    assert.equal(approved.depositWei, '10000000000000000');
+    assert.equal(approved.amount, '10000000');
+});
+
+test('a rising recommendation consumes existing funded buffer instead of blocking Next', async t => {
+    const f = fixture(t);
+    f.setBalance('11000000000000000');
+    await f.flow.start('10');
+    const original = f.wallet.getDepositFeeQuote;
+    f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
+        requiredFeeWei: '900000000000000', feeReserveWei: '1200000000000000', feeBufferWei: '300000000000000' });
+    const approved = await f.flow.verifyReady();
+    assert.equal(approved.feeLimitWei, '1000000000000000', 'the old displayed allowance stays the ceiling');
+    assert.equal(approved.depositWei, '10000000000000000');
+    assert.equal(f.flow.ready, true);
+    assert.equal(f.flow.requiredRemainingWei, '0');
+    assert.equal(f.flow.remainingWei, '200000000000000');
+});
+
+test('an incompletely funded buffer caps authorization to the remaining public balance', async t => {
+    const f = fixture(t);
+    f.setBalance('10800000000000001');
+    await f.flow.start('10');
+    assert.equal((await f.flow.verifyReady()).feeLimitWei, '800000000000001');
+    f.wallet.hasPendingTransaction = true;
+    await f.flow.check();
+    assert.equal(f.flow.ready, false, 'available funds do not bypass the pending transaction gate');
+    await assert.rejects(f.flow.verifyReady(), /Wait until/);
+});
+
+test('quote failures retain a successful public balance read without granting readiness', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.setBalance('11000000000000000');
+    f.wallet.getDepositFeeQuote = async () => { throw new Error('Network fees are unavailable.'); };
+    await f.flow.check({ forceQuote: true });
+    assert.equal(f.flow.status.ethBalance, '11000000000000000');
+    assert.equal(f.flow.ready, false);
+    assert.equal(f.flow.requiredWei, null);
+    assert.equal(f.flow.requiredRemainingWei, null);
+    assert.match(f.flow.error, /fees are unavailable/);
+    f.wallet.getStatus = async () => { throw new Error('Balance unavailable'); };
+    await f.flow.check({ forceQuote: true });
+    assert.equal(f.flow.status, null, 'a failed balance read does not present an old balance as current');
+    assert.equal(f.flow.ready, false);
+    assert.match(f.flow.error, /balance could not be checked/);
 });
 
 test('invalid quote amounts, scope, times and fee arithmetic fail closed', async t => {
     const variants = [
         { amount: '1' }, { depositWei: '1' }, { chainId: 1 }, { address: '0xOTHER' },
         { contractAddress: '0xOTHER' }, { operationId: '' }, { depositCommitment: '' },
-        { quotedAt: 13_000 }, { expiresAt: 12_000 }, { feeBufferWei: '1' }, { expectedFeeWei: '-1' }
+        { quotedAt: 13_000 }, { expiresAt: 12_000 }, { feeBufferWei: '1' }, { expectedFeeWei: '-1' },
+        { requiredFeeWei: undefined }, { requiredFeeWei: '0' }, { requiredFeeWei: '500000000000000', feeBufferWei: '500000000000000' }
     ];
     for (const invalid of variants) {
         const f = fixture(t);
@@ -271,7 +336,7 @@ test('out-of-order same-amount fee reads cannot replace a newer quote', async t 
     f.wallet.getDepositFeeQuote = () => new Promise(resolve => { resolveOld = resolve; });
     const oldCheck = f.flow.check({ forceQuote: true });
     f.wallet.getDepositFeeQuote = async intent => ({ ...await original(intent),
-        feeReserveWei: '1200000000000000', feeBufferWei: '600000000000000' });
+        feeReserveWei: '1200000000000000', feeBufferWei: '400000000000000' });
     await f.flow.check({ forceQuote: true });
     resolveOld(oldQuote);
     await oldCheck;

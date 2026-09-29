@@ -1,10 +1,6 @@
 import QRCode from 'qrcode';
 import { getAddress } from 'ethers';
 
-const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-})[character]);
-
 // EIP-681 includes the intended chain and the exact native transfer in wei.
 // The caller supplies the remaining transfer, including fees and less any
 // funds already at the address, rather than just the private-note principal.
@@ -40,11 +36,11 @@ function qrSvg(uri) {
     return svg;
 }
 
-export function renderFundingPaymentQr({ address, chainId, amountWei, network }) {
+export function renderFundingPaymentQr({ address, chainId, amountWei }) {
     const uri = fundingPaymentUri({ address, chainId, amountWei });
     if (!uri) return '';
     return `<figure class="zkapi-funding-qr" data-funding-payment-qr>
         ${qrSvg(uri)}
-        <figcaption>Scan to pay on ${escapeHtml(network)}<span>Includes the ETH amount shown above.</span></figcaption>
+        <figcaption>Scan to pay</figcaption>
     </figure>`;
 }

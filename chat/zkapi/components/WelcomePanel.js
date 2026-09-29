@@ -136,8 +136,9 @@ export default class WelcomePanel {
         this.error = '';
         this.notice = '';
         this.render();
+        let releaseWalletMethod;
         try {
-            await prepareWalletMethod();
+            releaseWalletMethod = await prepareWalletMethod();
             const report = message => this.setStatus(message);
             const flow = this.fundingFlow;
             const action = async () => {
@@ -172,6 +173,7 @@ export default class WelcomePanel {
                 : error.shortMessage || error.message || String(error);
             this.render();
         } finally {
+            releaseWalletMethod?.();
             this.busy = false;
             this.render();
         }

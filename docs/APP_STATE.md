@@ -16,6 +16,117 @@
 - The unavailable-verification timeline icon now places a small orange dot inside a neutral shield. Successful verification retains its checkmark; pending, interrupted, and rejected states do not acquire the outage dot. Typed verification events use the shield with custom verifier hosts as well as the default host.
 - Removed the duplicate outage banner from single-model and Council key cards. The Activity Timeline heading is now "Verification not available"; its expanded explanation still identifies the key as unverified. Security Details retains verification status. Issuance, retry and rejection behavior are unchanged. This supersedes the key-card warning presentation described in the September 27 outage notes below.
 
+## 2026-09-28: Compact funding instructions and clearer existing balance
+
+- The funding screen leads with "Send" and the remaining amount including the
+  optional buffer, after subtracting ETH already at the address. The entire
+  balance bar and fee breakdown live in the question-mark panel, closed by
+  default. The extra minimum-shortfall sentence is removed.
+- The bar uses one continuous blue fill for the current address balance,
+  including leftovers from earlier deposits. It no longer colors that balance
+  as separate deposit/fee buckets. A required-total marker and hatched optional
+  range explain the target; exact ETH/USD amounts and the cost breakdown remain
+  available in the panel. Opening the panel persists through read-only refreshes.
+- Readiness still requires principal plus the required fee allowance; incomplete
+  optional buffer never blocks Next. See [funding behavior](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address).
+
+## 2026-09-28: Sepolia chat startup blocked by verifier TLS outage
+
+- Around 21:15 UTC, investigation of a reported "Failed to fetch" on private
+  chat startup identified a verifier outage that blocks new keys. Deployment
+  health, manifest, tree snapshot, billing quote and public RPC checks passed.
+  Browser requests to `verifier2.openanonymity.ai` failed, while independent
+  workstation and Sepolia EC2 probes timed out during the TLS handshake.
+  This failure precedes CORS checks; a frontend origin allowlist does not fix it.
+- Fresh Azure diagnostics at 21:18 UTC reported both `oa-verifier` and
+  `skr-sidecar` in `Waiting` with no start time, despite the container group
+  reporting `Running`. A group `DeploymentTimeout` event occurred at 19:53 UTC.
+  See [diagnostic run 36485142008](https://github.com/OpenAnonymity/oa-verifier/actions/runs/36485142008).
+- The SDK verifies each newly issued key before allowing inference. A failed
+  verification retains the prepared-request journal; preserve site storage and
+  use the existing recovery path after service restoration. Do not bypass key
+  verification. Mainnet shares this verifier and may also be affected; a funded
+  Mainnet chat was not tested. Recovery was not confirmed at investigation time.
+- Public deployment and asset-integrity checks alone do not establish live
+  verifier or inference readiness. See [runtime troubleshooting](ZKAPI_PAYMENTS.md#private-chat-startup-troubleshooting).
+
+## 2026-09-28: Optional funding buffer and address progress
+
+- Send to an address separates the required transaction allowance from an
+  optional fee buffer. Next requires the fixed principal plus the required
+  allowance, not the entire recommended buffer. A rising recommendation can
+  consume the already-shown budget without blocking or increasing authorization.
+- The visible funding bar shows the public address balance against Deposit,
+  Network fee and Optional buffer, with required and recommended totals. Once
+  required funds are present, the QR and suggested top-up disappear even if the
+  optional buffer is incomplete. Fee errors retain an independently checked
+  address balance while suppressing stale payment instructions.
+- The required fee allowance still covers the padded gas limit at a viable
+  next-block fee rate, as required for upfront affordability; it differs from
+  the estimated fee actually spent. See [funding behavior](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address).
+
+## 2026-09-28: ETH in balance details
+
+- Native balance details show exact ETH beneath the existing USD available
+  balance. The SDK's integer-gwei formatter preserves all nine ETH decimals,
+  independently of the USD oracle; stale pricing leaves USD unavailable while
+  ETH remains visible. Claimed balances use zero for both amount calculations.
+- This is display-only, with no new price requests or wallet operations. See
+  [native balance details](ZKAPI_PAYMENTS.md#native-balance-details).
+
+## 2026-09-28: Actual historical Mainnet USDC fees verified
+
+- The user supplied old Mainnet vault `0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709`.
+  Etherscan shows 31 successful deposits: 6,769,348–6,798,742 gas each,
+  effective prices 0.032632814–0.218146265 gwei, and approximately $0.42–$3.67
+  per deposit using each transaction date's ETH/USD closing reference.
+- The September 22 deposit of 2 USDC used 6,769,771 gas at 0.144245936 gwei:
+  0.000976511954400656 ETH, about $2.69. The later native quote's sampled
+  5.388380983-gwei effective rate is 37.36 times higher. Repricing that exact
+  old deposit at the quote's rate/reference gives $98.29. The user's memory of
+  much cheaper deposits is correct; network gas pricing explains the increase.
+- Both exact Mainnet deployments link the same Poseidon library and have
+  identical hashing source. These actual Mainnet transactions supersede the
+  earlier reliance on Sepolia/mock-token comparisons for historical costs.
+  See [Mainnet receipt comparison](ZKAPI_PAYMENTS.md#historical-mainnet-usdc-receipts-2026-09-28).
+
+## 2026-09-28: Nearly $100 Mainnet deposit quote
+
+- A later MetaMask screenshot still has a 6,759,269 gas limit, with 6.8453-gwei
+  max base fee and a 0.1-gwei tip. At Mainnet block 26078062's 5.288380983-gwei
+  base fee and the app's valid $2,694.5224 ETH/USD reference, using that full gas
+  limit would cost about $98.14. This is an estimate, not a completed receipt.
+- Prior controlled comparisons and archived Sepolia token/native receipts show
+  slightly lower native gas consumption. Historical Mainnet USDC receipts were
+  subsequently checked above. The expensive shared tree update and gas pricing
+  explain the quote; changing the deposit asset does not remove the hashing cost.
+- See the [quote investigation](ZKAPI_PAYMENTS.md#mainnet-metamask-nearly-100-fee-quote-2026-09-28).
+
+## 2026-09-28: Immediate payment method selection and user-approved fees
+
+- Payment method selection is local presentation state, independent of SDK
+  provider activation. Read-only fee/price RPCs must not block switching between
+  MetaMask and Send to an address. Explicit wallet actions and saved signed
+  transactions retain serialization; stale reads cannot restore old UI state.
+  Address quote preparation must activate and invoke the SDK in one synchronous
+  turn: the SDK reads the chain/root through its captured provider even when an
+  explicit sender is supplied. Stopped flow generations cancel delayed activation.
+- Removed the address signer's fixed 0.02 ETH total-fee and 300-gwei price caps.
+  They originated in the September 27 address-provider implementation, not an
+  Ethereum rule. Keep validated fee data, protocol gas bounds, sufficient funds,
+  and the user's exact approved quote allowance. Higher fees require a current
+  quote and user action; they do not justify an arbitrary market-price block.
+- Deposit screens omit repeated Mainnet/Sepolia labels and the network caption
+  under MetaMask. QR payloads retain their chain ID; withdrawal/return destination
+  labels still provide the network context needed for those actions.
+- See [wallet methods](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address)
+  for provider activation, current fee policy and quote approval boundaries.
+- Independent review passed 276 focused tests, including a real local-EVM
+  high-fee deposit. A fresh browser without MetaMask displayed a live Mainnet
+  quote/QR above the former fee cap and preserved the amount during rapid
+  method switches. No funds or external wallet signatures were used in that
+  browser check.
+
 ## 2026-09-28: Tinfoil DeepSeek V4.1 Flash catalog update
 
 - Memory and Tab-Tab now offer `deepseek-v4-1-flash` instead of the stale `deepseek-v4-flash`, matching Tinfoil's public catalog. Tinfoil marks V4.1 Flash experimental; live inference quality has not been validated here.
@@ -32,7 +143,8 @@
   remaining ETH transfer, including fees and subtracting the current address
   balance. Hide it with stale payment instructions on edits, quote failures,
   expiration or a fully funded address. The encoder is bundled; no remote QR
-  service or private data is used. Decoder tests cover both networks.
+  service or private data is used. Its caption is simply "Scan to pay"; the
+  redundant amount explanation underneath was removed. Decoder tests cover both networks.
 - See [wallet methods](ZKAPI_PAYMENTS.md#wallet-methods-metamask-and-send-to-an-address)
   for amount persistence, quote boundaries and QR semantics.
 - Regression coverage includes locking both dialogs before asynchronous price

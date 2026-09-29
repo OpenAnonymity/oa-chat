@@ -87,6 +87,16 @@ static hosts actually serve. Pin updates
 must change the package dependency and lock together; floating SDK branch
 references and local workspace dependencies are rejected by enabled builds.
 
+## Native balance details
+
+Balance details retain the USD available balance and show its exact ETH amount
+directly beneath it on native deployments. Both use the same available ledger
+balance, or zero after a confirmed expiry claim. The ETH line uses the SDK's
+`formatBillingAmount` integer-gwei conversion with up to nine decimal places;
+it is not derived from the rounded USD display. It remains available when the
+oracle is stale and the USD value displays `—`. Rendering adds no network reads
+or wallet operations.
+
 ## Application integration
 
 The standalone entry uses `startChatApp()` from `chat/publicApi.js`, which
@@ -159,6 +169,34 @@ blocked: the server has reserved the note's nullifier, and a client cannot safel
 assume that a missing response means no key was issued. No automatic refund or
 force-reset is performed.
 
+### Private chat startup troubleshooting
+
+On 2026-09-28 around 21:15 UTC, investigation of Sepolia's reported "Failed to
+fetch" identified an outage of the required key-verification service at
+`https://verifier2.openanonymity.ai` that blocks private chat startup. Browser
+requests failed; independent workstation and Sepolia EC2 probes timed out during
+TLS negotiation. The user's specific funded request was not reproduced.
+The Sepolia deployment's health, manifest, tree snapshot and billing quote
+were reachable and the public RPC preflight succeeded. The
+failure occurred before HTTP/CORS, so it was not evidence of a Sepolia origin
+allowlist mismatch. Fresh Azure diagnostics at 21:18 UTC showed both the
+`oa-verifier` and `skr-sidecar` containers stuck in `Waiting`, with no start
+time, while the overall group misleadingly reported `Running`. The group also
+had a `DeploymentTimeout` warning from 19:53 UTC. The read-only evidence is in
+[diagnostic run 36485142008](https://github.com/OpenAnonymity/oa-verifier/actions/runs/36485142008).
+No verifier restart or redeployment was performed in this investigation.
+The SDK requests a lease through the same-origin
+`/zkapi-deployment/` route, then posts its verification evidence to the pinned
+verifier's `/submit_key`; inference starts only after a verified response.
+Transport errors from this step can surface as the browser's bare "Failed to
+fetch" message. The prepared-request journal remains saved, so preserve site
+storage and recover the existing request after the service returns rather than
+resetting the wallet or bypassing verification. Mainnet pins the same verifier
+and may also be affected, but no funded Mainnet chat was tested during this
+investigation. Service recovery was not confirmed at that time. Public asset
+and deployment checks must be distinguished from live verifier and inference
+readiness checks.
+
 ## Wallet methods: MetaMask and Send to an address
 
 The web app offers exactly two choices: **MetaMask** first, then **Send to an
@@ -184,6 +222,15 @@ units. MetaMask's amount control does not create a browser funding account;
 only selecting Send to an address starts that method's address and fee checks.
 An edited draft follows the method switch instead of being replaced by an older
 address-scoped amount. An in-progress SDK deposit always keeps its saved amount.
+Selecting a method changes the local UI immediately, independently of background
+price, balance and fee reads. Provider activation happens when a read or explicit
+wallet action needs it. Read-only quote preparation activates and captures the
+address provider together, so it also works without a MetaMask extension.
+Transaction submission and saved-transaction recovery remain serialized.
+A stopped flow cannot activate a provider or repaint a different method when its
+read finishes.
+The deposit form omits redundant network badges and captions. Payment QR payloads
+still bind the configured chain, and destination fields retain their network context.
 
 For USD entry, the SDK reads a pinned,
 fresh finalized Chainlink ETH/USD reference price and computes an exact integer-gwei principal,
@@ -204,41 +251,63 @@ The reference uses the latest finalized round, with a 4,500-second age limit,
 and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
-The screen emphasizes the exact ETH still to send and its current USD estimate,
-network and funding address, with a short waiting/ready status. A clickable question
-mark beside the send amount reveals the breakdown: ETH principal added to the
-private balance, estimated network fee, additional fee buffer and total ETH to
-send, together with the estimate and browser-storage explanations. These details
-start closed; they are not hover text. ETH already held at
+The screen says **Send** above the exact remaining ETH transfer including the
+optional fee buffer, with its current USD estimate and funding address. The
+question mark beside that amount reveals the entire address-balance bar and
+cost breakdown. These details start closed; they are not hover text, and their
+open state survives read-only refreshes. There is no separate numeric minimum
+shortfall below the QR.
+The bar uses one blue fill for all ETH already at the address, explicitly
+including leftovers from previous deposits. The rest is unfilled; a marker
+shows the required total and a hatched tail marks the optional buffer. Balance
+is not visually allocated into deposit and fee buckets. The exact ETH/USD
+balance, funded percentage of the total including buffer, and plain breakdown
+of deposit, network fee allowance, optional buffer and totals stay in the panel.
+The optional buffer is extra on top of the required network fee allowance.
+The panel also explains the estimated actual fee versus the required allowance
+and browser storage. ETH already held at
 the funding address reduces the requested transfer. A five-second read-only
 loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
 and durably stores a note draft independently of `pending_deposit`; no funding
 quote connects MetaMask, authorizes a signer, or broadcasts a transaction.
+An independent successful balance read remains visible if the fee quote fails;
+a failed balance read clears availability instead of preserving stale readiness.
 The provider simulates the exact payable deposit with only the sender's balance
 overridden, then estimates its gas. RPCs lacking state-override support fail
 closed instead of substituting a fixed reserve.
 
-Valid address-payment instructions also display a locally generated QR code.
+Valid address-payment instructions also display a locally generated QR code
+with the short caption "Scan to pay" and no additional amount caption.
 Its [ERC-681 URI](https://eips.ethereum.org/EIPS/eip-681) binds the public
 funding address, configured chain ID and exact remaining transfer in wei:
 principal plus the fee allowance, less funds already held at that address.
 It is not a QR for only the private-note principal. Editing the amount hides
 the old QR immediately; missing, stale or failed fee estimates and a zero
-remaining transfer do not show a payable code. The SVG and encoder are bundled
+remaining transfer do not show a payable code. Once the required amount is
+covered, the QR and recommended top-up are hidden even if the optional buffer
+is not fully funded. The SVG and encoder are bundled
 locally, with a fixed white quiet zone in both themes. No QR service, private
 key, recovery material, account identity or inference content is involved.
 
 Expected fee is estimated gas multiplied by current base fee plus priority fee.
-The maximum allowance uses the SDK's padded gas limit and current EIP-1559
-maximum price; their difference is the additional buffer. The unchanged 300-gwei
-and 0.02-ETH caps are signing safety limits, not the normal prefunding amount.
-**Next** requires enough ETH for principal plus the allowance, forces a fresh
+The **required allowance** uses the SDK's padded gas limit multiplied by the
+next-block base-fee bound plus priority fee. This is upfront transaction
+affordability, not a promise that the entire allowance will be charged.
+The recommended maximum uses the same gas limit and the current EIP-1559 price
+with additional headroom. The **optional buffer** is that recommended maximum
+minus the required allowance, not minus the estimated actual fee. There is no fixed
+gas-price or total-ETH fee ceiling: users review the current quote and choose
+whether to proceed. The user's approved allowance still limits the signed deposit.
+**Next** requires enough ETH for principal plus the required allowance, forces a fresh
 quote and checks the saved amount before and after the asynchronous reads.
-An increased allowance requires reviewing the new quote and another explicit
-click. Submission binds the exact prepared operation, commitment, principal and
+A higher recommended buffer alone does not block progress: the approved fee
+limit is bounded by the displayed recommendation, refreshed recommendation and
+actual address balance after the unchanged principal. Only a required fee that
+no longer fits these bounds requires reviewing the new quote or more funds.
+Submission binds the exact prepared operation, commitment, principal and
 fee ceiling, then rechecks simulation, fees and expiry before signing.
 Fresh maximum price can be clamped to that approved total allowance divided by
-actual padded gas, so modest increases consume the existing buffer instead of
+actual padded gas and the freshly available address balance, so modest increases consume the existing buffer instead of
 requiring a larger allowance. The current next-block base fee plus tip must
 still fit, and the signer never exceeds the amount already approved.
 
@@ -275,8 +344,8 @@ matching recovery paths. The repaired setup remains a single-party development
 setup, not an audited production ceremony.
 
 The address provider validates the configured chain, token and vault, exact
-calldata and authorized amount/destination. It simulates calls and applies gas
-and fee caps. Signed transaction bytes and nonce are encrypted and durably saved
+calldata and authorized amount/destination. It simulates calls and enforces the
+protocol gas ceiling and approved deposit allowance. Signed transaction bytes and nonce are encrypted and durably saved
 before broadcast. Explicit recovery replays those identical bytes; ordinary
 status reads never broadcast. Web Locks serialize local signing across tabs;
 unsupported storage or locks fail closed for this option. All RPC requests use
@@ -285,10 +354,10 @@ or `globalThis.ethereum` substitution is introduced.
 
 New browser records use AES-256-GCM with a non-extractable browser key. Legacy
 records retain PBKDF2-SHA-256 until explicit conversion. The encrypted journal
-envelope has a 4 MiB limit. The signer uses the SDK’s EIP-7825 ceiling of 16,777,216 gas, with
-additional caps of 300 gwei and 0.02 ETH in gas fees. New transactions use
-EIP-1559 with the app's **Low** policy: 1.25 times the latest base fee (rounded
-up) plus a priority fee estimated from recent low bids, clipped to both caps.
+envelope has a 4 MiB limit. The signer uses the SDK’s EIP-7825 ceiling of 16,777,216 gas.
+New transactions use EIP-1559 with the app's **Low** policy: 1.25 times the latest
+base fee (rounded up) plus a priority fee estimated from recent low bids.
+Deposits may use the previously approved buffer, but never exceed that allowance.
 The tip is the integer median of the gas-weighted 10th-percentile rewards in
 nonempty blocks within the latest 20 blocks, with the existing 0.001-gwei minimum. Empty blocks
 are excluded; an entirely empty history uses that minimum. This avoids blindly
@@ -304,15 +373,17 @@ the priority fee, otherwise signing stops. Missing or malformed fee data also
 stops signing. Affordability uses the maximum possible fee, while the chain
 charges the actual fee. Existing legacy and type-2 recovery records replay
 their original bytes; the app does not raise fees or replace a pending
-transaction automatically. These limits can temporarily block a valid operation
-during high fees. Same-origin application code can use the browser-held key.
+transaction automatically. Arithmetic must fit a valid uint256 transaction,
+including value plus maximum fee. High market fees alone do not block a quote
+or an affordable, explicitly approved deposit. Same-origin application code can
+use the browser-held key.
 
 Before-broadcast funding and fee failures keep a public-only explanation scoped
 to the active action. After the SDK finishes preserving or releasing its own
 submission claim, the host restores that explanation over generic wallet-error
 copy. Insufficient ETH reports the exact shortfall from the freshly checked
 balance and maximum fee liability, the funding address/network, and an explicit
-retry instruction. Fee-limit and malformed-fee errors use fixed copy. No RPC
+retry instruction. Changed-quote and malformed-fee errors use fixed copy. No RPC
 error payload, proof, calldata or secret enters these explanations, and they
 are not persisted. A top-up or status refresh never retries the transaction.
 
@@ -422,9 +493,10 @@ Native used 0.1615% less gas than the earlier address/token deposit and paid
 older gas price gives 0.007440519287809800 ETH: the asset switch itself does
 not explain materially higher costs. The earlier token approval was a separate
 45,921-gas transaction costing 0.000044138983382823 ETH; do not compare an
-approval-only wallet quote with the whole deposit. No known historical Mainnet
-user receipt was supplied, so these are not assertions about that user's own
-Mainnet transactions.
+approval-only wallet quote with the whole deposit. At the time of this Sepolia
+comparison no historical Mainnet user receipt had been supplied. The later
+[actual Mainnet comparison](#historical-mainnet-usdc-receipts-2026-09-28)
+establishes the user's historical costs independently.
 
 The same comparison for withdrawal shows 7,057,861 gas / 0.007476799452342588
 ETH previously and 7,043,946 gas / 0.007545454436185302 ETH now. Gas usage fell
@@ -462,6 +534,74 @@ includes an additional buffer that is not necessarily spent. Ethereum's
 [gas documentation](https://ethereum.org/developers/docs/gas/) explains the
 gas-times-price calculation, and its [network documentation](https://ethereum.org/developers/docs/networks/)
 distinguishes test assets from actual-value Mainnet transactions.
+
+## Historical Mainnet USDC receipts (2026-09-28)
+
+The user supplied old Mainnet vault
+[`0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709`](https://etherscan.io/address/0xef88012d1A7F9d44e5f5afB8bC5e611Dc3283709).
+Its Etherscan history contains 54 transactions, including 31 successful deposit
+calls (`0xc588341c`, with the vault's deposit event). Reading all 31 transaction
+detail pages and verifying gas-used × effective-price against each fee gives:
+
+- Gas used: **6,769,348–6,798,742**.
+- Effective gas price: **0.032632814–0.218146265 gwei**.
+- Actual fees: **0.000220904538458786–0.001476713872634375 ETH**.
+- Approximately **$0.42–$3.67** using each transaction date's Etherscan ETH/USD
+  closing reference, rather than Etherscan's default current-dollar fee display.
+  This is a historical reference conversion, not an exact execution-time FX rate.
+
+The [September 22 deposit of 2 USDC](https://etherscan.io/tx/0x74c20b1a84bd8652baf319eeb9567de0e4b77dfa152945273dc00a3e15c39a92)
+used **6,769,771 gas** at **0.144245936 gwei**, paying
+**0.000976511954400656 ETH**, about **$2.69** at that date's $2,753.25 reference.
+Its base fee was 0.144145936 gwei and priority fee 0.0001 gwei. This was the
+full deposit, with a real USDC transfer and vault deposit event, not an approval.
+The user's recollection of substantially cheaper Mainnet deposits is correct.
+
+The native screenshot's 6,759,269 gas limit is essentially the same magnitude
+as that actual old consumption; a quote limit and a completed receipt are not
+identical measurements. The sampled native rate below, 5.288380983 base plus
+0.1 tip, is **37.36 times** that old effective gas price. Repricing the exact old
+deposit at that sampled rate and $2,694.5224 reference gives **$98.29**. The
+large dollar increase is explained by gas prices, not additional native hashing.
+
+Fresh reads of the old and new public manifests identify protocol e4efda23 and
+8b2d4e3 respectively, both linked to the same Mainnet Poseidon library
+`0xc6B55e86668d8c446B3D81273AAb9CBb20F28c7f`; public `eth_getCode` confirms that
+address in both vault runtimes. Those exact versions have byte-identical
+Poseidon, Merkle update, note-leaf source and source compiler configuration.
+
+Sanitized per-transaction evidence is saved locally as
+`~/.codex/deployments/zkapi-fresh-20260928/old-mainnet-usdc-receipt-comparison-public.json`.
+Historical receipt RPC calls to PublicNode returned null, so receipt fields
+above were verified from Etherscan rather than independently from that RPC.
+No transaction, contract change or deployment was performed.
+
+## Mainnet MetaMask nearly $100 fee quote (2026-09-28)
+
+The later screenshot reports gas limit **6,759,269**, max base fee **6.8453
+gwei**, and priority fee **0.1 gwei** for a roughly $2 deposit. These are wallet
+quote fields, not a submitted transaction or actual receipt.
+
+A read-only sample at **19:31:55 UTC** returned Mainnet block **26078062**
+(timestamp 19:31:47 UTC) with base fee **5.288380983 gwei**. The app's pinned
+finalized ETH/USD reference was **$2,694.5224**, updated at 18:30:35 UTC and
+within its 4,500-second validity window. Assuming the entire screenshot gas
+limit is consumed, base fee plus its 0.1-gwei tip gives
+**0.036421516538581427 ETH**, or **$98.14**. The tip alone contributes about
+**$1.82**. This explains the displayed order of magnitude without treating the
+maximum fee field as the actual inclusion price. The eventual charge depends
+on actual gas used and the inclusion block's fee.
+
+The amount deposited does not scale down the vault's tree-hashing work. Prior
+controlled legacy ERC20/native comparisons below found native slightly cheaper
+in gas, and token approval was an additional transaction. Those tests and
+Sepolia receipts are not the user's historical Mainnet USDC receipt. The recent
+browser fee-cap removal changes the address provider's acceptance policy; it
+does not change MetaMask's fee rates or the deployed vault's computation.
+
+The sanitized read-only sample and arithmetic are saved locally as
+`~/.codex/deployments/zkapi-fresh-20260928/mainnet-fee-screenshot-20260928-public.json`.
+No wallet connection, signature, transaction or deployment was performed.
 
 ## Mainnet MetaMask $26.45 fee investigation (2026-09-28)
 

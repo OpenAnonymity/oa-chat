@@ -5,9 +5,10 @@ const nonNegativeInteger = value => typeof value === 'string' && /^\d+$/.test(va
 const depositChanged = 'The deposit amount changed in another tab. Reopen this screen to use the saved amount.';
 
 function validateFeeQuote(fee, intent, funding, address, now) {
-    if (!fee || !positiveInteger(fee.expectedFeeWei) || !positiveInteger(fee.feeReserveWei)
+    if (!fee || !positiveInteger(fee.expectedFeeWei) || !positiveInteger(fee.requiredFeeWei) || !positiveInteger(fee.feeReserveWei)
         || !nonNegativeInteger(fee.feeBufferWei)
-        || BigInt(fee.expectedFeeWei) + BigInt(fee.feeBufferWei) !== BigInt(fee.feeReserveWei)
+        || BigInt(fee.expectedFeeWei) > BigInt(fee.requiredFeeWei)
+        || BigInt(fee.requiredFeeWei) + BigInt(fee.feeBufferWei) !== BigInt(fee.feeReserveWei)
         || String(fee.amount) !== intent.amount || String(fee.depositWei) !== intent.depositWei
         || Number(fee.chainId) !== Number(funding.chain_id)
         || String(fee.address).toLowerCase() !== address.toLowerCase()
@@ -194,21 +195,31 @@ export class AddressDepositFlow extends DepositAmount {
                 this.ready = false;
                 this.changed({ expired: true });
             }
-            const [status, result] = await Promise.all([
+            const [statusResult, feeResult] = await Promise.allSettled([
                 this.wallet.getStatus(),
-                !forceQuote && fresh ? this.fee : this.wallet.getDepositFeeQuote(intent)
+                !forceQuote && fresh ? this.fee : this.wallet.getDepositFeeQuote(intent, {
+                    isCurrent: () => this.running && generation === this.generation && edit === this.editGeneration
+                        && intent === this.intent && check === this.checkGeneration
+                })
             ]);
             if (!this.running || generation !== this.generation || edit !== this.editGeneration
                 || intent !== this.intent || check !== this.checkGeneration) return;
-            if (!nonNegativeInteger(status?.ethBalance)) throw new Error('The address balance could not be checked.');
-            const fee = validateFeeQuote(result, intent, this.client.config.funding, this.address, this.now());
+            const status = statusResult.status === 'fulfilled' ? statusResult.value : null;
+            if (!nonNegativeInteger(status?.ethBalance)) {
+                this.status = null;
+                throw new Error('The address balance could not be checked.');
+            }
+            // A quote failure must not hide a successfully checked public
+            // balance. Showing funds never grants signing readiness on its own.
             this.status = status;
+            this.checkedAt = this.now();
+            if (feeResult.status === 'rejected') throw feeResult.reason;
+            const fee = validateFeeQuote(feeResult.value, intent, this.client.config.funding, this.address, this.now());
             this.fee = fee;
             this.scheduleQuoteExpiry(fee);
-            this.checkedAt = this.now();
             this.error = '';
             this.ready = !this.wallet.hasPendingTransaction
-                && BigInt(status.ethBalance) >= BigInt(intent.depositWei) + BigInt(fee.feeReserveWei);
+                && BigInt(status.ethBalance) >= BigInt(intent.depositWei) + BigInt(fee.requiredFeeWei);
         } catch (error) {
             if (generation !== this.generation || edit !== this.editGeneration || check !== this.checkGeneration) return;
             this.error = error.message;
@@ -221,6 +232,17 @@ export class AddressDepositFlow extends DepositAmount {
 
     get totalWei() {
         return this.intent && this.fee ? (BigInt(this.intent.depositWei) + BigInt(this.fee.feeReserveWei)).toString() : null;
+    }
+
+    get requiredWei() {
+        return this.intent && this.fee ? (BigInt(this.intent.depositWei) + BigInt(this.fee.requiredFeeWei)).toString() : null;
+    }
+
+    get requiredRemainingWei() {
+        const required = this.requiredWei;
+        if (required == null || !nonNegativeInteger(this.status?.ethBalance)) return null;
+        const remaining = BigInt(required) - BigInt(this.status.ethBalance);
+        return (remaining > 0n ? remaining : 0n).toString();
     }
 
     get remainingWei() {
@@ -250,12 +272,15 @@ export class AddressDepositFlow extends DepositAmount {
             if (!this.running || !this.ready || intent !== this.intent || edit !== this.editGeneration) {
                 throw new Error(this.error || 'The address needs more ETH to cover the deposit and current network fees.');
             }
-            if (BigInt(this.fee.feeReserveWei) > displayedLimit) {
+            const availableFee = BigInt(this.status.ethBalance) - BigInt(intent.depositWei);
+            const currentLimit = BigInt(this.fee.feeReserveWei);
+            const feeLimit = [displayedLimit, availableFee, currentLimit].reduce((minimum, value) => value < minimum ? value : minimum);
+            if (BigInt(this.fee.requiredFeeWei) > feeLimit) {
                 throw new Error('Network fees changed. Review the updated amount, then choose Next again.');
             }
             return { ...intent, preparedOperationId: this.fee.operationId,
                 depositCommitment: this.fee.depositCommitment,
-                feeLimitWei: this.fee.feeReserveWei, feeQuoteExpiresAt: this.fee.expiresAt };
+                feeLimitWei: feeLimit.toString(), feeQuoteExpiresAt: this.fee.expiresAt };
         } finally { this.verifying = false; }
     }
 
