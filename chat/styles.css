@@ -8501,6 +8501,8 @@ div:has(> #input-card.scrubber-preview-expanded) {
     color: hsl(var(--color-foreground));
 }
 
+.expiry-custom-error { color: hsl(var(--color-destructive-text)); text-wrap: pretty; }
+
 .expiry-toggle-btn[aria-checked="true"] {
     color: hsl(var(--color-foreground));
 }

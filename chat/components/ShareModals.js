@@ -1,3 +1,4 @@
+import { resolveCustomShareExpiry } from '../domain/shareExpiry.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 /**
  * ShareModals Component
@@ -599,12 +600,27 @@ class ShareModals {
             }
         };
 
+        // The typed value is validated, never repaired: "0 days" is an error to
+        // show, not a one-day share to create.
+        const customError = container.querySelector('.expiry-custom-error');
+        const showCustomError = (message) => {
+            if (customError) {
+                customError.textContent = message || '';
+                customError.classList.toggle('hidden', !message);
+            }
+            customValue?.setAttribute('aria-invalid', message ? 'true' : 'false');
+        };
+        const resolveCustom = () => resolveCustomShareExpiry(customValue?.value, customUnit?.value);
+
         // Save custom values when changed and handle Enter key
         if (customValue && customUnit) {
             const saveCustom = () => {
-                const val = parseInt(customValue.value, 10) || 1;
-                const unit = customUnit.value;
-                setCustomExpiry(val, unit);
+                const resolved = resolveCustom();
+                // Editing clears a stale error; the submit re-validates.
+                if (resolved.ok || customError?.classList.contains('hidden') === false) {
+                    showCustomError(resolved.ok ? '' : resolved.message);
+                }
+                if (resolved.ok) setCustomExpiry(parseInt(customValue.value, 10), customUnit.value);
             };
             customValue.addEventListener('input', saveCustom);
             customUnit.addEventListener('change', saveCustom);
@@ -657,12 +673,20 @@ class ShareModals {
             });
         });
 
+        // Returns the TTL in seconds, or null after showing why the custom
+        // value cannot be used (the caller must not submit in that case).
         return () => {
             const isCustom = selectedIndex === buttons.length - 1;
             if (isCustom && customValue && customUnit) {
-                const val = parseInt(customValue.value, 10) || 1;
-                const unit = parseInt(customUnit.value, 10) || 86400;
-                return Math.max(60, Math.min(val * unit, 2592000));
+                const resolved = resolveCustom();
+                if (!resolved.ok) {
+                    showCustomError(resolved.message);
+                    customValue.focus();
+                    customValue.select?.();
+                    return null;
+                }
+                showCustomError('');
+                return resolved.ttlSeconds;
             }
             const preset = TTL_PRESETS[selectedIndex];
             return preset !== undefined ? preset.value : 604800;
@@ -1126,13 +1150,14 @@ class ShareModals {
                             </button>
                         </div>
                         <div class="expiry-custom-container hidden mt-2 flex items-center justify-end gap-2">
-                            <input type="number" class="expiry-custom-value w-16 px-2 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary text-center" min="1" max="999" value="1">
+                            <input type="number" class="expiry-custom-value w-16 px-2 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary text-center" min="1" step="1" value="1" inputmode="numeric" aria-describedby="expiry-custom-error">
                             <select class="expiry-custom-unit px-2 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary">
                                 <option value="60">minutes</option>
                                 <option value="3600">hours</option>
                                 <option value="86400" selected>days</option>
                             </select>
                         </div>
+                        <p id="expiry-custom-error" class="expiry-custom-error hidden mt-1.5 text-right text-xs" role="alert"></p>
                     </div>
 
                     ${hasApiKey ? `
@@ -1226,13 +1251,15 @@ class ShareModals {
             };
 
             const handleConfirm = () => {
+                const ttlSeconds = getTtlSeconds();
+                if (ttlSeconds === null) return; // invalid custom expiry is shown inline
                 const password = currentMode === 'pin'
                     ? (pinInput?.value || null)
                     : (passwordInput?.value || null);
 
                 finish({
                     password,
-                    ttlSeconds: getTtlSeconds(),
+                    ttlSeconds,
                     shareApiKeyMetadata: apiMetadataCheckbox?.checked || false
                 });
             };
@@ -1420,13 +1447,14 @@ class ShareModals {
                             </button>
                         </div>
                         <div class="expiry-custom-container hidden mt-2 flex items-center justify-end gap-2">
-                            <input type="number" class="expiry-custom-value w-16 px-2 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary text-center" min="1" max="999" value="1">
+                            <input type="number" class="expiry-custom-value w-16 px-2 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary text-center" min="1" step="1" value="1" inputmode="numeric" aria-describedby="expiry-custom-error">
                             <select class="expiry-custom-unit px-2 py-1.5 text-sm border border-border/60 rounded-lg bg-background text-foreground focus:outline-none focus:border-primary">
                                 <option value="60">minutes</option>
                                 <option value="3600">hours</option>
                                 <option value="86400" selected>days</option>
                             </select>
                         </div>
+                        <p id="expiry-custom-error" class="expiry-custom-error hidden mt-1.5 text-right text-xs" role="alert"></p>
                     </div>
 
                     ${hasApiKey ? `
@@ -1608,13 +1636,16 @@ class ShareModals {
                 return;
             }
 
+            const ttlSeconds = getTtlSeconds();
+            if (ttlSeconds === null) return; // invalid custom expiry is shown inline
+
             const password = currentMode === 'pin'
                 ? (pinValue || null)
                 : (passwordValue || null);
 
             const settings = {
                 password,
-                ttlSeconds: getTtlSeconds(),
+                ttlSeconds,
                 shareApiKeyMetadata: apiMetadataCheckbox?.checked || false
             };
 
