@@ -3,7 +3,8 @@
 The standalone Go module lives in `daemon/`. Its `internal/ticket` package
 implements the same public Blind RSA ticket protocol as the browser, without an
 account session, browser cookies, or billing credentials. The daemon's local
-OpenAI API obtains a fresh, verified provider credential for every request.
+OpenAI API obtains a fresh provider credential for every request under the
+verification policy below.
 
 ## Import and invitation redemption
 
@@ -51,13 +52,18 @@ revoke copies held elsewhere; redeeming the same ticket twice fails upstream.
    `InferenceTicket token=...` or `InferenceTicket tokens=...` to
    `/api/request_key`.
 6. Submit the provisional key and station/org signatures to `/submit_key`.
-   Activate it only after `status=verified`, the exact station ID, and the
-   requested key's SHA-256 identifier all match. The deployed verifier and OA
+   A verified credential requires `status=verified`, the exact station ID, and
+   the requested key's SHA-256 identifier to match. The deployed verifier and OA
    Chat use the first eight digest bytes (16 lowercase hex characters); a full
    64-character SHA-256 response is also accepted only when all 64 characters
    match. Other lengths, including arbitrary shorter prefixes, fail. Expired,
-   pending, unknown, mismatched, and failed responses discard the credential.
-   There is no staging verifier bypass.
+   pending, unknown, mismatched, malformed and explicit refusal responses
+   discard the credential. The narrow [web-compatible outage policy](CLI_ZKAPI.md#privacy-boundaries)
+   also applies: eligible unavailable verification is labelled unverified in
+   response headers and a fixed foreground warning. This is not blanket
+   staging trust. The daemon checks each single-use key once and retains no
+   browser-style retry queue. A hard verification failure does not restore
+   already spent tickets.
 
 The key identifier is a consistency check on the authenticated HTTPS
 `/submit_key` response for that same raw key and signatures, not a standalone

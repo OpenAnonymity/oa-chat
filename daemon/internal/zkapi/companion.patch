@@ -1,31 +1,65 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index c9907ee..d485e85 100644
+index 7b7750c..555496d 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
-@@ -3190,7 +3190,9 @@ dependencies = [
+@@ -3246,6 +3246,7 @@ dependencies = [
   "reqwest",
   "serde",
   "serde_json",
 + "sha2",
   "sha3",
-+ "tempfile",
+  "tempfile",
   "thiserror",
-  "tokio",
-  "tower",
+@@ -3257,6 +3258,7 @@ dependencies = [
+  "zkapi-auth",
+  "zkapi-client",
+  "zkapi-core",
++ "zkapi-proof",
+  "zkapi-serverd",
+  "zkapi-types",
+ ]
 diff --git a/crates/zkapi-cli/src/main.rs b/crates/zkapi-cli/src/main.rs
-index 2337fc9..81581ca 100644
+index 594cbe6..f901eef 100644
 --- a/crates/zkapi-cli/src/main.rs
 +++ b/crates/zkapi-cli/src/main.rs
-@@ -635,6 +635,7 @@ fn build_auth_service_with_mode(
-             .collect(),
-         demo_rpc_url: cli.demo_rpc_url.clone(),
-         demo_billing_token_address: cli.demo_billing_token_address.clone(),
-+        demo_mint_enabled: false,
-         demo_private_key: cli.demo_private_key.clone(),
-         demo_note_ttl_seconds: cli.demo_note_ttl_seconds,
-         proof_mode: "groth16_bn254".to_string(),
-@@ -692,6 +693,11 @@ async fn run_one_command_client(options: OneCommandClientOptions<'_>) -> anyhow:
+@@ -312,6 +312,18 @@ struct DeploymentManifest {
+     contract_address: String,
+     billing_token_address: Option<String>,
+     #[serde(default)]
++    billing_asset: String,
++    #[serde(default)]
++    billing_unit: String,
++    #[serde(default)]
++    native_asset_wei_per_unit: String,
++    #[serde(default)]
++    native_price_feed_address: String,
++    #[serde(default)]
++    native_price_feed_decimals: u8,
++    #[serde(default)]
++    native_price_max_age_seconds: u64,
++    #[serde(default)]
+     demo_mint_enabled: bool,
+     protocol_server_url: String,
+     indexer_url: String,
+@@ -684,10 +696,13 @@ fn build_auth_service_with_mode(
+     request_mode: RequestMode,
+ ) -> anyhow::Result<Arc<AuthService>> {
+     AuthService::new(AuthConfig {
++        deployment_id: String::new(), billing_asset: "erc20".into(), billing_unit: "micro_usdc".into(), native_asset_wei_per_unit: "0".into(),
++        native_price_feed_address: String::new(), native_price_feed_decimals: 8, native_price_max_age_seconds: 3600,
+         protocol_version: cli.protocol_version,
+         chain_id: cli.chain_id,
+         contract_address: parse_felt("contract address", &cli.contract_address)?,
+         request_charge_cap: cli.request_charge_cap,
++        oa_request_limit_micro_usd: 1_000_000,
+         policy_charge_cap: cli.policy_charge_cap,
+         policy_enabled: cli.policy_enabled,
+         auth_scheme: parse_auth_scheme(&cli.auth_scheme)?,
+@@ -768,8 +783,14 @@ async fn run_one_command_client(options: OneCommandClientOptions<'_>) -> anyhow:
+         openrouter_inference_base,
+         require_oa_org_key_source,
      } = options;
++    validate_oa_bridge_transport()?;
      let manifest = load_deployment_manifest(deployment).await?;
      validate_deployment_manifest(&manifest)?;
 +    let expected_chain: u64 = std::env::var("OA_ZKAPI_CHAIN_ID")
@@ -36,26 +70,89 @@ index 2337fc9..81581ca 100644
 
      let state_dir =
          requested_state_dir.unwrap_or_else(|| default_client_state_dir(&manifest.deployment_id));
-@@ -843,12 +849,13 @@ fn auth_service_from_manifest(
-         models,
+@@ -863,6 +884,20 @@ async fn run_one_command_client(options: OneCommandClientOptions<'_>) -> anyhow:
+     run(service, listen).await
+ }
+
++fn validate_oa_bridge_transport() -> anyhow::Result<()> {
++    if std::env::var_os("OA_ZKAPI_BRIDGE_TOKEN").is_none() { return Ok(()); }
++    let proxy = std::env::var("HTTPS_PROXY").map_err(|_| anyhow::anyhow!("OA companion requires the local authenticated CONNECT proxy"))?;
++    let url = reqwest::Url::parse(&proxy)?;
++    anyhow::ensure!(url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "::1"))
++        && url.port().is_some() && !url.username().is_empty() && url.password().is_some_and(|value| value.len() >= 32)
++        && url.path() == "/" && url.query().is_none() && url.fragment().is_none(), "invalid OA local CONNECT proxy");
++    for key in ["HTTP_PROXY","ALL_PROXY","http_proxy","https_proxy","all_proxy"] {
++        anyhow::ensure!(std::env::var(key).as_deref() == Ok(proxy.as_str()), "inconsistent OA proxy configuration");
++    }
++    for key in ["NO_PROXY","no_proxy"] { anyhow::ensure!(std::env::var(key).unwrap_or_default().is_empty(), "OA proxy bypass is prohibited"); }
++    Ok(())
++}
++
+ async fn load_deployment_manifest(source: &str) -> anyhow::Result<DeploymentManifest> {
+     let bytes = if source.starts_with("https://") || source.starts_with("http://") {
+         reqwest::get(source)
+@@ -931,15 +966,23 @@ fn auth_service_from_manifest(
+         require_oa_org_key_source,
+     } = policy;
+     let models = if manifest.models.is_empty() {
+-        vec![ModelDescriptor::new("openai/gpt-5.6-sol")]
++        vec![ModelDescriptor::new("openai/gpt-4o-mini")]
+     } else {
+         manifest.models.clone()
+     };
+     AuthService::new(AuthConfig {
++        deployment_id: manifest.deployment_id.clone(),
++        billing_asset: manifest.billing_asset.clone(),
++        billing_unit: manifest.billing_unit.clone(),
++        native_asset_wei_per_unit: manifest.native_asset_wei_per_unit.clone(),
++        native_price_feed_address: manifest.native_price_feed_address.clone(),
++        native_price_feed_decimals: manifest.native_price_feed_decimals,
++        native_price_max_age_seconds: manifest.native_price_max_age_seconds,
+         protocol_version: manifest.protocol_version,
+         chain_id: manifest.chain_id,
+         contract_address: parse_felt("deployment contract address", &manifest.contract_address)?,
+         request_charge_cap: manifest.request_charge_cap,
++        oa_request_limit_micro_usd: std::env::var("OA_ZKAPI_REQUEST_LIMIT_MICRO_USD").unwrap_or_else(|_| "1000000".into()).parse()?,
+         policy_charge_cap: 10_000_000,
+         policy_enabled: false,
+         auth_scheme: zkapi_auth::AuthSchemeKind::StateAnchor,
+@@ -951,12 +994,12 @@ fn auth_service_from_manifest(
+         suggested_deposit_amount,
          demo_rpc_url: Some(manifest.rpc_url.clone()),
          demo_billing_token_address: manifest.billing_token_address.clone(),
-+        demo_mint_enabled: manifest.chain_id == 11_155_111 && manifest.demo_mint_enabled,
-         demo_private_key: None,
+-        demo_mint_enabled: manifest.demo_mint_enabled && allow_demo_mint,
++        demo_mint_enabled: manifest.chain_id == 11_155_111 && manifest.demo_mint_enabled && allow_demo_mint,
          demo_note_ttl_seconds: None,
          proof_mode: "groth16_bn254".to_string(),
          cairo_dir: String::new(),
          trusted_epoch_roots: Vec::new(),
 -        proof_setup_dir: "protocol/setup/v2".to_string(),
-+        proof_setup_dir: std::env::var("ZKAPI_PROOF_SETUP_DIR").unwrap_or_else(|_| "protocol/setup/v2".to_string()),
++        proof_setup_dir: std::env::var("ZKAPI_PROOF_SETUP_DIR").unwrap_or_else(|_| "protocol/setup/v2".into()),
          state_signing_key: parse_curve_point(
              "deployment state signing key",
              &manifest.state_signing_key.x,
+@@ -2396,6 +2439,8 @@ mod tests {
+     fn deployment_manifest_rejects_non_v2_backends() {
+         let manifest = DeploymentManifest {
+             deployment_id: "test".to_string(),
++            billing_asset: "erc20".into(), billing_unit: "micro_usdc".into(), native_asset_wei_per_unit: "0".into(),
++            native_price_feed_address: String::new(), native_price_feed_decimals: 8, native_price_max_age_seconds: 3600,
+             protocol_version: 1,
+             chain_id: 11155111,
+             rpc_url: "https://rpc.example".to_string(),
 diff --git a/crates/zkapi-clientd/Cargo.toml b/crates/zkapi-clientd/Cargo.toml
-index 0b24c2c..0dd4244 100644
+index c52ce9f..f9a2968 100644
 --- a/crates/zkapi-clientd/Cargo.toml
 +++ b/crates/zkapi-clientd/Cargo.toml
-@@ -23,6 +23,7 @@ reqwest = { workspace = true }
+@@ -11,6 +11,7 @@ path = "src/main.rs"
+
+ [dependencies]
+ zkapi-client = { path = "../../protocol/rust/crates/zkapi-client" }
++zkapi-proof = { path = "../../protocol/rust/crates/zkapi-proof" }
+ zkapi-core = { path = "../../protocol/rust/crates/zkapi-core" }
+ zkapi-types = { path = "../../protocol/rust/crates/zkapi-types" }
+ zkapi-auth = { path = "../zkapi-auth" }
+@@ -24,6 +25,7 @@ reqwest = { workspace = true }
  serde = { workspace = true }
  serde_json = { workspace = true }
  sha3 = { workspace = true }
@@ -63,36 +160,50 @@ index 0b24c2c..0dd4244 100644
  thiserror = { workspace = true }
  tokio = { workspace = true }
  tower = { workspace = true }
-@@ -31,6 +32,7 @@ tracing = { workspace = true }
- tracing-subscriber = { workspace = true }
-
- [dev-dependencies]
-+tempfile = { workspace = true }
- zkapi-core = { path = "../../protocol/rust/crates/zkapi-core" }
- zkapi-serverd = { path = "../zkapi-serverd" }
- http-body-util = "0.1"
 diff --git a/crates/zkapi-clientd/src/config.rs b/crates/zkapi-clientd/src/config.rs
-index 0787fac..00da439 100644
+index ebde330..5946cae 100644
 --- a/crates/zkapi-clientd/src/config.rs
 +++ b/crates/zkapi-clientd/src/config.rs
-@@ -50,6 +50,7 @@ pub struct AuthConfig {
-     pub models: Vec<ModelDescriptor>,
-     pub demo_rpc_url: Option<String>,
-     pub demo_billing_token_address: Option<String>,
-+    pub demo_mint_enabled: bool,
-     pub demo_private_key: Option<String>,
-     pub demo_note_ttl_seconds: Option<u64>,
-     /// Retired v1 compatibility field; v2 always uses Groth16 BN254.
-@@ -99,6 +100,7 @@ impl Default for AuthConfig {
-             models: vec![ModelDescriptor::new("zkapi-echo")],
-             demo_rpc_url: None,
-             demo_billing_token_address: None,
-+            demo_mint_enabled: false,
-             demo_private_key: None,
-             demo_note_ttl_seconds: None,
-             proof_mode: "groth16_bn254".to_string(),
+@@ -35,10 +35,20 @@ impl ModelDescriptor {
+
+ #[derive(Debug, Clone)]
+ pub struct AuthConfig {
++    pub deployment_id: String,
++    pub billing_asset: String,
++    pub billing_unit: String,
++    pub native_asset_wei_per_unit: String,
++    pub native_price_feed_address: String,
++    pub native_price_feed_decimals: u8,
++    pub native_price_max_age_seconds: u64,
++
++
+     pub protocol_version: u16,
+     pub chain_id: u64,
+     pub contract_address: Felt252,
+     pub request_charge_cap: u128,
++    pub oa_request_limit_micro_usd: u128,
+     pub policy_charge_cap: u128,
+     pub policy_enabled: bool,
+     /// Authentication method this client uses; must match the server's.
+@@ -88,10 +98,16 @@ impl AuthConfig {
+ impl Default for AuthConfig {
+     fn default() -> Self {
+         Self {
++            deployment_id: String::new(),
++            billing_asset: "erc20".into(),
++            billing_unit: "micro_usdc".into(),
++            native_asset_wei_per_unit: "0".into(),
++            native_price_feed_address: String::new(), native_price_feed_decimals: 8, native_price_max_age_seconds: 3600,
+             protocol_version: 2,
+             chain_id: 1,
+             contract_address: Felt252::ZERO,
+             request_charge_cap: 1_000_000,
++            oa_request_limit_micro_usd: 1_000_000,
+             policy_charge_cap: 10_000_000,
+             policy_enabled: false,
+             auth_scheme: zkapi_auth::AuthSchemeKind::StateAnchor,
 diff --git a/crates/zkapi-clientd/src/error.rs b/crates/zkapi-clientd/src/error.rs
-index 8edf04e..e55322a 100644
+index 6f82083..373ea54 100644
 --- a/crates/zkapi-clientd/src/error.rs
 +++ b/crates/zkapi-clientd/src/error.rs
 @@ -4,6 +4,12 @@ use zkapi_client::error::ClientError;
@@ -102,27 +213,27 @@ index 8edf04e..e55322a 100644
 +    #[error("inference is awaiting settlement; retry withdrawal after settlement")]
 +    PendingSettlement,
 +    #[error("withdrawal transaction is awaiting finalized confirmation")]
-+    WithdrawalPending,
++    OaWithdrawalPending,
 +    #[error("a withdrawal is reserved for a different destination or note state; resume the saved withdrawal")]
 +    WithdrawalConflict,
      #[error("wallet is busy in another process")]
      WalletBusy,
      #[error("wallet has no active note; fund it first")]
-@@ -31,7 +37,7 @@ pub enum AuthError {
+@@ -42,7 +48,7 @@ pub enum AuthError {
  impl AuthError {
      pub fn status_code(&self) -> StatusCode {
          match self {
 -            Self::WalletBusy => StatusCode::CONFLICT,
-+            Self::WalletBusy | Self::PendingSettlement | Self::WithdrawalPending | Self::WithdrawalConflict => StatusCode::CONFLICT,
++            Self::WalletBusy | Self::PendingSettlement | Self::OaWithdrawalPending | Self::WithdrawalConflict => StatusCode::CONFLICT,
              Self::NoActiveNote | Self::InsufficientBalance => StatusCode::PAYMENT_REQUIRED,
-             Self::PendingRequest | Self::LeasePending(_) => StatusCode::CONFLICT,
-             Self::InvalidInput(_) | Self::Serialization(_) => StatusCode::BAD_REQUEST,
-@@ -44,6 +50,9 @@ impl AuthError {
+             Self::PendingRequest
+             | Self::LeasePending(_)
+@@ -59,6 +65,9 @@ impl AuthError {
      pub fn code(&self) -> &'static str {
          match self {
              Self::WalletBusy => "wallet_busy",
 +            Self::PendingSettlement => "pending_settlement",
-+            Self::WithdrawalPending => "withdrawal_pending",
++            Self::OaWithdrawalPending => "withdrawal_pending",
 +            Self::WithdrawalConflict => "withdrawal_conflict",
              Self::NoActiveNote => "no_active_note",
              Self::InsufficientBalance => "insufficient_balance",
@@ -176,7 +287,7 @@ index 6952f58..cb8c9ab 100644
              .send()
              .await
 diff --git a/crates/zkapi-clientd/src/lib.rs b/crates/zkapi-clientd/src/lib.rs
-index e046d70..e18b6d5 100644
+index 2cbde2c..452f232 100644
 --- a/crates/zkapi-clientd/src/lib.rs
 +++ b/crates/zkapi-clientd/src/lib.rs
 @@ -4,6 +4,7 @@ pub mod error;
@@ -187,21 +298,411 @@ index e046d70..e18b6d5 100644
 
  pub use config::{AuthConfig, ModelDescriptor, RequestMode};
  pub use routes::{build_router, run};
+@@ -14,3 +15,5 @@ pub use service::{
+     ServerAttestationSnapshot, ServerHealthSnapshot, ServerSnapshot, WalletStatus,
+     WithdrawalChainStatus, WithdrawalMode, WithdrawalPlan, ZkapiConfig, CREDITS_PER_USD,
+ };
++
++mod oa_native;
 diff --git a/crates/zkapi-clientd/src/main.rs b/crates/zkapi-clientd/src/main.rs
-index 75a1e9a..83554d6 100644
+index 3b94253..454ed46 100644
 --- a/crates/zkapi-clientd/src/main.rs
 +++ b/crates/zkapi-clientd/src/main.rs
-@@ -116,6 +116,7 @@ async fn main() -> anyhow::Result<()> {
-         models: args.models.into_iter().map(ModelDescriptor::new).collect(),
-         demo_rpc_url: args.demo_rpc_url,
-         demo_billing_token_address: args.demo_billing_token_address,
-+        demo_mint_enabled: false,
-         demo_private_key: args.demo_private_key,
-         demo_note_ttl_seconds: args.demo_note_ttl_seconds,
-         proof_mode: "groth16_bn254".to_string(),
+@@ -99,11 +99,14 @@ async fn main() -> anyhow::Result<()> {
+
+     let args = Args::parse();
+     let service = AuthService::new(AuthConfig {
++        deployment_id: String::new(), billing_asset: "erc20".into(), billing_unit: "micro_usdc".into(), native_asset_wei_per_unit: "0".into(),
++        native_price_feed_address: String::new(), native_price_feed_decimals: 8, native_price_max_age_seconds: 3600,
+         protocol_version: args.protocol_version,
+         chain_id: args.chain_id,
+         contract_address: Felt252::from_hex(&args.contract_address)
+             .map_err(|err| anyhow::anyhow!("invalid --contract-address: {err}"))?,
+         request_charge_cap: args.request_charge_cap,
++        oa_request_limit_micro_usd: 1_000_000,
+         policy_charge_cap: args.policy_charge_cap,
+         policy_enabled: args.policy_enabled,
+         auth_scheme: args
+diff --git a/crates/zkapi-clientd/src/oa_native.rs b/crates/zkapi-clientd/src/oa_native.rs
+new file mode 100644
+index 0000000..cea7cb1
+--- /dev/null
++++ b/crates/zkapi-clientd/src/oa_native.rs
+@@ -0,0 +1,371 @@
++//! Native ETH quote checks. Never trust the payment server's conversion alone.
++use crate::{config::AuthConfig, error::AuthError};
++use serde::{Deserialize, Serialize};
++use serde_json::{json, Value};
++
++#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
++#[serde(deny_unknown_fields)]
++pub(crate) struct Quote {
++    pub asset: String,
++    pub units_per_eth: u64,
++    pub chain_id: u64,
++    pub feed_address: String,
++    pub round_id: String,
++    pub answer: String,
++    pub decimals: u8,
++    pub updated_at: u64,
++    pub expires_at: u64,
++}
++fn invalid() -> AuthError {
++    AuthError::Wallet(
++        "native ETH billing quote is invalid, stale, or disagrees with the finalized oracle".into(),
++    )
++}
++fn decimal(value: &str) -> Result<u128, AuthError> {
++    if value.is_empty()
++        || value.len() > 39
++        || !value.bytes().all(|b| b.is_ascii_digit())
++        || (value.len() > 1 && value.starts_with('0'))
++    {
++        return Err(invalid());
++    }
++    value.parse().map_err(|_| invalid())
++}
++impl Quote {
++    pub fn validate(&self, config: &AuthConfig, allow_expired: bool) -> Result<(), AuthError> {
++        let round = decimal(&self.round_id)?;
++        let answer = decimal(&self.answer)?;
++        if config.billing_asset != "native_eth"
++            || config.billing_unit != "gwei"
++            || config.native_asset_wei_per_unit != "1000000000"
++            || config.demo_billing_token_address.is_some()
++            || config.native_price_feed_decimals != 8
++            || config.native_price_max_age_seconds == 0
++            || config.native_price_max_age_seconds > 86400
++            || self.asset != "native_eth"
++            || self.units_per_eth != 1_000_000_000
++            || self.chain_id != config.chain_id
++            || self.feed_address != config.native_price_feed_address.to_ascii_lowercase()
++            || self.decimals != config.native_price_feed_decimals
++            || round == 0
++            || round >= 1u128 << 80
++            || answer == 0
++            || answer > 1_000_000_000_000_000_000
++            || self.updated_at == 0
++            || self.updated_at > crate::service::now_seconds()
++            || self
++                .updated_at
++                .checked_add(config.native_price_max_age_seconds)
++                != Some(self.expires_at)
++            || (!allow_expired && self.expires_at <= crate::service::now_seconds())
++        {
++            return Err(invalid());
++        }
++        Ok(())
++    }
++    pub fn budget_units(&self, micro_usd: u128) -> Result<u128, AuthError> {
++        if ![1_000_000, 2_000_000, 3_000_000, 4_500_000, 6_000_000].contains(&micro_usd) {
++            return Err(invalid());
++        }
++        let numerator = micro_usd
++            .checked_mul(100_000_000_000_000_000u128)
++            .ok_or_else(invalid)?;
++        let denominator = decimal(&self.answer)?
++            .checked_mul(1_000_000)
++            .ok_or_else(invalid)?;
++        let units = numerator / denominator + u128::from(numerator % denominator != 0);
++        if units == 0 || units > 9_007_199_254_740_991 {
++            return Err(invalid());
++        }
++        Ok(units)
++    }
++    pub fn usd_micros(&self, units: u128) -> Result<u128, AuthError> {
++        if units == 0 || units > 9_007_199_254_740_991 {
++            return Err(invalid());
++        }
++        let value = units
++            .checked_mul(decimal(&self.answer)?)
++            .and_then(|n| n.checked_mul(1_000_000))
++            .ok_or_else(invalid)?
++            / 100_000_000_000_000_000u128;
++        if value == 0 || value > 9_007_199_254_740_991 {
++            return Err(invalid());
++        }
++        Ok(value)
++    }
++}
++async fn json_response(mut response: reqwest::Response) -> Result<Value, AuthError> {
++    if !response.status().is_success() {
++        return Err(invalid());
++    }
++    let mut body = Vec::new();
++    while let Some(chunk) = response.chunk().await.map_err(|_| invalid())? {
++        if body.len() + chunk.len() > 65536 {
++            return Err(invalid());
++        }
++        body.extend_from_slice(&chunk);
++    }
++    serde_json::from_slice(&body).map_err(|_| invalid())
++}
++async fn rpc(config: &AuthConfig, method: &str, params: Value) -> Result<Value, AuthError> {
++    let url = config.demo_rpc_url.as_ref().ok_or_else(invalid)?;
++    let body = json_response(
++        crate::service::fresh_private_http()?
++            .post(url)
++            .timeout(std::time::Duration::from_secs(20))
++            .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
++            .send()
++            .await
++            .map_err(|_| invalid())?,
++    )
++    .await?;
++    if body["jsonrpc"] != "2.0" || body["id"] != 1 || body.get("error").is_some() {
++        return Err(invalid());
++    }
++    body.get("result").cloned().ok_or_else(invalid)
++}
++fn hex_u128(value: &Value) -> Result<u128, AuthError> {
++    let text = value
++        .as_str()
++        .and_then(|v| v.strip_prefix("0x"))
++        .ok_or_else(invalid)?;
++    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
++        return Err(invalid());
++    }
++    u128::from_str_radix(text.trim_start_matches('0').trim(), 16)
++        .or_else(|_| {
++            if text.bytes().all(|b| b == b'0') {
++                Ok(0)
++            } else {
++                Err(())
++            }
++        })
++        .map_err(|_| invalid())
++}
++fn block_identity(block: &Value) -> Result<(&str, &str), AuthError> {
++    let number = block["number"].as_str().ok_or_else(invalid)?;
++    hex_u128(&block["number"])?;
++    let hash = block["hash"].as_str().ok_or_else(invalid)?;
++    if !hash.starts_with("0x")
++        || hash.len() != 66
++        || !hash[2..].bytes().all(|b| b.is_ascii_hexdigit())
++    {
++        return Err(invalid());
++    }
++    Ok((number, hash))
++}
++pub(crate) async fn verified_quote(config: &AuthConfig) -> Result<Quote, AuthError> {
++    let proposed = json_response(
++        crate::service::fresh_private_http()?
++            .get(format!(
++                "{}/v2/billing/quote",
++                config.protocol_server_url.trim_end_matches('/')
++            ))
++            .timeout(std::time::Duration::from_secs(20))
++            .send()
++            .await
++            .map_err(|_| invalid())?,
++    )
++    .await?;
++    let quote: Quote = serde_json::from_value(proposed).map_err(|_| invalid())?;
++    quote.validate(config, false)?;
++    if hex_u128(&rpc(config, "eth_chainId", json!([])).await?)? != config.chain_id as u128 {
++        return Err(invalid());
++    }
++    let block = rpc(config, "eth_getBlockByNumber", json!(["finalized", false])).await?;
++    let (number, hash) = block_identity(&block)?;
++    let vault = format!(
++        "0x{}",
++        config.contract_address.as_bytes()[12..]
++            .iter()
++            .map(|b| format!("{b:02x}"))
++            .collect::<String>()
++    );
++    for (data, expected) in [("0x4d1352fd", 1_000_000_000u128), ("0x631b2f10", 0)] {
++        let result = rpc(
++            config,
++            "eth_call",
++            json!([{"to":vault,"data":data},"latest"]),
++        )
++        .await?;
++        if result.as_str().is_none_or(|s| s.len() != 66) || hex_u128(&result)? != expected {
++            return Err(invalid());
++        }
++    }
++    let decimals = rpc(
++        config,
++        "eth_call",
++        json!([{"to":config.native_price_feed_address,"data":"0x313ce567"},number]),
++    )
++    .await?;
++    if hex_u128(&decimals)? != quote.decimals as u128 {
++        return Err(invalid());
++    }
++    let encoded = rpc(
++        config,
++        "eth_call",
++        json!([{"to":config.native_price_feed_address,"data":"0xfeaf968c"},number]),
++    )
++    .await?;
++    let encoded = encoded.as_str().ok_or_else(invalid)?;
++    if encoded.len() != 322
++        || !encoded.starts_with("0x")
++        || !encoded[2..].bytes().all(|b| b.is_ascii_hexdigit())
++    {
++        return Err(invalid());
++    }
++    let words = (0..5)
++        .map(|i| {
++            hex_u128(&json!(format!(
++                "0x{}",
++                &encoded[2 + i * 64..2 + (i + 1) * 64]
++            )))
++        })
++        .collect::<Result<Vec<_>, _>>()?;
++    if words[0] != decimal(&quote.round_id)?
++        || words[1] != decimal(&quote.answer)?
++        || words[2] == 0
++        || words[2] > words[3]
++        || words[3] != quote.updated_at as u128
++        || words[4] < words[0]
++    {
++        return Err(invalid());
++    }
++    let canonical = rpc(config, "eth_getBlockByNumber", json!([number, false])).await?;
++    let (_, canonical_hash) = block_identity(&canonical)?;
++    if !canonical_hash.eq_ignore_ascii_case(hash)
++        || hex_u128(&rpc(config, "eth_chainId", json!([])).await?)? != config.chain_id as u128
++    {
++        return Err(invalid());
++    }
++    Ok(quote)
++}
++pub(crate) fn saved_quote(config: &AuthConfig, payload: &str) -> Result<Option<Quote>, AuthError> {
++    let mut value: Value = serde_json::from_str(payload).map_err(|_| invalid())?;
++    let object = value.as_object_mut().ok_or_else(invalid)?;
++    let quote = object
++        .remove("billing_quote")
++        .map(serde_json::from_value::<Quote>)
++        .transpose()
++        .map_err(|_| invalid())?;
++    let authorization: zkapi_types::wire::OpenRouterLeaseAuthorization =
++        serde_json::from_value(value).map_err(|_| invalid())?;
++    if authorization != Default::default() {
++        return Err(invalid());
++    }
++    match (&*config.billing_asset, &quote) {
++        ("native_eth", Some(quote)) => quote.validate(config, true)?,
++        ("native_eth", None) => return Err(invalid()),
++        (_, Some(_)) => return Err(invalid()),
++        _ => {}
++    }
++    Ok(quote)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn fixture() -> (AuthConfig, Quote) {
++        let config = AuthConfig {
++            billing_asset: "native_eth".into(),
++            billing_unit: "gwei".into(),
++            native_asset_wei_per_unit: "1000000000".into(),
++            native_price_feed_address: format!("0x{}", "12".repeat(20)),
++            native_price_feed_decimals: 8,
++            native_price_max_age_seconds: 3600,
++            ..Default::default()
++        };
++        let updated = crate::service::now_seconds() - 60;
++        let quote = Quote {
++            asset: "native_eth".into(),
++            units_per_eth: 1_000_000_000,
++            chain_id: config.chain_id,
++            feed_address: config.native_price_feed_address.clone(),
++            round_id: "123".into(),
++            answer: "250000000000".into(),
++            decimals: 8,
++            updated_at: updated,
++            expires_at: updated + 3600,
++        };
++        (config, quote)
++    }
++    #[test]
++    fn native_budget_and_saved_quote_bindings_are_exact() {
++        let (config, quote) = fixture();
++        quote.validate(&config, false).unwrap();
++        assert_eq!(quote.budget_units(1_000_000).unwrap(), 400_000);
++        assert_eq!(quote.usd_micros(400_000).unwrap(), 1_000_000);
++        assert!(quote.budget_units(7_000_000).is_err());
++        let mut changed = quote.clone();
++        changed.answer = "300000000001".into();
++        assert_eq!(changed.budget_units(1_000_000).unwrap(), 333_334);
++        let payload =
++            json!({"mode":"openrouter_ephemeral_lease","version":1,"billing_quote":quote})
++                .to_string();
++        assert_eq!(saved_quote(&config, &payload).unwrap(), Some(quote.clone()));
++        assert!(saved_quote(
++            &config,
++            r#"{"mode":"openrouter_ephemeral_lease","version":1}"#
++        )
++        .is_err());
++        for (field, value) in [
++            ("chain_id", json!(111)),
++            ("feed_address", json!(format!("0x{}", "34".repeat(20)))),
++            ("answer", json!("0")),
++            ("round_id", json!("0123")),
++            ("units_per_eth", json!(1)),
++            ("expires_at", json!(0)),
++        ] {
++            let mut value_quote = serde_json::to_value(&quote).unwrap();
++            value_quote[field] = value;
++            assert!(serde_json::from_value::<Quote>(value_quote)
++                .unwrap()
++                .validate(&config, true)
++                .is_err());
++        }
++        let mut expired = quote.clone();
++        expired.updated_at = 1;
++        expired.expires_at = 3601;
++        assert!(expired.validate(&config, false).is_err());
++        assert!(expired.validate(&config, true).is_ok());
++    }
++    #[tokio::test]
++    async fn oracle_requires_finalized_round_chain_vault_and_canonical_block() {
++        use axum::{
++            routing::{get, post},
++            Json, Router,
++        };
++        use std::sync::{
++            atomic::{AtomicU8, Ordering},
++            Arc,
++        };
++        let (mut config, quote) = fixture();
++        let mode = Arc::new(AtomicU8::new(0));
++        let quote_response = quote.clone();
++        let rpc_quote = quote.clone();
++        let modes = mode.clone();
++        let router=Router::new().route("/v2/billing/quote",get(move||{let q=quote_response.clone();async move {Json(json!(q))}}))
++            .route("/rpc",post(move|Json(body):Json<Value>|{let q=rpc_quote.clone();let mode=modes.load(Ordering::SeqCst);async move {
++                let result=match body["method"].as_str().unwrap() {
++                    "eth_chainId"=>json!(if mode==1{"0x2"}else{"0x1"}),
++                    "eth_getBlockByNumber"=>json!({"number":"0x10","hash":format!("0x{}",if mode==2 && body["params"][0]=="0x10"{"bb".repeat(32)}else{"aa".repeat(32)})}),
++                    "eth_call"=>match body["params"][0]["data"].as_str().unwrap() {
++                        "0x4d1352fd"=>json!(format!("0x{:064x}",if mode==3{0}else{1_000_000_000u128})),
++                        "0x631b2f10"=>json!(format!("0x{:064x}",if mode==4{1}else{0})),
++                        "0x313ce567"=>json!(format!("0x{:064x}",if mode==5{9}else{8})),
++                        "0xfeaf968c"=>json!(format!("0x{:064x}{:064x}{:064x}{:064x}{:064x}",if mode==6{124}else{123},250_000_000_000u128,q.updated_at-1,q.updated_at,123)),_=>panic!("unexpected call")},_=>panic!("unexpected method")};
++                Json(json!({"jsonrpc":"2.0","id":1,"result":result}))
++            }}));
++        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++        let url = format!("http://{}", listener.local_addr().unwrap());
++        config.protocol_server_url = url.clone();
++        config.demo_rpc_url = Some(format!("{url}/rpc"));
++        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++        assert_eq!(verified_quote(&config).await.unwrap(), quote);
++        for value in 1..=6 {
++            mode.store(value, Ordering::SeqCst);
++            assert!(verified_quote(&config).await.is_err(), "mode {value}");
++        }
++        server.abort();
++    }
++}
 diff --git a/crates/zkapi-clientd/src/oa_withdrawal.rs b/crates/zkapi-clientd/src/oa_withdrawal.rs
 new file mode 100644
-index 0000000..fc3d3b1
+index 0000000..a1c8287
 --- /dev/null
 +++ b/crates/zkapi-clientd/src/oa_withdrawal.rs
 @@ -0,0 +1,734 @@
@@ -645,7 +1146,7 @@ index 0000000..fc3d3b1
 +    }
 +    let receipt = request("eth_getTransactionReceipt", json!([hash])).await?;
 +    if receipt.is_null() {
-+        return Err(AuthError::WithdrawalPending);
++        return Err(AuthError::OaWithdrawalPending);
 +    }
 +    validate_close_event(record, &receipt, hash)?;
 +    let number = quantity(&receipt["blockNumber"])?;
@@ -653,7 +1154,7 @@ index 0000000..fc3d3b1
 +    hex_bytes(hash, 32)?;
 +    let finalized = request("eth_getBlockByNumber", json!(["finalized", false])).await?;
 +    if quantity(&finalized["number"])? < number {
-+        return Err(AuthError::WithdrawalPending);
++        return Err(AuthError::OaWithdrawalPending);
 +    }
 +    let canonical = request(
 +        "eth_getBlockByNumber",
@@ -665,7 +1166,7 @@ index 0000000..fc3d3b1
 +            .as_str()
 +            .is_some_and(|value| value.eq_ignore_ascii_case(hash))
 +    {
-+        return Err(AuthError::WithdrawalPending);
++        return Err(AuthError::OaWithdrawalPending);
 +    }
 +    if quantity(&request("eth_chainId", json!([])).await?)? != config.chain_id {
 +        return Err(AuthError::WithdrawalConflict);
@@ -940,20 +1441,20 @@ index 0000000..fc3d3b1
 +    }
 +}
 diff --git a/crates/zkapi-clientd/src/routes.rs b/crates/zkapi-clientd/src/routes.rs
-index d5d0955..de2e966 100644
+index bebd5c4..104f02d 100644
 --- a/crates/zkapi-clientd/src/routes.rs
 +++ b/crates/zkapi-clientd/src/routes.rs
-@@ -15,7 +15,8 @@
-
+@@ -18,7 +18,8 @@ use std::io;
  use std::sync::Arc;
 
--use axum::extract::State;
-+use axum::extract::{State, Request};
+ use axum::body::{Body, Bytes};
+-use axum::extract::{Path as AxumPath, State};
++use axum::extract::{Path as AxumPath, State, Request};
 +use axum::middleware::{self, Next};
- use axum::http::{header, HeaderValue, Method, StatusCode};
+ use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
  use axum::response::{Html, IntoResponse, Response};
  use axum::routing::{get, post};
-@@ -41,10 +42,28 @@ struct WithdrawBody {
+@@ -50,11 +51,29 @@ struct WithdrawBody {
      destination: String,
  }
 
@@ -972,6 +1473,7 @@ index d5d0955..de2e966 100644
 +fn build_router_with_token(service: Arc<AuthService>, token: Option<String>) -> Router {
      Router::new()
          .route("/", get(funding_index))
+         .route("/favicon.ico", get(funding_favicon))
          .route("/health", get(healthz))
 +        .route("/oa/v1/status", get(oa_bridge_status))
 +        .route("/oa/v1/lease", post(oa_bridge_lease))
@@ -982,9 +1484,9 @@ index d5d0955..de2e966 100644
          .route("/healthz", get(healthz))
          .route("/request", post(core_request))
          .route("/status", get(wallet_status))
-@@ -77,9 +96,67 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
-         .route("/zkapi/v1/config", get(zkapi_config))
+@@ -92,9 +111,68 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
          .route("/zkapi/v1/inference", post(zkapi_inference))
+         .route("/funding/{*path}", get(funding_asset))
          .layer(local_cors_layer())
 +        .layer(middleware::from_fn_with_state(token, oa_bridge_auth))
          .with_state(service)
@@ -1047,10 +1549,11 @@ index d5d0955..de2e966 100644
 +    }
 +}
 +
++
  /// A deliberately narrow CORS policy.
  ///
  /// The funding UI is served by this same daemon, so it is same-origin and does
-@@ -370,6 +447,16 @@ fn openai_error(err: AuthError) -> Response {
+@@ -703,6 +781,17 @@ fn openai_error(err: AuthError) -> Response {
 
  #[cfg(test)]
  mod tests {
@@ -1064,10 +1567,11 @@ index d5d0955..de2e966 100644
 +        }
 +    }
 +
++
      use axum::body::Body;
+     use axum::http::StatusCode;
      use http_body_util::BodyExt;
-     use tower::ServiceExt;
-@@ -390,12 +477,12 @@ mod tests {
+@@ -738,12 +827,12 @@ mod tests {
              ..Default::default()
          })
          .unwrap();
@@ -1082,7 +1586,34 @@ index d5d0955..de2e966 100644
                      .uri("/funding")
                      .body(Body::empty())
                      .unwrap(),
-@@ -407,7 +494,7 @@ mod tests {
+@@ -770,7 +859,7 @@ mod tests {
+             let stylesheet = router
+                 .clone()
+                 .oneshot(
+-                    axum::http::Request::builder()
++                    axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                         .uri("/funding/styles.css")
+                         .body(Body::empty())
+                         .unwrap(),
+@@ -797,7 +886,7 @@ mod tests {
+                 let response = router
+                     .clone()
+                     .oneshot(
+-                        axum::http::Request::builder()
++                        axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                             .uri(path)
+                             .body(Body::empty())
+                             .unwrap(),
+@@ -811,7 +900,7 @@ mod tests {
+             let response = router
+                 .clone()
+                 .oneshot(
+-                    axum::http::Request::builder()
++                    axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                         .uri(path)
+                         .body(Body::empty())
+                         .unwrap(),
+@@ -831,7 +920,7 @@ mod tests {
          let models = router
              .clone()
              .oneshot(
@@ -1091,7 +1622,7 @@ index d5d0955..de2e966 100644
                      .uri("/v1/models")
                      .body(Body::empty())
                      .unwrap(),
-@@ -421,7 +508,7 @@ mod tests {
+@@ -845,7 +934,7 @@ mod tests {
          let health = router
              .clone()
              .oneshot(
@@ -1100,7 +1631,16 @@ index d5d0955..de2e966 100644
                      .uri("/health")
                      .body(Body::empty())
                      .unwrap(),
-@@ -433,7 +520,7 @@ mod tests {
+@@ -857,7 +946,7 @@ mod tests {
+         let settled = router
+             .clone()
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .method("POST")
+                     .uri("/wallet/settle")
+                     .body(Body::empty())
+@@ -870,7 +959,7 @@ mod tests {
          let config = router
              .clone()
              .oneshot(
@@ -1109,7 +1649,16 @@ index d5d0955..de2e966 100644
                      .uri("/funding/config")
                      .body(Body::empty())
                      .unwrap(),
-@@ -453,7 +540,7 @@ mod tests {
+@@ -883,7 +972,7 @@ mod tests {
+         assert_eq!(value["chain_id"], 1);
+         assert_eq!(value["demo_rpc_url"], "http://127.0.0.1:48654");
+         assert_eq!(value["demo_billing_token_address"], "0xabc");
+-        assert_eq!(value["demo_mint_enabled"], true);
++        assert_eq!(value["demo_mint_enabled"], false);
+         assert_eq!(value["suggested_deposit_amount"], 2468);
+         assert!(value.get("demo_private_key").is_none());
+         assert_eq!(value["demo_note_ttl_seconds"], 1234);
+@@ -892,7 +981,7 @@ mod tests {
              let removed = router
                  .clone()
                  .oneshot(
@@ -1118,7 +1667,16 @@ index d5d0955..de2e966 100644
                          .method("POST")
                          .uri(path)
                          .body(Body::empty())
-@@ -466,7 +553,7 @@ mod tests {
+@@ -906,7 +995,7 @@ mod tests {
+         let withdrawal_confirm = router
+             .clone()
+             .oneshot(
+-                axum::http::Request::builder()
++                axum::http::Request::builder().header("Authorization", "Bearer companion-test-token-thirty-two-characters")
+                     .method("POST")
+                     .uri("/wallet/withdraw/confirm")
+                     .body(Body::empty())
+@@ -918,7 +1007,7 @@ mod tests {
 
          let demo = router
              .oneshot(
@@ -1128,10 +1686,10 @@ index d5d0955..de2e966 100644
                      .body(Body::empty())
                      .unwrap(),
 diff --git a/crates/zkapi-clientd/src/service.rs b/crates/zkapi-clientd/src/service.rs
-index 41dc152..223b758 100644
+index 6b0305d..640abbb 100644
 --- a/crates/zkapi-clientd/src/service.rs
 +++ b/crates/zkapi-clientd/src/service.rs
-@@ -31,6 +31,67 @@ use zkapi_types::wire::{
+@@ -35,6 +35,67 @@ use zkapi_types::wire::{
  };
  use zkapi_types::{EpochRoots, Felt252, WithdrawalPublicInputsV2};
 
@@ -1169,7 +1727,7 @@ index 41dc152..223b758 100644
 +// browser's bounded safety margin; never extend the lease's usable deadline.
 +fn oa_key_expiry_covers_lease(key_valid_till: u64, lease_expires_at: u64) -> bool {
 +    key_valid_till.checked_sub(lease_expires_at)
-+        .is_some_and(|safety_margin| safety_margin <= 60)
++        .is_some_and(|safety_margin| safety_margin <= MAX_OA_EVIDENCE_EXPIRY_SKEW_SECONDS)
 +}
 +
 +fn oa_verifier_binds_key(result: &Value, station_id: &str, api_key: &str) -> bool {
@@ -1190,7 +1748,7 @@ index 41dc152..223b758 100644
 +
 +// A new client has neither a connection pool nor prior TLS session state.
 +// It inherits the authenticated local CONNECT proxy for direct TCP or Wisp.
-+fn fresh_private_http() -> Result<reqwest::Client, AuthError> {
++pub(crate) fn fresh_private_http() -> Result<reqwest::Client, AuthError> {
 +    reqwest::Client::builder().timeout(Duration::from_secs(180))
 +        .redirect(reqwest::redirect::Policy::none()).build()
 +        .map_err(|_| AuthError::Wallet("cannot initialize private transport".into()))
@@ -1199,111 +1757,121 @@ index 41dc152..223b758 100644
  fn compute_payload_hash(payload: impl AsRef<[u8]>) -> Felt252 {
      // Must match the protocol's canonical request-payload binding; the wallet
      // re-derives and rejects on mismatch (`request_flow`), and the value feeds
-@@ -98,6 +159,7 @@ pub struct FundingConfig {
-     pub demo_rpc_url: Option<String>,
-     #[serde(skip_serializing_if = "Option::is_none")]
-     pub demo_billing_token_address: Option<String>,
-+    pub demo_mint_enabled: bool,
-     #[serde(skip_serializing_if = "Option::is_none")]
-     pub demo_private_key: Option<String>,
-     #[serde(skip_serializing_if = "Option::is_none")]
-@@ -331,10 +393,94 @@ pub struct AuthService {
+@@ -117,6 +178,15 @@ pub struct RetiredNote {
+
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+ pub struct FundingConfig {
++    pub deployment_id: String,
++    pub billing_asset: String,
++    pub billing_unit: String,
++    pub native_asset_wei_per_unit: String,
++    pub native_price_feed_address: String,
++    pub native_price_feed_decimals: u8,
++    pub native_price_max_age_seconds: u64,
++
++
+     pub contract_address: Felt252,
+     pub chain_id: u64,
+     pub indexer_url: String,
+@@ -320,6 +390,7 @@ struct ActiveOpenRouterLease {
+     settle_after: u64,
+     verification: Option<OaKeyVerificationEvidence>,
+     verified: bool,
++    verification_detail: Option<String>,
+     requests_served: u32,
+ }
+
+@@ -371,6 +442,8 @@ struct OpenRouterLeaseExtensions {
+     key_source: String,
+     #[serde(default)]
+     verification: Option<OaKeyVerificationEvidence>,
++    #[serde(default)]
++    billing_quote: Option<crate::oa_native::Quote>,
+ }
+
+ #[derive(Debug, Clone, Deserialize)]
+@@ -396,8 +469,7 @@ fn validate_oa_key_evidence(
+             "OA key evidence omitted the station ID".to_string(),
+         ));
+     }
+-    let expiry_skew = evidence.key_valid_till.saturating_sub(expires_at);
+-    if evidence.key_valid_till < expires_at || expiry_skew > MAX_OA_EVIDENCE_EXPIRY_SKEW_SECONDS {
++    if !oa_key_expiry_covers_lease(evidence.key_valid_till, expires_at) {
+         return Err(AuthError::KeyVerification(format!(
+             "OA key evidence expiry {} does not safely cover lease expiry {expires_at}",
+             evidence.key_valid_till
+@@ -421,6 +493,58 @@ fn validate_oa_key_evidence(
+     Ok(())
+ }
+
++#[derive(Debug)]
++struct OaVerificationOutcome { verified: bool, detail: Option<&'static str> }
++
++fn oa_transport_unavailable(error: &reqwest::Error) -> bool {
++    use std::error::Error;
++    let mut source: Option<&(dyn Error + 'static)> = Some(error);
++    while let Some(cause) = source {
++        let text = cause.to_string().to_ascii_lowercase();
++        if ["certificate", "cert ", "tls", "ssl", "invalid peer", "unknown issuer", "proxy authentication", "canceled", "cancelled"].iter().any(|term| text.contains(term)) { return false; }
++        source = cause.source();
++    }
++    error.is_connect() || error.is_timeout()
++}
++
++fn oa_verifier_hard_failure(result: &Value, temporary_ownership: bool) -> bool {
++    let status = result.get("status").and_then(Value::as_str).unwrap_or("");
++    if result.get("status").is_some_and(|value| !value.is_string())
++        || result.get("banned_station").is_some_and(|value| !value.is_null() && *value != Value::Bool(false))
++        || ["banned", "rejected", "denied", "invalid"].contains(&status)
++        || (status == "unverified" && !temporary_ownership)
++        || result.get("ownership_passed") == Some(&Value::Bool(false))
++        || result.pointer("/ownership/ownership_passed") == Some(&Value::Bool(false)) {
++        return true;
++    }
++    for field in ["error", "detail", "message"] {
++        let text = result.get(field).map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string())).unwrap_or_default().to_ascii_lowercase();
++        if ["invalid signature", "signature mismatch", "expired", "invalid key", "privacy", "logging", "training", "banned"].iter().any(|term| text.contains(term))
++            || (text.contains("ownership") && (text.contains("mismatch") || text.contains("failed"))) {
++            return true;
++        }
++    }
++    false
++}
++
++fn oa_verifier_outage(status: Option<u16>, result: &Value, expires_at: u64, evidence: &OaKeyVerificationEvidence) -> Result<OaVerificationOutcome, AuthError> {
++    let fail = || AuthError::KeyVerification("verifier refused key or outage policy does not permit this key".into());
++    if expires_at <= now_seconds() { return Err(fail()); }
++    let temporary_ownership = status == Some(503) && result["status"] == "unverified" && result["detail"] == "ownership_check_error";
++    if oa_verifier_hard_failure(result, temporary_ownership) { return Err(fail()); }
++    let detail = if temporary_ownership { "ownership_check_error" }
++        else if status == Some(429) { "rate_limited" }
++        else {
++            if !evidence.station_recently_attested
++                || !matches!(status, None | Some(408 | 500 | 502 | 503 | 504))
++                || !matches!(result.get("status").and_then(Value::as_str), None | Some("error" | "unavailable")) {
++                return Err(fail());
++            }
++            "recently_attested_outage"
++        };
++    Ok(OaVerificationOutcome { verified: false, detail: Some(detail) })
++}
++
+ fn default_openrouter_key_source() -> String {
+     "openrouter".to_string()
+ }
+@@ -476,10 +600,10 @@ pub struct AuthService {
      config: AuthConfig,
      wallet_mutex: Arc<Mutex<()>>,
      indexer: IndexerClient,
 -    http: reqwest::Client,
      direct_lease: tokio::sync::Mutex<Option<ActiveOpenRouterLease>>,
+     direct_request_mutex: Arc<tokio::sync::RwLock<()>>,
+     prepared_withdrawal: tokio::sync::Mutex<Option<WithdrawalPlan>>,
++    oa_banned_stations: Mutex<std::collections::HashSet<String>>,
  }
 
-+#[cfg(test)]
-+mod oa_withdrawal_tests {
-+    use super::*;
-+    use crate::oa_withdrawal::{self, tests::fixture};
-+
-+    #[tokio::test]
-+    async fn reservation_survives_failed_prepare_and_blocks_all_spending_paths() {
-+        let (_directory, config, note) = fixture();
-+        let service = AuthService::new(config.clone()).unwrap();
-+        // The indexer fixture is unreachable. Persistence must happen first.
-+        assert!(service.oa_prepare_withdrawal([1;20]).await.is_err());
-+        assert_eq!(service.oa_withdrawal_status().await.unwrap()["phase"], "reserved");
-+        drop(service);
-+        let service = AuthService::new(config.clone()).unwrap();
-+        for result in [service.prepare_deposit(1).await.map(|_| ()),
-+            service.confirm_deposit(ConfirmDepositRequest { secret: Felt252::ONE, note_id: note.note_id+1, amount: 1, expiry_ts: 4_000_000_000 }).await.map(|_| ()),
-+            service.reset_wallet().await.map(|_| ()), service.recover().await.map(|_| ()),
-+            service.prepare_direct_lease_request().await.map(|_| ()),
-+            service.clear_pending_request().await,
-+            service.create_withdrawal(WithdrawalMode::Mutual, [2;20]).await.map(|_| ()),
-+            service.execute_request_demo(CoreRequest::post_json("/chat", serde_json::json!({}))).await.map(|_| ())] {
-+            assert!(matches!(result, Err(AuthError::WithdrawalConflict)), "{result:?}");
-+        }
-+        *service.direct_lease.lock().await = Some(ActiveOpenRouterLease {
-+            client_request_id: "cached-before-reservation".into(), api_key: "fixture-key".into(),
-+            openrouter_api_base: "https://openrouter.ai/api/v1".into(), expires_at: now_seconds()+300,
-+            settle_after: now_seconds()+360, verified: true, verification: None,
-+        });
-+        assert!(matches!(service.ready_direct_lease().await, Err(AuthError::WithdrawalConflict)));
-+        assert!(matches!(service.oa_prepare_withdrawal([2;20]).await, Err(AuthError::WithdrawalConflict)));
-+        assert!(config.state_dir.join("note_state.json").exists());
-+    }
-+
-+    #[tokio::test]
-+    async fn pending_settlement_is_recovered_before_reserving_and_parse_errors_fail_closed() {
-+        use axum::{routing::get, Json, Router};
-+        use std::sync::atomic::{AtomicUsize, Ordering};
-+        let (_directory, mut config, note) = fixture();
-+        let attempts = Arc::new(AtomicUsize::new(0)); let seen = attempts.clone();
-+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-+        config.protocol_server_url = format!("http://{}", listener.local_addr().unwrap());
-+        let router = Router::new().route("/v2/requests/pending", get(move || {
-+            seen.fetch_add(1, Ordering::SeqCst);
-+            async { Json(serde_json::json!({"status":"pending", "nullifier_status":"reserved"})) }
-+        }));
-+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-+        let journal_path = config.state_dir.join("pending_journal.json");
-+        zkapi_client::journal::PendingRequestJournal::write(&journal_path, &zkapi_client::journal::PendingRequestJournal {
-+            exists: true, client_request_id: "pending".into(), nullifier: core_v2::nullifier(&note.secret_s, &note.current_anchor),
-+            payload_hash: Felt252::ONE, user_rerandomization: Felt252::ONE, created_at_ms: 1, prepared_request: None,
-+        }).unwrap();
-+        let service = AuthService::new(config.clone()).unwrap();
-+        assert!(matches!(service.oa_prepare_withdrawal([1;20]).await, Err(AuthError::PendingSettlement)));
-+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
-+        assert!(oa_withdrawal::load(&config).unwrap().is_none());
-+        std::fs::write(&journal_path, "malformed").unwrap();
-+        assert!(service.oa_prepare_withdrawal([1;20]).await.is_err());
-+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
-+        assert!(oa_withdrawal::load(&config).unwrap().is_none());
-+        server.abort();
-+    }
-+
-+    #[tokio::test]
-+    async fn lost_completion_reply_is_idempotent_and_cannot_clear_new_note_lease() {
-+        let (_directory, config, note) = fixture();
-+        let mut record = oa_withdrawal::reserve(&config, &note, [1;20]).unwrap();
-+        record.plan = Some(oa_withdrawal::tests::plan(&record));
-+        oa_withdrawal::save(&config, &record).unwrap();
-+        let hash = format!("0x{}", "ab".repeat(32));
-+        oa_withdrawal::complete(&config, &mut record, &hash).unwrap();
-+        let service = AuthService::new(config.clone()).unwrap();
-+        assert_eq!(service.oa_prepare_withdrawal([1;20]).await.unwrap(), record.plan.clone().unwrap());
-+        let mut next = note.clone(); next.note_id += 1;
-+        next.save(&config.state_dir.join("note_state.json")).unwrap();
-+        *service.direct_lease.lock().await = Some(ActiveOpenRouterLease {
-+            client_request_id: "new-note-lease".into(), api_key: "fixture-key".into(),
-+            openrouter_api_base: "https://openrouter.ai/api/v1".into(), expires_at: now_seconds()+300,
-+            settle_after: now_seconds()+360, verified: true, verification: None,
-+        });
-+        assert_eq!(service.oa_confirm_withdrawal(hash).await.unwrap()["phase"], "complete");
-+        assert_eq!(service.direct_lease.lock().await.as_ref().unwrap().client_request_id, "new-note-lease");
-+        assert_eq!(zkapi_client::note_state::NoteState::load(&config.state_dir.join("note_state.json")).unwrap().note_id, next.note_id);
-+    }
-+}
-+
  impl AuthService {
-     pub fn new(config: AuthConfig) -> Result<Arc<Self>, AuthError> {
-         std::fs::create_dir_all(&config.state_dir)
-@@ -343,11 +489,6 @@ impl AuthService {
+@@ -491,17 +615,181 @@ impl AuthService {
              indexer: IndexerClient::new(config.indexer_url.clone()),
              config,
              wallet_mutex: Arc::new(Mutex::new(())),
@@ -1313,63 +1881,22 @@ index 41dc152..223b758 100644
 -                .build()
 -                .map_err(|error| AuthError::Wallet(error.to_string()))?,
              direct_lease: tokio::sync::Mutex::new(None),
+             direct_request_mutex: Arc::new(tokio::sync::RwLock::new(())),
+             prepared_withdrawal: tokio::sync::Mutex::new(prepared_withdrawal),
++            oa_banned_stations: Mutex::new(Default::default()),
          }))
      }
-@@ -388,6 +529,7 @@ impl AuthService {
-                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
-             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
-             let wallet = load_wallet(&config, Vec::new())?;
-+            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
-             if wallet.state().is_some() {
-                 return Err(AuthError::InvalidInput(
-                     "wallet already has an active note".to_string(),
-@@ -426,6 +568,8 @@ impl AuthService {
-                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
-             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
-             let mut wallet = load_wallet(&config, Vec::new())?;
-+            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
-+            crate::oa_withdrawal::check_spending(&config, Some(request.note_id))?;
-             wallet.confirm_deposit(
-                 request.secret,
-                 request.note_id,
-@@ -447,6 +591,7 @@ impl AuthService {
-                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
-             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
-             let mut wallet = load_wallet(&config, trusted_roots)?;
-+            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
-             let runtime = current_thread_runtime()?;
-             let recovered = runtime.block_on(wallet.recover())?;
-             let request = recovered.as_ref().map(|response| {
-@@ -532,6 +677,8 @@ impl AuthService {
-                 .lock()
-                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
-             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
-+            let wallet = load_wallet(&config, Vec::new())?;
-+            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
-             let state_path = config.state_dir.join("note_state.json");
-             let journal_path = config.state_dir.join("pending_journal.json");
-             if state_path.exists() {
-@@ -560,6 +707,7 @@ impl AuthService {
-             models: self.config.models.clone(),
-             demo_rpc_url: self.config.demo_rpc_url.clone(),
-             demo_billing_token_address: self.config.demo_billing_token_address.clone(),
-+            demo_mint_enabled: self.config.demo_mint_enabled && self.config.chain_id == 11_155_111,
-             demo_private_key: self.config.demo_private_key.clone(),
-             demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
-         }
-@@ -599,13 +747,156 @@ impl AuthService {
-         }
-     }
 
--    async fn execute_direct_openrouter(
--        &self,
--        request: CoreRequest,
--    ) -> Result<CoreResponse, AuthError> {
 +    // The Go gateway receives only a verified provider lease. Prompt content
 +    // never enters the wallet/prover bridge or the zkAPI payment server.
 +    pub fn oa_bridge_status(&self) -> serde_json::Value {
 +        serde_json::json!({
-+            "bridge_version": 1,
++            "bridge_version": 2,
++            "deployment_id": self.config.deployment_id,
++            "contract_address": self.config.contract_address,
++            "billing_asset": self.config.billing_asset,
++            "billing_unit": self.config.billing_unit,
++            "circuit_id": zkapi_proof::compact::CIRCUIT_ID,
 +            "withdrawal_bridge_version": 1,
 +            "chain_id": self.config.chain_id,
 +            "mode": self.config.request_mode,
@@ -1494,59 +2021,168 @@ index 41dc152..223b758 100644
 +            "base_url": lease.openrouter_api_base,
 +            "expires_at": lease.expires_at,
 +            "verified": lease.verified,
++            "verification_status": if lease.verified { "verified" } else { "verifier-unavailable" },
++            "verification_detail": lease.verification_detail,
 +        }))
 +    }
 +
-+    async fn ready_direct_lease(&self) -> Result<tokio::sync::MutexGuard<'_, Option<ActiveOpenRouterLease>>, AuthError> {
-         self.ensure_scheme_agreement().await?;
-         let mut lease_guard = self.direct_lease.lock().await;
-
-+        self.oa_check_spending().await?;
 +
-+        if let Some(lease) = lease_guard.as_ref() {
-+            use sha3::{Digest, Keccak256};
++    async fn ready_direct_lease(&self) -> Result<tokio::sync::MutexGuard<'_, Option<ActiveOpenRouterLease>>, AuthError> {
++        use sha3::{Digest, Keccak256};
++        self.ensure_scheme_agreement().await?;
++        let mut slot = self.direct_lease.lock().await;
++        self.oa_check_spending().await?;
++        if let Some(lease) = slot.as_ref() {
 +            let marker = self.config.state_dir.join("oa-issued-leases")
 +                .join(format!("{:x}", Keccak256::digest(lease.client_request_id.as_bytes())));
 +            if marker.exists() {
-+                if self.recover().await?.recovered {
-+                    *lease_guard = None;
-+                } else {
++                let recovered = self.recover().await?;
++                if recovered.wallet.pending_request {
 +                    return Err(AuthError::LeasePending("the previous API request is awaiting lease settlement".into()));
 +                }
++                *slot = None;
 +            }
 +        }
-         if let Some(lease) = lease_guard.as_ref() {
-             // Leave a small margin so a key cannot expire while a request is
-             // being transmitted to OpenRouter.
-@@ -649,6 +940,15 @@ impl AuthService {
-             }
-             lease.verified = true;
-         }
-+        Ok(lease_guard)
++        self.ensure_direct_openrouter_lease(&mut slot, "oa-single-use").await?;
++        let lease = slot.as_mut().ok_or_else(|| AuthError::Wallet("lease disappeared".into()))?;
++        let evidence = lease.verification.as_ref().ok_or_else(|| AuthError::KeyVerification("missing OA key evidence".into()))?;
++        let outcome = self.verify_oa_key(&lease.api_key, lease.expires_at, evidence).await?;
++        if now_seconds().saturating_add(1) >= lease.expires_at {
++            return Err(AuthError::KeyVerification("key expired during verification".into()));
++        }
++        lease.verified = outcome.verified;
++        lease.verification_detail = outcome.detail.map(str::to_string);
++        Ok(slot)
 +    }
 +
-+    async fn execute_direct_openrouter(
-+        &self,
-+        request: CoreRequest,
-+    ) -> Result<CoreResponse, AuthError> {
-+        let mut lease_guard = self.ready_direct_lease().await?;
-+        let lease = lease_guard.as_mut().ok_or_else(|| AuthError::Wallet("lease disappeared".into()))?;
-         let (upstream_path, upstream_body) =
-             crate::compat::openrouter_request(&request.path, request.body);
+     pub fn default_model(&self) -> &str {
+         self.config
+             .models
+@@ -596,6 +884,7 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             if wallet.state().is_some() {
+                 return Err(AuthError::InvalidInput(
+                     "wallet already has an active note".to_string(),
+@@ -634,6 +923,8 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let mut wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
++            crate::oa_withdrawal::check_spending(&config, Some(request.note_id))?;
+             wallet.confirm_deposit(
+                 request.secret,
+                 request.note_id,
+@@ -655,6 +946,7 @@ impl AuthService {
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
+             let mut wallet = load_wallet(&config, trusted_roots)?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let runtime = current_thread_runtime()?;
+             let recovered = runtime.block_on(wallet.recover())?;
+             let request = recovered.as_ref().map(|response| {
+@@ -780,6 +1072,8 @@ impl AuthService {
+                 .lock()
+                 .map_err(|err| AuthError::Wallet(err.to_string()))?;
+             let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
+             let state_path = config.state_dir.join("note_state.json");
+             let journal_path = config.state_dir.join("pending_journal.json");
+             let prepared_path = prepared_withdrawal_path(&config.state_dir);
+@@ -806,6 +1100,13 @@ impl AuthService {
+
+     pub fn funding_config(&self) -> FundingConfig {
+         FundingConfig {
++            deployment_id: self.config.deployment_id.clone(),
++            billing_asset: self.config.billing_asset.clone(),
++            billing_unit: self.config.billing_unit.clone(),
++            native_asset_wei_per_unit: self.config.native_asset_wei_per_unit.clone(),
++            native_price_feed_address: self.config.native_price_feed_address.clone(),
++            native_price_feed_decimals: self.config.native_price_feed_decimals,
++            native_price_max_age_seconds: self.config.native_price_max_age_seconds,
+             contract_address: self.config.contract_address,
+             chain_id: self.config.chain_id,
+             indexer_url: self.config.indexer_url.clone(),
+@@ -814,7 +1115,7 @@ impl AuthService {
+             suggested_deposit_amount: self.config.suggested_deposit_amount,
+             demo_rpc_url: self.config.demo_rpc_url.clone(),
+             demo_billing_token_address: self.config.demo_billing_token_address.clone(),
+-            demo_mint_enabled: self.config.demo_mint_enabled,
++            demo_mint_enabled: self.config.demo_mint_enabled && self.config.chain_id == 11_155_111,
+             demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
+         }
+     }
+@@ -835,6 +1136,7 @@ impl AuthService {
+         request: CoreRequest,
+         session_id: Option<&str>,
+     ) -> Result<CoreResponse, AuthError> {
++        self.oa_check_spending().await?;
+         if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
+             return Err(AuthError::WithdrawalPending(format!(
+                 "{} withdrawal for note {} is prepared; finish it before sending more requests",
+@@ -868,6 +1170,7 @@ impl AuthService {
+         request: CoreRequest,
+         session_id: Option<&str>,
+     ) -> Result<StreamingCoreResponse, AuthError> {
++        self.oa_check_spending().await?;
+         if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
+             return Err(AuthError::WithdrawalPending(format!(
+                 "{} withdrawal for note {} is prepared; finish it before sending more requests",
+@@ -1208,14 +1511,15 @@ impl AuthService {
+                         "OA lease lost its verification evidence".to_string(),
+                     )
+                 })?;
+-                self.verify_oa_key(&lease.api_key, lease.expires_at, &evidence)
++                let outcome = self.verify_oa_key(&lease.api_key, lease.expires_at, &evidence)
+                     .await?;
+                 if now_seconds().saturating_add(1) >= lease.expires_at {
+                     return Err(AuthError::KeyVerification(
+                         "OA key expired while verification was in progress".to_string(),
+                     ));
+                 }
+-                lease.verified = true;
++                lease.verified = outcome.verified;
++                lease.verification_detail = outcome.detail.map(str::to_string);
+             }
+             let client_request_id = lease.client_request_id.clone();
+             let mut reserved_lease = lease.clone();
+@@ -1300,14 +1604,15 @@ impl AuthService {
+             let evidence = lease.verification.clone().ok_or_else(|| {
+                 AuthError::KeyVerification("OA lease lost its verification evidence".to_string())
+             })?;
+-            self.verify_oa_key(&lease.api_key, lease.expires_at, &evidence)
++            let outcome = self.verify_oa_key(&lease.api_key, lease.expires_at, &evidence)
+                 .await?;
+             if now_seconds().saturating_add(1) >= lease.expires_at {
+                 return Err(AuthError::KeyVerification(
+                     "OA key expired while verification was in progress".to_string(),
+                 ));
+             }
+-            lease.verified = true;
++            lease.verified = outcome.verified;
++            lease.verification_detail = outcome.detail.map(str::to_string);
+         }
          let url = format!(
-@@ -656,8 +956,7 @@ impl AuthService {
-             lease.openrouter_api_base.trim_end_matches('/'),
-             upstream_path
-         );
--        let response = self
--            .http
-+        let response = fresh_private_http()?
-             .post(url)
-             .bearer_auth(&lease.api_key)
-             .header("content-type", "application/json")
-@@ -698,8 +997,7 @@ impl AuthService {
-     async fn issue_direct_openrouter_lease(&self) -> Result<ActiveOpenRouterLease, AuthError> {
-         for attempt in 0..2 {
+             "{}{}",
+@@ -1326,8 +1631,7 @@ impl AuthService {
+         expires_at: u64,
+     ) -> Result<reqwest::Response, AuthError> {
+         for attempt in 1..=DIRECT_REMOTE_MAX_ATTEMPTS {
+-            let response = match self
+-                .http
++            let response = match fresh_private_http()?
+                 .post(url)
+                 .bearer_auth(api_key)
+                 .header("content-type", "application/json")
+@@ -1390,10 +1694,10 @@ impl AuthService {
+     ) -> Result<ActiveOpenRouterLease, AuthError> {
+         let mut retried_stale_root = false;
+         let mut reconciled_lost_key = false;
++        let mut refreshed_native_quote = false;
+         loop {
              let request = self.prepare_direct_lease_request().await?;
 -            let response = self
 -                .http
@@ -1554,35 +2190,205 @@ index 41dc152..223b758 100644
                  .post(format!(
                      "{}/v2/openrouter/leases",
                      self.config.protocol_server_url.trim_end_matches('/')
-@@ -815,7 +1113,7 @@ impl AuthService {
-             ));
+@@ -1412,6 +1716,13 @@ impl AuthService {
+                     .map_err(|error| AuthError::Serialization(error.to_string()))?;
+                 let extensions: OpenRouterLeaseExtensions = serde_json::from_str(&body)
+                     .map_err(|error| AuthError::Serialization(error.to_string()))?;
++                let expected_quote = crate::oa_native::saved_quote(&self.config, &request.payload)?;
++                let expected_micros = match &expected_quote { Some(quote) => quote.usd_micros(request.public_inputs.solvency_bound)?, None => request.public_inputs.solvency_bound };
++                if lease.status != "active" || lease.client_request_id != request.client_request_id
++                    || extensions.billing_quote != expected_quote || !lease.spending_limit_usd.is_finite()
++                    || lease.spending_limit_usd != expected_micros as f64 / 1_000_000.0 {
++                    return Err(AuthError::KeyVerification("lease identity, native quote, or spending cap mismatch".into()));
++                }
+                 if lease.api_key.is_empty() || lease.expires_at <= now_seconds() {
+                     return Err(AuthError::Wallet(
+                         "server returned an unusable OpenRouter lease".to_string(),
+@@ -1466,10 +1777,17 @@ impl AuthService {
+                     settle_after: lease.settle_after,
+                     verification,
+                     verified,
++                    verification_detail: None,
+                     requests_served: 0,
+                 });
+             }
+             if let Ok(error) = serde_json::from_str::<ErrorResponse>(&body) {
++                if !refreshed_native_quote && self.config.billing_asset == "native_eth"
++                    && matches!(error.error_code.as_str(), "native_quote_expired" | "native_quote_superseded") {
++                    self.refresh_unaccepted_native_request(request.clone()).await?;
++                    refreshed_native_quote = true;
++                    continue;
++                }
+                 if error.error_code == "stale_root" && !retried_stale_root {
+                     self.clear_pending_request().await?;
+                     retried_stale_root = true;
+@@ -1535,114 +1853,64 @@ impl AuthService {
+         api_key: &str,
+         expires_at: u64,
+         evidence: &OaKeyVerificationEvidence,
+-    ) -> Result<(), AuthError> {
++    ) -> Result<OaVerificationOutcome, AuthError> {
+         let expected_verifier = self.config.oa_verifier_url.trim_end_matches('/');
+         if !matches_trusted_url(&evidence.verifier_url, expected_verifier) {
+-            return Err(AuthError::KeyVerification(
+-                "lease verifier does not match the client's trusted OA verifier".to_string(),
+-            ));
++            return Err(AuthError::KeyVerification("lease verifier does not match trusted verifier".into()));
          }
-         if evidence.station_id.is_empty()
--            || evidence.key_valid_till != expires_at
-+            || !oa_key_expiry_covers_lease(evidence.key_valid_till, expires_at)
-             || evidence.station_signature.len() != 128
-             || evidence.org_signature.len() != 128
-         {
-@@ -823,8 +1121,7 @@ impl AuthService {
-                 "OA key evidence is incomplete or inconsistent".to_string(),
-             ));
+         validate_oa_key_evidence(expires_at, evidence)?;
+-        let url = format!("{expected_verifier}/submit_key");
+-        let request = serde_json::json!({
+-            "station_id": evidence.station_id,
+-            "api_key": api_key,
+-            "key_valid_till": evidence.key_valid_till,
+-            "station_signature": evidence.station_signature,
+-            "org_signature": evidence.org_signature,
+-        });
+-        for attempt in 1..=DIRECT_REMOTE_MAX_ATTEMPTS {
+-            let response = match self.http.post(&url).json(&request).send().await {
+-                Ok(response) => response,
+-                Err(error) => {
+-                    if attempt < DIRECT_REMOTE_MAX_ATTEMPTS {
+-                        let delay = direct_remote_retry_delay(attempt, None);
+-                        if retry_fits_lease(expires_at, delay) {
+-                            tracing::warn!(
+-                                attempt,
+-                                error = %error,
+-                                "retrying transient OA verifier transport failure"
+-                            );
+-                            tokio::time::sleep(delay).await;
+-                            continue;
+-                        }
+-                    }
+-                    return Err(AuthError::KeyVerification(format!(
+-                        "verifier request failed: {error}"
+-                    )));
+-                }
+-            };
+-            let status = response.status();
+-            let retry_after = retry_after_delay(response.headers());
+-            let body = response.text().await.map_err(|error| {
+-                AuthError::KeyVerification(format!("invalid verifier response: {error}"))
+-            })?;
+-            let result: Value = match serde_json::from_str(&body) {
+-                Ok(result) => result,
+-                Err(error)
+-                    if is_transient_remote_status(status)
+-                        && attempt < DIRECT_REMOTE_MAX_ATTEMPTS =>
+-                {
+-                    let delay = direct_remote_retry_delay(attempt, retry_after);
+-                    if retry_fits_lease(expires_at, delay) {
+-                        tracing::warn!(
+-                            attempt,
+-                            %status,
+-                            error = %error,
+-                            "retrying invalid transient OA verifier response"
+-                        );
+-                        tokio::time::sleep(delay).await;
+-                        continue;
+-                    }
+-                    return Err(AuthError::KeyVerification(format!(
+-                        "invalid verifier response: {error}"
+-                    )));
+-                }
+-                Err(error) => {
+-                    return Err(AuthError::KeyVerification(format!(
+-                        "invalid verifier response: {error}"
+-                    )))
+-                }
+-            };
+-            if status.is_success()
+-                && result.get("status").and_then(Value::as_str) == Some("verified")
+-            {
+-                tracing::info!(
+-                    station_id = %evidence.station_id,
+-                    recently_attested = evidence.station_recently_attested,
+-                    "OA verifier accepted station-issued OpenRouter key"
+-                );
+-                return Ok(());
++        if self.oa_banned_stations.lock().map_err(|_| AuthError::KeyVerification("station policy unavailable".into()))?.contains(&evidence.station_id) {
++            return Err(AuthError::KeyVerification("station is banned".into()));
++        }
++        if api_key.is_empty() || expires_at <= now_seconds() {
++            return Err(AuthError::KeyVerification("key is empty or expired".into()));
++        }
++        // Each attempt has fresh TLS state. Use a bounded verifier timeout;
++        // transport failure is availability evidence, never successful verification.
++        let response = fresh_private_http()?.post(format!("{expected_verifier}/submit_key"))
++            .timeout(Duration::from_secs(5))
++            .json(&serde_json::json!({
++                "station_id": evidence.station_id, "api_key": api_key,
++                "key_valid_till": evidence.key_valid_till,
++                "station_signature": evidence.station_signature,
++                "org_signature": evidence.org_signature,
++            })).send().await;
++        let mut response = match response {
++            Ok(response) => response,
++            Err(error) if oa_transport_unavailable(&error) => {
++                return oa_verifier_outage(None, &Value::Null, expires_at, evidence);
+             }
+-            let retryable = result
+-                .get("retryable")
+-                .and_then(Value::as_bool)
+-                .unwrap_or(false)
+-                || is_transient_remote_status(status);
+-            if retryable && attempt < DIRECT_REMOTE_MAX_ATTEMPTS {
+-                let delay = direct_remote_retry_delay(attempt, retry_after);
+-                if retry_fits_lease(expires_at, delay) {
+-                    tracing::warn!(
+-                        attempt,
+-                        %status,
+-                        delay_ms = delay.as_millis(),
+-                        "retrying transient OA key verification failure"
+-                    );
+-                    tokio::time::sleep(delay).await;
+-                    continue;
+-                }
++            Err(_) => return Err(AuthError::KeyVerification("verifier transport failed".into())),
++        };
++        let status = response.status().as_u16();
++        let mut bytes = Vec::new();
++        while let Some(chunk) = response.chunk().await.map_err(|_| AuthError::KeyVerification("invalid verifier response".into()))? {
++            if bytes.len() + chunk.len() > 1 << 20 {
++                return Err(AuthError::KeyVerification("oversized verifier response".into()));
+             }
+-            let detail = result
+-                .get("detail")
+-                .and_then(Value::as_str)
+-                .unwrap_or("station key was not verified");
+-            return Err(AuthError::KeyVerification(format!(
+-                "trusted verifier rejected the station key (HTTP {status}: {detail})"
+-            )));
++            bytes.extend_from_slice(&chunk);
          }
--        let response = self
--            .http
-+        let response = fresh_private_http()?
-             .post(format!("{expected_verifier}/submit_key"))
-             .json(&serde_json::json!({
-                 "station_id": evidence.station_id,
-@@ -842,7 +1139,7 @@ impl AuthService {
-         let result: Value = response.json().await.map_err(|error| {
-             AuthError::KeyVerification(format!("invalid verifier response: {error}"))
-         })?;
--        if !status.is_success() || result.get("status").and_then(Value::as_str) != Some("verified")
-+        if !status.is_success() || !oa_verifier_binds_key(&result, &evidence.station_id, api_key)
-         {
-             return Err(AuthError::KeyVerification(format!(
-                 "trusted verifier rejected the station key (HTTP {status})"
-@@ -866,6 +1163,7 @@ impl AuthService {
+-        Err(AuthError::KeyVerification(
+-            "OA verifier request exhausted its retry budget".to_string(),
+-        ))
++        let result: Value = serde_json::from_slice(&bytes).map_err(|_| AuthError::KeyVerification("invalid verifier response".into()))?;
++        if !result.is_object() { return Err(AuthError::KeyVerification("invalid verifier response".into())); }
++        if result["status"] == "banned" || result.get("banned_station").is_some_and(|value| !value.is_null() && *value != Value::Bool(false)) {
++            self.oa_banned_stations.lock().map_err(|_| AuthError::KeyVerification("station policy unavailable".into()))?.insert(evidence.station_id.clone());
++        }
++        if (200..300).contains(&status) {
++            if !oa_verifier_hard_failure(&result, false) && oa_verifier_binds_key(&result, &evidence.station_id, api_key) {
++                return Ok(OaVerificationOutcome { verified: true, detail: None });
++            }
++            return Err(AuthError::KeyVerification("verifier did not approve this station and key".into()));
++        }
++        // Present binding fields must always agree, including in outage errors.
++        if result.get("station_id").is_some_and(|id| id.as_str() != Some(&evidence.station_id))
++            || result.get("key_hash").is_some_and(|_| {
++                let mut bound = result.clone(); bound["status"] = serde_json::json!("verified");
++                if bound.get("station_id").is_none() { bound["station_id"] = serde_json::json!(evidence.station_id); }
++                !oa_verifier_binds_key(&bound, &evidence.station_id, api_key)
++            }) {
++            return Err(AuthError::KeyVerification("verifier response binding mismatch".into()));
++        }
++        oa_verifier_outage(Some(status), &result, expires_at, evidence)
+     }
+
+     async fn prepare_direct_lease_request(&self) -> Result<ApiRequestV2, AuthError> {
+@@ -1655,6 +1923,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -1590,7 +2396,72 @@ index 41dc152..223b758 100644
              let authorization = serde_json::to_string(&OpenRouterLeaseAuthorization::default())
                  .map_err(|error| AuthError::Serialization(error.to_string()))?;
              if wallet.has_pending_request() {
-@@ -904,6 +1202,7 @@ impl AuthService {
+@@ -1663,7 +1932,7 @@ impl AuthService {
+                         "an older pending request has no retryable request body".to_string(),
+                     )
+                 })?;
+-                if request.payload != authorization {
++                if crate::oa_native::saved_quote(&config, &request.payload).is_err() {
+                     return Err(AuthError::LeasePending(
+                         "a non-lease zkAPI request is still pending".to_string(),
+                     ));
+@@ -1676,6 +1945,13 @@ impl AuthService {
+             let (active_root, siblings) = runtime.block_on(async move {
+                 Ok::<_, AuthError>((indexer.root().await?, indexer.note_path(note_id).await?))
+             })?;
++            let authorization = if config.billing_asset == "native_eth" {
++                let quote = runtime.block_on(crate::oa_native::verified_quote(&config))?;
++                let mut proof_config = config.clone();
++                proof_config.request_charge_cap = quote.budget_units(config.oa_request_limit_micro_usd)?.max(config.request_charge_cap);
++                wallet = load_wallet(&proof_config, Vec::new())?;
++                serde_json::json!({"mode":"openrouter_ephemeral_lease","version":1,"billing_quote":quote}).to_string()
++            } else { authorization };
+             let payload_hash = compute_payload_hash(authorization.as_bytes());
+             wallet
+                 .prepare_request(&authorization, payload_hash, active_root, siblings)
+@@ -1684,6 +1960,41 @@ impl AuthService {
+         .await
+     }
+
++    async fn refresh_unaccepted_native_request(&self, request: ApiRequestV2) -> Result<(), AuthError> {
++        let config = self.config.clone(); let wallet_mutex = self.wallet_mutex.clone();
++        spawn_blocking(move || {
++            let _guard = wallet_mutex.lock().map_err(|_| AuthError::Wallet("wallet lock unavailable".into()))?;
++            let _lockfile = acquire_wallet_lock(&config.state_dir)?;
++            let wallet = load_wallet(&config, Vec::new())?;
++            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
++            let saved = wallet.pending_api_request()?.ok_or(AuthError::PendingRequest)?;
++            if serde_json::to_value(&saved).ok() != serde_json::to_value(&request).ok() {
++                return Err(AuthError::PendingRequest);
++            }
++            crate::oa_native::saved_quote(&config, &request.payload)?;
++            current_thread_runtime()?.block_on(async {
++                let mut response = fresh_private_http()?.post(format!("{}/v2/openrouter/leases/{}/expire",config.protocol_server_url.trim_end_matches('/'),request.client_request_id))
++                    .json(&request).send().await.map_err(|_| AuthError::PendingRequest)?;
++                if !response.status().is_success() { return Err(AuthError::PendingRequest); }
++                let mut body = Vec::new();
++                while let Some(chunk) = response.chunk().await.map_err(|_| AuthError::PendingRequest)? {
++                    if body.len()+chunk.len()>65536 { return Err(AuthError::PendingRequest); } body.extend_from_slice(&chunk);
++                }
++                let value: Value = serde_json::from_slice(&body).map_err(|_| AuthError::PendingRequest)?;
++                if !matches!(value["status"].as_str(), Some("expired_unaccepted" | "superseded_unaccepted"))
++                    || value["client_request_id"] != request.client_request_id
++                    || serde_json::from_value::<Felt252>(value["request_nullifier"].clone()).ok() != Some(request.public_inputs.request_nullifier)
++                    || serde_json::from_value::<Felt252>(value["payload_hash"].clone()).ok() != Some(request.payload_hash) {
++                    return Err(AuthError::PendingRequest);
++                }
++                // The server's atomic issuance check proved the old request can
++                // no longer be admitted. Only now may its quote be replaced.
++                wallet.clear_pending_request()?;
++                Ok(())
++            })
++        }).await
++    }
++
+     async fn clear_pending_request(&self) -> Result<(), AuthError> {
+         let config = self.config.clone();
+         let wallet_mutex = self.wallet_mutex.clone();
+@@ -1693,6 +2004,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -1598,7 +2469,7 @@ index 41dc152..223b758 100644
              wallet.clear_pending_request()?;
              Ok(())
          })
-@@ -914,7 +1213,7 @@ impl AuthService {
+@@ -1703,7 +2015,7 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<OpenRouterLeaseStatusResponse, AuthError> {
@@ -1607,7 +2478,45 @@ index 41dc152..223b758 100644
              .get(format!(
                  "{}/v2/openrouter/leases/{client_request_id}",
                  self.config.protocol_server_url.trim_end_matches('/')
-@@ -977,6 +1276,7 @@ impl AuthService {
+@@ -1722,8 +2034,7 @@ impl AuthService {
+         &self,
+         client_request_id: &str,
+     ) -> Result<Option<OpenRouterLeaseStatusResponse>, AuthError> {
+-        let response = self
+-            .http
++        let response = fresh_private_http()?
+             .get(format!(
+                 "{}/v2/openrouter/leases/{client_request_id}",
+                 self.config.protocol_server_url.trim_end_matches('/')
+@@ -1748,7 +2059,7 @@ impl AuthService {
+         &self,
+         client_request_id: &str,
+     ) -> Result<RecoveryResponseV2, AuthError> {
+-        self.http
++        fresh_private_http()?
+             .get(format!(
+                 "{}/v2/requests/{client_request_id}",
+                 self.config.protocol_server_url.trim_end_matches('/')
+@@ -1767,7 +2078,7 @@ impl AuthService {
+         &self,
+         nullifier: &Felt252,
+     ) -> Result<RecoveryResponseV2, AuthError> {
+-        self.http
++        fresh_private_http()?
+             .get(format!(
+                 "{}/v2/nullifiers/{}",
+                 self.config.protocol_server_url.trim_end_matches('/'),
+@@ -1795,8 +2106,7 @@ impl AuthService {
+         }
+         let deadline = Instant::now() + DIRECT_LEASE_RETIRE_MAX_WAIT;
+         let status = loop {
+-            let response = self
+-                .http
++            let response = fresh_private_http()?
+                 .post(format!(
+                     "{}/v2/openrouter/leases/{client_request_id}",
+                     self.config.protocol_server_url.trim_end_matches('/')
+@@ -1911,6 +2221,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
@@ -1615,7 +2524,7 @@ index 41dc152..223b758 100644
              let payload = serde_json::to_string(&request)
                  .map_err(|err| AuthError::Serialization(err.to_string()))?;
              let payload_hash = hash_payload(&payload);
-@@ -1065,6 +1365,7 @@ impl AuthService {
+@@ -2033,6 +2344,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, trusted_roots)?;
@@ -1623,150 +2532,137 @@ index 41dc152..223b758 100644
              let runtime = current_thread_runtime()?;
 
              runtime.block_on(async move {
-@@ -1404,6 +1705,184 @@ fn default_body() -> Value {
+@@ -2164,8 +2476,7 @@ impl AuthService {
+                 "deployment does not advertise an RPC URL for withdrawal confirmation".to_string(),
+             )
+         })?;
+-        let response = self
+-            .http
++        let response = fresh_private_http()?
+             .post(rpc_url)
+             .json(&serde_json::json!({
+                 "jsonrpc": "2.0",
+@@ -2397,7 +2708,7 @@ fn hash_payload(payload: &str) -> Felt252 {
+     compute_payload_hash(payload.as_bytes())
+ }
 
- #[cfg(test)]
- mod security_tests {
-+    #[tokio::test]
-+    async fn anonymous_http_calls_use_distinct_connections() {
-+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-+        let address=listener.local_addr().unwrap();
-+        let connections=std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-+        let count=connections.clone();
-+        let server=tokio::spawn(async move {
-+            for _ in 0..2 {
-+                let (mut socket,_)=listener.accept().await.unwrap();
-+                count.fetch_add(1,std::sync::atomic::Ordering::SeqCst);
-+                tokio::spawn(async move {
-+                    let mut request=[0u8;1024];
-+                    socket.read(&mut request).await.unwrap();
-+                    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok").await.unwrap();
-+                    let _=socket.read(&mut request).await;
-+                });
+-fn now_seconds() -> u64 {
++pub(crate) fn now_seconds() -> u64 {
+     SystemTime::now()
+         .duration_since(UNIX_EPOCH)
+         .unwrap_or_default()
+@@ -2674,7 +2985,18 @@ fn load_wallet(
+     config: &AuthConfig,
+     trusted_epoch_roots: Vec<EpochRoots>,
+ ) -> Result<Wallet, AuthError> {
+-    Wallet::new(client_config(config, trusted_epoch_roots)).map_err(Into::into)
++    let mut wallet_config = client_config(config, trusted_epoch_roots);
++    if config.billing_asset == "native_eth" {
++        if let Some(journal) = zkapi_client::journal::PendingRequestJournal::read(&config.state_dir.join("pending_journal.json"))? {
++            let request = journal.prepared_request.ok_or_else(|| AuthError::Wallet("native pending request has no durable authorization".into()))?;
++            crate::oa_native::saved_quote(config, &request.payload)?;
++            if request.public_inputs.solvency_bound < config.request_charge_cap || request.public_inputs.solvency_bound > 9_007_199_254_740_991 {
++                return Err(AuthError::Wallet("invalid saved native request bound".into()));
 +            }
++            wallet_config.request_charge_cap = request.public_inputs.solvency_bound;
++        }
++    }
++    Wallet::new(wallet_config).map_err(Into::into)
+ }
+
+ fn acquire_wallet_lock(state_dir: &Path) -> Result<std::fs::File, AuthError> {
+@@ -3346,3 +3668,251 @@ mod tests {
+         assert!(!commitment.is_zero());
+     }
+ }
++
++#[cfg(test)]
++mod oa_withdrawal_tests {
++    use super::*;
++    use crate::oa_withdrawal::{self, tests::fixture};
++
++    #[tokio::test]
++    async fn reservation_survives_failed_prepare_and_blocks_all_spending_paths() {
++        let (_directory, config, note) = fixture();
++        let service = AuthService::new(config.clone()).unwrap();
++        // The indexer fixture is unreachable. Persistence must happen first.
++        assert!(service.oa_prepare_withdrawal([1;20]).await.is_err());
++        assert_eq!(service.oa_withdrawal_status().await.unwrap()["phase"], "reserved");
++        drop(service);
++        let service = AuthService::new(config.clone()).unwrap();
++        for result in [service.prepare_deposit(1).await.map(|_| ()),
++            service.confirm_deposit(ConfirmDepositRequest { secret: Felt252::ONE, note_id: note.note_id+1, amount: 1, expiry_ts: 4_000_000_000 }).await.map(|_| ()),
++            service.reset_wallet().await.map(|_| ()), service.recover().await.map(|_| ()),
++            service.prepare_direct_lease_request().await.map(|_| ()),
++            service.clear_pending_request().await,
++            service.create_withdrawal(WithdrawalMode::Mutual, [2;20]).await.map(|_| ()),
++            service.execute_request_demo(CoreRequest::post_json("/chat", serde_json::json!({}))).await.map(|_| ())] {
++            assert!(matches!(result, Err(AuthError::WithdrawalConflict)), "{result:?}");
++        }
++        *service.direct_lease.lock().await = Some(ActiveOpenRouterLease {
++            session_id: "oa-single-use".into(), requests_served: 0, verification_detail: None, client_request_id: "cached-before-reservation".into(), api_key: "fixture-key".into(),
++            openrouter_api_base: "https://openrouter.ai/api/v1".into(), expires_at: now_seconds()+300,
++            settle_after: now_seconds()+360, verified: true, verification: None,
 +        });
-+        for _ in 0..2 {
-+            let response=super::fresh_private_http().unwrap().get(format!("http://{address}/")).send().await.unwrap();
-+            assert_eq!(response.text().await.unwrap(),"ok");
-+        }
-+        tokio::time::timeout(std::time::Duration::from_secs(3),server).await.unwrap().unwrap();
-+        assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst),2);
-+    }
-+
-+    #[test]
-+    fn browser_demo_mint_requires_explicit_sepolia_flag() {
-+        for (chain_id, enabled, expected) in [
-+            (11_155_111, true, true),
-+            (11_155_111, false, false),
-+            (1, true, false),
-+            (31_337, true, false),
-+        ] {
-+            let directory = tempfile::tempdir().unwrap();
-+            let service = super::AuthService::new(crate::config::AuthConfig {
-+                state_dir: directory.path().to_path_buf(),
-+                chain_id,
-+                demo_mint_enabled: enabled,
-+                ..Default::default()
-+            }).unwrap();
-+            assert_eq!(service.funding_config().demo_mint_enabled, expected);
-+        }
-+    }
-+
-+    #[test]
-+    fn oa_key_expiry_accepts_only_bounded_covering_lifetimes() {
-+        for (signed_expiry, lease_expiry, valid) in [
-+            (1_000, 1_000, true),
-+            (1_030, 1_000, true),
-+            (1_060, 1_000, true),
-+            (999, 1_000, false),
-+            (1_061, 1_000, false),
-+            (0, 0, true),
-+            (0, 1, false),
-+            (u64::MAX, u64::MAX, true),
-+            (u64::MAX, u64::MAX - 60, true),
-+            (u64::MAX, u64::MAX - 61, false),
-+            (u64::MAX - 1, u64::MAX, false),
-+            (0, u64::MAX, false),
-+            (u64::MAX, 0, false),
-+        ] {
-+            assert_eq!(super::oa_key_expiry_covers_lease(signed_expiry, lease_expiry), valid);
-+        }
++        assert!(matches!(service.ready_direct_lease().await, Err(AuthError::WithdrawalConflict)));
++        assert!(matches!(service.oa_prepare_withdrawal([2;20]).await, Err(AuthError::WithdrawalConflict)));
++        assert!(config.state_dir.join("note_state.json").exists());
 +    }
 +
 +    #[tokio::test]
-+    async fn verify_oa_key_posts_original_signed_expiry_and_evidence() {
-+        use axum::{extract::State, routing::post, Json, Router};
-+        use serde_json::{json, Value};
-+        use sha2::{Digest, Sha256};
-+        use std::sync::{Arc, Mutex};
-+
-+        async fn submit(
-+            State(seen): State<Arc<Mutex<Vec<Value>>>>,
-+            Json(body): Json<Value>,
-+        ) -> Json<Value> {
-+            seen.lock().unwrap().push(body);
-+            let hash = format!("{:x}", Sha256::digest(b"test-key"));
-+            Json(json!({"status":"verified", "station_id":"test-station", "key_hash":&hash[..16]}))
-+        }
-+        let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
++    async fn pending_settlement_is_recovered_before_reserving_and_parse_errors_fail_closed() {
++        use axum::{routing::get, Json, Router};
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        let (_directory, mut config, note) = fixture();
++        let attempts = Arc::new(AtomicUsize::new(0)); let seen = attempts.clone();
 +        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-+        let verifier_url = format!("http://{}", listener.local_addr().unwrap());
-+        let app = Router::new().route("/submit_key", post(submit)).with_state(seen.clone());
-+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-+        let directory = tempfile::tempdir().unwrap();
-+        let service = super::AuthService::new(crate::config::AuthConfig {
-+            state_dir: directory.path().to_path_buf(),
-+            oa_verifier_url: verifier_url.clone(),
-+            protocol_server_url: verifier_url.clone(),
-+            request_mode: crate::config::RequestMode::DirectOpenrouter,
-+            require_oa_org_key_source: true,
-+            ..Default::default()
++        config.protocol_server_url = format!("http://{}", listener.local_addr().unwrap());
++        let router = Router::new().route("/v2/requests/pending", get(move || {
++            seen.fetch_add(1, Ordering::SeqCst);
++            async { Json(serde_json::json!({"status":"pending", "nullifier_status":"reserved"})) }
++        }));
++        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++        let journal_path = config.state_dir.join("pending_journal.json");
++        zkapi_client::journal::PendingRequestJournal::write(&journal_path, &zkapi_client::journal::PendingRequestJournal {
++            exists: true, client_request_id: "pending".into(), nullifier: core_v2::nullifier(&note.secret_s, &note.current_anchor),
++            payload_hash: Felt252::ONE, user_rerandomization: Felt252::ONE, created_at_ms: 1, prepared_request: None,
 +        }).unwrap();
-+        let mut evidence = super::OaKeyVerificationEvidence {
-+            verifier_url,
-+            station_id: "test-station".into(),
-+            station_recently_attested: true,
-+            key_valid_till: 1_000,
-+            station_signature: "ab".repeat(64),
-+            org_signature: "cd".repeat(64),
-+        };
-+        for signed_expiry in [1_000, 1_030, 1_060] {
-+            evidence.key_valid_till = signed_expiry;
-+            service.verify_oa_key("test-key", 1_000, &evidence).await.unwrap();
-+            assert_eq!(seen.lock().unwrap().last().unwrap(), &json!({
-+                "station_id":"test-station", "api_key":"test-key",
-+                "key_valid_till":signed_expiry,
-+                "station_signature":evidence.station_signature,
-+                "org_signature":evidence.org_signature,
-+            }));
-+        }
-+        for signed_expiry in [999, 1_061, u64::MAX] {
-+            evidence.key_valid_till = signed_expiry;
-+            assert!(matches!(service.verify_oa_key("test-key", 1_000, &evidence).await,
-+                Err(super::AuthError::KeyVerification(_))));
-+        }
-+        assert_eq!(seen.lock().unwrap().len(), 3, "invalid expiry must fail before HTTP submission");
-+
-+        let lease_expiry = super::now_seconds() + 300;
-+        evidence.key_valid_till = lease_expiry + 30;
-+        *service.direct_lease.lock().await = Some(super::ActiveOpenRouterLease {
-+            client_request_id: "test-existing-lease".into(),
-+            api_key: "test-key".into(),
-+            openrouter_api_base: "https://openrouter.ai/api/v1".into(),
-+            expires_at: lease_expiry,
-+            settle_after: lease_expiry + 5,
-+            verification: Some(evidence.clone()),
-+            verified: false,
-+        });
-+        let handout = service.oa_bridge_lease().await.unwrap();
-+        assert_eq!(handout["expires_at"], lease_expiry, "signed-key margin must not extend usable lease");
-+        assert_eq!(handout["verified"], true);
-+        assert_eq!(seen.lock().unwrap().last().unwrap()["key_valid_till"], lease_expiry + 30);
-+        assert_eq!(seen.lock().unwrap().len(), 4);
++        let service = AuthService::new(config.clone()).unwrap();
++        assert!(matches!(service.oa_prepare_withdrawal([1;20]).await, Err(AuthError::PendingSettlement)));
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        assert!(oa_withdrawal::load(&config).unwrap().is_none());
++        std::fs::write(&journal_path, "malformed").unwrap();
++        assert!(service.oa_prepare_withdrawal([1;20]).await.is_err());
++        assert_eq!(attempts.load(Ordering::SeqCst), 1);
++        assert!(oa_withdrawal::load(&config).unwrap().is_none());
 +        server.abort();
 +    }
 +
++    #[tokio::test]
++    async fn lost_completion_reply_is_idempotent_and_cannot_clear_new_note_lease() {
++        let (_directory, config, note) = fixture();
++        let mut record = oa_withdrawal::reserve(&config, &note, [1;20]).unwrap();
++        record.plan = Some(oa_withdrawal::tests::plan(&record));
++        oa_withdrawal::save(&config, &record).unwrap();
++        let hash = format!("0x{}", "ab".repeat(32));
++        oa_withdrawal::complete(&config, &mut record, &hash).unwrap();
++        let service = AuthService::new(config.clone()).unwrap();
++        assert_eq!(service.oa_prepare_withdrawal([1;20]).await.unwrap(), record.plan.clone().unwrap());
++        let mut next = note.clone(); next.note_id += 1;
++        next.save(&config.state_dir.join("note_state.json")).unwrap();
++        *service.direct_lease.lock().await = Some(ActiveOpenRouterLease {
++            session_id: "oa-single-use".into(), requests_served: 0, verification_detail: None, client_request_id: "new-note-lease".into(), api_key: "fixture-key".into(),
++            openrouter_api_base: "https://openrouter.ai/api/v1".into(), expires_at: now_seconds()+300,
++            settle_after: now_seconds()+360, verified: true, verification: None,
++        });
++        assert_eq!(service.oa_confirm_withdrawal(hash).await.unwrap()["phase"], "complete");
++        assert_eq!(service.direct_lease.lock().await.as_ref().unwrap().client_request_id, "new-note-lease");
++        assert_eq!(zkapi_client::note_state::NoteState::load(&config.state_dir.join("note_state.json")).unwrap().note_id, next.note_id);
++    }
++}
++
++#[cfg(test)]
++mod oa_bridge_security_tests {
 +    #[test]
 +    fn oa_verifier_accepts_only_exact_protocol_hash_forms() {
 +        use sha2::{Digest, Sha256};
@@ -1805,6 +2701,125 @@ index 41dc152..223b758 100644
 +        assert_eq!(std::fs::read_dir(directory.path().join("oa-issued-leases")).unwrap().count(), 2);
 +    }
 +
-     use super::{enforce_required_key_source, matches_trusted_url};
-
-     #[test]
++
++}
++
++#[cfg(test)]
++mod oa_outage_tests {
++    use super::*;
++    use serde_json::json;
++    fn evidence(attested: bool) -> OaKeyVerificationEvidence {
++        OaKeyVerificationEvidence { verifier_url: "https://verifier2.openanonymity.ai".into(), station_id: "station".into(), station_recently_attested: attested,
++            key_valid_till: now_seconds()+330, station_signature: "ab".repeat(64), org_signature: "cd".repeat(64) }
++    }
++    #[test]
++    fn outage_is_explicit_and_only_allowlisted_failures_can_continue() {
++        for status in [408,500,502,503,504] {
++            assert!(oa_verifier_outage(Some(status), &json!({"status":"error"}),now_seconds()+300,&evidence(false)).is_err());
++            let result=oa_verifier_outage(Some(status),&json!({"status":"error"}),now_seconds()+300,&evidence(true)).unwrap();
++            assert!(!result.verified); assert_eq!(result.detail,Some("recently_attested_outage"));
++        }
++        for (status,body) in [(401,json!({})),(403,json!({})),(425,json!({})),(524,json!({})),(529,json!({})),
++            (503,json!({"status":"pending"})),(503,json!({"status":"unverified"})),(429,json!({"status":"banned"})),
++            (503,json!({"status":"unverified","detail":"ownership_check_error","ownership_passed":false})),
++            (503,json!({"status":"error","ownership":{"ownership_passed":false}})),(503,json!({"error":"invalid signature"})),
++            (503,json!({"status":123})),(503,json!({"status":null})),
++            (503,json!({"status":"error","error":{"detail":"invalid signature"}})),
++            (429,json!({"status":"error","banned_station":{"station_id":"station","reason":"blocked"}})),
++            (503,json!({"message":"privacy violation"})),(503,json!({"detail":"ownership check failed"}))] {
++            assert!(oa_verifier_outage(Some(status),&body,now_seconds()+300,&evidence(true)).is_err(),"{status} {body}");
++        }
++        for (status,body,detail) in [(429,json!({"status":"error"}),"rate_limited"),
++            (503,json!({"status":"unverified","detail":"ownership_check_error"}),"ownership_check_error")] {
++            let result=oa_verifier_outage(Some(status),&body,now_seconds()+300,&evidence(false)).unwrap();
++            assert!(!result.verified);assert_eq!(result.detail,Some(detail));
++        }
++        assert!(oa_verifier_outage(None,&Value::Null,now_seconds()-1,&evidence(true)).is_err());
++        assert!(oa_verifier_outage(None,&Value::Null,now_seconds()+300,&evidence(false)).is_err());
++    }
++    #[tokio::test]
++    async fn verifier_http_rejects_malformed_binding_mismatches_and_remembers_bans() {
++        use axum::{extract::State,routing::post,Json,Router};
++        use sha2::{Digest,Sha256};
++        let reply=Arc::new(Mutex::new((200u16,json!({}))));let capture=Arc::new(Mutex::new(Vec::<Value>::new()));
++        let state=(reply.clone(),capture.clone());
++        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());
++        let router=Router::new().route("/submit_key",post(|State((reply,capture)):State<(Arc<Mutex<(u16,Value)>>,Arc<Mutex<Vec<Value>>>)>,Json(request):Json<Value>|async move {
++            capture.lock().unwrap().push(request);let (status,body)=reply.lock().unwrap().clone();
++            (axum::http::StatusCode::from_u16(status).unwrap(),Json(body))
++        })).with_state(state);
++        let server=tokio::spawn(async move {axum::serve(listener,router).await.unwrap()});
++        let directory=tempfile::tempdir().unwrap();let service=AuthService::new(AuthConfig{state_dir:directory.path().into(),oa_verifier_url:url.clone(),..Default::default()}).unwrap();
++        let mut ev=evidence(true);ev.verifier_url=url;let expiry=ev.key_valid_till-30;
++        let hash=format!("{:x}",Sha256::digest(b"test-key"));
++        *reply.lock().unwrap()=(200,json!({"status":"verified","station_id":"station","key_hash":&hash[..16]}));
++        assert!(service.verify_oa_key("test-key",expiry,&ev).await.unwrap().verified);
++        assert_eq!(capture.lock().unwrap()[0]["key_valid_till"],ev.key_valid_till);
++        for (status,body) in [(200,json!({"status":"verified"})),(503,json!([])),(503,json!({"status":"error","station_id":"other"})),
++            (429,json!({"status":"error","key_hash":"0000000000000000"})),(200,json!({"status":"pending"}))] {
++            *reply.lock().unwrap()=(status,body);assert!(service.verify_oa_key("test-key",expiry,&ev).await.is_err());
++        }
++        *reply.lock().unwrap()=(503,json!({"status":"error"}));
++        assert!(!service.verify_oa_key("test-key",expiry,&ev).await.unwrap().verified);
++        *reply.lock().unwrap()=(503,json!({"status":"error","banned_station":{"station_id":"station","reason":"refused"}}));assert!(service.verify_oa_key("test-key",expiry,&ev).await.is_err());
++        let count=capture.lock().unwrap().len();*reply.lock().unwrap()=(503,json!({"status":"error"}));
++        assert!(service.verify_oa_key("test-key",expiry,&ev).await.is_err());assert_eq!(capture.lock().unwrap().len(),count);
++        server.abort();
++    }
++}
++
++#[cfg(test)]
++mod oa_native_recovery_tests {
++    use super::*;
++    use serde_json::json;
++    use zkapi_client::journal::PendingRequestJournal;
++    fn fixture() -> (tempfile::TempDir, AuthConfig, ApiRequestV2) {
++        let (directory,mut config,note)=crate::oa_withdrawal::tests::fixture();
++        config.billing_asset="native_eth".into();config.billing_unit="gwei".into();config.native_asset_wei_per_unit="1000000000".into();
++        config.native_price_feed_address=format!("0x{}","12".repeat(20));config.request_charge_cap=50_000;
++        config.oa_request_limit_micro_usd=6_000_000; // Current policy differs from saved one-dollar authorization.
++        let quote=json!({"asset":"native_eth","units_per_eth":1_000_000_000,"chain_id":config.chain_id,"feed_address":config.native_price_feed_address,
++            "round_id":"123","answer":"250000000000","decimals":8,"updated_at":1,"expires_at":3601});
++        let payload=json!({"mode":"openrouter_ephemeral_lease","version":1,"billing_quote":quote}).to_string();
++        let request=ApiRequestV2{client_request_id:"saved-native".into(),payload_hash:compute_payload_hash(payload.as_bytes()),payload,
++            public_inputs:zkapi_types::RequestPublicInputsV2{protocol_version:2,chain_id:config.chain_id,contract_address:config.contract_address,active_root:Felt252::ZERO,
++                state_signing_key_x:config.state_signing_key.x,state_signing_key_y:config.state_signing_key.y,request_time:1,solvency_bound:400_000,
++                request_nullifier:core_v2::nullifier(&note.secret_s,&note.current_anchor),authorization_tag:Felt252::ONE,anonymous_commitment_x:Felt252::ONE,anonymous_commitment_y:Felt252::ONE},
++            proof:Groth16ProofWire{backend:zkapi_types::wire::ProofBackendWire::Groth16Bn254,proof:"fixture".into()}};
++        PendingRequestJournal::write(&config.state_dir.join("pending_journal.json"),&PendingRequestJournal{exists:true,client_request_id:request.client_request_id.clone(),nullifier:request.public_inputs.request_nullifier,payload_hash:request.payload_hash,user_rerandomization:Felt252::ONE,created_at_ms:1,prepared_request:Some(request.clone())}).unwrap();
++        (directory,config,request)
++    }
++    #[tokio::test]
++    async fn restart_replays_expired_frozen_quote_and_bound_without_new_oracle() {
++        let (_directory,config,request)=fixture();let service=AuthService::new(config).unwrap();
++        let restored=service.prepare_direct_lease_request().await.unwrap();
++        assert_eq!(serde_json::to_value(restored).unwrap(),serde_json::to_value(request).unwrap());
++    }
++    #[test]
++    fn settlement_changed_quote_preserves_note_and_journal() {
++        let (_directory,config,request)=fixture();let before=std::fs::read(config.state_dir.join("note_state.json")).unwrap();
++        let mut wallet=load_wallet(&config,Vec::new()).unwrap();
++        let response:RequestResponseV2=serde_json::from_value(json!({"status":"finalized","client_request_id":request.client_request_id,"request_nullifier":request.public_inputs.request_nullifier,
++            "response_code":200,"response_payload":"{}","response_hash":"0x0","charge_applied":0,"next_commitment":{"x":"0x0","y":"0x1"},
++            "next_anchor":"0x1","blind_delta_srv":"0x0","next_state_signature":{"r_x":"0x0","r_y":"0x1","s":"0x0"}})).unwrap();
++        let failure=wallet.complete_pending_response(&response).unwrap_err();assert!(failure.to_string().contains("changed the authorized quote"));
++        assert_eq!(std::fs::read(config.state_dir.join("note_state.json")).unwrap(),before);
++        assert!(PendingRequestJournal::read(&config.state_dir.join("pending_journal.json")).unwrap().is_some());
++    }
++    #[tokio::test]
++    async fn quote_refresh_requires_atomic_matching_unaccepted_acknowledgement() {
++        use axum::{extract::State,routing::post,Json,Router};
++        let (_directory,mut config,request)=fixture();
++        let reply=Arc::new(Mutex::new(json!({"status":"expired_unaccepted","client_request_id":request.client_request_id,"request_nullifier":request.public_inputs.request_nullifier,"payload_hash":request.payload_hash})));
++        let original=reply.lock().unwrap().clone();let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();config.protocol_server_url=format!("http://{}",listener.local_addr().unwrap());
++        let router=Router::new().route("/v2/openrouter/leases/saved-native/expire",post(|State(reply):State<Arc<Mutex<Value>>>|async move {Json(reply.lock().unwrap().clone())})).with_state(reply.clone());
++        let server=tokio::spawn(async move{axum::serve(listener,router).await.unwrap()});let service=AuthService::new(config.clone()).unwrap();
++        for (field,value) in [("status",json!("not_found")),("client_request_id",json!("other")),("request_nullifier",json!("0x0")),("payload_hash",json!("0x0"))] {
++            let mut altered=original.clone();altered[field]=value;*reply.lock().unwrap()=altered;
++            assert!(service.refresh_unaccepted_native_request(request.clone()).await.is_err());
++            assert!(PendingRequestJournal::read(&config.state_dir.join("pending_journal.json")).unwrap().is_some());
++        }
++        *reply.lock().unwrap()=original;service.refresh_unaccepted_native_request(request).await.unwrap();
++        assert!(PendingRequestJournal::read(&config.state_dir.join("pending_journal.json")).unwrap().is_none());server.abort();
++    }
++}

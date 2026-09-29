@@ -70,7 +70,16 @@ func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.W
 	if state.ChainID == 11155111 {
 		network, token = "Ethereum Sepolia (test network)", "test billing tokens"
 	}
-	fmt.Fprintf(out, "%s withdrawal\nPrivate balance: %s %s\nToken contract: %s\n", network, fundingUnits(strconv.FormatUint(state.PrivateBalance, 10), 6), token, state.TokenAddress)
+	decimals := 6
+	if state.BillingAsset == "native_eth" {
+		token, decimals = "ETH", 9
+		if state.ChainID == 11155111 {
+			token = "Sepolia ETH"
+		}
+		fmt.Fprintf(out, "%s withdrawal\nPrivate balance: %s %s\n", network, fundingUnits(strconv.FormatUint(state.PrivateBalance, 10), decimals), token)
+	} else {
+		fmt.Fprintf(out, "%s withdrawal\nPrivate balance: %s %s\nToken contract: %s\n", network, fundingUnits(strconv.FormatUint(state.PrivateBalance, 10), decimals), token, state.TokenAddress)
+	}
 	fmt.Fprintf(out, "Local signing address: %s\nAvailable for network fees: %s ETH\n", state.Address, fundingUnits(state.ETHBalance, 18))
 	printWithdrawalProgress(out, state, token)
 	if !destinationSet {
@@ -173,8 +182,12 @@ func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.W
 }
 
 func printWithdrawalProgress(out io.Writer, state zkapi.AddressWithdrawalStatus, token string) {
+	decimals := 6
+	if state.BillingAsset == "native_eth" {
+		decimals = 9
+	}
 	if state.Destination != "" && state.Phase != "ready" {
-		fmt.Fprintf(out, "Saved withdrawal: %s %s to %s\n", fundingUnits(strconv.FormatUint(state.Amount, 10), 6), token, state.Destination)
+		fmt.Fprintf(out, "Saved withdrawal: %s %s to %s\n", fundingUnits(strconv.FormatUint(state.Amount, 10), decimals), token, state.Destination)
 	}
 	fmt.Fprintf(out, "%s: %s\n", state.Phase, state.Message)
 	if state.TransactionHash != "" {
@@ -244,7 +257,7 @@ func requestWithdrawal(ctx context.Context, c config.Config, method string, body
 		return state, errors.New("local withdrawal request failed; check saved status before retrying")
 	}
 	chain, err := zkapi.ChainID(c.ZKAPI.Network)
-	if err != nil || json.Unmarshal(raw, &state) != nil || state.ChainID != chain || state.TokenDecimals != 6 || !fundingAddress(state.Address) || !fundingAddress(state.TokenAddress) || !fundingBalance(state.ETHBalance) {
+	if err != nil || json.Unmarshal(raw, &state) != nil || state.ChainID != chain || !validBillingAsset(state.BillingAsset, state.BillingUnit, state.WeiPerUnit, state.TokenAddress, state.TokenDecimals) || !fundingAddress(state.Address) || !fundingBalance(state.ETHBalance) {
 		return state, errors.New("invalid local withdrawal address, token, or network")
 	}
 	if state.Destination != "" {

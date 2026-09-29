@@ -1,3 +1,37 @@
+## 2026-09-29: CLI native ETH deployment and verifier outage parity
+
+- The CLI source now embeds the fresh Mainnet/Sepolia manifests used by staging
+  and the Sepolia wallet frontend. Companion source is `20aa542`, protocol
+  `8b2d4e3`, and the circuit is `zkapi-v2-note-bound-v1`. Native principal and
+  private balances are integer gwei; public ETH remains exact wei. Local
+  funding submits one payable deposit, with no token approval.
+- Companion state includes deployment ID; funding journals bind vault, asset,
+  unit and scale. Legacy private notes are not migrated. Preserve old config
+  directories and use their matching release. Prepared requests preserve the
+  frozen quote and original cap across restart; settlement checks the same
+  quote. New requests default to a $1 cap; supported coarse caps are
+  $1/$2/$3/$4.50/$6. Full details: [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md).
+- Both CLI backends support the browser's eligible verifier outage behavior.
+  Recent attestation permits transport/gateway outage continuation; 429 and
+  exact ownership-check errors follow the existing browser exception. Explicit
+  refusal, bad bindings/signatures/origins and malformed responses fail closed.
+  Outage keys remain unverified and produce fixed response headers and a safe
+  foreground warning. Single-use CLI keys have no retained-session retry queue.
+- Native macOS build/install/reinstall and independent source review passed.
+  Live Sepolia finalized deposit, real SSE (40 content events), actual
+  `verifier-unavailable` continuation, 409 key-reuse prevention, and signed
+  28-gwei settlement passed. The 749972-gwei withdrawal mined with exact payout,
+  treasury share, closed note and consumed nullifier. Withdrawal finalized at
+  checkpoint 11805799; restart/repeat retained completion with no new transaction
+  (chain nonce 2). No private note or pending settlement remains. Exact evidence:
+  [native CLI validation](../daemon/packaging/validation/sepolia-native-cli-20260929.json).
+  Deposit/withdrawal restart checks preserve signed bytes and nonce. Mainnet
+  passed read-only startup/catalog checks; no Mainnet transaction was sent.
+- Sepolia briefly returned `native_quote_expired` while a newer oracle round
+  awaited finality. It recovered naturally without changing the 4500-second
+  limit. A briefly underpriced saved withdrawal also mined without replacing
+  its bytes. Preserve pending journals through both timing conditions.
+
 ## 2026-09-28: Restore switched accounts in existing windows
 
 - A completed username sign-in announces that its saved account is ready. Other windows discard old in-memory credentials and load the new account's non-extractable key bundle, verify the shared session, and activate its scoped ticket wallet without reloading or asking for a second passkey. Focus, visibility, and send preflight also reconcile the saved binding when a notification was missed.

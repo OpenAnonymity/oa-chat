@@ -20,6 +20,10 @@ import (
 // AddressWithdrawalStatus contains public progress only. Proofs, raw signed
 // transactions, note recovery secrets, and the signing key stay on disk.
 type AddressWithdrawalStatus struct {
+	DeploymentID    string `json:"deployment_id,omitempty"`
+	BillingAsset    string `json:"billing_asset,omitempty"`
+	BillingUnit     string `json:"billing_unit,omitempty"`
+	WeiPerUnit      string `json:"native_asset_wei_per_unit,omitempty"`
 	Address         string `json:"address"`
 	ChainID         uint64 `json:"chain_id"`
 	TokenAddress    string `json:"token_address"`
@@ -118,7 +122,7 @@ func (h *FundingHandler) AddressWithdrawal(ctx context.Context) (AddressWithdraw
 
 func (h *FundingHandler) withdrawalSnapshot(ctx context.Context) (fundingConfig, *addressFundingRecord, withdrawalWallet, AddressWithdrawalStatus, error) {
 	config, record, payment, err := h.addressSnapshot(ctx)
-	status := AddressWithdrawalStatus{Address: payment.Address, ChainID: payment.ChainID, TokenAddress: payment.TokenAddress, TokenDecimals: 6, ETHBalance: payment.ETHBalance}
+	status := AddressWithdrawalStatus{Address: payment.Address, ChainID: payment.ChainID, TokenAddress: payment.TokenAddress, TokenDecimals: payment.TokenDecimals, DeploymentID: payment.DeploymentID, BillingAsset: payment.BillingAsset, BillingUnit: payment.BillingUnit, WeiPerUnit: payment.WeiPerUnit, ETHBalance: payment.ETHBalance}
 	var wallet withdrawalWallet
 	if err != nil {
 		return config, record, wallet, status, err

@@ -16,6 +16,14 @@ import (
 
 const testBridgeToken = "unit-test-companion-token-32-characters"
 
+func testPolicy(network string) map[string]any {
+	p, _, err := pinnedDeployment(network)
+	if err != nil {
+		panic(err)
+	}
+	return map[string]any{"bridge_version": 2, "chain_id": p.ChainID, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": p.ID, "contract_address": p.Contract, "billing_asset": p.Asset, "billing_unit": p.Unit, "circuit_id": p.Proof.Circuit}
+}
+
 func newTestClient(t *testing.T, handler http.HandlerFunc, inference *httptest.Server) *Client {
 	t.Helper()
 	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +33,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc, inference *httptest.S
 			return
 		}
 		if r.URL.Path == "/oa/v1/status" {
-			_, _ = io.WriteString(w, `{"bridge_version":1,"chain_id":1,"mode":"direct_openrouter","require_oa_org_key_source":true}`)
+			_ = json.NewEncoder(w).Encode(testPolicy("mainnet"))
 			return
 		}
 		handler(w, r)
@@ -71,7 +79,7 @@ func TestCompleteReturnsLiveSSEAndSendsNoPromptToCompanion(t *testing.T) {
 		if string(data) != "{}" {
 			t.Error("inference payload crossed wallet bridge")
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "ephemeral-test-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "ephemeral-test-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -98,7 +106,7 @@ func TestLeasePolicyFailureNeverSendsPrompt(t *testing.T) {
 			upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called.Store(true) }))
 			defer upstream.Close()
 			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-				lease := map[string]any{"api_key": "secret", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true}
+				lease := map[string]any{"api_key": "secret", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"}
 				switch kind {
 				case "unverified":
 					lease["verified"] = false
@@ -160,7 +168,7 @@ func TestNoRedirectOfCredentialOrPrompt(t *testing.T) {
 	}))
 	defer upstream.Close()
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "secret", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "secret", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
 	response, err := client.Complete(context.Background(), json.RawMessage(`{"messages":[]}`))
 	if err != nil {
@@ -193,7 +201,7 @@ func TestProviderLeaseNeverReusedAcrossAPIRequests(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); _, _ = io.WriteString(w, `{}`) }))
 	defer upstream.Close()
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "one-private-session-only", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "one-private-session-only", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
 	response, err := client.Complete(context.Background(), json.RawMessage(`{"messages":[]}`))
 	if err != nil {
@@ -221,7 +229,7 @@ func TestInferenceNeverInheritsCookieJar(t *testing.T) {
 	jar.SetCookies(origin, []*http.Cookie{{Name: "identity", Value: "should-not-leave-client"}})
 	upstream.Client().Jar = jar
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "cookie-free-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "cookie-free-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
 	response, err := client.Complete(context.Background(), json.RawMessage(`{}`))
 	if err != nil {

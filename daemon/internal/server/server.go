@@ -201,6 +201,18 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer response.Body.Close()
+	// These headers are assigned by the local backend from its verifier result,
+	// replacing any provider-supplied value. Forward only the documented enum.
+	switch status := response.Header.Get("X-OA-Verification-Status"); status {
+	case "verified":
+		w.Header().Set("X-OA-Verification-Status", status)
+	case "verifier-unavailable":
+		w.Header().Set("X-OA-Verification-Status", status)
+		switch detail := response.Header.Get("X-OA-Verification-Detail"); detail {
+		case "recently_attested_outage", "rate_limited", "ownership_check_error":
+			w.Header().Set("X-OA-Verification-Detail", detail)
+		}
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		status := response.StatusCode
 		if status < 400 || status > 599 {

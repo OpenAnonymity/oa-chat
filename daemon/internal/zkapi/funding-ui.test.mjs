@@ -10,7 +10,7 @@ const token = '0x2222222222222222222222222222222222222222';
 const hash = '0x' + 'a'.repeat(64);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
-function fixture({chainID = 11155111, demoMintEnabled = false, addressState = {}, deposits = [{phase: 'active'}], responses = {}, stored = {}, noCapability = false, privateBalance = null, storageUnavailable = false} = {}) {
+function fixture({native = false, chainID = 11155111, demoMintEnabled = false, addressState = {}, deposits = [{phase: 'active'}], responses = {}, stored = {}, noCapability = false, privateBalance = null, storageUnavailable = false} = {}) {
     const fields = new Map();
     const field = id => {
         if (!fields.has(id)) fields.set(id, {value: id === 'amount' ? '0.10' : '', disabled: false, readOnly: false, textContent: '', events: {}, addEventListener(type, callback) { this.events[type] = callback; }});
@@ -22,7 +22,8 @@ function fixture({chainID = 11155111, demoMintEnabled = false, addressState = {}
     const events = {};
     let depositIndex = 0;
     let funded = privateBalance !== null;
-    const base = {address, chain_id: chainID, token_address: token, token_balance: '100000', eth_balance: '1000000000000000', phase: 'ready', ...addressState};
+    const nativeFields = native ? {deployment_id: 'native-test', billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000', token_address: '', token_decimals: 9} : {};
+    const base = {address, chain_id: chainID, token_address: token, ...nativeFields, token_balance: '100000', eth_balance: '1000000000000000', phase: 'ready', ...addressState};
     const context = {
         document: {getElementById: field},
         location: {hash: noCapability ? '' : '#funding-capability'},
@@ -43,7 +44,7 @@ function fixture({chainID = 11155111, demoMintEnabled = false, addressState = {}
                 const response = await responses[path](requests.filter(request => request.url === url).length, options, base);
                 if (response) return {ok: response.status === 200, status: response.status, text: async () => response.text ?? JSON.stringify(response.body)};
             }
-            if (path === 'config') result = {chain_id: chainID, demo_mint_enabled: demoMintEnabled, token_address: token, contract_address: '0x1111111111111111111111111111111111111111'};
+            if (path === 'config') result = {chain_id: chainID, demo_mint_enabled: demoMintEnabled, token_address: token, contract_address: '0x1111111111111111111111111111111111111111', ...nativeFields};
             else if (path === 'address') result = base;
             else if (path === 'status') result = {has_note: funded, balance: privateBalance ?? 100000};
             else if (path === 'address/deposit') {
@@ -303,6 +304,45 @@ test('missing companion state requiring recovery keeps funding disabled after re
     await tick();
     assert.equal(f.field('fund').disabled, true);
     assert.equal(f.field('status').textContent, 'Restore the original companion state before continuing.');
+    await f.field('fund').events.click();
+    assert.equal(posts(f).length, 0);
+});
+
+
+test('native ETH funding uses exact gwei amounts and no token instructions', async () => {
+    const f = fixture({native: true});
+    await tick();
+    assert.equal(f.field('fund').disabled, false);
+    assert.equal(f.field('amount').value, '0.00075');
+    assert.match(f.field('requirements').textContent, /test ETH on Sepolia/);
+    assert.doesNotMatch(f.field('requirements').textContent, /USDC|approval|token/);
+    assert.match(f.field('received').textContent, /0\.001000000000000000 Sepolia ETH/);
+    assert.equal(posts(f).length, 0);
+    f.field('amount').value = '0.000750001';
+    await f.field('fund').events.click();
+    assert.equal(JSON.parse(posts(f)[0].options.body).amount, 750001);
+});
+
+test('native saved deposit reload preserves all nine decimal places without signing', async () => {
+    const f = fixture({native: true, addressState: {amount: 750001, phase: 'deposit_pending'}});
+    await tick();
+    assert.equal(f.field('amount').value, '0.000750001');
+    assert.equal(posts(f).length, 0);
+});
+
+test('native response unit or deployment mismatch prevents funding', async () => {
+    for (const changed of [{token_decimals: 6}, {native_asset_wei_per_unit: '1000000'}, {deployment_id: 'other'}, {billing_asset: 'erc20'}]) {
+        const f = fixture({native: true, addressState: changed});
+        await tick();
+        assert.equal(f.field('fund').disabled, true);
+        assert.equal(posts(f).length, 0);
+    }
+});
+
+test('native sub-gwei amount cannot be rounded into a deposit', async () => {
+    const f = fixture({native: true});
+    await tick();
+    f.field('amount').value = '0.0000000001';
     await f.field('fund').events.click();
     assert.equal(posts(f).length, 0);
 });

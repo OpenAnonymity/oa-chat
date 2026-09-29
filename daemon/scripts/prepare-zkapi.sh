@@ -12,7 +12,7 @@ if [[ -e "$destination" ]]; then
     echo 'Destination already exists; use a fresh build directory.' >&2
     exit 1
 fi
-git clone --filter=blob:none --no-checkout https://github.com/OpenAnonymity/zkapi-EF-collab.git "$destination"
+git clone --filter=blob:none --no-checkout https://github.com/OpenAnonymity/zkapi.git "$destination"
 git -C "$destination" fetch --depth=1 origin "$OA_COMPANION_COMMIT"
 git -C "$destination" checkout --detach "$OA_COMPANION_COMMIT"
 git -C "$destination" submodule update --init --recursive --depth=1

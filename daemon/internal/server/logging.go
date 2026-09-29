@@ -26,6 +26,9 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 		returned := false
 		logger.Printf("request started method=%s route=%s", method, route)
 		defer func() {
+			if response.Header().Get("X-OA-Verification-Status") == "verifier-unavailable" {
+				logger.Print("Verification unavailable: inference used an outage-eligible key; this key is not verified")
+			}
 			result := "finished"
 			if !returned || response.failed || r.Context().Err() != nil {
 				result = "aborted"

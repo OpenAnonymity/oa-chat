@@ -146,8 +146,7 @@ func TestDemoMintEnabledOnlyForAdvertisedSepoliaDeployment(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/oa/v1/status":
-					expectedChain, _ := ChainID(scenario.network)
-					_ = json.NewEncoder(w).Encode(map[string]any{"bridge_version": 1, "chain_id": expectedChain, "mode": "direct_openrouter", "require_oa_org_key_source": true})
+					_ = json.NewEncoder(w).Encode(testPolicy(scenario.network))
 				case "/funding/config":
 					_ = json.NewEncoder(w).Encode(map[string]any{"chain_id": scenario.chain, "contract_address": "0x1111111111111111111111111111111111111111", "demo_billing_token_address": "0x2222222222222222222222222222222222222222", "demo_rpc_url": "https://rpc.example", "demo_mint_enabled": scenario.flag})
 				default:
@@ -197,10 +196,14 @@ func TestDepositReceiptRequiresMatchingVaultCommitmentAmountAndSuccess(t *testin
 			t.Fatalf("valid vault event via outer destination %s rejected: %v", destination, err)
 		}
 	}
-	for _, mutation := range []string{"reverted", "log address", "event topic", "commitment", "amount", "note overflow", "expired", "no event", "malformed"} {
+	for _, mutation := range []string{"reverted", "log address", "event topic", "commitment", "amount", "note overflow", "expired", "no event", "malformed", "removed", "duplicate"} {
 		receipt := sampleReceipt(record)
 		receipt.To = "0xdb9b1e94b5b69df7e401ddbede43491141047db3"
 		switch mutation {
+		case "removed":
+			receipt.Logs[0].Removed = true
+		case "duplicate":
+			receipt.Logs = append(receipt.Logs, receipt.Logs[0])
 		case "reverted":
 			receipt.Status = "0x0"
 		case "log address":

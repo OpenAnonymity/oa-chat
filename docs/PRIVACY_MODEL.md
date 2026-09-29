@@ -68,8 +68,8 @@ already disclosed to that UI.
 
 The local API key authenticates only the UI-to-daemon hop and never reaches OA
 services or the provider. Incoming cookies, identity headers, and top-level
-account/storage metadata are stripped. Ticket requests get distinct verified
-provider keys; zkAPI leases are single-use across API requests and process
+account/storage metadata are stripped. Ticket requests get distinct
+provider keys under the verification/outage policy below; zkAPI leases are single-use across API requests and process
 restarts. The daemon stores no chat history and creates no request-log files.
 Its foreground `serve` command emits operational metadata to stdout: local
 readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
@@ -83,7 +83,10 @@ through opt-in Wisp. Environment proxy variables are ignored. Opt-in Wisp resolv
 destination DNS and hides the source IP from destination services, while the
 relay can observe connection metadata. A configured relay failure never falls
 back to direct HTTPS. Destination certificate validation, station/key binding,
-and verified access remain mandatory in either mode. See the CLI documentation
+and the same verification policy apply in either mode. The daemon matches the
+web outage eligibility described below and exposes `verifier-unavailable`
+response metadata plus a fixed operational warning. It checks each single-use
+key once; unlike retained browser sessions, it has no background retry queue. See the CLI documentation
 for deployed-service prerequisites and the zkAPI settlement constraint.
 
 The CLI's Ethereum address-funding route generates an Ethereum signing key
@@ -273,11 +276,12 @@ for implementation details.
 
 ### 6. Verifier fail-closed policy
 
-The browser fails closed unless the verifier explicitly returns `verified` and
-binds that approval to the requested station and key hash. Pending, unknown,
-unverified, mismatched, and network-error results never activate the provisional
-child key. Because ticket spending commits before verification, a failed check
-discards the bounded child key but does not restore the ticket.
+The browser and daemon require matching station/key approval or the narrow,
+explicitly unverified outage exception in section 4. Pending, unknown,
+mismatched, malformed and explicit refusal results fail closed; transport
+failures qualify only under that exception. Because ticket spending commits
+before verification, a hard failed check discards the bounded child key but
+does not restore the ticket.
 
 The default development exception requires both the oa-chat page hostname and
 its configured oa-org hostname to be an exact loopback value (`localhost`,
@@ -287,7 +291,8 @@ routing. The build rejects OA production hostnames and never queries the
 production verifier. Both exceptions label the result as a bypass rather than
 `verified`, exclude the credential from shared-access payloads, and identify
 the reduced assurance in the security UI. Production and ordinary staging
-builds retain the fail-closed verifier path. See
+builds retain station/key checks and only the explicit outage exception from
+section 4. See
 [Disposable Demo Frontend Routing](DEMO_DEPLOYMENT.md).
 
 Commercial UI extensions receive only redacted aggregate ticket state through

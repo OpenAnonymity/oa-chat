@@ -51,12 +51,17 @@ async function api(path, body) {
     if (!result || typeof result !== 'object') throw new Error('The local funding service returned an invalid response.');
     return result;
 }
+const nativeETH = () => config?.billing_asset === 'native_eth';
+const billingDecimals = () => nativeETH() ? 9 : 6;
+const billingLabel = () => nativeETH() ? (config.chain_id === 1 ? ' ETH' : ' Sepolia ETH') : (config.chain_id === 1 ? ' USDC' : ' test billing tokens');
 function amountUnits() {
     const value = $('amount').value.trim();
-    if (!/^(0|[1-9]\d{0,6})(\.\d{1,6})?$/.test(value)) throw new Error('Enter a positive token amount with at most six decimal places.');
+    const decimals = billingDecimals();
+    const pattern = new RegExp('^(0|[1-9]\\d{0,6})(\\.\\d{1,' + decimals + '})?$');
+    if (!pattern.test(value)) throw new Error('Enter a positive amount with at most ' + decimals + ' decimal places.');
     const [whole, fraction = ''] = value.split('.');
-    const units = BigInt(whole) * 1000000n + BigInt(fraction.padEnd(6, '0'));
-    if (units <= 0n || units > 1000000000000n) throw new Error('Enter an amount between 0.000001 and 1,000,000 tokens.');
+    const units = BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(fraction.padEnd(decimals, '0'));
+    if (units <= 0n || units > 1000000000000n) throw new Error('Enter an amount between ' + formatUnits(1, decimals) + ' and ' + formatUnits(1000000000000, decimals) + billingLabel() + '.');
     return Number(units);
 }
 function formatUnits(value, decimals) {
@@ -67,7 +72,8 @@ function formatUnits(value, decimals) {
 function showAddress(result) {
     if (!/^0x[0-9a-f]{40}$/i.test(result.address || '')
         || Number(result.chain_id) !== config.chain_id
-        || result.token_address?.toLowerCase() !== config.token_address.toLowerCase()) {
+        || (result.token_address || '').toLowerCase() !== (config.token_address || '').toLowerCase()
+        || (nativeETH() && (result.billing_asset !== 'native_eth' || result.billing_unit !== 'gwei' || result.native_asset_wei_per_unit !== '1000000000' || result.token_decimals !== 9 || result.deployment_id !== config.deployment_id))) {
         throw new Error('The receiving address does not match the configured network and billing token. No further transaction was requested.');
     }
     if (receiving && result.address.toLowerCase() !== receiving.address.toLowerCase()) {
@@ -76,16 +82,16 @@ function showAddress(result) {
     const previous = receiving;
     receiving = result;
     $('address').textContent = result.address;
-    $('received').textContent = 'Received: ' + formatUnits(result.token_balance, 6) + (config.chain_id === 1 ? ' USDC' : ' test billing tokens') + ' · ' + formatUnits(result.eth_balance, 18) + (config.chain_id === 1 ? ' ETH' : ' Sepolia ETH') + '.';
+    $('received').textContent = nativeETH() ? 'Received: ' + formatUnits(result.eth_balance, 18) + billingLabel() + '.' : 'Received: ' + formatUnits(result.token_balance, 6) + billingLabel() + ' · ' + formatUnits(result.eth_balance, 18) + (config.chain_id === 1 ? ' ETH' : ' Sepolia ETH') + '.';
     $('transaction').textContent = /^0x[0-9a-f]{64}$/i.test(result.transaction_hash || '') ? 'Latest transaction: ' + result.transaction_hash : '';
     if (result.amount) {
-        $('amount').value = formatUnits(result.amount, 6);
+        $('amount').value = formatUnits(result.amount, billingDecimals());
         $('amount').readOnly = true;
         $('fund').textContent = result.phase === 'reverted' ? 'Retry saved deposit' : 'Continue saved deposit';
     } else if (result.phase === 'ready') {
         $('amount').readOnly = false;
         $('fund').textContent = 'Deposit into private balance';
-        if (previous?.amount) $('amount').value = '0.10';
+        if (previous?.amount) $('amount').value = nativeETH() ? '0.00075' : '0.10';
     }
     controls();
 }
@@ -95,7 +101,7 @@ async function refreshBalance() {
     hasNote = privateStatus.has_note === true;
     privateStateReady = true;
     $('balance').textContent = hasNote
-        ? 'Private balance: ' + formatUnits(privateStatus.balance || 0, 6) + (config.chain_id === 1 ? ' USDC' : ' test billing tokens')
+        ? 'Private balance: ' + formatUnits(privateStatus.balance || 0, billingDecimals()) + billingLabel()
         : 'No active private balance yet.';
     controls();
 }
@@ -180,12 +186,13 @@ window.addEventListener('pagehide', () => { stopped = true; });
     try {
         if (!capability) throw new Error('Start a secure funding session with oa-chat fund --browser.');
         config = await api('config');
-        if (![1, 11155111].includes(config.chain_id) || !/^0x[0-9a-f]{40}$/i.test(config.token_address || '')) throw new Error('The funding network is not supported.');
-        $('network').textContent = config.chain_id === 1 ? 'Ethereum Mainnet · real USDC' : 'Sepolia · test billing token';
+        if (![1, 11155111].includes(config.chain_id) || (nativeETH() ? (config.token_address || config.billing_unit !== 'gwei' || config.native_asset_wei_per_unit !== '1000000000' || !config.deployment_id) : !/^0x[0-9a-f]{40}$/i.test(config.token_address || ''))) throw new Error('The funding network is not supported.');
+        $('network').textContent = nativeETH() ? (config.chain_id === 1 ? 'Ethereum Mainnet · ETH' : 'Sepolia · test ETH') : (config.chain_id === 1 ? 'Ethereum Mainnet · real USDC' : 'Sepolia · test billing token');
         $('vault').textContent = config.contract_address;
-        $('token').textContent = config.token_address;
-        $('amount-label').textContent = config.chain_id === 1 ? 'Amount in USDC' : 'Amount in test billing tokens';
-        $('requirements').textContent = config.chain_id === 1
+        $('token').textContent = nativeETH() ? 'Native ETH (no token contract)' : config.token_address;
+        $('amount-label').textContent = 'Amount in' + billingLabel();
+        if (nativeETH()) $('amount').value = '0.00075';
+        $('requirements').textContent = nativeETH() ? 'Send ' + (config.chain_id === 1 ? 'ETH on Ethereum Mainnet' : 'test ETH on Sepolia') + ' to this address for the deposit and network fees.' : config.chain_id === 1
             ? 'Send USDC (the billing token contract below) and ETH to this address on Ethereum Mainnet. ETH pays the approval and deposit network fees. Transfers on other networks will not fund this balance.'
             : 'Send the configured test billing token and Sepolia ETH to this address on Sepolia. ETH pays network fees. Other test USDC contracts will not work. Do not send real funds. This address funding flow does not mint test tokens.';
         try { $('tx').value = sessionStorage.getItem('oa-funding-deposit-tx') || ''; } catch (_) {}

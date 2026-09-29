@@ -22,6 +22,10 @@ import (
 // AddressFundingStatus exposes only public funding data, never signing keys,
 // signed bytes, private-note secrets, or inference credentials.
 type AddressFundingStatus struct {
+	DeploymentID    string `json:"deployment_id,omitempty"`
+	BillingAsset    string `json:"billing_asset,omitempty"`
+	BillingUnit     string `json:"billing_unit,omitempty"`
+	WeiPerUnit      string `json:"native_asset_wei_per_unit,omitempty"`
 	Address         string `json:"address"`
 	ChainID         uint64 `json:"chain_id"`
 	TokenAddress    string `json:"token_address"`
@@ -61,22 +65,30 @@ func (h *FundingHandler) addressSnapshot(ctx context.Context) (fundingConfig, *a
 	if err := h.assertAddressChain(ctx, config); err != nil {
 		return config, nil, AddressFundingStatus{}, err
 	}
-	decimals, err := h.addressUintCall(ctx, config, config.Token, "0x313ce567", "latest")
-	if err != nil || decimals.Cmp(big.NewInt(6)) != 0 {
-		return config, nil, AddressFundingStatus{}, errors.New("the payment token must use exactly six decimals")
+	if !config.nativeETH() {
+		decimals, err := h.addressUintCall(ctx, config, config.Token, "0x313ce567", "latest")
+		if err != nil || decimals.Cmp(big.NewInt(6)) != 0 {
+			return config, nil, AddressFundingStatus{}, errors.New("the payment token must use exactly six decimals")
+		}
 	}
 	record, err := h.loadAddress(config)
 	if err != nil {
 		return config, nil, AddressFundingStatus{}, err
 	}
 	status := addressPublicStatus(record)
-	token, err := h.addressUintCall(ctx, config, config.Token, "0x70a08231"+addressABIWord(record.Address), "latest")
-	if err != nil {
-		return config, record, status, err
+	token := new(big.Int)
+	if !config.nativeETH() {
+		token, err = h.addressUintCall(ctx, config, config.Token, "0x70a08231"+addressABIWord(record.Address), "latest")
+		if err != nil {
+			return config, record, status, err
+		}
 	}
 	eth, err := h.addressQuantity(ctx, config, "eth_getBalance", []any{record.Address, "pending"})
 	if err != nil {
 		return config, record, status, err
+	}
+	if config.nativeETH() {
+		token.Quo(eth, big.NewInt(1_000_000_000))
 	}
 	status.TokenBalance, status.ETHBalance = token.String(), eth.String()
 	if record.Phase == "active" {
@@ -108,6 +120,10 @@ func (h *FundingHandler) addressHasNote(ctx context.Context) (bool, error) {
 
 func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 	status := AddressFundingStatus{Address: record.Address, ChainID: record.ChainID, TokenAddress: record.Token, TokenDecimals: 6, TokenBalance: "0", ETHBalance: "0", Amount: record.Amount, Phase: record.Phase}
+	status.DeploymentID, status.BillingAsset, status.BillingUnit, status.WeiPerUnit = record.DeploymentID, record.BillingAsset, record.BillingUnit, record.WeiPerUnit
+	if record.BillingAsset == "native_eth" {
+		status.TokenDecimals = 9
+	}
 	if record.Pending != nil {
 		status.TransactionHash = record.Pending.Hash
 	}
@@ -132,6 +148,13 @@ func addressPublicStatus(record *addressFundingRecord) AddressFundingStatus {
 		status.Message = "A withdrawal is saved. Run oa-chat withdraw and resume its destination before funding again."
 	default:
 		status.Message = "Payment recovery is required. Preserve the local funding files."
+	}
+	if record.BillingAsset == "native_eth" {
+		if record.Phase == "ready" {
+			status.Message = "Send ETH on the displayed network to this address, then choose a private deposit amount in ETH."
+		} else if record.Phase == "waiting_funds" {
+			status.Message = "Waiting for the selected ETH principal plus enough ETH for network fees."
+		}
 	}
 	return status
 }
@@ -338,9 +361,12 @@ func (h *FundingHandler) fundAddressLocked(ctx context.Context, amount uint64) (
 	if err := h.saveAddress(record); err != nil {
 		return update(), err
 	}
-	allowance, err := h.addressAllowance(ctx, config, record.Address, "latest")
-	if err != nil {
-		return update(), err
+	allowance := new(big.Int).SetUint64(amount)
+	if !config.nativeETH() {
+		allowance, err = h.addressAllowance(ctx, config, record.Address, "latest")
+		if err != nil {
+			return update(), err
+		}
 	}
 	kind, to, data := "approval", config.Token, "0x095ea7b3"+addressABIWord(config.Contract)+fmt.Sprintf("%064x", amount)
 	if allowance.Cmp(new(big.Int).SetUint64(amount)) < 0 {
@@ -391,7 +417,7 @@ func (h *FundingHandler) readAddressDeposit(config fundingConfig) (*depositRecor
 		return nil, errors.New("cannot read the pending private deposit")
 	}
 	var record depositRecord
-	if json.Unmarshal(raw, &record) != nil || record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+	if json.Unmarshal(raw, &record) != nil || !depositDeploymentMatches(record, config) {
 		return nil, errors.New("pending private deposit belongs to another deployment or is invalid; preserve it for recovery")
 	}
 	return &record, nil
@@ -494,9 +520,13 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 			return errors.New("the payment RPC has not caught up with saved transactions; no new transaction was sent")
 		}
 	}
-	gas, err := h.addressQuantity(ctx, config, "eth_estimateGas", []any{map[string]string{"from": record.Address, "to": to, "data": data, "value": "0x0"}})
+	value := new(big.Int)
+	if config.nativeETH() && kind == "deposit" {
+		value.Mul(new(big.Int).SetUint64(record.Amount), big.NewInt(1_000_000_000))
+	}
+	gas, err := h.addressQuantity(ctx, config, "eth_estimateGas", []any{map[string]string{"from": record.Address, "to": to, "data": data, "value": "0x" + value.Text(16)}})
 	if err != nil {
-		return errors.New("payment simulation failed; check token and ETH balances before retrying")
+		return errors.New("payment simulation failed; check the deposit balance and ETH for network fees before retrying")
 	}
 	if !gas.IsUint64() || gas.Uint64() < 21000 || gas.Uint64() > 16_777_216 {
 		return errors.New("invalid payment gas estimate")
@@ -517,8 +547,9 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 	if err != nil {
 		return err
 	}
-	if balance.Cmp(fee) < 0 {
-		return fmt.Errorf("%w (maximum transaction cost: %s ETH)", errAddressNeedsETH, new(big.Rat).SetFrac(fee, big.NewInt(1_000_000_000_000_000_000)).FloatString(18))
+	required := new(big.Int).Add(new(big.Int).Set(fee), value)
+	if balance.Cmp(required) < 0 {
+		return fmt.Errorf("%w (required principal plus maximum transaction cost: %s ETH)", errAddressNeedsETH, new(big.Rat).SetFrac(required, big.NewInt(1_000_000_000_000_000_000)).FloatString(18))
 	}
 	if err := h.assertAddressChain(ctx, config); err != nil {
 		return err
@@ -531,7 +562,7 @@ func (h *FundingHandler) signAddressTransaction(ctx context.Context, config fund
 	if err != nil {
 		return errors.New("invalid payment call data")
 	}
-	unsigned := types.NewTransaction(nonce.Uint64(), common.HexToAddress(to), big.NewInt(0), gasLimit, price, calldata)
+	unsigned := types.NewTransaction(nonce.Uint64(), common.HexToAddress(to), value, gasLimit, price, calldata)
 	signed, err := types.SignTx(unsigned, types.NewEIP155Signer(new(big.Int).SetUint64(config.ChainID)), key)
 	if err != nil {
 		return errors.New("cannot sign payment transaction")
@@ -640,6 +671,19 @@ func (h *FundingHandler) addressFinalReceipt(ctx context.Context, config funding
 // The manual legacy recovery endpoint shares confirm(), so locally signed
 // deposits must retain the same finality policy there as in FundAddress.
 func (h *FundingHandler) confirmAddressFinality(ctx context.Context, config fundingConfig, hash string) error {
+	// Native deposits may also arrive through the manual confirmation route.
+	// Its finality requirement is independent of a local signed-transaction
+	// journal, so another matching receipt cannot bypass the activation wait.
+	if config.nativeETH() {
+		_, final, err := h.addressFinalReceipt(ctx, config, hash, true)
+		if err != nil {
+			return err
+		}
+		if !final {
+			return errors.New("the saved deposit is awaiting Ethereum finality; retry confirmation later")
+		}
+		return nil
+	}
 	if _, err := os.Lstat(h.addressStatePath()); errors.Is(err, os.ErrNotExist) {
 		return nil
 	} else if err != nil {

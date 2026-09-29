@@ -147,7 +147,11 @@ nor responses enter the proof companion.
 
 Build it with `daemon/scripts/prepare-zkapi.sh` followed by
 `daemon/scripts/build-native.sh`; see [packaging](docs/CLI_PACKAGING.md).
-Installed native bundles include both binaries and proving assets.
+Installed native bundles include both binaries and proving assets. The September
+29 source build passed a funded native ETH Sepolia run through streamed
+inference, actual outage continuation, metered settlement, finalized withdrawal,
+and restart recovery; see [current validation](docs/CLI_ZKAPI.md#native-sepolia-acceptance-2026-09-29).
+The updated source has not been published as a new release.
 
 ```sh
 oa-chat init --backend zkapi
@@ -156,15 +160,16 @@ oa-chat serve
 oa-chat fund
 ```
 
-`fund` prints a persistent Ethereum address and its public USDC/ETH balances.
-Send USDC and ETH for gas to that address on the displayed network, then run:
+`fund` prints a persistent Ethereum address and its public ETH balance.
+Send ETH for principal and gas to that address on the displayed network, then run:
 
 ```sh
-oa-chat fund --amount 0.10
+oa-chat fund --amount 0.00075
 ```
 
-Choose the amount of USDC to turn into private inference credits. This command
-waits for incoming funds, signs the approval and vault deposit locally, and
+Choose the amount of ETH to turn into private inference credits (up to nine
+decimals, integer gwei). This command waits for incoming funds, signs the
+payable vault deposit locally, and
 waits for the confirmed deposit to activate. Ctrl+C stops waiting; rerunning
 the same command resumes the saved transaction. Keep the same `--config-dir`
 when using a nondefault directory. Starting the service or running plain
@@ -207,7 +212,12 @@ oa-chat --config-dir /path/to/private-sepolia-state fund
 ```
 
 The companion checks the manifest chain against the selected network, and
-state is separated by network. Its HTTPS requests always use the daemon's
+state is separated by network and deployment ID. This source targets the fresh
+September 28 native ETH deployments, not the older ERC-20 wallets. Preserve
+old recovery directories; they cannot be rebound to the new vault. The default
+request cap is $1; `init --zkapi-request-limit-usd 1|2|3|4.5|6` selects a coarse
+cap, converted to gwei using an independently checked frozen billing quote.
+Its HTTPS requests always use the daemon's
 authenticated loopback CONNECT bridge, which rejects plaintext HTTP. The bridge
 connects directly to destination TCP by default, or carries destination TLS
 through Wisp when `relay_url` is set. Go inference uses the same external
@@ -261,8 +271,11 @@ by this implementation. See the [publication handoff](docs/CLI_PACKAGING.md#buil
 ## Privacy and stream handling
 
 - Tickets are blinded locally with CIRCL's RFC-compatible Blind RSA. Every
-  request obtains a fresh provider key, activated only after explicit verifier
-  approval bound to its station and the verifier's SHA-256 key identifier.
+  request obtains a fresh provider key. Matching verifier approval binds its
+  station and SHA-256 key identifier. Like the web client, a narrowly eligible
+  verifier outage can continue with explicitly unverified access; see the
+  [outage policy](docs/CLI_ZKAPI.md#privacy-boundaries). Response headers and a
+  fixed foreground warning distinguish this state from verified access.
   Like the browser, the daemon accepts the deployed 16-hex identifier; it also
   accepts a matching full 64-hex digest. This check applies to the authenticated
   HTTPS response to that key's submission, never a generic broadcast result.

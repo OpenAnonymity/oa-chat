@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +35,10 @@ type FundingHandler struct {
 }
 
 type fundingConfig struct {
+	DeploymentID    string `json:"deployment_id,omitempty"`
+	BillingAsset    string `json:"billing_asset,omitempty"`
+	BillingUnit     string `json:"billing_unit,omitempty"`
+	WeiPerUnit      string `json:"native_asset_wei_per_unit,omitempty"`
 	ChainID         uint64 `json:"chain_id"`
 	Contract        string `json:"contract_address"`
 	Token           string `json:"token_address"`
@@ -43,6 +46,10 @@ type fundingConfig struct {
 	DemoMintEnabled bool   `json:"demo_mint_enabled"`
 }
 type depositRecord struct {
+	DeploymentID    string   `json:"deployment_id,omitempty"`
+	BillingAsset    string   `json:"billing_asset,omitempty"`
+	BillingUnit     string   `json:"billing_unit,omitempty"`
+	WeiPerUnit      string   `json:"native_asset_wei_per_unit,omitempty"`
 	ChainID         uint64   `json:"chain_id"`
 	Contract        string   `json:"contract_address"`
 	Amount          uint64   `json:"amount"`
@@ -219,6 +226,10 @@ func (h *FundingHandler) config(ctx context.Context) (fundingConfig, error) {
 		return fundingConfig{}, err
 	}
 	var wire struct {
+		DeploymentID    string `json:"deployment_id"`
+		BillingAsset    string `json:"billing_asset"`
+		BillingUnit     string `json:"billing_unit"`
+		WeiPerUnit      string `json:"native_asset_wei_per_unit"`
 		ChainID         uint64 `json:"chain_id"`
 		Contract        string `json:"contract_address"`
 		Token           string `json:"demo_billing_token_address"`
@@ -230,12 +241,24 @@ func (h *FundingHandler) config(ctx context.Context) (fundingConfig, error) {
 	}
 	expected, _ := ChainID(h.client.config.Network)
 	rpc, err := url.Parse(wire.RPC)
-	if wire.ChainID != expected || !isHex(wire.Contract, 20) || !isHex(wire.Token, 20) || err != nil || rpc.Scheme != "https" || rpc.Host == "" || rpc.User != nil || rpc.Fragment != "" {
+	if wire.ChainID != expected || !isHex(wire.Contract, 20) || err != nil || rpc.Scheme != "https" || rpc.Host == "" || rpc.User != nil || rpc.Fragment != "" {
 		return fundingConfig{}, errors.New("invalid funding network or contract")
 	}
+	if wire.BillingAsset == "native_eth" {
+		deployment, _, deploymentErr := pinnedDeployment(h.client.config.Network)
+		if deploymentErr != nil || wire.DeploymentID != deployment.ID || wire.ChainID != deployment.ChainID || !strings.EqualFold(wire.Contract, deployment.Contract) || wire.BillingAsset != deployment.Asset || wire.BillingUnit != deployment.Unit {
+			return fundingConfig{}, errors.New("native funding configuration does not match the packaged deployment")
+		}
+		if wire.DeploymentID == "" || wire.Token != "" || wire.BillingUnit != "gwei" || wire.WeiPerUnit != "1000000000" {
+			return fundingConfig{}, errors.New("invalid native ETH funding units or deployment")
+		}
+	} else if (wire.BillingAsset != "" && wire.BillingAsset != "erc20") || !isHex(wire.Token, 20) || wire.WeiPerUnit != "" {
+		return fundingConfig{}, errors.New("invalid billing asset configuration")
+	}
 	return fundingConfig{
+		DeploymentID: wire.DeploymentID, BillingAsset: wire.BillingAsset, BillingUnit: wire.BillingUnit, WeiPerUnit: wire.WeiPerUnit,
 		ChainID: wire.ChainID, Contract: wire.Contract, Token: wire.Token, RPC: wire.RPC,
-		DemoMintEnabled: wire.DemoMintEnabled && wire.ChainID == 11155111,
+		DemoMintEnabled: wire.DemoMintEnabled && wire.ChainID == 11155111 && wire.BillingAsset != "native_eth",
 	}, nil
 }
 
@@ -266,7 +289,7 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 		if json.Unmarshal(raw, &record) != nil {
 			return nil, errors.New("pending deposit recovery data is invalid; preserve the file for recovery")
 		}
-		if record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+		if !depositDeploymentMatches(record, config) {
 			return nil, errors.New("pending deposit belongs to another deployment; preserve it for recovery")
 		}
 		if record.Active && !wallet.HasNote {
@@ -290,7 +313,7 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 			err = os.ErrNotExist
 		} else {
 			if record.Amount != amount {
-				return nil, fmt.Errorf("a deposit for %s USDC is pending; resume that amount first", strconv.FormatFloat(float64(record.Amount)/1e6, 'f', 6, 64))
+				return nil, fmt.Errorf("a deposit for %d billing units is pending; resume that amount first", record.Amount)
 			}
 			return publicDeposit(record), nil
 		}
@@ -315,6 +338,7 @@ func (h *FundingHandler) prepare(ctx context.Context, amount uint64) (any, error
 		}
 	}
 	record.ChainID, record.Contract = config.ChainID, config.Contract
+	record.DeploymentID, record.BillingAsset, record.BillingUnit, record.WeiPerUnit = config.DeploymentID, config.BillingAsset, config.BillingUnit, config.WeiPerUnit
 	if err := h.save(record); err != nil {
 		return nil, err
 	}
@@ -400,7 +424,7 @@ func (h *FundingHandler) confirm(ctx context.Context, tx string) (any, error) {
 		return nil, errors.New("no pending deposit to confirm")
 	}
 	var record depositRecord
-	if json.Unmarshal(raw, &record) != nil || record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+	if json.Unmarshal(raw, &record) != nil || !depositDeploymentMatches(record, config) {
 		return nil, errors.New("pending deposit does not match the deployment")
 	}
 	// Preserve the first submitted hash immediately for crash recovery. A
@@ -487,6 +511,7 @@ type ethReceipt struct {
 		Address string   `json:"address"`
 		Topics  []string `json:"topics"`
 		Data    string   `json:"data"`
+		Removed bool     `json:"removed"`
 	} `json:"logs"`
 }
 
@@ -526,8 +551,11 @@ func validateReceipt(receipt ethReceipt, record depositRecord) (uint32, uint64, 
 	if !ok {
 		return 0, 0, errors.New("invalid pending commitment")
 	}
+	var matchingNote uint32
+	var matchingExpiry uint64
+	matches := 0
 	for _, log := range receipt.Logs {
-		if !strings.EqualFold(log.Address, record.Contract) || len(log.Topics) != 3 || !strings.EqualFold(log.Topics[0], depositEventTopic) {
+		if log.Removed || !strings.EqualFold(log.Address, record.Contract) || len(log.Topics) != 3 || !strings.EqualFold(log.Topics[0], depositEventTopic) {
 			continue
 		}
 		if !isHex(log.Topics[1], 32) || !isHex(log.Topics[2], 32) || !isHex(log.Data, 96) {
@@ -543,9 +571,13 @@ func validateReceipt(receipt ethReceipt, record depositRecord) (uint32, uint64, 
 		if !note.IsUint64() || note.Uint64() > 0xffffffff || !amount.IsUint64() || amount.Uint64() != record.Amount || !expiry.IsUint64() || expiry.Uint64() <= uint64(time.Now().Unix()) {
 			return 0, 0, errors.New("deposit event values do not match the pending note")
 		}
-		return uint32(note.Uint64()), expiry.Uint64(), nil
+		matchingNote, matchingExpiry = uint32(note.Uint64()), expiry.Uint64()
+		matches++
 	}
-	return 0, 0, errors.New("deposit receipt has no event matching this private note")
+	if matches == 1 {
+		return matchingNote, matchingExpiry, nil
+	}
+	return 0, 0, errors.New("deposit receipt must contain exactly one event matching this private note")
 }
 
 // Deposit witnesses describe the current shared tree, not private wallet
@@ -598,3 +630,18 @@ func syncDirectoryChain(path string) error {
 		path = parent
 	}
 }
+
+// Old ERC-20 recovery files remain readable only under their original contract.
+// Native records require explicit deployment and unit binding: a chain match
+// alone must never reinterpret a private balance from another deployment.
+func depositDeploymentMatches(record depositRecord, config fundingConfig) bool {
+	if record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) {
+		return false
+	}
+	if config.nativeETH() {
+		return record.DeploymentID == config.DeploymentID && record.BillingAsset == config.BillingAsset && record.BillingUnit == config.BillingUnit && record.WeiPerUnit == config.WeiPerUnit
+	}
+	return record.BillingAsset != "native_eth" && (record.DeploymentID == "" || record.DeploymentID == config.DeploymentID)
+}
+
+func (config fundingConfig) nativeETH() bool { return config.BillingAsset == "native_eth" }

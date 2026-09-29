@@ -67,7 +67,7 @@ class PreparationTests(unittest.TestCase):
             # are no external downloads and no changes to the user's Git config.
             global_config.write_text(
                 '[protocol "file"]\n\tallow = always\n'
-                f'[url "{source.as_uri()}"]\n\tinsteadOf = https://github.com/OpenAnonymity/zkapi-EF-collab.git\n')
+                f'[url "{source.as_uri()}"]\n\tinsteadOf = https://github.com/OpenAnonymity/zkapi.git\n')
             prepared = root / "prepared"
             result = subprocess.run(["bash", str(scripts / "prepare-zkapi.sh"), str(prepared)],
                                     env=environment, text=True, capture_output=True, timeout=30)

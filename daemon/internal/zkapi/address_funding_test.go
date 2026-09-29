@@ -18,11 +18,13 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-const addressTestVault = "0x1111111111111111111111111111111111111111"
+const addressTestVault = "0x4bdc8718c4f39289455a3c15f8bd2c345aa51a41"
 const addressTestToken = "0x2222222222222222222222222222222222222222"
 const addressTestBlock = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 type addressFixture struct {
+	native                                                         bool
+	estimateValue                                                  string
 	mu                                                             sync.Mutex
 	h                                                              *FundingHandler
 	chain, decimals, gas, gasPrice, balance, eth, allowance, nonce string
@@ -36,9 +38,10 @@ type addressFixture struct {
 	rpcCalls                                                       []string
 }
 
-func newAddressFixture(t *testing.T) *addressFixture {
+func newAddressFixture(t *testing.T, native ...bool) *addressFixture {
 	t.Helper()
 	f := &addressFixture{chain: "0x1", decimals: "0x6", gas: "0x10000", gasPrice: "0x3b9aca00", balance: "0xf4240", eth: "0xde0b6b3a7640000", allowance: "0x0", nonce: "0x0", finalized: "0x20", canonical: addressTestBlock, accepted: map[string]*types.Transaction{}, receipts: map[string]map[string]any{}}
+	f.native = len(native) > 0 && native[0]
 	rpc := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -67,6 +70,9 @@ func newAddressFixture(t *testing.T) *addressFixture {
 		case "eth_getTransactionCount":
 			result = f.nonce
 		case "eth_estimateGas":
+			var call map[string]string
+			_ = json.Unmarshal(request.Params[0], &call)
+			f.estimateValue = call["value"]
 			result = f.gas
 		case "eth_gasPrice":
 			result = f.gasPrice
@@ -131,7 +137,7 @@ func newAddressFixture(t *testing.T) *addressFixture {
 				t.Error("broadcast does not match durable journal")
 			}
 			from, err := types.Sender(types.NewEIP155Signer(big.NewInt(1)), &tx)
-			if err != nil || !strings.EqualFold(from.Hex(), journal.Address) || tx.Value().Sign() != 0 {
+			if err != nil || !strings.EqualFold(from.Hex(), journal.Address) || (!f.native && tx.Value().Sign() != 0) {
 				t.Error("invalid EIP-155 signature or value")
 			}
 			f.accepted[tx.Hash().Hex()] = &tx
@@ -153,7 +159,19 @@ func newAddressFixture(t *testing.T) *addressFixture {
 		defer f.mu.Unlock()
 		switch r.URL.Path {
 		case "/funding/config":
-			_ = json.NewEncoder(w).Encode(map[string]any{"chain_id": 1, "contract_address": addressTestVault, "demo_billing_token_address": addressTestToken, "demo_rpc_url": rpc.URL})
+			config := map[string]any{"chain_id": 1, "contract_address": addressTestVault, "demo_billing_token_address": addressTestToken, "demo_rpc_url": rpc.URL}
+			if f.native {
+				config["demo_billing_token_address"] = nil
+				deployment, _, err := pinnedDeployment("mainnet")
+				if err != nil {
+					t.Fatal(err)
+				}
+				config["deployment_id"] = deployment.ID
+				config["billing_asset"] = "native_eth"
+				config["billing_unit"] = "gwei"
+				config["native_asset_wei_per_unit"] = "1000000000"
+			}
+			_ = json.NewEncoder(w).Encode(config)
 		case "/wallet/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"has_note": f.active, "note": map[string]any{"note_id": 12, "current_balance": 99999}})
 		case "/funding/api/deposit/prepare":

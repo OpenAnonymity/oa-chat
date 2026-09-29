@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	MainnetManifest         = "https://d27v1dvkaxfc09.cloudfront.net/config.json"
-	SepoliaManifest         = "https://d33l4w2z2nh4cg.cloudfront.net/config.json"
-	CompanionRevision       = "b89365f7050e376f55e489c4d60b623cf224a4d8"
+	MainnetManifest         = "https://54.67.93.98.sslip.io/config.json"
+	SepoliaManifest         = "https://52.52.207.206.sslip.io/config.json"
+	CompanionRevision       = "20aa542ae98e767c0507133fd34b12a56f5ccd3d"
 	DefaultClientURL        = "http://127.0.0.1:43134"
 	DefaultInferenceBaseURL = "https://openrouter.ai/api/v1"
 )
@@ -30,11 +30,12 @@ const (
 // Config is the Go-side bridge configuration. A companion must be built with
 // companion.patch; unpatched or unauthenticated daemons are rejected.
 type Config struct {
-	ClientURL        string       `json:"client_url"`
-	BridgeToken      string       `json:"bridge_token"`
-	Network          string       `json:"network"` // empty means mainnet; Sepolia is explicit
-	InferenceBaseURL string       `json:"inference_base_url"`
-	HTTPClient       *http.Client `json:"-"` // remote HTTPS, direct or over Wisp as configured
+	ClientURL            string       `json:"client_url"`
+	BridgeToken          string       `json:"bridge_token"`
+	Network              string       `json:"network"` // empty means mainnet; Sepolia is explicit
+	InferenceBaseURL     string       `json:"inference_base_url"`
+	HTTPClient           *http.Client `json:"-"` // remote HTTPS, direct or over Wisp as configured
+	RequestLimitMicroUSD uint64       `json:"request_limit_micro_usd,omitempty"`
 }
 
 type Client struct {
@@ -78,6 +79,14 @@ func New(config Config) (*Client, error) {
 	}
 	if config.Network == "" {
 		config.Network = "mainnet"
+	}
+	if config.RequestLimitMicroUSD == 0 {
+		config.RequestLimitMicroUSD = 1_000_000
+	}
+	switch config.RequestLimitMicroUSD {
+	case 1_000_000, 2_000_000, 3_000_000, 4_500_000, 6_000_000:
+	default:
+		return nil, errors.New("invalid zkAPI request spending cap")
 	}
 	if _, err := ChainID(config.Network); err != nil {
 		return nil, err
@@ -197,13 +206,22 @@ func (c *Client) Check(ctx context.Context) error {
 		Mode          string `json:"mode"`
 		RequireOA     bool   `json:"require_oa_org_key_source"`
 		BridgeVersion int    `json:"bridge_version"`
+		DeploymentID  string `json:"deployment_id"`
+		Contract      string `json:"contract_address"`
+		BillingAsset  string `json:"billing_asset"`
+		BillingUnit   string `json:"billing_unit"`
+		CircuitID     string `json:"circuit_id"`
 	}
 	if json.Unmarshal(data, &result) != nil {
 		return &Error{http.StatusBadGateway, "invalid_companion_response"}
 	}
 	expected, _ := ChainID(c.config.Network)
-	if result.ChainID != expected || result.Mode != "direct_openrouter" || !result.RequireOA || result.BridgeVersion != 1 {
+	if result.ChainID != expected || result.Mode != "direct_openrouter" || !result.RequireOA || result.BridgeVersion != 2 {
 		return &Error{http.StatusBadGateway, "companion_policy_mismatch"}
+	}
+	deployment, _, err := pinnedDeployment(c.config.Network)
+	if err != nil || result.DeploymentID != deployment.ID || !strings.EqualFold(result.Contract, deployment.Contract) || result.BillingAsset != deployment.Asset || result.BillingUnit != deployment.Unit || result.CircuitID != deployment.Proof.Circuit {
+		return &Error{http.StatusBadGateway, "companion_deployment_mismatch"}
 	}
 	return nil
 }
@@ -212,7 +230,33 @@ func (c *Client) Models(ctx context.Context) (json.RawMessage, error) {
 	if err := c.Check(ctx); err != nil {
 		return nil, err
 	}
-	return c.request(ctx, http.MethodGet, "/v1/models", nil)
+	// Native manifests describe payment deployments rather than a frozen model
+	// catalog. Read the provider's public catalog over the same HTTPS transport.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.InferenceBaseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	response, err := c.inference.Do(req)
+	if err != nil {
+		return nil, &Error{http.StatusBadGateway, "models_unavailable"}
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
+	var catalog struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err != nil || response.StatusCode != http.StatusOK || len(raw) > 16<<20 || json.Unmarshal(raw, &catalog) != nil || len(catalog.Data) == 0 {
+		return nil, &Error{http.StatusBadGateway, "models_unavailable"}
+	}
+	for _, model := range catalog.Data {
+		if strings.TrimSpace(model.ID) == "" {
+			return nil, &Error{http.StatusBadGateway, "models_unavailable"}
+		}
+	}
+	return json.RawMessage(raw), nil
 }
 
 // Complete passes the caller's JSON unchanged over the anonymous HTTP client.
@@ -227,12 +271,14 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 		return nil, err
 	}
 	var lease struct {
-		APIKey    string `json:"api_key"`
-		BaseURL   string `json:"base_url"`
-		ExpiresAt uint64 `json:"expires_at"`
-		Verified  bool   `json:"verified"`
+		APIKey             string `json:"api_key"`
+		BaseURL            string `json:"base_url"`
+		ExpiresAt          uint64 `json:"expires_at"`
+		Verified           bool   `json:"verified"`
+		VerificationStatus string `json:"verification_status"`
+		VerificationDetail string `json:"verification_detail"`
 	}
-	if json.Unmarshal(leaseJSON, &lease) != nil || !lease.Verified || lease.APIKey == "" || strings.ContainsAny(lease.APIKey, "\r\n") || lease.ExpiresAt <= uint64(time.Now().Unix()+1) || strings.TrimRight(lease.BaseURL, "/") != c.config.InferenceBaseURL {
+	if json.Unmarshal(leaseJSON, &lease) != nil || !usableVerification(lease.Verified, lease.VerificationStatus, lease.VerificationDetail) || lease.APIKey == "" || strings.ContainsAny(lease.APIKey, "\r\n") || lease.ExpiresAt <= uint64(time.Now().Unix()+1) || strings.TrimRight(lease.BaseURL, "/") != c.config.InferenceBaseURL {
 		return nil, &Error{http.StatusBadGateway, "invalid_verified_lease"}
 	}
 	// The companion enforces this durably; the Go layer also rejects a
@@ -258,10 +304,32 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	response, err := c.inference.Do(req)
+	if response != nil {
+		response.Header.Del("X-OA-Verification-Status")
+		response.Header.Del("X-OA-Verification-Detail")
+		response.Header.Set("X-OA-Verification-Status", lease.VerificationStatus)
+		if lease.VerificationStatus == "verifier-unavailable" {
+			response.Header.Set("X-OA-Verification-Detail", lease.VerificationDetail)
+		}
+	}
 	if err != nil {
 		return nil, &Error{http.StatusBadGateway, "inference_transport_failed"}
 	}
 	return response, nil
+}
+
+func usableVerification(verified bool, status, detail string) bool {
+	if status == "verified" {
+		return verified && detail == ""
+	}
+	if verified || status != "verifier-unavailable" {
+		return false
+	}
+	switch detail {
+	case "recently_attested_outage", "rate_limited", "ownership_check_error":
+		return true
+	}
+	return false
 }
 
 func (c *Client) WalletStatus(ctx context.Context) (json.RawMessage, error) {

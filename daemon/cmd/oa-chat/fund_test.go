@@ -31,7 +31,7 @@ func TestFundingAmountExactUnits(t *testing.T) {
 func fundingTestStatus(phase string) map[string]any {
 	return map[string]any{
 		"address": "0x1111111111111111111111111111111111111111", "chain_id": 1,
-		"token_address": "0x2222222222222222222222222222222222222222", "token_balance": "1230000", "eth_balance": "1000000000000000",
+		"token_address": "0x2222222222222222222222222222222222222222", "token_decimals": 6, "token_balance": "1230000", "eth_balance": "1000000000000000",
 		"phase": phase, "message": "Payment progress saved locally.",
 	}
 }

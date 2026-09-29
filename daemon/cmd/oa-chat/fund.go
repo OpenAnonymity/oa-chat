@@ -22,7 +22,7 @@ var errFundingWaitStopped = errors.New("stopped waiting; rerun the same command 
 
 func runFunding(ctx context.Context, c config.Config, args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("fund", flag.ContinueOnError)
-	amountText := flags.String("amount", "", "USDC amount to deposit; waits for incoming funds (up to 6 decimal places)")
+	amountText := flags.String("amount", "", "ETH amount to deposit; waits for incoming funds (up to 9 decimal places)")
 	browser := flags.Bool("browser", false, "open the optional funding page")
 	noOpen := flags.Bool("no-open", false, "print the optional browser funding URL without opening it")
 	if err := flags.Parse(args); err != nil {
@@ -40,7 +40,7 @@ func runFunding(ctx context.Context, c config.Config, args []string, out io.Writ
 	var amount uint64
 	if *amountText != "" {
 		var err error
-		amount, err = parseFundingAmount(*amountText)
+		amount, err = parseFundingAmountForAsset(*amountText, 9, "ETH")
 		if err != nil {
 			return err
 		}
@@ -72,16 +72,34 @@ func runFunding(ctx context.Context, c config.Config, args []string, out io.Writ
 	}
 	network := "Ethereum Mainnet"
 	token := "USDC"
+	decimals := 6
 	if state.ChainID == 11155111 {
 		network, token = "Ethereum Sepolia (test network)", "test USDC"
 	}
-	fmt.Fprintf(out, "%s funding address:\n%s\n\nSend %s and ETH for network fees to this same address on %s.\nToken contract: %s\n", network, state.Address, token, network, state.TokenAddress)
-	fmt.Fprintf(out, "Available: %s %s; %s ETH\n", fundingUnits(state.TokenBalance, 6), token, fundingUnits(state.ETHBalance, 18))
+	if state.BillingAsset == "native_eth" {
+		token, decimals = "ETH", 9
+		if state.ChainID == 11155111 {
+			token = "Sepolia ETH"
+		}
+	}
+	if *amountText != "" {
+		amount, err = parseFundingAmountForAsset(*amountText, decimals, token)
+		if err != nil {
+			return err
+		}
+	}
+	if state.BillingAsset == "native_eth" {
+		fmt.Fprintf(out, "%s funding address:\n%s\n\nSend ETH for the private deposit and network fees to this address on %s.\n", network, state.Address, network)
+		fmt.Fprintf(out, "Available: %s %s\n", fundingUnits(state.ETHBalance, 18), token)
+	} else {
+		fmt.Fprintf(out, "%s funding address:\n%s\n\nSend %s and ETH for network fees to this same address on %s.\nToken contract: %s\n", network, state.Address, token, network, state.TokenAddress)
+		fmt.Fprintf(out, "Available: %s %s; %s ETH\n", fundingUnits(state.TokenBalance, 6), token, fundingUnits(state.ETHBalance, 18))
+	}
 	fmt.Fprintln(out, "No wallet connection is needed. The signing key stays in your private OA Chat config directory; back up that directory.")
 	fmt.Fprintln(out, "Deposits also spend ETH network fees, capped at 0.02 ETH per transaction.")
 	if amount == 0 {
 		if state.Amount != 0 {
-			fmt.Fprintf(out, "Saved deposit: %s %s\n%s: %s\n", fundingUnits(strconv.FormatUint(state.Amount, 10), 6), token, state.Phase, state.Message)
+			fmt.Fprintf(out, "Saved deposit: %s %s\n%s: %s\n", fundingUnits(strconv.FormatUint(state.Amount, 10), decimals), token, state.Phase, state.Message)
 			if state.TransactionHash != "" {
 				fmt.Fprintln(out, "Transaction:", state.TransactionHash)
 			}
@@ -90,14 +108,17 @@ func runFunding(ctx context.Context, c config.Config, args []string, out io.Writ
 			return nil
 		}
 		nextAmount := "0.10"
+		if decimals == 9 {
+			nextAmount = "0.00075"
+		}
 		if state.Amount != 0 {
-			nextAmount = fundingUnits(strconv.FormatUint(state.Amount, 10), 6)
+			nextAmount = fundingUnits(strconv.FormatUint(state.Amount, 10), decimals)
 		}
 		fmt.Fprintf(out, "To deposit or resume, run oa-chat fund --amount %s (keep the same --config-dir if used).\n", nextAmount)
 		fmt.Fprintln(out, "Address balances become private credits only after this deposit step.")
 		return nil
 	}
-	fmt.Fprintf(out, "\nDepositing %s %s into your private balance. Press Ctrl+C to stop waiting; saved transactions can be resumed with the same command.\n", fundingUnits(strconv.FormatUint(amount, 10), 6), token)
+	fmt.Fprintf(out, "\nDepositing %s %s into your private balance. Press Ctrl+C to stop waiting; saved transactions can be resumed with the same command.\n", fundingUnits(strconv.FormatUint(amount, 10), decimals), token)
 	previous := ""
 	for {
 		state, err = requestFunding(ctx, c, "POST", "/admin/funding/deposit", map[string]uint64{"amount": amount})
@@ -132,7 +153,11 @@ func runFunding(ctx context.Context, c config.Config, args []string, out io.Writ
 }
 
 func parseFundingAmount(value string) (uint64, error) {
-	bad := errors.New("amount must be positive USDC with at most 6 decimal places, up to 1000000")
+	return parseFundingAmountForAsset(value, 6, "USDC")
+}
+
+func parseFundingAmountForAsset(value string, decimals int, asset string) (uint64, error) {
+	bad := fmt.Errorf("amount must be positive %s with at most %d decimal places, up to %s", asset, decimals, fundingUnits("1000000000000", decimals))
 	parts := strings.Split(value, ".")
 	if len(parts) > 2 || parts[0] == "" || len(value) > 24 {
 		return 0, bad
@@ -146,10 +171,10 @@ func parseFundingAmount(value string) (uint64, error) {
 	if len(parts) == 2 {
 		fraction = parts[1]
 	}
-	if len(fraction) > 6 {
+	if len(fraction) > decimals {
 		return 0, bad
 	}
-	units, err := strconv.ParseUint(parts[0]+fraction+strings.Repeat("0", 6-len(fraction)), 10, 64)
+	units, err := strconv.ParseUint(parts[0]+fraction+strings.Repeat("0", decimals-len(fraction)), 10, 64)
 	if err != nil || units == 0 || units > 1_000_000_000_000 {
 		return 0, bad
 	}
@@ -201,7 +226,7 @@ func requestFunding(ctx context.Context, c config.Config, method, path string, b
 		return state, errors.New("local funding request failed")
 	}
 	chain, _ := zkapi.ChainID(c.ZKAPI.Network)
-	if json.Unmarshal(raw, &state) != nil || state.ChainID != chain || !fundingAddress(state.Address) || !fundingAddress(state.TokenAddress) || !fundingBalance(state.TokenBalance) || !fundingBalance(state.ETHBalance) {
+	if json.Unmarshal(raw, &state) != nil || state.ChainID != chain || !fundingAddress(state.Address) || !validBillingAsset(state.BillingAsset, state.BillingUnit, state.WeiPerUnit, state.TokenAddress, state.TokenDecimals) || !fundingBalance(state.TokenBalance) || !fundingBalance(state.ETHBalance) {
 		return state, errors.New("invalid local funding address or network")
 	}
 	return state, nil
@@ -217,4 +242,13 @@ func fundingAddress(value string) bool {
 
 func fundingBalance(value string) bool {
 	return value != "" && len(value) <= 78 && strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) < 0
+}
+
+// Legacy responses remain readable for explicit recovery, while native ETH
+// requires its exact gwei scale and cannot masquerade as a six-decimal token.
+func validBillingAsset(asset, unit, weiPerUnit, token string, decimals int) bool {
+	if asset == "native_eth" {
+		return unit == "gwei" && weiPerUnit == "1000000000" && token == "" && decimals == 9
+	}
+	return (asset == "" || asset == "erc20") && fundingAddress(token) && decimals == 6 && weiPerUnit == ""
 }

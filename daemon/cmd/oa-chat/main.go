@@ -109,13 +109,14 @@ func help() {
        [--org-url HTTPS_ORIGIN] [--verifier-url HTTPS_ORIGIN]
        [--relay-url WSS_URL] [--listen 127.0.0.1:8787]
        [--zkapi-binary PATH] [--proof-setup-dir PATH]
+       [--zkapi-request-limit-usd 1|2|3|4.5|6]
   serve                  Run the local API with status and logs on stdout
   status                 Show service and private wallet readiness
   api-key                Print the local key to configure your client
   tickets import FILE|-  Import OA exported ticket JSON
   tickets redeem [--code-file FILE]  Read shared invite code from stdin/file
   fund                   Show your Ethereum funding address and balances
-  fund --amount USDC     Wait for funds and deposit that amount locally
+  fund --amount ETH      Wait for funds and deposit that amount locally
   fund --browser         Open the optional address funding page
   fund --no-open         Print the optional funding page URL
   withdraw               Show private-balance withdrawal status
@@ -144,11 +145,18 @@ func initialize(dir string, args []string) error {
 	f.StringVar(&c.Listen, "listen", c.Listen, "loopback IP:port")
 	f.StringVar(&c.ZKAPI.Binary, "zkapi-binary", "", "path to oa-zkapi wallet/prover")
 	f.StringVar(&c.ZKAPI.ProofSetupDir, "proof-setup-dir", "", "verified deployed circuit proving assets")
+	requestLimit := f.Float64("zkapi-request-limit-usd", 1, "maximum spend for one zkAPI key: 1, 2, 3, 4.5 or 6 USD")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected init arguments")
+	}
+	switch *requestLimit {
+	case 1, 2, 3, 4.5, 6:
+		c.ZKAPI.RequestLimitMicroUSD = uint64(*requestLimit * 1_000_000)
+	default:
+		return errors.New("zkAPI request limit must be 1, 2, 3, 4.5 or 6 USD")
 	}
 	if err := config.Init(dir, c); err != nil {
 		return err
@@ -161,7 +169,7 @@ func ticketBackend(dir string, c config.Config, client *http.Client) (*ticket.Ba
 	return ticket.New(ticket.Config{OrgURL: c.OrgURL, VerifierURL: c.VerifierURL, WalletPath: filepath.Join(dir, "tickets.json"), Client: client})
 }
 func zkConfig(c config.Config, client *http.Client) zkapi.Config {
-	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, HTTPClient: client}
+	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, RequestLimitMicroUSD: c.ZKAPI.RequestLimitMicroUSD, HTTPClient: client}
 }
 
 type ticketInference struct {
@@ -210,7 +218,16 @@ func (t *ticketInference) Complete(ctx context.Context, body json.RawMessage) (*
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("User-Agent", "OA-Chat/1")
-	return t.client.Do(req)
+	response, err := t.client.Do(req)
+	if response != nil {
+		response.Header.Del("X-OA-Verification-Status")
+		response.Header.Del("X-OA-Verification-Detail")
+		response.Header.Set("X-OA-Verification-Status", key.VerificationStatus)
+		if key.VerificationStatus == "verifier-unavailable" {
+			response.Header.Set("X-OA-Verification-Detail", key.VerificationDetail)
+		}
+	}
+	return response, err
 }
 
 func serve(ctx context.Context, dir string, c config.Config, out io.Writer) error {
@@ -436,6 +453,13 @@ func status(ctx context.Context, dir string, c config.Config) error {
 		result["tickets"] = count
 	} else {
 		result["network"] = c.ZKAPI.Network
+		result["billing_asset"] = "native_eth"
+		result["billing_unit"] = "gwei"
+		limit := c.ZKAPI.RequestLimitMicroUSD
+		if limit == 0 {
+			limit = 1_000_000
+		}
+		result["request_limit_micro_usd"] = limit
 		wallet, err := zkapi.New(zkConfig(c, client))
 		if err != nil {
 			return err

@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,18 +16,22 @@ import (
 // This file is local custody material, separate from both the inference API
 // credential and the companion's private-note recovery file. Back up both.
 type addressFundingRecord struct {
-	Version    int                      `json:"version"`
-	ChainID    uint64                   `json:"chain_id"`
-	Contract   string                   `json:"contract_address"`
-	Token      string                   `json:"token_address"`
-	Address    string                   `json:"address"`
-	PrivateKey string                   `json:"private_key"`
-	Amount     uint64                   `json:"amount,omitempty"`
-	Commitment string                   `json:"commitment,omitempty"`
-	Phase      string                   `json:"phase"`
-	Pending    *addressTransaction      `json:"pending,omitempty"`
-	History    []addressTransaction     `json:"history,omitempty"`
-	Withdrawal *addressWithdrawalRecord `json:"withdrawal,omitempty"`
+	DeploymentID string                   `json:"deployment_id,omitempty"`
+	BillingAsset string                   `json:"billing_asset,omitempty"`
+	BillingUnit  string                   `json:"billing_unit,omitempty"`
+	WeiPerUnit   string                   `json:"native_asset_wei_per_unit,omitempty"`
+	Version      int                      `json:"version"`
+	ChainID      uint64                   `json:"chain_id"`
+	Contract     string                   `json:"contract_address"`
+	Token        string                   `json:"token_address"`
+	Address      string                   `json:"address"`
+	PrivateKey   string                   `json:"private_key"`
+	Amount       uint64                   `json:"amount,omitempty"`
+	Commitment   string                   `json:"commitment,omitempty"`
+	Phase        string                   `json:"phase"`
+	Pending      *addressTransaction      `json:"pending,omitempty"`
+	History      []addressTransaction     `json:"history,omitempty"`
+	Withdrawal   *addressWithdrawalRecord `json:"withdrawal,omitempty"`
 }
 
 type addressTransaction struct {
@@ -59,6 +64,10 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 			Version: 1, ChainID: config.ChainID, Contract: config.Contract, Token: config.Token,
 			Address: crypto.PubkeyToAddress(key.PublicKey).Hex(), PrivateKey: hex.EncodeToString(crypto.FromECDSA(key)), Phase: "ready",
 		}
+		if config.nativeETH() {
+			record.Version = 2
+			record.DeploymentID, record.BillingAsset, record.BillingUnit, record.WeiPerUnit = config.DeploymentID, config.BillingAsset, config.BillingUnit, config.WeiPerUnit
+		}
 		// Never expose an address that has not survived fsync plus atomic rename.
 		if err := h.saveAddress(record); err != nil {
 			return nil, err
@@ -70,7 +79,7 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 		return nil, errors.New("cannot read the local payment address; preserve its recovery file")
 	}
 	var record addressFundingRecord
-	if json.Unmarshal(raw, &record) != nil || record.Version != 1 {
+	if json.Unmarshal(raw, &record) != nil || (record.Version != 1 && record.Version != 2) {
 		return nil, errors.New("payment address recovery data is invalid; preserve the file")
 	}
 	key, err := crypto.HexToECDSA(record.PrivateKey)
@@ -79,6 +88,13 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 	}
 	if record.ChainID != config.ChainID || !strings.EqualFold(record.Contract, config.Contract) || !strings.EqualFold(record.Token, config.Token) {
 		return nil, errors.New("payment address belongs to another deployment; preserve its recovery file")
+	}
+	if config.nativeETH() {
+		if record.Version != 2 || record.DeploymentID != config.DeploymentID || record.BillingAsset != config.BillingAsset || record.BillingUnit != config.BillingUnit || record.WeiPerUnit != config.WeiPerUnit {
+			return nil, errors.New("payment recovery deployment or native units mismatch; preserve the recovery file")
+		}
+	} else if record.Version != 1 || record.BillingAsset == "native_eth" {
+		return nil, errors.New("native payment recovery cannot be used for token funding; preserve the recovery file")
 	}
 	if record.Pending != nil && record.Pending.FinalizedRevert {
 		return nil, errors.New("pending payment is incorrectly marked as retired; preserve the recovery file")
@@ -90,8 +106,30 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 			return nil, errors.New("payment transaction recovery data is invalid; preserve the file")
 		}
 		from, senderErr := types.Sender(types.NewEIP155Signer(tx.ChainId()), &tx)
-		if senderErr != nil || !strings.EqualFold(from.Hex(), record.Address) || tx.Value().Sign() != 0 || tx.To() == nil || (entry.Kind != "deposit" && entry.Kind != "approval" && entry.Kind != "approval_reset" && entry.Kind != "withdrawal") {
+		if senderErr != nil || !strings.EqualFold(from.Hex(), record.Address) || tx.To() == nil || (entry.Kind != "deposit" && entry.Kind != "approval" && entry.Kind != "approval_reset" && entry.Kind != "withdrawal") {
 			return nil, errors.New("payment transaction recovery signature is invalid; preserve the file")
+		}
+		if config.nativeETH() {
+			if entry.Kind == "approval" || entry.Kind == "approval_reset" {
+				return nil, errors.New("native payment recovery contains an unexpected token approval; preserve the file")
+			}
+			if entry.Kind == "deposit" {
+				data := tx.Data()
+				if len(data) != 4+34*32 || hex.EncodeToString(data[:4]) != "c588341c" {
+					return nil, errors.New("native deposit recovery call is invalid; preserve the file")
+				}
+				amount := new(big.Int).SetBytes(data[36:68])
+				if !amount.IsUint64() || amount.Sign() == 0 || tx.Value().Cmp(new(big.Int).Mul(new(big.Int).Set(amount), big.NewInt(1_000_000_000))) != 0 {
+					return nil, errors.New("native deposit recovery value does not match its amount; preserve the file")
+				}
+				if record.Pending != nil && strings.EqualFold(record.Pending.Hash, entry.Hash) && (amount.Uint64() != record.Amount || !strings.EqualFold(hex.EncodeToString(data[4:36]), addressABIWord(record.Commitment))) {
+					return nil, errors.New("native deposit recovery does not match its saved authorization; preserve the file")
+				}
+			} else if tx.Value().Sign() != 0 {
+				return nil, errors.New("withdrawal recovery value must be zero; preserve the file")
+			}
+		} else if tx.Value().Sign() != 0 {
+			return nil, errors.New("token payment recovery value must be zero; preserve the file")
 		}
 		expected := config.Token
 		if entry.Kind == "deposit" || entry.Kind == "withdrawal" {
