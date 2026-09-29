@@ -144,6 +144,22 @@ when that sender also receives the withdrawal. Quotes now reserve the exact
 payout headroom; signing still checks the real balance. A regression test covers
 both simulation calls and the signing boundary.
 
+Withdrawal finalized at checkpoint 11808017. After restarting and waiting for
+companion readiness, `withdraw --resume` returned the saved completed result;
+the chain nonce stayed 4, signed bytes were unchanged, and no active private
+note or pending transaction remained. Both actual receipt fees survived restart.
+The test daemon was stopped and its private configuration backed up locally.
+Exactly 0.020387670172247908 Sepolia ETH remains at the local funding address.
+
+The full Go race suite and vet, 45 Rust clientd tests, 21 Rust CLI tests,
+all-target compilation, exact source/patch checks, and native package
+installation/reinstallation passed. GitHub's Linux/macOS installer workflow
+also passed for the implementation commit. Independent adversarial review
+approved the final code. See the [sanitized receipt and recovery record](../packaging/validation/sepolia-cli-quotes-20260929.json).
+Mainnet was checked read-only; public ETH return has automated coverage but no
+live broadcast in this run. This validates the local source and native test
+package, without publishing a new release.
+
 ## Earlier native Sepolia acceptance (2026-09-29)
 
 The local Go/Rust build matches both current frontend profiles. Mainnet was

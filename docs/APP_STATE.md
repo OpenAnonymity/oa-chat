@@ -39,6 +39,14 @@
   recovery. Earlier sections below describe historical implementations and
   acceptance runs; the previous native-flow result does not itself validate the
   new fee-quote flow.
+- The new quoted flow passed live Sepolia acceptance: $2 fixed-principal deposit,
+  runtime mode switching and signed-transaction recovery, a blocked $6 model,
+  $1 model streaming during the verifier outage, signed 28-gwei settlement,
+  and finalized 731555-gwei withdrawal. Restart/resume retained completion with
+  no new nonce or active private note. Both actual fees fit the approved limits.
+  The full Go race suite/vet, Rust checks, native installation and Linux/macOS
+  installer CI passed. Public ETH return has automated coverage but was not
+  broadcast in this run. See the [sanitized evidence](../daemon/packaging/validation/sepolia-cli-quotes-20260929.json).
 
 ## 2026-09-29: Payment feedback published to staging and Sepolia
 
