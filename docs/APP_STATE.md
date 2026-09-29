@@ -1,3 +1,25 @@
+## 2026-09-29: CLI 0.2.0 prerelease published
+
+- [daemon-v0.2.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)
+  was published at 14:58 UTC as a prerelease with 12 assets. Its source is
+  `ef888242c36860ccf8ec176b2b1eb724cee77456`, the latest main when tagged.
+  Subsequent main changes correct packaging validation and record evidence;
+  the tag and original native artifacts were not moved or rebuilt.
+- Original native builds and assembly passed; corrected package revalidation
+  `36585685844` passed Nix on all four platforms, both macOS Homebrew services,
+  Linux AMD64 Homebrew installation, and Arch makepkg. Every uploaded asset's
+  digest matches the assembled artifact. The exact-tag one-command installer
+  is now public and the active documentation points to it.
+- Public HTTPS installation on macOS ARM64 passed real 0.1.0 → 0.2.0 → 0.2.0
+  upgrade/reinstallation, preserving private configuration bytes/permissions
+  and all prior bundles. Fresh Sepolia startup used the packaged companion and
+  proofs without source-build overrides; 393 budgeted models, authentication
+  boundaries, and a live $2 deposit quote passed. No additional funds were sent.
+  The funded acceptance earlier today uses the unchanged runtime/patches.
+- [Release evidence](../daemon/packaging/validation/daemon-0.2.0-release-20260929.json)
+  distinguishes published-binary checks from the funded acceptance and links
+  both CI runs. All temporary test services stopped cleanly.
+
 ## 2026-09-29: Release package revalidation
 
 - The `daemon-v0.2.0` tag at `ef888242c36860ccf8ec176b2b1eb724cee77456`

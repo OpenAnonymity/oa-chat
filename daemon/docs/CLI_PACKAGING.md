@@ -388,6 +388,27 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
 
+## Published 0.2.0 prerelease validation (2026-09-29)
+
+[daemon-v0.2.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)
+was published at 14:58 UTC with 12 assets from main commit
+`ef888242c36860ccf8ec176b2b1eb724cee77456`. The [native build and assembly](https://github.com/OpenAnonymity/oa-chat/actions/runs/36582999421)
+passed on all four targets. Its package stage exposed the Nix 2.35 lazy-source
+test assumption described above; [corrected package revalidation](https://github.com/OpenAnonymity/oa-chat/actions/runs/36585685844)
+passed every original Nix/Homebrew/Arch check against the same immutable
+artifacts. All 12 uploaded asset digests match the assembled files.
+
+The public exact-tag `curl | bash` command upgraded a real 0.1.0 macOS ARM64
+installation to 0.2.0 and reinstalled 0.2.0. It preserved private configuration
+bytes and permissions, all prior bundles, and the complete binary/proof pair.
+A fresh profile started the packaged Sepolia companion without custom binary
+or proof paths, returned 393 models with automatic budgets, enforced local
+authentication boundaries, and prepared a live $2 deposit quote. It stopped
+cleanly. This release check did not send funds or approve a transaction; the
+funded acceptance earlier on September 29 covered the unchanged daemon runtime
+and companion patches. See the [sanitized release record](../packaging/validation/daemon-0.2.0-release-20260929.json)
+and [installation-to-inference walkthrough](CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+
 ## Distribution preparation validation (2026-09-28)
 
 - All 21 installer regressions passed on macOS (Bash 3.2/BSD tools) and
