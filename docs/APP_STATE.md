@@ -32,6 +32,38 @@
   limit. A briefly underpriced saved withdrawal also mined without replacing
   its bytes. Preserve pending journals through both timing conditions.
 
+## 2026-09-28: Payment feedback and reload continuity
+
+- Funding choices are MetaMask / Send Ethereum. Manual funding gives explicit
+  external-wallet send instructions, identifies this browser’s receiving address,
+  explains fees above the deposit amount, and replaces Next with Deposit. Missing
+  or insufficient ETH has visible status; cost details are shorter. Public
+  leftover ETH returns stay distinct from private-balance withdrawal.
+- Fee refresh retains the last estimate/QR and open help until a replacement is
+  ready. The display snapshot never authorizes signing; expiry disables Deposit,
+  errors suppress QR, edits discard it, and submission still validates a fresh
+  quote. See [payment feedback](ZKAPI_PAYMENTS.md#payment-flow-feedback-2026-09-28).
+- Both balance and first-time Welcome dialogs keep tab-local view/method/
+  disclosure/scroll and safe amount-draft
+  metadata until dismissed. Address amounts restore the existing durable ETH
+  intent. Wait for the full address/fee layout before consuming restored scroll;
+  a temporary loading screen can clamp it to zero. User interaction cancels
+  deferred restoration. No restore submits a transaction or opens a wallet prompt.
+- MetaMask cancellation clears only a provably unsubmitted matching SDK draft
+  under its wallet lock; approvals, submitted/uncertain work and other-tab changes
+  retain recovery. A seven-second notice returns to a fresh deposit form.
+- Withdrawal labels no longer imply completion before the payout. Verified
+  completion opens Payment history with brief confirmation; prepared withdrawals
+  keep their destination across method switches. Missing USD uses exact ETH.
+  Method switching clears transient feedback, never transaction journals.
+- Validation: 1,024 core and 660 zkAPI tests pass; fresh Sepolia production
+  build succeeds; independent final diff review approved. An unfunded local
+  browser displayed live Sepolia fees/QR, preserved fee help across refresh/reload,
+  and had no horizontal overflow at 375px. The final scroll recheck hit preview
+  networking failures (RPC connection errors and missing same-origin proxy routes
+  on the static preview server); browser-clamping regressions cover the fix in
+  both dialogs. No funded wallet transaction or deployment was performed.
+
 ## 2026-09-28: Restore switched accounts in existing windows
 
 - A completed username sign-in announces that its saved account is ready. Other windows discard old in-memory credentials and load the new account's non-extractable key bundle, verify the shared session, and activate its scoped ticket wallet without reloading or asking for a second passkey. Focus, visibility, and send preflight also reconcile the saved binding when a notification was missed.

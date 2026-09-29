@@ -1,3 +1,4 @@
+import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from '../../chat/zkapi/components/WalletModalView.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -17,7 +18,10 @@ function fixture(method, phase) {
         deposit() { assert.fail('Opening saved progress cannot submit a deposit'); },
         quoteDepositUsd() { assert.fail('A saved deposit must never be repriced'); }
     };
-    const context = {
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false,
+        setTimeout, clearTimeout, depositOperationId: () => null,
+        readWelcomeModalIntent: () => null, writeWelcomeModalIntent() {},
+        isWalletCancellation: error => error?.code === 4001, resetCanceledDeposit: async () => true,
         isIndexerLag, pendingDepositMessage, zkapiErrorMessage,
         zkapiClient: client,
         addressFundingWallet: { pending: null },
@@ -100,6 +104,61 @@ for (const method of ['address', 'metamask']) {
         assert.equal(welcome.step, 'success');
     });
 }
+
+test('an explicitly opened Welcome survives reload even after onboarding was dismissed', () => {
+    let saved = null;
+    const build = () => {
+        const f = fixture('metamask', null);
+        const { welcome, context, client } = f;
+        client.config.pending_deposit = null;
+        context.readWelcomeModalIntent = () => saved;
+        context.writeWelcomeModalIntent = value => { saved = value; };
+        context.setWalletMethod = () => {};
+        context.document = { activeElement: null, addEventListener() {}, removeEventListener() {},
+            documentElement: { removeAttribute() {}, setAttribute() {} } };
+        context.window = { location: { search: '?s=current-chat' } };
+        context.localStorage = { getItem: () => 'true', setItem() {} };
+        context.URLSearchParams = URLSearchParams;
+        context.showSurface = () => {};
+        context.hideSurface = () => {};
+        welcome.overlay = { querySelector: selector => selector === '[data-funding-scroll]' ? { scrollTop: 42 } : null };
+        welcome.render = () => welcome.rememberRunningModal();
+        welcome.close = Object.getPrototypeOf(welcome).close;
+        return f;
+    };
+    const first = build();
+    assert.equal(first.welcome.shouldShow(), false);
+    first.welcome.open();
+    first.welcome.fundingInputAmount = '7.5';
+    first.welcome.fundingInputCurrency = 'eth';
+    first.welcome.fundingHelpOpen = 'quote';
+    first.welcome.rememberRunningModal();
+    assert.equal(saved.scroll, 42);
+    const second = build();
+    assert.equal(second.welcome.shouldShow(), true);
+    second.welcome.open();
+    assert.equal(second.welcome.isOpen, true);
+    assert.equal(second.welcome.fundingInputAmount, '7.5');
+    assert.equal(second.welcome.fundingInputCurrency, 'eth');
+    assert.equal(second.welcome.fundingHelpOpen, 'quote');
+    assert.equal(second.welcome.restoredModalView.scroll, 42);
+    const third = build();
+    assert.equal(third.welcome.shouldShow(), true);
+    third.welcome.open();
+    third.welcome.close();
+    assert.equal(saved, null);
+    assert.equal(build().welcome.shouldShow(), false);
+});
+
+test('a saved Welcome deposit returns to safe recovery controls after reload', () => {
+    const { welcome, context } = fixture('metamask', 'submitted');
+    context.readWelcomeModalIntent = () => ({ open: true, method: 'metamask' });
+    assert.equal(welcome.shouldShow(), true);
+    assert.match(welcome.renderWelcome(), /Continue saved deposit/);
+    assert.doesNotMatch(welcome.renderWelcome(), /id="welcome-fund-btn"/);
+    welcome.app.accountModal.isOpen = true;
+    assert.equal(welcome.shouldShow(), false, 'an already restored balance dialog takes precedence');
+});
 
 for (const method of ['address', 'metamask']) {
     for (const phase of ['prepared', 'retry_exact', 'submitted', 'awaiting_wallet', 'ambiguous']) {

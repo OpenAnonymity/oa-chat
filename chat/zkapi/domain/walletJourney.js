@@ -38,7 +38,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
 export function classifyWalletStatus(kind, message = '') {
     const text = String(message || '');
     if (!text) return null;
-    if (/returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
+    if (/Withdrawal confirmed\.|returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
     if (/submitted|waiting for confirmation|Checking submitted|checking confirmation|Checking (the private-vault deposit|payment status)/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
@@ -97,7 +97,8 @@ export function walletJourney({ kind, message = '', persistedPhase = '', last = 
     return {
         kind,
         position,
-        category: kind === 'deposit' ? 'Adding your balance' : kind === 'escape' ? 'Starting account recovery' : 'Returning your balance',
+        category: kind === 'deposit' ? 'Adding your balance' : kind === 'escape' ? 'Starting account recovery'
+            : ['prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal ready to continue' : 'Withdrawal',
         steps: steps.map((step, i) => ({
             ...step,
             state: i < index ? 'complete' : i === index ? (failed ? 'error' : state) : 'upcoming'

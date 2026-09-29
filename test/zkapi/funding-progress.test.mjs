@@ -127,3 +127,10 @@ test('invalid amounts fail closed without calling the formatter or interpolating
     assert.equal(render({ renderAmount: null }), '');
     assert.equal(render({ depositWei: String(2n ** 256n - 1n) }), '');
 });
+
+test('compact fee details show money once without the repeated chart explanations', () => {
+    const html = render({ compact: true, availableWei: '125' });
+    for (const label of ['Already at this address', 'Deposit', 'Network fee', 'Optional buffer', 'Required total']) assert.ok(html.includes(label));
+    assert.doesNotMatch(html, /progressbar|including buffer|Blue shows|funding-progress-chart/);
+    assert.match(html, /<b>150 wei<\/b>/);
+});

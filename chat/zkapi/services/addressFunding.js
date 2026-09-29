@@ -56,7 +56,7 @@ export async function runAddressAction(owner, details, report, action) {
             if (pending && !canQuotePendingAddressDeposit()) {
                 throw new Error('Check the saved deposit status before continuing.');
             }
-            if (!owner.fundingFlow) throw new Error('Prepare an ETH deposit before choosing Next.');
+            if (!owner.fundingFlow) throw new Error('Enter a deposit amount before choosing Deposit.');
             const intent = await owner.fundingFlow.verifyReady();
             if (pending && (String(pending.amount) !== intent.amount
                 || pending.operation_id !== intent.preparedOperationId)) {
@@ -67,7 +67,7 @@ export async function runAddressAction(owner, details, report, action) {
                 preparedOperationId: intent.preparedOperationId, depositCommitment: intent.depositCommitment,
                 feeLimitWei: intent.feeLimitWei, feeQuoteExpiresAt: intent.feeQuoteExpiresAt };
         } else {
-            if (pending?.amount == null) throw new Error('Prepare an ETH deposit before choosing Next.');
+            if (pending?.amount == null) throw new Error('Enter a deposit amount before choosing Deposit.');
             authorization = { kind: 'deposit', amount: String(pending.amount) };
         }
     } else if (kind === 'withdraw' || kind === 'escape') {

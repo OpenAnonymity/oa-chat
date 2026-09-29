@@ -1,3 +1,4 @@
+import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from '../../chat/zkapi/components/WalletModalView.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -45,7 +46,9 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
     const element = () => ({ events: {}, addEventListener(type, handler) { this.events[type] = handler; } });
     for (const name of ['amount', 'currency']) fields.set(`[data-funding-${name}]`, element());
     const methods = ['metamask', 'address'].map(value => Object.assign(element(), { dataset: { walletMethod: value } }));
-    const context = { formatFundingAmount, renderFundingProgress, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, formatFundingAmount, renderFundingProgress, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
+        depositOperationId: () => null, isWalletCancellation: () => false,
+        readWelcomeModalIntent: () => null, writeWelcomeModalIntent() {},
         addressFundingWallet: wallet, getWalletMethod: () => method, walletMethodActionBusy: () => false, setWalletMethod: value => { method = value; },
         canQuotePendingAddressDeposit: () => Boolean(client.config.pending_deposit?.funding_quote_available),
         chatDB: { getSetting: async key => records.get(key) ?? null,
@@ -83,7 +86,7 @@ test('one shared amount precedes method choice in both native deposit dialogs', 
     assert.ok(html.indexOf('data-funding-amount') < html.indexOf('data-wallet-method'));
     assert.doesNotMatch(html, /welcome-deposit-amount/);
     const accountSource = source('AccountModal');
-    assert.ok(accountSource.indexOf('${renderDepositAmount(this)}') < accountSource.indexOf('${renderWalletMethod(this)}'));
+    assert.ok(accountSource.indexOf('${renderDepositAmount(this)}') < accountSource.indexOf('renderWalletMethod(this)', accountSource.indexOf('${renderDepositAmount(this)}')));
     const account = Object.assign(Object.create(f.Account.prototype), f.owner, {
         renderOutcome: () => '', renderWithdrawalStatusLink: () => '', justCanceled: () => false,
         privateBalanceHelpOpen: {}
@@ -160,7 +163,7 @@ test('a dirty draft survives a method switch and replaces an older address-scope
     assert.equal([...f.records.values()][0].usdAmount, '23');
 });
 
-test('QR uses the remaining exact wei and disappears immediately on edits, stale quotes and full funding', async t => {
+test('QR uses exact remaining wei, stays during fee refresh, and clears on edits or full funding', async t => {
     const f = fixture(t, { method: 'address', input: '0.005', currency: 'eth' });
     await f.hydrate();
     f.owner.fundingFlow.status = { ethBalance: '4000000000000000' };
@@ -173,7 +176,10 @@ test('QR uses the remaining exact wei and disappears immediately on edits, stale
     assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
     await f.owner.fundingFlow.setAmount('0.006', 'eth');
     f.owner.fundingFlow.fee.expiresAt = Date.now() - 1;
-    assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);
+    const refreshing = f.controls.renderFundingAccount(f.owner);
+    assert.match(refreshing, /data-test-qr/);
+    assert.match(refreshing, /data-funding-next[^>]*disabled/);
+    assert.match(refreshing, /Updating fee estimate/);
     f.owner.fundingFlow.fee.expiresAt = Date.now() + 60_000;
     f.owner.fundingFlow.status = { ethBalance: f.owner.fundingFlow.totalWei };
     assert.doesNotMatch(f.controls.renderFundingAccount(f.owner), /data-test-qr/);

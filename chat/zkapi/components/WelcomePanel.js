@@ -1,12 +1,15 @@
 import { attachFundingDisclosures } from './FundingDisclosures.js';
 import { showSurface, hideSurface } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import { depositOperationId, isWalletCancellation, resetCanceledDeposit } from '../services/canceledDeposit.mjs';
+import { readWelcomeModalIntent, writeWelcomeModalIntent } from '../services/welcomeModalIntent.mjs';
+import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from './WalletModalView.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { runAddressAction } from '../services/addressFunding.js';
 import { isIndexerLag, pendingDepositMessage, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
-import { getWalletMethod, initWalletClient, prepareWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
-import { attachWalletMethodControls, captureWalletView, refreshWalletView, renderDepositAmount, prepareDepositAmount, renderFundingAccount, renderWalletMethod, restoreWalletView, stopFundingFlow } from './WalletMethodControls.js';
+import { getWalletMethod, initWalletClient, prepareWalletMethod, setWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
+import { attachWalletMethodControls, captureWalletView, refreshWalletView, renderDepositAmount, prepareDepositAmount, renderFundingAccount, renderWalletMethod, restoreWalletView, stopFundingFlow, isFundingViewHydrating } from './WalletMethodControls.js';
 
 const DISMISSED_KEY = 'zkapi-oa-welcome-dismissed';
 const MODAL_CLASSES = 'rounded-2xl border border-border shadow-lg flex flex-col zkapi-welcome-dialog';
@@ -15,6 +18,10 @@ export default class WelcomePanel {
     constructor(app) {
         this.app = app;
         this.overlay = document.getElementById('welcome-panel');
+        attachWalletModalRestoreCancellation(this);
+        const rememberView = () => queueMicrotask(() => this.rememberRunningModal());
+        this.overlay?.addEventListener?.('scroll', rememberView, true);
+        this.overlay?.addEventListener?.('toggle', rememberView, true);
         this.isOpen = false;
         this.step = 'welcome';
         this.busy = false;
@@ -53,6 +60,8 @@ export default class WelcomePanel {
     }
 
     shouldShow() {
+        if (this.app.accountModal?.isOpen || this.app.accountModal?.readRunningModal?.()) return false;
+        if (readWelcomeModalIntent()) return true;
         return !zkapiClient.hasNote
             && localStorage.getItem(DISMISSED_KEY) !== 'true'
             && !new URLSearchParams(window.location.search).has('s');
@@ -60,9 +69,25 @@ export default class WelcomePanel {
 
     open() {
         if (!this.overlay || this.isOpen) return;
+        const saved = readWelcomeModalIntent();
+        if (['metamask', 'address'].includes(saved?.method)) {
+            try { setWalletMethod(saved.method); } catch { /* A saved transaction owns its signer. */ }
+        }
+        if (getWalletMethod() !== 'address' && typeof saved?.amount === 'string'
+            && saved.amount.length <= 50 && /^[\d.]*$/.test(saved.amount)) {
+            this.fundingInputAmount = saved.amount;
+            this.depositAmount = saved.amount;
+            this.fundingInputCurrency = saved.currency === 'eth' ? 'eth' : 'usd';
+        }
+        if (saved) {
+            this.fundingHelpOpen = ['quote', 'receipt'].includes(saved.help) ? saved.help : null;
+            this.restoredModalView = { setup: saved.setup === true, method: getWalletMethod(),
+                scroll: Number.isFinite(saved.scroll) ? Math.max(0, saved.scroll) : 0 };
+        }
         this.isOpen = true;
         this.syncConfirmedDepositBalance();
         this.step = zkapiClient.hasNote || this.depositBalanceRefreshPending ? 'success' : 'welcome';
+        if (this.restoredModalView) this.restoredModalView.step = this.step;
         this.status = '';
         this.error = '';
         this.notice = '';
@@ -77,7 +102,10 @@ export default class WelcomePanel {
 
     close() {
         if (!this.isOpen || this.busy) return;
+        this.clearTransientOutcome();
         this.isOpen = false;
+        cancelWalletModalRestore(this);
+        writeWelcomeModalIntent(null);
         stopFundingFlow(this);
         this.disposeFundingDisclosures?.();
         localStorage.setItem(DISMISSED_KEY, 'true');
@@ -95,6 +123,17 @@ export default class WelcomePanel {
         return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    rememberRunningModal() {
+        if (!this.isOpen) return;
+        const amount = this.fundingInputAmount ?? this.depositAmount;
+        const scroll = this.restoredModalView?.scroll ?? this.overlay?.querySelector?.('[data-funding-scroll]')?.scrollTop ?? 0;
+        writeWelcomeModalIntent({ open: true, method: getWalletMethod(),
+            amount: typeof amount === 'string' && amount.length <= 50 && /^[\d.]*$/.test(amount) ? amount : null,
+            currency: this.fundingInputCurrency === 'eth' ? 'eth' : 'usd', help: this.fundingHelpOpen || null,
+            setup: this.overlay?.querySelector?.('[data-funding-setup-details]')?.dataset.open === 'true',
+            scroll: Number.isFinite(scroll) ? scroll : 0 });
+    }
+
     setStatus(message) {
         this.status = message;
         const element = this.overlay?.querySelector('[data-welcome-status]');
@@ -109,11 +148,22 @@ export default class WelcomePanel {
         }
     }
 
+    clearTransientOutcome() {
+        clearTimeout(this.noticeTimer);
+        this.noticeTimer = null;
+        this.notice = '';
+        this.error = '';
+        this.status = '';
+    }
+
     async fund() {
         if (this.busy || this.fundingBusy || this.depositBalanceRefreshPending) return;
+        cancelWalletModalRestore(this);
         // The balance dialog owns every durable deposit phase, including a
         // prepared plan that never reached the signer. Never reprice it here.
         if (zkapiClient.config?.pending_deposit) return this.resumeSavedDeposit();
+        this.clearTransientOutcome();
+        let operationId = depositOperationId();
         const amount = this.overlay.querySelector('[data-funding-amount]')?.value
             ?? this.overlay.querySelector('#welcome-deposit-amount')?.value ?? this.fundingInputAmount;
         this.depositAmount = amount;
@@ -139,7 +189,10 @@ export default class WelcomePanel {
         let releaseWalletMethod;
         try {
             releaseWalletMethod = await prepareWalletMethod();
-            const report = message => this.setStatus(message);
+            const report = message => {
+                operationId = depositOperationId() || operationId;
+                this.setStatus(message);
+            };
             const flow = this.fundingFlow;
             const action = async () => {
                 const deposit = getWalletMethod() === 'address' ? this.fundingDepositIntent.ethAmount
@@ -165,12 +218,30 @@ export default class WelcomePanel {
             this.render();
         } catch (error) {
             this.step = 'welcome';
+            const rejected = isWalletCancellation(error) && !error?.transactionHash && error?.broadcastPossible !== true;
+            if (rejected && getWalletMethod() === 'metamask') {
+                try {
+                    if (await resetCanceledDeposit(error, operationId)) {
+                        stopFundingFlow(this);
+                        this.depositAmount = null;
+                        this.fundingNotice = '';
+                        this.fundingError = '';
+                    }
+                } catch { /* Keep saved recovery if local cleanup fails. */ }
+            }
             const pending = pendingDepositMessage(error, zkapiClient.config?.pending_deposit);
-            this.notice = pending || (isIndexerLag(error) ? zkapiErrorMessage(error) : '');
+            this.notice = pending || (rejected ? 'Deposit canceled.' : isIndexerLag(error) ? zkapiErrorMessage(error) : '');
             if (error?.code === 'address_wait_stopped') this.fundingNotice = error.message;
-            this.error = this.notice || error?.code === 'address_wait_stopped' ? '' : error?.code === 4001
-                ? 'Deposit canceled.'
-                : error.shortMessage || error.message || String(error);
+            this.error = this.notice || error?.code === 'address_wait_stopped' ? '' : error.shortMessage || error.message || String(error);
+            if (rejected) {
+                const notice = this.notice;
+                this.noticeTimer = setTimeout(() => {
+                    if (this.notice !== notice) return;
+                    this.notice = '';
+                    if (this.isOpen && !this.busy) this.render();
+                }, 7000);
+                this.noticeTimer?.unref?.();
+            }
             this.render();
         } finally {
             releaseWalletMethod?.();
@@ -218,7 +289,7 @@ export default class WelcomePanel {
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
                 ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(walletMethodText(this.error))}</p>` : ''}
                 ${this.notice ? `<p class="mt-3 text-xs text-muted-foreground" role="status">${this.escapeHtml(walletMethodText(this.notice))}</p>` : ''}
-                ${pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with Ethereum wallet')}</button>`}
+                ${pendingDeposit ? '<button id="welcome-resume-deposit-btn" class="zkapi-primary-button mt-5 w-full" type="button">Continue saved deposit</button>' : getWalletMethod() === 'address' ? '' : `<button id="welcome-fund-btn" class="zkapi-primary-button mt-5 w-full" type="button" ${addressFundingWallet.pending ? 'disabled' : ''}>${walletMethodText('Continue with MetaMask')}</button>`}
                 <button id="welcome-skip-btn" class="btn-ghost-hover mt-2 w-full rounded-lg px-3 py-2 text-xs text-muted-foreground hover:text-foreground" type="button">Not now</button>
                 <p class="mt-4 text-center text-[10px] leading-relaxed text-muted-foreground/70">The note secret and chat history stay on this device.</p>
             </div>`;
@@ -254,19 +325,23 @@ export default class WelcomePanel {
     render() {
         if (!this.overlay) return;
         this.disposeFundingDisclosures?.();
-        const walletView = captureWalletView(this);
-        const fundingSetup = captureFundingSetupView(this.overlay);
+        const restored = currentWalletModalRestore(this, getWalletMethod());
+        const walletView = restored ? { scroll: restored.scroll } : captureWalletView(this);
+        const fundingSetup = restored ? { open: restored.setup, scrollTop: restored.scroll } : captureFundingSetupView(this.overlay);
         this.overlay.innerHTML = this.step === 'redeeming'
             ? this.renderProgress()
             : this.step === 'success'
                 ? this.renderSuccess()
                 : this.renderWelcome(fundingSetup);
-        this.disposeFundingDisclosures = attachFundingDisclosures(this.overlay);
+        this.disposeFundingDisclosures = attachFundingDisclosures(this.overlay, () => this.rememberRunningModal());
         restoreFundingSetupView(this.overlay, fundingSetup);
         attachWalletMethodControls(this);
         restoreWalletView(this, walletView);
+        finishWalletModalRestore(this, { hydrating: isFundingViewHydrating(this), method: getWalletMethod() });
+        this.rememberRunningModal();
         this.overlay.querySelector('#welcome-deposit-amount')?.addEventListener('input', event => {
             this.depositAmount = event.target.value;
+            this.rememberRunningModal();
         });
         this.overlay.querySelector('#welcome-fund-btn')?.addEventListener('click', () => this.fund());
         this.overlay.querySelector('#welcome-resume-deposit-btn')?.addEventListener('click', () => this.resumeSavedDeposit());

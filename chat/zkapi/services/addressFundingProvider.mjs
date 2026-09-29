@@ -538,11 +538,11 @@ export class AddressFundingProvider {
         if (code === 'address_insufficient_eth') {
             const network = requirement.chainId === 1 ? 'Ethereum Mainnet'
                 : requirement.chainId === 11155111 ? 'Sepolia' : `chain ${requirement.chainId}`;
-            message = `Your funding address needs at least ${formatEther(requirement.shortfallWei)} ETH more for this transaction and its maximum network fee. Send it to ${requirement.address} on ${network}, then retry the action. Fees may change. This transaction was not sent.`;
+            message = `This browser needs ${formatEther(requirement.shortfallWei)} ETH more to cover this transaction and fees. Send it to ${requirement.address} on ${network}, then retry the action. Nothing was sent.`;
         } else if (code === 'address_fee_data') {
-            message = 'Current Ethereum fees could not be read reliably. Check the network connection, then retry the action. This transaction was not sent.';
+            message = 'Unable to check Ethereum fees. Check your connection and try again. Nothing was sent.';
         } else if (code === 'address_fee_quote_changed') {
-            message = 'The network fee quote changed or expired. Review the updated deposit quote and choose Next again. This transaction was not sent.';
+            message = 'Fees changed. Review the new estimate, then click Deposit. Nothing was sent.';
         } else throw fail('Unsupported payment failure.');
         const error = fail(message, code);
         if (requirement) error.fundingRequirement = copy(requirement);

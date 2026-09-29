@@ -884,3 +884,31 @@ test('editing and stopping cancel the quote expiry callback', async t => {
     t.mock.timers.tick(30_001);
     assert.equal(expired, 0);
 });
+
+test('a quote refresh starts before expiry and keeps the last public estimate until replacement', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const original = f.flow.displayQuote;
+    f.advance(20_001);
+    let finish;
+    const quote = f.wallet.getDepositFeeQuote.bind(f.wallet);
+    f.wallet.getDepositFeeQuote = () => new Promise(resolve => { finish = resolve; });
+    const checking = f.flow.check();
+    assert.equal(typeof finish, 'function', 'refresh begins while the old quote is still valid');
+    assert.equal(f.flow.displayQuote, original);
+    const replacement = await quote(f.flow.intent);
+    finish(replacement);
+    await checking;
+    assert.equal(f.flow.displayQuote, replacement);
+    f.advance(30_001);
+    const stalled = f.flow.check();
+    assert.equal(f.flow.fee, null, 'expired quote cannot authorize a deposit');
+    assert.equal(f.flow.displayQuote, replacement, 'public estimate survives a stalled read');
+    assert.equal(f.flow.ready, false);
+    finish(null);
+    await stalled;
+    assert.equal(f.flow.displayQuote, replacement, 'details survive a failed refresh');
+    assert.ok(f.flow.error);
+    f.flow.invalidate();
+    assert.equal(f.flow.displayQuote, null, 'editing removes an estimate for the old principal');
+});

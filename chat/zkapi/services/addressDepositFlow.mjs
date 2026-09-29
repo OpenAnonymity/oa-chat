@@ -24,7 +24,7 @@ function validateFeeQuote(fee, intent, funding, address, now) {
 }
 
 // This controller only reads public chain state. It cannot sign, submit or
-// recover transactions. Explicit Next handlers own those separate capabilities.
+// recover transactions. Explicit Deposit handlers own those separate capabilities.
 export class AddressDepositFlow extends DepositAmount {
     constructor({ wallet, client, store, changed = () => {}, now = Date.now, interval = 5_000 }) {
         super({ client, changed, now });
@@ -32,6 +32,7 @@ export class AddressDepositFlow extends DepositAmount {
         this.intent = null;
         this.status = null;
         this.fee = null;
+        this.displayQuote = null;
         this.error = '';
         this.ready = false;
         this.generation = 0;
@@ -121,6 +122,7 @@ export class AddressDepositFlow extends DepositAmount {
         this.ready = false;
         this.error = '';
         this.fee = null;
+        this.displayQuote = null;
     }
 
     clearQuoteExpiry() {
@@ -148,6 +150,7 @@ export class AddressDepositFlow extends DepositAmount {
 
     async setAmount(...args) {
         this.clearQuoteExpiry();
+        this.displayQuote = null;
         return super.setAmount(...args);
     }
 
@@ -188,8 +191,8 @@ export class AddressDepositFlow extends DepositAmount {
         try {
             const fresh = this.fee && this.fee.expiresAt > this.now();
             if (this.fee && !fresh) {
-                // Hide expired payment instructions before a replacement RPC;
-                // a stalled network read must not leave the old QR actionable.
+                // Expiry revokes deposit authorization. Retain the last public
+                // transfer estimate for display while its replacement loads.
                 this.clearQuoteExpiry();
                 this.fee = null;
                 this.ready = false;
@@ -197,7 +200,7 @@ export class AddressDepositFlow extends DepositAmount {
             }
             const [statusResult, feeResult] = await Promise.allSettled([
                 this.wallet.getStatus(),
-                !forceQuote && fresh ? this.fee : this.wallet.getDepositFeeQuote(intent, {
+                !forceQuote && fresh && this.fee.expiresAt - this.now() > Math.min(10_000, this.interval * 2) ? this.fee : this.wallet.getDepositFeeQuote(intent, {
                     isCurrent: () => this.running && generation === this.generation && edit === this.editGeneration
                         && intent === this.intent && check === this.checkGeneration
                 })
@@ -216,6 +219,7 @@ export class AddressDepositFlow extends DepositAmount {
             if (feeResult.status === 'rejected') throw feeResult.reason;
             const fee = validateFeeQuote(feeResult.value, intent, this.client.config.funding, this.address, this.now());
             this.fee = fee;
+            this.displayQuote = fee;
             this.scheduleQuoteExpiry(fee);
             this.error = '';
             this.ready = !this.wallet.hasPendingTransaction
@@ -253,7 +257,7 @@ export class AddressDepositFlow extends DepositAmount {
     }
 
     async verifyReady() {
-        if (!this.running || !this.intent || !this.ready || !this.fee || this.verifying || this.changingCurrency) throw new Error('Wait until the ETH has arrived before choosing Next.');
+        if (!this.running || !this.intent || !this.ready || !this.fee || this.verifying || this.changingCurrency) throw new Error('Wait until enough ETH has arrived, then choose Deposit.');
         const intent = this.intent;
         const edit = this.editGeneration;
         const displayedLimit = BigInt(this.fee.feeReserveWei);
@@ -276,7 +280,7 @@ export class AddressDepositFlow extends DepositAmount {
             const currentLimit = BigInt(this.fee.feeReserveWei);
             const feeLimit = [displayedLimit, availableFee, currentLimit].reduce((minimum, value) => value < minimum ? value : minimum);
             if (BigInt(this.fee.requiredFeeWei) > feeLimit) {
-                throw new Error('Network fees changed. Review the updated amount, then choose Next again.');
+                throw new Error('Network fees changed. Review the updated amount, then choose Deposit again.');
             }
             return { ...intent, preparedOperationId: this.fee.operationId,
                 depositCommitment: this.fee.depositCommitment,
@@ -288,6 +292,7 @@ export class AddressDepositFlow extends DepositAmount {
         this.clearQuoteExpiry();
         await this.store.write(this.scope, null);
         this.intent = null;
+        this.displayQuote = null;
         this.ready = false;
     }
 }

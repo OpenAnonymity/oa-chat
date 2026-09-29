@@ -152,7 +152,7 @@ test('a canceled MetaMask prompt is said in the dialog, on the step it stopped a
     } finally { Object.assign(zkapiClient, original); }
 });
 
-test('a canceled deposit says so once: no "saved" caption or resume note beside the cancel line', async t => {
+test('a canceled deposit retains any recovery plan that could not safely be cleared', async t => {
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
     Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {}, pending_deposit: { phase: 'prepared', amount: 2_000_000 } }, withdrawal: null, withdrawals: [], lastError: null });
     const modal = modalWith({}, { view: 'balance', app: { showToast: () => {} } });
@@ -165,15 +165,15 @@ test('a canceled deposit says so once: no "saved" caption or resume note beside 
         const saved = modal.renderBalance();
         assert.match(saved, /Saved deposit/);
         assert.match(saved, /Before resuming, check MetaMask for a pending transaction\./);
-        assert.match(saved, /Resume with Ethereum wallet/);
+        assert.match(saved, /Resume with MetaMask/);
         assert.doesNotMatch(saved, /Deposit canceled/);
 
         await modal.run(async report => { report('Confirm the deposit in MetaMask…'); throw Object.assign(new Error('User rejected the request.'), { code: 4001 }); }, { kind: 'deposit', title: 'Adding your balance' });
         assert.equal(modal.outcome.canceled, true);
         assert.match(modal.rendered, /Deposit canceled\./);
-        assert.doesNotMatch(modal.rendered, /Saved deposit/);
+        assert.match(modal.rendered, /Saved deposit/);
         assert.doesNotMatch(modal.rendered, /Saved in this browser/);
-        assert.match(modal.rendered, /Try again with Ethereum wallet/);
-        assert.doesNotMatch(modal.rendered, /Resume with Ethereum wallet/);
+        assert.doesNotMatch(modal.rendered, /Try again with Ethereum wallet/);
+        assert.match(modal.rendered, /Resume with MetaMask/);
     } finally { Object.assign(zkapiClient, original); }
 });

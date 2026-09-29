@@ -55,7 +55,7 @@ test('updated transfer instructions replace the QR without a repetitive network 
     const updated = renderFundingPaymentQr({ ...props, amountWei: '1500000000000000' });
     assert.notEqual(decodeSvg(initial), decodeSvg(updated));
     assert.equal(decodeSvg(updated), `ethereum:${address}@1?value=1500000000000000`);
-    assert.match(updated, /<figcaption>Scan to pay<\/figcaption>/);
+    assert.match(updated, /<figcaption>Scan with your wallet to fill in the transfer<\/figcaption>/);
     assert.doesNotMatch(updated, /onload|Ethereum|Sepolia/);
     assert.doesNotMatch(updated, /<svg onload/);
 });

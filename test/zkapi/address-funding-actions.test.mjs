@@ -101,10 +101,10 @@ test('failed readiness after fee or balance changes never enters signer authoriz
 test('fresh deposits require a native deployment and a prepared read-only funding flow', async t => {
     const { owner, authorizations } = fixture(t);
     owner.fundingFlow = { verifyReady() { assert.fail('an ERC20 deployment cannot authorize an ETH deposit'); } };
-    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Prepare an ETH deposit/);
+    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Enter a deposit amount before choosing Deposit/);
     zkapiClient.config = { funding: { ...funding, billing_asset: 'native_eth' } };
     owner.fundingFlow = null;
-    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Prepare an ETH deposit/);
+    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Enter a deposit amount before choosing Deposit/);
     assert.deepEqual(authorizations, []);
 });
 
