@@ -265,12 +265,14 @@ class ChatDatabase {
             store.put(session);
             return;
         }
+        const incoming = { id: session.id, apiKey: session.apiKey };
         const request = store.get(session.id);
         request.onsuccess = () => {
-            try { logAccessOverwrite(request.result, session); } catch { /* diagnostics only */ }
-            store.put(session);
+            try { logAccessOverwrite(request.result, incoming); } catch { /* diagnostics only */ }
         };
-        request.onerror = () => { store.put(session); };
+        // IDB processes these requests in order, but clones put's argument now.
+        // Waiting for the read would let later caller mutations change this save.
+        store.put(session);
     }
 
     async saveSession(session) {

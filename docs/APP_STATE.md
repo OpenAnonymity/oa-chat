@@ -1,3 +1,9 @@
+## 2026-09-29: Combined release review follow-up
+
+- Access overwrite diagnostics enqueue the read before the write in one IDB transaction, but enqueue `put` synchronously so IndexedDB preserves the caller's save-time snapshot. A regression mutates the caller's session while the read is pending.
+- Selecting a share-expiry preset or restoring Custom clears the previous validation error.
+- The known cross-tab stale-save key overwrite remains diagnosed, not repaired by this release.
+
 ## 2026-09-29: Release browser audit fixes
 
 Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (staging build ac3aa13 / 63162d3).

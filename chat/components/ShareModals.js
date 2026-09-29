@@ -638,6 +638,7 @@ class ShareModals {
         buttons.forEach((btn, index) => {
             btn.onclick = () => {
                 selectedIndex = index;
+                showCustomError('');
                 updateIndicator(index);
                 // Save preference (for presets, not custom)
                 if (index < TTL_PRESETS.length) {

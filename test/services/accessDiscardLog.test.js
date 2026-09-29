@@ -195,11 +195,19 @@ test('a save without a key over a stored, unexpired key is reported by the stora
         const writes = [];
         const store = {
             get: id => { const request = { onsuccess: null }; queueMicrotask(() => request.onsuccess?.({ target: request })); request.result = id === 'session-7' ? valid({ id: 'session-7', currentEphemeralKeyId: 'eph-11' }) : null; return request; },
-            put: value => writes.push(value)
+            put: value => writes.push(structuredClone(value))
         };
-        chatDB.putSessionNotingOverwrite(store, { id: 'session-7', apiKey: null });
+        const incoming = { id: 'session-7', apiKey: null, title: 'Before save', nested: { value: 1 } };
+        chatDB.putSessionNotingOverwrite(store, incoming);
+        assert.equal(writes.length, 1, 'put snapshots synchronously, before diagnostic read finishes');
+        incoming.title = 'After save';
+        incoming.nested.value = 2;
+        incoming.apiKey = 'granted-later';
         await new Promise(resolve => setTimeout(resolve, 0));
         assert.equal(writes.length, 1);
+        assert.equal(writes[0].title, 'Before save');
+        assert.equal(writes[0].nested.value, 1);
+        assert.equal(writes[0].apiKey, null);
         assert.equal(entries.at(-1).action, ACCESS_OVERWRITE_ACTION);
         assert.equal(entries.at(-1).response.ephemeralKeyId, 'eph-11');
         const before = entries.length;
