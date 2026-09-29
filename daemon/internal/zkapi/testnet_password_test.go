@@ -74,7 +74,7 @@ func TestCompanionAuthenticationFailureIsActionableAndRedacted(t *testing.T) {
 	}
 	_, err = client.request(context.Background(), http.MethodGet, "/oa/v1/billing/quote", nil)
 	var rejected *Error
-	if !errors.As(err, &rejected) || rejected.Code != "testnet_password_required" || !strings.Contains(err.Error(), "oa-chat start") || strings.Contains(err.Error(), "private server") {
+	if !errors.As(err, &rejected) || rejected.Code != "testnet_password_required" || !strings.Contains(err.Error(), "oa-chat config") || strings.Contains(err.Error(), "private server") {
 		t.Fatalf("authentication error was hidden or leaked: %v", err)
 	}
 }

@@ -4,8 +4,10 @@
 Run without options for offline fixture regressions. --artifacts DIR checks an
 assembled release. Add --makepkg on an Arch host to build its native package,
 --homebrew to test a temporary local tap and its user service, or
---homebrew-install to test installation and a foreground server without a
-service manager. Native modes require a host with no oa-chat installation.
+--homebrew-install to test installation and foreground readiness guidance
+without a service manager. Empty profiles must fail with configuration guidance,
+not start an unfunded inference service. Native modes require a host with no
+oa-chat installation.
 """
 
 import argparse
@@ -24,8 +26,6 @@ import tarfile
 import tempfile
 import time
 import unittest
-from urllib.error import URLError
-from urllib.request import urlopen
 
 
 REPO = Path(__file__).resolve().parents[2]
@@ -329,7 +329,13 @@ def verify_homebrew(directory, version, user_service=True):
             command(["brew", "test", formula], env=env, timeout=120)
             if sys.platform.startswith("linux"):
                 command(["brew", "linkage", "--test", formula], env=env, timeout=120)
+            # Hidden init remains an internal fixture helper: no tickets, live
+            # model lookup, funding, or interactive setup are needed here.
             command([prefix / "bin/oa-chat", "--config-dir", config, "init", "--listen", f"127.0.0.1:{port}"], env=env)
+            result = subprocess.run([str(prefix / "bin/oa-chat"), "--config-dir", str(config), "serve"],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            check(result.returncode != 0 and "Run oa-chat config" in result.stderr,
+                  "Unconfigured Homebrew daemon must exit with configuration guidance")
             if user_service:
                 # 'run' tests the generated service without registering it at
                 # login; the temporary Homebrew env file directs private state.
@@ -340,27 +346,25 @@ def verify_homebrew(directory, version, user_service=True):
                 process = subprocess.Popen([str(prefix / "bin/oa-chat"), "--config-dir", str(config), "serve"],
                                            env=env, stdout=output, stderr=subprocess.STDOUT)
             deadline = time.monotonic() + 30
-            healthy = False
+            needs_configuration = False
+            diagnostic_log = log if user_service else root / "foreground.log"
             while time.monotonic() < deadline:
-                try:
-                    with urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1) as response:
-                        healthy = json.load(response) == {"status": "ok"}
-                        if healthy:
-                            break
-                except (URLError, OSError):
-                    pass
-                time.sleep(0.2)
-            if not healthy:
-                diagnostics = ""
-                diagnostic_log = log if user_service else root / "foreground.log"
                 if diagnostic_log.is_file():
                     with diagnostic_log.open("rb") as source:
                         start = initial_log_size if user_service else 0
                         source.seek(max(start, diagnostic_log.stat().st_size - 4096))
                         diagnostics = source.read(4096).decode("utf-8", errors="replace")
-                mode = "user service" if user_service else "foreground daemon"
-                raise ValueError(f"Homebrew {mode} did not become healthy using isolated config\n"
-                                 f"Recent operational output:\n{diagnostics}")
+                    if "Run oa-chat config" in diagnostics:
+                        needs_configuration = True
+                        break
+                time.sleep(0.2)
+            mode = "user service" if user_service else "foreground daemon"
+            check(needs_configuration, f"Homebrew {mode} did not report configuration guidance")
+            # Preflight must reject the empty ticket wallet before binding the API.
+            with socket.socket() as probe:
+                probe.settimeout(0.2)
+                check(probe.connect_ex(("127.0.0.1", port)) != 0,
+                      "Unconfigured Homebrew daemon unexpectedly exposed the API")
             check(config.stat().st_mode & 0o777 == 0o700 and
                   (config / "config.json").stat().st_mode & 0o777 == 0o600,
                   "Native service configuration permissions are not private")
@@ -368,8 +372,7 @@ def verify_homebrew(directory, version, user_service=True):
                 command(["brew", "services", "stop", formula], env=env, timeout=60)
                 started = False
             else:
-                process.terminate()
-                check(process.wait(timeout=10) == 0, "Homebrew foreground daemon failed shutdown")
+                check(process.wait(timeout=10) != 0, "Unconfigured Homebrew daemon did not fail readiness")
                 process = None
             deadline = time.monotonic() + 10
             while True:
@@ -415,7 +418,7 @@ def verify_homebrew(directory, version, user_service=True):
                 message = (f"Validation failed: {original_error}\n" if original_error is not None else "")
                 raise ValueError(message + "Native Homebrew cleanup failed:\n" + "\n".join(cleanup_errors))
     lifetime = "user service" if user_service else "foreground daemon"
-    print(f"Native Homebrew install, formula test, {lifetime} health, and stop passed")
+    print(f"Native Homebrew install, formula test, {lifetime} configuration guidance, and stop passed")
 
 
 class PackageTests(unittest.TestCase):
@@ -549,7 +552,7 @@ def main():
     parser.add_argument("--artifacts", type=Path, help="Assembled release directory")
     parser.add_argument("--makepkg", action="store_true", help="Build/check native Arch package in temporary state")
     parser.add_argument("--homebrew", action="store_true", help="Install/test a temporary local tap and user service")
-    parser.add_argument("--homebrew-install", action="store_true", help="Test Homebrew install and foreground server")
+    parser.add_argument("--homebrew-install", action="store_true", help="Test Homebrew install and foreground readiness guidance")
     args = parser.parse_args()
     if (args.makepkg or args.homebrew or args.homebrew_install) and args.artifacts is None:
         parser.error("Native package validation requires --artifacts")

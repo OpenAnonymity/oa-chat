@@ -608,6 +608,11 @@ export function captureWalletView(owner) {
     const active = globalThis.document?.activeElement;
     return {
         id: root.contains?.(active) && active?.matches?.('input:not([type=password]), textarea, [data-funding-help-toggle], [data-funding-currency]') ? active.id : null,
+        // Fee/balance callbacks may render again after the password action's
+        // own completion render. Preserve only a currently focused trigger;
+        // never retain this intent after focus moves to another control.
+        passwordTriggerFocused: owner.isOpen && root.contains?.(active)
+            && active?.matches?.('[data-funding-testnet-password]') === true,
         // Keep the actual editable node through balance refreshes. Replacing a
         // focused input between composition/typing events can lose keystrokes.
         preservedInput: root.contains?.(active) && ['funding-usd', 'funding-eth'].includes(active?.id) ? active : null,
@@ -639,6 +644,9 @@ export function restoreWalletView(owner, saved) {
         }
         input?.focus?.({ preventScroll: true });
         if (saved.start != null) input?.setSelectionRange?.(saved.start, saved.end);
+    }
+    if (saved.passwordTriggerFocused && owner.isOpen) {
+        owner.overlay.querySelector('[data-funding-testnet-password]')?.focus?.({ preventScroll: true });
     }
     const scroller = owner.overlay.querySelector('[data-funding-scroll]');
     if (scroller && saved.scroll != null) scroller.scrollTop = saved.scroll;

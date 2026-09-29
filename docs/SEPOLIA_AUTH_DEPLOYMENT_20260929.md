@@ -60,6 +60,12 @@ accepts the generated password. A local 0.3.3 bundle starts the matched bridge
 version 4 companion and retrieves a verified native ETH quote through the real
 Rust transport. Missing/wrong passwords stop before companion/state creation.
 
+After integration with the current config/serve CLI, an isolated 0.4.1 build
+passed ten live PTY/configuration checks: password-menu availability, hidden
+input, rejection/retry, owner-only save, restored terminal echo, restart
+guidance, and missing/wrong-password rejection before runtime startup. The
+action changed no config, wallet or funding state and started no daemon.
+
 The live browser shows the password entry control, clears rejected input,
 reports the rejection, and cancels safely. The challenger checkpoint advanced
 from `11810451` to `11810460` with no pending obligations. All defined container

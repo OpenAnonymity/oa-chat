@@ -21,7 +21,7 @@ in {
       default = "%h/.config/oa-chat";
       description = ''
         Runtime private configuration directory; systemd expands %h to each user's home.
-        Initialize this directory with oa-chat init before starting the service.
+        Initialize this directory with oa-chat config before starting the service.
         Never use a Nix store path or embed credentials or wallet contents in Nix.
       '';
     };

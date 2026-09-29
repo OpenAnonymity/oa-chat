@@ -67,7 +67,7 @@ func (p *terminalSetupPrompter) openTerminal() error {
 	if p.input == nil {
 		fd, err := unix.Open("/dev/tty", unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 		if err != nil {
-			return errors.New("setup needs an interactive terminal; run oa-chat start in a terminal to answer the setup questions")
+			return errors.New("setup needs an interactive terminal; run oa-chat config in a terminal to answer the setup questions")
 		}
 		device := &setupTerminal{fd: fd}
 		p.device, p.input = device, bufio.NewReader(device)
@@ -138,7 +138,7 @@ func (p *terminalSetupPrompter) Ask(ctx context.Context, question, fallback stri
 			}
 		}
 		if err != nil {
-			return "", errors.New("setup input ended; run oa-chat start again to continue")
+			return "", errors.New("setup input ended; run oa-chat config again to continue")
 		}
 		if b == '\n' {
 			if err := ctx.Err(); err != nil {
@@ -176,6 +176,8 @@ func (p *terminalSetupPrompter) Confirm(ctx context.Context, question string) (b
 
 type startOptions struct {
 	network, backend, usd, model, listen string
+	prepared                             *config.Config
+	setupOnly, checkOnly                 bool
 }
 
 func parseStartOptions(args []string) (startOptions, error) {
@@ -324,12 +326,18 @@ func runGuidedStart(ctx context.Context, dir string, args []string, ui setupProm
 	if err != nil {
 		return err
 	}
-	err = guidedStart(ctx, dir, options, ui, out, startRuntime{
+	runtime := startRuntime{
 		testnet: prepareSepoliaAccess,
 		active:  resolveActiveConfig, probe: probeSetupService, serve: serve, companion: checkSetupCompanion,
 		fund: runGuidedFunding, tickets: runGuidedTickets,
 		interval: 500 * time.Millisecond, timeout: 90 * time.Second,
-	})
+	}
+	// A legacy start override also needs the original saved snapshot. Capture
+	// it before prepareStartConfig applies the requested runtime mode.
+	if saved, loadErr := config.Load(dir); loadErr == nil {
+		runtime.serve = configuredRuntime(saved).serve
+	}
+	err = guidedStart(ctx, dir, options, ui, out, runtime)
 	if ctx.Err() != nil {
 		ui.Printf("\nStopped. Your saved wallet state is preserved; rerun the same start command to continue.\n")
 		return nil
@@ -338,11 +346,17 @@ func runGuidedStart(ctx context.Context, dir string, args []string, ui setupProm
 }
 
 func guidedStart(ctx context.Context, dir string, options startOptions, ui setupPrompter, out io.Writer, runtime startRuntime) (result error) {
-	c, err := prepareStartConfig(ctx, dir, options, ui)
+	var c config.Config
+	var err error
+	if options.prepared != nil {
+		c = *options.prepared
+	} else {
+		c, err = prepareStartConfig(ctx, dir, options, ui)
+	}
 	if err != nil {
 		return err
 	}
-	if options.backend == "" && runtime.active != nil {
+	if options.prepared == nil && options.backend == "" && runtime.active != nil {
 		checkCtx, checkCancel := context.WithTimeout(ctx, 3*time.Second)
 		active, activeErr := runtime.active(checkCtx, c)
 		checkCancel()
@@ -358,14 +372,18 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	if c.Backend == "ticket" && (options.usd != "" || options.model != "") {
 		return errors.New("--usd and --model apply to zkapi setup; select --backend zkapi for model-based ETH funding")
 	}
-	ui.Printf("Mode: %s; network: %s.\n", c.Backend, c.ZKAPI.Network)
+	if c.Backend == "zkapi" {
+		ui.Printf("Mode: %s; network: %s.\n", c.Backend, c.ZKAPI.Network)
+	} else {
+		ui.Printf("Mode: ticket.\n")
+	}
 	attached, err := runtime.probe(ctx, c)
 	if err != nil {
 		return err
 	}
 	life, cancel := context.WithCancel(ctx)
 	defer cancel()
-	logs := &setupLogWriter{out: out}
+	logs := &setupLogWriter{out: out, enabled: options.checkOnly}
 	var done chan error
 	if attached {
 		ui.Printf("Using the compatible daemon already running at http://%s.\n", c.Listen)
@@ -415,7 +433,7 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 			if life.Err() != nil {
 				return life.Err()
 			}
-			return errors.New("setup timed out waiting for the local API and companion; check that oa-chat, oa-zkapi, and proving assets are installed together, then rerun start")
+			return errors.New("setup timed out waiting for the local API and companion; check that oa-chat, oa-zkapi, and proving assets are installed together, then run oa-chat config")
 		case <-timer.C:
 		}
 	}
@@ -431,12 +449,15 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	if err := life.Err(); err != nil {
 		return err
 	}
-	ui.Printf("\nReady for inference.\nOpenAI base URL: http://%s/v1\nGet your local API key: %s --config-dir %s api-key\n", c.Listen, setupExecutable(), shellQuoteSetup(dir))
+	if options.setupOnly {
+		return nil
+	}
+	ui.Printf("\nReady for inference.\nOpenAI base URL: http://%s/v1\nGet your local API key: %s --config-dir %s config --api-key\n", c.Listen, setupExecutable(), shellQuoteSetup(dir))
 	if attached {
 		ui.Printf("The existing daemon continues running.\n")
 		return nil
 	}
-	ui.Printf("Leave this terminal running. Ctrl+C stops the daemon; rerun the same start command to resume.\n")
+	ui.Printf("Leave this terminal running. Ctrl+C stops the daemon; run oa-chat serve to resume.\n")
 	logs.enable()
 	result = <-done
 	done = nil
@@ -475,7 +496,7 @@ func probeSetupService(ctx context.Context, c config.Config) (bool, error) {
 		return false, errors.New("the configured API port is occupied but its daemon could not be authenticated; stop the conflicting service yourself or choose a separate configuration and listen address")
 	}
 	if active.Backend != c.Backend || (c.Backend == "zkapi" && active.ZKAPI.Network != c.ZKAPI.Network) {
-		return false, errors.New("the running daemon uses a different mode or network; stop it yourself and rerun start, or select its mode with --backend")
+		return false, errors.New("the running daemon uses a different mode or network; stop it before changing configuration, or select its mode with serve --backend")
 	}
 	return true, nil
 }
@@ -506,6 +527,14 @@ func checkSetupCompanion(ctx context.Context, c config.Config) error {
 }
 
 func runGuidedTickets(ctx context.Context, dir string, c config.Config, ui setupPrompter) error {
+	return guidedTickets(ctx, dir, c, ui, false)
+}
+
+func addGuidedTickets(ctx context.Context, dir string, c config.Config, ui setupPrompter) error {
+	return guidedTickets(ctx, dir, c, ui, true)
+}
+
+func guidedTickets(ctx context.Context, dir string, c config.Config, ui setupPrompter, add bool) error {
 	client, err := relay.NewClient(c.RelayURL)
 	if err != nil {
 		return err
@@ -519,8 +548,8 @@ func runGuidedTickets(ctx context.Context, dir string, c config.Config, ui setup
 	if err != nil {
 		return err
 	}
-	for count == 0 {
-		ui.Printf("Your ticket wallet is empty. You can import exported tickets or redeem an invitation code from a private file.\n")
+	for count == 0 || add {
+		ui.Printf("Ticket wallet: %d available. Import exported tickets or redeem an invitation code from a private file.\n", count)
 		action, err := ui.Ask(ctx, "Add tickets: import or redeem", "import")
 		if err != nil {
 			return err
@@ -542,7 +571,7 @@ func runGuidedTickets(ctx context.Context, dir string, c config.Config, ui setup
 		// before checking that the selected input is a regular file.
 		fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 		if err != nil {
-			return errors.New("cannot open ticket input file; check its path and rerun start")
+			return errors.New("cannot open ticket input file; check its path and run oa-chat config")
 		}
 		file := os.NewFile(uintptr(fd), path)
 		info, statErr := file.Stat()
@@ -566,6 +595,7 @@ func runGuidedTickets(ctx context.Context, dir string, c config.Config, ui setup
 		if err != nil {
 			return err
 		}
+		add = false
 		count, err = wallet.CountContext(ctx)
 		if err != nil {
 			return err
@@ -573,7 +603,7 @@ func runGuidedTickets(ctx context.Context, dir string, c config.Config, ui setup
 	}
 	models, err := localRequest(ctx, c, http.MethodGet, "/v1/models")
 	if err != nil {
-		return errors.New("ticket wallet is present, but model discovery is unavailable; check the service connection and rerun start")
+		return errors.New("ticket wallet is present, but model discovery is unavailable; check the service connection and run oa-chat config")
 	}
 	var catalog struct {
 		Data []struct {
@@ -581,7 +611,7 @@ func runGuidedTickets(ctx context.Context, dir string, c config.Config, ui setup
 		} `json:"data"`
 	}
 	if json.Unmarshal(models, &catalog) != nil || len(catalog.Data) == 0 {
-		return errors.New("no ticket models are available; rerun start when the model service is available")
+		return errors.New("no ticket models are available; run oa-chat config when the model service is available")
 	}
 	for _, model := range catalog.Data {
 		if strings.TrimSpace(model.ID) == "" {

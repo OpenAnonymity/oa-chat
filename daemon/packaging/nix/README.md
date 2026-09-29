@@ -9,11 +9,11 @@ After extracting `oa-chat-packaging.tar.gz`, install without root privileges:
 
 ```sh
 nix profile install ./nix#oa-chat
-oa-chat init
+oa-chat config
 oa-chat serve
 ```
 
-You can also run `nix run ./nix -- version` or build with `nix build ./nix`.
+You can also run `nix run ./nix -- --version` or build with `nix build ./nix`.
 Nix flakes require the `nix-command` and `flakes` experimental features.
 The package supports x86_64/aarch64 on Linux and macOS. Linux ELF dependencies
 are patched into the Nix store and the matching companion/proof data are bundled.
@@ -41,11 +41,11 @@ services.oa-chat = {
 };
 ```
 
-Log in as that user and run `OA_CHAT_CONFIG_DIR="$HOME/.config/oa-chat" oa-chat init`, then
+Log in as that user and run `OA_CHAT_CONFIG_DIR="$HOME/.config/oa-chat" oa-chat config`, then
 `systemctl --user start oa-chat`. The default private directory is
 `~/.config/oa-chat`. A custom runtime directory can be selected with
 `services.oa-chat.configDir`; initialize the same directory with
-`OA_CHAT_CONFIG_DIR=/absolute/private/directory oa-chat init`.
+`OA_CHAT_CONFIG_DIR=/absolute/private/directory oa-chat config`.
 
 ## Home Manager user service (Linux)
 
@@ -57,7 +57,7 @@ services.oa-chat = {
 };
 ```
 
-Run `oa-chat init` as the login user, then `systemctl --user start oa-chat`.
+Run `oa-chat config` as the login user, then `systemctl --user start oa-chat`.
 The module respects Home Manager's `xdg.configHome`; initialize that same
 directory with `OA_CHAT_CONFIG_DIR` if it differs from your shell's default.
 The service stays stopped until the initialized `config.json` exists.

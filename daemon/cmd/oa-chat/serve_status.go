@@ -16,10 +16,10 @@ func ticketReadiness(wallet ticketCounter) func(context.Context) string {
 	return func(ctx context.Context) string {
 		count, err := wallet.CountContext(ctx)
 		if err != nil {
-			return "Ticket wallet unavailable or busy; run oa-chat status to check"
+			return "Ticket wallet unavailable or busy; run oa-chat config to check"
 		}
 		if count == 0 {
-			return "Ticket wallet: 0 tickets; import or redeem tickets before inference"
+			return "Ticket wallet: 0 tickets; run oa-chat config to import or redeem tickets"
 		}
 		return fmt.Sprintf("Ticket wallet: %d tickets available", count)
 	}
@@ -49,7 +49,7 @@ func zkReadiness(wallet walletStatusReader) func(context.Context) string {
 			return "zkAPI companion ready; private wallet awaiting settlement"
 		}
 		if !*state.HasNote {
-			return "zkAPI companion ready; no private balance loaded; run oa-chat fund"
+			return "zkAPI companion ready; no private balance loaded; run oa-chat config to add funding"
 		}
 		return "zkAPI companion ready; private balance loaded"
 	}

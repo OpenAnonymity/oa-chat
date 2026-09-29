@@ -9,121 +9,123 @@ including SSE streaming, tool calls, multimodal messages, structured outputs,
 usage events, and reasoning fields. Responses, Assistants, embeddings,
 file-storage, and image-generation endpoints are not implemented.
 
-## Install, then run guided setup
+## Install, configure, and serve
 
-Install or update version `0.3.3`:
-
-```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.3/install.sh | bash
-```
-
-Then start guided setup with the default installation prefix:
+The public commands are **`oa-chat config`** and **`oa-chat serve`**. Install or
+update the `0.4.1` prerelease:
 
 ```sh
-PATH="$HOME/.local/bin:$PATH" oa-chat start
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
+PATH="$HOME/.local/bin:$PATH" oa-chat config
+PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-The installer checks and installs both binaries and proving assets. Setup is a
-separate step: it creates missing configuration in the default directory,
-checks an existing configuration, starts or reuses the local API and companion,
-and checks the wallet against an available model's automatic request cap.
-
-A new setup asks which network to use. **Mainnet is the default**; choose
-**Sepolia** for test ETH, or pass `--network sepolia` explicitly. Existing
-configurations keep their saved network. No wallet is switched to another
-network or overwritten to repair a load error.
-
-If funding is needed, choose the USD amount (normally $2), review the fixed ETH
-principal and maximum network fee, and confirm. Send ETH on the selected
-network to the displayed funding address. Setup checks automatically, deposits
-when enough arrives, and waits for finalized activation. A higher fee ceiling
-requires another confirmation. When ready, it prints the local API URL and a
-command to retrieve the API key, without printing the key automatically. Leave
-the terminal running for inference and settlement.
-
-Rerun the same `start` command to check readiness or resume progress. For a
-custom prefix, substitute its `bin` directory in PATH. Keeping that directory
-on your shell PATH lets you use the shorter `oa-chat start` command.
-
-New guided configurations use zkAPI and configure both supported modes.
-Existing configuration and its saved mode are preserved; a compatible running
-daemon is reused. Use `--backend zkapi` to choose zkAPI for an existing ticket
-profile, or `--backend ticket` for guided ticket import/redemption. See the
-[guided walkthrough](docs/CLI_ZKAPI.md#guided-first-time-setup) and its
-[Sepolia example](docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+Installation checks and updates both binaries and their proving assets. It
+creates no configuration and starts no service. `config` then shows the saved
+status and guides setup; `serve` runs the configured local inference API.
+For a custom prefix, substitute its `bin` directory in PATH. Keeping that
+directory on your shell PATH lets you use the shorter commands below.
 
 Run as your normal user on macOS 13+ or Linux with glibc 2.39+, on AMD64 or
-ARM64. Linux also needs OpenSSL 3, libgcc, and CA certificates. Binaries go in
-`~/.local/bin`; no `sudo` or shell-profile changes are needed. Stop an existing
-daemon before upgrading, rerun with the same prefix, and restart afterward.
-Both binaries and proof assets update together while preserving configuration,
-tickets, wallet state, and the previous release. Legacy ERC-20 notes are not
-migrated to the native ETH deployment.
+ARM64. Linux also needs OpenSSL 3, libgcc, and CA certificates. No `sudo` or
+shell-profile changes are needed. Stop the daemon before upgrading, rerun the
+installer with the same prefix, and restart afterward. Private configuration,
+tickets, wallets, and the previous release are retained. Use `oa-chat --version`
+to check the installed version. See [installer options](docs/CLI_PACKAGING.md#one-command-installation)
+for version pinning, custom prefixes, and optional `--setup`.
 
-Guided setup was introduced in `0.3.0`; `0.3.1` fixes terminal cancellation,
-and `0.3.2` makes Mainnet the new-setup default with Sepolia optional.
-[Installer options and upgrades](docs/CLI_PACKAGING.md#one-command-installation)
-cover version pinning, custom installation directories, and the optional
-`--setup` flag to combine installation and guided startup. Exact-tag URLs
-support prereleases; GitHub's `latest/download` URL excludes them. A Homebrew
-tap and an AUR package have not yet been published.
+## Configure or edit a profile
 
-## Build and run ticket mode
+```sh
+oa-chat config
+```
+
+With no configuration, the command creates the private directory and asks
+whether to use **zkAPI** (the default) or **tickets**. zkAPI then asks for
+**Mainnet** (the default) or **Sepolia** (test ETH). It checks what is missing
+and guides ticket import/redemption or wallet funding. It starts temporary
+local services for these checks and stops services it owns when configuration
+finishes. You then run `oa-chat serve` separately.
+
+With an existing profile, `config` displays a redacted status and offers a
+menu to check readiness, edit settings, manage tickets, withdraw private
+credits, return public ETH, show the local API key, or quit. It preserves your
+keys, tickets, and wallet files. Stop a running daemon before editing settings;
+saved settings are available through `oa-chat config --status`.
+
+The editor covers the saved access mode, zkAPI network, loopback listener,
+and optional Wisp relay. Both access modes remain available in the same
+profile. Mainnet and Sepolia funding and wallet state stay separated; changing
+the selected network preserves each network's state. An invalid config or
+orphaned recovery state is reported for recovery rather than overwritten.
+
+For an explicit choice, the same command accepts these settings:
+
+```sh
+oa-chat config --backend zkapi --network sepolia
+oa-chat config --backend ticket
+oa-chat config --listen 127.0.0.1:8788
+oa-chat config --relay-url wss://YOUR_WISP_RELAY/
+```
+
+Replace the example relay URL with your own, or use `--relay-url ''` to disable
+it. `--zkapi-binary` and `--proof-setup-dir` select custom companion locations
+for source builds. Installed bundles normally discover both automatically.
+Changes are saved; `serve --backend ticket|zkapi` can select a runtime mode
+without changing the saved default.
+
+Configuration defaults to `~/Library/Application Support/oa-chat` on macOS
+and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
+`OA_CHAT_CONFIG_DIR` or global `--config-dir DIR` selects another directory.
+Private directories use `0700`; `config.json` uses `0600`. Back up the entire
+private directory, including `funding/` and `zkapi/`. The backup controls public
+funds, private notes, and cash-like tickets. Keep legacy ERC-20 wallet profiles
+separate from the current native ETH deployment.
+
+### Build and run ticket mode
 
 Run source-build commands from the repository root:
 
 ```sh
 cd daemon
 go build -o oa-chat ./cmd/oa-chat
-./oa-chat init
-./oa-chat tickets redeem --code-file /path/to/private-invite.txt
-# Alternatively:
-./oa-chat tickets import /path/to/tickets.json
-./oa-chat serve --backend ticket
+./oa-chat config --backend ticket
+./oa-chat serve
 ```
 
-Imports also work while the service runs. `tickets redeem` without a file
-reads an invitation code or OA ticket-share URL from stdin. No account sign-in
-is required. See [ticket protocol and recovery](docs/CLI_TICKETS.md).
+The wizard guides import from a private ticket file or redemption of an
+invitation code/OA share URL from a private file. No account sign-in is required.
+Ticket mode does not require the Rust companion. See
+[ticket protocol and recovery](docs/CLI_TICKETS.md).
 
-Configuration defaults to `~/Library/Application Support/oa-chat` on macOS
-and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
-`OA_CHAT_CONFIG_DIR` or global `--config-dir DIR` selects another directory.
-The directory must be `0700`; `config.json` is `0600`. `init` never overwrites
-existing configuration. Use separate directories for staging and production.
+### Transport and client credentials
 
-One initialization configures both ticket and zkAPI modes. Stop the current
-daemon, then choose `serve --backend ticket` or `serve --backend zkapi` using
-the same directory. `init --backend` sets the saved default used when `serve`
-omits the flag; it does not disable the other mode. Existing configurations
-need no reinitialization. The local API key and transport settings are shared;
-tickets and private notes remain separate. Ticket mode does not start or require
-the Rust companion. Ticket import and redemption work in either mode.
+The external network proxy is disabled by default: an empty `relay_url` uses
+direct HTTPS for ticketing, verification, inference, companion requests, and
+funding RPC. Environment proxy variables are ignored. Destination services can
+see your source IP and local DNS resolves their names. A configured Wisp relay
+resolves destination DNS and hides your source IP from destination services;
+it sees connection metadata. A configured relay fails closed without direct
+fallback. Editing configuration preserves existing nonempty relay settings
+unless you explicitly change them.
 
-The external network proxy is disabled by default: an empty or omitted `relay_url` uses
-direct HTTPS, including ticketing, verification, inference, companion requests,
-and funding RPC. Environment proxy variables are ignored. Destination services
-can see your source IP, and destination DNS uses your local resolver.
-To opt in to the encrypted Wisp relay when initializing a new configuration:
+`oa-chat config --api-key` explicitly prints the random **local** API key for
+connecting your client. It is not an inference-provider key. Normal status and
+setup output never print it automatically. Keep credentials and wallet/recovery
+files out of public logs and bug reports.
+
+### Run inference
 
 ```sh
-oa-chat init --relay-url wss://YOUR_WISP_RELAY/
+oa-chat serve
 ```
 
-Replace the example URL with your Wisp relay URL. For an existing configuration,
-set `relay_url` in `config.json` to the desired Wisp URL, or to `""` to disable
-the proxy, then restart the daemon. Existing
-nonempty relay settings stay enabled after upgrading. Wisp resolves destination
-DNS and hides your source IP from destination services; it still sees connection
-metadata. A configured relay fails closed without falling back to direct HTTPS.
-Version `0.2.0` defaults new configurations to direct HTTPS; upgrading preserves
-an existing relay setting.
-
-`oa-chat status` shows the authenticated running mode, saved default, and wallet
-readiness. `oa-chat api-key`
-explicitly prints the random **local** API key for configuring your client.
-It is not an inference-provider key. Keep keys, ticket codes, wallet files,
-and recovery files out of public logs and bug reports.
+`serve` uses your saved configuration, checks readiness without prompting, and
+stays in the foreground for inference and settlement. If configuration,
+tickets, funding, or companion prerequisites are missing, it explains the
+problem and directs you to `oa-chat config`. It does not begin a funding flow.
+Stop it with Ctrl+C before changing settings. To use another configured access
+mode for this run, pass `--backend ticket` or `--backend zkapi`.
 
 ### Foreground status and logs
 
@@ -154,7 +156,7 @@ Add an OpenAI-compatible connection in **Admin Panel → Settings → Connection
 | Setting | Value |
 | --- | --- |
 | API base URL | `http://127.0.0.1:8787/v1` |
-| API key | Output of `oa-chat api-key` |
+| API key | Output of `oa-chat config --api-key` |
 | Model | Select from the daemon's model list |
 
 The endpoint must be reachable from the **Open WebUI backend process**.
@@ -185,100 +187,33 @@ and restart recovery. See the [terminal-flow validation](docs/CLI_ZKAPI.md#termi
 For source builds, use `daemon/scripts/prepare-zkapi.sh` followed by
 `daemon/scripts/build-native.sh`; see [packaging](docs/CLI_PACKAGING.md).
 
-Use `oa-chat start --backend zkapi` for guided readiness and funding with your
-saved network. For a new Sepolia configuration, use
-`oa-chat start --backend zkapi --network sepolia`. The advanced manual flow
-remains available:
+Run `oa-chat config` and choose zkAPI to check readiness and fund the selected
+network. The guided flow follows the web wallet's send-to-address experience:
+choose a USD amount, review the fixed ETH principal and maximum network fee,
+then authorize the deposit. Send ETH to the displayed funding address. The
+wizard waits for it, deposits automatically within the approved bounds, and
+waits for finalized activation. A higher fee ceiling requires confirmation.
+It checks model readiness without sending an inference or spending credits.
 
-```sh
-oa-chat init                 # once, for both modes; mainnet unless --network is supplied
-oa-chat serve --backend zkapi
-# In another terminal:
-oa-chat fund
-```
+Ctrl+C keeps saved progress. Rerun `config` and check readiness to continue:
+unsigned deposits require confirmation again; signed deposits recover the same
+transaction without a new authorization or nonce. Public address ETH becomes
+private inference credit only after deposit activation. No browser extension,
+wallet connection, seed phrase, or imported private key is required.
 
-Sepolia requires the shared testnet password. Guided `start` asks for it with
-input hidden, verifies it before funding, and saves it in an owner-only local
-file. Unattended services can set `OA_ZKAPI_TESTNET_PASSWORD_FILE` to a private
-password file. Restart after changing a password, and upgrade both binaries
-together. Mainnet and ticket mode are unaffected. See
+Sepolia requires the shared testnet password. `config` asks for it with input
+hidden and verifies it before starting the companion or funding. It saves the
+accepted password in an owner-only local file. Use the **password** menu action
+to change it without funding, then restart any running daemon. Unattended
+services can set `OA_ZKAPI_TESTNET_PASSWORD_FILE` to a private password file.
+Mainnet and ticket mode are unaffected. See
 [Sepolia authentication](docs/CLI_ZKAPI.md#sepolia-access-password).
 
-`fund` prints a persistent Ethereum address and its public ETH balance.
-The command-line flow follows the web wallet's send-to-address flow: choose a
-private deposit amount, review principal and network fees, send enough ETH to
-the displayed address, and approve the exact quote:
-
-```sh
-oa-chat fund --amount 0.00075
-# Alternatively, choose a USD value converted to ETH with the verified quote:
-oa-chat fund --usd 2
-# After reviewing the returned quote and funding address:
-oa-chat fund --approve QUOTE_ID
-```
-
-Choose the amount of ETH to turn into private inference credits (up to nine
-decimals, integer gwei), or an exact USD amount. The quote shows the fixed
-principal, required fee allowance, recommended fee buffer, current balance,
-and remaining top-up. Approving its ID authorizes local signing within the
-quoted bounds; stale or changed quotes require a new review. Unused fee
-allowance stays at the local address. After submission, the command waits for
-Ethereum finality before activating the private note.
-
-Ctrl+C stops waiting without deleting saved state. `oa-chat fund --resume`
-recovers a saved transaction; it cannot authorize a new deposit or fee increase.
-Use the same `--config-dir` throughout. `serve`, showing an address, and preparing
-a quote never broadcast a transaction. Guided `start` asks before authorizing
-a new deposit; after that confirmation, it refreshes bounded quotes and deposits
-automatically when the funds arrive.
-
-No browser extension, wallet connection, seed phrase, or imported private key
-is required. The daemon creates a signing key and keeps it in its owner-only
-configuration directory. Back up the entire directory, including `funding/`
-and `zkapi/`; that backup controls public funds and private credits.
-Public address balances are not private inference credits until deposited.
-
-To return the remaining private balance to an Ethereum address:
-
-```sh
-oa-chat withdraw                 # status only
-oa-chat withdraw --to 0xYOUR_ETHEREUM_DESTINATION
-oa-chat withdraw --approve QUOTE_ID
-```
-
-Replace the placeholder with the receiving address. This closes the entire
-private balance after reviewing and approving its destination and fee quote;
-the local signer pays ETH gas. Withdrawal preparation reserves the note, so
-finish any outstanding inference settlement first. No wallet connection is
-needed. Resume an interrupted withdrawal with `oa-chat withdraw --resume`
-and the same configuration directory. Once completed, `fund --amount` can
-prepare a new private balance.
-See [withdrawal and recovery details](docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet).
-
-Return public ETH left at the funding address separately:
-
-```sh
-oa-chat fund return --to 0xYOUR_ETHEREUM_DESTINATION
-# Add --amount ETH to choose a partial return; otherwise reserve gas and return the rest.
-oa-chat fund return --approve QUOTE_ID
-```
-
-These commands use the same quote/approval boundary. They do not withdraw a
-private note. Browser funding pages and the `--browser`/`--no-open` flags have
-been removed. See [funding, recovery, and limitations](docs/CLI_ZKAPI.md).
-Upgrade both binaries together with the one-command installer before using
-these commands; `daemon-v0.1.0` predates them.
-
-The advanced `init` command defaults to Ethereum mainnet; new guided `start`
-asks for the network with Mainnet as the default and Sepolia as an option. For an explicit,
-separate Sepolia profile using the manual commands:
-
-```sh
-oa-chat --config-dir /path/to/private-sepolia-state init \
-  --network sepolia --listen 127.0.0.1:8788
-oa-chat --config-dir /path/to/private-sepolia-state serve --backend zkapi
-oa-chat --config-dir /path/to/private-sepolia-state fund
-```
+Use the **withdraw** menu action to close the full remaining private balance,
+or **return** to send unused public ETH elsewhere. Both ask for a destination,
+show the quote, and require explicit approval before signing. The withdrawal
+signer needs public ETH for gas. See [funding and recovery](docs/CLI_ZKAPI.md)
+for reservations, restart behavior, and current protocol limits.
 
 The companion checks the manifest chain against the selected network, and
 state is separated by network and deployment ID. Version `0.2.0` targets the fresh
@@ -317,12 +252,12 @@ After installing a generated release formula/package:
 
 ```sh
 # Homebrew, as your normal user:
-oa-chat init
+oa-chat config
 brew services start oa-chat
 brew services stop oa-chat
 
 # Linux, as your normal user:
-oa-chat init
+oa-chat config
 systemctl --user daemon-reload
 systemctl --user enable --now oa-chat.service
 systemctl --user stop oa-chat.service

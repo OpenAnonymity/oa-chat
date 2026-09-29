@@ -203,7 +203,7 @@ index 6f82083..807bddf 100644
 
  #[derive(Debug, Error)]
  pub enum AuthError {
-+    #[error("Sepolia password is missing or incorrect; restart oa-chat start with the current shared password")]
++    #[error("Sepolia password is missing or incorrect; stop the daemon and run oa-chat config to enter the current shared password")]
 +    TestnetPasswordRequired,
 +    #[error("inference is awaiting settlement; retry withdrawal after settlement")]
 +    PendingSettlement,

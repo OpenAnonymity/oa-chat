@@ -167,7 +167,7 @@ func Load(dir string) (Config, error) {
 	path := filepath.Join(dir, "config.json")
 	info, err := os.Lstat(path)
 	if err != nil {
-		return Config{}, errors.New("configuration missing; run oa-chat init first")
+		return Config{}, errors.New("configuration missing; run oa-chat config first")
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 		return Config{}, errors.New("config.json must be a regular owner-only file (chmod 600)")

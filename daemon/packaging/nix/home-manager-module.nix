@@ -13,7 +13,7 @@ in {
     configDir = lib.mkOption {
       type = lib.types.str;
       default = "${config.xdg.configHome}/oa-chat";
-      description = "Runtime private directory initialized separately with oa-chat init; never put credentials or wallet contents in Nix.";
+      description = "Runtime private directory initialized separately with oa-chat config; never put credentials or wallet contents in Nix.";
     };
     startAtLogin = lib.mkOption {
       type = lib.types.bool;

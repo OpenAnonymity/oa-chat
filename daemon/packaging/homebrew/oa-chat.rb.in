@@ -57,7 +57,7 @@ class OaChat < Formula
   def caveats
     <<~EOS
       Initialize your private configuration before starting the service:
-        oa-chat init
+        oa-chat config
         brew services start oa-chat
       Run these commands as your own user. Each user has a separate wallet.
       Client API base URL: http://127.0.0.1:8787/v1

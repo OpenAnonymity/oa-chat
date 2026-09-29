@@ -127,6 +127,9 @@ func requestPaymentQuote(ctx context.Context, c config.Config, method, path, kin
 }
 
 func printPaymentQuote(out io.Writer, q zkapi.AddressPaymentQuote, command string) {
+	if _, guided := out.(setupUIWriter); guided {
+		command = ""
+	}
 	fmt.Fprintf(out, "\n%s %s quote\n", fundingNetwork(q.ChainID), q.Kind)
 	if q.InputMicroUSD != 0 {
 		fmt.Fprintf(out, "Selected USD value: $%s (converted once to the fixed ETH principal below)\n", fundingUnits(fmt.Sprint(q.InputMicroUSD), 6))
@@ -146,6 +149,10 @@ func printPaymentQuote(out io.Writer, q zkapi.AddressPaymentQuote, command strin
 		fmt.Fprintln(out, "After funds arrive, request a fresh quote. The optional buffer does not block a funded transaction.")
 	} else {
 		fmt.Fprintln(out, "The existing balance covers the required amount; no top-up is needed.")
+	}
+	if command == "" {
+		fmt.Fprintf(out, "Quote expires: %s\nQuoting does not sign or broadcast.\n", time.UnixMilli(q.ExpiresAt).Format(time.RFC3339))
+		return
 	}
 	fmt.Fprintf(out, "Quote expires: %s\nTo authorize this exact quote: %s --approve %s\nKeep the same --config-dir if used. Quoting does not sign or broadcast.\n", time.UnixMilli(q.ExpiresAt).Format(time.RFC3339), command, q.ID)
 }

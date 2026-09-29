@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,9 +39,9 @@ func TestTicketReadinessReportsOnlyAggregateState(t *testing.T) {
 		err   error
 		want  string
 	}{
-		{name: "empty", want: "Ticket wallet: 0 tickets; import or redeem tickets before inference"},
+		{name: "empty", want: "Ticket wallet: 0 tickets; run oa-chat config to import or redeem tickets"},
 		{name: "available", count: 12, want: "Ticket wallet: 12 tickets available"},
-		{name: "error", count: 12, err: errors.New("secret finalized_ticket and /private/wallet/path"), want: "Ticket wallet unavailable or busy; run oa-chat status to check"},
+		{name: "error", count: 12, err: errors.New("secret finalized_ticket and /private/wallet/path"), want: "Ticket wallet unavailable or busy; run oa-chat config to check"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -66,7 +67,7 @@ func TestZKReadinessAllowlistedFlagsAndRedactedFailures(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "empty", data: `{"has_note":false,"pending_request":false}`, want: "zkAPI companion ready; no private balance loaded; run oa-chat fund"},
+		{name: "empty", data: `{"has_note":false,"pending_request":false}`, want: "zkAPI companion ready; no private balance loaded; run oa-chat config to add funding"},
 		{name: "loaded", data: `{"has_note":true,"pending_request":false,"balance":"secret-balance","note_id":"secret-note","private_key":"secret-key"}`, want: "zkAPI companion ready; private balance loaded"},
 		{name: "legacy optional pending", data: `{"has_note":true}`, want: "zkAPI companion ready; private balance loaded"},
 		{name: "pending", data: `{"has_note":true,"pending_request":true}`, want: "zkAPI companion ready; private wallet awaiting settlement"},
@@ -178,7 +179,16 @@ func (s *serveOutput) String() string {
 
 func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	if os.Getenv("OA_CHAT_SERVE_STDOUT_TEST_HELPER") == "1" {
-		if err := run([]string{"--config-dir", os.Getenv("OA_CHAT_SERVE_STDOUT_TEST_DIR"), "serve", "--backend", "ticket"}); err != nil {
+		dir := os.Getenv("OA_CHAT_SERVE_STDOUT_TEST_DIR")
+		c, err := config.Load(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := c
+		c.Backend = "ticket"
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := serveSnapshot(ctx, dir, c, expected, os.Stdout); err != nil {
 			log.Print(err)
 			os.Exit(1)
 		}

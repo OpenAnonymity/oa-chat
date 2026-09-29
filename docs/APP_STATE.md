@@ -6,6 +6,10 @@
   node inside the password dialog left focus on the page after Escape. Closing
   the underlying wallet view suppresses that restoration. Regression tests
   replace both trigger nodes and cover accepted, canceled and closed outcomes.
+- Later fee/balance callbacks also replace the button. Wallet view capture now
+  preserves a focused password trigger through those renders. It does not
+  reclaim focus after the user moves elsewhere, retain password input data, or
+  focus a closed view. Tests cover multiple later refreshes and nested dialogs.
 
 ## 2026-09-29: Shared-password access for Sepolia
 
@@ -19,11 +23,14 @@
   trigger a funding or inference operation. A rejected service request clears
   access and is never replayed automatically. The password is excluded from
   storage, account sync, wallet snapshots, and activity logs.
-- CLI guided setup asks through a hidden controlling-terminal prompt before
+- CLI configuration asks through a hidden controlling-terminal prompt before
   funding. `sepolia-password` is an owner-only file alongside private config;
   `OA_ZKAPI_TESTNET_PASSWORD` / `OA_ZKAPI_TESTNET_PASSWORD_FILE` override it.
-  Restart after changing a credential. Native bridge version 4 requires the
-  matching binary pair so an older companion cannot silently omit auth.
+  The Sepolia `config` menu's password action validates and saves a replacement
+  without starting a daemon or entering funding; `config --status` stays offline.
+  `serve` never prompts and rejects missing/invalid access before companion or
+  funding work. Restart after changing a credential. Native bridge version 4
+  requires the matching binary pair so an older companion cannot omit auth.
 - The browser SDK sends the header only to its configured Sepolia `/v2/` API;
   the native companion scopes it to the pinned Sepolia protocol server.
   Neither sends it to RPC, indexer, provider, org or verifier. Redirects are
@@ -37,7 +44,7 @@
 - Browser SDK auth is backported onto the deployed `cf56d67` SDK as `76a979b`.
   The current backend also includes the auth implementation. The host does not
   adopt the backend main branch's unrelated native-only SDK interface removals.
-- Validation: 1,097 core + 669 payment tests, 315 stable-SDK tests, the full
+- Validation: 1,097 core + 674 payment tests, 315 stable-SDK tests, the full
   Rust backend workspace, Go race/vet, native auth/companion tests, both network
   production builds and a macOS ARM64 install/reinstall passed. A browser
   fixture verified wrong-password feedback, successful submit, Escape and focus
@@ -49,8 +56,43 @@
   Only server/gateway containers were replaced, preserving the custom database
   filename and all native deployment pins. Mainnet is unchanged. See the
   [rollout and rollback record](SEPOLIA_AUTH_DEPLOYMENT_20260929.md).
-- Current installation instructions target `daemon-v0.3.3`; four-platform
+- Current installation instructions target `daemon-v0.4.1`; four-platform
   release packaging is in progress. The compatible web build is already live.
+
+## 2026-09-29: CLI configuration and serving are separate commands
+
+- The public command surface is `oa-chat config` and `oa-chat serve`. Configuration
+  shows a credential-free summary and either creates a missing private profile or
+  offers check/edit/tickets/withdraw/return/api-key/quit for an existing profile.
+  New configuration prompts for ticket or zkAPI; only zkAPI asks for a network,
+  defaulting to Mainnet with Sepolia available. `config --status` shows saved
+  settings without network requests; `config --api-key` explicitly prints the
+  local inference credential. Older command entry points remain hidden for
+  compatibility; current help and setup guidance advertise the two commands.
+- Editing changes the saved mode, network, listener, and optional relay. Flags
+  also select companion/proof paths. Updates retain all credentials and wallet
+  files, use an owner-only daemon lock and atomic synced replacement, and reject
+  concurrent editors or edits while serving. Startup rechecks the complete saved
+  snapshot after locking, independently of an explicit runtime backend override.
+  Mainnet/Sepolia funding and note directories were already separate; switching
+  networks selects that network's existing state and never migrates funds.
+- Config uses a temporary authenticated API/companion for guided funding and
+  recovery, then stops only the processes it owns before returning. It may attach
+  to a matching running daemon without stopping it. Ticket additions can be made
+  even with a nonempty wallet, and ticket readiness under a saved zkAPI default
+  prints `serve --backend ticket` rather than claiming the saved mode is ready.
+- Serve performs noninteractive readiness checks and directs missing setup to
+  `oa-chat config`. It never prompts, imports tickets, prepares a payment, or
+  authorizes one. Readiness uses the lowest available model cap; inference still
+  enforces each request's selected model cap. Setup reads the controlling terminal
+  for consent and preserves fixed-deposit/fee ceilings and signed recovery.
+  Withdrawal and public ETH return are menu actions, with quote review and
+  explicit consent; signed recovery retains the saved transaction. Public payment
+  prompts do not expose legacy command syntax.
+- Installer `--setup` now runs config and exits after readiness. Normal installation
+  remains separate, followed by config and then serve. Current source instructions
+  target 0.4.0. Package tests check the public empty-wallet refusal and service
+  stop behavior without funding fixtures or requiring production network access.
 
 ## 2026-09-29: Separate CLI installation and guided first-time setup
 
@@ -67,6 +109,22 @@
 - Current instructions target `daemon-v0.3.2`. The earlier release validation
   records remain historical evidence. The installation command selects no
   network and creates no configuration.
+- [0.3.2 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.2)
+  from main commit `bee44cfb9b347812499da0cba22c8e04c944909d`. All ten release
+  jobs and all 12 uploaded asset comparisons passed. The public installer
+  upgraded 0.3.1 while preserving existing configuration and the prior bundle;
+  it created no fresh configuration or daemon. Separately invoked setup selected
+  Mainnet on an empty answer, created private configuration, and reached a live
+  funding quote. Cancellation preserved unsigned progress and stopped both services.
+  No Mainnet transaction was authorized. The original CI pair also reused the
+  saved Sepolia network and funded balance for attached and owned readiness.
+- Two initial Sepolia readiness attempts returned `companion_request_failed`.
+  Subsequent read-only wallet, withdrawal, and quote requests returned HTTP 200,
+  and both start modes passed. The exact initial cause remains unconfirmed; this
+  release does not claim to fix intermittent upstream availability. Deposit,
+  inference, and settlement evidence remains scoped to 0.3.0/0.3.1; the companion
+  is byte-identical. See the [0.3.2 release record](../daemon/packaging/validation/daemon-0.3.2-release-20260929.json)
+  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-032-separate-setup-validation-2026-09-29).
 
 ## 2026-09-29: Combined release review follow-up
 
