@@ -43,7 +43,7 @@ func runPublicReturn(ctx context.Context, c config.Config, args []string, out io
 	submitted := false
 	defer func() {
 		if result != nil && submitted {
-			result = fmt.Errorf("%w; recover saved progress with oa-chat fund return --resume using the same --config-dir", result)
+			result = fmt.Errorf("%w; recover saved progress with oa-chat config, choose return, and use the same --config-dir", result)
 		}
 	}()
 	flags := flag.NewFlagSet("fund return", flag.ContinueOnError)

@@ -7,50 +7,50 @@ who imported tickets or funded the private balance.
 
 ## Local configuration
 
-Run `oa-chat start` for guided creation and readiness checks. For explicit
-service-manager setup, run `oa-chat init` before starting the service.
-Configuration is stored in
-`config.json` under Go's `os.UserConfigDir()/oa-chat`: normally
-`~/.config/oa-chat` on Linux and `~/Library/Application Support/oa-chat` on
-macOS. `OA_CHAT_CONFIG_DIR` or a global `--config-dir` selects a separate
-configuration, for example for staging. Do not run initialization or funding
-with `sudo`.
+Run `oa-chat config` before starting the foreground daemon or a managed
+service. It creates missing directories, shows the current redacted status,
+and guides or edits the profile. Configuration is stored in `config.json`
+under Go's `os.UserConfigDir()/oa-chat`: normally `~/.config/oa-chat` on Linux
+and `~/Library/Application Support/oa-chat` on macOS. `OA_CHAT_CONFIG_DIR` or
+global `--config-dir` selects another private directory. Do not configure or
+fund a wallet with `sudo`.
 
-Configure your client with the daemon's local API token and the API base URL.
-The local token authenticates clients to this daemon; it is not an OA ticket,
-wallet secret, or provider API key. The daemon accepts only loopback listeners.
-Withdrawals also require a separate `management-token` in that private directory.
-The CLI creates and reads this owner-only credential automatically; do not share
-it with inference clients. It is excluded from `config.json` serialization.
-Client applications
-retain their own transcripts under their own storage/privacy settings.
+Run `oa-chat serve` after configuration finishes. It checks prerequisites
+without prompting and directs you to `oa-chat config` if anything is missing.
+Use `config --status` to inspect saved settings and `config --api-key` to explicitly
+print the local client token. This token authenticates clients to the daemon;
+it is not a ticket, wallet secret, or provider API key. Wallet management uses
+a separate owner-only `management-token`, which the CLI manages automatically.
+Do not share it with inference clients. The API accepts only loopback listeners.
+Client applications retain their own transcripts under their own privacy settings.
 
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Install or update version `0.3.2`:
+AUR. Install or update the `0.4.0` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.0/install.sh | bash
 ```
 
-Run guided first-time setup separately:
+Configure and then serve separately:
 
 ```sh
-PATH="$HOME/.local/bin:$PATH" oa-chat start
+PATH="$HOME/.local/bin:$PATH" oa-chat config
+PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-Setup creates missing default configuration, checks readiness, and walks through
-funding if needed. For new configuration, Mainnet is the default network and
-Sepolia is offered as an option; an existing configuration keeps its saved
-network. Select Sepolia in the prompt or pass `start --network sepolia` for test
-funds. See the [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
+Configuration asks for zkAPI or ticket access. zkAPI asks for Mainnet (the
+default) or Sepolia. Existing profiles show their saved settings and can be
+edited. The wizard guides funding or ticket setup, stops any services it
+started, and exits; `serve` runs the inference API. See the
+[guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
-The optional installer `--setup` flag still runs the installed `oa-chat start`
-after validation, activation, and cleanup. It places the installed companion
-first on PATH for that process. Add `--network sepolia` only when selecting test
-funds explicitly. Prompts read your controlling terminal, never the piped
-installer script.
+The optional installer `--setup` runs the installed `oa-chat config` after
+validation, activation, and cleanup, with the matching companion first on
+PATH. Add `--network sepolia` to select test funds explicitly. Configuration
+prompts read the controlling terminal, never the piped installer text. It
+returns when configuration finishes and prints the separate `serve` command.
 
 The published script is pinned to its own release version. It downloads the
 matching archive and `SHA256SUMS` over HTTPS, verifies the archive before
@@ -62,26 +62,26 @@ runtime libraries with the distribution's package manager. Bash, `curl`,
 Homebrew, Python, or root access is needed to run the installer.
 
 Launchers default to `~/.local/bin`. In a future terminal, run
-`PATH="$HOME/.local/bin:$PATH" oa-chat start`, or follow the printed PATH
-guidance to use the shorter `oa-chat start` command. For a custom prefix,
+`PATH="$HOME/.local/bin:$PATH" oa-chat config`, or follow the printed PATH
+guidance to use the shorter `oa-chat config` command. For a custom prefix,
 substitute its `bin` directory in PATH. This selects both matching binaries. Omit `--network`
 with `--setup` to use an existing configuration's network or answer the new
 configuration's network prompt. `--network` is accepted only with `--setup`
 and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
 The default install-only command does not create configuration, initialize or
 fund wallets, start a daemon, register a service, or edit shell startup files.
-`--setup` starts a foreground process or attaches to a compatible daemon; it
-does not register a background service either.
+`--setup` may run temporary services for configuration; it stops services it
+started before returning. It does not register a background service.
 
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version are `daemon-v0.3.2` and `0.3.2`.
+metadata; the tag and installer version are `daemon-v0.4.0` and `0.4.0`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -93,17 +93,17 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/ins
 `--version MAJOR.MINOR.PATCH` can override the script's pinned version;
 `--help` lists the options. The source file `daemon/install.sh` requires an
 explicit `--version` because its release placeholder is filled only by
-`assemble-release.py`. Guided `start` requires version `0.3.0` or newer.
+`assemble-release.py`. The two-command interface requires version `0.4.0` or newer.
 
 Stop a running daemon before upgrading, rerun the installation command with
-the same prefix, and restart afterward (`--setup` runs the guided restart).
+the same prefix, and restart afterward (`--setup` checks configuration before you run `serve`).
 The installer does not terminate an existing daemon. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
 wallet state remain in the separate private configuration directory.
-Reinitializing is unnecessary. `oa-chat version` should print `oa-chat 0.3.2`
+Reinitializing is unnecessary. `oa-chat --version` should print `oa-chat 0.4.0`
 after this upgrade. A setup failure leaves the validated installation in place
-and returns the CLI's failure status so you can rerun `start` after addressing
+and returns the CLI's failure status so you can rerun `config` after addressing
 it. The installer does not migrate legacy ERC-20 notes to native ETH; retain
 their recovery directory and matching old client, and use a fresh config for
 the native deployment. Launchers belonging to an unrelated installation are
@@ -145,7 +145,7 @@ copies that generated formula to a Homebrew tap; no tap is published by the
 build scripts. Once installed from that tap:
 
 ```sh
-oa-chat init
+oa-chat config
 brew services start oa-chat
 brew services list
 brew services stop oa-chat
@@ -174,7 +174,7 @@ The release workflow uses Ubuntu 24.04 and declares glibc 2.39 or newer;
 older distributions need a native source build on their own baseline.
 
 ```sh
-oa-chat init
+oa-chat config
 systemctl --user daemon-reload
 systemctl --user enable --now oa-chat.service
 systemctl --user status oa-chat.service
@@ -218,13 +218,14 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-For the `0.3.2` release, select its exact version:
+For the `0.4.0` release, select its exact version:
 
 ```sh
-release_version=0.3.2
+release_version=0.4.0
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
-oa-chat start
+oa-chat config
+oa-chat serve
 ```
 
 The published `daemon-v0.1.0` predates this packaging and has no Nix flake asset.
@@ -253,11 +254,11 @@ For Home Manager on Linux, import `inputs.oa-chat.homeManagerModules.default`
 and enable `services.oa-chat`; it runs as that Home Manager user. Both modules
 default to manual startup, require separately initialized `config.json`, and
 use `UMask=0077`. After applying NixOS configuration, run
-`oa-chat --config-dir "$HOME/.config/oa-chat" init`, then
+`oa-chat --config-dir "$HOME/.config/oa-chat" config`, then
 `systemctl --user start oa-chat`. Home Manager uses its configured XDG directory.
 Set `startAtLogin = true` to opt into login startup. A custom `configDir` must
 be an absolute runtime path (NixOS also accepts `%h/`); use the same directory
-with `oa-chat --config-dir PATH init`. Never put credentials or wallet contents
+with `oa-chat --config-dir PATH config`. Never put credentials or wallet contents
 in declarative Nix configuration. On macOS, the Nix package supports foreground
 `oa-chat serve`; use Homebrew for managed launchd services.
 
@@ -273,26 +274,23 @@ The Go API daemon owns incoming API requests and streaming responses.
 The companion and `share/oa-chat/proof-setup` are included in every native
 archive. Linux packages install them as `/usr/bin/oa-zkapi` and
 `/usr/share/oa-chat/proof-setup`. Homebrew installs them under its formula
-prefix. One `init` configures both modes; `serve --backend ticket|zkapi` selects
-the running backend. Funding is command-line only. The Go daemon generates
-its own local signing key; no external wallet is required. `fund --amount ETH`
-or `fund --usd USD` prepares a deposit quote. `withdraw --to ADDRESS` prepares
-a quote for the full private balance after reserving it in the companion.
-`fund return --to ADDRESS [--amount ETH]` quotes a return of unused public ETH.
-These explicit commands sign only after the corresponding `--approve QUOTE_ID`;
-`--resume` recovers saved signed bytes without granting new authority. Guided
-`start` also supports deposits: after confirming a fixed principal and fee
-ceiling, it refreshes quotes and authorizes that same deposit automatically
-when funds arrive. Withdrawals and public returns retain explicit approvals.
+prefix. `config` sets up both access modes; `serve --backend ticket|zkapi`
+selects the runtime backend. New configuration defaults to zkAPI and prompts
+for Mainnet (the default) or Sepolia. Changing modes or networks retains each
+wallet's separate state.
+
+Funding, withdrawals, and public ETH returns are actions in `config`. The
+local signer requires no external wallet connection. Guided deposits ask for
+a fixed principal and maximum fee before waiting for funds; automatic quote
+refreshes must remain within that consent. Withdrawals and public returns
+show a destination and fee quote and require approval before signing. Saved
+signed transactions recover with their original bytes and nonce.
+
 The companion must advertise `bridge_version: 3` for model-selected budgets
-and `withdrawal_bridge_version: 1`; ship both binaries together. `serve`, address
-checks, and quote preparation never broadcast a transaction. Version
-`0.2.0` introduced the explicit terminal quote flow; `0.3.0` adds guided
-startup and bounded automatic deposits. The historical `0.1.0` release used
-MetaMask.
-Advanced `init` defaults to Ethereum mainnet. Guided `start` asks for the
-network on first use with Mainnet as the default; use `--network sepolia`
-to select test ETH explicitly. Existing configurations retain their network.
+and `withdrawal_bridge_version: 1`; ship both binaries together. `serve`,
+address checks, and quote preparation never authorize wallet transactions.
+Legacy ERC-20 recovery states require their matching old client and a separate
+profile; the native deployment does not migrate them.
 
 ## Building a release
 
@@ -357,9 +355,11 @@ python3 daemon/scripts/test-nix.py /tmp/oa-chat-release
 
 Use the archive's native host for executable checks. The Homebrew checks
 refuse an existing `oa-chat` installation and use a temporary local tap and
-private configuration. `--homebrew` checks the actual user-service lifecycle;
-`--homebrew-install` checks Linux installation/linkage and foreground startup
-without requiring a user systemd manager. `--makepkg` requires a non-root Arch
+private configuration. `--homebrew` checks user-service startup, missing-ticket
+guidance, and stop. `--homebrew-install` checks Linux installation/linkage and
+the foreground readiness rejection without requiring a user systemd manager.
+An empty wallet must exit with `config` guidance before exposing the API; these
+package checks do not claim funded inference readiness. `--makepkg` requires a non-root Arch
 builder and compares the packaged binaries/assets with the native archive.
 Nix checks use checksum-verified local archives so draft-release URLs are not
 required. These checks never import tickets or fund a wallet.

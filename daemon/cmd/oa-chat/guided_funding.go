@@ -59,7 +59,7 @@ func (s localGuidedFunding) Readiness(ctx context.Context) (zkapi.WalletReadines
 func (s localGuidedFunding) Budget(ctx context.Context, usd uint64) (uint64, error) {
 	q, err := s.wallet.NativeUSDQuote(ctx)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("cannot verify a current ETH price for the model cap: %w", err)
 	}
 	return q.GweiForUSD(usd)
 }
@@ -126,6 +126,28 @@ func selectSetupModel(models []setupModel, id string) (setupModel, error) {
 	return eligible[0], nil
 }
 
+// Readiness needs enough balance for at least one available model. The client
+// still chooses a model per request, whose own cap is checked by inference.
+func selectReadinessModel(models []setupModel) (setupModel, error) {
+	selected, err := selectSetupModel(models, "")
+	if err != nil {
+		return selected, err
+	}
+	for _, candidate := range models {
+		if candidate.Budget < selected.Budget {
+			selected = candidate
+		}
+	}
+	return selected, nil
+}
+
+func selectGuidedModel(models []setupModel, id string) (setupModel, error) {
+	if id != "" {
+		return selectSetupModel(models, id)
+	}
+	return selectReadinessModel(models)
+}
+
 func setupUSD(amount uint64) string {
 	return strings.TrimRight(strings.TrimRight(fundingUnits(strconv.FormatUint(amount, 10), 6), "0"), ".")
 }
@@ -135,7 +157,7 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 	if err != nil {
 		return err
 	}
-	model, err := selectSetupModel(models, modelID)
+	model, err := selectGuidedModel(models, modelID)
 	if err != nil {
 		return err
 	}
@@ -163,7 +185,7 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 		}
 	case "ready", "waiting_funds":
 		if state.TransactionHash != "" {
-			return errors.New("a saved transaction needs recovery; inspect oa-chat fund before continuing")
+			return errors.New("a saved transaction needs recovery; run oa-chat config before continuing")
 		}
 		var usd uint64
 		if state.Amount == 0 {
@@ -204,20 +226,20 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 			return err
 		}
 		if quote.Amount < bound {
-			return errors.New("the saved deposit is below this model's current cap; select a lower-budget model or review the amount with oa-chat fund")
+			return errors.New("the saved deposit is below this model's current cap; select a lower-budget model or review funding with oa-chat config")
 		}
 		if err := waitAndDeposit(ctx, service, quote, ui, wait); err != nil {
 			return err
 		}
 	default:
-		return errors.New("saved funding needs attention; run oa-chat fund with the same configuration before restarting setup")
+		return errors.New("saved funding needs attention; run oa-chat config with the same configuration before restarting setup")
 	}
 	ready, err = waitSetupWallet(ctx, service, ui, wait)
 	if err != nil {
 		return err
 	}
 	if !ready.HasNote {
-		return errors.New("deposit recovery did not activate the private balance; rerun start with the same configuration")
+		return errors.New("deposit recovery did not activate the private balance; run oa-chat config with the same configuration")
 	}
 	// Finality may take many minutes. Read the live cap again before claiming
 	// readiness; no test inference is sent and no anonymous access is consumed.
@@ -246,10 +268,10 @@ func waitSetupWallet(ctx context.Context, service guidedFundingService, ui setup
 		switch withdrawal.Phase {
 		case "no_note", "ready", "waiting_settlement", "complete":
 		default:
-			return state, errors.New("a withdrawal needs attention; run oa-chat withdraw with the same configuration before restarting setup")
+			return state, errors.New("a withdrawal needs attention; run oa-chat config and choose withdraw before restarting setup")
 		}
 		if state.WithdrawalPending {
-			return state, errors.New("a private withdrawal is reserved; run oa-chat withdraw with the same configuration to recover it")
+			return state, errors.New("a private withdrawal is reserved; run oa-chat config and choose withdraw to recover it")
 		}
 		if !state.PendingRequest && withdrawal.Phase != "waiting_settlement" {
 			return state, nil
@@ -270,7 +292,7 @@ func checkSetupBalance(ctx context.Context, service guidedFundingService, state 
 		return err
 	}
 	if state.Balance < bound {
-		return fmt.Errorf("the existing private balance is below the $%s cap for %q; choose a lower-budget model, or use oa-chat withdraw to close this note before adding funding", setupUSD(model.Budget), model.ID)
+		return fmt.Errorf("the existing private balance is below the $%s cap for %q; choose withdraw in oa-chat config to close this note before adding funding", setupUSD(model.Budget), model.ID)
 	}
 	ui.Printf("Private balance ready: %s ETH; enough for %q. Request caps are selected automatically for each model.\n", fundingUnits(strconv.FormatUint(state.Balance, 10), 9), model.ID)
 	return nil
@@ -326,7 +348,7 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 					return finishGuidedDeposit(ctx, service, state, ui, wait)
 				case "ready", "waiting_funds":
 				default:
-					return errors.New("saved funding needs attention; inspect oa-chat fund before continuing")
+					return errors.New("saved funding needs attention; run oa-chat config before continuing")
 				}
 			}
 			if !retrying {
@@ -371,7 +393,7 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 					return err
 				}
 				if state.Phase != "deposit_pending" && state.Phase != "confirming" && state.Phase != "active" {
-					return errors.New("the deposit was not confirmed; rerun start to inspect saved progress before approving again")
+					return errors.New("the deposit was not confirmed; run oa-chat config to inspect saved progress before approving again")
 				}
 			}
 			if !sameSetupFunding(state, initial) {
@@ -439,7 +461,7 @@ func finishGuidedDeposit(ctx context.Context, service guidedFundingService, init
 			return nil
 		}
 		if state.Phase != "deposit_pending" && state.Phase != "confirming" {
-			return errors.New("deposit needs attention; inspect oa-chat fund with this configuration before continuing (a reverted transaction is never retried automatically)")
+			return errors.New("deposit needs attention; run oa-chat config with this configuration before continuing (a reverted transaction is never retried automatically)")
 		}
 		if err := wait(ctx); err != nil {
 			return err

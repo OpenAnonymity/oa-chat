@@ -201,7 +201,7 @@ func TestFundCancellationDuringDepositRequestDoesNotReportServiceUnavailable(t *
 	}))
 	defer s.Close()
 	err := runFunding(ctx, fundingTestConfig(s), []string{"--resume"}, &bytes.Buffer{})
-	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "--resume") {
+	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "oa-chat config") {
 		t.Fatalf("in-flight cancellation lost accurate recovery guidance: %v", err)
 	}
 	if strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "transaction canceled") {

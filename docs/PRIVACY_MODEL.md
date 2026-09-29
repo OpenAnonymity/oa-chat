@@ -105,18 +105,22 @@ withdrawal amounts and destinations
 are public Ethereum activity visible to the configured RPC (accessed directly
 by default, or through opt-in Wisp) and chain observers. They are not made
 anonymous by removing a wallet connection. Funding is command-line only:
-quoting prepares local recovery data. The explicit `fund --approve` command
-authorizes a saved quote's exact principal, destination, and fee allowance.
-Guided `start` instead asks once to authorize a fixed deposit and maximum
-network fee before waiting for incoming ETH. It refreshes short-lived quotes
+quoting prepares local recovery data. The `config` menu asks for explicit
+approval of the displayed principal, destination, and fee allowance before
+withdrawals or public returns. Its guided deposit asks once to authorize a fixed
+principal and maximum network fee before waiting for incoming ETH. It refreshes
+short-lived quotes
 and may approve them automatically only for that same network, deployment,
 funding address, private-note commitment, principal, and nonce, within the
 accepted fee ceiling. A higher ceiling requires new confirmation. Piped
 installer text is never treated as consent; interactive answers come from the
 controlling terminal. Unsigned progress requires consent again after restart;
 signed progress reuses its original transaction. A reverted transaction is
-never retried automatically. The wizard checks only local readiness and public
-model policy; it does not send a test inference or acquire access merely to
+never retried automatically. Configuration stops any temporary services it owns
+when finished; `serve`
+checks readiness without prompting and points missing prerequisites back to
+`config`. The wizard checks only local readiness and public model policy; it
+does not send a test inference or acquire access merely to
 check setup. The signing key and private-note secret never enter account
 synchronization or inference requests. Backups of the private configuration
 directory control both public funds and private notes.

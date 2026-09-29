@@ -133,7 +133,7 @@ func TestFundApprovalUsesOnlyReviewedIDAndNeverRetriesAmbiguousResponse(t *testi
 			if (err == nil) != (outcome == "active") || posts.Load() != int32(wantPosts) {
 				t.Fatalf("approval failed safely? outcome=%s posts=%d error=%v", outcome, posts.Load(), err)
 			}
-			if outcome == "lost-reply" && !strings.Contains(err.Error(), "fund --resume") {
+			if outcome == "lost-reply" && !strings.Contains(err.Error(), "oa-chat config") {
 				t.Fatal("lost approval reply did not direct recovery")
 			}
 		})

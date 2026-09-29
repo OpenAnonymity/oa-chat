@@ -27,7 +27,7 @@ func runWithdrawal(ctx context.Context, c config.Config, args []string, out io.W
 			result = errWithdrawalWaitStopped
 		}
 		if result != nil && submitted {
-			result = fmt.Errorf("%w; recover saved progress with oa-chat withdraw --resume using the same --config-dir", result)
+			result = fmt.Errorf("%w; recover saved progress with oa-chat config, choose withdraw, and use the same --config-dir", result)
 		}
 	}()
 	flags := flag.NewFlagSet("withdraw", flag.ContinueOnError)

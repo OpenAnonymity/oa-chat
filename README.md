@@ -6,35 +6,34 @@ The web app runs entirely in the browser. Each session uses a fresh ephemeral ac
 
 For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
-Install or update the [command-line daemon](daemon/README.md) first:
+The CLI has two commands: **`config`** for setup and changes, and **`serve`**
+for inference. Install or update the `0.4.0` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.0/install.sh | bash
 ```
 
-Then run guided first-time setup (or check and resume an existing setup):
+Then configure and run:
 
 ```sh
-PATH="$HOME/.local/bin:$PATH" oa-chat start
+PATH="$HOME/.local/bin:$PATH" oa-chat config
+PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-Setup creates missing configuration and asks which network to use, with
-**Mainnet as the default** and **Sepolia as an option**. For test ETH, choose
-Sepolia at the prompt or run `oa-chat start --network sepolia`. Existing
-configurations keep their saved network and mode.
+`config` shows the current status, creates missing private directories, and
+walks through ticket or zkAPI access. For zkAPI, **Mainnet is the default** and
+**Sepolia is an option**. Run it again to edit your saved settings or manage
+funding, withdrawals, and tickets. Existing wallet state is preserved.
 
-If funding is needed, choose the private balance to add, approve the fixed
-amount and maximum fee, then send ETH on the selected network to the displayed
-address. Setup waits for funds, deposits automatically, waits for finality, and
-prints your local inference endpoint. Leave the terminal running.
+If funding is needed, approve the displayed principal and maximum fee, then
+send ETH on the selected network to the displayed address. Configuration waits
+for the funds, deposits automatically, waits for finality, and exits. `serve`
+then runs the local inference API; missing prerequisites point back to `config`.
 
-Stop the daemon before upgrading and use the same installation prefix.
-Configuration, tickets, and wallet state are retained. See the
-[guided walkthrough](daemon/docs/CLI_ZKAPI.md#guided-first-time-setup) and
-[installer options](daemon/docs/CLI_PACKAGING.md#one-command-installation) for
-custom prefixes and optional combined installation/setup. Exact-tag URLs
-support prereleases; GitHub's `latest/download` URL excludes them. Public
-package repositories have not yet been published.
+Stop the daemon before upgrading or editing configuration. Installation updates
+both binaries and preserves private state. See the
+[CLI guide](daemon/README.md) and
+[installer options](daemon/docs/CLI_PACKAGING.md#one-command-installation).
 
 ### Highlights
 - **Unlinkable inference**: Every session uses an ephemeral, blind-signature-backed access key. The inference provider sees anonymous requests with no way to identify the user behind them or link them across sessions.

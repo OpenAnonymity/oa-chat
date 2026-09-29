@@ -1,3 +1,38 @@
+## 2026-09-29: CLI configuration and serving are separate commands
+
+- The public command surface is `oa-chat config` and `oa-chat serve`. Configuration
+  shows a credential-free summary and either creates a missing private profile or
+  offers check/edit/tickets/withdraw/return/api-key/quit for an existing profile.
+  New configuration prompts for ticket or zkAPI; only zkAPI asks for a network,
+  defaulting to Mainnet with Sepolia available. `config --status` shows saved
+  settings without network requests; `config --api-key` explicitly prints the
+  local inference credential. Older command entry points remain hidden for
+  compatibility; current help and setup guidance advertise the two commands.
+- Editing changes the saved mode, network, listener, and optional relay. Flags
+  also select companion/proof paths. Updates retain all credentials and wallet
+  files, use an owner-only daemon lock and atomic synced replacement, and reject
+  concurrent editors or edits while serving. Startup rechecks the complete saved
+  snapshot after locking, independently of an explicit runtime backend override.
+  Mainnet/Sepolia funding and note directories were already separate; switching
+  networks selects that network's existing state and never migrates funds.
+- Config uses a temporary authenticated API/companion for guided funding and
+  recovery, then stops only the processes it owns before returning. It may attach
+  to a matching running daemon without stopping it. Ticket additions can be made
+  even with a nonempty wallet, and ticket readiness under a saved zkAPI default
+  prints `serve --backend ticket` rather than claiming the saved mode is ready.
+- Serve performs noninteractive readiness checks and directs missing setup to
+  `oa-chat config`. It never prompts, imports tickets, prepares a payment, or
+  authorizes one. Readiness uses the lowest available model cap; inference still
+  enforces each request's selected model cap. Setup reads the controlling terminal
+  for consent and preserves fixed-deposit/fee ceilings and signed recovery.
+  Withdrawal and public ETH return are menu actions, with quote review and
+  explicit consent; signed recovery retains the saved transaction. Public payment
+  prompts do not expose legacy command syntax.
+- Installer `--setup` now runs config and exits after readiness. Normal installation
+  remains separate, followed by config and then serve. Current source instructions
+  target 0.4.0. Package tests check the public empty-wallet refusal and service
+  stop behavior without funding fixtures or requiring production network access.
+
 ## 2026-09-29: Separate CLI installation and guided first-time setup
 
 - The recommended flow is installation/update first, then `oa-chat start` for

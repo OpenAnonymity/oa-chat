@@ -121,7 +121,7 @@ func TestPublicReturnLostApprovalReplyDoesNotRetry(t *testing.T) {
 	}))
 	defer s.Close()
 	err := runPublicReturn(context.Background(), fundingTestConfig(s), []string{"--approve", testQuoteID}, &bytes.Buffer{})
-	if err == nil || posts.Load() != 1 || !strings.Contains(err.Error(), "fund return --resume") {
+	if err == nil || posts.Load() != 1 || !strings.Contains(err.Error(), "choose return") {
 		t.Fatalf("lost reply recovery guidance/retry: posts=%d error=%v", posts.Load(), err)
 	}
 }

@@ -64,14 +64,14 @@ Usage: bash install.sh [--version MAJOR.MINOR.PATCH] [--prefix ABSOLUTE_DIR]
 The published script defaults to its own release version. The source script
 requires --version. The default prefix is $HOME/.local; commands go in its bin/.
 Rerun with the same prefix to update; private configuration and wallets are kept.
-Add --setup to run guided configuration, funding, and startup after installation.
+Add --setup to run guided configuration and funding after installation.
 --network requires --setup; omitted networks are selected during guided setup.
 Interactive answers come from your terminal, never the piped installer script.
 Requires macOS 13+ or Linux with glibc 2.39+, curl, tar, and SHA-256 tooling.
 Linux also needs OpenSSL 3, libgcc, and CA certificates.
 On NixOS, use the Nix flake package instead of the native archive installer.
 Does not run sudo or edit shell profiles. Default installation does not initialize
-wallets or start services; --setup explicitly starts the foreground guided flow.
+wallets or start services; --setup runs configuration and exits when it is ready.
 HELP
                 return ;;
             *) fail "Unknown argument: $1 (see --help)." ;;
@@ -247,17 +247,17 @@ HELP
         printf 'Existing private configuration, tickets, and wallet state were preserved.\n'
         printf 'Restart any running daemon to use the new version. Previous release retained at %s/%s.\n' "$install_root" "$current_target"
     fi
-    [[ "$setup" = 1 ]] || printf 'Start guided setup: oa-chat start\n'
+    [[ "$setup" = 1 ]] || printf 'Configure: oa-chat config\nThen serve inference: oa-chat serve\n'
     cleanup
     trap - EXIT
     if [[ "$setup" = 1 ]]; then
-        local start_arguments=(start)
-        [[ "$network_selected" = 0 ]] || start_arguments+=(--network "$setup_network")
-        # Guided startup discovers its matching companion through PATH. Keep
+        local config_arguments=(config)
+        [[ "$network_selected" = 0 ]] || config_arguments+=(--network "$setup_network")
+        # Guided configuration discovers its matching companion through PATH. Keep
         # this installation ahead of any older pair without editing profiles.
         export PATH="$prefix/bin${PATH:+:$PATH}"
         printf '\nStarting guided setup…\n'
-        exec "$prefix/bin/oa-chat" "${start_arguments[@]}"
+        exec "$prefix/bin/oa-chat" "${config_arguments[@]}"
     fi
 }
 

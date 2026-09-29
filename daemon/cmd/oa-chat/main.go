@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -42,12 +43,17 @@ func run(args []string) error {
 	}
 	global := flag.NewFlagSet("oa-chat", flag.ContinueOnError)
 	global.StringVar(&dir, "config-dir", dir, "private configuration and wallet directory")
+	showVersion := global.Bool("version", false, "print version")
 	global.Usage = help
 	if err := global.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
 		}
 		return err
+	}
+	if *showVersion {
+		fmt.Println("oa-chat", version)
+		return nil
 	}
 	args = global.Args()
 	if len(args) == 0 {
@@ -66,6 +72,15 @@ func run(args []string) error {
 		help()
 		return nil
 	}
+	if args[0] == "config" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		ui := &terminalSetupPrompter{out: os.Stdout}
+		defer ui.Close()
+		return runConfigure(ctx, dir, args[1:], ui, os.Stdout)
+	}
+	// Legacy entry points remain callable for existing scripts, but are not
+	// part of the user-facing command surface.
 	if args[0] == "init" {
 		return initialize(dir, args[1:])
 	}
@@ -76,19 +91,24 @@ func run(args []string) error {
 		defer ui.Close()
 		return runGuidedStart(ctx, dir, args[1:], ui, os.Stdout)
 	}
+	if args[0] == "serve" && len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+		fmt.Println("Usage: oa-chat serve [--backend ticket|zkapi]\nRun the saved configuration. Run oa-chat config to configure missing prerequisites.")
+		return nil
+	}
 	c, err := config.Load(dir)
 	if err != nil {
-		return err
+		return configurationRequired(err)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	switch args[0] {
 	case "serve":
+		expected := c
 		c, err = serveConfig(c, args[1:])
 		if err != nil {
 			return err
 		}
-		return serve(ctx, dir, c, os.Stdout)
+		return runConfiguredServe(ctx, dir, c, expected, os.Stdout)
 	case "api-key":
 		if len(args) != 1 {
 			return errors.New("api-key accepts no arguments")
@@ -104,48 +124,22 @@ func run(args []string) error {
 	case "tickets":
 		return tickets(ctx, dir, c, args[1:])
 	default:
-		return errors.New("unknown command; run oa-chat help")
+		return errors.New("unknown command; use oa-chat config or oa-chat serve (--help for usage)")
 	}
 }
 
 func help() {
 	fmt.Fprintln(os.Stderr, `Usage: oa-chat [--config-dir DIR] COMMAND
 
-  init [--backend ticket|zkapi] [--network mainnet|sepolia]
-       [--org-url HTTPS_ORIGIN] [--verifier-url HTTPS_ORIGIN]
-       [--relay-url WSS_URL] [--listen 127.0.0.1:8787]
-       [--zkapi-binary PATH] [--proof-setup-dir PATH]
-  serve [--backend ticket|zkapi]  Select mode and run the local API
-  start [--network mainnet|sepolia] [--backend ticket|zkapi]
-        [--usd USD] [--model ID] [--listen 127.0.0.1:8787]
-                         Check setup, guide funding, and run the local API
-  status                 Show service and private wallet readiness
-  api-key                Print the local key to configure your client
-  tickets import FILE|-  Import OA exported ticket JSON
-  tickets redeem [--code-file FILE]  Read shared invite code from stdin/file
-  fund                   Show your Ethereum funding address and balances
-  fund --amount ETH      Prepare a quote to deposit that amount locally
-  fund --usd USD         Prepare a deposit quote from an exact USD value
-  fund --approve QUOTE_ID Approve the reviewed deposit quote
-  fund --resume          Recover a previously signed deposit
-  fund return --to ADDRESS [--amount ETH]  Quote a return of public address funds
-  fund return --approve QUOTE_ID  Approve the reviewed return quote
-  fund return [--resume] Show return status or recover a signed public return
-  withdraw               Show private-balance withdrawal status
-  withdraw --to ADDRESS  Quote closing the private balance to ADDRESS
-  withdraw --approve QUOTE_ID  Approve the reviewed withdrawal quote
-  withdraw --resume      Recover a previously signed withdrawal
-  withdraw --to ADDRESS --confirm TX_HASH  Confirm a matching withdrawal after a revert
-  version
+  config                 Show status, configure or edit settings, and prepare the wallet
+  serve [--backend ticket|zkapi]
+                         Run inference using the saved configuration
 
-OpenAI base URL: http://127.0.0.1:8787/v1
+Run oa-chat config --help for configuration options.
+Run oa-chat --version to show the installed version.
 Config: OA_CHAT_CONFIG_DIR or the OS user config directory / oa-chat.
-Network proxy is off by default; --relay-url opts into the encrypted Wisp relay.
-No prompts or responses are stored by the daemon. The connected UI may store them.
-One init configures both ticket and zkAPI wallets; serve selects the active mode.
-The saved backend is the default when serve omits --backend.
-init defaults to Ethereum mainnet. start asks for the network on first use.
-start preserves existing configuration; --network must match its saved network.`)
+Mainnet and Sepolia are available for zkAPI; both wallets are preserved.
+The network proxy is off by default. No prompts or responses are stored.`)
 }
 
 func initialize(dir string, args []string) error {
@@ -219,10 +213,10 @@ func (z zkInference) Complete(ctx context.Context, body json.RawMessage) (*http.
 		}
 		switch remote.Status {
 		case http.StatusPaymentRequired:
-			return nil, &server.BackendError{Status: 402, Code: "funding_required", Message: "The private balance needs funding. Run oa-chat fund."}
+			return nil, &server.BackendError{Status: 402, Code: "funding_required", Message: "The private balance needs funding. Run oa-chat config to add funding."}
 		case http.StatusConflict:
 			if remote.Code == "withdrawal_pending" || remote.Code == "withdrawal_conflict" {
-				return nil, &server.BackendError{Status: 409, Code: "withdrawal_pending", Message: "The private balance is reserved for withdrawal. Run oa-chat withdraw to check status and resume with the saved destination."}
+				return nil, &server.BackendError{Status: 409, Code: "withdrawal_pending", Message: "The private balance is reserved for withdrawal. Run oa-chat config and choose withdraw to recover the saved destination."}
 			}
 			return nil, &server.BackendError{Status: 409, Code: "settlement_pending", Message: "The previous anonymous lease is settling. Retry after settlement; a provider key is never reused across API requests."}
 		}
@@ -265,6 +259,10 @@ func (t *ticketInference) Complete(ctx context.Context, body json.RawMessage) (*
 }
 
 func serve(ctx context.Context, dir string, c config.Config, out io.Writer) error {
+	return serveSnapshot(ctx, dir, c, c, out)
+}
+
+func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, out io.Writer) error {
 	logger := log.New(out, "oa-chat ", log.LstdFlags)
 	logger.Print("Starting local API service")
 	lock, err := os.OpenFile(filepath.Join(dir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -276,6 +274,15 @@ func serve(ctx context.Context, dir string, c config.Config, out io.Writer) erro
 		return errors.New("an OA Chat daemon is already using this config directory")
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	// Configuration may have been edited after command dispatch but before
+	// acquiring the service lock. Never start with that stale snapshot.
+	saved, err := config.Load(dir)
+	if err != nil {
+		return configurationRequired(err)
+	}
+	if !reflect.DeepEqual(saved, expected) {
+		return errors.New("configuration changed before startup; run oa-chat config to review it, then retry serve")
+	}
 	client, err := relay.NewClient(c.RelayURL)
 	if err != nil {
 		return err
@@ -371,7 +378,7 @@ func serve(ctx context.Context, dir string, c config.Config, out io.Writer) erro
 	if c.Backend == "zkapi" {
 		logger.Printf("zkAPI network: %s", c.ZKAPI.Network)
 	}
-	logger.Print("Use oa-chat api-key to configure your client; Ctrl+C stops the service")
+	logger.Print("Use oa-chat config --api-key to configure your client; Ctrl+C stops the service")
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)

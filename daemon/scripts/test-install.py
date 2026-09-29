@@ -108,7 +108,7 @@ class InstallerTests(unittest.TestCase):
         self.download_temp.mkdir()
         self.curl_log = self.root / "curl.jsonl"
         self.exec_log = self.root / "executions.log"
-        self.start_log = self.root / "start-arguments.bin"
+        self.config_log = self.root / "config-arguments.bin"
         self.forbidden_log = self.root / "forbidden.log"
         for command in ("curl", "uname", "getconf", "sw_vers", "id", "sysctl", "mv", "sudo",
                         "systemctl", "launchctl", "brew"):
@@ -122,7 +122,7 @@ class InstallerTests(unittest.TestCase):
                         TEST_ARTIFACTS=str(self.artifacts),
                         TEST_CURL_LOG=str(self.curl_log),
                         TEST_EXEC_LOG=str(self.exec_log),
-                        TEST_START_LOG=str(self.start_log),
+                        TEST_CONFIG_LOG=str(self.config_log),
                         TEST_FORBIDDEN_LOG=str(self.forbidden_log),
                         XDG_CONFIG_HOME=str(self.home / ".config"),
                         OA_CHAT_CONFIG_DIR=str(self.home / "private-config"))
@@ -163,22 +163,23 @@ class InstallerTests(unittest.TestCase):
             files["share/oa-chat/proof-setup/" + name] = b"fixture proof asset\n"
         for executable, argument, output in (("oa-chat", "version", "oa-chat " + (binary_version or version)),
                                              ("oa-zkapi", "--help", "zkAPI fixture help")):
-            start_handler = (
-                'if [ "${1:-}" = start ]; then\n'
+            config_handler = (
+                'if [ "${1:-}" = config ]; then\n'
                 '  [ ! -e "$(dirname "$0")/../lib/oa-chat/.install-lock" ] || exit 92\n'
                 '  for leftover in "$TMPDIR"/oa-chat-install.*; do\n'
                 '    [ ! -e "$leftover" ] || exit 93\n'
                 '  done\n'
                 '  [ "$(command -v oa-zkapi)" = "$(dirname "$0")/oa-zkapi" ] || exit 94\n'
                 '  oa-zkapi --help >/dev/null || exit 95\n'
-                '  printf "%s\\0" "$0" "$@" >> "$TEST_START_LOG"\n'
+                '  printf "%s\\0" "$0" "$@" >> "$TEST_CONFIG_LOG"\n'
+                '  if [ "${TEST_SETUP_EXIT:-0}" = 0 ]; then printf "Serve inference: oa-chat serve\\n"; fi\n'
                 '  exit "${TEST_SETUP_EXIT:-0}"\n'
                 'fi\n'
             ) if executable == "oa-chat" else ''
             files[executable] = (
                 '#!/bin/sh\n'
                 f'printf "%s\\n" "{executable} $*" >> "$TEST_EXEC_LOG"\n'
-                + start_handler
+                + config_handler
                 + f'[ "$#" -eq 1 ] && [ "$1" = "{argument}" ] || exit 90\n'
                 + ('exit 91\n' if runtime_fail == executable else f'printf "%s\\n" "{output}"\n')
             ).encode()
@@ -281,8 +282,9 @@ class InstallerTests(unittest.TestCase):
                          {"oa-chat version", "oa-zkapi --help"})
         self.assertFalse((self.home / ".config/systemd").exists())
         self.assertFalse((self.home / "Library/LaunchAgents").exists())
-        self.assertFalse(self.start_log.exists())
-        self.assertIn("Start guided setup: oa-chat start", self.last_result.stdout)
+        self.assertFalse(self.config_log.exists())
+        self.assertIn("Configure: oa-chat config", self.last_result.stdout)
+        self.assertIn("Then serve inference: oa-chat serve", self.last_result.stdout)
         calls = [json.loads(line) for line in self.curl_log.read_text().splitlines()]
         self.assertEqual(len(calls), 2)
         for args in calls:
@@ -299,13 +301,16 @@ class InstallerTests(unittest.TestCase):
                     arguments += ["--network", network]
                 result = self.run_installer(prefix=prefix, arguments=arguments, piped=True)
                 self.assert_success(result, prefix=prefix)
-                expected = [str(prefix.resolve() / "bin/oa-chat"), "start"]
+                expected = [str(prefix.resolve() / "bin/oa-chat"), "config"]
                 if network:
                     expected += ["--network", network]
-                self.assertEqual(self.start_log.read_bytes().split(b"\0")[:-1],
+                self.assertEqual(self.config_log.read_bytes().split(b"\0")[:-1],
                                  [argument.encode() for argument in expected])
-                self.assertNotIn("Start guided setup: oa-chat start", result.stdout)
-                self.start_log.unlink()
+                self.assertNotIn("Configure: oa-chat config", result.stdout)
+                self.assertIn("Serve inference: oa-chat serve", result.stdout)
+                self.assertFalse(any(line == "oa-chat serve" or line.startswith("oa-chat start")
+                                     for line in self.exec_log.read_text().splitlines()))
+                self.config_log.unlink()
 
     def test_setup_failure_preserves_install_and_propagates_exit_code(self):
         self.fixture()
@@ -313,7 +318,8 @@ class InstallerTests(unittest.TestCase):
         result = self.run_installer(arguments=("--setup", "--network", "sepolia"), piped=True)
         self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
         self.assert_installed()
-        self.assertTrue(self.start_log.exists())
+        self.assertTrue(self.config_log.exists())
+        self.assertNotIn("Serve inference: oa-chat serve", result.stdout)
 
     def test_setup_selects_installed_companion_ahead_of_older_path_entry(self):
         self.fixture()
@@ -322,7 +328,7 @@ class InstallerTests(unittest.TestCase):
         stale_companion.chmod(0o755)
         result = self.run_installer(arguments=("--setup", "--network", "sepolia"), piped=True)
         self.assert_success(result)
-        self.assertTrue(self.start_log.exists())
+        self.assertTrue(self.config_log.exists())
 
     def test_setup_upgrade_preserves_old_release_and_hands_off_once(self):
         self.fixture()
@@ -333,8 +339,8 @@ class InstallerTests(unittest.TestCase):
         self.assert_success(result, version="1.2.4")
         self.assertTrue(old_release.is_dir())
         self.assertIn("Restart any running daemon", result.stdout)
-        self.assertEqual(self.start_log.read_bytes().split(b"\0")[:-1],
-                         [str(self.prefix.resolve() / "bin/oa-chat").encode(), b"start", b"--network", b"sepolia"])
+        self.assertEqual(self.config_log.read_bytes().split(b"\0")[:-1],
+                         [str(self.prefix.resolve() / "bin/oa-chat").encode(), b"config", b"--network", b"sepolia"])
 
     def test_invalid_setup_arguments_fail_before_download(self):
         for arguments in (("--network", "sepolia"), ("--setup", "--network"),
@@ -346,7 +352,7 @@ class InstallerTests(unittest.TestCase):
                 self.assert_rejected(self.run_installer(arguments=arguments, piped=True))
                 self.assertFalse(self.curl_log.exists())
                 self.assertFalse(self.exec_log.exists())
-                self.assertFalse(self.start_log.exists())
+                self.assertFalse(self.config_log.exists())
                 self.assertFalse((self.root / "injected").exists())
 
     def test_rosetta_downloads_native_arm64(self):
