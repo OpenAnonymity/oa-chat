@@ -912,3 +912,47 @@ test('a quote refresh starts before expiry and keeps the last public estimate un
     f.flow.invalidate();
     assert.equal(f.flow.displayQuote, null, 'editing removes an estimate for the old principal');
 });
+
+test('a USD quote that fails after an edit is retried on the next poll instead of staying dirty', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    assert.equal(f.flow.dirty, false);
+    const quote = f.client.quoteDepositUsd;
+    f.client.quoteDepositUsd = async () => { throw new Error('Temporary price read failure.'); };
+    // The controls set requestedAmount on input before the debounced setAmount.
+    f.flow.invalidate();
+    f.flow.requestedAmount = { value: '12', currency: 'usd' };
+    assert.equal(await f.flow.setAmount('12', 'usd'), false);
+    assert.equal(f.flow.dirty, true);
+    assert.match(f.flow.error, /Temporary/);
+    // check() ignores a dirty flow, so the poll has to re-run the quote.
+    const quotesBefore = f.quotes();
+    f.client.quoteDepositUsd = quote;
+    const originalSetTimeout = globalThis.setTimeout;
+    let scheduled;
+    globalThis.setTimeout = (callback, delay) => { scheduled = { callback, delay }; return originalSetTimeout(() => {}, 0); };
+    try { f.flow.schedule(); } finally { globalThis.setTimeout = originalSetTimeout; }
+    assert.equal(scheduled.delay, 60_000);
+    f.flow.schedule = () => {};
+    await scheduled.callback();
+    assert.equal(f.quotes(), quotesBefore + 1, 'the requested amount was quoted again');
+    assert.equal(f.flow.dirty, false);
+    assert.equal(f.flow.error, '');
+    assert.equal(f.flow.intent.usdAmount, '12');
+});
+
+test('the poll leaves a clean in-progress edit alone', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.flow.invalidate();
+    f.flow.requestedAmount = { value: '12', currency: 'usd' };
+    const quotesBefore = f.quotes();
+    const originalSetTimeout = globalThis.setTimeout;
+    let scheduled;
+    globalThis.setTimeout = (callback) => { scheduled = callback; return originalSetTimeout(() => {}, 0); };
+    try { f.flow.schedule(); } finally { globalThis.setTimeout = originalSetTimeout; }
+    f.flow.schedule = () => {};
+    await scheduled();
+    assert.equal(f.quotes(), quotesBefore, 'no quote while the debounce still owns the edit');
+    assert.equal(f.flow.dirty, true);
+});

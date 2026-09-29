@@ -176,8 +176,14 @@ export class AddressDepositFlow extends DepositAmount {
         clearTimeout(this.timer);
         this.timer = setTimeout(async () => {
             try {
-                if (!this.intent && this.requestedAmount) await this.setAmount(this.requestedAmount.value, this.requestedAmount.currency);
-                else await this.check();
+                // A failed amount quote (price oracle or RPC outage) is retried
+                // on the poll cadence like the fee check, whether it was the
+                // first quote or an edit; check() skips a dirty flow, so without
+                // this a failed edit stayed on "Updating the ETH amount…" for
+                // good. An in-progress edit has no error and is left alone.
+                if (this.requestedAmount && (!this.intent || (this.dirty && this.error))) {
+                    await this.setAmount(this.requestedAmount.value, this.requestedAmount.currency);
+                } else await this.check();
             } finally { if (this.running) this.schedule(); }
         }, this.interval);
     }

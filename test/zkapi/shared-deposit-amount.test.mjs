@@ -290,3 +290,37 @@ test('rapid switches and a draft stay responsive while an old address fee quote 
     assert.equal(f.effects.authorizations, 0);
     assert.deepEqual(f.effects.deposits, []);
 });
+
+// A quote failure is one error, said once, under a heading that does not
+// keep promising an update (release browser audit, 2026-09-29, finding 3).
+test('a failed quote is shown once after Deposit echoes it, and the input points at that copy', async t => {
+    const f = fixture(t);
+    f.client.quoteDepositUsd = async () => { throw new Error('Temporary price read failure.'); };
+    await f.hydrate();
+    const before = f.controls.renderDepositAmount(f.owner);
+    assert.equal((before.match(/Temporary price read failure\./g) || []).length, 1);
+    assert.match(before, /aria-invalid="true" aria-describedby="zkapi-amount-error"/);
+    assert.match(before, /id="zkapi-amount-error" class="zkapi-funding-error" role="alert"/);
+    const account = Object.assign(Object.create(f.Account.prototype), f.owner, {
+        run: () => assert.fail('a failed quote never reaches the wallet'), recordDepositConfirmation() {}
+    });
+    await account.startDeposit(account.fundingInputAmount);
+    assert.equal(account.outcome?.message, 'Temporary price read failure.');
+    const after = f.controls.renderDepositAmount(account) + account.renderOutcome();
+    assert.equal((after.match(/Temporary price read failure\./g) || []).length, 1, 'the outcome is the only copy');
+    assert.match(after, /aria-describedby="zkapi-deposit-error"/);
+    assert.doesNotMatch(after, /zkapi-amount-error/);
+});
+
+test('Send Ethereum names a failed estimate instead of "Updating the ETH amount…" and says it retries', async t => {
+    const f = fixture(t, { method: 'address' });
+    f.client.quoteDepositUsd = async () => { throw new Error('Temporary price read failure.'); };
+    await f.hydrate();
+    const html = f.controls.renderDepositAmount(f.owner) + f.controls.renderFundingAccount(f.owner);
+    assert.match(html, /<h3[^>]*>Estimate unavailable<\/h3>/);
+    assert.doesNotMatch(html, /Updating the ETH amount|when the estimate is ready/);
+    assert.equal((html.match(/Temporary price read failure\./g) || []).length, 1);
+    assert.match(html, /aria-describedby="zkapi-amount-error"/);
+    assert.match(html, /Retrying automatically\. Changing the amount or switching between USD and ETH also starts a new estimate\./);
+    assert.match(html, /data-funding-copy/, 'the address stays available');
+});

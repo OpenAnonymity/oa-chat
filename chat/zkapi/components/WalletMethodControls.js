@@ -23,6 +23,14 @@ function amountFlow(owner) {
     return getWalletMethod() === 'address' ? owner.fundingFlow : owner.depositAmountFlow;
 }
 
+// The amount flow's error is shown once. After a failed Deposit the owner
+// echoes it (AccountModal outcome, WelcomePanel error) next to the action and
+// carries the input's aria-describedby target, so the flow's own copy yields.
+function ownerEchoesFlowError(owner, flow) {
+    const message = flow?.error;
+    return Boolean(message) && (owner.outcome?.message === message || owner.error === message);
+}
+
 export function stopFundingFlow(owner, { preserveAmount = false } = {}) {
     const selected = amountFlow(owner);
     if (preserveAmount) {
@@ -327,11 +335,16 @@ export function renderDepositAmount(owner) {
     const amount = saved ? intentInputAmount(intent) : owner.fundingInputAmount ?? intentInputAmount(intent) ?? suggestedAmount(owner);
     const disabled = owner.busy || owner.fundingBusy || owner.walletMethodReady === false;
     const label = currency.toUpperCase();
+    const local = getWalletMethod() === 'address';
+    // The flow's error sits under this input (MetaMask) or under the receiving
+    // address (Send Ethereum); either way the input points at it.
+    const flowError = !saved && flow?.error && !ownerEchoesFlowError(owner, flow) ? 'zkapi-amount-error' : '';
+    const describedBy = [owner.outcome?.field === 'deposit' ? 'zkapi-deposit-error' : '', flowError].filter(Boolean).join(' ');
     return `<section class="zkapi-deposit-amount" aria-label="${saved ? 'Saved deposit amount' : 'Deposit amount'}">
         <div class="zkapi-funding-field"><label for="funding-${currency}">${saved ? 'Saved deposit amount' : 'Amount to deposit'}</label>
-        <div class="zkapi-funding-amount-input">${currency === 'usd' ? '<span aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${currency} id="funding-${currency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${label}" ${owner.outcome?.field === 'deposit' ? 'aria-invalid="true" aria-describedby="zkapi-deposit-error"' : ''} value="${owner.escapeHtml(amount)}" ${saved ? 'readonly' : ''} ${disabled ? 'disabled' : ''} />
+        <div class="zkapi-funding-amount-input">${currency === 'usd' ? '<span aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${currency} id="funding-${currency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${label}" ${describedBy ? `aria-invalid="true" aria-describedby="${describedBy}"` : ''} value="${owner.escapeHtml(amount)}" ${saved ? 'readonly' : ''} ${disabled ? 'disabled' : ''} />
         <button data-funding-currency id="funding-currency" class="zkapi-funding-currency" type="button" aria-label="Switch amount to ${currency === 'usd' ? 'ETH' : 'USD'}" ${disabled || saved || addressFundingWallet.hasPendingTransaction ? 'disabled' : ''}>${label}<span aria-hidden="true">⇄</span></button></div></div>
-        ${!saved && getWalletMethod() !== 'address' && flow?.error ? `<p class="zkapi-funding-error" role="alert">${owner.escapeHtml(flow.error)}</p>` : ''}
+        ${flowError && !local ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${owner.escapeHtml(flow.error)}</p>` : ''}
     </section>`;
 }
 
@@ -372,7 +385,15 @@ export function renderFundingAccount(owner) {
     const ready = flow?.ready && freshQuote;
     const updating = Boolean(displayFee && !freshQuote);
     const balanceLine = `<p class="zkapi-helper zkapi-funding-available">Available at this address: ${availableKnown ? renderFundingWei(owner, available) : 'Checking balance…'}</p>`;
-    const fundingLoading = flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…';
+    // A failed quote is a state of its own: the heading must not keep
+    // promising an update that already failed. The poll retries a quote it
+    // was asked for; a saved amount that could not be restored waits for input.
+    const failed = Boolean(flow?.error);
+    const retrying = failed && Boolean(flow.intent || flow.requestedAmount);
+    const fundingLoading = failed ? 'Estimate unavailable' : flow?.dirty ? 'Updating the ETH amount…' : flow?.fee ? 'Refreshing the network fee estimate…' : 'Estimating the deposit network fee…';
+    const fundingLoadingNote = failed ? 'The amount and breakdown will appear once the estimate succeeds.' : 'The amount and breakdown will appear when the estimate is ready.';
+    const fundingRetryHint = failed ? `<p class="zkapi-note">${retrying ? 'Retrying automatically. Changing the amount or switching between USD and ETH also starts a new estimate.' : 'Change the amount or switch between USD and ETH to try again.'}</p>` : '';
+    const showFlowError = failed && !ownerEchoesFlowError(owner, flow);
     const sendUsd = fundingUsdValue(remaining);
     const sendUsdReference = `<span class="zkapi-funding-send-usd">${sendUsd ? `≈ ${escape(sendUsd)} USD` : 'USD estimate unavailable'}</span>`;
     const sendHeading = ready ? 'Ready to deposit' : displayedRequiredCovered ? 'Funds received' : recommendedRemaining == null ? 'Checking your funding address…' : recommendedRemaining === 0n ? 'Funds available'
@@ -402,8 +423,8 @@ export function renderFundingAccount(owner) {
                 : updating ? 'Updating fee estimate…'
                     : BigInt(available) === 0n ? 'Waiting for ETH…'
                         : `${escape(formatFundingAmount(flow.requiredRemainingWei, 18))} ETH still needed.`}</p>
-        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Deposit</button>` : `${fundingHelp(owner, 'quote', fundingLoading, `${balanceLine}<p class="zkapi-note" role="status">The amount and breakdown will appear when the estimate is ready.</p>`)}${address}`}
-        ${flow?.error ? `<p class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`
+        <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Deposit</button>` : `${fundingHelp(owner, 'quote', fundingLoading, `${balanceLine}<p class="zkapi-note" role="status">${fundingLoadingNote}</p>`)}${address}`}
+        ${showFlowError ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}${intent && displayTotal != null && !flow.dirty ? '' : fundingRetryHint}`
         : `${fundingHelp(owner, 'receipt', 'This browser’s receiving address', renderFundingReceipt(owner))}${owner.view === 'withdraw' ? '<p class="zkapi-note">If more ETH is needed for the withdrawal fee, send it here from your own wallet. Enter your withdrawal destination below.</p>' : ''}${address}
         ${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`}
         ${owner.view === 'withdraw' ? `<label class="zkapi-funding-field">Your wallet address on ${escape(network)}<input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label><p class="zkapi-note">${savedDestination ? 'This withdrawal keeps its saved destination.' : 'Enter the Ethereum address in your own wallet where you want to receive the withdrawal. This browser’s receiving address pays the network fee separately.'}</p>` : ''}
