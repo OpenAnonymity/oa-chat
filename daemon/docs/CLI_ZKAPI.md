@@ -10,11 +10,11 @@ primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md
 
 ## Sepolia: from installation to inference
 
-Use version `0.3.0` for guided setup. Stop any daemon you are upgrading,
+Use version `0.3.1` for guided setup and prompt cancellation fixes. Stop any daemon you are upgrading,
 then run:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --setup --network sepolia
 ```
 
 The same command installs or updates both binaries and proving assets. It then
@@ -56,11 +56,14 @@ Use the original `--prefix` for an installation in a custom location.
    inference and settlement. When setup attached to an existing daemon, it
    returns after the checks and that daemon continues running.
 
-For later starts, follow the installer's PATH guidance and run:
+For later starts with the default install prefix, run:
 
 ```sh
-oa-chat start --network sepolia
+PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia
 ```
+
+For a custom prefix, substitute its `bin` directory in PATH. Keeping that
+directory on your shell PATH lets you use the shorter `oa-chat start` command.
 
 New guided configurations use zkAPI. Existing saved modes remain available;
 without an explicit mode override, a compatible running daemon's mode is used.

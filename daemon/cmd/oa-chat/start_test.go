@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/config"
+	"golang.org/x/sys/unix"
 )
 
 type startTestUI struct {
@@ -193,7 +196,11 @@ func TestGuidedStartTerminalWaitCancelsWithoutInput(t *testing.T) {
 	}
 	defer read.Close()
 	defer write.Close()
-	ui := &terminalSetupPrompter{out: io.Discard, input: bufio.NewReader(read), device: read}
+	device := &setupTerminal{fd: int(read.Fd())}
+	if err := unix.SetNonblock(device.fd, true); err != nil {
+		t.Fatal(err)
+	}
+	ui := &terminalSetupPrompter{out: io.Discard, input: bufio.NewReader(device), device: device}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	started := time.Now()
@@ -202,6 +209,136 @@ func TestGuidedStartTerminalWaitCancelsWithoutInput(t *testing.T) {
 	}
 	if time.Since(started) > time.Second {
 		t.Fatal("terminal cancellation took too long")
+	}
+}
+
+type setupWouldBlockReader struct{ calls int }
+
+func (r *setupWouldBlockReader) Read([]byte) (int, error) {
+	r.calls++
+	return 0, unix.EAGAIN
+}
+
+func TestGuidedStartPromptBoundsWouldBlockRetries(t *testing.T) {
+	reader := &setupWouldBlockReader{}
+	ui := &terminalSetupPrompter{out: io.Discard, input: bufio.NewReader(reader)}
+	ctx, cancel := context.WithTimeout(context.Background(), 160*time.Millisecond)
+	defer cancel()
+	if approved, err := ui.Confirm(ctx, "Approve deposit"); approved || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("would-block input did not cancel safely: approved=%v, err=%v", approved, err)
+	}
+	if reader.calls < 1 || reader.calls > 10 {
+		t.Fatalf("would-block input busy-spun instead of waiting: %d reads", reader.calls)
+	}
+}
+
+// This helper runs in its own controlling terminal. Its stdin is deliberately
+// a pipe containing "yes": only input from the terminal may grant consent.
+func TestGuidedStartPromptPTYHelper(t *testing.T) {
+	if os.Getenv("OA_TEST_PROMPT_PTY") != "1" {
+		return
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	ui := &terminalSetupPrompter{out: os.Stdout}
+	defer ui.Close()
+	approved, err := ui.Confirm(ctx, "PTY spending confirmation")
+	switch os.Getenv("OA_TEST_PROMPT_PTY_ACTION") {
+	case "approve":
+		if !approved || err != nil {
+			t.Fatalf("terminal confirmation failed: approved=%v, err=%v", approved, err)
+		}
+	case "decline":
+		if approved || err != nil {
+			t.Fatalf("terminal refusal failed: approved=%v, err=%v", approved, err)
+		}
+	case "eof":
+		if approved || err == nil || ctx.Err() != nil {
+			t.Fatalf("terminal EOF granted consent or canceled: approved=%v, err=%v", approved, err)
+		}
+	default:
+		if approved || !errors.Is(err, context.Canceled) {
+			t.Fatalf("terminal interrupt did not cancel consent: approved=%v, err=%v", approved, err)
+		}
+	}
+	fmt.Println("PTY_EXPECTED_RESULT")
+}
+
+func TestGuidedStartPromptPTYConsentAndCancellation(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 is needed for the real PTY regression")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const harness = `
+import errno, os, pty, select, signal, sys, time
+
+read_fd, write_fd = os.pipe()
+os.write(write_fd, b"yes\n")
+os.close(write_fd)
+pid, terminal = pty.fork()
+if pid == 0:
+    os.dup2(read_fd, 0)
+    os.close(read_fd)
+    env = dict(os.environ, OA_TEST_PROMPT_PTY="1", OA_TEST_PROMPT_PTY_ACTION=sys.argv[2])
+    os.execve(sys.argv[1], [sys.argv[1], "-test.run=^TestGuidedStartPromptPTYHelper$"], env)
+os.close(read_fd)
+output = b""
+status = None
+reaped = False
+try:
+    deadline = time.monotonic() + 5
+    while b"PTY spending confirmation (yes/no) [no]: " not in output:
+        if time.monotonic() >= deadline:
+            raise RuntimeError("terminal prompt did not appear: " + repr(output))
+        if select.select([terminal], [], [], 0.1)[0]:
+            output += os.read(terminal, 4096)
+        exited, status = os.waitpid(pid, os.WNOHANG)
+        if exited:
+            reaped = True
+            raise RuntimeError("prompt consumed piped consent or exited early: " + repr(output))
+    if sys.argv[2] == "partial":
+        os.write(terminal, b"y")
+    time.sleep(0.2)
+    action = {"approve": b"yes\n", "decline": b"no\n", "eof": b"\x04"}.get(sys.argv[2], b"\x03")
+    os.write(terminal, action)
+    deadline = time.monotonic() + 3
+    while True:
+        if select.select([terminal], [], [], 0.1)[0]:
+            try:
+                output += os.read(terminal, 4096)
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+        exited, status = os.waitpid(pid, os.WNOHANG)
+        if exited:
+            reaped = True
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError("terminal action needed extra input to exit: " + repr(output))
+    if os.waitstatus_to_exitcode(status) != 0 or b"PTY_EXPECTED_RESULT" not in output:
+        raise RuntimeError("terminal result failed: " + repr(output))
+finally:
+    if not reaped:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except ProcessLookupError:
+            pass
+    os.close(terminal)
+`
+	for _, input := range []string{"empty", "partial", "approve", "decline", "eof"} {
+		t.Run(input, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, python, "-c", harness, executable, input)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("real PTY cancellation: %v\n%s", err, output)
+			}
+		})
 	}
 }
 

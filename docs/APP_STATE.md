@@ -10,6 +10,25 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - Diagnostics for the lost key (finding 1): every path that drops or replaces a ticket-bought session key now records a local Activity Timeline event (`access-discard` / `access-replace`) with its reason (`backend-change`, `verification-declined`, `credits-exhausted`, `station-banned`, `verifier-rejected`, `verifier-retry-rejected`, `persisted-unverified`, `council-lane`; a replacement says `expired`, `not-usable` or `unspecified`), the ephemeral key id, station and verification status, never the key, plus an `[access]` console line. A key can also vanish with no discard at all: `chatDB.saveSession` / `saveSessionWithMessages` read the stored row (same transaction, only when the incoming copy has no key) and log `access-overwrite` when a save without a key lands on a stored, unexpired key; the loading side (`cacheSessions`, `insertSessionIntoList`, across `reloadSessions` and, through a per-tab sessionStorage record of the held key, across a navigation) logs `access-missing`. Nothing about what is written or loaded changes. See `chat/services/inference/accessDiscardLog.js` and `test/services/accessDiscardLog.test.js`.
 - What the harness found (oa-commercial `test-robustness/`, group I): the checkout returns keep the key with a second tab open (`I1a`, `I1b`), a return that lands in a new tab lands on no chat, so a message typed there starts a new chat and spends a ticket on that chat's own key while the earlier chat's key is intact (`I1c`), and an ordinary reload keeps the key (`I1d`). `I1e` reproduces a loss: a second tab holding a copy of the chat from before the key was granted, and not applying storage events at that moment (as a streaming tab does not), saves that copy; the stored key is erased, the first tab reloads on the storage event, loses it, and the next turn spends another ticket. Both new events name it. A save should not erase a newer stored key; that persistence change is proposed, not made.
 
+## 2026-09-29: CLI terminal cancellation patch
+
+- The final public 0.3.0 acceptance check exposed a macOS terminal edge case:
+  Ctrl+C at an unanswered confirmation stopped the companion, but the CLI's
+  buffered terminal read waited for Enter before returning. Funding state stayed
+  intact and no transaction was authorized after cancellation.
+- Guided prompts now read `/dev/tty` through a nonblocking descriptor, so
+  cancellation can interrupt empty or partially typed prompts without another
+  keystroke. There is no input goroutine and no stdin fallback. Piped installer
+  text still cannot grant consent. macOS terminal poll events can arrive without
+  readable canonical input; a cancellation-aware backoff prevents idle spinning.
+  A real PTY regression covers cancellation, consent, refusal, and EOF separately
+  from in-memory prompt fixtures.
+- Recommended installation instructions target `daemon-v0.3.1`. For subsequent
+  starts, the one-line PATH assignment selects both the installed daemon and
+  companion, even when an older binary shadows them on the parent shell's PATH.
+  The 0.3.0 tag and assets remain immutable; its successful build, funding,
+  stream, and settlement evidence is retained below.
+
 ## 2026-09-29: Ask source links and malformed math labels
 
 - Ask answers now use the same inline-link chip renderer as full replies, including streaming updates. Only links present in the answer are enhanced; plain domain names are not assigned guessed URLs. Structured sources still use the existing Ask sources footer. The screenshot alone cannot establish whether the original model returned linked or bare source names.
@@ -36,8 +55,8 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - `install.sh --setup --network sepolia` installs/updates the native pair and
   then runs the installed absolute CLI with its companion directory first on
   PATH. It needs no separate PATH/init/serve/funding terminal for the first run.
-  Ordinary installation remains install-only. Active instructions target the
-  follow-up `daemon-v0.3.0`; publication is pending at this checkpoint.
+  Ordinary installation remains install-only. This flow shipped in
+  `daemon-v0.3.0`; current instructions use its `0.3.1` cancellation patch.
 - Setup authenticates an existing daemon or starts and owns a foreground
   daemon. It never stops a foreign process. Without an explicit backend flag,
   an authenticated compatible running mode wins; otherwise the saved default
@@ -65,7 +84,12 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - Validation: full Go race suite/vet, Linux command cross-compilation, 26
   installer regressions, and fresh adversarial review pass. Review fixes cover
   companion PATH selection, slow-start readiness, and ambiguous recovery.
-  Live Sepolia acceptance and release publication are being recorded separately.
+  All four native/package gates and public 0.2.0 → 0.3.0 guided upgrade passed.
+  The real Sepolia deposit finalized and the CI pair streamed and settled an
+  inference. A final macOS prompt-cancellation check found that Ctrl+C could
+  require Enter to exit the terminal read; a patch release addresses it. See
+  [release evidence](../daemon/packaging/validation/daemon-0.3.0-release-20260929.json)
+  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-030-guided-setup-validation-2026-09-29).
 
 ## 2026-09-29: CLI 0.2.0 prerelease published
 

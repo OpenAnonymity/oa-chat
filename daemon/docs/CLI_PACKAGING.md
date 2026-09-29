@@ -28,10 +28,10 @@ retain their own transcripts under their own storage/privacy settings.
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Use version `0.3.0` to install or update and enter guided Sepolia setup:
+AUR. Use version `0.3.1` to install or update and enter guided Sepolia setup:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --setup --network sepolia
 ```
 
 `--setup` runs the installed `oa-chat start` after validation, activation, and
@@ -45,7 +45,7 @@ Prompts read your controlling terminal, never the piped installer script.
 For installation or updates only, omit the setup flags:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash
 ```
 
 The published script is pinned to its own release version. It downloads the
@@ -57,8 +57,10 @@ runtime libraries with the distribution's package manager. Bash, `curl`,
 `tar`, and either `sha256sum` or `shasum` must be available. No compiler,
 Homebrew, Python, or root access is needed to run the installer.
 
-Launchers default to `~/.local/bin`. Follow the printed PATH guidance for
-future terminals, then use `oa-chat start` to run setup again. Omit `--network`
+Launchers default to `~/.local/bin`. In a future terminal, run
+`PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia`, or follow the printed PATH
+guidance to use the shorter `oa-chat start` command. For a custom prefix,
+substitute its `bin` directory in PATH. This selects both matching binaries. Omit `--network`
 with `--setup` to use an existing configuration's network or answer the new
 configuration's network prompt. `--network` is accepted only with `--setup`
 and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
@@ -70,12 +72,12 @@ does not register a background service either.
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --prefix "$HOME/oa-tools" --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --prefix "$HOME/oa-tools" --setup --network sepolia
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version are `daemon-v0.3.0` and `0.3.0`.
+metadata; the tag and installer version are `daemon-v0.3.1` and `0.3.1`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -95,7 +97,7 @@ The installer does not terminate an existing daemon. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
 wallet state remain in the separate private configuration directory.
-Reinitializing is unnecessary. `oa-chat version` should print `oa-chat 0.3.0`
+Reinitializing is unnecessary. `oa-chat version` should print `oa-chat 0.3.1`
 after this upgrade. A setup failure leaves the validated installation in place
 and returns the CLI's failure status so you can rerun `start` after addressing
 it. The installer does not migrate legacy ERC-20 notes to native ETH; retain
@@ -212,10 +214,10 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-For the `0.3.0` release, select its exact version:
+For the `0.3.1` release, select its exact version:
 
 ```sh
-release_version=0.3.0
+release_version=0.3.1
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
 oa-chat start
@@ -406,6 +408,33 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Published 0.3.0 guided-setup validation (2026-09-29)
+
+[daemon-v0.3.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.0)
+was published with 12 verified assets from main commit
+`081f1b49e70bea28f3f9e2a6be9aeaeeab9acae6`. All ten jobs in the
+[release workflow](https://github.com/OpenAnonymity/oa-chat/actions/runs/36593398164)
+passed: four native builds, assembly, four platform package checks, and draft
+creation. All uploaded sizes and digests match the original assembled artifact.
+
+The public HTTPS installer upgraded 0.2.0 to 0.3.0 on macOS ARM64, preserved
+private configuration bytes and permissions and the prior bundle, and entered
+guided Sepolia setup. Its matching companion took precedence over an older
+global installation. The live guide displayed a funding address, required
+consent, prompted again for increased fees, and stopped without signing when
+that increase was declined. Restarting retained the unsigned principal and
+asked for consent again. The final macOS cancellation check exposed a terminal
+read that needed Enter after Ctrl+C at a prompt; the follow-up patch fixes it.
+
+A dedicated funded Sepolia profile deposited 743,028 gwei through the guided
+flow. Restarting with the original CI binary pair resumed the identical signed
+transaction and reached ready after finality. One explicit streamed request
+returned HTTP 200 and `[DONE]`, exercised the recently-attested verifier-outage
+policy, and automatically settled for 9 gwei. An attached `start` waited for
+settlement, reported ready, and left the original daemon running. Test processes
+were then stopped and private recovery state was backed up. Setup itself sent
+no inference request. See the [sanitized validation record](../packaging/validation/daemon-0.3.0-release-20260929.json).
 
 ## Published 0.2.0 prerelease validation (2026-09-29)
 

@@ -8,18 +8,19 @@ For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon]
 
 The daemon includes [guided setup](daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
 that installs or updates the binaries, creates missing configuration, checks
-readiness, and walks you through funding. Use the `daemon-v0.3.0` installer for
+readiness, and walks you through funding. Use the `daemon-v0.3.1` installer for
 this guided flow:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --setup --network sepolia
 ```
 
 Choose the private balance to add, approve its fixed amount and maximum fee,
 then send **Sepolia test ETH** to the displayed address. Setup waits for the
 transfer, deposits automatically, waits for finality, and prints your local
 inference endpoint. Leave the terminal running. On later runs, use
-`oa-chat start --network sepolia`; existing configuration and wallet state are
+`PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia` with the default install
+prefix; existing configuration and wallet state are
 reused. An existing ticket configuration can select `--backend zkapi`.
 
 Omit `--setup --network sepolia` for installation or updates only. Stop the daemon

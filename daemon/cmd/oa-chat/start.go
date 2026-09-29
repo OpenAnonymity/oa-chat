@@ -33,12 +33,29 @@ type setupPrompter interface {
 type terminalSetupPrompter struct {
 	out    io.Writer
 	input  *bufio.Reader
-	device *os.File
+	device *setupTerminal
+}
+
+// Read directly from a nonblocking descriptor. Darwin can report POLLNVAL for
+// /dev/tty; a subsequent blocking read would wait for another complete line
+// even after cancellation. Avoid both that read and os.File's runtime poller.
+type setupTerminal struct{ fd int }
+
+func (d *setupTerminal) Read(buffer []byte) (int, error) {
+	n, err := unix.Read(d.fd, buffer)
+	if n < 0 {
+		n = 0
+	}
+	if n == 0 && err == nil {
+		err = io.EOF
+	}
+	return n, err
 }
 
 func (p *terminalSetupPrompter) Close() {
 	if p.device != nil {
-		_ = p.device.Close()
+		_ = unix.Close(p.device.fd)
+		p.device = nil
 	}
 }
 
@@ -51,10 +68,11 @@ func (p *terminalSetupPrompter) Ask(ctx context.Context, question, fallback stri
 		return "", err
 	}
 	if p.input == nil {
-		device, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+		fd, err := unix.Open("/dev/tty", unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 		if err != nil {
 			return "", errors.New("setup needs an interactive terminal; run oa-chat start in a terminal to answer the setup questions")
 		}
+		device := &setupTerminal{fd: fd}
 		p.device, p.input = device, bufio.NewReader(device)
 	}
 	p.Printf("%s", question)
@@ -68,7 +86,7 @@ func (p *terminalSetupPrompter) Ask(ctx context.Context, question, fallback stri
 			return "", err
 		}
 		if p.device != nil && p.input.Buffered() == 0 {
-			fds := []unix.PollFd{{Fd: int32(p.device.Fd()), Events: unix.POLLIN}}
+			fds := []unix.PollFd{{Fd: int32(p.device.fd), Events: unix.POLLIN}}
 			n, err := unix.Poll(fds, 100)
 			if errors.Is(err, unix.EINTR) {
 				continue
@@ -81,10 +99,28 @@ func (p *terminalSetupPrompter) Ask(ctx context.Context, question, fallback stri
 			}
 		}
 		b, err := p.input.ReadByte()
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
+			// Some terminal devices return an immediate poll event while no
+			// canonical input is available. Bound retries without busy-spinning.
+			timer := time.NewTimer(50 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", ctx.Err()
+			case <-timer.C:
+				continue
+			}
+		}
 		if err != nil {
 			return "", errors.New("setup input ended; run oa-chat start again to continue")
 		}
 		if b == '\n' {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
 			answer := strings.TrimSpace(line.String())
 			if answer == "" {
 				answer = fallback
