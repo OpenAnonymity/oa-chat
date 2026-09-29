@@ -27,7 +27,7 @@ function ethText(wei) {
 }
 
 /** Pure view: renderAmount receives canonical wei and returns trusted markup. */
-export function renderFundingProgress({ availableWei, depositWei, requiredFeeWei, feeBufferWei = '0', renderAmount, compact = false } = {}) {
+export function renderFundingProgress({ availableWei, depositWei, requiredFeeWei, feeBufferWei = '0', renderAmount } = {}) {
     const amounts = [availableWei, depositWei, requiredFeeWei, feeBufferWei].map(unsignedWei);
     if (amounts.some(value => value === null) || typeof renderAmount !== 'function') return '';
     const [available, deposit, fee, buffer] = amounts;
@@ -48,12 +48,6 @@ export function renderFundingProgress({ availableWei, depositWei, requiredFeeWei
         <dt>${labels[index]}${index === 1 ? '<small>Required allowance</small>' : ''}</dt>
         <dd>${renderAmount(amount.toString())}</dd>
     </div>`).join('');
-    if (compact) return `<section class="zkapi-funding-progress" data-funding-progress data-required-covered="${requiredCovered}" aria-label="Deposit cost breakdown">
-        <div class="zkapi-funding-progress-available"><span>Already at this address</span><strong>${renderAmount(available.toString())}</strong></div>
-        <dl class="zkapi-funding-progress-legend">${breakdown}</dl>
-        <dl class="zkapi-funding-progress-totals"><div><dt>Required total</dt><dd>${renderAmount(required.toString())}</dd></div></dl>
-        <p class="zkapi-funding-progress-note">The actual fee can be lower. The buffer is optional; unused ETH stays at this address.</p>
-    </section>`;
     const progressText = `${ethText(available)} already at this address, including any ETH left from earlier deposits. ${ethText(required)} required for the deposit and network fee. ${ethText(buffer)} optional buffer. ${ethText(recommended)} total including buffer. ${requiredCovered ? 'Required amount covered.' : `${ethText(required - available)} still required.`}`;
     const optionalRange = buffer > 0n
         ? `<span class="zkapi-funding-progress-optional" style="left:${percent(requiredPosition)}%;width:${percent(PERCENT_SCALE - requiredPosition)}%" aria-hidden="true"></span>`

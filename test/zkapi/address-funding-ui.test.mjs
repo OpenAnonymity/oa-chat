@@ -133,7 +133,7 @@ function quotedFlow(overrides = {}) {
     };
 }
 
-test('ordinary native funding keeps the fee breakdown available and enables Next only when funded', () => {
+test('ordinary native funding keeps the fee breakdown available and enables Deposit only when funded', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const waiting = controls.renderFundingAccount(owner);
@@ -201,7 +201,7 @@ test('a fee outage retains the independently checked funding-address balance', (
 
 test('the visible send amount shows USD for the remaining transfer including fees and existing ETH', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true,
-        formatMoney: amount => ({ '1500000': '$3.00', '5000000': '$10.00', '5500000': '$11.00' })[amount] || '$0.00' } });
+        formatMoney: amount => ({ '1500000': '$3.00', '5000000': '$10.00', '500000': '$1.00', '5500000': '$11.00' })[amount] || '$0.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
@@ -211,10 +211,14 @@ test('the visible send amount shows USD for the remaining transfer including fee
     assert.match(heading, /zkapi-funding-send-usd">≈ \$3\.00 USD/);
     assert.doesNotMatch(heading, /\$10\.00|\$11\.00/);
     assert.match(html, /data-funding-help-panel[^>]+hidden/);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<p class="zkapi-note">/);
-    assert.ok(details, 'cost details are in the collapsed question-mark panel');
+    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
+    assert.ok(details, 'cost details are in the collapsed transaction breakdown');
     assert.match(details[1], /data-funding-progress/);
+    assert.match(details[1], /role="progressbar"/);
+    assert.match(details[1], /zkapi-funding-progress-required|zkapi-funding-progress-optional/);
     assert.match(details[1], /Already at this address/);
+    assert.match(html, /Transaction breakdown <svg/);
+    assert.match(html, /zkapi-funding-summary">Deposit ≈ \$10\.00 · Fee allowance ≈ \$1\.00<\/p>/);
     assert.doesNotMatch(html.replace(details[1], ''), /data-funding-progress|Already at this address|Estimated actual network fee|Optional buffer/);
     assert.doesNotMatch(html, /Recommended to send|more is required for the deposit and network fee allowance/);
     owner.fundingHelpOpen = 'quote';
@@ -227,6 +231,7 @@ test('an unavailable USD conversion keeps exact ETH visible without a zero dolla
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /0\.0055/);
     assert.match(html, /zkapi-funding-send-usd">USD estimate unavailable/);
+    assert.match(html, /zkapi-funding-summary">Deposit 0\.005 ETH · Fee allowance 0\.0005 ETH<\/p>/);
     assert.doesNotMatch(html, /≈ \$0/);
 });
 
@@ -1053,7 +1058,7 @@ test('quote expiry repaints stale instructions even during a disclosure or pendi
     assert.equal(renders, 1, 'expiry does not wait for another RPC or animation');
 });
 
-test('manual deposit explains the external send, network, fee difference and exact shortfall', () => {
+test('manual deposit keeps instructions in the breakdown and shows a concise exact shortfall', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00',
         config: { funding: { chain_id: 11155111 } }, networkName: () => 'Sepolia' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({
@@ -1064,10 +1069,15 @@ test('manual deposit explains the external send, network, fee difference and exa
     assert.match(html, /choose <strong>Sepolia<\/strong>/);
     assert.match(html, /Only your deposit is added to the private balance/);
     assert.match(html, /This browser’s receiving address/);
-    assert.match(html, /0\.00045 ETH more is needed/);
+    assert.match(html, /0\.00045 ETH still needed/);
     assert.match(html, /data-funding-next[^>]*disabled[^>]*>Deposit/);
     assert.doesNotMatch(html, /Waiting for funds|>Next</);
-    assert.match(html, /Confirm the transfer in your wallet/);
+    assert.match(html, /confirm the transfer in your wallet/);
+    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
+    assert.ok(details);
+    assert.match(details[1], /In your own wallet/);
+    assert.match(details[1], /Only your deposit is added/);
+    assert.doesNotMatch(html.replace(details[1], ''), /In your own wallet|Only your deposit is added|confirm the transfer|zkapi-funding-address-label/);
 });
 
 test('failed refresh keeps fee details but suppresses QR and deposit authorization', () => {
@@ -1076,7 +1086,7 @@ test('failed refresh keeps fee details but suppresses QR and deposit authorizati
     Object.assign(flow, { displayQuote: flow.fee, fee: null, ready: false, error: 'Unable to check fees.' });
     Object.assign(f.owner, { view: 'fund', isOpen: true, fundingFlow: flow, fundingHelpOpen: 'quote' });
     const html = f.controls.renderFundingAccount(f.owner);
-    assert.match(html, /Deposit cost breakdown/);
+    assert.match(html, /Transaction breakdown/);
     assert.match(html, /0\.0055/);
     assert.doesNotMatch(html, /data-funding-help-panel[^>]*hidden|data-funding-payment-qr/);
     assert.match(html, /data-funding-next[^>]*disabled/);

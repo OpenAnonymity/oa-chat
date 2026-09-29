@@ -1,14 +1,23 @@
 ## Payment-flow feedback (2026-09-28)
 
-The two choices now read **MetaMask** and **Send Ethereum**. MetaMask actions
-name MetaMask. Manual funding explicitly tells the user to open their own
-wallet, select the configured Ethereum network, copy this browser’s receiving
-address (or scan it), and confirm the transfer there. The QR only fills transfer
-details. The separate **Deposit** action adds received ETH to the private balance.
-The main screen explains that its larger send total includes network fees and
-an optional buffer; it reports no funds yet or the exact additional ETH required.
-Fee details use a compact money breakdown. **Return leftover ETH** is explicitly
-separate from withdrawing the private balance.
+The two choices read **MetaMask** and **Send Ethereum**. MetaMask actions name
+MetaMask. The September 29 compact funding layout keeps the **Send** total,
+address, QR and **Deposit** action visible, with a short numeric summary such as
+`Deposit ≈ $5 · Fee allowance ≈ $X`. The fee allowance is the quoted maximum
+reserve including the optional buffer, not an actual fee charged. Exact ETH
+replaces a missing USD estimate. The status is **Waiting for ETH**, the exact
+additional amount still needed, or **Funds received**.
+
+A closed-by-default **Transaction breakdown** chevron disclosure contains the
+full funding progress bar, exact costs and send instructions. It explains
+opening the user's own wallet, selecting the configured Ethereum network,
+copying this browser's receiving address (or scanning its QR), and confirming
+the transfer there. Scanning only fills transfer details; the separate Deposit
+action adds received ETH to the private balance. Saved-deposit explanations
+also live in the disclosure. It remains open across read-only refreshes and
+reload, and does not close on an outside click. The withdrawal receipt's
+question-mark help is unchanged. **Return leftover ETH** remains distinct from
+withdrawing the private balance.
 
 Read-only polling renews fees before expiry. The last verified public transfer
 estimate and open details stay visible while a replacement loads, marked as
@@ -303,23 +312,38 @@ and can lag the chain head. Unavailable or stale pricing blocks USD conversion;
 exact ETH amounts remain visible without an invented dollar value.
 
 The screen says **Send** above the exact remaining ETH transfer including the
-optional fee buffer, with its current USD estimate and funding address. The
-question mark beside that amount reveals the compact address balance and
-cost breakdown. These details start closed; they are not hover text, and their
-open state survives read-only refreshes. The status below the QR shows the exact required shortfall after a partial
-transfer, so a disabled Deposit action explains what is missing.
-The optional full progress renderer uses one blue fill for all ETH already at the address, explicitly
+optional fee buffer, with its current USD estimate and the address. A compact
+numeric line separates **Deposit** from **Fee allowance**; each uses a current
+USD estimate when available, otherwise exact ETH. Fee allowance means
+`feeReserveWei`, the full quoted reserve including its optional buffer. It is
+not the estimated actual fee or a deduction already made. ETH already held
+at the address reduces the Send amount, so that remaining transfer can be less
+than the deposit plus fee allowance shown in the summary. The address has no
+extra receiving-address caption, and the QR caption is simply **Scan to pay**.
+The short status below it reads **Waiting for ETH**, reports the exact required
+shortfall after a partial transfer, or says **Funds received**. Deposit still
+requires only the principal plus the required allowance, not the optional buffer.
+
+The inline **Transaction breakdown** chevron opens a disclosure, closed by
+default, containing the external-wallet transfer instructions and network,
+saved-deposit explanation when relevant, and the full progress bar and costs.
+It uses the existing `fundingHelpOpen` quote state to retain its open state
+across read-only refreshes and reload; outside clicks do not collapse it.
+Receipt help in withdrawal views retains its separate question-mark behavior.
+
+The full progress bar uses one blue fill for all ETH already at the address,
 including leftovers from previous deposits. The rest is unfilled; a marker
 shows the required total and a hatched tail marks the optional buffer. Balance
-is not visually allocated into deposit and fee buckets. The exact ETH/USD
-balance, funded percentage of the total including buffer, and plain breakdown
-of deposit, network fee allowance, optional buffer and totals stay in the panel.
-The optional buffer is extra on top of the required network fee allowance.
-The panel also explains the estimated actual fee versus the required allowance
-and browser storage. ETH already held at
-the funding address reduces the requested transfer. A five-second read-only
-loop checks funds, reusing the fee quote for up to 30 seconds. The SDK prepares
-and durably stores a note draft independently of `pending_deposit`; no funding
+is not visually allocated into deposit and fee buckets. Exact ETH/USD balance,
+funded percentage of the total including buffer, and the full breakdown of
+deposit, required network fee allowance, optional buffer and totals remain
+inside this disclosure. It distinguishes the estimated actual fee from the
+required allowance and explains browser custody and how to send from an external
+wallet. The optional buffer is extra on top of the required network fee allowance.
+
+A five-second read-only loop checks funds, reusing the fee quote for up to
+30 seconds. The SDK prepares and durably stores a note draft independently of
+`pending_deposit`; no funding
 quote connects MetaMask, authorizes a signer, or broadcasts a transaction.
 An independent successful balance read remains visible if the fee quote fails;
 a failed balance read clears availability instead of preserving stale readiness.

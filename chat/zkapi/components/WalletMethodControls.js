@@ -210,6 +210,11 @@ export function renderFundingWei(owner, value) {
     return `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH${usd ? ` <span>(≈ ${owner.escapeHtml(usd)})</span>` : ''}`;
 }
 
+function fundingSummaryAmount(owner, value) {
+    const usd = fundingUsdValue(value);
+    return usd ? `≈ ${owner.escapeHtml(usd)}` : `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH`;
+}
+
 function intentCurrency(intent) {
     return intent?.inputCurrency || (intent?.usdAmount === null ? 'eth' : 'usd');
 }
@@ -229,16 +234,20 @@ function fundingQuoteFresh(fee) {
         && fee.quotedAt <= Date.now() && fee.expiresAt > Date.now();
 }
 
-function fundingHelp(owner, kind, heading, content) {
+function fundingHelp(owner, kind, heading, content, summary = '') {
     const scope = String(owner.overlay?.id || 'wallet').replace(/[^a-zA-Z0-9_-]/g, '-');
     const id = `zkapi-${scope}-funding-${kind}-help`;
     const open = owner.fundingHelpOpen === kind;
-    const label = kind === 'quote' ? 'Deposit cost breakdown' : 'Funding address details';
+    const quote = kind === 'quote';
+    const label = quote ? 'Transaction breakdown' : 'Funding address details';
+    const toggle = `<button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle${quote ? ' zkapi-funding-breakdown-toggle' : ''}" aria-label="${label}" aria-expanded="${open}" aria-controls="${id}">${quote ? 'Transaction breakdown <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>' : '?'}</button>`;
     return `<div class="zkapi-funding-help" data-funding-help="${kind}">
         <div class="zkapi-funding-heading">
-            <h3 class="${kind === 'quote' ? 'zkapi-funding-send-amount' : ''}">${heading}</h3>
-            <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle" aria-label="${label}" aria-expanded="${open}" aria-controls="${id}">?</button>
+            <h3 class="${quote ? 'zkapi-funding-send-amount' : ''}">${heading}</h3>
+            ${quote ? '' : toggle}
         </div>
+        ${summary}
+        ${quote ? toggle : ''}
         <div id="${id}" data-funding-help-panel class="zkapi-funding-help-panel" role="region" aria-label="${label}" ${open ? '' : 'hidden'}>${content}</div>
     </div>`;
 }
@@ -264,7 +273,7 @@ function attachFundingHelp(owner) {
     };
     const toggle = () => setOpen(panel.hidden);
     const outside = event => {
-        if (!panel.hidden && !help.contains(event.target)) setOpen(false);
+        if (help.dataset.fundingHelp !== 'quote' && !panel.hidden && !help.contains(event.target)) setOpen(false);
     };
     const escape = event => {
         if (event.key !== 'Escape' || panel.hidden) return;
@@ -372,29 +381,27 @@ export function renderFundingAccount(owner) {
     const address = `<div class="zkapi-funding-address"><input data-funding-address readonly aria-label="This browser’s receiving address" value="${escape(wallet.address)}" /><button data-funding-copy class="zkapi-secondary-button" type="button">Copy address</button></div>`;
     return `<section class="zkapi-funding-account" aria-label="This browser’s receiving address">
         ${funding ? `
-        <p class="zkapi-helper">1. In your own wallet, choose <strong>${escape(network)}</strong> and send ETH.</p>
-        <p class="zkapi-note">Copy this browser’s address below into your wallet’s Send screen, or scan the QR. Confirm the transfer in your wallet.</p>
-        ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. The network fee estimate refreshes before you continue.</p>' : ''}
         ${intent && displayTotal != null && !flow.dirty ? `${fundingHelp(owner, 'quote', sendHeading, `${availableKnown ? renderFundingProgress({ availableWei: available, depositWei: intent.depositWei,
             requiredFeeWei: displayFee.requiredFeeWei, feeBufferWei: displayFee.feeBufferWei,
-            renderAmount: value => renderFundingWei(owner, value), compact: true }) : balanceLine}
+            renderAmount: value => renderFundingWei(owner, value) }) : balanceLine}
         <dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
             <div><dt>Estimated actual network fee</dt><dd>${renderFundingWei(owner, displayFee.expectedFeeWei)}</dd></div>
             <div class="zkapi-funding-total"><dt>${displayedRequiredCovered ? 'Optional buffer remaining' : 'Amount to send'}</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
         </dl>
+        <p class="zkapi-note">In your own wallet, choose <strong>${escape(network)}</strong> and send ETH to this browser’s receiving address. Copy the address or scan the QR, then confirm the transfer in your wallet.</p>
+        <p class="zkapi-note">Only your deposit is added to the private balance. The fee allowance includes the optional buffer; unused ETH stays at this address.</p>
+        ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. The network fee estimate refreshes before you continue.</p>' : ''}
         <p class="zkapi-note">Fees are checked again when you click Deposit. Your sending wallet charges its own transfer fee separately.</p>
-        <p class="zkapi-note">Your balance holds ETH. Its USD value changes with the ETH price. Keep this browser’s site data to retain access.</p>`)}
-        <p class="zkapi-note">Includes network fees and an optional buffer. Only your deposit is added to the private balance.</p>
-        ${updating ? '<p class="zkapi-note" role="status">Updating fee estimate… The last estimate stays visible; Deposit is paused.</p>' : ''}
-        <p class="zkapi-funding-address-label">This browser’s receiving address</p>
+        <p class="zkapi-note">Your balance holds ETH. Its USD value changes with the ETH price. Keep this browser’s site data to retain access.</p>`,
+        `<p class="zkapi-funding-summary">Deposit ${fundingSummaryAmount(owner, intent.depositWei)} · Fee allowance ${fundingSummaryAmount(owner, displayFee.feeReserveWei)}</p>`)}
         ${address}
         ${!flow.error && !displayedRequiredCovered && remaining != null && BigInt(remaining) > 0n ? renderFundingPaymentQr({ address: wallet.address,
             chainId: Number(zkapiClient.config?.funding?.chain_id), amountWei: remaining }) : ''}
-        <p class="zkapi-helper zkapi-funding-status" role="status">${ready ? '2. Funds received. Click Deposit to add them to your private balance.'
-            : !availableKnown ? 'Checking the ETH received at this address…'
-                : updating ? 'Checking current fees before you can deposit.'
-                    : BigInt(available) === 0n ? '2. No ETH received yet. Send from your own wallet first; Deposit unlocks when enough arrives.'
-                        : `2. ETH received, but ${escape(formatFundingAmount(flow.requiredRemainingWei, 18))} ETH more is needed for the deposit and fees.`}</p>
+        <p class="zkapi-helper zkapi-funding-status" role="status">${ready ? 'Funds received.'
+            : !availableKnown ? 'Checking balance…'
+                : updating ? 'Updating fee estimate…'
+                    : BigInt(available) === 0n ? 'Waiting for ETH…'
+                        : `${escape(formatFundingAmount(flow.requiredRemainingWei, 18))} ETH still needed.`}</p>
         <button data-funding-next class="zkapi-primary-button" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Deposit</button>` : `${fundingHelp(owner, 'quote', fundingLoading, `${balanceLine}<p class="zkapi-note" role="status">The amount and breakdown will appear when the estimate is ready.</p>`)}${address}`}
         ${flow?.error ? `<p class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`
         : `${fundingHelp(owner, 'receipt', 'This browser’s receiving address', renderFundingReceipt(owner))}${owner.view === 'withdraw' ? '<p class="zkapi-note">If more ETH is needed for the withdrawal fee, send it here from your own wallet. Enter your withdrawal destination below.</p>' : ''}${address}

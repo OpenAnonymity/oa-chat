@@ -1,3 +1,23 @@
+## 2026-09-29: Compact Send Ethereum funding view
+
+- Restored the compact deposit layout: Send total, address, QR, short funding
+  status and Deposit button. A numeric Deposit / Fee allowance line uses USD
+  estimates with exact ETH fallback. Fee allowance is the full `feeReserveWei`,
+  including the optional buffer; it does not claim an actual fee was charged.
+- The inline Transaction breakdown chevron replaces the deposit question mark.
+  It starts closed and contains the transfer instructions, network, saved-deposit
+  explanation, full balance progress bar and exact costs. The bar retains its
+  continuous balance fill, required-total marker and optional-buffer hatch.
+  Quote details keep their existing state across refresh/reload and remain open
+  on outside clicks; withdrawal receipt question-mark help keeps its own behavior.
+- The QR caption is Scan to pay. Waiting for ETH, the exact required shortfall,
+  and Funds received provide compact status. Existing fresh-quote checks,
+  optional-buffer readiness, cancellation reset and reload restoration remain
+  intact. See [funding presentation](ZKAPI_PAYMENTS.md#payment-flow-feedback-2026-09-28).
+- Validation: 162 focused tests and independent final-diff review pass. A 375px
+  browser preview with a live Sepolia quote confirmed the compact closed view
+  and the restored bar, required marker and optional-buffer hatch when expanded.
+
 ## 2026-09-29: Shared CLI setup, automatic budgets, and terminal funding
 
 - One `oa-chat init` configures ticket and zkAPI capability. `serve --backend
