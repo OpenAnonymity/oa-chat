@@ -1,0 +1,355 @@
+{
+  "date_utc": "2026-09-29",
+  "source_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+  "source_was_main_at_tag_creation": true,
+  "change_scope": "Two public commands: guided and editable config, and noninteractive serve with setup guidance. Installer optional setup invokes config and returns.",
+  "native_artifact": {
+    "tag": "daemon-v0.4.0",
+    "run_id": 36638920965,
+    "artifact_id": 11065762089,
+    "artifact_name": "darwin-arm64",
+    "actions_zip_digest": "sha256:d3f171f04500e1511b2f40c9a17c86a077768347bd3bd20186d88cfd3b1fb42b",
+    "archive_sha256": "45de9b1793b0a51a45c841d0d90759a6bea2637774fe9c3c599a0143258524e6",
+    "source_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+    "source_clean": true,
+    "upstream_pins_and_exact_source_patches_verified": true,
+    "binary_sha256": {
+      "oa-chat": "9ae5a7c20af210e9cd44f8270bf87cc15d0844244656281e87c5d6678188fa8d",
+      "oa-zkapi": "db3d1ebee9b1f3b75aee980a8ec399f793a34f3d0649e18dfa15a096dbc50fae"
+    },
+    "version": "oa-chat 0.4.0"
+  },
+  "native_command_acceptance": {
+    "version": "0.4.0",
+    "source_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+    "original_ci_darwin_arm64_pair": true,
+    "help_lists_only_config_and_serve": true,
+    "missing_config_serve_guidance": true,
+    "fresh_ticket_config_created": true,
+    "ticket_mode_skips_network_prompt": true,
+    "ticket_import_prompt_reached": true,
+    "existing_config_summary_and_edit_menu": true,
+    "edited_listener_saved": "127.0.0.1:18896",
+    "config_and_credential_modes": "0600",
+    "directory_mode": "0700",
+    "empty_ticket_serve_config_guidance": true,
+    "ctrl_c_exits_without_extra_keystroke": true,
+    "owned_services_stopped": true,
+    "no_transactions_or_inference_sent": true
+  },
+  "source_acceptance": {
+    "source_build_version": "0.4.0",
+    "missing_serve_guidance": true,
+    "fresh_ticket_mode_without_network_prompt": true,
+    "ticket_import_prompt_reached": true,
+    "ticket_config_cancel_clean": true,
+    "existing_config_edit_to_zkapi_sepolia": true,
+    "listen_edited": true,
+    "edited_settings_saved": true,
+    "zkapi_funding_amount_prompt_reached": true,
+    "funding_cancelled_before_quote_or_consent": true,
+    "funded_sepolia_config_ready": true,
+    "config_exited_and_stopped_owned_services": true,
+    "source_serve_initial_failure": "Companion returned a generic invalid/stale/oracle quote error. A subsequent public protocol probe returned HTTP 401 testnet_password_required; no inference or transaction was sent.",
+    "readiness_safety_check_retained": true,
+    "no_new_funding_or_withdrawal": true,
+    "sepolia_live_inference_this_release": "blocked by external testnet password gate"
+  },
+  "public_upgrade": {
+    "upgrade": "0.3.2 -> 0.4.0",
+    "public_https_installer": true,
+    "native_platform": "darwin-arm64",
+    "version": "oa-chat 0.4.0",
+    "install_only_exit_code": 0,
+    "setup_flag_omitted": true,
+    "network_flag_omitted": true,
+    "fresh_configuration_not_created": true,
+    "setup_listeners_not_started": true,
+    "existing_configuration_bytes_and_private_modes_preserved": true,
+    "prior_bundle_retained_and_executable": true,
+    "paired_binaries_match_original_ci_artifact": true,
+    "default_user_install_unchanged": true,
+    "directory_mode": "0700",
+    "private_file_modes": "0600"
+  },
+  "public_separate_configuration": {
+    "version": "0.4.0",
+    "source_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+    "public_installed_pair": true,
+    "configuration_invoked_separately": true,
+    "no_mode_or_network_flags": true,
+    "prompt_offered_ticket_and_zkapi": true,
+    "blank_mode_answer_saved_zkapi": true,
+    "prompt_offered_mainnet_and_sepolia": true,
+    "blank_network_answer_saved_mainnet": true,
+    "private_directory_mode": "0700",
+    "credential_file_modes": "0600",
+    "companion_discovered_from_install_path": true,
+    "automatic_readiness_model_cap_usd": 1,
+    "live_mainnet_funding_quote_and_address_displayed": true,
+    "fixed_deposit_and_maximum_fee_consent_requested": true,
+    "approval_given": false,
+    "no_transaction_signed_or_broadcast": true,
+    "unsigned_intent_preserved": true,
+    "ctrl_c_exit_code": 0,
+    "unfunded_serve_exit_code": 1,
+    "unfunded_serve_points_to_config": true,
+    "serve_did_not_prompt_or_authorize_funding": true,
+    "owned_services_stopped": true
+  },
+  "local_validation": {
+    "full_go_race_suite_passed": true,
+    "go_vet_passed": true,
+    "linux_amd64_command_tests_cross_compiled": true,
+    "installer_tests_passed": 26,
+    "offline_package_tests_passed": 11,
+    "fresh_adversarial_implementation_review_approved": true,
+    "release_notes_review_approved": true
+  },
+  "release": {
+    "tag": "daemon-v0.4.0",
+    "url": "https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.0",
+    "release_id": 399580633,
+    "published_at": "2026-09-29T22:47:36Z",
+    "draft": false,
+    "prerelease": true,
+    "verified_uploaded_asset_count": 12,
+    "assets": [
+      {
+        "name": "install.sh",
+        "size": 14695,
+        "digest": "sha256:611302d11e26ae52b9c3c235b9dc97c85bb56577a5008477775a6ab5c84ead6f"
+      },
+      {
+        "name": "oa-chat-nix.tar.gz",
+        "size": 5133,
+        "digest": "sha256:a50be6525f376d50aff538436c7136886a7b5dbfa3b5d7e1072adb8e61372c92"
+      },
+      {
+        "name": "oa-chat-packaging.tar.gz",
+        "size": 6477,
+        "digest": "sha256:ef3e96dad91ed1638fe2528fbb1fbf3ee151f647afb51d168ecbc422e83f4e4d"
+      },
+      {
+        "name": "oa-chat_0.4.0_darwin_amd64.tar.gz",
+        "size": 23487385,
+        "digest": "sha256:d18fc3fa8d281d4e5cd046ca9c6dbe522c85a015288edd0632dd48f7e38be10c"
+      },
+      {
+        "name": "oa-chat_0.4.0_darwin_arm64.tar.gz",
+        "size": 22863328,
+        "digest": "sha256:45de9b1793b0a51a45c841d0d90759a6bea2637774fe9c3c599a0143258524e6"
+      },
+      {
+        "name": "oa-chat_0.4.0_linux_amd64.deb",
+        "size": 24071444,
+        "digest": "sha256:778ad55b041261a21a068eac979728de3c72819e0cb31e1b89049547cfc1dafd"
+      },
+      {
+        "name": "oa-chat_0.4.0_linux_amd64.rpm",
+        "size": 24089593,
+        "digest": "sha256:a73147895879b0ab78858083f5c969dd8e619965c7aafe78a1cb810132f8aa44"
+      },
+      {
+        "name": "oa-chat_0.4.0_linux_amd64.tar.gz",
+        "size": 23787117,
+        "digest": "sha256:2edc63f950f1245d78daeaef94dee581b044128f961885104978202964812b54"
+      },
+      {
+        "name": "oa-chat_0.4.0_linux_arm64.deb",
+        "size": 24022176,
+        "digest": "sha256:3092b2dc6bc3ea2bcba5920f5c7b91944f7e0d79ef956b4d7f7093428bd1d2b8"
+      },
+      {
+        "name": "oa-chat_0.4.0_linux_arm64.rpm",
+        "size": 23998676,
+        "digest": "sha256:8c1e8b0442a0cdad62936a4879b69700fb940880c5a713333b3ba796db706049"
+      },
+      {
+        "name": "oa-chat_0.4.0_linux_arm64.tar.gz",
+        "size": 23602969,
+        "digest": "sha256:45bdffba749773d9729a322542cc704660da992d991d981ac5d05f1d6df2eb84"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 1871,
+        "digest": "sha256:30e8582d4206ba2a4b641e1261a548e7511cadeab161342c98b576dd8ce9e7a5"
+      }
+    ]
+  },
+  "immutable_tag_preserved": true,
+  "ci": {
+    "run_id": 36638920965,
+    "url": "https://github.com/OpenAnonymity/oa-chat/actions/runs/36638920965",
+    "all_10_jobs_passed": true,
+    "jobs": [
+      {
+        "name": "native (ubuntu-24.04-arm, linux-arm64)",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (macos-15, darwin-arm64)",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (ubuntu-24.04, linux-amd64)",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (macos-15-intel, darwin-amd64)",
+        "conclusion": "success"
+      },
+      {
+        "name": "assemble",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15-intel)",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04)",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04-arm)",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15)",
+        "conclusion": "success"
+      },
+      {
+        "name": "draft",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "assembled_checks": {
+    "tag": "daemon-v0.4.0",
+    "source_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+    "verified_files": [
+      "aur/.SRCINFO",
+      "aur/PKGBUILD",
+      "homebrew/oa-chat.rb",
+      "install.sh",
+      "nix/README.md",
+      "nix/flake.lock",
+      "nix/flake.nix",
+      "nix/home-manager-module.nix",
+      "nix/nixos-module.nix",
+      "nix/package.nix",
+      "nix/service-utils.nix",
+      "oa-chat-nix.tar.gz",
+      "oa-chat-packaging.tar.gz",
+      "oa-chat_0.4.0_darwin_amd64.tar.gz",
+      "oa-chat_0.4.0_darwin_arm64.tar.gz",
+      "oa-chat_0.4.0_linux_amd64.deb",
+      "oa-chat_0.4.0_linux_amd64.rpm",
+      "oa-chat_0.4.0_linux_amd64.tar.gz",
+      "oa-chat_0.4.0_linux_arm64.deb",
+      "oa-chat_0.4.0_linux_arm64.rpm",
+      "oa-chat_0.4.0_linux_arm64.tar.gz"
+    ],
+    "installer_pinned": true,
+    "installer_matches_source": true,
+    "installer_guided_setup": true,
+    "installer_companion_path_precedence": true,
+    "bundles": [
+      {
+        "target": "darwin/amd64",
+        "sha256": "d18fc3fa8d281d4e5cd046ca9c6dbe522c85a015288edd0632dd48f7e38be10c",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 darwin/amd64",
+          "oa_chat_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790720351"
+        }
+      },
+      {
+        "target": "darwin/arm64",
+        "sha256": "45de9b1793b0a51a45c841d0d90759a6bea2637774fe9c3c599a0143258524e6",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 darwin/arm64",
+          "oa_chat_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790720351"
+        }
+      },
+      {
+        "target": "linux/amd64",
+        "sha256": "2edc63f950f1245d78daeaef94dee581b044128f961885104978202964812b54",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 linux/amd64",
+          "oa_chat_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790720351"
+        }
+      },
+      {
+        "target": "linux/arm64",
+        "sha256": "45bdffba749773d9729a322542cc704660da992d991d981ac5d05f1d6df2eb84",
+        "provenance": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "3a2da6b7c1479c458ffb9162a30e15cbb84d336111d57eb17dceb09ac93a3e8b",
+          "go_toolchain": "go version go1.25.0 linux/arm64",
+          "oa_chat_commit": "d89ecf8d160cb2c5f234254280df6d3c1d64134f",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "fe05bb384fd3e8d9d90bf35ee1bb242c823efda298ed10938478dab74aec1b23",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790720351"
+        }
+      }
+    ],
+    "actions_artifact": {
+      "run_id": 36638920965,
+      "id": 11066486664,
+      "name": "assembled-release",
+      "size_in_bytes": 189574893,
+      "api_digest": "sha256:0755cad86da0727f6337eafca2fd833162f103d06820c051698dc0a8b13d02bb"
+    },
+    "mac_arm64_matches_original_native_artifact": true
+  },
+  "sepolia_deployment_limitation": {
+    "checked_at_utc": "2026-09-29T22:23:38Z",
+    "requests_were_public_and_read_only": true,
+    "sepolia": {
+      "health": 200,
+      "config_json": 200,
+      "billing_quote": 401,
+      "error_code": "testnet_password_required"
+    },
+    "mainnet": {
+      "billing_quote": 200
+    },
+    "companion_0_4_0": "Upstream non-2xx quote responses are mapped to a generic invalid/stale/finalized-oracle error. That text alone does not establish oracle staleness.",
+    "readiness": "blocked; no inference or transaction sent",
+    "parallel_followup": "Sepolia authentication support and matching companion are being integrated separately. No server authentication bypass or change was attempted."
+  },
+  "financial_test_scope": "No new transaction or inference was sent for 0.4.0. Mainnet setup stopped before approval. A funded Sepolia source configuration initially passed readiness; a subsequent serve returned a generic quote error, and a later read-only upstream probe confirmed a password gate. 0.4.0 lacks the required auth transport. Earlier successful live deposit/inference/settlement tests are historical evidence for 0.3.0 and 0.3.1, not a live 0.4.0 inference pass.",
+  "state_preservation": "Private state remains outside the repository. Temporary owned services were stopped. The default user installation and configuration were not modified."
+}

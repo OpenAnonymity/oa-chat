@@ -32,6 +32,22 @@
   remains separate, followed by config and then serve. Current source instructions
   target 0.4.0. Package tests check the public empty-wallet refusal and service
   stop behavior without funding fixtures or requiring production network access.
+- [0.4.0 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.0)
+  from `d89ecf8d160cb2c5f234254280df6d3c1d64134f`. All ten release CI jobs passed;
+  the four native bundles and all twelve uploaded assets were verified. The public
+  installer upgraded 0.3.2 while preserving configuration bytes, private modes,
+  and the previous bundle. Native create/edit/cancel checks passed. Separately
+  invoked public config selected Mainnet by default and displayed a live funding
+  quote; approval was canceled. Unfunded serve then exited with config guidance.
+- Live Sepolia inference is **not** a 0.4.0 validation claim. The protocol deployment
+  enabled a password gate during testing; public `/v2/billing/quote` returned
+  HTTP 401 `testnet_password_required`. This companion predates that authentication
+  support. Its generic invalid/stale/finalized-oracle quote error masks upstream
+  non-2xx responses and does not establish oracle staleness. A matched auth-capable
+  client/companion update is required; waiting for finality alone cannot fix 401.
+  No new transaction or inference was sent. See the
+  [release record](../daemon/packaging/validation/daemon-0.4.0-release-20260929.json)
+  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
 
 ## 2026-09-29: Browser funding and withdrawal recovery audit
 
