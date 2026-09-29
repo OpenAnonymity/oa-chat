@@ -26,12 +26,12 @@ retain their own transcripts under their own storage/privacy settings.
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Install the published
-[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0)
+AUR. Install or update to the
+[`daemon-v0.2.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)
 with:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash
 ```
 
 The published script is pinned to its own release version. It downloads the
@@ -48,10 +48,10 @@ PATH command printed by the installer to the current shell, then run:
 
 ```sh
 oa-chat init
-oa-chat serve
+oa-chat serve --backend ticket
 ```
 
-Import/redeem tickets or follow the [zkAPI funding setup](../README.md#zkapi-and-funding)
+Import/redeem tickets or follow the [Sepolia walkthrough](CLI_ZKAPI.md#sepolia-from-installation-to-inference)
 before sending inference requests. The installer does not initialize a
 configuration, import tickets, fund a wallet, start a daemon/service, or edit
 shell startup files.
@@ -59,12 +59,12 @@ shell startup files.
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version remain `daemon-v0.1.0` and `0.1.0`.
+metadata; the tag and installer version are `daemon-v0.2.0` and `0.2.0`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -82,7 +82,11 @@ Stop a running daemon before upgrading, rerun the installation command with
 the same prefix, and restart the daemon afterward. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
-wallet balances remain in the separate private configuration directory.
+wallet state remain in the separate private configuration directory. Reinitializing
+is unnecessary for an existing compatible configuration. After restarting,
+`oa-chat version` should print `oa-chat 0.2.0`. The installer does not migrate
+legacy ERC-20 notes to native ETH; retain their recovery directory and matching
+old client, and use a fresh config for the native deployment.
 Launchers belonging to an unrelated installation are refused; use the existing
 package manager for a Homebrew/package upgrade or choose another prefix.
 
@@ -108,11 +112,10 @@ does not register it with systemd. Its
 `ExecStart` uses `/usr/bin/oa-chat`; use foreground `oa-chat serve` or configure
 a user service with the chosen prefix and PATH.
 
-Availability: `daemon-v0.1.0` was published as a GitHub prerelease on
-September 22, 2026, with its generated `install.sh` asset and native packages.
-The exact-tag commands above are available; `latest/download` excludes this
-prerelease. Public package repositories, including a Homebrew tap and an AUR
-package, have not yet been published.
+Use the exact-tag commands for this prerelease; GitHub's `latest/download`
+does not select it. The September 22 `0.1.0` publication record below is
+historical evidence. Public package repositories, including a Homebrew tap
+and an AUR package, have not yet been published.
 
 ## Homebrew
 
@@ -195,10 +198,10 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-After the **new** release is published, select its exact version:
+For the `0.2.0` release, select its exact version:
 
 ```sh
-release_version=MAJOR.MINOR.PATCH # Replace with the newly published daemon version.
+release_version=0.2.0
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
 oa-chat init
@@ -261,9 +264,10 @@ Each operation signs only after its corresponding `--approve QUOTE_ID` command;
 `--resume` recovers saved signed bytes without granting new authority.
 The companion must advertise `bridge_version: 3` for model-selected budgets
 and `withdrawal_bridge_version: 1`; ship both binaries together. Service startup,
-address checks, and quote preparation never broadcast a transaction. The published 0.1.0
-release predates this behavior and still uses MetaMask. User-facing configuration
-uses Ethereum mainnet; Sepolia must be selected explicitly for testing.
+address checks, and quote preparation never broadcast a transaction. Version
+`0.2.0` includes this terminal flow; the historical `0.1.0` release used MetaMask.
+User-facing configuration uses Ethereum mainnet; Sepolia must be selected
+explicitly for testing.
 
 ## Building a release
 

@@ -8,6 +8,132 @@ The Rust companion is needed because the deployed Groth16 wallet and recovery
 implementation is Rust; this change does not claim to port those cryptographic
 primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md).
 
+## Sepolia: from installation to inference
+
+These commands use Bash or Zsh and a separate native-ETH Sepolia configuration.
+If upgrading, first stop the running daemon with Ctrl+C or its service manager.
+Keep any legacy ERC-20 recovery directory separate; the upgrade retains files
+but cannot convert an old note to the new vault.
+
+1. **Install or update.** The same command handles a fresh install and an
+   existing installation under `~/.local`. Use your original `--prefix` if you
+   chose a custom location. No `sudo` is needed.
+
+   ```sh
+   curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash
+   export PATH="$HOME/.local/bin:$PATH"
+   hash -r
+   oa-chat version
+   ```
+
+   The version must read `oa-chat 0.2.0`. Add the PATH line to your shell startup
+   file if needed for future terminals. The installer updates both executables
+   and proof assets together; it retains the previous release and your private
+   configuration. It does not restart an already running process.
+
+2. **Initialize Sepolia and start the daemon in terminal A.** Use this fresh
+   directory for native ETH, or your existing compatible Sepolia directory.
+   Run `init` only once; it never overwrites an existing configuration.
+
+   ```sh
+   export OA_CHAT_CONFIG_DIR="$HOME/.config/oa-chat-sepolia-native"
+   oa-chat init --network sepolia --listen 127.0.0.1:8788
+   oa-chat serve --backend zkapi
+   ```
+
+   Leave this terminal running. Wait for companion readiness. One initialization
+   also supports ticket mode; later, stop the process and restart with
+   `serve --backend ticket` to select it. The Sepolia setting must be explicit
+   because new configurations otherwise use Mainnet.
+
+3. **Prepare a funding quote in terminal B.** Select the same configuration
+   before every command in a new terminal:
+
+   ```sh
+   export PATH="$HOME/.local/bin:$PATH"
+   export OA_CHAT_CONFIG_DIR="$HOME/.config/oa-chat-sepolia-native"
+   oa-chat status
+   oa-chat fund --usd 2
+   ```
+
+   Confirm `network: sepolia` and the displayed **Ethereum Sepolia** funding
+   address. `$2` selects private principal using the verified ETH/USD quote;
+   gas is additional. The output separates principal, estimated fee, required
+   fee allowance, optional buffer, and exact top-up. For an ETH-denominated
+   principal, use `fund --amount ETH` instead.
+
+4. **Send Sepolia test ETH, then approve a fresh quote.** Transfer the displayed
+   top-up to the generated funding address on Sepolia. Use the recommended
+   top-up if you want the optional buffer. The vault address is not the funding
+   destination. Gas can exceed the small inference principal, so use the live
+   quote instead of sending only `$2` worth of test ETH.
+
+   Once the transfer arrives, refresh the quote; its fee approval expires after
+   30 seconds. Repeating the same USD input retains the already selected ETH
+   principal. Review the new quote ID and amounts, then replace `QUOTE_ID` below:
+
+   ```sh
+   oa-chat fund --usd 2
+   oa-chat fund --approve QUOTE_ID
+   ```
+
+   Approval signs the deposit and waits for finality, typically around
+   15 minutes after mining. Keep terminal A running. If terminal B is interrupted,
+   recover the saved transaction with `oa-chat fund --resume`; do not create a
+   second deposit. If the quote expired before signing, refresh and approve its
+   new ID. Unused gas allowance remains at the public funding address.
+
+5. **Confirm readiness.** Once funding reports `active`, run:
+
+   ```sh
+   oa-chat status
+   ```
+
+   Look for `service_running: true`, `backend: zkapi`, `network: sepolia`,
+   `companion_ready: true`, `funded: true`, and `pending_settlement: false`.
+   `private_balance` is in gwei. The selected model's automatic request budget
+   must fit this private balance; public ETH alone cannot pay for inference.
+
+6. **Discover models and send a streaming request.** In terminal B, capture the
+   local API key without printing it. These commands pass it to curl through
+   stdin rather than including it in curl's process arguments:
+
+   ```sh
+   OA_LOCAL_API_KEY=$(oa-chat api-key)
+   printf 'Authorization: Bearer %s\n' "$OA_LOCAL_API_KEY" | \
+     curl --fail-with-body --silent --show-error --header @- \
+       http://127.0.0.1:8788/v1/models
+
+   printf 'Authorization: Bearer %s\n' "$OA_LOCAL_API_KEY" | \
+     curl --fail-with-body --silent --show-error --no-buffer --header @- \
+       -H 'Content-Type: application/json' \
+       http://127.0.0.1:8788/v1/chat/completions \
+       -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Say hello in one sentence."}],"stream":true,"max_tokens":64}'
+   unset OA_LOCAL_API_KEY
+   ```
+
+   Choose an available ID from `/v1/models`; each entry includes its current
+   `oa_request_limit_micro_usd` (1,000,000 means a $1 cap). The example model used
+   the $1 bucket in live validation. The daemon sets this cap automatically;
+   actual usage is settled afterward. Success streams `data:` events followed
+   by `data: [DONE]`. Your client is now ready to use base URL
+   `http://127.0.0.1:8788/v1` and the key from `oa-chat api-key`.
+
+After each request, keep the daemon running while its anonymous lease settles.
+A second request can return `409 settlement_pending` for up to about five
+minutes; retry after `oa-chat status` shows `pending_settlement: false`.
+`402 funding_required` means the private balance cannot cover the selected
+model's cap. Choose a lower-budget model or close the current note and fund a
+new one; an active note cannot be topped up in place. An eligible trusted-station
+verifier outage may continue as `verifier-unavailable`; explicit verification
+refusals still block access.
+
+Back up the complete private `OA_CHAT_CONFIG_DIR` directory, including
+`funding/` and `zkapi/`. Keep that backup and the local API key private. To stop,
+press Ctrl+C in terminal A; restart with the same directory and
+`oa-chat serve --backend zkapi` to recover saved state. Withdrawal and public
+ETH return use the separate quote/approval commands described below.
+
 ## Network and funding
 
 `oa-chat init` configures both ticket and zkAPI modes, with Ethereum mainnet
@@ -114,9 +240,9 @@ funding requirement. Previously signed legacy transactions are replayed with
 their original bytes and fee settings. After canonical finality, status shows
 the actual network fee derived from the receipt.
 
-Address funding is a source change after `daemon-v0.1.0`; that published release
-still uses MetaMask. The acceptance records below distinguish the current
-terminal quote flow from earlier implementations.
+Version `0.2.0` includes this terminal flow. The older `daemon-v0.1.0` bundle
+used MetaMask; install both matching `0.2.0` binaries together. The acceptance
+records below distinguish the current terminal quote flow from earlier implementations.
 
 ## Terminal quote validation (2026-09-29)
 
@@ -442,9 +568,9 @@ from the private balance and are not swept by withdrawal; use `fund return`
 for public ETH. Withdrawal amount,
 destination, and transaction are public Ethereum data.
 
-Build both binaries from this revision: the companion must advertise
-`bridge_version: 3` and `withdrawal_bridge_version: 1`. The published `daemon-v0.1.0` bundle predates
-the command and cannot run it with only a replaced Go executable.
+Install both binaries from the `0.2.0` bundle: the companion must advertise
+`bridge_version: 3` and `withdrawal_bridge_version: 1`. The older `daemon-v0.1.0`
+bundle predates the command and cannot run it with only a replaced Go executable.
 
 ## Historical address-funding verification (2026-09-22)
 

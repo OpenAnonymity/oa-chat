@@ -7,16 +7,18 @@ The web app runs entirely in the browser. Each session uses a fresh ephemeral ac
 For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
 The daemon also includes a [one-command installer](daemon/docs/CLI_PACKAGING.md#one-command-installation)
-for macOS and Linux. Install the published
-[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0):
+for macOS and Linux. Install or update to the
+[`daemon-v0.2.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0):
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash
 ```
 
-It installs the binaries and proving assets for your user. Follow its PATH
-guidance, then run `oa-chat init` and configure tickets or zkAPI access as
-described in the [CLI guide](daemon/README.md). The exact-tag URL supports prereleases;
+It installs the binaries and proving assets for your user. Rerun the same
+command to update an existing one-command installation; stop the daemon first
+and restart it afterward. Configuration, tickets, and wallet state are retained.
+Follow its PATH guidance, then use the [Sepolia walkthrough](daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
+or configure tickets as described in the [CLI guide](daemon/README.md). The exact-tag URL supports prereleases;
 GitHub's `latest/download` URL excludes them. Public package repositories have
 not yet been published.
 

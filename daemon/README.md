@@ -11,11 +11,11 @@ file-storage, and image-generation endpoints are not implemented.
 
 ## Install with one command
 
-Install the native binaries and proving assets from the published
-[`daemon-v0.1.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.1.0):
+Install or update the native binaries and proving assets with the
+[`daemon-v0.2.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0):
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.1.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash
 ```
 
 This installs `oa-chat` and `oa-zkapi` under `~/.local/bin` on macOS 13+ or
@@ -26,25 +26,28 @@ both executables before activating the installation. Run it as your normal
 user; it does not need `sudo`, change your shell configuration, or start a
 service.
 
-Then initialize the daemon and import/redeem tickets before starting it:
+For an existing one-command installation, stop the daemon and rerun that same
+command with the same prefix, then restart. It updates both binaries and proof
+assets together while retaining your private configuration, tickets, and wallet
+state. It does not migrate legacy ERC-20 notes to the native ETH deployment.
+
+For a new ticket setup, initialize once and import/redeem tickets:
 
 ```sh
 oa-chat init
 oa-chat tickets redeem
-oa-chat serve
+oa-chat serve --backend ticket
 ```
 
-For zkAPI access, keep the same configuration and use the
-[funding setup](#zkapi-and-funding). Dual-mode selection and the quote-based
-command-line funding flow below require a source build of this revision;
-`daemon-v0.1.0` predates them.
+For Sepolia zkAPI, follow the [installation-to-inference walkthrough](docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+Version `0.2.0` includes shared initialization, runtime mode selection, automatic
+model budgets, and terminal deposit/withdrawal quotes.
 [Installer options and upgrades](docs/CLI_PACKAGING.md#one-command-installation)
 cover version pinning and custom installation directories.
 
 The exact-tag installer URL works for stable releases and GitHub prereleases.
 GitHub's `latest/download` URL excludes prereleases, so use the command above
-for this preview. Public installation passed on macOS ARM64 and Ubuntu 24.04
-ARM64; see the [release validation record](docs/CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
+for this preview. See [packaging and release validation](docs/CLI_PACKAGING.md).
 A Homebrew tap and an AUR package have not yet been published.
 
 ## Build and run ticket mode
@@ -95,8 +98,8 @@ the proxy, then restart the daemon. Existing
 nonempty relay settings stay enabled after upgrading. Wisp resolves destination
 DNS and hides your source IP from destination services; it still sees connection
 metadata. A configured relay fails closed without falling back to direct HTTPS.
-This default change requires a source build of this revision; the published
-`daemon-v0.1.0` bundle still defaults to Wisp.
+Version `0.2.0` defaults new configurations to direct HTTPS; upgrading preserves
+an existing relay setting.
 
 `oa-chat status` shows the authenticated running mode, saved default, and wallet
 readiness. `oa-chat api-key`
@@ -124,8 +127,7 @@ still return a nonzero exit status with a diagnostic on stderr.
 For example, `oa-chat serve > oa-chat.log` captures operational output. The
 daemon does not create log files itself; shell redirection or your service
 manager can retain this activity metadata. Homebrew services use their
-configured log file and systemd captures stdout in the journal. This behavior
-requires a source build of this revision; `daemon-v0.1.0` predates it.
+configured log file and systemd captures stdout in the journal.
 
 ## Connect Open WebUI
 
@@ -157,14 +159,13 @@ The API daemon is Go. The existing Rust zkAPI wallet/prover is packaged as
 Go supervises the companion and owns inference streaming. Neither prompts
 nor responses enter the proof companion.
 
-Build it with `daemon/scripts/prepare-zkapi.sh` followed by
+Version `0.2.0` bundles both matching binaries and proving assets; no source
+build is needed. The September 29 implementation passed a funded native ETH
+Sepolia run through quoted deposit approval, automatic model budgets, streamed
+inference, verifier-outage continuation, metered settlement, finalized withdrawal,
+and restart recovery. See the [terminal-flow validation](docs/CLI_ZKAPI.md#terminal-quote-validation-2026-09-29).
+For source builds, use `daemon/scripts/prepare-zkapi.sh` followed by
 `daemon/scripts/build-native.sh`; see [packaging](docs/CLI_PACKAGING.md).
-Installed native bundles include both binaries and proving assets. The September
-29 source build passed a funded native ETH Sepolia run through streamed
-inference, actual outage continuation, metered settlement, finalized withdrawal,
-and restart recovery; see [that run's validation](docs/CLI_ZKAPI.md#native-sepolia-acceptance-2026-09-29).
-That run predates the automatic model budgets and quote approval commands.
-The updated source has not been published as a new release.
 
 ```sh
 oa-chat init                 # once, for both modes
@@ -233,8 +234,8 @@ oa-chat fund return --approve QUOTE_ID
 These commands use the same quote/approval boundary. They do not withdraw a
 private note. Browser funding pages and the `--browser`/`--no-open` flags have
 been removed. See [funding, recovery, and limitations](docs/CLI_ZKAPI.md).
-Build both matching binaries from this revision; the published
-`daemon-v0.1.0` bundle does not implement these commands.
+Upgrade both binaries together with the one-command installer before using
+these commands; `daemon-v0.1.0` predates them.
 
 Ethereum mainnet is the default. Sepolia requires an explicit selection:
 
@@ -246,7 +247,7 @@ oa-chat --config-dir /path/to/private-sepolia-state fund
 ```
 
 The companion checks the manifest chain against the selected network, and
-state is separated by network and deployment ID. This source targets the fresh
+state is separated by network and deployment ID. Version `0.2.0` targets the fresh
 September 28 native ETH deployments, not the older ERC-20 wallets. Preserve
 old recovery directories; they cannot be rebound to the new vault. Each model
 automatically selects the same reviewed budget bucket as the web wallet: $1,

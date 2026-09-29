@@ -193,14 +193,16 @@ class InstallerTests(unittest.TestCase):
                  for path in sorted(directory.glob("*.tar.gz"))]
         (directory / "SHA256SUMS").write_text("".join(lines))
 
-    def run_installer(self, version="1.2.3", prefix=None, arguments=(), script=None):
-        command = ["/bin/bash", str(script or INSTALLER)]
+    def run_installer(self, version="1.2.3", prefix=None, arguments=(), script=None, piped=False):
+        source = script or INSTALLER
+        command = ["/bin/bash", "-s", "--"] if piped else ["/bin/bash", str(source)]
         if version is not None:
             command += ["--version", version]
         if prefix is not None:
             command += ["--prefix", str(prefix)]
+        input_options = {"input": source.read_text()} if piped else {"stdin": subprocess.DEVNULL}
         self.last_result = subprocess.run(command + list(arguments), env=self.env,
-                                          stdin=subprocess.DEVNULL, capture_output=True,
+                                          **input_options, capture_output=True,
                                           text=True, timeout=30, cwd=self.root)
         return self.last_result
 
@@ -276,14 +278,25 @@ class InstallerTests(unittest.TestCase):
         self.assert_success(self.run_installer())
 
     def test_upgrade_and_reinstall_leave_complete_active_pair(self):
-        self.fixture()
-        self.assert_success(self.run_installer())
-        self.fixture(version="1.2.4")
-        upgrade = self.run_installer(version="1.2.4")
-        self.assert_success(upgrade, version="1.2.4")
+        self.fixture(version="0.1.0")
+        self.assert_success(self.run_installer(version="0.1.0"), version="0.1.0")
+        old_release = (self.prefix / "lib/oa-chat/current").resolve()
+        old_files = {path.relative_to(old_release): path.read_bytes()
+                     for path in old_release.rglob("*") if path.is_file()}
+        self.fixture(version="0.2.0")
+        # The new release's one-command installer chooses its pinned version
+        # without requiring an update flag or a separate uninstall.
+        published = self.root / "install-0.2.0.sh"
+        published.write_text(INSTALLER.read_text().replace("@@VERSION@@", "0.2.0"))
+        upgrade = self.run_installer(version=None, script=published, piped=True)
+        self.assert_success(upgrade, version="0.2.0")
         self.assertIn("Restart any running daemon", upgrade.stdout)
         self.assertNotIn("For a new configuration", upgrade.stdout)
-        self.assert_success(self.run_installer(version="1.2.4"), version="1.2.4")
+        self.assertNotEqual((self.prefix / "lib/oa-chat/current").resolve(), old_release)
+        self.assert_success(self.run_installer(version=None, script=published, piped=True), version="0.2.0")
+        self.assertEqual(len(list((self.prefix / "lib/oa-chat/releases").iterdir())), 3)
+        self.assertEqual({path.relative_to(old_release): path.read_bytes()
+                          for path in old_release.rglob("*") if path.is_file()}, old_files)
 
     def test_release_script_pins_default_version(self):
         for operating_system in ("darwin", "linux"):

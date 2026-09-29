@@ -1,3 +1,25 @@
+## 2026-09-29: CLI 0.2.0 prerelease preparation
+
+- Selected `daemon-v0.2.0` for the native CLI prerelease. Current install links
+  use its exact-tag `install.sh`; GitHub prerelease status is release metadata,
+  while the binary and installer version remain plain `0.2.0`. Publication and
+  public-download validation are pending at this checkpoint.
+- The same one-command installer updates a prior managed installation under
+  the same prefix, atomically switches the checked binary/proof bundle, and
+  retains the prior release and separate private state. Stop the daemon before
+  upgrading and restart it afterward. Existing compatible configs need no
+  reinitialization. An old ERC-20 note cannot be migrated to the native vault;
+  retain its matching client/recovery state separately.
+- [The Sepolia walkthrough](../daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
+  now covers install/PATH/version, explicit Sepolia initialization, consistent
+  `OA_CHAT_CONFIG_DIR` across terminals, quote/send/refresh/approve/finality,
+  status, model budget discovery, and streaming inference. API credentials go
+  to curl through stdin, and the guide distinguishes public ETH from private
+  credit and documents the settlement wait before another independent request.
+- Removed stale source-build-only guidance for the capabilities included in
+  this release; earlier validation records remain historical. Release evidence
+  must be added after the new native matrix and public installation checks.
+
 ## 2026-09-29: Compact Send Ethereum funding view
 
 - Restored the compact deposit layout: Send total, address, QR, short funding

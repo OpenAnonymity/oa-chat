@@ -50,12 +50,13 @@ main() {
                 prefix=$2; shift 2 ;;
             --help|-h)
                 cat <<'HELP'
-Install the OA Chat CLI and its zkAPI companion for the current user.
+Install or update the OA Chat CLI and its zkAPI companion for the current user.
 
 Usage: bash install.sh [--version MAJOR.MINOR.PATCH] [--prefix ABSOLUTE_DIR]
 
 The published script defaults to its own release version. The source script
 requires --version. The default prefix is $HOME/.local; commands go in its bin/.
+Rerun with the same prefix to update; private configuration and wallets are kept.
 Requires macOS 13+ or Linux with glibc 2.39+, curl, tar, and SHA-256 tooling.
 Linux also needs OpenSSL 3, libgcc, and CA certificates.
 On NixOS, use the Nix flake package instead of the native archive installer.
@@ -228,6 +229,7 @@ HELP
         printf 'Your PATH currently selects %s. Put %s/bin first to use this installation.\n' "$target" "$prefix"
     fi
     if [[ -n "$current_target" ]]; then
+        printf 'Existing private configuration, tickets, and wallet state were preserved.\n'
         printf 'Restart any running daemon to use the new version. Previous release retained at %s/%s.\n' "$install_root" "$current_target"
     else
         printf 'For a new configuration: oa-chat init, then oa-chat serve --backend ticket or oa-chat serve --backend zkapi.\n'
