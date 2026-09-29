@@ -339,6 +339,18 @@ builder and compares the packaged binaries/assets with the native archive.
 Nix checks use checksum-verified local archives so draft-release URLs are not
 required. These checks never import tickets or fund a wallet.
 
+When a test-harness incompatibility blocks otherwise successful native builds
+and assembly, the read-only [package revalidation workflow](../../.github/workflows/oa-daemon-package-check.yml)
+can check the original artifacts with the corrected harness. Dispatch it with
+the completed release run ID and its existing `daemon-vMAJOR.MINOR.PATCH` tag.
+It verifies the source workflow, tag commit, all four successful native jobs,
+and assembly, then checks every downloaded checksum and each native bundle's
+clean source commit before repeating the complete package matrix. It does not
+rebuild, retag, or publish anything. After all checks pass, a maintainer can
+create and publish the release with those original assembled assets. Keep
+both run URLs in the release evidence. Nix 2.35 requires `nix flake archive`
+before external tools read a source path returned by lazy flake metadata.
+
 After reviewing the successful build, publish the GitHub draft so all pinned
 download URLs become available. Copy `homebrew/oa-chat.rb` to `Formula/oa-chat.rb`
 in the intended Homebrew tap, and copy `aur/PKGBUILD` plus `aur/.SRCINFO` to the

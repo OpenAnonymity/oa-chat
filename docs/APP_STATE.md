@@ -1,3 +1,17 @@
+## 2026-09-29: Release package revalidation
+
+- The `daemon-v0.2.0` tag at `ef888242c36860ccf8ec176b2b1eb724cee77456`
+  remains immutable. Its original release run `36582999421` passed all four
+  native builds/installations and release assembly, but all package jobs hit
+  a Nix 2.35 test-harness assumption: flake metadata can name a source path
+  before materializing it. The harness now explicitly archives the flake
+  before comparing its files; lock and payload checks remain intact.
+- The read-only package revalidation workflow checks the original run/tag,
+  successful build jobs, complete checksums, and all native source commits,
+  then repeats the original four-runner Nix/Homebrew/Arch checks. It never
+  builds, retags, or publishes. Publication remains gated on those checks.
+  See [packaging](../daemon/docs/CLI_PACKAGING.md#building-a-release).
+
 ## 2026-09-29: CLI 0.2.0 prerelease preparation
 
 - Selected `daemon-v0.2.0` for the native CLI prerelease. Current install links
