@@ -196,13 +196,15 @@ index ebde330..bcfc691 100644
              chain_id: 1,
              contract_address: Felt252::ZERO,
 diff --git a/crates/zkapi-clientd/src/error.rs b/crates/zkapi-clientd/src/error.rs
-index 6f82083..373ea54 100644
+index 6f82083..807bddf 100644
 --- a/crates/zkapi-clientd/src/error.rs
 +++ b/crates/zkapi-clientd/src/error.rs
-@@ -4,6 +4,12 @@ use zkapi_client::error::ClientError;
+@@ -4,6 +4,14 @@ use zkapi_client::error::ClientError;
 
  #[derive(Debug, Error)]
  pub enum AuthError {
++    #[error("Sepolia password is missing or incorrect; restart oa-chat start with the current shared password")]
++    TestnetPasswordRequired,
 +    #[error("inference is awaiting settlement; retry withdrawal after settlement")]
 +    PendingSettlement,
 +    #[error("withdrawal transaction is awaiting finalized confirmation")]
@@ -212,18 +214,21 @@ index 6f82083..373ea54 100644
      #[error("wallet is busy in another process")]
      WalletBusy,
      #[error("wallet has no active note; fund it first")]
-@@ -42,7 +48,7 @@ pub enum AuthError {
+@@ -42,7 +50,8 @@ pub enum AuthError {
  impl AuthError {
      pub fn status_code(&self) -> StatusCode {
          match self {
 -            Self::WalletBusy => StatusCode::CONFLICT,
++            Self::TestnetPasswordRequired => StatusCode::UNAUTHORIZED,
 +            Self::WalletBusy | Self::PendingSettlement | Self::OaWithdrawalPending | Self::WithdrawalConflict => StatusCode::CONFLICT,
              Self::NoActiveNote | Self::InsufficientBalance => StatusCode::PAYMENT_REQUIRED,
              Self::PendingRequest
              | Self::LeasePending(_)
-@@ -59,6 +65,9 @@ impl AuthError {
+@@ -58,7 +67,11 @@ impl AuthError {
+
      pub fn code(&self) -> &'static str {
          match self {
++            Self::TestnetPasswordRequired => "testnet_password_required",
              Self::WalletBusy => "wallet_busy",
 +            Self::PendingSettlement => "pending_settlement",
 +            Self::OaWithdrawalPending => "withdrawal_pending",
@@ -231,6 +236,29 @@ index 6f82083..373ea54 100644
              Self::NoActiveNote => "no_active_note",
              Self::InsufficientBalance => "insufficient_balance",
              Self::PendingRequest => "pending_request",
+@@ -82,6 +95,7 @@ impl AuthError {
+ impl From<ClientError> for AuthError {
+     fn from(value: ClientError) -> Self {
+         match value {
++            ClientError::TestnetPasswordRequired => Self::TestnetPasswordRequired,
+             ClientError::NoActiveNote => Self::NoActiveNote,
+             ClientError::InsufficientBalance { .. } => Self::InsufficientBalance,
+             ClientError::PendingRequest => Self::PendingRequest,
+@@ -94,6 +108,14 @@ impl From<ClientError> for AuthError {
+ mod tests {
+     use super::*;
+
++    #[test]
++    fn password_failure_retains_safe_status_and_code() {
++        let error = AuthError::from(ClientError::TestnetPasswordRequired);
++        assert_eq!(error.status_code(), StatusCode::UNAUTHORIZED);
++        assert_eq!(error.code(), "testnet_password_required");
++        assert_eq!(error.funding_url(), None);
++    }
++
+     #[test]
+     fn upstream_http_status_is_not_disguised_as_bad_gateway() {
+         let error = AuthError::UpstreamResponse {
 diff --git a/crates/zkapi-clientd/src/indexer.rs b/crates/zkapi-clientd/src/indexer.rs
 index 6952f58..cb8c9ab 100644
 --- a/crates/zkapi-clientd/src/indexer.rs
@@ -312,10 +340,10 @@ index 3b94253..2709888 100644
          contract_address: Felt252::from_hex(&args.contract_address)
 diff --git a/crates/zkapi-clientd/src/oa_native.rs b/crates/zkapi-clientd/src/oa_native.rs
 new file mode 100644
-index 0000000..cea7cb1
+index 0000000..52b5adf
 --- /dev/null
 +++ b/crates/zkapi-clientd/src/oa_native.rs
-@@ -0,0 +1,371 @@
+@@ -0,0 +1,368 @@
 +//! Native ETH quote checks. Never trust the payment server's conversion alone.
 +use crate::{config::AuthConfig, error::AuthError};
 +use serde::{Deserialize, Serialize};
@@ -473,18 +501,15 @@ index 0000000..cea7cb1
 +    Ok((number, hash))
 +}
 +pub(crate) async fn verified_quote(config: &AuthConfig) -> Result<Quote, AuthError> {
-+    let proposed = json_response(
-+        crate::service::fresh_private_http()?
-+            .get(format!(
++    let response = zkapi_client::testnet_auth::request(config.chain_id, &config.protocol_server_url, reqwest::Method::GET, format!(
 +                "{}/v2/billing/quote",
 +                config.protocol_server_url.trim_end_matches('/')
-+            ))
++            ))?
 +            .timeout(std::time::Duration::from_secs(20))
 +            .send()
 +            .await
-+            .map_err(|_| invalid())?,
-+    )
-+    .await?;
++            .map_err(|_| invalid())?;
++    let proposed = json_response(zkapi_client::testnet_auth::check_response(response)?).await?;
 +    let quote: Quote = serde_json::from_value(proposed).map_err(|_| invalid())?;
 +    quote.validate(config, false)?;
 +    if hex_u128(&rpc(config, "eth_chainId", json!([])).await?)? != config.chain_id as u128 {
@@ -1711,10 +1736,10 @@ index bebd5c4..6270e31 100644
                      .body(Body::empty())
                      .unwrap(),
 diff --git a/crates/zkapi-clientd/src/service.rs b/crates/zkapi-clientd/src/service.rs
-index 6b0305d..2ad5a34 100644
+index 6b0305d..6338b4f 100644
 --- a/crates/zkapi-clientd/src/service.rs
 +++ b/crates/zkapi-clientd/src/service.rs
-@@ -35,6 +35,67 @@ use zkapi_types::wire::{
+@@ -35,6 +35,71 @@ use zkapi_types::wire::{
  };
  use zkapi_types::{EpochRoots, Felt252, WithdrawalPublicInputsV2};
 
@@ -1750,6 +1775,10 @@ index 6b0305d..2ad5a34 100644
 +
 +// OA server leases stop before the signed provider key expires. Match the
 +// browser's bounded safety margin; never extend the lease's usable deadline.
++fn testnet_http_error(error: reqwest::Error) -> AuthError {
++    if error.status() == Some(reqwest::StatusCode::UNAUTHORIZED) { AuthError::TestnetPasswordRequired } else { AuthError::Wallet("protocol server request failed".into()) }
++}
++
 +fn oa_key_expiry_covers_lease(key_valid_till: u64, lease_expires_at: u64) -> bool {
 +    key_valid_till.checked_sub(lease_expires_at)
 +        .is_some_and(|safety_margin| safety_margin <= MAX_OA_EVIDENCE_EXPIRY_SKEW_SECONDS)
@@ -1782,7 +1811,7 @@ index 6b0305d..2ad5a34 100644
  fn compute_payload_hash(payload: impl AsRef<[u8]>) -> Felt252 {
      // Must match the protocol's canonical request-payload binding; the wallet
      // re-derives and rejects on mismatch (`request_flow`), and the value feeds
-@@ -117,6 +178,15 @@ pub struct RetiredNote {
+@@ -117,6 +182,15 @@ pub struct RetiredNote {
 
  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
  pub struct FundingConfig {
@@ -1798,7 +1827,7 @@ index 6b0305d..2ad5a34 100644
      pub contract_address: Felt252,
      pub chain_id: u64,
      pub indexer_url: String,
-@@ -320,6 +390,7 @@ struct ActiveOpenRouterLease {
+@@ -320,6 +394,7 @@ struct ActiveOpenRouterLease {
      settle_after: u64,
      verification: Option<OaKeyVerificationEvidence>,
      verified: bool,
@@ -1806,7 +1835,7 @@ index 6b0305d..2ad5a34 100644
      requests_served: u32,
  }
 
-@@ -371,6 +442,8 @@ struct OpenRouterLeaseExtensions {
+@@ -371,6 +446,8 @@ struct OpenRouterLeaseExtensions {
      key_source: String,
      #[serde(default)]
      verification: Option<OaKeyVerificationEvidence>,
@@ -1815,7 +1844,7 @@ index 6b0305d..2ad5a34 100644
  }
 
  #[derive(Debug, Clone, Deserialize)]
-@@ -396,8 +469,7 @@ fn validate_oa_key_evidence(
+@@ -396,8 +473,7 @@ fn validate_oa_key_evidence(
              "OA key evidence omitted the station ID".to_string(),
          ));
      }
@@ -1825,7 +1854,7 @@ index 6b0305d..2ad5a34 100644
          return Err(AuthError::KeyVerification(format!(
              "OA key evidence expiry {} does not safely cover lease expiry {expires_at}",
              evidence.key_valid_till
-@@ -421,6 +493,58 @@ fn validate_oa_key_evidence(
+@@ -421,6 +497,58 @@ fn validate_oa_key_evidence(
      Ok(())
  }
 
@@ -1884,7 +1913,7 @@ index 6b0305d..2ad5a34 100644
  fn default_openrouter_key_source() -> String {
      "openrouter".to_string()
  }
-@@ -476,10 +600,10 @@ pub struct AuthService {
+@@ -476,10 +604,10 @@ pub struct AuthService {
      config: AuthConfig,
      wallet_mutex: Arc<Mutex<()>>,
      indexer: IndexerClient,
@@ -1896,7 +1925,7 @@ index 6b0305d..2ad5a34 100644
  }
 
  impl AuthService {
-@@ -491,17 +615,191 @@ impl AuthService {
+@@ -491,17 +619,191 @@ impl AuthService {
              indexer: IndexerClient::new(config.indexer_url.clone()),
              config,
              wallet_mutex: Arc::new(Mutex::new(())),
@@ -1909,14 +1938,14 @@ index 6b0305d..2ad5a34 100644
              direct_request_mutex: Arc::new(tokio::sync::RwLock::new(())),
              prepared_withdrawal: tokio::sync::Mutex::new(prepared_withdrawal),
 +            oa_banned_stations: Mutex::new(Default::default()),
-+        }))
-+    }
-+
+         }))
+     }
+
 +    // The Go gateway receives only a verified provider lease. Prompt content
 +    // never enters the wallet/prover bridge or the zkAPI payment server.
 +    pub fn oa_bridge_status(&self) -> serde_json::Value {
 +        serde_json::json!({
-+            "bridge_version": 3,
++            "bridge_version": 4,
 +            "deployment_id": self.config.deployment_id,
 +            "contract_address": self.config.contract_address,
 +            "billing_asset": self.config.billing_asset,
@@ -2056,9 +2085,9 @@ index 6b0305d..2ad5a34 100644
 +            "verified": lease.verified,
 +            "verification_status": if lease.verified { "verified" } else { "verifier-unavailable" },
 +            "verification_detail": lease.verification_detail,
-         }))
-     }
-
++        }))
++    }
++
 +
 +    async fn ready_direct_lease(&self, request_limit_micro_usd: u128) -> Result<tokio::sync::MutexGuard<'_, Option<ActiveOpenRouterLease>>, AuthError> {
 +        use sha3::{Digest, Keccak256};
@@ -2093,7 +2122,7 @@ index 6b0305d..2ad5a34 100644
      pub fn default_model(&self) -> &str {
          self.config
              .models
-@@ -551,7 +849,7 @@ impl AuthService {
+@@ -551,7 +853,7 @@ impl AuthService {
              } else {
                  config.request_charge_cap
              };
@@ -2102,7 +2131,7 @@ index 6b0305d..2ad5a34 100644
                  return Ok(None);
              }
              // The wallet normally removes this file after settlement. Treat
-@@ -596,6 +894,7 @@ impl AuthService {
+@@ -596,6 +898,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -2110,7 +2139,7 @@ index 6b0305d..2ad5a34 100644
              if wallet.state().is_some() {
                  return Err(AuthError::InvalidInput(
                      "wallet already has an active note".to_string(),
-@@ -634,6 +933,8 @@ impl AuthService {
+@@ -634,6 +937,8 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -2119,7 +2148,7 @@ index 6b0305d..2ad5a34 100644
              wallet.confirm_deposit(
                  request.secret,
                  request.note_id,
-@@ -655,6 +956,7 @@ impl AuthService {
+@@ -655,6 +960,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
@@ -2127,7 +2156,7 @@ index 6b0305d..2ad5a34 100644
              let runtime = current_thread_runtime()?;
              let recovered = runtime.block_on(wallet.recover())?;
              let request = recovered.as_ref().map(|response| {
-@@ -780,6 +1082,8 @@ impl AuthService {
+@@ -780,6 +1086,8 @@ impl AuthService {
                  .lock()
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
@@ -2136,7 +2165,7 @@ index 6b0305d..2ad5a34 100644
              let state_path = config.state_dir.join("note_state.json");
              let journal_path = config.state_dir.join("pending_journal.json");
              let prepared_path = prepared_withdrawal_path(&config.state_dir);
-@@ -806,6 +1110,13 @@ impl AuthService {
+@@ -806,6 +1114,13 @@ impl AuthService {
 
      pub fn funding_config(&self) -> FundingConfig {
          FundingConfig {
@@ -2150,7 +2179,7 @@ index 6b0305d..2ad5a34 100644
              contract_address: self.config.contract_address,
              chain_id: self.config.chain_id,
              indexer_url: self.config.indexer_url.clone(),
-@@ -814,7 +1125,7 @@ impl AuthService {
+@@ -814,7 +1129,7 @@ impl AuthService {
              suggested_deposit_amount: self.config.suggested_deposit_amount,
              demo_rpc_url: self.config.demo_rpc_url.clone(),
              demo_billing_token_address: self.config.demo_billing_token_address.clone(),
@@ -2159,7 +2188,7 @@ index 6b0305d..2ad5a34 100644
              demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
          }
      }
-@@ -835,6 +1146,7 @@ impl AuthService {
+@@ -835,6 +1150,7 @@ impl AuthService {
          request: CoreRequest,
          session_id: Option<&str>,
      ) -> Result<CoreResponse, AuthError> {
@@ -2167,7 +2196,7 @@ index 6b0305d..2ad5a34 100644
          if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
              return Err(AuthError::WithdrawalPending(format!(
                  "{} withdrawal for note {} is prepared; finish it before sending more requests",
-@@ -868,6 +1180,7 @@ impl AuthService {
+@@ -868,6 +1184,7 @@ impl AuthService {
          request: CoreRequest,
          session_id: Option<&str>,
      ) -> Result<StreamingCoreResponse, AuthError> {
@@ -2175,7 +2204,7 @@ index 6b0305d..2ad5a34 100644
          if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
              return Err(AuthError::WithdrawalPending(format!(
                  "{} withdrawal for note {} is prepared; finish it before sending more requests",
-@@ -937,7 +1250,7 @@ impl AuthService {
+@@ -937,7 +1254,7 @@ impl AuthService {
                  // the retryable prompt-free proof remains in the wallet
                  // journal. Use it to retire or recover the authoritative
                  // server-side lease.
@@ -2184,7 +2213,7 @@ index 6b0305d..2ad5a34 100644
                  let Some(lease) = self.find_direct_lease_for_withdrawal(&request).await? else {
                      tracing::warn!(
                          client_request_id = %request.client_request_id,
-@@ -1091,6 +1404,7 @@ impl AuthService {
+@@ -1091,6 +1408,7 @@ impl AuthService {
          &self,
          lease_slot: &mut Option<ActiveOpenRouterLease>,
          session_id: &str,
@@ -2192,7 +2221,7 @@ index 6b0305d..2ad5a34 100644
      ) -> Result<(), AuthError> {
          if lease_slot
              .as_ref()
-@@ -1123,7 +1437,7 @@ impl AuthService {
+@@ -1123,7 +1441,7 @@ impl AuthService {
          // explicit settlement, credit exhaustion, or a key rejection.
          let _ = self.recover().await?;
          *lease_slot = Some(
@@ -2201,7 +2230,7 @@ index 6b0305d..2ad5a34 100644
                  .await?,
          );
          Ok(())
-@@ -1197,7 +1511,7 @@ impl AuthService {
+@@ -1197,7 +1515,7 @@ impl AuthService {
          loop {
              let request_guard = self.direct_request_mutex.clone().read_owned().await;
              let mut lease_slot = self.direct_lease.lock().await;
@@ -2210,7 +2239,7 @@ index 6b0305d..2ad5a34 100644
                  .await?;
              let lease = lease_slot
                  .as_mut()
-@@ -1208,14 +1522,15 @@ impl AuthService {
+@@ -1208,14 +1526,15 @@ impl AuthService {
                          "OA lease lost its verification evidence".to_string(),
                      )
                  })?;
@@ -2228,7 +2257,7 @@ index 6b0305d..2ad5a34 100644
              }
              let client_request_id = lease.client_request_id.clone();
              let mut reserved_lease = lease.clone();
-@@ -1300,14 +1615,15 @@ impl AuthService {
+@@ -1300,14 +1619,15 @@ impl AuthService {
              let evidence = lease.verification.clone().ok_or_else(|| {
                  AuthError::KeyVerification("OA lease lost its verification evidence".to_string())
              })?;
@@ -2246,7 +2275,7 @@ index 6b0305d..2ad5a34 100644
          }
          let url = format!(
              "{}{}",
-@@ -1326,8 +1642,7 @@ impl AuthService {
+@@ -1326,8 +1646,7 @@ impl AuthService {
          expires_at: u64,
      ) -> Result<reqwest::Response, AuthError> {
          for attempt in 1..=DIRECT_REMOTE_MAX_ATTEMPTS {
@@ -2256,7 +2285,7 @@ index 6b0305d..2ad5a34 100644
                  .post(url)
                  .bearer_auth(api_key)
                  .header("content-type", "application/json")
-@@ -1387,13 +1702,17 @@ impl AuthService {
+@@ -1387,21 +1706,25 @@ impl AuthService {
      async fn issue_direct_openrouter_lease(
          &self,
          session_id: String,
@@ -2269,15 +2298,25 @@ index 6b0305d..2ad5a34 100644
 -            let request = self.prepare_direct_lease_request().await?;
 -            let response = self
 -                .http
+-                .post(format!(
 +            let request = self.prepare_direct_lease_request(request_limit_micro_usd).await?;
 +            if let Some(limit) = request_limit_micro_usd {
 +                self.check_request_budget(&request, limit)?;
 +            }
-+            let response = fresh_private_http()?
-                 .post(format!(
++            let response = zkapi_client::testnet_auth::request(self.config.chain_id, &self.config.protocol_server_url, reqwest::Method::POST, format!(
                      "{}/v2/openrouter/leases",
                      self.config.protocol_server_url.trim_end_matches('/')
-@@ -1412,6 +1731,13 @@ impl AuthService {
+-                ))
++                ))?
+                 .json(&request)
+                 .send()
+                 .await
+                 .map_err(|error| AuthError::Wallet(error.to_string()))?;
++            let response = zkapi_client::testnet_auth::check_response(response)?;
+             let status = response.status();
+             let body = response
+                 .text()
+@@ -1412,6 +1735,13 @@ impl AuthService {
                      .map_err(|error| AuthError::Serialization(error.to_string()))?;
                  let extensions: OpenRouterLeaseExtensions = serde_json::from_str(&body)
                      .map_err(|error| AuthError::Serialization(error.to_string()))?;
@@ -2291,7 +2330,7 @@ index 6b0305d..2ad5a34 100644
                  if lease.api_key.is_empty() || lease.expires_at <= now_seconds() {
                      return Err(AuthError::Wallet(
                          "server returned an unusable OpenRouter lease".to_string(),
-@@ -1466,10 +1792,17 @@ impl AuthService {
+@@ -1466,10 +1796,17 @@ impl AuthService {
                      settle_after: lease.settle_after,
                      verification,
                      verified,
@@ -2309,7 +2348,7 @@ index 6b0305d..2ad5a34 100644
                  if error.error_code == "stale_root" && !retried_stale_root {
                      self.clear_pending_request().await?;
                      retried_stale_root = true;
-@@ -1535,117 +1868,77 @@ impl AuthService {
+@@ -1535,117 +1872,77 @@ impl AuthService {
          api_key: &str,
          expires_at: u64,
          evidence: &OaKeyVerificationEvidence,
@@ -2489,7 +2528,7 @@ index 6b0305d..2ad5a34 100644
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
          let indexer = self.indexer.clone();
-@@ -1655,6 +1948,7 @@ impl AuthService {
+@@ -1655,6 +1952,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -2497,7 +2536,7 @@ index 6b0305d..2ad5a34 100644
              let authorization = serde_json::to_string(&OpenRouterLeaseAuthorization::default())
                  .map_err(|error| AuthError::Serialization(error.to_string()))?;
              if wallet.has_pending_request() {
-@@ -1663,7 +1957,7 @@ impl AuthService {
+@@ -1663,7 +1961,7 @@ impl AuthService {
                          "an older pending request has no retryable request body".to_string(),
                      )
                  })?;
@@ -2506,7 +2545,7 @@ index 6b0305d..2ad5a34 100644
                      return Err(AuthError::LeasePending(
                          "a non-lease zkAPI request is still pending".to_string(),
                      ));
-@@ -1676,6 +1970,13 @@ impl AuthService {
+@@ -1676,6 +1974,13 @@ impl AuthService {
              let (active_root, siblings) = runtime.block_on(async move {
                  Ok::<_, AuthError>((indexer.root().await?, indexer.note_path(note_id).await?))
              })?;
@@ -2520,7 +2559,7 @@ index 6b0305d..2ad5a34 100644
              let payload_hash = compute_payload_hash(authorization.as_bytes());
              wallet
                  .prepare_request(&authorization, payload_hash, active_root, siblings)
-@@ -1684,6 +1985,41 @@ impl AuthService {
+@@ -1684,6 +1989,42 @@ impl AuthService {
          .await
      }
 
@@ -2537,8 +2576,9 @@ index 6b0305d..2ad5a34 100644
 +            }
 +            crate::oa_native::saved_quote(&config, &request.payload)?;
 +            current_thread_runtime()?.block_on(async {
-+                let mut response = fresh_private_http()?.post(format!("{}/v2/openrouter/leases/{}/expire",config.protocol_server_url.trim_end_matches('/'),request.client_request_id))
++                let response = zkapi_client::testnet_auth::request(config.chain_id, &config.protocol_server_url, reqwest::Method::POST, format!("{}/v2/openrouter/leases/{}/expire",config.protocol_server_url.trim_end_matches('/'),request.client_request_id))?
 +                    .json(&request).send().await.map_err(|_| AuthError::PendingRequest)?;
++                let mut response = zkapi_client::testnet_auth::check_response(response)?;
 +                if !response.status().is_success() { return Err(AuthError::PendingRequest); }
 +                let mut body = Vec::new();
 +                while let Some(chunk) = response.chunk().await.map_err(|_| AuthError::PendingRequest)? {
@@ -2562,7 +2602,7 @@ index 6b0305d..2ad5a34 100644
      async fn clear_pending_request(&self) -> Result<(), AuthError> {
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
-@@ -1693,6 +2029,7 @@ impl AuthService {
+@@ -1693,6 +2034,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -2570,44 +2610,92 @@ index 6b0305d..2ad5a34 100644
              wallet.clear_pending_request()?;
              Ok(())
          })
-@@ -1703,7 +2040,7 @@ impl AuthService {
+@@ -1703,16 +2045,15 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<OpenRouterLeaseStatusResponse, AuthError> {
 -        self.http
-+        fresh_private_http()?
-             .get(format!(
+-            .get(format!(
++        zkapi_client::testnet_auth::request(self.config.chain_id, &self.config.protocol_server_url, reqwest::Method::GET, format!(
                  "{}/v2/openrouter/leases/{client_request_id}",
                  self.config.protocol_server_url.trim_end_matches('/')
-@@ -1722,8 +2059,7 @@ impl AuthService {
+-            ))
++            ))?
+             .send()
+             .await
+             .map_err(|error| AuthError::Wallet(error.to_string()))?
+             .error_for_status()
+-            .map_err(|error| AuthError::Wallet(error.to_string()))?
++            .map_err(testnet_http_error)?
+             .json()
+             .await
+             .map_err(|error| AuthError::Serialization(error.to_string()))
+@@ -1722,12 +2063,10 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<Option<OpenRouterLeaseStatusResponse>, AuthError> {
 -        let response = self
 -            .http
-+        let response = fresh_private_http()?
-             .get(format!(
+-            .get(format!(
++        let response = zkapi_client::testnet_auth::request(self.config.chain_id, &self.config.protocol_server_url, reqwest::Method::GET, format!(
                  "{}/v2/openrouter/leases/{client_request_id}",
                  self.config.protocol_server_url.trim_end_matches('/')
-@@ -1748,7 +2084,7 @@ impl AuthService {
+-            ))
++            ))?
+             .send()
+             .await
+             .map_err(|error| AuthError::Wallet(error.to_string()))?;
+@@ -1736,7 +2075,7 @@ impl AuthService {
+         }
+         let response = response
+             .error_for_status()
+-            .map_err(|error| AuthError::Wallet(error.to_string()))?;
++            .map_err(testnet_http_error)?;
+         response
+             .json()
+             .await
+@@ -1748,16 +2087,15 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<RecoveryResponseV2, AuthError> {
 -        self.http
-+        fresh_private_http()?
-             .get(format!(
+-            .get(format!(
++        zkapi_client::testnet_auth::request(self.config.chain_id, &self.config.protocol_server_url, reqwest::Method::GET, format!(
                  "{}/v2/requests/{client_request_id}",
                  self.config.protocol_server_url.trim_end_matches('/')
-@@ -1767,7 +2103,7 @@ impl AuthService {
+-            ))
++            ))?
+             .send()
+             .await
+             .map_err(|error| AuthError::Wallet(error.to_string()))?
+             .error_for_status()
+-            .map_err(|error| AuthError::Wallet(error.to_string()))?
++            .map_err(testnet_http_error)?
+             .json()
+             .await
+             .map_err(|error| AuthError::Serialization(error.to_string()))
+@@ -1767,17 +2105,16 @@ impl AuthService {
          &self,
          nullifier: &Felt252,
      ) -> Result<RecoveryResponseV2, AuthError> {
 -        self.http
-+        fresh_private_http()?
-             .get(format!(
+-            .get(format!(
++        zkapi_client::testnet_auth::request(self.config.chain_id, &self.config.protocol_server_url, reqwest::Method::GET, format!(
                  "{}/v2/nullifiers/{}",
                  self.config.protocol_server_url.trim_end_matches('/'),
-@@ -1787,7 +2123,7 @@ impl AuthService {
+                 nullifier
+-            ))
++            ))?
+             .send()
+             .await
+             .map_err(|error| AuthError::Wallet(error.to_string()))?
+             .error_for_status()
+-            .map_err(|error| AuthError::Wallet(error.to_string()))?
++            .map_err(testnet_http_error)?
+             .json()
+             .await
+             .map_err(|error| AuthError::Serialization(error.to_string()))
+@@ -1787,7 +2124,7 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<(), AuthError> {
@@ -2616,17 +2704,27 @@ index 6b0305d..2ad5a34 100644
          if request.client_request_id != client_request_id {
              return Err(AuthError::LeasePending(
                  "pending proof does not match the rejected OpenRouter lease".to_string(),
-@@ -1795,8 +2131,7 @@ impl AuthService {
+@@ -1795,16 +2132,15 @@ impl AuthService {
          }
          let deadline = Instant::now() + DIRECT_LEASE_RETIRE_MAX_WAIT;
          let status = loop {
 -            let response = self
 -                .http
-+            let response = fresh_private_http()?
-                 .post(format!(
+-                .post(format!(
++            let response = zkapi_client::testnet_auth::request(self.config.chain_id, &self.config.protocol_server_url, reqwest::Method::POST, format!(
                      "{}/v2/openrouter/leases/{client_request_id}",
                      self.config.protocol_server_url.trim_end_matches('/')
-@@ -1911,6 +2246,7 @@ impl AuthService {
+-                ))
++                ))?
+                 .json(&request)
+                 .send()
+                 .await
+                 .map_err(|error| AuthError::Wallet(error.to_string()))?;
++            let response = zkapi_client::testnet_auth::check_response(response)?;
+             let http_status = response.status();
+             let body = response
+                 .text()
+@@ -1911,6 +2247,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
@@ -2634,7 +2732,7 @@ index 6b0305d..2ad5a34 100644
              let payload = serde_json::to_string(&request)
                  .map_err(|err| AuthError::Serialization(err.to_string()))?;
              let payload_hash = hash_payload(&payload);
-@@ -2033,6 +2369,7 @@ impl AuthService {
+@@ -2033,6 +2370,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, trusted_roots)?;
@@ -2642,7 +2740,7 @@ index 6b0305d..2ad5a34 100644
              let runtime = current_thread_runtime()?;
 
              runtime.block_on(async move {
-@@ -2164,8 +2501,7 @@ impl AuthService {
+@@ -2164,8 +2502,7 @@ impl AuthService {
                  "deployment does not advertise an RPC URL for withdrawal confirmation".to_string(),
              )
          })?;
@@ -2652,7 +2750,7 @@ index 6b0305d..2ad5a34 100644
              .post(rpc_url)
              .json(&serde_json::json!({
                  "jsonrpc": "2.0",
-@@ -2397,7 +2733,7 @@ fn hash_payload(payload: &str) -> Felt252 {
+@@ -2397,7 +2734,7 @@ fn hash_payload(payload: &str) -> Felt252 {
      compute_payload_hash(payload.as_bytes())
  }
 
@@ -2661,7 +2759,7 @@ index 6b0305d..2ad5a34 100644
      SystemTime::now()
          .duration_since(UNIX_EPOCH)
          .unwrap_or_default()
-@@ -2674,7 +3010,18 @@ fn load_wallet(
+@@ -2674,7 +3011,18 @@ fn load_wallet(
      config: &AuthConfig,
      trusted_epoch_roots: Vec<EpochRoots>,
  ) -> Result<Wallet, AuthError> {
@@ -2681,7 +2779,7 @@ index 6b0305d..2ad5a34 100644
  }
 
  fn acquire_wallet_lock(state_dir: &Path) -> Result<std::fs::File, AuthError> {
-@@ -2917,7 +3264,7 @@ mod wallet_lifecycle_tests {
+@@ -2917,7 +3265,7 @@ mod wallet_lifecycle_tests {
 
      #[tokio::test]
      async fn low_balance_note_is_preserved_and_active_slot_is_cleared() {
@@ -2690,7 +2788,7 @@ index 6b0305d..2ad5a34 100644
 
          let retired = service
              .retire_low_balance_note()
-@@ -2926,22 +3273,22 @@ mod wallet_lifecycle_tests {
+@@ -2926,22 +3274,22 @@ mod wallet_lifecycle_tests {
              .expect("low-balance note should be retired");
 
          assert_eq!(retired.note_id, 18);
@@ -2717,7 +2815,7 @@ index 6b0305d..2ad5a34 100644
          PendingRequestJournal::write(
              &pending_directory.path().join("pending_journal.json"),
              &PendingRequestJournal {
-@@ -3346,3 +3693,270 @@ mod tests {
+@@ -3346,3 +3694,270 @@ mod tests {
          assert!(!commitment.is_zero());
      }
  }

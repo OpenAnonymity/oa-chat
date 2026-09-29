@@ -28,6 +28,18 @@ test('redacts mixed-case sensitive headers and accepts Headers and entry lists',
     assert.equal(networkLogger.sanitizeHeaders(new Headers({ 'X-Auth-Token': 'secret' }))['x-auth-token'], '[REDACTED]');
 });
 
+test('never retains the Sepolia service password in operational header logs', () => {
+    for (const headers of [
+        { 'X-ZKAPI-Testnet-Password': 'shared-sepolia-secret' },
+        new Headers({ 'x-zkapi-testnet-password': 'shared-sepolia-secret' }),
+        [['X-ZkApi-TESTNET-PASSWORD', 'shared-sepolia-secret']]
+    ]) {
+        const safe = networkLogger.sanitizeHeaders(headers);
+        assert.deepEqual(Object.values(safe), ['[REDACTED]']);
+        assert.doesNotMatch(JSON.stringify(safe), /shared-sepolia-secret/);
+    }
+});
+
 test('shared logger preserves wallet/runtime secret redaction without dropping safe metadata', () => {
     const entry = networkLogger.logRequest({
         type: 'local',

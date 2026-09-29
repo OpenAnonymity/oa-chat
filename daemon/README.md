@@ -11,10 +11,10 @@ file-storage, and image-generation endpoints are not implemented.
 
 ## Install, then run guided setup
 
-Install or update version `0.3.2`:
+Install or update version `0.3.3`:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.3/install.sh | bash
 ```
 
 Then start guided setup with the default installation prefix:
@@ -196,6 +196,13 @@ oa-chat serve --backend zkapi
 # In another terminal:
 oa-chat fund
 ```
+
+Sepolia requires the shared testnet password. Guided `start` asks for it with
+input hidden, verifies it before funding, and saves it in an owner-only local
+file. Unattended services can set `OA_ZKAPI_TESTNET_PASSWORD_FILE` to a private
+password file. Restart after changing a password, and upgrade both binaries
+together. Mainnet and ticket mode are unaffected. See
+[Sepolia authentication](docs/CLI_ZKAPI.md#sepolia-access-password).
 
 `fund` prints a persistent Ethereum address and its public ETH balance.
 The command-line flow follows the web wallet's send-to-address flow: choose a

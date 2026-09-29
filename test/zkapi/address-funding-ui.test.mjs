@@ -44,6 +44,29 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         flushMicrotasks() { while (microtasks.length) microtasks.shift()(); } };
 }
 
+test('only Sepolia shows a password action and the action validates without signing', async () => {
+    const checked = [];
+    const f = fixture({ client: { config: { funding: { chain_id: 11155111 } },
+        ensureTestnetAccess: async options => checked.push(options) } });
+    assert.match(f.controls.renderWalletMethod(f.owner), /Enter Sepolia password/);
+    const button = f.field('testnet-password');
+    f.controls.attachWalletMethodControls(f.owner);
+    await button.events.click();
+    assert.equal(checked.length, 1);
+    assert.equal(checked[0].interactive, true);
+    assert.equal(checked[0].changePassword, true);
+    const mainnet = fixture({ client: { config: { funding: { chain_id: 1 } } } });
+    assert.doesNotMatch(mainnet.controls.renderWalletMethod(mainnet.owner), /Sepolia password/);
+});
+
+test('saved transactions lock the signer selector but leave Sepolia password recovery usable', () => {
+    const f = fixture({ wallet: { hasPendingTransaction: true }, client: { config: { funding: { chain_id: 11155111 } } } });
+    const html = f.controls.renderWalletMethod(f.owner);
+    assert.match(html, /data-wallet-method="metamask"[^>]*disabled/);
+    assert.match(html, /data-funding-testnet-password/);
+    assert.doesNotMatch(html, /data-funding-testnet-password[^>]*disabled/);
+});
+
 function disclosureOwner(f) {
     const accountSource = fs.readFileSync(new URL('../../chat/zkapi/components/AccountModal.js', import.meta.url), 'utf8')
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');

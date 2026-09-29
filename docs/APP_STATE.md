@@ -1,3 +1,44 @@
+## 2026-09-29: Shared-password access for Sepolia
+
+- Sepolia can require a single shared service password in the ZKAPI server's
+  private `ZKAPI_TESTNET_PASSWORD` environment. The server checks it before
+  parsing service requests, proofs, recovery reads, or lease issuance; valid
+  note proofs are still required afterward. Public health advertises the gate;
+  `GET /v2/auth` validates it without requesting a key or spending funds.
+- The browser prompts before Send/funding and keeps the password only in memory.
+  Wallet controls allow entering/changing it. Canceled authentication cannot
+  trigger a funding or inference operation. A rejected service request clears
+  access and is never replayed automatically. The password is excluded from
+  storage, account sync, wallet snapshots, and activity logs.
+- CLI guided setup asks through a hidden controlling-terminal prompt before
+  funding. `sepolia-password` is an owner-only file alongside private config;
+  `OA_ZKAPI_TESTNET_PASSWORD` / `OA_ZKAPI_TESTNET_PASSWORD_FILE` override it.
+  Restart after changing a credential. Native bridge version 4 requires the
+  matching binary pair so an older companion cannot silently omit auth.
+- The browser SDK sends the header only to its configured Sepolia `/v2/` API;
+  the native companion scopes it to the pinned Sepolia protocol server.
+  Neither sends it to RPC, indexer, provider, org or verifier. Redirects are
+  disabled on authenticated requests. Mainnet ignores client password settings
+  and the server refuses an accidentally configured Mainnet testnet password.
+- Deployment preserves the native vault, note database, signing keys and proof
+  assets. This gate does not restrict public Ethereum contracts or revoke a
+  previously issued provider key. See [the privacy model](PRIVACY_MODEL.md)
+  [browser access details](SEPOLIA_AUTH.md), and
+  [CLI access instructions](../daemon/docs/CLI_ZKAPI.md).
+- Browser SDK auth is backported onto the deployed `cf56d67` SDK as `76a979b`.
+  The current backend also includes the auth implementation. The host does not
+  adopt the backend main branch's unrelated native-only SDK interface removals.
+- Validation: 1,097 core + 669 payment tests, 315 stable-SDK tests, the full
+  Rust backend workspace, Go race/vet, native auth/companion tests, both network
+  production builds and a macOS ARM64 install/reinstall passed. A browser
+  fixture verified wrong-password feedback, successful submit, Escape and focus
+  restoration. Fresh adversarial review fixed independent waiter cancellation,
+  password recovery during pending transactions, and unilateral escape access.
+- Current installation instructions target `daemon-v0.3.3`; release publication
+  and live acceptance are pending. The local AWS SSO authorization expired; the
+  prior deployment VM is offline and direct SSH to Sepolia timed out. No live
+  server, web alias, vault, wallet, or Mainnet deployment changed in this checkpoint.
+
 ## 2026-09-29: Separate CLI installation and guided first-time setup
 
 - The recommended flow is installation/update first, then `oa-chat start` for

@@ -8,6 +8,29 @@
     --zkapi-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
+.zkapi-testnet-password-dialog {
+    width: min(25rem, calc(100vw - 2rem));
+    padding: 1.75rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 1.25rem;
+    color: hsl(var(--color-foreground));
+    background: hsl(var(--color-popover));
+    box-shadow: 0 16px 48px rgb(0 0 0 / 0.25);
+}
+.zkapi-testnet-password-dialog::backdrop { background: rgb(0 0 0 / 0.5); }
+.zkapi-testnet-password-dialog form { display: grid; gap: 0.875rem; }
+.zkapi-testnet-password-dialog h2 { margin: 0; font-size: 1.125rem; font-weight: 600; }
+.zkapi-testnet-password-dialog p { margin: 0; font-size: 0.8rem; color: hsl(var(--color-muted-foreground)); }
+.zkapi-testnet-password-dialog label { font-size: 0.875rem; }
+.zkapi-testnet-password-dialog input {
+    width: 100%; padding: 0.65rem; border-radius: 0.5rem;
+    border: 1px solid hsl(var(--color-border));
+    background: hsl(var(--color-background)); color: inherit;
+}
+.zkapi-testnet-password-dialog [role="alert"] { color: hsl(var(--color-destructive-text)); }
+.zkapi-testnet-password-dialog [role="alert"]:empty { display: none; }
+.zkapi-testnet-password-actions { display: flex; justify-content: flex-end; gap: 0.75rem; }
+
 /* ---------- Private balance dialog: the OA dialog frame ----------
    Same frame as Account and Welcome in oa-commercial: 560px, 24px radius,
    40px inset, 22/600 title, no header hairline, rows separated by space.

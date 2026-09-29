@@ -9,7 +9,7 @@ For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon]
 Install or update the [command-line daemon](daemon/README.md) first:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.3/install.sh | bash
 ```
 
 Then run guided first-time setup (or check and resume an existing setup):

@@ -35,7 +35,7 @@
     "fonts:sync": "node scripts/sync-fonts.mjs"
   },
   "dependencies": {
-    "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#cf56d67e0c1dd4bc3f3c32392478ce242c746446",
+    "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#76a979bc8d49722cf9de50cb8f4830b3566ca07d",
     "ethers": "6.17.0",
     "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0"

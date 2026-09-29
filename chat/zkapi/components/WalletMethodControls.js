@@ -191,11 +191,15 @@ function ensureFundingFlow(owner) {
 export function renderWalletMethod(owner) {
     const local = getWalletMethod() === 'address';
     const locked = owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false || addressFundingWallet.hasPendingTransaction;
+    // Authentication does not select a signer or replace its durable request.
+    // A saved pending transaction must not lock users out of API recovery.
+    const accessLocked = owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false;
     return `<section class="zkapi-wallet-method" aria-label="Wallet method">
         <div class="zkapi-wallet-method-options" role="group" aria-label="How to transact">
             <button type="button" data-wallet-method="metamask" aria-pressed="${!local}" ${locked ? 'disabled' : ''}>MetaMask</button>
             <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Send Ethereum</button>
         </div>
+        ${Number(zkapiClient.config?.funding?.chain_id) === 11155111 ? `<button type="button" data-funding-testnet-password class="zkapi-quiet-button" ${accessLocked ? 'disabled' : ''}>${zkapiClient.testnetAuthenticated ? 'Change Sepolia password' : 'Enter Sepolia password'}</button>` : ''}
         ${owner.fundingError ? `<p class="zkapi-funding-error" role="alert">${owner.escapeHtml(owner.fundingError)}</p>` : ''}
     </section>`;
 }
@@ -456,6 +460,10 @@ export function attachWalletMethodControls(owner) {
         finally { owner.fundingBusy = false; if (owner.isOpen) owner.render(); }
     };
     const on = (name, action) => input(name)?.addEventListener('click', action);
+    on('testnet-password', () => perform(async () => {
+        stopFundingFlow(owner, { preserveAmount: true });
+        await zkapiClient.ensureTestnetAccess({ interactive: true, changePassword: true });
+    }));
     root.querySelectorAll('[data-wallet-method]').forEach(button => button.addEventListener('click', () => {
         if (owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false) return;
         if (getWalletMethod() === button.dataset.walletMethod) return;

@@ -10,10 +10,10 @@ primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md
 
 ## Guided first-time setup
 
-Install or update version `0.3.2` first. Stop any daemon you are upgrading:
+Install or update version `0.3.3` first. Stop any daemon you are upgrading:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.2/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.3/install.sh | bash
 ```
 
 Then run setup with the default installation prefix:
@@ -110,6 +110,35 @@ Follow the same guided funding flow using Sepolia test ETH. Sepolia is optional;
 it is not the default network. A separate configuration directory is required
 if your existing profile is already configured for Mainnet. After setup reaches
 ready, you can send the optional streaming request below.
+
+### Sepolia access password
+
+The Sepolia ZKAPI service requires one shared testnet password. Updated
+`oa-chat start --network sepolia` asks for it with terminal echo disabled,
+validates it with the pinned server before starting funding, and saves the
+accepted password in the owner-only `sepolia-password` file inside your private
+configuration directory. A missing or incorrect password cannot authorize
+service access. Mainnet and ticket mode do not use it.
+
+For unattended `serve`, supply `OA_ZKAPI_TESTNET_PASSWORD_FILE` pointing to a
+regular file readable only by its owner, or set `OA_ZKAPI_TESTNET_PASSWORD`
+through your service manager's private environment. Environment values take
+precedence over an explicit password file, which takes precedence over the saved
+file. Environment overrides are never saved. Keep passwords out of command-line
+arguments, shell history, screenshots and bug reports.
+
+Stop and restart the daemon after a password change. With no environment
+override, `start` asks again when the saved password is rejected. With an
+override, update its value or private file before restarting. Existing wallet
+and recovery state stay intact. Upgrade **both binaries together**: companion
+bridge version 4 is required, so an older companion cannot silently skip
+authentication and continue into funding.
+
+The password travels only over HTTPS to the pinned Sepolia protocol server in
+`X-ZKAPI-Testnet-Password`. Redirects cannot forward it. The indexer, Ethereum
+RPC, OA identity/ticket services, verifier and inference provider never receive
+it. It is a shared access restriction, not a per-user identity or replacement
+for proof authorization, and is separate from the local inference API key.
 
 ### Optional streaming request
 
@@ -221,7 +250,7 @@ pending settlement. Lease and settlement must retain that quote. A recovered
 prepared request keeps its original bound and rejects a different requested
 tier while pending. The cap is spending authority, not an immediate full-cap
 charge. Only the coarse USD bucket reaches the companion; model selection and
-prompts remain in the Go inference path. Bridge version 3 is required so an
+prompts remain in the Go inference path. Bridge version 4 is required so an
 older companion cannot silently ignore the per-request limit.
 
 Funding is command-line only. The old `/funding` browser routes and
@@ -249,7 +278,7 @@ their original bytes and fee settings. After canonical finality, status shows
 the actual network fee derived from the receipt.
 
 Version `0.2.0` includes this terminal flow. The older `daemon-v0.1.0` bundle
-used MetaMask; install both matching binaries from `0.2.0` or newer together. The acceptance
+used MetaMask; install both matching binaries from `0.3.3` or newer together. The acceptance
 records below distinguish the current terminal quote flow from earlier implementations.
 
 ## Terminal quote validation (2026-09-29)
@@ -576,8 +605,8 @@ from the private balance and are not swept by withdrawal; use `fund return`
 for public ETH. Withdrawal amount,
 destination, and transaction are public Ethereum data.
 
-Install both binaries from the same `0.2.0` or newer bundle: the companion must advertise
-`bridge_version: 3` and `withdrawal_bridge_version: 1`. The older `daemon-v0.1.0`
+Install both binaries from the same `0.3.3` or newer bundle: the companion must advertise
+`bridge_version: 4` and `withdrawal_bridge_version: 1`. The older `daemon-v0.1.0`
 bundle predates the command and cannot run it with only a replaced Go executable.
 
 ## Historical address-funding verification (2026-09-22)

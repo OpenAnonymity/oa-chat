@@ -21,7 +21,7 @@ func testPolicy(network string) map[string]any {
 	if err != nil {
 		panic(err)
 	}
-	return map[string]any{"bridge_version": 3, "chain_id": p.ChainID, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": p.ID, "contract_address": p.Contract, "billing_asset": p.Asset, "billing_unit": p.Unit, "circuit_id": p.Proof.Circuit}
+	return map[string]any{"bridge_version": 4, "chain_id": p.ChainID, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": p.ID, "contract_address": p.Contract, "billing_asset": p.Asset, "billing_unit": p.Unit, "circuit_id": p.Proof.Circuit}
 }
 
 func newTestClient(t *testing.T, handler http.HandlerFunc, inference *httptest.Server) *Client {
