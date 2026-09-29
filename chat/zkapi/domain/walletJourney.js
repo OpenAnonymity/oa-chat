@@ -57,6 +57,8 @@ export function classifyWalletStatus(kind, message = '') {
 /** Where a persisted phase (what survives a reload) puts the journey. */
 export function positionForPersistedPhase(kind, phase = '') {
     switch (String(phase || '')) {
+        case 'reserving':
+            return { step: 'proof', state: 'upcoming' };
         case 'prepared':
         case 'retry_exact':
             return kind === 'deposit' ? { step: 'deposit', state: 'upcoming' } : { step: 'wallet', state: 'upcoming' };
@@ -98,7 +100,8 @@ export function walletJourney({ kind, message = '', persistedPhase = '', last = 
         kind,
         position,
         category: kind === 'deposit' ? 'Adding your balance' : kind === 'escape' ? 'Starting account recovery'
-            : ['prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal ready to continue' : 'Withdrawal',
+            : persistedPhase === 'reserving' ? 'Withdrawal preparation paused'
+                : ['prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal ready to continue' : 'Withdrawal',
         steps: steps.map((step, i) => ({
             ...step,
             state: i < index ? 'complete' : i === index ? (failed ? 'error' : state) : 'upcoming'

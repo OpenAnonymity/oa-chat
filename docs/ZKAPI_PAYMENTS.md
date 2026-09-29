@@ -1,3 +1,21 @@
+## Recovery review (2026-09-29)
+
+The [browser payment recovery review](ZKAPI_RECOVERY_REVIEW.md) records the
+reload/closure state matrix and fixes for MetaMask retries, interrupted
+withdrawal reservation, explicit escape recovery and address return outcomes.
+Restoration performs status reads only. Uncertain submissions retain their
+original operation, and signed address transactions retain their exact bytes.
+The Return leftover ETH disclosure now retains the last verified return result
+across reload, including a revert. Confirmed deposits do not depend on optional
+host amount-preference cleanup succeeding.
+
+The pinned SDK has a local, hash-checked `wallet-recovery-v1` compatibility
+patch under `patches/`. Installation, tests, development and enabled production
+builds apply/verify it; `build.json` records its digest and resulting file hashes
+alongside the upstream revision. A changed SDK pin or unexpected source bytes
+requires reviewing the patch, not silently dropping it. Remove the patch when
+an upstream revision contains equivalent fixes.
+
 ## Payment-flow feedback (2026-09-28)
 
 The two choices read **MetaMask** and **Send Ethereum**. MetaMask actions name

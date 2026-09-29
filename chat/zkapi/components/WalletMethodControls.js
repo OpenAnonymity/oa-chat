@@ -352,6 +352,7 @@ export function renderFundingAccount(owner) {
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
     const wallet = addressFundingWallet;
+    const latestReturn = wallet.lastReturn;
     const disabled = owner.busy || owner.fundingBusy ? 'disabled' : '';
     const network = zkapiClient.networkName();
     const native = zkapiClient.isNativeEthFunding;
@@ -428,14 +429,17 @@ export function renderFundingAccount(owner) {
         : `${fundingHelp(owner, 'receipt', 'This browser’s receiving address', renderFundingReceipt(owner))}${owner.view === 'withdraw' ? '<p class="zkapi-note">If more ETH is needed for the withdrawal fee, send it here from your own wallet. Enter your withdrawal destination below.</p>' : ''}${address}
         ${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`}
         ${owner.view === 'withdraw' ? `<label class="zkapi-funding-field">Your wallet address on ${escape(network)}<input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label><p class="zkapi-note">${savedDestination ? 'This withdrawal keeps its saved destination.' : 'Enter the Ethereum address in your own wallet where you want to receive the withdrawal. This browser’s receiving address pays the network fee separately.'}</p>` : ''}
-        ${wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><button data-funding-recover class="zkapi-primary-button" type="button" ${disabled}>Check saved transaction</button></div>` : ''}
+        ${wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><p class="zkapi-note">A check can resend the same signed transaction. It never creates a new payment or raises the saved fee. If network fees are higher, confirmation may need to wait until they fall.</p><button data-funding-recover class="zkapi-primary-button" type="button" ${disabled}>Check saved transaction</button></div>` : ''}
         <details data-funding-details="return"><summary>Return leftover ETH</summary>
+            ${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
+                ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
+                : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
             <p class="zkapi-note">Use this only for extra ETH left at this browser’s receiving address. To withdraw your private balance, use Withdraw. Keep enough ETH here for that withdrawal’s network fee.</p>
             <label class="zkapi-funding-field">Destination on ${escape(network)}<input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
             ${!native ? `<label class="zkapi-funding-field">${escape(token)} amount<input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
             <label class="zkapi-funding-field">ETH amount (optional)<input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="Leave blank for remaining ETH" value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>
             <p class="zkapi-note">Enter an exact amount for a smart-contract recipient. A small fee reserve may remain after returning all ETH to a regular account.</p>
-            <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled}>Send ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled}>Send ETH</button></div>
+            <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ETH</button></div>
         </details>
         <p data-funding-notice class="zkapi-helper" role="status">${escape(owner.fundingNotice || '')}</p>
     </section>`;
@@ -558,12 +562,24 @@ export function attachWalletMethodControls(owner) {
     on('recover', () => perform(async () => {
         const release = await prepareWalletMethod();
         try {
+            const returning = addressFundingWallet.pending?.kind === 'sweep';
             const result = await addressFundingWallet.recoverPending();
-            await zkapiClient.refresh();
-            owner.fundingStatus = await addressFundingWallet.getStatus();
             owner.fundingNotice = result?.status === 'pending'
-                ? 'Waiting for final network confirmation. Your transaction stays saved; check again later.'
-                : 'Saved transaction checked.';
+                ? 'Waiting for final network confirmation. Your transaction stays saved; check again later. If network fees exceed its saved fee, it may need to wait until they fall.'
+                : returning && result?.status === 'confirmed' ? 'Return confirmed.'
+                    : returning && result?.status === 'reverted'
+                        ? 'Return reverted. No funds were transferred; the network fee may still have been charged. Review the balance before trying again.'
+                        : 'Saved transaction checked.';
+            try {
+                await zkapiClient.refresh();
+                owner.fundingStatus = await addressFundingWallet.getStatus();
+                owner.fundingStatusError = '';
+            } catch {
+                // Recovery already committed its result. A display refresh
+                // failure cannot turn a verified return into a failed payment.
+                owner.fundingStatus = null;
+                owner.fundingStatusError = 'Transaction status is saved. Unable to refresh the balance right now; retrying…';
+            }
         } finally { release?.(); }
     }));
     const transfer = asset => {
@@ -578,7 +594,13 @@ export function attachWalletMethodControls(owner) {
                 const hash = await addressFundingWallet.withAuthorizedAction({ kind: 'sweep', destination: to, asset, amount: units }, () => asset === 'eth'
                     ? addressFundingWallet.transferEth(to, units) : addressFundingWallet.transferTokens(to, units));
                 owner.fundingNotice = `Transfer submitted: ${hash}. Check the saved transaction before another transfer.`;
-                owner.fundingStatus = await addressFundingWallet.getStatus();
+                try {
+                    owner.fundingStatus = await addressFundingWallet.getStatus();
+                    owner.fundingStatusError = '';
+                } catch {
+                    owner.fundingStatus = null;
+                    owner.fundingStatusError = 'Your transfer stays saved. Unable to refresh the balance right now; retrying…';
+                }
             } finally { release?.(); }
         });
     };

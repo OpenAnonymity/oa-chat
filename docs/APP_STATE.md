@@ -33,6 +33,54 @@
   target 0.4.0. Package tests check the public empty-wallet refusal and service
   stop behavior without funding fixtures or requiring production network access.
 
+## 2026-09-29: Browser funding and withdrawal recovery audit
+
+- [Recovery review](ZKAPI_RECOVERY_REVIEW.md) records the interruption matrix,
+  fixes and remaining limits for MetaMask, Send Ethereum and withdrawals.
+- SDK compatibility patch `wallet-recovery-v1` preserves the exact private-note
+  operation after uncertain MetaMask submission and canceled retries, including
+  already-saved affected records. Interrupted replacement prompts retain their
+  original hash/nonce and can recover for another explicit same-nonce attempt.
+  Withdrawal preparation checks its original note under the SDK lock before
+  reservation so a newer note cannot inherit an old delayed wallet callback.
+  Installation, development, tests and enabled builds verify exact source hashes;
+  `build.json` records the patch digest alongside the pinned SDK revision. Review
+  or remove the patch when changing that revision.
+- Withdrawal startup restores `reserving`, unknown background outcomes and
+  unresolved background claims even without sessionStorage. A stale Welcome
+  marker cannot mask them. Prepared mutual withdrawal can explicitly select
+  escape only when the exact local journal has never entered submission; the
+  choice stays bound to its operation/destination and is revalidated under
+  the SDK lock during preparation and submission claim. Cancellation also
+  preserves any earlier ambiguous escape attempt. Changed-root proof regeneration
+  retains recovery history in both reservation and completed-plan writes, while
+  discarding stale proof inputs. Reload defaults to the durable mode. Escape
+  still needs valid proof/tree/RPC services and the contract's challenge window.
+- Confirmed address deposits stop their quote controller and clear the optional
+  host amount intent in the background with compare-and-swap. Cleanup failure
+  cannot change the confirmed outcome or erase another tab's newer draft.
+- Public ETH returns now save their canonical confirmed/reverted outcome in the
+  same encrypted journal transaction that releases the pending slot. The Return
+  leftover ETH disclosure retains it after reload. Post-transaction display
+  refresh failure does not report payment failure. Another return is disabled
+  while a signed transaction remains pending.
+- Signed address recovery still replays identical bytes. There is no fee bump or
+  cancel path; high fees can require waiting, now stated in the UI. Clearing site
+  data or losing the browser profile still loses local custody; account sync
+  does not restore it. These are accepted scope limits, not solved by reload.
+- Validation: 1,096 core and 736 payment tests pass; all 305 patched SDK
+  tests pass, including local EVM transaction tests. Mainnet and Sepolia
+  production builds succeed. Local browser verification covers MetaMask amount
+  restoration and Send Ethereum address/amount/disclosure restoration after
+  reload. A failed network read withheld Deposit with an unavailable estimate;
+  the 390px layout had no horizontal overflow or page errors. No live funded
+  MetaMask transaction, public-chain transfer or deployment was performed.
+  Fresh independent final-diff review approved after its cross-tab and proof
+  regeneration findings were fixed. That review passed 333 focused tests and
+  verified installed SDK hashes against the patch and reconstructed pristine
+  sources. Regressions for the last finding were also verified to fail when
+  only that fix was reversed.
+
 ## 2026-09-29: Separate CLI installation and guided first-time setup
 
 - The recommended flow is installation/update first, then `oa-chat start` for

@@ -710,6 +710,49 @@ test('ETH max sweep reserves the signed maximum fee using one quote on an ordina
     assert.equal(h.calls.filter(call => call.method === 'eth_gasPrice').length, 0);
 });
 
+for (const status of ['confirmed', 'reverted']) {
+    test(`a ${status} public ETH return retains its exact outcome across a fresh browser instance`, async () => {
+        const h = harness({ config: NATIVE_FUNDING });
+        await h.ready();
+        const amount = '10000000000000001';
+        const hash = await h.provider.withAuthorizedAction({ kind: 'sweep', asset: 'eth', destination: DESTINATION, amount },
+            () => h.provider.transferEth(DESTINATION, amount));
+        h.rpc.receipt = { transactionHash: hash, blockHash: h.rpc.blockHash, blockNumber: '0x21',
+            status: status === 'confirmed' ? '0x1' : '0x0' };
+        h.rpc.finalized = '0x21';
+        assert.equal((await h.provider.recoverPending()).status, status);
+        assert.equal(h.provider.pending, null);
+        const broadcasts = h.sent.length;
+        const restored = new AddressFundingProvider(h.init);
+        await restored.init();
+        assert.equal(restored.pending, null);
+        assert.deepEqual(restored.lastReturn, { transactionHash: hash, status, destination: DESTINATION, asset: 'eth', amount });
+        assert.equal(h.sent.length, broadcasts, 'reading a saved terminal result cannot replay or sign');
+        const ctx = await restored.context();
+        const record = await restored.read(ctx, true);
+        assert.deepEqual(record.transactions.at(-1).outcome, { status, blockHash: h.rpc.blockHash, blockNumber: '0x21' });
+    });
+}
+
+test('a failed terminal return write keeps the pending transaction recoverable after reload', async () => {
+    const h = harness({ config: NATIVE_FUNDING });
+    await h.ready();
+    const amount = '10000000000000001';
+    const hash = await h.provider.withAuthorizedAction({ kind: 'sweep', asset: 'eth', destination: DESTINATION, amount },
+        () => h.provider.transferEth(DESTINATION, amount));
+    h.rpc.receipt = { transactionHash: hash, blockHash: h.rpc.blockHash, blockNumber: '0x21', status: '0x1' };
+    h.rpc.finalized = '0x21';
+    h.store.fail = true;
+    await assert.rejects(h.provider.recoverPending(), { code: 'address_storage' });
+    h.store.fail = false;
+    const restored = new AddressFundingProvider(h.init);
+    await restored.init();
+    assert.equal(restored.pending.hash, hash);
+    assert.equal(restored.lastReturn, null);
+    assert.equal((await restored.recoverPending()).status, 'confirmed');
+    assert.equal(restored.lastReturn.transactionHash, hash);
+});
+
 test('ETH max return refuses contract recipients and insufficient fee reserves without signing', async () => {
     const h = harness();
     await h.ready();

@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
+import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 
-function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, blockedStorage = false, withdrawals = [] } = {}) {
+function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, savedWelcome = false, blockedStorage = false, withdrawals = [] } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals };
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
@@ -18,6 +19,7 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
         removeEventListener: (_, fn) => listeners.delete(fn)
     };
     const storage = new Map(savedModal ? [['oa-zkapi-running-modal', JSON.stringify(savedModal)]] : []);
+    if (savedWelcome) storage.set('oa-zkapi-welcome-modal', JSON.stringify({ open: true, method: 'metamask' }));
     globalThis.window = { addEventListener() {}, sessionStorage: {
         getItem(key) { if (blockedStorage) throw new Error('Storage blocked'); return storage.get(key) ?? null; },
         setItem(key, value) { if (blockedStorage) throw new Error('Storage blocked'); storage.set(key, value); },
@@ -250,7 +252,7 @@ test('a deposit settled during initialization preserves its open result through 
     assert.equal(f.storage.has('oa-zkapi-running-modal'), true);
 });
 
-for (const phase of ['prepared', 'retry_exact', 'awaiting_wallet', 'submitted', 'ambiguous', 'dropped_or_pending']) {
+for (const phase of ['reserving', 'prepared', 'retry_exact', 'awaiting_wallet', 'submitted', 'ambiguous', 'dropped_or_pending']) {
     test(`withdrawal reload restores ${phase} without a tab marker or resubmission`, async t => {
         const f = setup(t, { config: { prepared_withdrawal: { phase, mode: 'mutual' } }, note: { note_id: 7 } });
         await f.load();
@@ -377,4 +379,45 @@ test('MetaMask cancellation clears an unused SDK draft and expires its notice af
     t.mock.timers.tick(1);
     assert.equal(f.modal.outcome, null);
     assert.equal(f.modal.status, '');
+});
+
+for (const phase of ['reserving', 'prepared', 'awaiting_wallet', 'ambiguous', 'submitted']) {
+    test(`a stale Welcome view cannot hide ${phase} withdrawal recovery after reload`, async t => {
+        const f = setup(t, { savedWelcome: true,
+            config: { prepared_withdrawal: { phase, mode: 'mutual' } }, note: { note_id: 7 } });
+        await f.load();
+        assert.equal(f.modal.isOpen, true);
+        assert.equal(f.modal.view, 'withdraw');
+        assert.equal(f.storage.has('oa-zkapi-welcome-modal'), false);
+        f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    });
+}
+
+for (const record of [
+    { phase: 'ambiguous' },
+    { phase: 'pending', finalizeSubmissionId: 'saved-finalization' },
+    { phase: 'parked', startSubmissionId: 'saved-start' },
+    { phase: 'parked', backgroundPreparationCancelable: true }
+]) {
+    test(`fresh tab restores unresolved background withdrawal ${JSON.stringify(record)}`, async t => {
+        const f = setup(t, { withdrawals: [record], savedWelcome: true });
+        await f.load();
+        assert.equal(f.modal.isOpen, true);
+        assert.equal(f.modal.view, 'withdrawals');
+        assert.equal(f.storage.has('oa-zkapi-welcome-modal'), false);
+        f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    });
+}
+
+test('a fresh tab restores a signed public ETH return without SDK or tab presentation records', async t => {
+    const f = setup(t);
+    await f.load();
+    const state = addressFundingWallet.state;
+    t.after(() => { addressFundingWallet.state = state; });
+    addressFundingWallet.state = { ...state, pending: { kind: 'sweep', transaction: { data: '0x' } } };
+    f.modal.restorePendingOnInit = true;
+    f.modal.restorePendingOperation();
+    assert.equal(f.modal.isOpen, true);
+    assert.equal(f.modal.view, 'fund');
+    f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
 });

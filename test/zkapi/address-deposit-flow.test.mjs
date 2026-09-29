@@ -64,6 +64,57 @@ test('waiting continuously reads funds but never submits, then requires a fresh 
     await assert.rejects(f.flow.verifyReady(), /needs more ETH/);
 });
 
+test('confirmed deposit cleanup cannot turn a storage failure into a failed payment', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    f.store.compareAndSwap = async () => { throw new Error('storage unavailable after confirmed deposit'); };
+    assert.doesNotThrow(() => f.flow.complete());
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.flow.running, false);
+    assert.equal(f.flow.intent, null);
+    assert.equal(f.flow.fee, null);
+    assert.equal(f.flow.ready, false);
+    assert.equal(f.flow.timer, null);
+    assert.equal(f.saved().amount, '10000000', 'retaining a stale input preference is safe');
+});
+
+test('confirmed deposit presentation does not wait for an unresponsive preference store', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    let started = false;
+    f.store.compareAndSwap = () => { started = true; return new Promise(() => {}); };
+    assert.equal(f.flow.complete(), undefined);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(started, true);
+    assert.equal(f.flow.running, false);
+    assert.equal(f.flow.intent, null);
+});
+
+test('confirmed deposit cleanup preserves another tab’s newer saved amount', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    const newer = { ...f.saved(), amount: '20000000', ethAmount: '0.020',
+        depositWei: '20000000000000000', usdAmount: '20', inputAmount: '20' };
+    await f.store.write(f.flow.scope, newer);
+    await f.flow.complete();
+    assert.deepEqual(f.saved(), newer);
+});
+
+test('confirmed deposit cleanup removes only its own amount and blocks late quote updates', async t => {
+    const f = fixture(t);
+    await f.flow.start('10');
+    let finish;
+    f.wallet.getStatus = () => new Promise(resolve => { finish = resolve; });
+    const checking = f.flow.check();
+    await f.flow.complete();
+    finish({ ethBalance: '999999999999999999' });
+    await checking;
+    assert.equal(f.saved(), null);
+    assert.equal(f.flow.intent, null);
+    assert.equal(f.flow.fee, null);
+    assert.equal(f.flow.ready, false);
+});
+
 test('reopening restores the original ETH amount without repricing or sending', async t => {
     const first = fixture(t);
     await first.flow.start('10');

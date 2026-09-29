@@ -12,6 +12,9 @@
 !/local_inference/**
 !/scripts
 !/scripts/**
+!/patches
+/patches/*
+!/patches/zkapi-browser-sdk-wallet-recovery.mjs
 !/deployments
 /deployments/*
 !/deployments/zkapi

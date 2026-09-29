@@ -580,6 +580,49 @@ test('declining a public-fund return never authorizes or invokes the signer', as
     assert.equal(f.owner.fundingError, '');
 });
 
+for (const status of ['confirmed', 'reverted']) {
+    test(`saved public return ${status} outcome is visible after reload without a live balance`, () => {
+        const f = fixture({ wallet: { lastReturn: { status, asset: 'eth', amount: '10000000000000001', destination: recipient } } });
+        const html = f.controls.renderFundingAccount(f.owner);
+        assert.match(html, status === 'confirmed' ? /Last return confirmed: 0\.010000000000000001 ETH sent to/ : /Last return reverted\. No funds were transferred/);
+        assert.match(html, /data-funding-return-eth/);
+    });
+
+    test(`verified ${status} return survives a failed follow-up SDK refresh`, async () => {
+        const f = fixture({ wallet: { pending: { kind: 'sweep' }, async recoverPending() { return { status }; } },
+            client: { async refresh() { throw new Error('temporary refresh failure'); } } });
+        const button = f.field('recover');
+        f.controls.attachWalletMethodControls(f.owner);
+        await button.events.click();
+        assert.equal(f.owner.fundingError, '');
+        assert.match(f.owner.fundingNotice, status === 'confirmed' ? /Return confirmed/ : /Return reverted/);
+        assert.match(f.owner.fundingStatusError, /Transaction status is saved/);
+    });
+}
+
+test('a submitted public return stays visibly submitted when its immediate balance refresh fails', async () => {
+    const f = fixture({ wallet: {
+        async withAuthorizedAction(_auth, action) { return action(); },
+        async transferEth() { return '0xsaved'; },
+        async getStatus() { throw new Error('temporary balance failure'); }
+    } });
+    f.field('return-destination', recipient);
+    f.field('return-eth-amount', '0.01');
+    const button = f.field('return-eth');
+    f.controls.attachWalletMethodControls(f.owner);
+    await button.events.click();
+    assert.equal(f.owner.fundingError, '');
+    assert.match(f.owner.fundingNotice, /Transfer submitted: 0xsaved/);
+    assert.match(f.owner.fundingStatusError, /Your transfer stays saved/);
+});
+
+test('a pending public return prevents another return while keeping recovery available', () => {
+    const f = fixture({ wallet: { hasPendingTransaction: true, pending: { kind: 'sweep' } } });
+    const html = f.controls.renderFundingAccount(f.owner);
+    assert.match(html, /data-funding-return-eth[^>]* disabled/);
+    assert.match(html, /data-funding-recover[^>]*>Check saved transaction/);
+});
+
 for (const [draft, amount] of [['0.010000000000000001', '10000000000000001'], [' ', 'max']]) {
     test(`ETH return authorizes and sends the same ${amount === 'max' ? 'remaining balance' : 'exact wei amount'}`, async () => {
         const calls = [];
