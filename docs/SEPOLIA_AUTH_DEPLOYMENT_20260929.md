@@ -4,6 +4,28 @@ The existing Sepolia ZKAPI service now requires a shared password. The protected
 API is `https://52.52.207.206.sslip.io`; the web client is
 `https://oa-wallet-eth-sepolia.vercel.app`. Mainnet remains unchanged.
 
+## Deployed web client
+
+- Web build: `4NNJCZOR`, source `a9177d9b6b42800e5967e32a48be4d50ce23961a`.
+- Deployment: `dpl_7nqcxodbiYkDt1nutrssUjurucqY`.
+- Browser SDK: `3342c95871e8422bb878ad40072687c241a68a5b`.
+- Wallet recovery patch SHA-256:
+  `fc6c4da9412b533b77a6b7abb9921ec4162c393cd056c40db489d334434fe385`.
+
+All 492 integrity-manifest entries match the local reviewed build. The final
+same-origin authentication suite passed all sixteen checks with the pinned SDK.
+The live browser verified wrong-password feedback, cleared input, Escape
+cancellation, focus after subsequent wallet refreshes, and focus after closing
+the wallet, with no console errors. Authentication remains in memory only.
+
+This build retains the concurrent browser wallet recovery repairs. Independent
+review found and fixed a note replacement race while password entry awaited
+completion; both SDK source branches reject the changed note before preparing
+withdrawal. The combined web suite passed 1,097 core and 752 payment tests;
+all 318 patched stable-SDK tests and both network builds passed. Only Sepolia
+was promoted. The SDK-only follow-up does not change the deployed Rust server
+or the immutable CLI 0.4.1 release.
+
 ## Deployed server
 
 - Source: OpenAnonymity/zkapi `ead4bfd11be72972f7dfa0f794df88e2ff7ae0c3`
