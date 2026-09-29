@@ -981,7 +981,7 @@ class ChatApp {
             const stagedSession = structuredClone(session);
             await this.runtime.beforeBackendChange?.({ session: stagedSession, previousBackendId, backendId });
             if (this.isSessionDeleted(sessionId)) throw new Error('This chat is unavailable.');
-            this.inferenceService.clearAccessInfo(stagedSession);
+            this.inferenceService.clearAccessInfo(stagedSession, { reason: 'backend-change' });
             delete stagedSession.lastVerifierSubmitKeyProof;
             stagedSession.currentEphemeralKeyId = null;
             delete stagedSession.councilAccess;
@@ -3623,7 +3623,7 @@ class ChatApp {
                     }
                 } else {
                     // Verification failed, user chose to proceed without access
-                    this.inferenceService.clearAccessInfo(existingSession);
+                    this.inferenceService.clearAccessInfo(existingSession, { reason: 'verification-declined' });
                 }
             }
             await chatDB.saveSession(existingSession);
@@ -5207,7 +5207,7 @@ class ChatApp {
         const accessLabel = this.inferenceService.getAccessLabel(session);
         this.showToast('Exhausted current ephemeral key, requesting a new key', 'success');
 
-        this.inferenceService.clearAccessInfo(session);
+        this.inferenceService.clearAccessInfo(session, { reason: 'credits-exhausted' });
         await chatDB.saveSession(session);
         this.throwIfAborted(signal);
         this.updateSessionStreamingPhase(session.id, 'requesting-key');
@@ -11344,7 +11344,7 @@ class ChatApp {
 
         if (session) {
             // Clear the API key
-            this.inferenceService.clearAccessInfo(session);
+            this.inferenceService.clearAccessInfo(session, { reason: 'station-banned' });
             await chatDB.saveSession(session);
 
             // Update UI

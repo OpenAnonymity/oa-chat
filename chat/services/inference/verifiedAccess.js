@@ -1,3 +1,5 @@
+import { logAccessDiscard } from './accessDiscardLog.js';
+
 export const VERIFIER_UNAVAILABLE_STATUS = 'verifier-unavailable';
 
 export function isVerifierUnavailable(proof) {
@@ -131,6 +133,7 @@ export function clearUnverifiedOpenRouterAccess(session, options = {}) {
 
     let changed = clearUnsafeOpenRouterCouncilAccess(session, options);
     if (session.apiKey && !hasUsableVerifierApproval(session, options)) {
+        logAccessDiscard(session, options.reason || 'persisted-unverified');
         const discardedKey = session.apiKey;
         session.apiKey = null;
         session.apiKeyInfo = null;

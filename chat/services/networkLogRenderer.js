@@ -114,6 +114,8 @@ export function getActivityDescription(log, detailed = false) {
                 return 'Edited prompt and regenerated response';
             } else if (action === 'session-fork') {
                 return 'Forked chat to new session';
+            } else if (action === 'access-discard' || action === 'access-replace') {
+                return message || 'Session key discarded';
             }
             return message || 'Local operation completed';
         } else {
@@ -144,6 +146,11 @@ export function getActivityDescription(log, detailed = false) {
                 const messageCount = response?.messagesCopied || 0;
                 const hasSharedKey = response?.sharedApiKey;
                 return `Created a new conversation branch with ${messageCount} message${messageCount !== 1 ? 's' : ''} from the original session${hasSharedKey ? ', reusing the same ephemeral access key' : ''}.`;
+            } else if (action === 'access-discard' || action === 'access-replace') {
+                const facts = `Ephemeral key ${response?.ephemeralKeyId || 'unknown'}, station ${response?.stationId || 'unknown'}, verification ${response?.verification || 'none'}${response?.verificationDetail ? ` (${response.verificationDetail})` : ''}, expires ${response?.expiresAt || 'unknown'}.`;
+                return `${message || 'Session key discarded.'} ${facts} ${action === 'access-discard'
+                    ? 'The next message spends a ticket on a new key.'
+                    : 'The stored key stays until the new one is granted; a ticket is spent on the replacement.'}`;
             }
             return message || 'Local cryptographic operation completed successfully.';
         }

@@ -8,6 +8,7 @@ import {
     getVerifierBypassDetail,
     isLocalVerifierBypassAllowed
 } from '../localVerifierPolicy.js';
+import { logAccessDiscard } from '../accessDiscardLog.js';
 import {
     buildExplicitlyVerifiedOpenRouterSharePayload,
     clearUnverifiedOpenRouterAccess,
@@ -144,8 +145,9 @@ const openRouterBackend = {
             }
         }
     },
-    clearAccessInfo(session) {
+    clearAccessInfo(session, { reason = 'unspecified' } = {}) {
         if (!session) return;
+        logAccessDiscard(session, reason);
         session.apiKey = null;
         session.apiKeyInfo = null;
         session.expiresAt = null;

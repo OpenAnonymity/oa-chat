@@ -586,7 +586,7 @@ export default class CouncilController {
         ) {
             const discardedKey = session?.apiKey || null;
             if (typeof this.inferenceService.clearAccessInfo === 'function') {
-                this.inferenceService.clearAccessInfo(session);
+                this.inferenceService.clearAccessInfo(session, { reason: 'council-lane' });
             } else if (session) {
                 session.apiKey = null;
                 session.apiKeyInfo = null;

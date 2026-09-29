@@ -176,8 +176,8 @@ const inferenceService = {
     setAccessInfo(session, accessInfo) {
         return getBackendForSession(session).setAccessInfo(session, accessInfo);
     },
-    clearAccessInfo(session) {
-        return getBackendForSession(session).clearAccessInfo(session);
+    clearAccessInfo(session, options) {
+        return getBackendForSession(session).clearAccessInfo(session, options);
     },
     sanitizePersistedAccess(session) {
         const backend = getBackendForSession(session);

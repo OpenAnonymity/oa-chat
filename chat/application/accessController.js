@@ -3,6 +3,7 @@ import {
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
 } from '../services/inference/verifiedAccess.js';
 import { getCreditLimitSource, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
+import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
 
 export function isAccessCreditExhaustedError(error) {
     if (error?.status !== 402) return false;
@@ -311,6 +312,14 @@ export async function acquireSessionAccess(options = {}) {
         throw new Error('Access controller is missing required session dependencies.');
     }
 
+    if (session.apiKey) {
+        // A stored key is being passed over. Say why in the timeline before a
+        // ticket is spent on its replacement.
+        const expiresAt = Date.parse(session.expiresAt || session.apiKeyInfo?.expiresAt || session.apiKeyInfo?.expires_at || '');
+        logAccessReplace(session, !inferenceService.getAccessToken(session) ? 'not-usable'
+            : !Number.isFinite(expiresAt) || expiresAt <= Date.now() ? 'expired' : 'unspecified');
+    }
+
     let result;
     try {
         // An explicitly composed access implementation owns its acquisition policy.
@@ -328,7 +337,7 @@ export async function acquireSessionAccess(options = {}) {
         }
     } catch (error) {
         if (error?.verifierSubmitKeyProof) {
-            inferenceService.clearAccessInfo(session);
+            inferenceService.clearAccessInfo(session, { reason: 'verifier-rejected' });
             session.lastVerifierSubmitKeyProof = error.verifierSubmitKeyProof;
             await chatDB.saveSession(session);
             onSessionChanged(session);
