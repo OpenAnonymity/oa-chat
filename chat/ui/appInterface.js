@@ -260,6 +260,7 @@ const COMPONENT_APP_KEYS = new Set([
     'changePaymentMode',
     'handleMemoryApprovalDecision',
     'handleEditFileUpload',
+    'getPendingSend',
     'hasActiveSessionListCriteria',
     'hasTicketManagementAction',
     'inlineQuickAsk',

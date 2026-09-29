@@ -5,7 +5,7 @@
 
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
-import { VERIFIER_URL } from '../config.js';
+import { VERIFIER_URL, VERIFIER_OUTAGE_POLICY, VERIFIER_OUTAGE_POLICIES } from '../config.js';
 import { chatDB } from '../db.js';
 import { VERIFIER_UNAVAILABLE_STATUS } from './inference/verifiedAccess.js';
 
@@ -50,6 +50,9 @@ function isHardFailure(error, response, data) {
     return false;
 }
 
+export const VERIFIER_UNVERIFIED_ADVISORY_DETAIL = 'verifier-unverified-advisory';
+const VERIFIER_OUTAGE_RETRY_DETAILS = ['recently_attested_outage', 'verifier_outage', 'rate_limited', 'ownership_check_error'];
+
 function isVerifierTransportUnavailable(error) {
     if (error?.isUserAbort || error?.isCancelled) return false;
     if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return true;
@@ -83,6 +86,12 @@ export class StationVerifier {
     constructor() {
         // Verification state per station
         this.stationStates = new Map(); // stationId -> state
+
+        // Outage policy (see config.js). Tests override it per instance.
+        this.outagePolicy = VERIFIER_OUTAGE_POLICY;
+        if (typeof window !== 'undefined' && this.outagePolicy !== 'strict') {
+            console.log(`🔐 Verifier outage policy: ${this.outagePolicy} (keys continue unverified when the verifier cannot approve them)`);
+        }
 
         // Current active station (for UI display)
         this.currentStationId = null;
@@ -721,13 +730,42 @@ export class StationVerifier {
         }
     }
 
+    setOutagePolicy(policy) {
+        this.outagePolicy = VERIFIER_OUTAGE_POLICIES.includes(policy) ? policy : 'strict';
+    }
+
+    admitsUnattestedOutages() {
+        return this.outagePolicy === 'tolerant' || this.outagePolicy === 'advisory';
+    }
+
+    admitsUnverifiedVerdicts() {
+        return this.outagePolicy === 'advisory';
+    }
+
+    // Reasons a key can never continue, whatever the outage policy.
+    hardBlockReason(keyData) {
+        if (this.isStationBanned(keyData.stationId)) return 'Station is banned';
+        if (!Number.isFinite(Number(keyData.expiresAtUnix)) ||
+            Number(keyData.expiresAtUnix) * 1000 <= Date.now()) {
+            return 'The key expired before it could be verified';
+        }
+        return null;
+    }
+
     recordUnavailableKey(keyData, keyHash, detail = 'recently_attested_outage', queue = true) {
         const temporaryCheck = ['rate_limited', 'ownership_check_error'].includes(detail);
-        if ((!temporaryCheck && keyData.recentlyAttested !== true) ||
-            this.isStationBanned(keyData.stationId) ||
-            !Number.isFinite(Number(keyData.expiresAtUnix)) ||
-            Number(keyData.expiresAtUnix) * 1000 <= Date.now()) {
-            return { status: 'rejected', error: new Error('Verification required: station not recently attested, banned, or key expired') };
+        const blocked = this.hardBlockReason(keyData);
+        if (blocked) return { status: 'rejected', error: new Error(blocked) };
+        if (keyData.recentlyAttested !== true && !temporaryCheck) {
+            if (!this.admitsUnattestedOutages()) {
+                return {
+                    status: 'rejected',
+                    error: new Error('The verifier is unavailable and this station was not recently attested, so the key was not activated')
+                };
+            }
+            // The org did not vouch for a recent attestation; the outage policy
+            // admits the key anyway, with the same bounded background retries.
+            if (detail === 'recently_attested_outage') detail = 'verifier_outage';
         }
         networkLogger.logRequest({
             type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
@@ -737,6 +775,23 @@ export class StationVerifier {
         });
         if (queue) this.queuePendingSubmission(keyData, keyHash, detail);
         return { status: VERIFIER_UNAVAILABLE_STATUS, detail, keyHash };
+    }
+
+    // An explicit "unverified" verdict from a reachable verifier. Only the
+    // advisory policy continues here; the verdict is final, so nothing is
+    // queued for retry and the Activity Timeline says the station failed.
+    recordUnverifiedVerdict(keyData, keyHash, safeDetail, logData, responseStatus) {
+        const blocked = this.hardBlockReason(keyData);
+        if (blocked) return { status: 'rejected', error: new Error(blocked) };
+        networkLogger.logRequest({
+            type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
+            status: VERIFIER_UNAVAILABLE_STATUS,
+            request: { station_id: keyData.stationId },
+            response: logData,
+            detail: VERIFIER_UNVERIFIED_ADVISORY_DETAIL
+        });
+        console.warn('⚠️ Key unverified; continuing under the advisory verifier policy:', safeDetail, responseStatus);
+        return { status: VERIFIER_UNAVAILABLE_STATUS, detail: 'unverified_advisory', verdict: safeDetail, keyHash };
     }
 
     queuePendingSubmission(keyData, keyHash, detail) {
@@ -749,7 +804,7 @@ export class StationVerifier {
                 stationSignature: keyData.stationSignature, orgSignature: keyData.orgSignature,
                 recentlyAttested: keyData.recentlyAttested === true
             },
-            attempts: 1, maxAttempts: detail === 'recently_attested_outage' ? 3 : 10,
+            attempts: 1, maxAttempts: ['recently_attested_outage', 'verifier_outage'].includes(detail) ? 3 : 10,
             nextRetryAt: Date.now() + 5000, detail, observers: new Map()
         });
     }
@@ -757,7 +812,7 @@ export class StationVerifier {
     async trackPendingAccess(accessInfo, observerId, onResult) {
         const proof = accessInfo?.verifierSubmitKeyProof;
         if (proof?.status !== VERIFIER_UNAVAILABLE_STATUS ||
-            !['recently_attested_outage', 'rate_limited', 'ownership_check_error'].includes(proof.detail) ||
+            !VERIFIER_OUTAGE_RETRY_DETAILS.includes(proof.detail) ||
             (accessInfo.recentlyAttested !== true && proof.detail === 'recently_attested_outage') ||
             !accessInfo.key || !accessInfo.stationSignature || !accessInfo.orgSignature ||
             !Number.isFinite(Number(accessInfo.expiresAtUnix)) ||
@@ -784,11 +839,12 @@ export class StationVerifier {
                     try { result = await this.submitKey(entry.keyData, { queueOnFailure: false, outageDetail: entry.detail }); }
                     catch { result = { status: 'rejected', detail: 'verification_retry_failed' }; }
                     entry.attempts += 1;
-                    if (result.status === VERIFIER_UNAVAILABLE_STATUS && entry.attempts < entry.maxAttempts) {
+                    const verdictReached = result.detail === 'unverified_advisory';
+                    if (result.status === VERIFIER_UNAVAILABLE_STATUS && !verdictReached && entry.attempts < entry.maxAttempts) {
                         entry.nextRetryAt = Date.now() + Math.min(5000 * 2 ** (entry.attempts - 1), 300000);
                         continue;
                     }
-                    if (result.status === VERIFIER_UNAVAILABLE_STATUS) {
+                    if (result.status === VERIFIER_UNAVAILABLE_STATUS && !verdictReached) {
                         result = { ...result, detail: 'verification_retry_exhausted' };
                     }
                 }
@@ -906,6 +962,18 @@ export class StationVerifier {
                     keyData.key
                 );
                 const error = new Error(errorMessage);
+                const bannedVerdict = data?.status === 'banned' || !!data?.banned_station;
+
+                // A server error is an outage even when its body carries a
+                // verdict-shaped status; only a ban is treated as a verdict.
+                if (!bannedVerdict && response.status >= 500 && this.admitsUnattestedOutages()) {
+                    return this.recordUnavailableKey(keyData, keyHash, outageDetail, queueOnFailure);
+                }
+                // A reachable verifier refusing the key: the advisory policy
+                // continues on everything except a ban.
+                if (!bannedVerdict && this.admitsUnverifiedVerdicts()) {
+                    return this.recordUnverifiedVerdict(keyData, keyHash, errorMessage, logData, response.status);
+                }
 
                 // Check if this is a hard failure (4xx, banned, signature errors)
                 if (isHardFailure(error, response, data)) {
@@ -938,7 +1006,11 @@ export class StationVerifier {
                     return { status: 'rejected', error };
                 }
 
-                // Other failures do not establish a verifier outage.
+                // Other failures do not establish a verifier outage under the
+                // strict policy; the tolerant policies treat them as one.
+                if (this.admitsUnattestedOutages()) {
+                    return this.recordUnavailableKey(keyData, keyHash, outageDetail, queueOnFailure);
+                }
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
@@ -956,6 +1028,9 @@ export class StationVerifier {
                     data?.detail || 'unverified',
                     keyData.key
                 );
+                if (this.admitsUnverifiedVerdicts() && !data?.banned_station) {
+                    return this.recordUnverifiedVerdict(keyData, keyHash, safeDetail, logData, response.status);
+                }
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
@@ -974,6 +1049,10 @@ export class StationVerifier {
                     data?.detail || 'verification_pending',
                     keyData.key
                 );
+                // No verdict yet: the tolerant policies continue and keep retrying.
+                if (this.admitsUnattestedOutages()) {
+                    return this.recordUnavailableKey(keyData, keyHash, outageDetail, queueOnFailure);
+                }
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
@@ -991,6 +1070,10 @@ export class StationVerifier {
             }
 
             if (data?.status !== 'verified') {
+                // A malformed reply is a verifier fault, not a verdict.
+                if (this.admitsUnattestedOutages()) {
+                    return this.recordUnavailableKey(keyData, keyHash, outageDetail, queueOnFailure);
+                }
                 const error = new Error('Verifier returned an invalid success response');
                 networkLogger.logRequest({
                     type: 'verification',

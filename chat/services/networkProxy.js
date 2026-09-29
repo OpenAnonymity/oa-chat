@@ -649,7 +649,16 @@ class NetworkProxy {
                 { signal, timeoutMs }
             );
         } catch (error) {
-            if (error?.code === 'PROXY_TIMEOUT' || error?.name === 'AbortError') {
+            // The HTTPSession is shared by every relayed request, and closing
+            // it ends all of them: a completion stream in another chat would
+            // die with "The operation was aborted". So a request's own abort
+            // (a fetch timeout, Stop, a session switch) only tears the session
+            // down when nothing else is using it; a guard timeout, which means
+            // the relay itself stopped answering, always does.
+            const othersInFlight = this.activeRequestCount > 1;
+            const requestAborted = error?.name === 'AbortError' && signal?.aborted === true;
+            const sessionUnresponsive = error?.code === 'PROXY_TIMEOUT';
+            if (sessionUnresponsive || (requestAborted && !othersInFlight)) {
                 try {
                     session.close();
                 } catch {
@@ -732,17 +741,20 @@ class NetworkProxy {
             // On error, decrement immediately since there's no body to consume
             this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
 
+            // The request's own abort says nothing about the relay: it must
+            // not flip the System Panel to "Unavailable" or send later
+            // requests direct.
+            if (init.signal?.aborted) {
+                this.emitChange();
+                throw error;
+            }
+
             console.error('[networkProxy.fetch] HTTPSession.fetch failed:', error);
             this.state.usingProxy = false;
             this.state.connectionVerified = false;
             this.state.lastFailureAt = Date.now();
             this.state.lastError = error;
             this.state.transport = 'direct';
-
-            if (init.signal?.aborted) {
-                this.emitChange();
-                throw error;
-            }
 
             if (forceProxy || !this.state.settings.fallbackToDirect) {
                 this.emitChange();

@@ -56,6 +56,10 @@ const demoVerifierBypass = demoVerifierBypassSetting === 'true';
 if (demoVerifierBypass && !sameOriginOrg) {
     throw new Error('[build] verifier bypass is allowed only in an explicit same-origin demo build');
 }
+const verifierOutagePolicySetting = process.env.OA_VERIFIER_OUTAGE_POLICY || 'advisory';
+if (!['strict', 'tolerant', 'advisory'].includes(verifierOutagePolicySetting)) {
+    throw new Error('[build] OA_VERIFIER_OUTAGE_POLICY must be strict, tolerant or advisory');
+}
 const demoProxyUrlSetting = process.env.OA_DEMO_PROXY_URL || '';
 if (demoProxyUrlSetting) {
     let demoProxyUrl;
@@ -245,7 +249,8 @@ const build = async () => {
             ),
             '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
             '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting),
-            '__OA_VERIFIER_ORIGIN__': JSON.stringify(verifierOriginSetting)
+            '__OA_VERIFIER_ORIGIN__': JSON.stringify(verifierOriginSetting),
+            '__OA_VERIFIER_OUTAGE_POLICY__': JSON.stringify(verifierOutagePolicySetting)
         },
         minify: true,
         metafile: true,
