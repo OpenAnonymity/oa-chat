@@ -113,11 +113,6 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 		}
 	}
 	chain, _ := ChainID(config.Network)
-	limit := config.RequestLimitMicroUSD
-	if limit == 0 {
-		limit = 1_000_000
-	}
-	cmd.Env = append(cmd.Env, "OA_ZKAPI_REQUEST_LIMIT_MICRO_USD="+strconv.FormatUint(limit, 10))
 	cmd.Env = append(cmd.Env, "OA_ZKAPI_BRIDGE_TOKEN="+config.BridgeToken, "OA_ZKAPI_CHAIN_ID="+strconv.FormatUint(chain, 10), "ZKAPI_PROOF_SETUP_DIR="+companion.SetupDir, "ZKAPI_REQUIRE_OA_ORG_KEY_SOURCE=true")
 	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
 		cmd.Env = append(cmd.Env, name+"="+companion.ProxyURL)

@@ -8,12 +8,25 @@ verification policy below.
 
 ## Import and invitation redemption
 
-Initialize with `oa-chat init`, then either:
+One `oa-chat init` configures both ticket and zkAPI modes. Import or redeem
+tickets with either command:
 
 ```sh
 oa-chat tickets import exported-tickets.json
 oa-chat tickets redeem --code-file /path/to/private-invite.txt
 ```
+
+Start ticket inference with `oa-chat serve --backend ticket`. Stop that process
+and use `oa-chat serve --backend zkapi` to use the private ETH wallet from the
+same configuration directory. Omitting `--backend` uses the saved default;
+`init --backend` only selects that default. Existing configurations work without
+reinitialization. Both modes share the local API key and transport settings but
+retain separate ticket and private-note state. Ticket mode does not need an
+installed zkAPI companion or proving assets.
+
+Ticket import and redemption remain available regardless of the running mode.
+`oa-chat status` authenticates the daemon's selected mode before showing wallet
+readiness, and also reports the saved default.
 
 `tickets redeem` without `--code-file` reads stdin. The file contains only the
 24-character invitation code or the OA share URL containing `?tickets=...`.

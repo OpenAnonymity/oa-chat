@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -25,6 +26,7 @@ const addressTestBlock = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 type addressFixture struct {
 	native                                                         bool
 	estimateValue                                                  string
+	overrideReads                                                  int
 	mu                                                             sync.Mutex
 	h                                                              *FundingHandler
 	chain, decimals, gas, gasPrice, balance, eth, allowance, nonce string
@@ -69,7 +71,24 @@ func newAddressFixture(t *testing.T, native ...bool) *addressFixture {
 			result = f.eth
 		case "eth_getTransactionCount":
 			result = f.nonce
+		case "eth_getCode":
+			result = "0x"
+		case "eth_feeHistory":
+			bases := make([]string, 21)
+			rewards := make([][]string, 20)
+			ratios := make([]float64, 20)
+			for i := range bases {
+				bases[i] = f.gasPrice
+			}
+			for i := range rewards {
+				rewards[i] = []string{"0xf4240"}
+				ratios[i] = 0.5
+			}
+			result = map[string]any{"oldestBlock": "0xd", "baseFeePerGas": bases, "reward": rewards, "gasUsedRatio": ratios}
 		case "eth_estimateGas":
+			if len(request.Params) == 3 {
+				f.overrideReads++
+			}
 			var call map[string]string
 			_ = json.Unmarshal(request.Params[0], &call)
 			f.estimateValue = call["value"]
@@ -78,10 +97,18 @@ func newAddressFixture(t *testing.T, native ...bool) *addressFixture {
 			result = f.gasPrice
 		case "eth_call":
 			var call struct {
+				From string `json:"from"`
 				To   string `json:"to"`
 				Data string `json:"data"`
 			}
 			_ = json.Unmarshal(request.Params[0], &call)
+			if call.From != "" {
+				result = "0x"
+				if len(request.Params) == 3 {
+					f.overrideReads++
+				}
+				break
+			}
 			if !strings.EqualFold(call.To, addressTestToken) {
 				t.Error("unexpected token contract")
 			}
@@ -110,7 +137,7 @@ func newAddressFixture(t *testing.T, native ...bool) *addressFixture {
 			if number == "latest" {
 				number = "0x20"
 			}
-			result = map[string]string{"number": number, "hash": f.canonical}
+			result = map[string]string{"number": number, "hash": f.canonical, "timestamp": fmt.Sprintf("0x%x", time.Now().Unix()), "baseFeePerGas": f.gasPrice}
 		case "eth_sendRawTransaction":
 			var raw string
 			_ = json.Unmarshal(request.Params[0], &raw)
@@ -136,7 +163,7 @@ func newAddressFixture(t *testing.T, native ...bool) *addressFixture {
 			if !journaled {
 				t.Error("broadcast does not match durable journal")
 			}
-			from, err := types.Sender(types.NewEIP155Signer(big.NewInt(1)), &tx)
+			from, err := types.Sender(types.LatestSignerForChainID(big.NewInt(1)), &tx)
 			if err != nil || !strings.EqualFold(from.Hex(), journal.Address) || (!f.native && tx.Value().Sign() != 0) {
 				t.Error("invalid EIP-155 signature or value")
 			}
@@ -483,10 +510,10 @@ func TestAddressFundingBoundsGasFeesAndNonce(t *testing.T) {
 			case "gas buffer":
 				f.gas = "0x1000000"
 			case "fee":
-				f.gasPrice = "0x100000000000"
+				f.gasPrice = "0x01"
 			case "fee budget":
 				f.gas = "0x800000"
-				f.gasPrice = "0x2540be400"
+				f.gasPrice = "0x" + strings.Repeat("f", 64)
 			case "nonce":
 				f.nonce = "0xffffffffffffffff"
 			}
@@ -786,4 +813,24 @@ func TestAddressFundingRejectsRetiredTransactionInPendingJournal(t *testing.T) {
 	if len(f.submitted) != 1 {
 		t.Fatal("inconsistent pending journal broadcast")
 	}
+}
+
+func (f *addressFixture) fundNative(t *testing.T, amount uint64) (AddressFundingStatus, error) {
+	t.Helper()
+	config, err := f.h.config(context.Background())
+	if err != nil {
+		return AddressFundingStatus{}, err
+	}
+	record, err := f.h.loadAddress(config)
+	if err != nil {
+		return AddressFundingStatus{}, err
+	}
+	if record.Pending != nil || record.Phase == "active" {
+		return f.h.FundAddress(context.Background(), amount)
+	}
+	quote, err := f.h.QuoteAddressDeposit(context.Background(), amount)
+	if err != nil {
+		return AddressFundingStatus{}, err
+	}
+	return f.h.ApproveAddressDeposit(context.Background(), quote.ID)
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -21,7 +20,7 @@ func nativeFundingStatus() map[string]any {
 
 func TestNativeFundExactGweiAndETHDisplay(t *testing.T) {
 	posts := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := nativeFundingStatus()
 		if r.Method == http.MethodPost {
 			posts++
@@ -29,7 +28,9 @@ func TestNativeFundExactGweiAndETHDisplay(t *testing.T) {
 			if json.NewDecoder(r.Body).Decode(&body) != nil || body["amount"] != 750001 {
 				t.Error("native ETH amount was not converted exactly to gwei")
 			}
-			state["phase"] = "active"
+			q := paymentTestQuote("deposit")
+			_ = json.NewEncoder(w).Encode(q)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(state)
 	}))
@@ -38,7 +39,7 @@ func TestNativeFundExactGweiAndETHDisplay(t *testing.T) {
 	if err := runFunding(context.Background(), fundingTestConfig(s), []string{"--amount", "0.000750001"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if posts != 1 || !strings.Contains(out.String(), "Depositing 0.000750001 ETH") || strings.Contains(out.String(), "USDC") || strings.Contains(out.String(), "Token contract:") {
+	if posts != 1 || !strings.Contains(out.String(), "Fixed amount: 0.000750001000000000 ETH") || strings.Contains(out.String(), "USDC") || strings.Contains(out.String(), "Token contract:") {
 		t.Fatalf("wrong native funding flow: posts=%d output=%s", posts, out.String())
 	}
 }
@@ -57,7 +58,7 @@ func TestNativeAmountAndDenominationFailClosed(t *testing.T) {
 		func(s map[string]any) { s["native_asset_wei_per_unit"] = "1000000" },
 		func(s map[string]any) { s["token_address"] = "0x2222222222222222222222222222222222222222" },
 	} {
-		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet {
 				t.Error("invalid denomination authorized a deposit")
 			}

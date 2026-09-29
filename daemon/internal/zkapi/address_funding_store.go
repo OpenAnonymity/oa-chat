@@ -16,30 +16,38 @@ import (
 // This file is local custody material, separate from both the inference API
 // credential and the companion's private-note recovery file. Back up both.
 type addressFundingRecord struct {
-	DeploymentID string                   `json:"deployment_id,omitempty"`
-	BillingAsset string                   `json:"billing_asset,omitempty"`
-	BillingUnit  string                   `json:"billing_unit,omitempty"`
-	WeiPerUnit   string                   `json:"native_asset_wei_per_unit,omitempty"`
-	Version      int                      `json:"version"`
-	ChainID      uint64                   `json:"chain_id"`
-	Contract     string                   `json:"contract_address"`
-	Token        string                   `json:"token_address"`
-	Address      string                   `json:"address"`
-	PrivateKey   string                   `json:"private_key"`
-	Amount       uint64                   `json:"amount,omitempty"`
-	Commitment   string                   `json:"commitment,omitempty"`
-	Phase        string                   `json:"phase"`
-	Pending      *addressTransaction      `json:"pending,omitempty"`
-	History      []addressTransaction     `json:"history,omitempty"`
-	Withdrawal   *addressWithdrawalRecord `json:"withdrawal,omitempty"`
+	DepositMicroUSD uint64                   `json:"deposit_micro_usd,omitempty"`
+	DepositUSDUnits uint64                   `json:"deposit_usd_units,omitempty"`
+	DeploymentID    string                   `json:"deployment_id,omitempty"`
+	BillingAsset    string                   `json:"billing_asset,omitempty"`
+	BillingUnit     string                   `json:"billing_unit,omitempty"`
+	WeiPerUnit      string                   `json:"native_asset_wei_per_unit,omitempty"`
+	Version         int                      `json:"version"`
+	ChainID         uint64                   `json:"chain_id"`
+	Contract        string                   `json:"contract_address"`
+	Token           string                   `json:"token_address"`
+	Address         string                   `json:"address"`
+	PrivateKey      string                   `json:"private_key"`
+	Amount          uint64                   `json:"amount,omitempty"`
+	Commitment      string                   `json:"commitment,omitempty"`
+	Phase           string                   `json:"phase"`
+	Pending         *addressTransaction      `json:"pending,omitempty"`
+	History         []addressTransaction     `json:"history,omitempty"`
+	Withdrawal      *addressWithdrawalRecord `json:"withdrawal,omitempty"`
+	Quote           *AddressPaymentQuote     `json:"quote,omitempty"`
+	Return          *addressReturnRecord     `json:"return,omitempty"`
 }
 
 type addressTransaction struct {
-	Kind            string `json:"kind"`
-	Raw             string `json:"raw"`
-	Hash            string `json:"hash"`
-	Nonce           uint64 `json:"nonce"`
-	FinalizedRevert bool   `json:"finalized_revert,omitempty"`
+	ActualFeeWei      string `json:"actual_fee_wei,omitempty"`
+	ReturnDestination string `json:"return_destination,omitempty"`
+	ReturnValueWei    string `json:"return_value_wei,omitempty"`
+	Kind              string `json:"kind"`
+	Raw               string `json:"raw"`
+	Hash              string `json:"hash"`
+	Nonce             uint64 `json:"nonce"`
+	FinalizedRevert   bool   `json:"finalized_revert,omitempty"`
+	ApprovedFeeWei    string `json:"approved_fee_wei,omitempty"`
 }
 
 func (h *FundingHandler) addressStatePath() string {
@@ -105,8 +113,23 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 		if decodeErr != nil || tx.UnmarshalBinary(encoded) != nil || !strings.EqualFold(tx.Hash().Hex(), entry.Hash) || tx.Nonce() != entry.Nonce || !tx.ChainId().IsUint64() || tx.ChainId().Uint64() != config.ChainID {
 			return nil, errors.New("payment transaction recovery data is invalid; preserve the file")
 		}
-		from, senderErr := types.Sender(types.NewEIP155Signer(tx.ChainId()), &tx)
-		if senderErr != nil || !strings.EqualFold(from.Hex(), record.Address) || tx.To() == nil || (entry.Kind != "deposit" && entry.Kind != "approval" && entry.Kind != "approval_reset" && entry.Kind != "withdrawal") {
+		if tx.Type() != types.LegacyTxType && tx.Type() != types.DynamicFeeTxType {
+			return nil, errors.New("unsupported saved transaction type; preserve recovery files")
+		}
+		if entry.ActualFeeWei != "" {
+			actual, ok := new(big.Int).SetString(entry.ActualFeeWei, 10)
+			if !ok || actual.Sign() < 0 || actual.BitLen() > 256 || actual.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap())) > 0 {
+				return nil, errors.New("saved actual transaction fee is invalid; preserve recovery files")
+			}
+		}
+		if entry.ApprovedFeeWei != "" {
+			approved, ok := new(big.Int).SetString(entry.ApprovedFeeWei, 10)
+			if !ok || approved.Sign() <= 0 || approved.BitLen() > 256 || new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasFeeCap()).Cmp(approved) > 0 {
+				return nil, errors.New("saved payment exceeds its approved network fee; preserve recovery files")
+			}
+		}
+		from, senderErr := types.Sender(types.LatestSignerForChainID(tx.ChainId()), &tx)
+		if senderErr != nil || !strings.EqualFold(from.Hex(), record.Address) || tx.To() == nil || (entry.Kind != "deposit" && entry.Kind != "approval" && entry.Kind != "approval_reset" && entry.Kind != "withdrawal" && entry.Kind != "return") {
 			return nil, errors.New("payment transaction recovery signature is invalid; preserve the file")
 		}
 		if config.nativeETH() {
@@ -125,13 +148,20 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 				if record.Pending != nil && strings.EqualFold(record.Pending.Hash, entry.Hash) && (amount.Uint64() != record.Amount || !strings.EqualFold(hex.EncodeToString(data[4:36]), addressABIWord(record.Commitment))) {
 					return nil, errors.New("native deposit recovery does not match its saved authorization; preserve the file")
 				}
-			} else if tx.Value().Sign() != 0 {
+			} else if entry.Kind != "return" && tx.Value().Sign() != 0 {
 				return nil, errors.New("withdrawal recovery value must be zero; preserve the file")
 			}
 		} else if tx.Value().Sign() != 0 {
 			return nil, errors.New("token payment recovery value must be zero; preserve the file")
 		}
 		expected := config.Token
+		if entry.Kind == "return" {
+			expected = entry.ReturnDestination
+			value, ok := new(big.Int).SetString(entry.ReturnValueWei, 10)
+			if !ok || value.Sign() <= 0 || value.Cmp(tx.Value()) != 0 || len(tx.Data()) != 0 || entry.ApprovedFeeWei == "" {
+				return nil, errors.New("return recovery authorization is invalid; preserve the file")
+			}
+		}
 		if entry.Kind == "deposit" || entry.Kind == "withdrawal" {
 			expected = config.Contract
 		}
@@ -153,12 +183,26 @@ func (h *FundingHandler) loadAddress(config fundingConfig) (*addressFundingRecor
 			}
 		}
 	}
+	if r := record.Return; r != nil {
+		amount, ok := new(big.Int).SetString(r.AmountWei, 10)
+		if _, err := NormalizeWithdrawalDestination(r.Destination); err != nil || !ok || amount.Sign() < 0 || amount.BitLen() > 256 {
+			return nil, errors.New("public return recovery is invalid; preserve the file")
+		}
+		switch r.Phase {
+		case "quoted", "return_pending", "complete", "reverted":
+		default:
+			return nil, errors.New("public return phase is invalid; preserve the file")
+		}
+		if r.Phase == "return_pending" && (record.Pending == nil || record.Pending.Kind != "return" || !strings.EqualFold(record.Pending.Hash, r.TransactionHash) || !strings.EqualFold(record.Pending.ReturnDestination, r.Destination) || record.Pending.ReturnValueWei != r.AmountWei) {
+			return nil, errors.New("pending public return is missing its authorization; preserve the file")
+		}
+	}
 	if w := record.Withdrawal; w != nil {
 		if _, err := NormalizeWithdrawalDestination(w.Destination); err != nil || w.NoteID > 0xffffffff || (w.Binding != "" && (!isHex(w.Binding, 32) || !isHex(w.Nullifier, 32))) {
 			return nil, errors.New("withdrawal recovery data is invalid; preserve the file")
 		}
 		switch w.Phase {
-		case "withdrawal_pending", "waiting_settlement", "waiting_funds", "confirming", "reverted", "complete":
+		case "quoted", "withdrawal_pending", "waiting_settlement", "waiting_funds", "confirming", "reverted", "complete":
 		default:
 			return nil, errors.New("withdrawal recovery phase is invalid; preserve the file")
 		}

@@ -30,12 +30,11 @@ const (
 // Config is the Go-side bridge configuration. A companion must be built with
 // companion.patch; unpatched or unauthenticated daemons are rejected.
 type Config struct {
-	ClientURL            string       `json:"client_url"`
-	BridgeToken          string       `json:"bridge_token"`
-	Network              string       `json:"network"` // empty means mainnet; Sepolia is explicit
-	InferenceBaseURL     string       `json:"inference_base_url"`
-	HTTPClient           *http.Client `json:"-"` // remote HTTPS, direct or over Wisp as configured
-	RequestLimitMicroUSD uint64       `json:"request_limit_micro_usd,omitempty"`
+	ClientURL        string       `json:"client_url"`
+	BridgeToken      string       `json:"bridge_token"`
+	Network          string       `json:"network"` // empty means mainnet; Sepolia is explicit
+	InferenceBaseURL string       `json:"inference_base_url"`
+	HTTPClient       *http.Client `json:"-"` // remote HTTPS, direct or over Wisp as configured
 }
 
 type Client struct {
@@ -79,14 +78,6 @@ func New(config Config) (*Client, error) {
 	}
 	if config.Network == "" {
 		config.Network = "mainnet"
-	}
-	if config.RequestLimitMicroUSD == 0 {
-		config.RequestLimitMicroUSD = 1_000_000
-	}
-	switch config.RequestLimitMicroUSD {
-	case 1_000_000, 2_000_000, 3_000_000, 4_500_000, 6_000_000:
-	default:
-		return nil, errors.New("invalid zkAPI request spending cap")
 	}
 	if _, err := ChainID(config.Network); err != nil {
 		return nil, err
@@ -216,7 +207,7 @@ func (c *Client) Check(ctx context.Context) error {
 		return &Error{http.StatusBadGateway, "invalid_companion_response"}
 	}
 	expected, _ := ChainID(c.config.Network)
-	if result.ChainID != expected || result.Mode != "direct_openrouter" || !result.RequireOA || result.BridgeVersion != 2 {
+	if result.ChainID != expected || result.Mode != "direct_openrouter" || !result.RequireOA || result.BridgeVersion != 3 {
 		return &Error{http.StatusBadGateway, "companion_policy_mismatch"}
 	}
 	deployment, _, err := pinnedDeployment(c.config.Network)
@@ -226,39 +217,6 @@ func (c *Client) Check(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) Models(ctx context.Context) (json.RawMessage, error) {
-	if err := c.Check(ctx); err != nil {
-		return nil, err
-	}
-	// Native manifests describe payment deployments rather than a frozen model
-	// catalog. Read the provider's public catalog over the same HTTPS transport.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config.InferenceBaseURL+"/models", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	response, err := c.inference.Do(req)
-	if err != nil {
-		return nil, &Error{http.StatusBadGateway, "models_unavailable"}
-	}
-	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
-	var catalog struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err != nil || response.StatusCode != http.StatusOK || len(raw) > 16<<20 || json.Unmarshal(raw, &catalog) != nil || len(catalog.Data) == 0 {
-		return nil, &Error{http.StatusBadGateway, "models_unavailable"}
-	}
-	for _, model := range catalog.Data {
-		if strings.TrimSpace(model.ID) == "" {
-			return nil, &Error{http.StatusBadGateway, "models_unavailable"}
-		}
-	}
-	return json.RawMessage(raw), nil
-}
-
 // Complete passes the caller's JSON unchanged over the anonymous HTTP client.
 // Raw SSE bytes remain available to the gateway immediately; no fake streaming
 // or complete-response buffering occurs in either Go or the proof companion.
@@ -266,7 +224,12 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 	if err := c.Check(ctx); err != nil {
 		return nil, err
 	}
-	leaseJSON, err := c.request(ctx, http.MethodPost, "/oa/v1/lease", []byte("{}"))
+	limit, err := c.requestBudget(ctx, body)
+	if err != nil {
+		return nil, err
+	}
+	leaseBody, _ := json.Marshal(map[string]uint64{"request_limit_micro_usd": limit})
+	leaseJSON, err := c.request(ctx, http.MethodPost, "/oa/v1/lease", leaseBody)
 	if err != nil {
 		return nil, err
 	}

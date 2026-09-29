@@ -7,7 +7,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/OpenAnonymity/oa-chat'
 license=('MIT')
 depends=('ca-certificates' 'glibc>=2.39' 'gcc-libs' 'openssl>=3')
-optdepends=('systemd: user service management' 'xdg-utils: open the funding browser')
+optdepends=('systemd: user service management')
 options=('!strip') # Preserve the reviewed release binaries and their provenance.
 provides=('oa-chat')
 conflicts=('oa-chat')

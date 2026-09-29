@@ -76,7 +76,11 @@ readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
 and lifecycle events. Shell redirection and service managers may retain that
 metadata. Prompts, responses, credentials, raw URLs, and private wallet/proof
 details never enter these logs. Its proof
-companion receives no prompts/responses. It always uses an authenticated
+companion receives no prompts/responses or model IDs. The daemon reads the
+public model-tier map and provider catalog anonymously and sends only the model's reviewed coarse
+USD spending bucket to the companion. Native ETH conversion uses the verified
+quote bound to that request; neither the exact wallet balance nor prompt size
+is used to choose a bucket. It always uses an authenticated
 loopback CONNECT bridge that rejects plaintext HTTP and HTTP downgrades. The
 bridge opens destination TCP directly by default, or carries destination TLS
 through opt-in Wisp. Environment proxy variables are ignored. Opt-in Wisp resolves
@@ -92,14 +96,18 @@ for deployed-service prerequisites and the zkAPI settlement constraint.
 The CLI's Ethereum address-funding route generates an Ethereum signing key
 locally and retains it in an owner-only file alongside its private recovery
 state. No external wallet connection or OA account identity is required.
-Withdrawal management uses a separate owner-only local credential; the
-inference API key shared with a UI cannot authorize a withdrawal destination.
+All funding, withdrawal, and public-return management uses a separate
+owner-only local credential; the inference API key shared with a UI cannot
+authorize wallet transactions. The authenticated runtime-mode status is the
+only admin endpoint available with the inference credential alone.
 Funding address balances, incoming transfers, approvals, vault deposits, and
 withdrawal amounts and destinations
 are public Ethereum activity visible to the configured RPC (accessed directly
 by default, or through opt-in Wisp) and chain observers. They are not made
-anonymous by removing a wallet connection. The signing key and private-note secret never enter the optional
-browser page, account synchronization, or inference requests. Backups of the
+anonymous by removing a wallet connection. Funding is command-line only:
+quoting prepares local recovery data, and approving the saved quote separately
+authorizes its exact principal, destination, and fee allowance. The signing key
+and private-note secret never enter account synchronization or inference requests. Backups of the
 private configuration directory control both public funds and private notes.
 
 ### 1. Ticket issuance (blind signatures)

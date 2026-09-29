@@ -21,7 +21,7 @@ func testPolicy(network string) map[string]any {
 	if err != nil {
 		panic(err)
 	}
-	return map[string]any{"bridge_version": 2, "chain_id": p.ChainID, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": p.ID, "contract_address": p.Contract, "billing_asset": p.Asset, "billing_unit": p.Unit, "circuit_id": p.Proof.Circuit}
+	return map[string]any{"bridge_version": 3, "chain_id": p.ChainID, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": p.ID, "contract_address": p.Contract, "billing_asset": p.Asset, "billing_unit": p.Unit, "circuit_id": p.Proof.Circuit}
 }
 
 func newTestClient(t *testing.T, handler http.HandlerFunc, inference *httptest.Server) *Client {
@@ -43,6 +43,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc, inference *httptest.S
 	if err != nil {
 		t.Fatal(err)
 	}
+	addTestModelPolicy(c, map[string]uint64{"example/model": 1}, nil)
 	return c
 }
 
@@ -76,7 +77,7 @@ func TestCompleteReturnsLiveSSEAndSendsNoPromptToCompanion(t *testing.T) {
 			t.Errorf("unexpected bridge path %s", r.URL.Path)
 		}
 		data, _ := io.ReadAll(r.Body)
-		if string(data) != "{}" {
+		if string(data) != `{"request_limit_micro_usd":1000000}` {
 			t.Error("inference payload crossed wallet bridge")
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "ephemeral-test-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
@@ -119,7 +120,7 @@ func TestLeasePolicyFailureNeverSendsPrompt(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(lease)
 			}, upstream)
-			if _, err := client.Complete(context.Background(), json.RawMessage(`{}`)); err == nil {
+			if _, err := client.Complete(context.Background(), json.RawMessage(`{"model":"example/model"}`)); err == nil {
 				t.Fatal("unsafe lease accepted")
 			}
 			if called.Load() {
@@ -170,7 +171,7 @@ func TestNoRedirectOfCredentialOrPrompt(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "secret", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
-	response, err := client.Complete(context.Background(), json.RawMessage(`{"messages":[]}`))
+	response, err := client.Complete(context.Background(), json.RawMessage(`{"model":"example/model","messages":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,12 +204,12 @@ func TestProviderLeaseNeverReusedAcrossAPIRequests(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "one-private-session-only", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
-	response, err := client.Complete(context.Background(), json.RawMessage(`{"messages":[]}`))
+	response, err := client.Complete(context.Background(), json.RawMessage(`{"model":"example/model","messages":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	if _, err = client.Complete(context.Background(), json.RawMessage(`{"messages":[]}`)); err == nil {
+	if _, err = client.Complete(context.Background(), json.RawMessage(`{"model":"example/model","messages":[]}`)); err == nil {
 		t.Fatal("reused provider key across unrelated requests")
 	}
 	if calls.Load() != 1 {
@@ -231,7 +232,7 @@ func TestInferenceNeverInheritsCookieJar(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "cookie-free-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": true, "verification_status": "verified"})
 	}, upstream)
-	response, err := client.Complete(context.Background(), json.RawMessage(`{}`))
+	response, err := client.Complete(context.Background(), json.RawMessage(`{"model":"example/model"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

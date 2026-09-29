@@ -58,7 +58,13 @@ func newWithdrawalFixture(t *testing.T, native ...bool) *withdrawalFixture {
 		}
 		f.mine(t, approval.TransactionHash, false)
 	}
-	deposit, err := f.h.FundAddress(context.Background(), 100000)
+	var deposit AddressFundingStatus
+	var err error
+	if f.native {
+		deposit, err = f.fundNative(t, 100000)
+	} else {
+		deposit, err = f.h.FundAddress(context.Background(), 100000)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +218,19 @@ func (f *withdrawalFixture) journal(t *testing.T) addressFundingRecord {
 
 func (f *withdrawalFixture) withdraw(t *testing.T, retryHash ...string) string {
 	t.Helper()
-	if _, err := f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, f.noteID, retryHash...); err != nil {
+	if f.native {
+		retry := ""
+		if len(retryHash) > 0 {
+			retry = retryHash[0]
+		}
+		quote, err := f.h.QuoteAddressWithdrawal(context.Background(), withdrawalTestDestination, f.noteID, retry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.h.ApproveAddressWithdrawal(context.Background(), quote.ID); err != nil {
+			t.Fatal(err)
+		}
+	} else if _, err := f.h.WithdrawAddress(context.Background(), withdrawalTestDestination, f.noteID, retryHash...); err != nil {
 		t.Fatal(err)
 	}
 	record := f.journal(t)

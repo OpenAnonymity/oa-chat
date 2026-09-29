@@ -251,13 +251,17 @@ The Go API daemon owns incoming API requests and streaming responses.
 The companion and `share/oa-chat/proof-setup` are included in every native
 archive. Linux packages install them as `/usr/bin/oa-zkapi` and
 `/usr/share/oa-chat/proof-setup`. Homebrew installs them under its formula
-prefix. Address funding runs in the terminal with an optional local browser
-page. The Go daemon generates its own local signing key; no external wallet
-is required. `withdraw --to ADDRESS` uses that same key to withdraw the entire
-private balance to the specified address, after reserving it in the companion.
-The command requires the companion's `withdrawal_bridge_version: 1` capability;
-ship both binaries together. Only an explicit deposit or withdrawal command/action
-signs transactions; service startup and address checks never submit one. The published 0.1.0
+prefix. One `init` configures both modes; `serve --backend ticket|zkapi` selects
+the running backend. Funding is command-line only. The Go daemon generates
+its own local signing key; no external wallet is required. `fund --amount ETH`
+or `fund --usd USD` prepares a deposit quote. `withdraw --to ADDRESS` prepares
+a quote for the full private balance after reserving it in the companion.
+`fund return --to ADDRESS [--amount ETH]` quotes a return of unused public ETH.
+Each operation signs only after its corresponding `--approve QUOTE_ID` command;
+`--resume` recovers saved signed bytes without granting new authority.
+The companion must advertise `bridge_version: 3` for model-selected budgets
+and `withdrawal_bridge_version: 1`; ship both binaries together. Service startup,
+address checks, and quote preparation never broadcast a transaction. The published 0.1.0
 release predates this behavior and still uses MetaMask. User-facing configuration
 uses Ethereum mainnet; Sepolia must be selected explicitly for testing.
 

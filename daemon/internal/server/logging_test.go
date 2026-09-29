@@ -20,8 +20,10 @@ func TestRequestLogsContainOnlyAllowlistedMetadata(t *testing.T) {
 	}{
 		{"inference", http.MethodPost, "/v1/chat/completions?secret=query", "method=POST route=/v1/chat/completions"},
 		{"unknown", "SECRET-METHOD", "/private-secret?capability=query", "method=OTHER route=OTHER"},
-		{"funding", http.MethodGet, "/funding/private-secret?capability=query", "method=GET route=/funding/*"},
+		{"removed funding page", http.MethodGet, "/funding/private-secret?capability=query", "method=GET route=OTHER"},
 		{"address", http.MethodGet, "/admin/funding/address?secret=query", "method=GET route=/admin/funding/address"},
+		{"quote approval", http.MethodPost, "/admin/funding/approve?secret=query", "method=POST route=/admin/funding/approve"},
+		{"public return", http.MethodPost, "/admin/return/approve?secret=query", "method=POST route=/admin/return/approve"},
 		{"withdrawal", http.MethodPost, "/admin/withdrawal?secret=query", "method=POST route=/admin/withdrawal"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

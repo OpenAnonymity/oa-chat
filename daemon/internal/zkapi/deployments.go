@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // These public manifests match the reviewed frontend deployment profiles. A
@@ -26,6 +27,9 @@ type deploymentIdentity struct {
 	Asset    string             `json:"billing_asset"`
 	Unit     string             `json:"billing_unit"`
 	Proof    proofSetupIdentity `json:"proof_setup"`
+	Privacy  struct {
+		IssuerURL string `json:"issuer_url"`
+	} `json:"privacy_mode"`
 }
 
 type proofSetupIdentity struct {
@@ -34,6 +38,13 @@ type proofSetupIdentity struct {
 	RequestVerifyingKeySHA256    string `json:"request_verifying_key_sha256"`
 	WithdrawalProvingKeySHA256   string `json:"withdrawal_proving_key_sha256"`
 	WithdrawalVerifyingKeySHA256 string `json:"withdrawal_verifying_key_sha256"`
+}
+
+// MatchesDeployment checks a public management response against this release's
+// immutable network/vault identity without a network read or wallet operation.
+func MatchesDeployment(network, deploymentID, contract string) bool {
+	deployment, _, err := pinnedDeployment(network)
+	return err == nil && deployment.ID == deploymentID && strings.EqualFold(deployment.Contract, contract)
 }
 
 func pinnedDeployment(network string) (deploymentIdentity, []byte, error) {

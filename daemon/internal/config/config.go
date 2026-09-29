@@ -18,12 +18,14 @@ import (
 )
 
 type ZKAPI struct {
-	ClientURL            string `json:"client_url"`
-	BridgeToken          string `json:"bridge_token"`
-	Network              string `json:"network"`
-	Binary               string `json:"binary,omitempty"`
-	ProofSetupDir        string `json:"proof_setup_dir,omitempty"`
-	ExternalCompanion    bool   `json:"external_companion,omitempty"`
+	ClientURL         string `json:"client_url"`
+	BridgeToken       string `json:"bridge_token"`
+	Network           string `json:"network"`
+	Binary            string `json:"binary,omitempty"`
+	ProofSetupDir     string `json:"proof_setup_dir,omitempty"`
+	ExternalCompanion bool   `json:"external_companion,omitempty"`
+	// Retained only to load older configurations. Each new request chooses its
+	// budget from the selected model; a saved fixed limit has no effect.
 	RequestLimitMicroUSD uint64 `json:"request_limit_micro_usd,omitempty"`
 }
 
@@ -33,7 +35,7 @@ type Config struct {
 	ManagementToken string `json:"-"`
 	Listen          string `json:"listen"`
 	APIKey          string `json:"api_key"`
-	Backend         string `json:"backend"`
+	Backend         string `json:"backend"` // default for serve; both wallets are always configured
 	OrgURL          string `json:"org_url"`
 	VerifierURL     string `json:"verifier_url"`
 	RelayURL        string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp
@@ -101,11 +103,6 @@ func Validate(c Config) error {
 	}
 	if c.ZKAPI.Network != "mainnet" && c.ZKAPI.Network != "sepolia" {
 		return errors.New("ZKAPI network must be mainnet or sepolia")
-	}
-	switch c.ZKAPI.RequestLimitMicroUSD {
-	case 0, 1_000_000, 2_000_000, 3_000_000, 4_500_000, 6_000_000:
-	default:
-		return errors.New("zkapi.request_limit_micro_usd must select a reviewed $1, $2, $3, $4.50 or $6 spending cap")
 	}
 	if len(c.ZKAPI.BridgeToken) < 32 {
 		return errors.New("ZKAPI bridge_token must have at least 32 characters")

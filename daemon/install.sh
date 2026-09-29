@@ -230,7 +230,7 @@ HELP
     if [[ -n "$current_target" ]]; then
         printf 'Restart any running daemon to use the new version. Previous release retained at %s/%s.\n' "$install_root" "$current_target"
     else
-        printf 'For a new configuration: oa-chat init, then oa-chat serve. For zkAPI: oa-chat init --backend zkapi.\n'
+        printf 'For a new configuration: oa-chat init, then oa-chat serve --backend ticket or oa-chat serve --backend zkapi.\n'
     fi
     cleanup
     trap - EXIT

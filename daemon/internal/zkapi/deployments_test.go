@@ -234,3 +234,18 @@ func TestCompanionCommandChecksInstalledProofsBeforeCreatingWallet(t *testing.T)
 		}
 	}
 }
+
+func TestMatchesDeploymentUsesExactNetworkIDAndVault(t *testing.T) {
+	for _, network := range []string{"mainnet", "sepolia"} {
+		deployment, _, err := pinnedDeployment(network)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !MatchesDeployment(network, deployment.ID, strings.ToLower(deployment.Contract)) {
+			t.Fatal("matching deployment rejected")
+		}
+		if MatchesDeployment("unknown", deployment.ID, deployment.Contract) || MatchesDeployment(network, deployment.ID+"-other", deployment.Contract) || MatchesDeployment(network, deployment.ID, "0x1111111111111111111111111111111111111111") {
+			t.Fatal("mismatched deployment accepted")
+		}
+	}
+}

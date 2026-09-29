@@ -1,26 +1,54 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
-func TestNativeRequestCapAllowlist(t *testing.T) {
-	for _, cap := range []uint64{0, 1_000_000, 2_000_000, 3_000_000, 4_500_000, 6_000_000} {
+func TestLegacyNativeRequestCapDoesNotBlockConfigLoad(t *testing.T) {
+	for _, cap := range []uint64{1_000_000, 4_500_000, 4_000_000, ^uint64(0)} {
 		config, err := Default()
 		if err != nil {
 			t.Fatal(err)
 		}
 		config.Backend, config.ZKAPI.RequestLimitMicroUSD = "zkapi", cap
-		if err := Validate(config); err != nil {
-			t.Errorf("reviewed cap %d rejected: %v", cap, err)
+		dir := filepath.Join(t.TempDir(), "wallet")
+		if err := Init(dir, config); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := Load(dir)
+		if err != nil || loaded.ZKAPI.RequestLimitMicroUSD != cap {
+			t.Fatalf("legacy request-limit compatibility failed: %v", err)
 		}
 	}
-	for _, cap := range []uint64{1, 50_000, 999_999, 1_000_001, 4_000_000, 4_499_999, 4_500_001, 6_000_001, ^uint64(0)} {
-		config, err := Default()
+}
+
+func TestNewConfigHasBothModesWithoutFixedBudget(t *testing.T) {
+	c, err := Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "wallet")
+	if err := Init(dir, c); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil || strings.Contains(string(data), "request_limit_micro_usd") {
+		t.Fatal("new config retained a fixed budget", err)
+	}
+	for _, mode := range []string{"ticket", "zkapi"} {
+		loaded, err := Load(dir)
 		if err != nil {
 			t.Fatal(err)
 		}
-		config.Backend, config.ZKAPI.RequestLimitMicroUSD = "zkapi", cap
-		if err := Validate(config); err == nil {
-			t.Errorf("unreviewed cap %d accepted", cap)
+		loaded.Backend = mode
+		if err := Validate(loaded); err != nil {
+			t.Fatalf("one initialization did not configure %s: %v", mode, err)
+		}
+		if loaded.APIKey != c.APIKey || loaded.ZKAPI.BridgeToken != c.ZKAPI.BridgeToken {
+			t.Fatal("switching modes changed credentials")
 		}
 	}
 }

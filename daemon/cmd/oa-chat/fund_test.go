@@ -10,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/config"
+	"github.com/OpenAnonymity/oa-chat/daemon/internal/zkapi"
 )
 
 func TestFundingAmountExactUnits(t *testing.T) {
@@ -29,20 +31,57 @@ func TestFundingAmountExactUnits(t *testing.T) {
 }
 
 func fundingTestStatus(phase string) map[string]any {
-	return map[string]any{
-		"address": "0x1111111111111111111111111111111111111111", "chain_id": 1,
-		"token_address": "0x2222222222222222222222222222222222222222", "token_decimals": 6, "token_balance": "1230000", "eth_balance": "1000000000000000",
-		"phase": phase, "message": "Payment progress saved locally.",
-	}
+	state := nativeFundingStatus()
+	state["phase"], state["message"] = phase, "Payment progress saved locally."
+	state["eth_balance"] = "1000000000000000"
+	return state
 }
 
 func fundingTestConfig(s *httptest.Server) config.Config {
-	return config.Config{Backend: "zkapi", Listen: strings.TrimPrefix(s.URL, "http://"), APIKey: strings.Repeat("a", 32), ZKAPI: config.ZKAPI{Network: "mainnet"}}
+	return config.Config{Backend: "ticket", Listen: strings.TrimPrefix(s.URL, "http://"), APIKey: strings.Repeat("a", 32), ManagementToken: withdrawalTestManagementToken, ZKAPI: config.ZKAPI{Network: "mainnet"}}
+}
+
+func configForUnreachableWallet() config.Config {
+	return config.Config{Backend: "ticket", Listen: "127.0.0.1:1", APIKey: strings.Repeat("a", 32), ManagementToken: withdrawalTestManagementToken, ZKAPI: config.ZKAPI{Network: "mainnet"}}
+}
+
+func fundingCLITestServer(t *testing.T, next http.Handler) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/status" {
+			if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("a", 32) {
+				t.Error("mode lookup omitted API authentication")
+			}
+			_, _ = io.WriteString(w, `{"backend":"zkapi","network":"mainnet","request_budget_policy":"model"}`)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/admin/") && r.Header.Get("X-OA-Management-Token") != withdrawalTestManagementToken {
+			t.Error("wallet request omitted owner-only authentication")
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
+const testQuoteID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func paymentTestQuote(kind string) zkapi.AddressPaymentQuote {
+	q := zkapi.AddressPaymentQuote{ID: testQuoteID, Kind: kind, Address: "0x1111111111111111111111111111111111111111", ChainID: 1,
+		Contract: "0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41", DeploymentID: "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928",
+		Amount: 750001, PrincipalWei: "750001000000000", BalanceWei: "1000000000000000", ExpectedFeeWei: "21000", RequiredFeeWei: "25000", FeeReserveWei: "30000", FeeBufferWei: "5000", RequiredTotalWei: "750001000025000", RecommendedTotalWei: "750001000030000", ShortfallWei: "0", RecommendedTopUpWei: "0",
+		EstimatedGas: 21000, GasLimit: 25000, MaxFeePerGas: "1", MaxPriorityFeePerGas: "1", FeePolicy: "low", ExpiresAt: time.Now().Add(time.Minute).UnixMilli()}
+	if kind == "withdrawal" {
+		q.NoteID, q.Amount, q.PrincipalWei, q.Destination = 58, 99971, "0", withdrawalTestDestination
+		q.RequiredTotalWei, q.RecommendedTotalWei = q.RequiredFeeWei, q.FeeReserveWei
+	}
+	if kind == "return" {
+		q.Destination = withdrawalTestDestination
+	}
+	return q
 }
 
 func TestFundDefaultsToAddressWithoutBrowserOrSpending(t *testing.T) {
 	requests := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.URL.Path != "/admin/funding/address" || r.Method != "GET" || r.Header.Get("Authorization") != "Bearer "+strings.Repeat("a", 32) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -54,7 +93,7 @@ func TestFundDefaultsToAddressWithoutBrowserOrSpending(t *testing.T) {
 	if err := runFunding(context.Background(), fundingTestConfig(s), nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Ethereum Mainnet", "0x1111111111111111111111111111111111111111", "1.230000 USDC", "0.001000000000000000 ETH", "fund --amount", "signing key stays"} {
+	for _, want := range []string{"Ethereum Mainnet", "0x1111111111111111111111111111111111111111", "0.001000000000000000 ETH", "fund --amount", "signing key stays"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}
@@ -64,17 +103,20 @@ func TestFundDefaultsToAddressWithoutBrowserOrSpending(t *testing.T) {
 	}
 }
 
-func TestFundAmountAuthorizesExactDeposit(t *testing.T) {
+func TestFundAmountOnlyQuotesExactDeposit(t *testing.T) {
 	var methods []string
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method+" "+r.URL.Path)
 		phase := "ready"
 		if r.Method == "POST" {
 			var body map[string]uint64
-			if json.NewDecoder(r.Body).Decode(&body) != nil || body["amount"] != 100001 || len(body) != 1 {
+			if json.NewDecoder(r.Body).Decode(&body) != nil || body["amount"] != 100001000 || len(body) != 1 {
 				t.Error("deposit amount was rounded or not sent exactly")
 			}
-			phase = "active"
+			q := paymentTestQuote("deposit")
+			q.Amount, q.PrincipalWei = 100001000, "100001000000000000"
+			_ = json.NewEncoder(w).Encode(q)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(fundingTestStatus(phase))
 	}))
@@ -83,13 +125,13 @@ func TestFundAmountAuthorizesExactDeposit(t *testing.T) {
 	if err := runFunding(context.Background(), fundingTestConfig(s), []string{"--amount", "0.100001"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(methods, ",") != "GET /admin/funding/address,POST /admin/funding/deposit" {
+	if strings.Join(methods, ",") != "GET /admin/funding/address,POST /admin/funding/quote" {
 		t.Fatalf("wrong funding sequence: %v", methods)
 	}
 }
 
 func TestFundDisplaysSavedAmountForResumption(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Error("viewing saved progress authorized a transaction")
 		}
@@ -102,13 +144,13 @@ func TestFundDisplaysSavedAmountForResumption(t *testing.T) {
 	if err := runFunding(context.Background(), fundingTestConfig(s), nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Saved deposit: 0.234567 USDC") || !strings.Contains(out.String(), "fund --amount 0.234567") {
+	if !strings.Contains(out.String(), "Saved deposit: 0.000234567 ETH") || !strings.Contains(out.String(), "fund --resume") {
 		t.Fatalf("saved amount was not shown: %s", out.String())
 	}
 }
 
 func TestFundRejectsNetworkMismatchBeforeDeposit(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
 			t.Error("wrong network initiated a deposit")
 		}
@@ -125,15 +167,17 @@ func TestFundRejectsNetworkMismatchBeforeDeposit(t *testing.T) {
 func TestFundCancellationRetainsResumptionGuidance(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(fundingTestStatus("waiting_funds"))
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		state := fundingTestStatus("deposit_pending")
+		state["amount"] = 100000000
+		_ = json.NewEncoder(w).Encode(state)
 		if r.Method == "POST" {
 			w.(http.Flusher).Flush()
 			cancel()
 		}
 	}))
 	defer s.Close()
-	err := runFunding(ctx, fundingTestConfig(s), []string{"--amount", "0.10"}, &bytes.Buffer{})
+	err := runFunding(ctx, fundingTestConfig(s), []string{"--resume"}, &bytes.Buffer{})
 	if !errors.Is(err, errFundingWaitStopped) {
 		t.Fatalf("cancellation lost recovery guidance: %v", err)
 	}
@@ -142,9 +186,11 @@ func TestFundCancellationRetainsResumptionGuidance(t *testing.T) {
 func TestFundCancellationDuringDepositRequestDoesNotReportServiceUnavailable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_ = json.NewEncoder(w).Encode(fundingTestStatus("ready"))
+			state := fundingTestStatus("deposit_pending")
+			state["amount"] = 100000000
+			_ = json.NewEncoder(w).Encode(state)
 			return
 		}
 		// The daemon has received the authorized request but has not replied.
@@ -154,8 +200,8 @@ func TestFundCancellationDuringDepositRequestDoesNotReportServiceUnavailable(t *
 		<-r.Context().Done()
 	}))
 	defer s.Close()
-	err := runFunding(ctx, fundingTestConfig(s), []string{"--amount", "0.10"}, &bytes.Buffer{})
-	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "rerun the same command") {
+	err := runFunding(ctx, fundingTestConfig(s), []string{"--resume"}, &bytes.Buffer{})
+	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "--resume") {
 		t.Fatalf("in-flight cancellation lost accurate recovery guidance: %v", err)
 	}
 	if strings.Contains(err.Error(), "unavailable") || strings.Contains(err.Error(), "transaction canceled") {
@@ -166,7 +212,7 @@ func TestFundCancellationDuringDepositRequestDoesNotReportServiceUnavailable(t *
 func TestFundReadOnlyCancellationDoesNotSuggestAuthorizingDeposit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/admin/funding/address" {
 			t.Errorf("read-only funding lookup made an unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -175,7 +221,7 @@ func TestFundReadOnlyCancellationDoesNotSuggestAuthorizingDeposit(t *testing.T) 
 	}))
 	defer s.Close()
 	err := runFunding(ctx, fundingTestConfig(s), nil, &bytes.Buffer{})
-	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "rerun the same command") {
+	if !errors.Is(err, errFundingWaitStopped) || !strings.Contains(err.Error(), "inspect saved status") {
 		t.Fatalf("read-only cancellation lost resumption guidance: %v", err)
 	}
 	if strings.Contains(err.Error(), "--amount") || strings.Contains(err.Error(), "unavailable") {
@@ -184,7 +230,7 @@ func TestFundReadOnlyCancellationDoesNotSuggestAuthorizingDeposit(t *testing.T) 
 }
 
 func TestFundingUnavailableServiceKeepsConnectionFailureGuidance(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	s := fundingCLITestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	c := fundingTestConfig(s)
 	s.Close()
 	_, err := requestFunding(context.Background(), c, http.MethodPost, "/admin/funding/deposit", map[string]uint64{"amount": 100000})
@@ -194,7 +240,7 @@ func TestFundingUnavailableServiceKeepsConnectionFailureGuidance(t *testing.T) {
 }
 
 func TestFundStopsOnLegacyRecovery(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(fundingTestStatus("legacy_recovery"))
 	}))
 	defer s.Close()

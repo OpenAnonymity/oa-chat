@@ -22,8 +22,8 @@ func TestNativeFundingExactPayableDepositAndFinalizedRecovery(t *testing.T) {
 	}
 	f.ambiguous = true
 	const amount = 747268
-	deposit, err := f.h.FundAddress(context.Background(), amount)
-	if err != nil || deposit.Phase != "deposit_pending" || f.prepared != 1 || f.paths != 1 || len(f.accepted) != 1 {
+	deposit, err := f.fundNative(t, amount)
+	if err != nil || deposit.Phase != "deposit_pending" || f.prepared != 1 || f.paths != 2 || len(f.accepted) != 1 {
 		t.Fatalf("native deposit failed: %+v %v", deposit, err)
 	}
 	tx := f.accepted[deposit.TransactionHash]
@@ -32,29 +32,28 @@ func TestNativeFundingExactPayableDepositAndFinalizedRecovery(t *testing.T) {
 	if tx.Nonce() != 0 || !strings.EqualFold(tx.To().Hex(), addressTestVault) || tx.Value().Cmp(expected) != 0 || simulated == nil || simulated.Cmp(expected) != 0 || len(tx.Data()) != 4+34*32 || hex.EncodeToString(tx.Data()[:4]) != "c588341c" {
 		t.Fatal("native signed value, calldata, or simulated value is incorrect")
 	}
-	for _, method := range f.rpcCalls {
-		if method == "eth_call" {
-			t.Fatal("native funding made an ERC-20 call")
-		}
+	if tx.Type() != types.DynamicFeeTxType || f.overrideReads != 2 {
+		t.Fatal("native quote/signing did not use state override quote and EIP-1559")
 	}
+
 	f.h = &FundingHandler{client: f.h.client, statePath: f.h.statePath}
-	again, err := f.h.FundAddress(context.Background(), amount)
+	again, err := f.fundNative(t, amount)
 	if err != nil || again.TransactionHash != deposit.TransactionHash || len(f.submitted) != 2 || f.submitted[0] != f.submitted[1] || len(f.accepted) != 1 {
 		t.Fatalf("native ambiguous recovery changed transaction: %v", err)
 	}
 	f.mine(t, deposit.TransactionHash, false)
 	f.finalized = "0x1"
-	pending, err := f.h.FundAddress(context.Background(), amount)
+	pending, err := f.fundNative(t, amount)
 	if err != nil || pending.Phase != "deposit_pending" || f.activated != 0 {
 		t.Fatal("native deposit activated before finality")
 	}
 	f.finalized = "0x20"
-	active, err := f.h.FundAddress(context.Background(), amount)
+	active, err := f.fundNative(t, amount)
 	if err != nil || active.Phase != "active" || f.activated != 1 {
 		t.Fatalf("native activation failed: %+v %v", active, err)
 	}
 	f.h = &FundingHandler{client: f.h.client, statePath: f.h.statePath}
-	active, err = f.h.FundAddress(context.Background(), amount)
+	active, err = f.fundNative(t, amount)
 	if err != nil || active.Phase != "active" || f.activated != 1 || len(f.accepted) != 1 {
 		t.Fatal("restart reinitialized native note")
 	}
@@ -65,8 +64,8 @@ func TestNativeFundingRequiresPrincipalAndFees(t *testing.T) {
 	const amount = 747268
 	principal := new(big.Int).Mul(big.NewInt(amount), big.NewInt(1_000_000_000))
 	f.eth = "0x" + principal.Text(16)
-	status, err := f.h.FundAddress(context.Background(), amount)
-	if err != nil || status.Phase != "waiting_funds" || len(f.accepted) != 0 || !strings.Contains(status.Message, "principal plus") {
+	status, err := f.fundNative(t, amount)
+	if err != nil || status.Phase != "waiting_funds" || len(f.accepted) != 0 || !strings.Contains(status.Message, "more") {
 		t.Fatalf("principal-only balance allowed deposit or lost actionable message: %+v %v", status, err)
 	}
 	f.eth = "0x" + new(big.Int).Sub(principal, big.NewInt(1)).Text(16)
@@ -80,7 +79,7 @@ func TestNativeFundingRecoveryRejectsDeploymentUnitAndValueChanges(t *testing.T)
 	for _, mutation := range []string{"deployment", "unit", "scale", "legacy_version", "signed_value", "saved_amount", "saved_commitment", "token_approval"} {
 		t.Run(mutation, func(t *testing.T) {
 			f := newAddressFixture(t, true)
-			if _, err := f.h.FundAddress(context.Background(), 100000); err != nil {
+			if _, err := f.fundNative(t, 100000); err != nil {
 				t.Fatal(err)
 			}
 			raw, err := os.ReadFile(f.h.addressStatePath())
@@ -121,7 +120,7 @@ func TestNativeFundingRecoveryRejectsDeploymentUnitAndValueChanges(t *testing.T)
 				t.Fatal(err)
 			}
 			before, _ := os.ReadFile(f.h.addressStatePath())
-			if _, err := f.h.FundAddress(context.Background(), 100000); err == nil {
+			if _, err := f.fundNative(t, 100000); err == nil {
 				t.Fatal("mismatched native recovery accepted")
 			}
 			after, _ := os.ReadFile(f.h.addressStatePath())
@@ -143,7 +142,7 @@ func TestNativeFundingDoesNotSilentlyRebindLegacySignerOrDeposit(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.native = true
-		if _, err := f.h.FundAddress(context.Background(), 100000); err == nil {
+		if _, err := f.fundNative(t, 100000); err == nil {
 			t.Fatal("legacy state silently rebound to native deployment")
 		}
 		if f.prepared != 0 || len(f.submitted) != 0 {

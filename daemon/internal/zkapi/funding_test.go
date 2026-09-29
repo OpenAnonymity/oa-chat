@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,52 +15,7 @@ import (
 	"time"
 )
 
-func TestFundingCapabilityOriginAndNoThirdPartyScripts(t *testing.T) {
-	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	defer upstream.Close()
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{"has_note":false}`) }, upstream)
-	handler, err := NewFundingHandler(client, "http://127.0.0.1:8787", t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	link, err := handler.NewSession()
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, _ := url.Parse(link)
-	for _, scenario := range []struct {
-		name, origin, host, token string
-		status                    int
-	}{
-		{"no token", "", "127.0.0.1:8787", "", 401},
-		{"malicious origin", "https://attacker.invalid", "127.0.0.1:8787", u.Fragment, 403},
-		{"dns rebinding", "", "attacker.invalid", u.Fragment, 403},
-		{"authorized", u.Scheme + "://" + u.Host, "127.0.0.1:8787", u.Fragment, 200},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "http://127.0.0.1:8787/funding/api/status", nil)
-			req.Host = scenario.host
-			req.Header.Set("Origin", scenario.origin)
-			req.Header.Set("Authorization", "Bearer "+scenario.token)
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, req)
-			if response.Code != scenario.status {
-				t.Fatalf("got %d: %s", response.Code, response.Body.String())
-			}
-		})
-	}
-	req := httptest.NewRequest("GET", "http://127.0.0.1:8787/funding", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, req)
-	if strings.Contains(response.Body.String(), "https://") || strings.Contains(response.Body.String(), "cdn") {
-		t.Fatal("funding page loads external assets")
-	}
-	if !strings.Contains(response.Header().Get("Content-Security-Policy"), "connect-src 'self'") {
-		t.Fatal("funding connect policy missing")
-	}
-}
-
-func TestPreparePersistsSecretAndNeverSendsItToBrowser(t *testing.T) {
+func TestPreparePersistsSecretAndReturnsOnlyPublicFields(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer upstream.Close()
 	var generated atomic.Int32

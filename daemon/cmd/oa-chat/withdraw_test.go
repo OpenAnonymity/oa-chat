@@ -26,10 +26,21 @@ func withdrawalTestConfig(s *httptest.Server) config.Config {
 	return c
 }
 
+func withdrawalApprovalTestServer(t *testing.T, next http.Handler) *httptest.Server {
+	t.Helper()
+	return fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/withdrawal/quote" && r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(paymentTestQuote("withdrawal"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	}))
+}
+
 func withdrawalTestStatus(phase string) map[string]any {
 	state := map[string]any{
 		"address": "0x1111111111111111111111111111111111111111", "chain_id": 1,
-		"token_address": "0x2222222222222222222222222222222222222222", "token_decimals": 6,
+		"token_address": "", "token_decimals": 9, "billing_asset": "native_eth", "billing_unit": "gwei", "native_asset_wei_per_unit": "1000000000",
 		"eth_balance": "1000000000000000", "private_balance": 99971, "amount": 99971,
 		"note_id": 58, "phase": phase, "message": "Withdrawal progress saved locally.",
 	}
@@ -41,7 +52,7 @@ func withdrawalTestStatus(phase string) map[string]any {
 
 func TestWithdrawDefaultsToReadOnlyStatus(t *testing.T) {
 	requests := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.Method != http.MethodGet || r.URL.Path != "/admin/withdrawal" || r.Header.Get("Authorization") != "Bearer "+strings.Repeat("a", 32) || r.Header.Get("X-OA-Management-Token") != withdrawalTestManagementToken {
 			t.Errorf("unexpected status request: %s %s", r.Method, r.URL.Path)
@@ -56,16 +67,16 @@ func TestWithdrawDefaultsToReadOnlyStatus(t *testing.T) {
 	if requests != 1 {
 		t.Fatal("status made additional requests")
 	}
-	for _, want := range []string{"Ethereum Mainnet", "0.099971 USDC", "0.001000000000000000 ETH", "withdraw --to ADDRESS", "does not authorize a transaction"} {
+	for _, want := range []string{"Ethereum Mainnet", "0.000099971 ETH", "0.001000000000000000 ETH", "withdraw --to ADDRESS", "does not authorize a transaction"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}
 	}
 }
 
-func TestWithdrawDestinationAuthorizesFullRemainingBalance(t *testing.T) {
+func TestWithdrawDestinationOnlyPreparesBoundQuote(t *testing.T) {
 	var sequence []string
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sequence = append(sequence, r.Method+" "+r.URL.Path)
 		if r.Header.Get("X-OA-Management-Token") != withdrawalTestManagementToken {
 			t.Error("owner credential missing from withdrawal request")
@@ -76,7 +87,8 @@ func TestWithdrawDestinationAuthorizesFullRemainingBalance(t *testing.T) {
 			if json.NewDecoder(r.Body).Decode(&body) != nil || len(body) != 2 || body["destination"] != withdrawalTestDestination || body["note_id"] != float64(58) {
 				t.Error("wrong withdrawal authorization")
 			}
-			phase = "complete"
+			_ = json.NewEncoder(w).Encode(paymentTestQuote("withdrawal"))
+			return
 		}
 		_ = json.NewEncoder(w).Encode(withdrawalTestStatus(phase))
 	}))
@@ -85,10 +97,10 @@ func TestWithdrawDestinationAuthorizesFullRemainingBalance(t *testing.T) {
 	if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &out); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(sequence, ",") != "GET /admin/withdrawal,POST /admin/withdrawal" {
+	if strings.Join(sequence, ",") != "GET /admin/withdrawal,POST /admin/withdrawal/quote" {
 		t.Fatalf("wrong sequence: %v", sequence)
 	}
-	for _, want := range []string{"full remaining balance", withdrawalTestDestination, "closes the private balance", "0.02 ETH per transaction", "No wallet connection is needed", "not canceled"} {
+	for _, want := range []string{withdrawalTestDestination, "Fixed amount: 0.000099971000000000 ETH", "--approve " + testQuoteID, "Quoting does not sign or broadcast"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}
@@ -98,7 +110,7 @@ func TestWithdrawDestinationAuthorizesFullRemainingBalance(t *testing.T) {
 func TestWithdrawSavedDestinationCannotChange(t *testing.T) {
 	for _, phase := range []string{"waiting_settlement", "waiting_funds", "withdrawal_pending", "confirming", "reverted"} {
 		t.Run(phase, func(t *testing.T) {
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					t.Error("changed destination authorized progress")
 				}
@@ -114,7 +126,7 @@ func TestWithdrawSavedDestinationCannotChange(t *testing.T) {
 }
 
 func TestWithdrawReadOnlyShowsExactSavedResumeCommand(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Error("status submitted a withdrawal")
 		}
@@ -127,13 +139,13 @@ func TestWithdrawReadOnlyShowsExactSavedResumeCommand(t *testing.T) {
 	if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "withdraw --to "+withdrawalTestDestination) || !strings.Contains(out.String(), "Transaction: 0x"+strings.Repeat("a", 64)) {
+	if !strings.Contains(out.String(), "withdraw --resume") || !strings.Contains(out.String(), "Transaction: 0x"+strings.Repeat("a", 64)) {
 		t.Fatal(out.String())
 	}
 }
 
 func TestWithdrawCompleteCommandDoesNotResubmit(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Error("completed withdrawal resubmitted")
 		}
@@ -147,12 +159,13 @@ func TestWithdrawCompleteCommandDoesNotResubmit(t *testing.T) {
 
 func TestWithdrawReadyNoteIgnoresPreviousCompletedDestination(t *testing.T) {
 	posts := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("ready")
 		state["destination"] = "0x4444444444444444444444444444444444444444"
 		if r.Method == http.MethodPost {
 			posts++
-			state = withdrawalTestStatus("complete")
+			_ = json.NewEncoder(w).Encode(paymentTestQuote("withdrawal"))
+			return
 		}
 		_ = json.NewEncoder(w).Encode(state)
 	}))
@@ -169,7 +182,7 @@ func TestWithdrawTerminalAndWaitingStatesStopAfterOneStep(t *testing.T) {
 	for _, phase := range []string{"waiting_settlement", "waiting_funds", "reverted", "recovery_required", "no_note", "ready", "unknown"} {
 		t.Run(phase, func(t *testing.T) {
 			posts := 0
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				state := withdrawalTestStatus("ready")
 				if r.Method == http.MethodPost {
 					posts++
@@ -179,14 +192,14 @@ func TestWithdrawTerminalAndWaitingStatesStopAfterOneStep(t *testing.T) {
 			}))
 			defer s.Close()
 			var out bytes.Buffer
-			err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &out)
+			err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--approve", testQuoteID}, &out)
 			if err == nil || posts != 1 {
 				t.Fatalf("phase %s did not stop exactly once: posts=%d err=%v", phase, posts, err)
 			}
-			if phase == "waiting_funds" && !strings.Contains(out.String(), "Send ETH on Ethereum Mainnet") {
+			if phase == "waiting_funds" && !strings.Contains(err.Error(), "fund the signing address") {
 				t.Fatal("missing ETH guidance")
 			}
-			if (phase == "waiting_funds" || phase == "waiting_settlement" || phase == "reverted") && !strings.Contains(out.String(), "withdraw --to "+withdrawalTestDestination) {
+			if (phase == "waiting_funds" || phase == "waiting_settlement" || phase == "reverted") && !strings.Contains(err.Error(), "rerun --to") {
 				t.Fatal("missing same-destination resume instructions")
 			}
 		})
@@ -196,7 +209,7 @@ func TestWithdrawTerminalAndWaitingStatesStopAfterOneStep(t *testing.T) {
 func TestWithdrawBlocksUnusableInitialStates(t *testing.T) {
 	for _, phase := range []string{"no_note", "recovery_required", "unknown"} {
 		t.Run(phase, func(t *testing.T) {
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					t.Error("unusable state authorized withdrawal")
 				}
@@ -212,7 +225,7 @@ func TestWithdrawBlocksUnusableInitialStates(t *testing.T) {
 
 func TestWithdrawResponseDestinationChangeStopsImmediately(t *testing.T) {
 	posts := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("ready")
 		if r.Method == http.MethodPost {
 			posts++
@@ -222,8 +235,8 @@ func TestWithdrawResponseDestinationChangeStopsImmediately(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(state)
 	}))
 	defer s.Close()
-	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "different destination") || posts != 1 {
+	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--approve", testQuoteID}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "changed the selected note, amount, or destination") || posts != 1 {
 		t.Fatalf("destination mismatch was not stopped: %v", err)
 	}
 }
@@ -231,7 +244,7 @@ func TestWithdrawResponseDestinationChangeStopsImmediately(t *testing.T) {
 func TestWithdrawReadOnlyCancellationDoesNotSuggestAuthorizingWithdrawal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Error("unexpected mutation")
 		}
@@ -248,7 +261,7 @@ func TestWithdrawReadOnlyCancellationDoesNotSuggestAuthorizingWithdrawal(t *test
 func TestWithdrawCancellationDuringSubmissionDoesNotClaimCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(withdrawalTestStatus("ready"))
 			return
@@ -258,7 +271,7 @@ func TestWithdrawCancellationDuringSubmissionDoesNotClaimCancellation(t *testing
 		<-r.Context().Done()
 	}))
 	defer s.Close()
-	err := runWithdrawal(ctx, withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
+	err := runWithdrawal(ctx, withdrawalTestConfig(s), []string{"--approve", testQuoteID}, &bytes.Buffer{})
 	if !errors.Is(err, errWithdrawalWaitStopped) || !strings.Contains(err.Error(), "may still be progressing") {
 		t.Fatalf("lost interruption recovery guidance: %v", err)
 	}
@@ -270,7 +283,7 @@ func TestWithdrawPendingWaitHonorsCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			var posts atomic.Int32
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				state := withdrawalTestStatus("ready")
 				if r.Method == http.MethodPost {
 					posts.Add(1)
@@ -283,7 +296,7 @@ func TestWithdrawPendingWaitHonorsCancellation(t *testing.T) {
 				}
 			}))
 			defer s.Close()
-			err := runWithdrawal(ctx, withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
+			err := runWithdrawal(ctx, withdrawalTestConfig(s), []string{"--approve", testQuoteID}, &bytes.Buffer{})
 			if !errors.Is(err, errWithdrawalWaitStopped) || posts.Load() != 1 {
 				t.Fatalf("pending cancellation failed: %v, posts=%d", err, posts.Load())
 			}
@@ -295,7 +308,7 @@ func TestWithdrawUncertainRequestNeverAutomaticallyRetries(t *testing.T) {
 	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusBadGateway} {
 		t.Run(http.StatusText(code), func(t *testing.T) {
 			posts := 0
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
 					_ = json.NewEncoder(w).Encode(withdrawalTestStatus("ready"))
 					return
@@ -305,7 +318,7 @@ func TestWithdrawUncertainRequestNeverAutomaticallyRetries(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]string{"error": "Check saved withdrawal status."})
 			}))
 			defer s.Close()
-			if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{}); err == nil {
+			if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--approve", testQuoteID}, &bytes.Buffer{}); err == nil {
 				t.Fatal("error reply accepted")
 			}
 			if posts != 1 {
@@ -316,7 +329,7 @@ func TestWithdrawUncertainRequestNeverAutomaticallyRetries(t *testing.T) {
 }
 
 func TestWithdrawInvalidOptionsAndChecksumNeverReachDaemon(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	s := fundingCLITestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer s.Close()
 	c := withdrawalTestConfig(s)
 	c.Listen = "127.0.0.1:1"
@@ -327,16 +340,13 @@ func TestWithdrawInvalidOptionsAndChecksumNeverReachDaemon(t *testing.T) {
 			t.Fatalf("invalid options reached daemon: %v: %v", args, err)
 		}
 	}
-	c.Backend = "ticket"
-	if err := runWithdrawal(context.Background(), c, nil, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "zkapi backend") {
-		t.Fatalf("ticket backend accepted: %v", err)
-	}
+
 }
 
 func TestWithdrawRejectsMalformedStatusBeforeSubmission(t *testing.T) {
 	for _, mutation := range []string{"network", "decimals", "signer", "token", "eth", "destination", "missing_destination", "transaction"} {
 		t.Run(mutation, func(t *testing.T) {
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					t.Error("malformed state authorized mutation")
 				}
@@ -371,9 +381,9 @@ func TestWithdrawRejectsMalformedStatusBeforeSubmission(t *testing.T) {
 
 func TestWithdrawNeverFollowsManagementRedirects(t *testing.T) {
 	var forwarded atomic.Int32
-	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwarded.Add(1) }))
+	target := fundingCLITestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { forwarded.Add(1) }))
 	defer target.Close()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	defer s.Close()
@@ -387,7 +397,7 @@ func TestWithdrawNeverFollowsManagementRedirects(t *testing.T) {
 
 func TestWithdrawPendingContinuesOnlyTheSameSavedDestination(t *testing.T) {
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		phase := "withdrawal_pending"
 		if r.Method == http.MethodPost {
 			var body map[string]any
@@ -418,13 +428,13 @@ func TestWithdrawPendingContinuesOnlyTheSameSavedDestination(t *testing.T) {
 func TestInferenceConflictDistinguishesWithdrawalFromSettlement(t *testing.T) {
 	for _, code := range []string{"withdrawal_pending", "withdrawal_conflict", "pending_settlement", "unknown"} {
 		t.Run(code, func(t *testing.T) {
-			bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			bridge := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/oa/v1/status":
-					_ = json.NewEncoder(w).Encode(map[string]any{"bridge_version": 2, "chain_id": 1, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928", "contract_address": "0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41", "billing_asset": "native_eth", "billing_unit": "gwei", "circuit_id": "zkapi-v2-note-bound-v1"})
+					_ = json.NewEncoder(w).Encode(map[string]any{"bridge_version": 3, "chain_id": 1, "mode": "direct_openrouter", "require_oa_org_key_source": true, "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260928", "contract_address": "0x4bDC8718c4F39289455a3C15F8Bd2C345AA51a41", "billing_asset": "native_eth", "billing_unit": "gwei", "circuit_id": "zkapi-v2-note-bound-v1"})
 				case "/oa/v1/lease":
 					body, _ := io.ReadAll(r.Body)
-					if string(body) != "{}" {
+					if string(body) != `{"request_limit_micro_usd":1000000}` {
 						t.Error("inference contents crossed companion boundary")
 					}
 					w.WriteHeader(http.StatusConflict)
@@ -435,7 +445,13 @@ func TestInferenceConflictDistinguishesWithdrawalFromSettlement(t *testing.T) {
 				}
 			}))
 			defer bridge.Close()
-			client, err := zkapi.New(zkapi.Config{ClientURL: bridge.URL, BridgeToken: strings.Repeat("b", 32), Network: "mainnet", HTTPClient: &http.Client{}})
+			client, err := zkapi.New(zkapi.Config{ClientURL: bridge.URL, BridgeToken: strings.Repeat("b", 32), Network: "mainnet", HTTPClient: &http.Client{Transport: ticketInferenceTransport(func(r *http.Request) (*http.Response, error) {
+				body := `{"test":1}`
+				if r.URL.Path == "/chat/pinned-models" {
+					body = `{"disabled_models":[]}`
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -455,25 +471,30 @@ func TestInferenceConflictDistinguishesWithdrawalFromSettlement(t *testing.T) {
 	}
 }
 
-func TestWithdrawSettlementBeforeReservationRetainsRequestedDestinationInGuidance(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := withdrawalTestStatus("ready")
+func TestWithdrawSettlementBeforeReservationRequiresNewQuote(t *testing.T) {
+	var posts int
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			state["phase"] = "waiting_settlement"
+			posts++
+			if r.URL.Path != "/admin/withdrawal/quote" {
+				t.Error("settlement wait authorized a payout")
+			}
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Wait for inference settlement, then rerun --to to prepare a fresh quote."})
+			return
 		}
-		_ = json.NewEncoder(w).Encode(state)
+		_ = json.NewEncoder(w).Encode(withdrawalTestStatus("ready"))
 	}))
 	defer s.Close()
-	var out bytes.Buffer
-	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &out)
-	if err == nil || !strings.Contains(out.String(), "After settlement, rerun oa-chat withdraw --to "+withdrawalTestDestination) {
-		t.Fatalf("lost destination guidance: %v %s", err, out.String())
+	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
+	if err == nil || posts != 1 || !strings.Contains(err.Error(), "fresh quote") {
+		t.Fatalf("settlement wait lost quote boundary: %v", err)
 	}
 }
 
 func TestWithdrawLostSubmissionReplyNeverRetriesOrClaimsNoTransaction(t *testing.T) {
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_ = json.NewEncoder(w).Encode(withdrawalTestStatus("ready"))
 			return
@@ -488,7 +509,7 @@ func TestWithdrawLostSubmissionReplyNeverRetriesOrClaimsNoTransaction(t *testing
 		_ = connection.Close()
 	}))
 	defer s.Close()
-	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
+	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--approve", testQuoteID}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "recover saved progress") || posts.Load() != 1 {
 		t.Fatalf("lost reply retried or lost recovery guidance: %v posts=%d", err, posts.Load())
 	}
@@ -500,9 +521,8 @@ func TestWithdrawLostSubmissionReplyNeverRetriesOrClaimsNoTransaction(t *testing
 func TestWithdrawExplicitRetryAuthorizesOnlyTheInitiallyObservedHash(t *testing.T) {
 	t.Parallel()
 	failedHash := "0x" + strings.Repeat("c", 64)
-	replacementHash := "0x" + strings.Repeat("d", 64)
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("reverted")
 		state["transaction_hash"] = failedHash
 		if r.Method == http.MethodPost {
@@ -525,7 +545,8 @@ func TestWithdrawExplicitRetryAuthorizesOnlyTheInitiallyObservedHash(t *testing.
 			if body["destination"] != withdrawalTestDestination || body["note_id"] != float64(58) {
 				t.Error("destination changed")
 			}
-			state["transaction_hash"] = replacementHash
+			_ = json.NewEncoder(w).Encode(paymentTestQuote("withdrawal"))
+			return
 		}
 		_ = json.NewEncoder(w).Encode(state)
 	}))
@@ -533,13 +554,13 @@ func TestWithdrawExplicitRetryAuthorizesOnlyTheInitiallyObservedHash(t *testing.
 	if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if posts.Load() != 2 {
+	if posts.Load() != 1 {
 		t.Fatalf("unexpected progress requests: %d", posts.Load())
 	}
 }
 
 func TestWithdrawRevertedWithoutHashDoesNotAuthorizeRetry(t *testing.T) {
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Error("missing failed hash authorized a replacement")
 		}
@@ -547,7 +568,7 @@ func TestWithdrawRevertedWithoutHashDoesNotAuthorizeRetry(t *testing.T) {
 	}))
 	defer s.Close()
 	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "no saved transaction hash") {
+	if err == nil || !strings.Contains(err.Error(), "no valid saved transaction hash") {
 		t.Fatalf("failed hash requirement missing: %v", err)
 	}
 }
@@ -556,7 +577,7 @@ func TestTwoWithdrawalClientsNeverAuthorizeRetryFromConcurrentRevert(t *testing.
 	failedHash := "0x" + strings.Repeat("e", 64)
 	initialReads := make(chan struct{})
 	var reads, posts, retries atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("withdrawal_pending")
 		state["transaction_hash"] = failedHash
 		if r.Method == http.MethodGet {
@@ -586,7 +607,7 @@ func TestTwoWithdrawalClientsNeverAuthorizeRetryFromConcurrentRevert(t *testing.
 		}()
 	}
 	for range 2 {
-		if err := <-results; err == nil || !strings.Contains(err.Error(), "another explicit command") {
+		if err := <-results; err == nil || !strings.Contains(err.Error(), "review and approve a fresh quote") {
 			t.Fatalf("polling client did not stop on finalized revert: %v", err)
 		}
 	}
@@ -599,7 +620,7 @@ func TestWithdrawLostRetryReplyRequiresFreshStatusAndDoesNotRepeatAuthorization(
 	failedHash := "0x" + strings.Repeat("c", 64)
 	replacementHash := "0x" + strings.Repeat("d", 64)
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := withdrawalApprovalTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("reverted")
 		state["transaction_hash"] = failedHash
 		if posts.Load() > 0 {
@@ -612,7 +633,7 @@ func TestWithdrawLostRetryReplyRequiresFreshStatusAndDoesNotRepeatAuthorization(
 				t.Error("invalid body")
 			}
 			if posts.Add(1) == 1 {
-				if body["retry_transaction_hash"] != failedHash {
+				if body["quote_id"] != testQuoteID || len(body) != 1 {
 					t.Error("missing initial retry authorization")
 				}
 				connection, _, err := w.(http.Hijacker).Hijack()
@@ -631,14 +652,14 @@ func TestWithdrawLostRetryReplyRequiresFreshStatusAndDoesNotRepeatAuthorization(
 		_ = json.NewEncoder(w).Encode(state)
 	}))
 	defer s.Close()
-	args := []string{"--to", withdrawalTestDestination}
+	args := []string{"--approve", testQuoteID}
 	if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), args, &bytes.Buffer{}); err == nil {
 		t.Fatal("lost retry response accepted")
 	}
 	if posts.Load() != 1 {
 		t.Fatal("uncertain retry was submitted again automatically")
 	}
-	if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), args, &bytes.Buffer{}); err != nil {
+	if err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--resume"}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if posts.Load() != 2 {
@@ -648,7 +669,7 @@ func TestWithdrawLostRetryReplyRequiresFreshStatusAndDoesNotRepeatAuthorization(
 
 func TestWithdrawSelectedNoteIDZeroIsExplicitlyAuthorized(t *testing.T) {
 	posts := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("ready")
 		state["note_id"] = 0
 		if r.Method == http.MethodPost {
@@ -657,8 +678,10 @@ func TestWithdrawSelectedNoteIDZeroIsExplicitlyAuthorized(t *testing.T) {
 			if json.NewDecoder(r.Body).Decode(&body) != nil || len(body) != 2 || body["note_id"] != float64(0) {
 				t.Error("note zero was omitted or changed")
 			}
-			state["phase"] = "complete"
-			state["destination"] = withdrawalTestDestination
+			q := paymentTestQuote("withdrawal")
+			q.NoteID = 0
+			_ = json.NewEncoder(w).Encode(q)
+			return
 		}
 		_ = json.NewEncoder(w).Encode(state)
 	}))
@@ -673,7 +696,7 @@ func TestWithdrawSelectedNoteIDZeroIsExplicitlyAuthorized(t *testing.T) {
 
 func TestWithdrawStaleClientDoesNotAdoptNewlyFundedNote(t *testing.T) {
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("withdrawal_pending")
 		if r.Method == http.MethodPost {
 			posts.Add(1)
@@ -689,7 +712,7 @@ func TestWithdrawStaleClientDoesNotAdoptNewlyFundedNote(t *testing.T) {
 	}))
 	defer s.Close()
 	err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination}, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "different private note") || posts.Load() != 1 {
+	if err == nil || !strings.Contains(err.Error(), "changed the selected note, amount, or destination") || posts.Load() != 1 {
 		t.Fatalf("stale client adopted a new note: %v posts=%d", err, posts.Load())
 	}
 }
@@ -699,7 +722,7 @@ func TestWithdrawConfirmationIsOneShotAndNeverAuthorizesRetry(t *testing.T) {
 	failedHash := "0x" + strings.Repeat("c", 64)
 	winningHash := "0x" + strings.Repeat("d", 64)
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("reverted")
 		state["transaction_hash"] = failedHash
 		if r.Method == http.MethodPost {
@@ -743,7 +766,7 @@ func TestWithdrawConfirmationIsOneShotAndNeverAuthorizesRetry(t *testing.T) {
 
 func TestWithdrawInvalidConfirmationNeverReachesDaemon(t *testing.T) {
 	requests := 0
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		t.Error("invalid confirmation reached daemon")
 	}))
@@ -768,7 +791,7 @@ func TestWithdrawInvalidConfirmationNeverReachesDaemon(t *testing.T) {
 func TestWithdrawConfirmationRequiresInitialFinalizedRevert(t *testing.T) {
 	for _, phase := range []string{"ready", "withdrawal_pending", "waiting_settlement", "waiting_funds", "confirming", "complete", "no_note", "recovery_required"} {
 		t.Run(phase, func(t *testing.T) {
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					t.Error("confirmation accepted before a saved finalized revert")
 				}
@@ -776,7 +799,7 @@ func TestWithdrawConfirmationRequiresInitialFinalizedRevert(t *testing.T) {
 			}))
 			defer s.Close()
 			err := runWithdrawal(context.Background(), withdrawalTestConfig(s), []string{"--to", withdrawalTestDestination, "--confirm", "0x" + strings.Repeat("a", 64)}, &bytes.Buffer{})
-			if err == nil || !strings.Contains(err.Error(), "only after") {
+			if err == nil || (!strings.Contains(err.Error(), "only after") && !strings.Contains(err.Error(), "same saved confirmation")) {
 				t.Fatalf("wrong phase permitted confirmation: %v", err)
 			}
 		})
@@ -785,7 +808,7 @@ func TestWithdrawConfirmationRequiresInitialFinalizedRevert(t *testing.T) {
 
 func TestWithdrawLostConfirmationReplyNeverSubmitsAgain(t *testing.T) {
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			state := withdrawalTestStatus("reverted")
 			state["transaction_hash"] = "0x" + strings.Repeat("a", 64)
@@ -815,7 +838,7 @@ func TestWithdrawExactConfirmationCommandResumesAfterLostReply(t *testing.T) {
 	failedHash := "0x" + strings.Repeat("a", 64)
 	winningHash := "0x" + strings.Repeat("b", 64)
 	var posts atomic.Int32
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := withdrawalTestStatus("reverted")
 		state["transaction_hash"] = failedHash
 		if posts.Load() > 0 {
@@ -859,7 +882,7 @@ func TestWithdrawExactConfirmationCommandResumesAfterLostReply(t *testing.T) {
 func TestWithdrawConfirmationCannotReplaceSavedEvidence(t *testing.T) {
 	for _, phase := range []string{"confirming", "complete"} {
 		t.Run(phase, func(t *testing.T) {
-			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
 					t.Error("confirmation replaced saved evidence")
 				}

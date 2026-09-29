@@ -34,7 +34,10 @@ oa-chat tickets redeem
 oa-chat serve
 ```
 
-For zkAPI access, use the [funding setup](#zkapi-and-funding) instead.
+For zkAPI access, keep the same configuration and use the
+[funding setup](#zkapi-and-funding). Dual-mode selection and the quote-based
+command-line funding flow below require a source build of this revision;
+`daemon-v0.1.0` predates them.
 [Installer options and upgrades](docs/CLI_PACKAGING.md#one-command-installation)
 cover version pinning and custom installation directories.
 
@@ -55,7 +58,7 @@ go build -o oa-chat ./cmd/oa-chat
 ./oa-chat tickets redeem --code-file /path/to/private-invite.txt
 # Alternatively:
 ./oa-chat tickets import /path/to/tickets.json
-./oa-chat serve
+./oa-chat serve --backend ticket
 ```
 
 Imports also work while the service runs. `tickets redeem` without a file
@@ -67,6 +70,14 @@ and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
 `OA_CHAT_CONFIG_DIR` or global `--config-dir DIR` selects another directory.
 The directory must be `0700`; `config.json` is `0600`. `init` never overwrites
 existing configuration. Use separate directories for staging and production.
+
+One initialization configures both ticket and zkAPI modes. Stop the current
+daemon, then choose `serve --backend ticket` or `serve --backend zkapi` using
+the same directory. `init --backend` sets the saved default used when `serve`
+omits the flag; it does not disable the other mode. Existing configurations
+need no reinitialization. The local API key and transport settings are shared;
+tickets and private notes remain separate. Ticket mode does not start or require
+the Rust companion. Ticket import and redemption work in either mode.
 
 The external network proxy is disabled by default: an empty or omitted `relay_url` uses
 direct HTTPS, including ticketing, verification, inference, companion requests,
@@ -87,10 +98,11 @@ metadata. A configured relay fails closed without falling back to direct HTTPS.
 This default change requires a source build of this revision; the published
 `daemon-v0.1.0` bundle still defaults to Wisp.
 
-`oa-chat status` shows service and wallet readiness. `oa-chat api-key`
+`oa-chat status` shows the authenticated running mode, saved default, and wallet
+readiness. `oa-chat api-key`
 explicitly prints the random **local** API key for configuring your client.
 It is not an inference-provider key. Keep keys, ticket codes, wallet files,
-and funding capability URLs out of public logs and bug reports.
+and recovery files out of public logs and bug reports.
 
 ### Foreground status and logs
 
@@ -105,7 +117,7 @@ availability or guarantee that a balance covers a request.
 Requests produce start and completion lines with an allowlisted method/route,
 HTTP status, elapsed time, and an aborted indication for interrupted requests.
 Health probes are silent. Streaming output continues to flush immediately.
-Prompts, responses, headers, model names, query strings, funding URLs, wallet
+Prompts, responses, headers, model names, query strings, wallet
 secrets, and raw companion/HTTP diagnostics are excluded. Command failures
 still return a nonzero exit status with a diagnostic on stderr.
 
@@ -150,30 +162,42 @@ Build it with `daemon/scripts/prepare-zkapi.sh` followed by
 Installed native bundles include both binaries and proving assets. The September
 29 source build passed a funded native ETH Sepolia run through streamed
 inference, actual outage continuation, metered settlement, finalized withdrawal,
-and restart recovery; see [current validation](docs/CLI_ZKAPI.md#native-sepolia-acceptance-2026-09-29).
+and restart recovery; see [that run's validation](docs/CLI_ZKAPI.md#native-sepolia-acceptance-2026-09-29).
+That run predates the automatic model budgets and quote approval commands.
 The updated source has not been published as a new release.
 
 ```sh
-oa-chat init --backend zkapi
-oa-chat serve
+oa-chat init                 # once, for both modes
+oa-chat serve --backend zkapi
 # In another terminal:
 oa-chat fund
 ```
 
 `fund` prints a persistent Ethereum address and its public ETH balance.
-Send ETH for principal and gas to that address on the displayed network, then run:
+The command-line flow follows the web wallet's send-to-address flow: choose a
+private deposit amount, review principal and network fees, send enough ETH to
+the displayed address, and approve the exact quote:
 
 ```sh
 oa-chat fund --amount 0.00075
+# Alternatively, choose a USD value converted to ETH with the verified quote:
+oa-chat fund --usd 2
+# After reviewing the returned quote and funding address:
+oa-chat fund --approve QUOTE_ID
 ```
 
 Choose the amount of ETH to turn into private inference credits (up to nine
-decimals, integer gwei). This command waits for incoming funds, signs the
-payable vault deposit locally, and
-waits for the confirmed deposit to activate. Ctrl+C stops waiting; rerunning
-the same command resumes the saved transaction. Keep the same `--config-dir`
-when using a nondefault directory. Starting the service or running plain
-`fund` never submits a transaction.
+decimals, integer gwei), or an exact USD amount. The quote shows the fixed
+principal, required fee allowance, recommended fee buffer, current balance,
+and remaining top-up. Approving its ID authorizes local signing within the
+quoted bounds; stale or changed quotes require a new review. Unused fee
+allowance stays at the local address. After submission, the command waits for
+Ethereum finality before activating the private note.
+
+Ctrl+C stops waiting without deleting saved state. `oa-chat fund --resume`
+recovers a saved transaction; it cannot authorize a new deposit or fee increase.
+Use the same `--config-dir` throughout. Starting the service, showing an address,
+or preparing a quote never broadcasts a transaction.
 
 No browser extension, wallet connection, seed phrase, or imported private key
 is required. The daemon creates a signing key and keeps it in its owner-only
@@ -186,37 +210,55 @@ To return the remaining private balance to an Ethereum address:
 ```sh
 oa-chat withdraw                 # status only
 oa-chat withdraw --to 0xYOUR_ETHEREUM_DESTINATION
+oa-chat withdraw --approve QUOTE_ID
 ```
 
 Replace the placeholder with the receiving address. This closes the entire
-private balance; the local signer pays ETH gas. No wallet connection is needed.
-Resume an interrupted withdrawal with the same destination and configuration
-directory. Once completed, `fund --amount` can create a new private balance.
+private balance after reviewing and approving its destination and fee quote;
+the local signer pays ETH gas. Withdrawal preparation reserves the note, so
+finish any outstanding inference settlement first. No wallet connection is
+needed. Resume an interrupted withdrawal with `oa-chat withdraw --resume`
+and the same configuration directory. Once completed, `fund --amount` can
+prepare a new private balance.
 See [withdrawal and recovery details](docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet).
 
-`fund --browser` opens an optional local page showing the same address and
-controls; `fund --no-open` prints its expiring capability URL. Reloading the
-page only checks status. Its explicit deposit button authorizes local signing;
-no signing key enters the page. See [funding, recovery, and limitations](docs/CLI_ZKAPI.md).
-The published `daemon-v0.1.0` binary predates this change; build this revision to
-use address funding until an updated native release is published. Withdrawals
-also require building the matching patched companion from this revision.
+Return public ETH left at the funding address separately:
+
+```sh
+oa-chat fund return --to 0xYOUR_ETHEREUM_DESTINATION
+# Add --amount ETH to choose a partial return; otherwise reserve gas and return the rest.
+oa-chat fund return --approve QUOTE_ID
+```
+
+These commands use the same quote/approval boundary. They do not withdraw a
+private note. Browser funding pages and the `--browser`/`--no-open` flags have
+been removed. See [funding, recovery, and limitations](docs/CLI_ZKAPI.md).
+Build both matching binaries from this revision; the published
+`daemon-v0.1.0` bundle does not implement these commands.
 
 Ethereum mainnet is the default. Sepolia requires an explicit selection:
 
 ```sh
 oa-chat --config-dir /path/to/private-sepolia-state init \
-  --backend zkapi --network sepolia --listen 127.0.0.1:8788
-oa-chat --config-dir /path/to/private-sepolia-state serve
+  --network sepolia --listen 127.0.0.1:8788
+oa-chat --config-dir /path/to/private-sepolia-state serve --backend zkapi
 oa-chat --config-dir /path/to/private-sepolia-state fund
 ```
 
 The companion checks the manifest chain against the selected network, and
 state is separated by network and deployment ID. This source targets the fresh
 September 28 native ETH deployments, not the older ERC-20 wallets. Preserve
-old recovery directories; they cannot be rebound to the new vault. The default
-request cap is $1; `init --zkapi-request-limit-usd 1|2|3|4.5|6` selects a coarse
-cap, converted to gwei using an independently checked frozen billing quote.
+old recovery directories; they cannot be rebound to the new vault. Each model
+automatically selects the same reviewed budget bucket as the web wallet: $1,
+$2, $3, $4.50, or $6. `/v1/models` includes `oa_request_limit_micro_usd` for each
+available model. The daemon loads current issuer model policy before issuing
+access. Explicit OA model tiers take precedence; otherwise, confirmed provider
+catalog models use the web wallet's reviewed fallback policy. Disabled,
+unknown, or unreviewed models are rejected. The companion
+converts the coarse USD budget to gwei using an independently checked frozen
+billing quote. A private balance at least equal to that bound can obtain access,
+subject to any outstanding settlement. The budget is a cap; settlement charges
+actual usage. Legacy fixed-limit settings are accepted but ignored.
 Its HTTPS requests always use the daemon's
 authenticated loopback CONNECT bridge, which rejects plaintext HTTP. The bridge
 connects directly to destination TCP by default, or carries destination TLS

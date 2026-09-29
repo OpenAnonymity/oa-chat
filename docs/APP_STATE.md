@@ -1,3 +1,45 @@
+## 2026-09-29: Shared CLI setup, automatic budgets, and terminal funding
+
+- One `oa-chat init` configures ticket and zkAPI capability. `serve --backend
+  ticket|zkapi` selects the running mode without rewriting the saved default or
+  touching the other wallet. Ticket commands remain usable in either mode.
+  CLI status and wallet commands discover the authenticated running mode,
+  including its network; an old saved default cannot redirect funding.
+- zkAPI chooses the same reviewed coarse model buckets as the web: ticket tiers
+  1/2 → $1, 3/8 → $2, 5 → $3, 25 → $4.50, 100 → $6. It requires the anonymous
+  live model map and excludes disabled/unreviewed tiers. Untiered models in the
+  public provider catalog use the web's fallback: opus/image names receive $2;
+  thinking/instant/default/reasoning fallbacks all map to $1. Exact live
+  assignments always win. Only the budget
+  crosses companion bridge v3, never a model ID or prompt. An existing pending
+  proof retains its original frozen quote and cap; switching models cannot
+  reinterpret it. Legacy configured global caps are ignored.
+- Funding is terminal-only; browser assets, capability routes, `--browser`, and
+  `--no-open` are removed. `fund --amount ETH` or `fund --usd USD` prepares a
+  durable fixed-principal quote. `fund --approve ID` authorizes that displayed
+  quote; `fund --resume` recovers saved signed bytes. A USD refresh retains the
+  original principal until the input is edited. ETH deposits use nine decimal
+  places; public returns can use all 18.
+- Low EIP-1559 fees match the web: pinned recent block/fee-history data, exact
+  payable simulation with a balance override, required allowance, optional
+  buffer, and exact remaining top-up after existing funds. Approval rechecks
+  the operation, balance, and fees against its displayed ceiling. There is no
+  fixed 0.02 ETH fee reserve. Optional buffer does not prevent proceeding when
+  the actual required allowance fits. Quoting never signs or broadcasts.
+  Withdrawal simulation must reserve headroom for the payout when the receiving
+  address is the local signer: overriding it with the maximum uint256 balance
+  makes the vault transfer overflow. Approval and signing use the real balance.
+- `withdraw --to ADDRESS` prepares a full private-balance quote;
+  `withdraw --approve ID` signs it. `fund return --to ADDRESS [--amount ETH]`
+  prepares a public ETH return; omit amount only for an EOA sweep. Private notes
+  and unsettled transactions must be resolved before returning their gas funds.
+  Management operations require the owner credential, separate from the API key
+  shared with inference clients. Back up the whole private config directory.
+- See [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md) for current commands and
+  recovery. Earlier sections below describe historical implementations and
+  acceptance runs; the previous native-flow result does not itself validate the
+  new fee-quote flow.
+
 ## 2026-09-29: Payment feedback published to staging and Sepolia
 
 - Both public apps now include the reviewed payment fixes from core
@@ -19,6 +61,7 @@
   Sepolia's deployment error-log scan was empty. Release verification did not
   perform funded wallet transactions.
 
+
 ## 2026-09-29: CLI native ETH deployment and verifier outage parity
 
 - The CLI source now embeds the fresh Mainnet/Sepolia manifests used by staging
@@ -30,8 +73,8 @@
   unit and scale. Legacy private notes are not migrated. Preserve old config
   directories and use their matching release. Prepared requests preserve the
   frozen quote and original cap across restart; settlement checks the same
-  quote. New requests default to a $1 cap; supported coarse caps are
-  $1/$2/$3/$4.50/$6. Full details: [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md).
+  quote. That revision defaulted new requests to a $1 cap; the automatic
+  model policy above now selects $1/$2/$3/$4.50/$6. Full details: [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md).
 - Both CLI backends support the browser's eligible verifier outage behavior.
   Recent attestation permits transport/gateway outage continuation; 429 and
   exact ownership-check errors follow the existing browser exception. Explicit

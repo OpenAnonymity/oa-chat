@@ -5,20 +5,17 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
-	"net/url"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestCheckRequiresExactV2NativeDeploymentIdentity(t *testing.T) {
+func TestCheckRequiresExactV3NativeDeploymentIdentity(t *testing.T) {
 	mutations := map[string]any{
 		"deployment_id": "old-deployment", "contract_address": "0x1111111111111111111111111111111111111111",
 		"chain_id": 42, "billing_asset": "erc20", "billing_unit": "micro_usd", "circuit_id": "zkapi-v2",
-		"bridge_version": 1, "require_oa_org_key_source": false, "mode": "proxy",
+		"bridge_version": 2, "require_oa_org_key_source": false, "mode": "proxy",
 	}
 	for _, network := range []string{"mainnet", "sepolia"} {
 		for field, replacement := range mutations {
@@ -99,12 +96,12 @@ func TestCompleteOverridesProviderVerificationHeadersWithTrustedBridgeState(t *t
 					t.Error("unexpected companion path")
 				}
 				body, _ := io.ReadAll(r.Body)
-				if string(body) != "{}" {
+				if string(body) != `{"request_limit_micro_usd":1000000}` {
 					t.Error("prompt sent to proof companion")
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"api_key": "bounded-key", "base_url": upstream.URL, "expires_at": time.Now().Unix() + 60, "verified": verified, "verification_status": status, "verification_detail": detail})
 			}, upstream)
-			response, err := client.Complete(context.Background(), json.RawMessage(`{"messages":[{"role":"user","content":"private"}]}`))
+			response, err := client.Complete(context.Background(), json.RawMessage(`{"model":"example/model","messages":[{"role":"user","content":"private"}]}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,69 +112,6 @@ func TestCompleteOverridesProviderVerificationHeadersWithTrustedBridgeState(t *t
 			}
 			if detail == "" && len(response.Header.Values("X-OA-Verification-Detail")) != 0 {
 				t.Fatal("verified response retained provider detail")
-			}
-		})
-	}
-}
-
-func TestModelsUsesAnonymousPublicCatalogTransport(t *testing.T) {
-	var providerCalls, companionExtraCalls atomic.Int32
-	const payload = `{"data":[{"id":"openai/gpt-4o-mini","name":"GPT-4o mini","context_length":128000}]}`
-	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		providerCalls.Add(1)
-		body, _ := io.ReadAll(r.Body)
-		if r.URL.Path != "/models" || r.Method != http.MethodGet || len(body) != 0 {
-			t.Error("catalog request included prompts or wrong route")
-		}
-		for _, header := range []string{"Authorization", "Cookie", "Proxy-Authorization", "X-OA-Verification-Status", "HTTP-Referer", "X-Title"} {
-			if r.Header.Get(header) != "" {
-				t.Errorf("identity header %s reached public catalog", header)
-			}
-		}
-		_, _ = io.WriteString(w, payload)
-	}))
-	defer upstream.Close()
-	jar, _ := cookiejar.New(nil)
-	origin, _ := url.Parse(upstream.URL)
-	jar.SetCookies(origin, []*http.Cookie{{Name: "identity", Value: "private-account"}})
-	upstream.Client().Jar = jar
-	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		companionExtraCalls.Add(1)
-		t.Error("model catalog unnecessarily used companion")
-	}, upstream)
-	raw, err := client.Models(context.Background())
-	if err != nil || string(raw) != payload || providerCalls.Load() != 1 || companionExtraCalls.Load() != 0 {
-		t.Fatalf("public catalog failed: %s %v", raw, err)
-	}
-}
-
-func TestModelsRejectsUnavailableOrMalformedCatalog(t *testing.T) {
-	for _, scenario := range []struct {
-		name   string
-		status int
-		body   string
-	}{
-		{"http failure", 503, `{"data":[{"id":"valid"}],"error":"private-provider-detail"}`},
-		{"redirect", 307, `{"data":[{"id":"valid"}]}`},
-		{"syntax", 200, `{"data":[`},
-		{"missing data", 200, `{}`},
-		{"empty data", 200, `{"data":[]}`},
-		{"wrong type", 200, `{"data":"private-provider-detail"}`},
-		{"wrong id type", 200, `{"data":[{"id":42}]}`},
-		{"missing id", 200, `{"data":[{}]}`},
-		{"empty id", 200, `{"data":[{"id":""}]}`},
-		{"whitespace id", 200, `{"data":[{"id":" \t\n"}]}`},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(scenario.status)
-				_, _ = io.WriteString(w, scenario.body)
-			}))
-			defer upstream.Close()
-			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected bridge catalog call") }, upstream)
-			raw, err := client.Models(context.Background())
-			if err == nil || raw != nil || strings.Contains(err.Error(), "private-provider-detail") {
-				t.Fatal("untrusted malformed catalog accepted or diagnostic leaked")
 			}
 		})
 	}
