@@ -112,3 +112,19 @@ for (const atBottom of [true, false]) {
         assert.equal(scroller.scrollTop, atBottom ? 1200 : 100);
     });
 }
+
+
+test('Ask enhances supplied source links on each answer update using the shared renderer', () => withViewport(() => {
+    const area = Object.create(ChatArea.prototype);
+    const answer = { closest: () => null, innerHTML: '' };
+    area.quickAsk = { activeRequestId: 7, window: { querySelector: selector => selector === '.quick-ask-answer' ? answer : null } };
+    area.app = { processContentWithLatex: content => `<p>${content}</p>` };
+    area.updateQuickAskStatus = () => {};
+    const calls = [];
+    window.MessageTemplates = { enhanceInlineLinks(html, id) { calls.push({ html, id }); return `enhanced:${html}`; } };
+    area.updateQuickAskAnswer('partial');
+    area.updateQuickAskAnswer('<a href="https://law.cornell.edu/">law.cornell.edu</a>');
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].id, 'quick-ask-7');
+    assert.equal(answer.innerHTML, `enhanced:${calls[1].html}`);
+}));

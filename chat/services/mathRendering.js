@@ -334,6 +334,46 @@ function normalizeDollarMathTextNodes(root) {
     });
 }
 
+// Models sometimes emit prose ampersands inside \text without escaping them.
+// Restrict recovery to balanced text groups; & outside them aligns matrix columns.
+export function normalizeMathTextAmpersands(source) {
+    // A literal \text command inside verbatim is content, not a text group.
+    if ([...source.matchAll(/\\verb\b/g)].some(token => !isEscaped(source, token.index))) {
+        return source;
+    }
+    const command = /\\text\s*\{/g;
+    let result = '';
+    let cursor = 0;
+    let match;
+    while ((match = command.exec(source))) {
+        if (isEscaped(source, match.index)) continue;
+        const contentStart = command.lastIndex;
+        let depth = 1;
+        let end = contentStart;
+        for (; end < source.length; end++) {
+            if (source[end] !== '{' && source[end] !== '}') continue;
+            if (isEscaped(source, end)) continue;
+            if (source[end] === '{') depth++;
+            if (source[end] === '}' && --depth === 0) break;
+        }
+        if (depth !== 0) break;
+        result += source.slice(cursor, contentStart);
+        // Embedded math, verbatim and other commands have their own ampersand
+        // rules. Leave those groups alone instead of guessing at TeX semantics.
+        const text = source.slice(contentStart, end);
+        const hasCommandsOrMath = [...text.matchAll(/\$|\\(?:[a-zA-Z]|\()/g)]
+            .some(token => !isEscaped(text, token.index));
+        for (let i = contentStart; i < end; i++) {
+            result += !hasCommandsOrMath && source[i] === '&' && !isEscaped(source, i)
+                ? '\\&' : source[i];
+        }
+        result += '}';
+        cursor = end + 1;
+        command.lastIndex = cursor;
+    }
+    return result + source.slice(cursor);
+}
+
 export function renderMathContent(root) {
     if (!root) return;
 
@@ -344,6 +384,7 @@ export function renderMathContent(root) {
     renderer(root, {
         delimiters: MATH_DELIMITERS,
         ignoredClasses: ['math-literal-dollar'],
+        preProcess: normalizeMathTextAmpersands,
         throwOnError: false
     });
 }

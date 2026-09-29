@@ -1,3 +1,9 @@
+## 2026-09-29: Ask source links and malformed math labels
+
+- Ask answers now use the same inline-link chip renderer as full replies, including streaming updates. Only links present in the answer are enhanced; plain domain names are not assigned guessed URLs. Structured sources still use the existing Ask sources footer. The screenshot alone cannot establish whether the original model returned linked or bare source names.
+- Shared KaTeX rendering escapes otherwise-invalid ampersands inside balanced, plain `\text{...}` groups. Groups containing commands or embedded math, and expressions containing verbatim commands, are left untouched. Matrix alignment ampersands outside text groups and already escaped characters remain intact. The reported Gemini flow is covered with the actual bundled KaTeX parser; this is narrow recovery for malformed model output, not support for arbitrary invalid LaTeX. Trusted HTML remains disabled.
+- The proxy retry control uses the same two-arrow SVG as Regenerate response. Its larger hit area is centered under the globe; the status text aligns with Network Proxy. Existing retry transitions and reduced-motion support remain, as does the orange unavailable globe. No proxy routing or fallback policy changed in this UI work.
+
 ## 2026-09-28: Restore switched accounts in existing windows
 
 - A completed username sign-in announces that its saved account is ready. Other windows discard old in-memory credentials and load the new account's non-extractable key bundle, verify the shared session, and activate its scoped ticket wallet without reloading or asking for a second passkey. Focus, visibility, and send preflight also reconcile the saved binding when a notification was missed.

@@ -2598,7 +2598,9 @@ class RightPanel {
                 <div id="proxy-failure-notice" class="oa-proxy-failure" data-state="unavailable"${statusMeta.state === 'unavailable' ? '' : ' hidden'}>
                     <button type="button" id="proxy-retry-btn" class="oa-proxy-retry" aria-label="Retry proxy connection" aria-disabled="${!!pending}" data-tooltip="Retry" data-tooltip-position="end">
                         <span class="t-icon-swap" data-state="a" aria-hidden="true">
-                            <span class="t-icon" data-icon="a"><span class="oa-proxy-retry-turns"><svg class="oa-proxy-retry-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span></span>
+                            <span class="t-icon" data-icon="a"><span class="oa-proxy-retry-turns"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="oa-proxy-retry-arrow">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg></span></span>
                             <span class="t-icon" data-icon="b"><span class="t-success-check" data-state="out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4 4 10-10"/></svg></span></span>
                         </span>
                     </button>

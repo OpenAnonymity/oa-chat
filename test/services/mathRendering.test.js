@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import katex from '../../chat/vendor/katex/katex.min.js';
 import markedApi from '../../chat/vendor/marked/marked.min.js';
 
 import {
     createMathPlaceholderNamespace,
+    normalizeMathTextAmpersands,
+    renderMathContent,
     normalizeInlineDollarMath,
     protectDollarMathForMarkdown,
     restoreLiteralDollarPlaceholders
@@ -128,4 +131,55 @@ test('leaves inline and fenced code untouched during Markdown protection', () =>
     });
 
     assert.equal(protectedContent, content);
+});
+
+
+test('renders the reported Gemini flow without breaking matrix alignment', () => {
+    const source = String.raw`\text{Deposit on-chain} \longrightarrow \begin{matrix} \text{ZK Proof of Solvency} \\ + \text{ RLN Nullifier} \end{matrix} \xrightarrow{\text{Off-chain API Call}} \text{Server executes & refunds diff} \longrightarrow \text{Accumulate & Repeat}`;
+    assert.throws(() => katex.renderToString(source, { throwOnError: true }));
+    const repaired = normalizeMathTextAmpersands(source);
+    assert.doesNotThrow(() => katex.renderToString(repaired, { throwOnError: true }));
+    const matrix = String.raw`\begin{matrix} a & b \\ \text{A & B} & c \end{matrix}`;
+    const normalized = normalizeMathTextAmpersands(matrix);
+    assert.equal(normalized, String.raw`\begin{matrix} a & b \\ \text{A \& B} & c \end{matrix}`);
+    assert.doesNotThrow(() => katex.renderToString(normalized, { throwOnError: true }));
+});
+
+test('math repair preserves escaped ampersands, other math and incomplete text groups', () => {
+    for (const source of [String.raw`\text{A \& B}`, String.raw`a & b`, String.raw`\text{unfinished &`, String.raw`\\text{A & B}`]) {
+        assert.equal(normalizeMathTextAmpersands(source), source);
+    }
+    assert.equal(normalizeMathTextAmpersands(String.raw`\text{A {B & C} \{ D & E}`), String.raw`\text{A {B \& C} \{ D \& E}`);
+});
+
+test('shared math renderer applies repair without enabling trusted HTML', () => {
+    const previous = globalThis.renderMathInElement;
+    let options;
+    globalThis.renderMathInElement = (_, value) => { options = value; };
+    try { renderMathContent({}); } finally { globalThis.renderMathInElement = previous; }
+    assert.equal(options.preProcess(String.raw`\text{A & B}`), String.raw`\text{A \& B}`);
+    assert.notEqual(options.trust, true);
+});
+
+
+test('math repair leaves embedded matrices, verbatim and URL commands intact', () => {
+    const sources = [
+        String.raw`\text{matrix $\begin{matrix} a & b \end{matrix}$}`,
+        String.raw`\text{matrix \(\begin{matrix} a & b \end{matrix}\)}`,
+        String.raw`\text{\verb|a & b|}`,
+        String.raw`\verb|\text{A & B}|`,
+        String.raw`\verb*+\text{A & B}+`,
+        String.raw`\text{\href{https://example.com/?a=1&b=2}{link}}`
+    ];
+    for (const source of sources) {
+        const normalized = normalizeMathTextAmpersands(source);
+        assert.equal(normalized, source);
+        assert.equal(katex.renderToString(normalized, { throwOnError: true }),
+            katex.renderToString(source, { throwOnError: true }));
+    }
+    const mixed = sources[0] + String.raw` + \text{A & B}`;
+    const normalized = normalizeMathTextAmpersands(mixed);
+    assert.equal(normalized, sources[0] + String.raw` + \text{A \& B}`);
+    const rendered = katex.renderToString(normalized, { throwOnError: true });
+    assert.equal((rendered.match(/<mtd>/g) || []).length, 2);
 });

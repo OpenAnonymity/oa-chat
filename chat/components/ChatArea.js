@@ -772,7 +772,12 @@ export default class ChatArea {
 
         assistantBubble?.classList.remove('quick-ask-assistant-pending');
         this.updateQuickAskStatus(content ? '' : options.status);
-        answerEl.innerHTML = this.app.processContentWithLatex(content || '');
+        const html = this.app.processContentWithLatex(content || '');
+        // Ask uses the same source chips as full replies, including while streaming.
+        // Only existing links are enhanced; plain domain names are not invented URLs.
+        answerEl.innerHTML = globalThis.window?.MessageTemplates?.enhanceInlineLinks?.(
+            html, `quick-ask-${this.quickAsk.activeRequestId}`
+        ) ?? html;
         renderMathContent(answerEl);
         if (followAnswer) miniChat.scrollTop = miniChat.scrollHeight;
     }

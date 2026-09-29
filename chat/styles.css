@@ -9912,13 +9912,14 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 .oa-proxy-status-icon:hover .oa-proxy-status-tooltip, .oa-proxy-status-icon:focus-visible .oa-proxy-status-tooltip { visibility: visible; }
 /* The failure row is the Network Proxy row's subtitle: it exists only while
    the proxy is unavailable (and through the retry that follows), sits under
-   the label's text rather than under the globe, and stays muted — the globe
-   already carries the state's colour. Retry is the single-arc arrow with a
+   the header's icon and text columns, and stays muted — the globe
+   already carries the state's colour. Retry uses the response-regeneration icon with a
    real 22px target; each press turns it one full turn by transition, so a
    second press continues the motion rather than restarting it. */
 .oa-proxy-failure {
-    display: flex; gap: .375rem; align-items: center; font-size: .6875rem; line-height: 1.4;
-    padding-left: 1rem; margin-top: .25rem; max-height: 1.5rem;
+    display: grid; grid-template-columns: .875rem minmax(0, 1fr); gap: .375rem;
+    align-items: center; font-size: .6875rem; line-height: 1.4;
+    margin-top: .25rem; max-height: 1.5rem;
     --proxy-feedback-fade: 280ms;
     --text-swap-translate-y: 2px; --text-swap-blur: 1px;
     --icon-swap-start-scale: .8; --icon-swap-blur: 1px;
@@ -9937,6 +9938,8 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 .oa-proxy-status-icon { transition: color 420ms ease; }
 .oa-proxy-failure[hidden] { display: none; }
 .oa-proxy-retry {
+    /* Keep the 22px target centered on the header's 14px globe column. */
+    margin-left: -.25rem;
     display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
     width: 1.375rem; height: 1.375rem; padding: 0; border: 0; border-radius: .375rem;
     background: transparent; color: hsl(var(--color-muted-foreground)); cursor: pointer;
