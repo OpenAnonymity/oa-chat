@@ -27,6 +27,7 @@ import {
 } from './services/mathRendering.js';
 import networkProxy from './services/networkProxy.js';
 import inferenceService from './services/inference/inferenceService.js';
+import { noteLoadedSession } from './services/inference/accessDiscardLog.js';
 import ticketClient from './services/ticketClient.js';
 import ticketStore from './services/ticketStore.js';
 import scrubberService from './services/scrubberService.js';
@@ -9557,9 +9558,18 @@ class ChatApp {
             if (session && session.id) {
                 this.sanitizePersistedSessionAccess(session);
                 this.normalizeSessionCouncilState(session);
+                this.noteLoadedSession(session);
                 this.state.sessionsById.set(session.id, session);
             }
         });
+    }
+
+    // Diagnostics only: a chat loaded from storage without the unexpired key
+    // this tab held for it leaves an access-missing timeline event.
+    noteLoadedSession(session) {
+        const previous = this.state.sessionsById.get(session.id) || this.sessionsBeforeReload?.get(session.id) || null;
+        if (previous === session) return;
+        noteLoadedSession(session, previous);
     }
 
     insertSessionIntoList(session) {
@@ -9568,6 +9578,7 @@ class ChatApp {
         // Search also populates the cache; cache membership is not sidebar membership.
         session = this.state.sessionsById.get(session.id) || session;
         this.sanitizePersistedSessionAccess(session);
+        this.noteLoadedSession(session);
 
         this.normalizeSessionCouncilState(session);
 
@@ -9652,6 +9663,9 @@ class ChatApp {
     }
 
     async reloadSessions() {
+        // Kept until the reload has cached its sessions, so a chat that comes
+        // back without the key this tab held is noticed (noteLoadedSession).
+        this.sessionsBeforeReload = this.state.sessionsById;
         this.state.sessions = [];
         this.state.sessionsById = new Map();
         this.state.sessionsPageCursor = null;
@@ -9660,8 +9674,12 @@ class ChatApp {
         this.state.sessionSearchResultsQuery = '';
         this.state.sessionSearchResultsKey = '';
         this.state.sessionSearchPending = false;
-        await this.loadInitialSessions();
-        await this.ensureSessionLoaded(this.state.currentSessionId);
+        try {
+            await this.loadInitialSessions();
+            await this.ensureSessionLoaded(this.state.currentSessionId);
+        } finally {
+            this.sessionsBeforeReload = null;
+        }
         if (this.hasActiveSessionListCriteria()) {
             await this.updateSessionSearchResults();
         } else {

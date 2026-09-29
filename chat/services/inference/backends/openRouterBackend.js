@@ -8,7 +8,7 @@ import {
     getVerifierBypassDetail,
     isLocalVerifierBypassAllowed
 } from '../localVerifierPolicy.js';
-import { logAccessDiscard } from '../accessDiscardLog.js';
+import { logAccessDiscard, rememberHeldAccess } from '../accessDiscardLog.js';
 import {
     buildExplicitlyVerifiedOpenRouterSharePayload,
     clearUnverifiedOpenRouterAccess,
@@ -143,6 +143,7 @@ const openRouterBackend = {
                 };
                 session.currentEphemeralKeyId = newEphemeralId;
             }
+            rememberHeldAccess(session);
         }
     },
     clearAccessInfo(session, { reason = 'unspecified' } = {}) {

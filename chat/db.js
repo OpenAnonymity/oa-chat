@@ -1,4 +1,6 @@
 // IndexedDB implementation for chat history storage
+import { logAccessOverwrite } from './services/inference/accessDiscardLog.js';
+
 function normalizeId(id) {
     return (id || '').toString().replace(/-/g, '').toUpperCase();
 }
@@ -254,6 +256,23 @@ class ChatDatabase {
     }
 
     // Sessions
+    // A save without a key that lands on a stored, unexpired key is how a key
+    // vanishes with no discard (a stale copy from another tab). The read runs
+    // inside the same transaction, only when the incoming copy has no key, and
+    // never changes what is written; it only leaves an access-overwrite event.
+    putSessionNotingOverwrite(store, session) {
+        if (session?.apiKey || typeof store.get !== 'function') {
+            store.put(session);
+            return;
+        }
+        const request = store.get(session.id);
+        request.onsuccess = () => {
+            try { logAccessOverwrite(request.result, session); } catch { /* diagnostics only */ }
+            store.put(session);
+        };
+        request.onerror = () => { store.put(session); };
+    }
+
     async saveSession(session) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readwrite');
@@ -267,7 +286,7 @@ class ChatDatabase {
             };
             transaction.onerror = () => reject(transaction.error || new Error('The chat session could not be saved.'));
             transaction.onabort = () => reject(transaction.error || new Error('The chat session was not committed.'));
-            store.put(session);
+            this.putSessionNotingOverwrite(store, session);
         });
     }
 
@@ -311,7 +330,7 @@ class ChatDatabase {
             };
             transaction.onerror = () => reject(transaction.error);
 
-            sessionsStore.put(session);
+            this.putSessionNotingOverwrite(sessionsStore, session);
             (messages || []).forEach(message => {
                 messagesStore.put(message);
             });

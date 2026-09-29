@@ -5,19 +5,29 @@ import { applyVerifierRetryResult } from '../../chat/application/verifierRecover
 import { acquireSessionAccess } from '../../chat/application/accessController.js';
 import {
     ACCESS_DISCARD_ACTION,
+    ACCESS_MISSING_ACTION,
+    ACCESS_OVERWRITE_ACTION,
     ACCESS_REPLACE_ACTION,
     describeAccessDiscard,
-    logAccessDiscard
+    logAccessDiscard,
+    logAccessOverwrite,
+    noteLoadedSession,
+    rememberHeldAccess
 } from '../../chat/services/inference/accessDiscardLog.js';
 
 // A key that disappears between two messages must leave a reason in the
 // Activity Timeline (release browser audit, 2026-09-29, finding 1).
 
+function fakeSessionStorage() {
+    const map = new Map();
+    return { getItem: key => map.has(key) ? map.get(key) : null, setItem: (key, value) => map.set(key, String(value)), removeItem: key => map.delete(key), map };
+}
+
 async function withTimeline(run) {
     const entries = [];
     const previousWindow = globalThis.window;
     const previousInfo = console.info;
-    globalThis.window = { networkLogger: { logRequest: entry => { entries.push(entry); return entry; } } };
+    globalThis.window = { networkLogger: { logRequest: entry => { entries.push(entry); return entry; } }, sessionStorage: fakeSessionStorage() };
     console.info = () => {};
     try { return await run(entries); } finally {
         console.info = previousInfo;
@@ -117,4 +127,94 @@ test('the Activity Timeline names the discard and spells out its facts in detail
         response: { reason: 'backend-change', ephemeralKeyId: 'eph-7', stationId: 'station-9', verification: 'verified', expiresAt: '2026-09-29T10:00:00Z' } };
     assert.equal(getActivityDescription(log), 'Session key discarded: the chat switched payment mode');
     assert.match(getActivityDescription(log, true), /Ephemeral key eph-7, station station-9, verification verified, expires 2026-09-29T10:00:00Z\. The next message spends a ticket on a new key\./);
+});
+
+const valid = (overrides = {}) => ({ ...session(), expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    apiKeyInfo: { stationId: 'station-9', verifierSubmitKeyProof: { status: 'verified' } }, ...overrides });
+
+test('a chat reloaded without the unexpired key this tab held is reported as missing', async () => {
+    await withTimeline(entries => {
+        const before = valid({ currentEphemeralKeyId: 'eph-20' });
+        const loaded = { id: 'session-1', apiKey: null };
+        noteLoadedSession(loaded, before);
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].action, ACCESS_MISSING_ACTION);
+        assert.equal(entries[0].response.reason, 'missing-after-reload');
+        assert.equal(entries[0].response.ephemeralKeyId, 'eph-20');
+        assert.doesNotMatch(JSON.stringify(entries), /sk-or-v1/);
+
+        // An expired key, or one this tab discarded itself, is not missing.
+        noteLoadedSession(loaded, valid({ currentEphemeralKeyId: 'eph-21', expiresAt: '2020-01-01T00:00:00Z' }));
+        const discarded = valid({ id: 'session-2', currentEphemeralKeyId: 'eph-8' });
+        logAccessDiscard(discarded, 'backend-change');
+        noteLoadedSession({ id: 'session-2', apiKey: null }, discarded);
+        assert.deepEqual(entries.slice(1).map(entry => entry.action), [ACCESS_DISCARD_ACTION]);
+    });
+});
+
+test('a chat that comes back from navigation without the key this tab remembered is reported once', async () => {
+    await withTimeline(entries => {
+        const held = valid({ id: 'session-3', currentEphemeralKeyId: 'eph-9' });
+        rememberHeldAccess(held);
+        assert.match(globalThis.window.sessionStorage.getItem('oa-held-access'), /eph-9/);
+        assert.doesNotMatch(globalThis.window.sessionStorage.getItem('oa-held-access'), /sk-or-v1/);
+        // No in-memory copy after a navigation: only the per-tab record remains.
+        noteLoadedSession({ id: 'session-3', apiKey: null }, null);
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].response.reason, 'missing-after-navigation');
+        assert.equal(entries[0].response.ephemeralKeyId, 'eph-9');
+        noteLoadedSession({ id: 'session-3', apiKey: null }, null);
+        assert.equal(entries.length, 1, 'the record is cleared after one report');
+
+        // A chat that comes back with its key refreshes the record silently.
+        noteLoadedSession(held, null);
+        assert.equal(entries.length, 1);
+        assert.match(globalThis.window.sessionStorage.getItem('oa-held-access'), /eph-9/);
+    });
+});
+
+test('a save without a key over a stored, unexpired key is reported by the storage layer', async () => {
+    await withTimeline(async entries => {
+        const stored = valid({ id: 'session-4', currentEphemeralKeyId: 'eph-10' });
+        logAccessOverwrite(stored, { id: 'session-4', apiKey: null });
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].action, ACCESS_OVERWRITE_ACTION);
+        assert.equal(entries[0].response.reason, 'stale-save');
+        // Not when the incoming copy keeps a key, when the stored one expired,
+        // when the ids differ, or when this tab discarded it on purpose.
+        logAccessOverwrite(stored, { id: 'session-4', apiKey: 'other' });
+        logAccessOverwrite(valid({ id: 'session-5', expiresAt: '2020-01-01T00:00:00Z' }), { id: 'session-5', apiKey: null });
+        logAccessOverwrite(stored, { id: 'session-6', apiKey: null });
+        logAccessDiscard(stored, 'credits-exhausted');
+        logAccessOverwrite(stored, { id: 'session-4', apiKey: null });
+        assert.deepEqual(entries.slice(1).map(entry => entry.action), [ACCESS_DISCARD_ACTION]);
+
+        // chatDB reads the stored copy in the same transaction only when the
+        // incoming copy has no key, and always writes what it was given.
+        const { chatDB } = await import('../../chat/db.js');
+        const writes = [];
+        const store = {
+            get: id => { const request = { onsuccess: null }; queueMicrotask(() => request.onsuccess?.({ target: request })); request.result = id === 'session-7' ? valid({ id: 'session-7', currentEphemeralKeyId: 'eph-11' }) : null; return request; },
+            put: value => writes.push(value)
+        };
+        chatDB.putSessionNotingOverwrite(store, { id: 'session-7', apiKey: null });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        assert.equal(writes.length, 1);
+        assert.equal(entries.at(-1).action, ACCESS_OVERWRITE_ACTION);
+        assert.equal(entries.at(-1).response.ephemeralKeyId, 'eph-11');
+        const before = entries.length;
+        chatDB.putSessionNotingOverwrite(store, { id: 'session-7', apiKey: 'kept' });
+        assert.equal(writes.length, 2, 'a keyed save is written without a read');
+        assert.equal(entries.length, before);
+    });
+});
+
+test('a key granted again after a discard is live again: losing it is reported', async () => {
+    await withTimeline(entries => {
+        const held = valid({ id: 'session-8', currentEphemeralKeyId: 'eph-30' });
+        logAccessDiscard(held, 'backend-change');
+        rememberHeldAccess(held); // setAccessInfo with the same underlying key reuses the ephemeral id
+        noteLoadedSession({ id: 'session-8', apiKey: null }, held);
+        assert.deepEqual(entries.map(entry => entry.action), [ACCESS_DISCARD_ACTION, ACCESS_MISSING_ACTION]);
+    });
 });
