@@ -8287,6 +8287,11 @@ class ChatApp {
                 } else if (terminalError.status === 503 || terminalError.status === 502 || terminalError.status === 504) {
                     // Service unavailable / gateway errors (after retries exhausted)
                     userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
+                } else if (terminalError?.providerReported && !terminalError?.status) {
+                    // The provider ended the stream with its own error event.
+                    // Say what happened in plain words; keep its text as detail.
+                    const detail = String(errorMessage || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+                    userFriendlyMessage = `The provider stopped the reply with an error${detail ? ` (${detail})` : ''}. Any partial answer has been kept. Retry sends a new request.`;
                 } else if (terminalError?.name === 'AbortError' || /\boperation was aborted\b/i.test(errorMessage)) {
                     // Aborted without the person asking: the transport (relay
                     // session or browser connection) closed under the request.

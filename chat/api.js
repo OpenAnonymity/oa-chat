@@ -1100,7 +1100,10 @@ export class OpenRouterAPI {
                 if (parsed.error) {
                     const errorMessage = parsed.error.message || 'Stream error occurred';
                     const error = new Error(errorMessage);
-                    error.code = parsed.error.code;
+                    // The raw message stays on the error (credit detection reads
+                    // it); the chat shows a readable summary, see app.js.
+                    error.code = parsed.error.code || 'PROVIDER_STREAM_ERROR';
+                    error.providerReported = true;
                     error.isStreamError = true;
                     error.retryable = false;
                     error.hasReceivedTokens = hasReceivedFirstToken;
