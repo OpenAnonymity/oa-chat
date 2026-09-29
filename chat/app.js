@@ -1165,6 +1165,37 @@ class ChatApp {
         return hasPartialOutput;
     }
 
+    // The pending assistant row for a turn that has not produced a chunk yet.
+    // Storage trouble must not stop the send; the row only improves reloads.
+    async persistPendingTurn(message) {
+        if (!message?.pendingTurn) return;
+        try {
+            await chatDB.saveMessage(message);
+        } catch (error) {
+            console.warn('Could not persist the pending turn:', error?.message || error);
+        }
+    }
+
+    markPendingTurnStarted(message) {
+        if (!message?.pendingTurn) return;
+        delete message.pendingTurn;
+        message.isLocalOnly = false;
+    }
+
+    async discardPendingTurn(message) {
+        if (!message?.pendingTurn) return;
+        // Leaving the page: keep the row so the reloaded page shows the
+        // interrupted turn with Retry (a runtime-ownership test builds the app
+        // without a constructor, so the flag is read lazily).
+        if (this.pageUnloading === true) return;
+        delete message.pendingTurn;
+        try {
+            await chatDB.deleteMessage(message.id);
+        } catch (error) {
+            console.warn('Could not discard the pending turn:', error?.message || error);
+        }
+    }
+
     getPendingSend(sessionId = this.state.currentSessionId) {
         return [...this.sendSubmissionsInFlight.values()].find(entry => entry.sessionId === sessionId
             || (!entry.sessionId && entry.generation === this.sessionNavigationGeneration)) || null;
@@ -7678,6 +7709,8 @@ class ChatApp {
         // Store current files and search state before clearing
         const currentFiles = submission.files;
         const searchEnabled = submission.searchEnabled;
+        // The turn's assistant row, persisted before any network work (see below).
+        let pendingTurn = null;
 
         try {
 
@@ -7782,6 +7815,29 @@ class ChatApp {
                 ? this.showTypingIndicator(typingModelName, initialPendingPhase)
                 : null;
 
+            // Persist the turn before any key request or network work. Local-only
+            // (never model context, shares or memory), it only exists so that a
+            // reload before the first chunk shows an interrupted reply with Retry
+            // instead of a user message that looks unanswered. The streaming
+            // message below reuses its id; the first chunk clears the marker.
+            pendingTurn = {
+                id: this.generateId(),
+                sessionId: session.id,
+                role: 'assistant',
+                content: '',
+                reasoning: '',
+                timestamp: Date.now(),
+                model: typingModelName,
+                tokenCount: null,
+                streamingTokens: 0,
+                streamingReasoning: false,
+                streamingPending: true,
+                streamingPhase: initialPendingPhase,
+                isLocalOnly: true,
+                pendingTurn: true
+            };
+            await this.persistPendingTurn(pendingTurn);
+
             await this.prepareRuntimeTurn(session, abortController.signal);
 
             // Automatically acquire API key if needed
@@ -7806,6 +7862,8 @@ class ChatApp {
                     }
                 } catch (error) {
                     if (typingId) this.removeTypingIndicator(typingId);
+                    await this.discardPendingTurn(pendingTurn);
+                    if (this.pageUnloading === true) return;
                     if (this.floatingPanel) {
                         this.floatingPanel.showMessage(error.message, 'error', 5000);
                     }
@@ -7853,6 +7911,7 @@ class ChatApp {
 
             if (!modelNameToUse || !selectedModelEntry) {
                 console.warn('No available models to send message.');
+                await this.discardPendingTurn(pendingTurn);
                 await this.addMessage('assistant', 'No models are available right now. Please add a model and try again.', { isLocalOnly: true }, session);
                 return; // Return early
             }
@@ -7890,14 +7949,18 @@ class ChatApp {
                 let processedMessages = this.processMessagesWithFiles(sanitizedMessages, modelIdForRequest, session.id);
                 let memoryGenerationAtProcess = this.getMemoryApiOverrideRevision(session.id);
 
-                // Create a placeholder message for streaming
-                const streamingMessageId = this.generateId();
+                // Create a placeholder message for streaming (the pending turn's row)
+                const streamingMessageId = pendingTurn.id;
                 streamedContent = '';
                 streamedReasoning = '';
                 let streamingTokenCount = 0;
 
-                // Prepare assistant message object (don't save to DB yet - wait for first chunk)
-                streamingMessage = {
+                // Prepare the assistant message. It is persisted at once as a
+                // pending turn (local-only, so it never enters model context,
+                // shares or memory): a reload before the first chunk then shows
+                // an interrupted reply with Retry instead of a user message
+                // that looks unanswered. The first chunk clears the marker.
+                streamingMessage = Object.assign(pendingTurn, {
                     id: streamingMessageId,
                     sessionId: session.id,
                     role: 'assistant',
@@ -7911,8 +7974,11 @@ class ChatApp {
                     streamingPending: true,
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata,
-                    accessTrace: this.takeAccessTrace(session.id)
-                };
+                    accessTrace: this.takeAccessTrace(session.id),
+                    isLocalOnly: true,
+                    pendingTurn: true
+                });
+                await this.persistPendingTurn(streamingMessage);
 
                 // Track progress for periodic saves
                 let lastSaveLength = 0;
@@ -7941,6 +8007,7 @@ class ChatApp {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
+                            this.markPendingTurnStarted(streamingMessage);
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
 
@@ -8046,6 +8113,7 @@ class ChatApp {
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
+                            this.markPendingTurnStarted(streamingMessage);
                             reasoningStartTime = Date.now();
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
@@ -8075,6 +8143,7 @@ class ChatApp {
                 );
 
                 // Save the final message content with token data, reasoning, and citations
+                this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
                 if (streamingMessage.scrubber) {
                     streamingMessage.scrubber.redactedResponse = streamedContent;
@@ -8130,6 +8199,12 @@ class ChatApp {
             } catch (error) {
                 console.error('Error getting AI response:', error);
                 if (typingId) this.removeTypingIndicator(typingId);
+                // A turn that never produced a chunk leaves no pending row
+                // behind; the branches below persist the outcome themselves.
+                if (streamingMessage && !firstChunkReceived) await this.discardPendingTurn(streamingMessage);
+                // The page is going away: no retries, no error rows, nothing
+                // else to persist over the pending turn the next load shows.
+                if (this.pageUnloading === true) break retryLoop;
 
                 // Check if error was due to cancellation
                 if (error.isCancelled) {
@@ -8243,6 +8318,9 @@ class ChatApp {
             } // End of retryLoop
         } finally {
             this.clearMemoryApiOverrideContent(session.id);
+            // A turn that ended without a chunk, an error row or a page unload
+            // must not leave a pending row behind.
+            if (pendingTurn?.pendingTurn) await this.discardPendingTurn(pendingTurn);
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
@@ -10456,6 +10534,11 @@ class ChatApp {
         }
 
         this.setupDeleteHistoryControls();
+
+        // A reload or navigation aborts in-flight requests; their cleanup must
+        // not erase the pending turn the reloaded page is about to show.
+        window.addEventListener('pagehide', () => { this.pageUnloading = true; });
+        window.addEventListener('beforeunload', () => { this.pageUnloading = true; });
 
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {

@@ -12,7 +12,9 @@ export function restoredResponseForDisplay(message, isSessionStreaming) {
 
     // Council and local agent messages own their own progress/retry controls.
     // Preserve the previous render-only normalization for those workflows.
-    if (message.council?.enabled || message.isLocalOnly
+    // A pending turn is local-only too (it must stay out of model context) but
+    // it is an ordinary reply that never started, so it gets the retry copy.
+    if (message.council?.enabled || (message.isLocalOnly && !message.pendingTurn)
         || String(message.model || '').trim().toLowerCase() === 'memory agent') {
         return { ...message, streamingReasoning: false, streamingTokens: null };
     }
@@ -29,6 +31,8 @@ export function restoredResponseForDisplay(message, isSessionStreaming) {
             .filter(stage => Array.isArray(stage?.steps) && stage.steps.length > 0
                 && stage.steps.every(step => step?.state === 'complete')),
         inferenceError: message.inferenceError
-            || 'This tab is no longer connected to the response. Check any other open tab before retrying. Retrying sends a new request.'
+            || (message.pendingTurn
+                ? 'This tab is no longer connected to the request; no reply was received. Check any other open tab before retrying. Retrying sends a new request.'
+                : 'This tab is no longer connected to the response. Check any other open tab before retrying. Retrying sends a new request.')
     };
 }

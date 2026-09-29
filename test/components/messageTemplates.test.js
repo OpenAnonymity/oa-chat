@@ -80,6 +80,27 @@ test('a saved pending response is displayed as disconnected without changing sto
     } finally { restoreGlobals(); }
 });
 
+test('a pending turn saved before the first chunk is displayed as an interrupted reply with retry', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const saved = Object.freeze({ id: 'pending', sessionId: 'chat', role: 'assistant',
+            content: '', model: 'Test', timestamp: 1, streamingPending: true,
+            streamingPhase: 'requesting-key', streamingTokens: 0,
+            isLocalOnly: true, pendingTurn: true });
+        const display = restoredResponseForDisplay(saved, false);
+        assert.match(display.inferenceError, /no reply was received/);
+        assert.match(display.inferenceError, /Retrying sends a new request/);
+        const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
+        assert.match(html, /Retry response/);
+        assert.doesNotMatch(html, /data-streaming-pending="true"/);
+        assert.doesNotMatch(html, /Model provider returned no response/);
+        assert.equal(restoredResponseForDisplay(saved, true), saved, 'a live pending turn in this tab is untouched');
+        // A local-only row that is not a pending turn keeps the old behaviour.
+        assert.equal(restoredResponseForDisplay({ ...saved, pendingTurn: false }, false).inferenceError, undefined);
+    } finally { restoreGlobals(); }
+});
+
 test('restored partial output is retained while live and completed messages stay unchanged', () => {
     const images = [{ url: 'data:image/png;base64,example' }];
     const saved = Object.freeze({ role: 'assistant', content: 'Partial answer', reasoning: 'Partial reasoning',
