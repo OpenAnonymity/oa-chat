@@ -11,10 +11,11 @@ file-storage, and image-generation endpoints are not implemented.
 
 ## Install and get ready with one command
 
-Guided setup is available in version `0.3.0`. For Sepolia test ETH:
+Use version `0.3.1` for guided setup, including terminal cancellation fixes.
+For Sepolia test ETH:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash -s -- --setup --network sepolia
 ```
 
 The installer checks and installs both binaries and proving assets, then runs
@@ -31,12 +32,14 @@ ceiling requires another confirmation. When ready, it prints the local API URL
 and a command to retrieve the API key; it does not print the key automatically.
 Leave the terminal running for inference and settlement.
 
-After installation, follow the installer's PATH guidance for future terminals,
-then restart or check an existing setup with:
+With the default install prefix, restart or check an existing setup with:
 
 ```sh
-oa-chat start --network sepolia
+PATH="$HOME/.local/bin:$PATH" oa-chat start --network sepolia
 ```
+
+For a custom prefix, substitute its `bin` directory in PATH. Keeping that
+directory on your shell PATH lets you use the shorter `oa-chat start` command.
 
 New guided configurations default to zkAPI. Existing configuration and its
 saved mode are preserved; a compatible running daemon is reused. Use
@@ -50,7 +53,7 @@ for recovery and sending your first request.
 For installation or updates only, omit the setup flags:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.1/install.sh | bash
 ```
 
 Run as your normal user on macOS 13+ or Linux with glibc 2.39+, on AMD64 or

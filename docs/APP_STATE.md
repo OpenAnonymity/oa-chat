@@ -1,3 +1,22 @@
+## 2026-09-29: CLI terminal cancellation patch
+
+- The final public 0.3.0 acceptance check exposed a macOS terminal edge case:
+  Ctrl+C at an unanswered confirmation stopped the companion, but the CLI's
+  buffered terminal read waited for Enter before returning. Funding state stayed
+  intact and no transaction was authorized after cancellation.
+- Guided prompts now read `/dev/tty` through a nonblocking descriptor, so
+  cancellation can interrupt empty or partially typed prompts without another
+  keystroke. There is no input goroutine and no stdin fallback. Piped installer
+  text still cannot grant consent. macOS terminal poll events can arrive without
+  readable canonical input; a cancellation-aware backoff prevents idle spinning.
+  A real PTY regression covers cancellation, consent, refusal, and EOF separately
+  from in-memory prompt fixtures.
+- Recommended installation instructions target `daemon-v0.3.1`. For subsequent
+  starts, the one-line PATH assignment selects both the installed daemon and
+  companion, even when an older binary shadows them on the parent shell's PATH.
+  The 0.3.0 tag and assets remain immutable; its successful build, funding,
+  stream, and settlement evidence is retained below.
+
 ## 2026-09-29: Ask source links and malformed math labels
 
 - Ask answers now use the same inline-link chip renderer as full replies, including streaming updates. Only links present in the answer are enhanced; plain domain names are not assigned guessed URLs. Structured sources still use the existing Ask sources footer. The screenshot alone cannot establish whether the original model returned linked or bare source names.
@@ -24,8 +43,8 @@
 - `install.sh --setup --network sepolia` installs/updates the native pair and
   then runs the installed absolute CLI with its companion directory first on
   PATH. It needs no separate PATH/init/serve/funding terminal for the first run.
-  Ordinary installation remains install-only. Active instructions target the
-  follow-up `daemon-v0.3.0`; publication is pending at this checkpoint.
+  Ordinary installation remains install-only. This flow shipped in
+  `daemon-v0.3.0`; current instructions use its `0.3.1` cancellation patch.
 - Setup authenticates an existing daemon or starts and owns a foreground
   daemon. It never stops a foreign process. Without an explicit backend flag,
   an authenticated compatible running mode wins; otherwise the saved default
@@ -53,7 +72,12 @@
 - Validation: full Go race suite/vet, Linux command cross-compilation, 26
   installer regressions, and fresh adversarial review pass. Review fixes cover
   companion PATH selection, slow-start readiness, and ambiguous recovery.
-  Live Sepolia acceptance and release publication are being recorded separately.
+  All four native/package gates and public 0.2.0 → 0.3.0 guided upgrade passed.
+  The real Sepolia deposit finalized and the CI pair streamed and settled an
+  inference. A final macOS prompt-cancellation check found that Ctrl+C could
+  require Enter to exit the terminal read; a patch release addresses it. See
+  [release evidence](../daemon/packaging/validation/daemon-0.3.0-release-20260929.json)
+  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-030-guided-setup-validation-2026-09-29).
 
 ## 2026-09-29: CLI 0.2.0 prerelease published
 
