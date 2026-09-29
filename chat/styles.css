@@ -81,6 +81,10 @@
     --color-accent-foreground: 222.2 47.4% 11.2%;
     --color-destructive: 0 62.8% 30.6%;
     --color-destructive-foreground: 0 0% 95%;
+    /* Error text on the page surface. --color-destructive is a fill; its
+       lightness (30.6%) reads at 1.5:1 on the dark grounds, so text gets
+       its own role, measured per theme (>= 4.5:1 on background and card). */
+    --color-destructive-text: 0 72% 42%;
     --color-border: 214.3 31.8% 91.4%;
     --color-input: 214.3 31.8% 91.4%;
     --color-ring: 222.2 84% 4.9%;
@@ -122,6 +126,7 @@
     --color-accent-foreground: 0 0% 95%;
     --color-destructive: 0 62.8% 30.6%;
     --color-destructive-foreground: 0 0% 95%;
+    --color-destructive-text: 0 91% 71%;
     --color-border: 0 0% 25%;
     --color-input: 0 0% 25%;
     --color-ring: 0 0% 80%;
@@ -166,6 +171,7 @@ html.zkapi-mode.theme-light {
     --color-accent-foreground: 232 45% 14%;
     --color-destructive: 0 62.8% 30.6%;
     --color-destructive-foreground: 0 0% 95%;
+    --color-destructive-text: 0 72% 42%;
     --color-border: 232 35% 86%;
     --color-input: 232 35% 86%;
     --color-ring: 228 76% 65%;
@@ -210,6 +216,7 @@ html.zkapi-mode.dark {
     --color-accent-foreground: 245 10% 87.9%;
     --color-destructive: 0 62.8% 30.6%;
     --color-destructive-foreground: 0 0% 95%;
+    --color-destructive-text: 0 91% 71%;
     --color-border: 247 15% 27.3%;
     --color-input: 247 15% 27.3%;
     --color-ring: 238 93% 83.2%;

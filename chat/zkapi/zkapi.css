@@ -346,7 +346,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
 .zkapi-step[data-state="active"], .zkapi-step[data-state="waiting"], .zkapi-step[data-state="error"] { color: hsl(var(--color-foreground)); }
 .zkapi-step[data-state="active"] .zkapi-step-mark { border-color: hsl(var(--color-primary)); border-top-color: transparent; animation: zkapi-step-spin 0.9s linear infinite; }
 .zkapi-step[data-state="waiting"] .zkapi-step-mark { border-color: hsl(var(--color-primary)); background: hsl(var(--color-primary) / 0.14); }
-.zkapi-step[data-state="error"] .zkapi-step-mark { border-color: hsl(var(--color-destructive) / 0.6); color: hsl(var(--color-destructive)); }
+.zkapi-step[data-state="error"] .zkapi-step-mark { border-color: hsl(var(--color-destructive) / 0.6); color: hsl(var(--color-destructive-text)); }
 .zkapi-step[data-state="upcoming"] { color: hsl(var(--color-muted-foreground) / 0.8); }
 @keyframes zkapi-step-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
@@ -356,7 +356,7 @@ html[data-keyboard-nav] .zkapi-dialog a:focus-visible {
    under the work, in the ink for a result and the attention colour for
    something to act on. */
 .zkapi-outcome { margin: 0; font-size: 0.875rem; line-height: 1.45; text-wrap: pretty; color: hsl(var(--color-foreground)); }
-.zkapi-outcome[data-tone="error"] { color: hsl(var(--color-destructive)); }
+.zkapi-outcome[data-tone="error"] { color: hsl(var(--color-destructive-text)); }
 .zkapi-outcome[data-tone="info"] { color: hsl(var(--color-muted-foreground)); }
 /* The decided method, one line where the choices were. */
 .zkapi-summary-line { margin: 0; font-size: 0.9375rem; color: hsl(var(--color-muted-foreground)); }
@@ -721,7 +721,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 
 .zkapi-state-glyph--error {
     background: hsl(var(--color-destructive) / 0.12);
-    color: hsl(var(--color-destructive));
+    color: hsl(var(--color-destructive-text));
 }
 
 .zkapi-state-glyph--waiting {
@@ -900,7 +900,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 
 .zkapi-journey-step[data-state="error"] .zkapi-journey-marker {
     background: hsl(var(--color-destructive) / 0.12);
-    color: hsl(var(--color-destructive));
+    color: hsl(var(--color-destructive-text));
 }
 
 .zkapi-journey-label {
@@ -1147,7 +1147,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 }
 
 .zkapi-capsule-end--error {
-    color: hsl(var(--color-destructive));
+    color: hsl(var(--color-destructive-text));
     font-size: 0.75rem;
     font-weight: 700;
 }
@@ -1765,7 +1765,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-account details { border-top: 1px solid hsl(var(--color-border)); margin-top: 16px; padding-top: 12px; }
 .zkapi-funding-account summary { cursor: pointer; font-size: 12px; font-weight: 500; }
 .zkapi-funding-account summary:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 3px; }
-.zkapi-funding-error { margin: 12px 0; font-size: 12px; line-height: 1.6; color: hsl(var(--color-destructive)); }
+.zkapi-funding-error { margin: 12px 0; font-size: 12px; line-height: 1.6; text-wrap: pretty; color: hsl(var(--color-destructive-text)); }
 .zkapi-funding-pending { margin-top: 12px; }
 .zkapi-funding-amount-input { display: flex; align-items: center; gap: 8px; }
 .zkapi-funding-amount-input > span { font-size: 20px; }
