@@ -8,7 +8,7 @@ verification policy below.
 
 ## Import and invitation redemption
 
-Run `oa-chat config` and choose **ticket** access, or select it explicitly:
+Select **ticket** access explicitly, or choose it in `oa-chat config --edit`:
 
 ```sh
 oa-chat config --backend ticket
@@ -16,12 +16,12 @@ oa-chat serve
 ```
 
 The wizard guides import from an exported ticket file or redemption from a
-private code file. For an existing profile, use the **tickets** menu action to
-add tickets. Use `oa-chat config --status` to inspect saved settings without opening the
-interactive menu.
+private code file. For an existing profile, use the **tickets** action in
+`oa-chat config --menu` to add tickets. Use `oa-chat config --status` to inspect
+saved settings without opening the setup flow.
 
 Both modes share a local API key and transport settings but retain separate
-ticket and private-note state. `config` can edit the saved default without
+ticket and private-note state. `config --edit` can edit the saved default without
 reinitializing the profile. `serve --backend ticket` or `serve --backend zkapi`
 selects the runtime mode only. Ticket mode does not need an installed zkAPI
 companion or proving assets.

@@ -1,3 +1,56 @@
+## 2026-09-29: CLI defaults go directly to a $20 ETH payment
+
+- In current source, plain `oa-chat config` shows status and immediately checks
+  setup. Missing profiles use zkAPI, Mainnet, and direct HTTPS without initial
+  mode/network questions. Existing profiles retain their saved mode, network,
+  relay, listener, credentials, and wallet files. They no longer require a menu
+  answer to check readiness. A ready private note is checked without preparing
+  another deposit.
+- `config --edit` opens the settings editor; `config --menu` opens the existing
+  setup/tickets/withdraw/return/api-key menu, with a password action for Sepolia.
+  `--backend`, `--network`, and the other settings flags remain available.
+  `config --usd AMOUNT` chooses a USD
+  principal for a new deposit only. Its default is $20 and it is not persisted
+  as configuration. Saved unsigned deposits retain their fixed ETH principal;
+  signed deposits recover the original transaction. Rerunning with `--usd`
+  cannot reprice either kind of saved deposit.
+- When funding is needed, setup obtains the default quote and displays the
+  funding address, ETH payment amount, fees, and terminal QR before its first
+  deposit-consent question. The recommended top-up covers the principal, fee
+  allowance, and fee buffer after subtracting existing address ETH. The QR uses
+  an Ethereum payment URI containing only the public address, chain ID, and
+  exact recommended top-up in wei. It is encoded locally, with no external QR
+  service or private wallet material. No QR is needed when existing ETH covers
+  the payment. Text payment instructions remain available.
+- Automatic quoting does not authorize a transaction. Setup still requires
+  explicit approval of the fixed principal and maximum fee, then waits for
+  funds and finalized activation under the existing consent/recovery bounds.
+  Sepolia still validates its password before companion startup or funding;
+  a missing/rejected password prompts with input hidden. The password menu
+  action remains available without starting funding.
+  `serve` remains noninteractive and directs missing prerequisites to `config`.
+- Validation before integrating the 0.4.1 authentication update: full Go race
+  tests, vet, and focused configuration/QR race tests passed. An independent QR
+  decoder recovered the exact Mainnet and Sepolia payment URIs from rendered
+  terminal half blocks. A source-built CLI
+  with the unchanged 0.4.0 companion created a private Mainnet/direct profile
+  and displayed a live $20 quote and QR without setup questions before consent.
+  The test used isolated ports after finding another service on the default
+  API port. Consent was canceled, no transaction was signed or broadcast, and
+  owned processes stopped. Independent adversarial review approved the diff.
+- After integration with the 0.4.1 authentication update, the full race suite,
+  vet, and independent integration review passed again. The source-built CLI
+  with the verified public 0.4.1 companion displayed a refreshed quote and QR
+  for the same saved $20 Mainnet deposit, preserving its fixed principal.
+  Consent was again canceled and owned services stopped. Password-menu tests
+  cover the production dispatch path; the password refusal test uses an
+  ephemeral test port so another local daemon cannot mask its assertion.
+- These changes postdate published 0.4.1. Installer URLs remain pinned to that
+  release; no newer binary publication is implied by the source changes. Its
+  Sepolia password support is preserved. The 0.4.0 and 0.4.1 release evidence
+  below remains historical evidence for those bundles. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
+  and [funding details](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+
 ## 2026-09-29: Sepolia password focus after wallet rerenders
 
 - The wallet's busy and completion renders replace its Enter/Change Sepolia
@@ -26,7 +79,7 @@
 - CLI configuration asks through a hidden controlling-terminal prompt before
   funding. `sepolia-password` is an owner-only file alongside private config;
   `OA_ZKAPI_TESTNET_PASSWORD` / `OA_ZKAPI_TESTNET_PASSWORD_FILE` override it.
-  The Sepolia `config` menu's password action validates and saves a replacement
+  The Sepolia `config --menu` password action validates and saves a replacement
   without starting a daemon or entering funding; `config --status` stays offline.
   `serve` never prompts and rejects missing/invalid access before companion or
   funding work. Restart after changing a credential. Native bridge version 4

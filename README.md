@@ -20,12 +20,16 @@ PATH="$HOME/.local/bin:$PATH" oa-chat config
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-`config` shows the current status, creates missing private directories, and
-walks through ticket or zkAPI access. For zkAPI, **Mainnet is the default** and
-**Sepolia is an option**. Run it again to edit your saved settings or manage
-funding, withdrawals, and tickets. Sepolia asks for its shared access password
-with input hidden before funding; Mainnet and ticket mode are unaffected.
-Existing wallet state is preserved.
+In current source, `config` shows status and checks setup immediately. Missing
+profiles default to **zkAPI on Mainnet with direct HTTPS**. If funding is needed,
+it displays a recommended **$20 deposit**, its ETH payment address and amount,
+and a terminal QR code. `config --network sepolia` selects test ETH;
+`config --backend ticket` selects tickets. Use `config --edit` for settings or
+`config --menu` for wallet management. Sepolia asks for its shared access
+password with input hidden before funding; Mainnet and ticket mode are
+unaffected. Existing settings and wallet state are preserved. These streamlined
+defaults and QR are newer than the published `0.4.1` installer above, which
+still asks initial setup questions.
 
 If funding is needed, approve the displayed principal and maximum fee, then
 send ETH on the selected network to the displayed address. Configuration waits

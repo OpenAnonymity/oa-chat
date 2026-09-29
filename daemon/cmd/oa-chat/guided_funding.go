@@ -152,6 +152,8 @@ func setupUSD(amount uint64) string {
 	return strings.TrimRight(strings.TrimRight(fundingUnits(strconv.FormatUint(amount, 10), 6), "0"), ".")
 }
 
+const defaultSetupDepositMicroUSD uint64 = 20_000_000
+
 func guidedFunding(ctx context.Context, service guidedFundingService, usdText, modelID string, ui setupPrompter, wait func(context.Context) error) error {
 	models, err := service.Models(ctx)
 	if err != nil {
@@ -189,23 +191,15 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 		}
 		var usd uint64
 		if state.Amount == 0 {
-			suggested := model.Budget + 1_000_000
-			for {
-				chosen := usdText
-				if chosen == "" {
-					chosen, err = ui.Ask(ctx, "Private inference balance to add in USD (network fees are extra)", setupUSD(suggested))
-					if err != nil {
-						return err
-					}
-				}
-				usd, err = parseFundingAmountForAsset(chosen, 6, "USD")
-				if err == nil && usd >= model.Budget {
-					break
-				}
-				if usdText != "" {
+			usd = max(defaultSetupDepositMicroUSD, model.Budget)
+			if usdText != "" {
+				usd, err = parseFundingAmountForAsset(usdText, 6, "USD")
+				if err != nil || usd < model.Budget {
 					return fmt.Errorf("deposit must be at least $%s for the selected model", setupUSD(model.Budget))
 				}
-				ui.Printf("Enter a positive USD amount of at least $%s, with up to six decimal places.\n", setupUSD(model.Budget))
+				ui.Printf("Selected deposit: $%s (network fees are extra).\n", setupUSD(usd))
+			} else {
+				ui.Printf("Recommended deposit: $%s (network fees are extra). Saved deposits keep their original amount.\n", setupUSD(usd))
 			}
 		} else {
 			ui.Printf("Resuming the saved fixed deposit of %s ETH.\n", fundingUnits(strconv.FormatUint(state.Amount, 10), 9))
@@ -268,10 +262,10 @@ func waitSetupWallet(ctx context.Context, service guidedFundingService, ui setup
 		switch withdrawal.Phase {
 		case "no_note", "ready", "waiting_settlement", "complete":
 		default:
-			return state, errors.New("a withdrawal needs attention; run oa-chat config and choose withdraw before restarting setup")
+			return state, errors.New("a withdrawal needs attention; run oa-chat config --menu and choose withdraw before restarting setup")
 		}
 		if state.WithdrawalPending {
-			return state, errors.New("a private withdrawal is reserved; run oa-chat config and choose withdraw to recover it")
+			return state, errors.New("a private withdrawal is reserved; run oa-chat config --menu and choose withdraw to recover it")
 		}
 		if !state.PendingRequest && withdrawal.Phase != "waiting_settlement" {
 			return state, nil
@@ -292,7 +286,7 @@ func checkSetupBalance(ctx context.Context, service guidedFundingService, state 
 		return err
 	}
 	if state.Balance < bound {
-		return fmt.Errorf("the existing private balance is below the $%s cap for %q; choose withdraw in oa-chat config to close this note before adding funding", setupUSD(model.Budget), model.ID)
+		return fmt.Errorf("the existing private balance is below the $%s cap for %q; choose withdraw in oa-chat config --menu to close this note before adding funding", setupUSD(model.Budget), model.ID)
 	}
 	ui.Printf("Private balance ready: %s ETH; enough for %q. Request caps are selected automatically for each model.\n", fundingUnits(strconv.FormatUint(state.Balance, 10), 9), model.ID)
 	return nil
@@ -308,16 +302,24 @@ func setupFeeWithin(quote zkapi.AddressPaymentQuote, maximum string) bool {
 	return ok && valid && fee.Sign() >= 0 && cap.Sign() >= 0 && fee.Cmp(cap) <= 0
 }
 
-func showSetupDeposit(ui setupPrompter, q zkapi.AddressPaymentQuote) {
+func showSetupDeposit(ui setupPrompter, q zkapi.AddressPaymentQuote) error {
+	// Validate the payment quantities before displaying even the text address
+	// and amount, so an inconsistent quote cannot invite an incorrect transfer.
+	if _, err := paymentRequestURI(q); err != nil {
+		return err
+	}
 	ui.Printf("\n%s\nFunding address: %s\nPrivate deposit: %s ETH\nEstimated network fee: %s ETH\nMaximum network fee: %s ETH\n", fundingNetwork(q.ChainID), q.Address, fundingUnits(q.PrincipalWei, 18), fundingUnits(q.ExpectedFeeWei, 18), fundingUnits(q.FeeReserveWei, 18))
 	ui.Printf("Required top-up: %s ETH\nRecommended top-up including fee buffer: %s ETH\n", fundingUnits(q.ShortfallWei, 18), fundingUnits(q.RecommendedTopUpWei, 18))
+	return printSetupPaymentQR(setupUIWriter{ui}, q)
 }
 
 func waitAndDeposit(ctx context.Context, service guidedFundingService, initial zkapi.AddressPaymentQuote, ui setupPrompter, wait func(context.Context) error) error {
 	if !sameSetupDeposit(initial, initial) {
 		return errors.New("saved deposit requires explicit recovery; it cannot be automatically funded")
 	}
-	showSetupDeposit(ui, initial)
+	if err := showSetupDeposit(ui, initial); err != nil {
+		return err
+	}
 	approved, err := ui.Confirm(ctx, "Automatically deposit this fixed amount when funds arrive, within the maximum network fee shown above?")
 	if err != nil {
 		return err
@@ -365,7 +367,9 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 			return errors.New("the saved deposit changed while waiting; stopped without approving another transaction")
 		}
 		if !setupFeeWithin(quote, ceiling) {
-			showSetupDeposit(ui, quote)
+			if err := showSetupDeposit(ui, quote); err != nil {
+				return err
+			}
 			approved, err := ui.Confirm(ctx, "Network fees increased. Allow the new maximum network fee shown above for this same deposit?")
 			if err != nil {
 				return err

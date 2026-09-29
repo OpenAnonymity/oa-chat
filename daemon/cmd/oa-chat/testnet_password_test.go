@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -159,8 +160,27 @@ func TestConfigPasswordOverrideIsNeitherPromptedNorSaved(t *testing.T) {
 func TestConfiguredServePasswordFailureCannotStartCompanionOrFunding(t *testing.T) {
 	clearPasswordEnvironment(t)
 	t.Setenv("OA_ZKAPI_TESTNET_PASSWORD", "") // Invalid locally; no network required.
-	dir, c := startTestConfig(t)
-	err := runConfiguredServe(context.Background(), dir, c, c, io.Discard)
+	// Do not let a user's daemon on the default port mask password validation.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	dir := filepath.Join(t.TempDir(), "private")
+	c, err := config.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Backend, c.ZKAPI.Network, c.Listen = "zkapi", "sepolia", listener.Addr().String()
+	if err := config.Init(dir, c); err != nil {
+		t.Fatal(err)
+	}
+	c, err = config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.Close()
+	err = runConfiguredServe(context.Background(), dir, c, c, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "Run oa-chat config") || !strings.Contains(err.Error(), "password") {
 		t.Fatalf("serve did not return password setup guidance: %v", err)
 	}

@@ -218,7 +218,7 @@ func (z zkInference) Complete(ctx context.Context, body json.RawMessage) (*http.
 			return nil, &server.BackendError{Status: 402, Code: "funding_required", Message: "The private balance needs funding. Run oa-chat config to add funding."}
 		case http.StatusConflict:
 			if remote.Code == "withdrawal_pending" || remote.Code == "withdrawal_conflict" {
-				return nil, &server.BackendError{Status: 409, Code: "withdrawal_pending", Message: "The private balance is reserved for withdrawal. Run oa-chat config and choose withdraw to recover the saved destination."}
+				return nil, &server.BackendError{Status: 409, Code: "withdrawal_pending", Message: "The private balance is reserved for withdrawal. Run oa-chat config --menu and choose withdraw to recover the saved destination."}
 			}
 			return nil, &server.BackendError{Status: 409, Code: "settlement_pending", Message: "The previous anonymous lease is settling. Retry after settlement; a provider key is never reused across API requests."}
 		}

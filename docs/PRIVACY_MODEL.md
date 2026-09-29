@@ -105,11 +105,16 @@ withdrawal amounts and destinations
 are public Ethereum activity visible to the configured RPC (accessed directly
 by default, or through opt-in Wisp) and chain observers. They are not made
 anonymous by removing a wallet connection. Funding is command-line only:
-quoting prepares local recovery data. The `config` menu asks for explicit
+quoting prepares local recovery data. The `config --menu` actions ask for explicit
 approval of the displayed principal, destination, and fee allowance before
 withdrawals or public returns. Its guided deposit asks once to authorize a fixed
-principal and maximum network fee before waiting for incoming ETH. It refreshes
-short-lived quotes
+principal and maximum network fee before waiting for incoming ETH. A new profile
+defaults to Mainnet and direct HTTPS and prepares a recommended $20 quote without
+initial setup questions; displaying this quote does not authorize a transaction.
+The terminal payment QR is generated locally and contains only the public funding
+address, chain ID, and exact recommended ETH top-up. No external QR service sees
+the payment instructions; signing keys, note secrets, and local credentials never
+enter the QR. The guided deposit refreshes short-lived quotes
 and may approve them automatically only for that same network, deployment,
 funding address, private-note commitment, principal, and nonce, within the
 accepted fee ceiling. A higher ceiling requires new confirmation. Piped

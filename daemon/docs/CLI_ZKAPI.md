@@ -23,19 +23,27 @@ Then configure it:
 PATH="$HOME/.local/bin:$PATH" oa-chat config
 ```
 
-The configuration command shows the saved status first. With no profile, it
-creates the normal private directory, asks for **zkAPI** or **ticket** access,
-and walks through what is missing. New profiles default to zkAPI; its network
-prompt offers **Mainnet by default** and **Sepolia as an option**. The private
+The configuration command shows the saved status first. With no profile, the
+current source creates the normal private directory using **zkAPI on Mainnet
+with direct HTTPS** and walks through what is missing. It prepares a recommended
+**$20 private deposit** without first asking for a mode, network, or amount,
+and displays the ETH payment address, amount, and terminal QR before requesting
+deposit approval. Use `config --backend ticket` for tickets or
+`config --network sepolia` for test ETH. The private
 directory is `~/Library/Application Support/oa-chat` on macOS or
 `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`. Global
 `--config-dir` or `OA_CHAT_CONFIG_DIR` selects another directory.
 
-For an existing profile, the menu can check readiness, edit settings, manage
-tickets, withdraw private credits, return public ETH, show the local API key,
-or quit. The editor retains saved values unless you change them. Stop a running
-daemon before editing. Mainnet and Sepolia keep separate funding keys and
-wallet state in the same profile; selecting one preserves the other. Invalid
+Automatic $20 quoting and the terminal QR are newer than the published `0.4.1`
+bundle. The installation command above still installs that release, which asks
+the initial mode, network, and deposit-amount questions.
+
+For an existing profile, plain `config` checks readiness immediately using the
+saved settings. Use `config --edit` to edit settings or `config --menu` to
+manage tickets, withdraw private credits, return public ETH, change the Sepolia
+password, show the local API key, or check setup. The editor retains saved values unless you change them.
+Stop a running daemon before editing. Mainnet and Sepolia keep separate funding
+keys and wallet state in the same profile; selecting one preserves the other. Invalid
 configuration or orphaned recovery state is reported for recovery, never
 replaced with a fresh wallet. Keep legacy ERC-20 recovery profiles separate.
 
@@ -43,19 +51,27 @@ For zkAPI setup:
 
 1. **Check readiness.** Configuration starts temporary local services or uses
    a compatible existing service. It checks the companion, model availability,
-   private balance, pending settlement, and withdrawal reservations. It does
-   not acquire inference access or send a test request.
-2. **Fund if needed.** Choose a USD principal, normally $2. Review its fixed
-   ETH amount, network, funding address, and maximum network fee, then approve
-   the automatic deposit. Send the displayed top-up in **ETH on that network**
-   to the funding address, not the vault. The recommended amount includes an
-   optional fee buffer. Leave configuration running: it checks every five
-   seconds, refreshes fee quotes within the approved bounds, deposits when
+   private balance, pending settlement, and withdrawal reservations. Sepolia
+   validates its saved access password or asks for one before starting the
+   companion or funding. Setup does not acquire inference access or send a test request.
+2. **Fund if needed.** Review the recommended $20 principal, its fixed ETH
+   amount, network, funding address, and maximum network fee, then approve the
+   automatic deposit. Send the displayed top-up in **ETH on that network**
+   to the funding address, not the vault. Scan the terminal QR in a compatible
+   Ethereum wallet or copy the address and amount. The recommended transfer
+   includes the principal, fee allowance, and an optional fee buffer, less any
+   ETH already at the funding address. Leave configuration running: it checks
+   every five seconds, refreshes fee quotes within the approved bounds, deposits when
    enough ETH arrives, and waits for finalized activation. A higher fee ceiling
    requires another confirmation. Unused public ETH stays at the funding address.
 3. **Run the inference service.** Configuration stops services it started and
    exits when ready. It prints the endpoint, the command for your local API key,
    and the command to serve. An existing service it reused is left running.
+
+To choose a different principal for a new deposit, run `oa-chat config --usd 50`
+with the desired USD amount. This option is not saved and does not replace the
+fixed ETH amount of a deposit already in progress. An existing ready private
+balance is checked without preparing another deposit.
 
 ```sh
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
@@ -77,7 +93,7 @@ request still checks the cap for its selected model. An active note below the
 lowest available cap must be closed before funding a replacement; it cannot
 be topped up in place. Public ETH alone is not private inference credit.
 
-Ctrl+C preserves progress. Run `config` again and check readiness to continue.
+Ctrl+C preserves progress. Run `config` again to check readiness and continue.
 An unsigned deposit retains its fixed amount and asks for consent again;
 a signed deposit resumes its saved transaction without authorizing another.
 A reverted transaction or withdrawal reservation requires explicit recovery.
@@ -121,8 +137,8 @@ file. Environment overrides are never saved. Keep passwords out of command-line
 arguments, shell history, screenshots and bug reports.
 
 Stop and restart the daemon after a password change. With no environment
-override, `config` asks again when the saved password is rejected. Its **password**
-menu action validates and saves a replacement without starting the companion or
+override, `config` asks again when the saved password is rejected. The **password**
+action in `config --menu` validates and saves a replacement without starting the companion or
 funding, including when the old saved password file needs repair. With an
 override, update its value or private file before restarting. Existing wallet
 and recovery state stay intact. Upgrade **both binaries together**: companion
@@ -162,7 +178,8 @@ explicit verification refusals still block access.
 
 ## Network and funding
 
-Use `oa-chat config` to select or edit the network, check readiness, and deposit.
+Use `oa-chat config` to check readiness and deposit. Select a network with
+`config --network mainnet|sepolia`, or use `config --edit` to change saved settings.
 The packaged public manifests match the September 28 native ETH deployments used by
 [staging Mainnet](https://staging.openanonymity.ai/) and
 [Sepolia](https://oa-wallet-eth-sepolia.vercel.app/):
@@ -196,6 +213,13 @@ A higher fee ceiling requires a new approval. No token approval or mint is
 needed. Configuration waits for finalized activation after signing. Canceling
 and resuming retains the same signed bytes and nonce. Unused fee allowance
 remains at the local address.
+
+The terminal QR is generated locally and encodes an Ethereum payment URI with
+the public funding address, selected chain ID, and exact recommended top-up in
+wei. It contains no signing key, private-note secret, or local API credential,
+and no external QR service receives the payment instructions. The text address,
+ETH amount, and URI remain available for wallets that cannot scan terminal QR
+codes. An address that already holds enough ETH needs no additional payment.
 
 The selected model automatically determines its inference budget, matching
 the web wallet's reviewed ticket-tier map:
@@ -231,7 +255,7 @@ prompts remain in the Go inference path. Bridge version 4 is required so an
 older companion cannot silently ignore the per-request limit.
 
 Funding is command-line only. Reading an address or requesting a quote never
-broadcasts a transaction. The **return** action in `config` quotes a transfer
+broadcasts a transaction. The **return** action in `config --menu` quotes a transfer
 of unused public ETH to a destination you enter. Choose a partial amount or
 return the available balance after reserving gas, then approve the quote.
 This is separate from withdrawing private inference credits.
@@ -513,7 +537,7 @@ Preserve its wallet state when changing to a separate funded state directory.
 
 ## Withdraw without connecting a wallet
 
-Run `oa-chat config` with the same configuration directory and choose the
+Run `oa-chat config --menu` with the same configuration directory and choose the
 **withdraw** menu action. Configuration starts temporary services if needed.
 The action shows status, asks for the receiving address, and displays a fee
 quote. Approval authorizes withdrawal of the **entire remaining private
@@ -529,7 +553,7 @@ An outstanding inference must settle first. Preparing a withdrawal saves a
 reservation before requesting clearance and blocks further inference on that note. The
 destination cannot change after starting; there is no cancellation that resumes
 spending a reserved note. Proof preparation can take several minutes. Ctrl+C
-stops waiting; rerun `config` and choose **withdraw** to recover saved signed progress.
+stops waiting; rerun `config --menu` and choose **withdraw** to recover saved signed progress.
 An uncertain broadcast reuses the identical signed transaction. Only a finalized
 revert permits a fresh transaction, following a new quote and approval, with
 the same note, destination, balance, and nullifier.

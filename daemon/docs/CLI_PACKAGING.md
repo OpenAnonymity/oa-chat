@@ -40,10 +40,16 @@ PATH="$HOME/.local/bin:$PATH" oa-chat config
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-Configuration asks for zkAPI or ticket access. zkAPI asks for Mainnet (the
-default) or Sepolia. Existing profiles show their saved settings and can be
-edited. The wizard guides funding or ticket setup, stops any services it
-started, and exits; `serve` runs the inference API. See the
+Current source creates a missing profile with zkAPI on Mainnet and direct
+HTTPS. When funding is needed, it displays a recommended $20 deposit quote, ETH payment address,
+amount, and terminal QR. `config --backend ticket` or `config --network sepolia`
+selects another mode or network; `config --usd 50` chooses another principal
+for a new deposit. Existing profiles show their saved settings and immediately
+check readiness. Use `config --edit` for settings or `config --menu` for wallet
+management. Deposit approval remains explicit. Configuration stops any
+services it started and exits; `serve` runs the inference API. The published
+`0.4.1` installer above predates the automatic $20 quote and QR and still asks
+initial setup questions. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
 Sepolia requires the matched password-capable client and companion in `0.4.1`
@@ -70,9 +76,9 @@ Launchers default to `~/.local/bin`. In a future terminal, run
 `PATH="$HOME/.local/bin:$PATH" oa-chat config`, or follow the printed PATH
 guidance to use the shorter `oa-chat config` command. For a custom prefix,
 substitute its `bin` directory in PATH. This selects both matching binaries. Omit `--network`
-with `--setup` to use an existing configuration's network or answer the new
-configuration's network prompt. `--network` is accepted only with `--setup`
-and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
+with `--setup` to use an existing configuration's network or Mainnet for a new
+profile (the `0.4.1` wizard asks for the network). `--network` is accepted only
+with `--setup` and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
 The default install-only command does not create configuration, initialize or
 fund wallets, start a daemon, register a service, or edit shell startup files.
 `--setup` may run temporary services for configuration; it stops services it
@@ -281,13 +287,15 @@ The companion and `share/oa-chat/proof-setup` are included in every native
 archive. Linux packages install them as `/usr/bin/oa-zkapi` and
 `/usr/share/oa-chat/proof-setup`. Homebrew installs them under its formula
 prefix. `config` sets up both access modes; `serve --backend ticket|zkapi`
-selects the runtime backend. New configuration defaults to zkAPI and prompts
-for Mainnet (the default) or Sepolia. Changing modes or networks retains each
-wallet's separate state.
+selects the runtime backend. Current source defaults new configuration to
+zkAPI on Mainnet with direct HTTPS. Use `config --edit` or `config --network
+sepolia` to select test ETH. Changing modes or networks retains each wallet's
+separate state.
 
-Funding, withdrawals, and public ETH returns are actions in `config`. The
-local signer requires no external wallet connection. Guided deposits ask for
-a fixed principal and maximum fee before waiting for funds; automatic quote
+`config` checks readiness and guides funding; `config --menu` offers withdrawals,
+public ETH returns, and Sepolia password changes. The local signer requires no
+external wallet connection. Guided deposits show a recommended $20 quote and
+terminal QR, then ask for approval of the fixed principal and maximum fee before waiting for funds; automatic quote
 refreshes must remain within that consent. Withdrawals and public returns
 show a destination and fee quote and require approval before signing. Saved
 signed transactions recover with their original bytes and nonce.

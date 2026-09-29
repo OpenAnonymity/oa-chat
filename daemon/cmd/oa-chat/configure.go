@@ -17,7 +17,8 @@ type configureAction func(context.Context, string, config.Config, string, setupP
 
 type configureOptions struct {
 	backend, network, listen, relay, binary, proofs string
-	status, apiKey                                  bool
+	usd                                             string
+	status, apiKey, edit, menu                      bool
 	fields                                          map[string]bool
 }
 
@@ -31,25 +32,36 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	f.StringVar(&o.relay, "relay-url", "", "optional Wisp relay URL; empty selects direct HTTPS")
 	f.StringVar(&o.binary, "zkapi-binary", "", "path to the installed zkAPI companion")
 	f.StringVar(&o.proofs, "proof-setup-dir", "", "path to the installed proving assets")
+	f.StringVar(&o.usd, "usd", "", "USD principal for a new deposit (default: 20; network fees are extra)")
 	f.BoolVar(&o.status, "status", false, "show saved configuration status without setup")
 	f.BoolVar(&o.apiKey, "api-key", false, "print the local inference API key explicitly")
+	f.BoolVar(&o.edit, "edit", false, "edit mode, network, listener, and transport interactively")
+	f.BoolVar(&o.menu, "menu", false, "open configuration and wallet management actions")
 	if err := f.Parse(args); err != nil {
 		return o, err
 	}
 	o.fields = make(map[string]bool)
 	invalid := false
 	f.Visit(func(field *flag.Flag) {
-		if field.Name == "status" || field.Name == "api-key" {
+		if field.Name == "status" || field.Name == "api-key" || field.Name == "edit" || field.Name == "menu" {
 			return
 		}
-		o.fields[field.Name] = true
+		if field.Name != "usd" {
+			o.fields[field.Name] = true
+		}
 		invalid = invalid || (field.Name != "relay-url" && strings.TrimSpace(field.Value.String()) == "")
 	})
 	if invalid || f.NArg() != 0 {
 		return o, errors.New("config flags require nonempty values except --relay-url; unexpected arguments are not accepted")
 	}
-	if o.status && o.apiKey || (o.status || o.apiKey) && len(o.fields) != 0 {
-		return o, errors.New("use --status or --api-key by itself, without configuration edits")
+	selectors := 0
+	for _, selected := range []bool{o.status, o.apiKey, o.edit, o.menu} {
+		if selected {
+			selectors++
+		}
+	}
+	if selectors > 1 || selectors != 0 && (len(o.fields) != 0 || o.usd != "") {
+		return o, errors.New("use --status, --api-key, --edit, or --menu by itself, without other configuration options")
 	}
 	if o.fields["backend"] && o.backend != "ticket" && o.backend != "zkapi" {
 		return o, errors.New("backend must be ticket or zkapi")
@@ -57,11 +69,19 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	if o.fields["network"] && o.network != "mainnet" && o.network != "sepolia" {
 		return o, errors.New("network must be mainnet or sepolia")
 	}
+	if o.usd != "" {
+		if _, err := parseFundingAmountForAsset(o.usd, 6, "USD"); err != nil {
+			return o, err
+		}
+		if o.backend == "ticket" {
+			return o, errors.New("--usd applies to zkAPI deposits only")
+		}
+	}
 	return o, nil
 }
 
 func runConfigure(ctx context.Context, dir string, args []string, ui setupPrompter, out io.Writer) error {
-	err := configure(ctx, dir, args, ui, out, runConfigAction)
+	err := configure(ctx, dir, args, ui, out, nil)
 	if ctx.Err() != nil {
 		ui.Printf("\nStopped. Your saved configuration and wallet state are preserved; run oa-chat config to continue.\n")
 		return nil
@@ -77,6 +97,13 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 	if err != nil {
 		return err
 	}
+	// Tests may supply a side-effect-free action. The production action carries
+	// the new-deposit preference without persisting it or changing recovery intent.
+	if action == nil {
+		action = func(ctx context.Context, dir string, c config.Config, operation string, ui setupPrompter, out io.Writer) error {
+			return runConfigActionWithUSD(ctx, dir, c, operation, o.usd, ui, out)
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -85,7 +112,7 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 	}
 	_, err = os.Lstat(filepath.Join(dir, "config.json"))
 	if errors.Is(err, os.ErrNotExist) {
-		if o.apiKey {
+		if o.apiKey || o.menu {
 			return errors.New("configuration is missing; run oa-chat config to create it")
 		}
 		ui.Printf("Configuration: %s\nStatus: not configured.\n", dir)
@@ -102,10 +129,9 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 			return err
 		}
 		c.Backend = "zkapi"
-		if len(o.fields) == 0 {
-			c, err = promptConfigure(ctx, c, ui, false)
-		} else {
-			c = applyConfigureOptions(c, o)
+		c = applyConfigureOptions(c, o)
+		if o.edit {
+			c, err = promptConfigure(ctx, c, ui, true)
 		}
 		if err != nil {
 			return err
@@ -139,8 +165,21 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 	if o.status {
 		return nil
 	}
+	if o.usd != "" && applyConfigureOptions(c, o).Backend != "zkapi" {
+		return errors.New("--usd applies to zkAPI deposits only; use config --backend zkapi to select that mode")
+	}
 	if len(o.fields) != 0 {
 		return saveConfiguredSettings(ctx, dir, c, applyConfigureOptions(c, o), ui, out, action)
+	}
+	if o.edit {
+		next, err := promptConfigure(ctx, c, ui, true)
+		if err != nil {
+			return err
+		}
+		return saveConfiguredSettings(ctx, dir, c, next, ui, out, action)
+	}
+	if !o.menu {
+		return action(ctx, dir, c, "setup", ui, out)
 	}
 	for {
 		choices := "check setup, edit settings, tickets, withdraw, return public ETH, api-key, or quit"
@@ -207,6 +246,7 @@ func showConfigureSummary(dir string, c config.Config, ui setupPrompter) {
 		transport = "Wisp relay enabled"
 	}
 	ui.Printf("Configuration: %s\nSaved mode: %s\nzkAPI network: %s\nOpenAI base URL: http://%s/v1\nTransport: %s\nLocal API credential: configured (use config --api-key to display it).\n", dir, c.Backend, c.ZKAPI.Network, c.Listen, transport)
+	ui.Printf("Change settings: oa-chat config --edit\nWallet actions: oa-chat config --menu\nUse the same --config-dir for these commands if set.\n")
 }
 
 func saveConfiguredSettings(ctx context.Context, dir string, previous, next config.Config, ui setupPrompter, out io.Writer, action configureAction) error {

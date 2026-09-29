@@ -150,6 +150,10 @@ func configuredWalletReady(ctx context.Context, service guidedFundingService, ui
 // Config owns a temporary runtime only for the selected wallet operation. It
 // returns after readiness/recovery, leaving a foreign compatible service alone.
 func runConfigAction(ctx context.Context, dir string, c config.Config, action string, ui setupPrompter, out io.Writer) error {
+	return runConfigActionWithUSD(ctx, dir, c, action, "", ui, out)
+}
+
+func runConfigActionWithUSD(ctx context.Context, dir string, c config.Config, action, usd string, ui setupPrompter, out io.Writer) error {
 	if action == "password" {
 		if c.Backend != "zkapi" || c.ZKAPI.Network != "sepolia" {
 			return errors.New("password configuration applies only to Sepolia zkAPI")
@@ -178,7 +182,7 @@ func runConfigAction(ctx context.Context, dir string, c config.Config, action st
 	default:
 		return errors.New("unknown configuration action")
 	}
-	err := guidedStart(ctx, dir, startOptions{prepared: &c, setupOnly: true}, ui, out, runtime)
+	err := guidedStart(ctx, dir, startOptions{prepared: &c, setupOnly: true, usd: usd}, ui, out, runtime)
 	if err != nil {
 		return err
 	}

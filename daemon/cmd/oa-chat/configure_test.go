@@ -13,22 +13,78 @@ import (
 	"testing"
 
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/config"
+	"github.com/OpenAnonymity/oa-chat/daemon/internal/zkapi"
 )
 
-func TestConfigureNewPromptsModeAndOnlyZKAPINetwork(t *testing.T) {
-	for _, test := range []struct{ name, answers, mode, network string }{
-		{"defaults", "\n\n", "zkapi", "mainnet"},
-		{"sepolia", "zkapi\nsepolia\n", "zkapi", "sepolia"},
-		{"ticket", "ticket\n", "ticket", "mainnet"},
+func TestConfigureDefaultShowsTwentyDollarPaymentBeforeOnlyConsent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	service := newWizardFixture()
+	service.quote = func(_ int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
+		if amount != 0 || usd != 20_000_000 {
+			t.Fatal("default config did not quote a new $20 deposit")
+		}
+		q := wizardQuote()
+		q.InputMicroUSD, q.BalanceWei = usd, "0"
+		q.ShortfallWei, q.RecommendedTopUpWei = q.RequiredTotalWei, q.RecommendedTotalWei
+		return q, nil
+	}
+	ui := &fundingWizardUI{confirmations: []bool{false}}
+	err := configure(context.Background(), dir, nil, ui, io.Discard, func(ctx context.Context, _ string, c config.Config, action string, prompt setupPrompter, _ io.Writer) error {
+		if action != "setup" || c.Backend != "zkapi" || c.ZKAPI.Network != "mainnet" || c.RelayURL != "" {
+			t.Fatal("fresh config did not select Mainnet without proxying")
+		}
+		return guidedFunding(ctx, service, "", "", prompt, immediateWizardPoll)
+	})
+	if err == nil || !strings.Contains(err.Error(), "declined") || ui.asks != 0 || ui.confirms != 1 || service.quoteCalls != 1 || service.approveCalls+service.resumeCalls != 0 {
+		t.Fatal("default config did not reach only payment consent without authorizing it", err)
+	}
+	for _, want := range []string{"Recommended deposit: $20", "Funding address:", "Scan with an Ethereum wallet:", "?value=750001000030000", "config --edit", "config --menu"} {
+		if !strings.Contains(ui.String(), want) {
+			t.Fatalf("payment display missing %q", want)
+		}
+	}
+}
+
+func TestConfigurePlainExistingChecksWithoutQuestionsOrChangingPreferences(t *testing.T) {
+	dir, original := startTestConfig(t)
+	next := original
+	next.RelayURL = "wss://relay.example/"
+	if err := config.Update(dir, original, next); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+	ui := &fundingWizardUI{}
+	called := false
+	err := configure(context.Background(), dir, nil, ui, io.Discard, func(_ context.Context, _ string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
+		called = true
+		if c != next || action != "setup" {
+			t.Fatal("plain config changed a saved preference")
+		}
+		return nil
+	})
+	after, _ := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil || !called || ui.asks != 0 || !bytes.Equal(before, after) {
+		t.Fatal("plain config did not check the saved profile directly", err)
+	}
+}
+
+func TestConfigureNewDefaultsAndExplicitChoicesDoNotAsk(t *testing.T) {
+	for _, test := range []struct {
+		name, mode, network string
+		args                []string
+	}{
+		{"defaults", "zkapi", "mainnet", nil},
+		{"sepolia", "zkapi", "sepolia", []string{"--network", "sepolia"}},
+		{"ticket", "ticket", "mainnet", []string{"--backend", "ticket"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "private", "new")
 			var output bytes.Buffer
-			ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(test.answers))}
+			ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(""))}
 			called := false
-			err := configure(context.Background(), dir, nil, ui, &output, func(_ context.Context, gotDir string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
+			err := configure(context.Background(), dir, test.args, ui, &output, func(_ context.Context, gotDir string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
 				called = true
-				if gotDir != dir || action != "setup" || c.Backend != test.mode || c.ZKAPI.Network != test.network || c.ManagementToken == "" {
+				if gotDir != dir || action != "setup" || c.Backend != test.mode || c.ZKAPI.Network != test.network || c.ManagementToken == "" || c.RelayURL != "" {
 					t.Fatal("wrong setup profile")
 				}
 				for _, secret := range []string{c.APIKey, c.ZKAPI.BridgeToken, c.ManagementToken} {
@@ -41,11 +97,8 @@ func TestConfigureNewPromptsModeAndOnlyZKAPINetwork(t *testing.T) {
 			if err != nil || !called {
 				t.Fatal("new setup did not complete", err)
 			}
-			if test.mode == "ticket" && strings.Contains(output.String(), "Choose network") {
-				t.Fatal("ticket mode asked for an ETH network")
-			}
-			if test.mode == "zkapi" && !strings.Contains(output.String(), "[mainnet]") {
-				t.Fatal("new setup did not default to mainnet")
+			if strings.Contains(output.String(), "Choose ") {
+				t.Fatal("default setup asked a question before its funding action")
 			}
 			loaded, err := config.Load(dir)
 			if err != nil || loaded.Backend != test.mode || loaded.ZKAPI.Network != test.network {
@@ -66,9 +119,9 @@ func TestConfigureEditPreservesCredentialsAndAdvancedSettings(t *testing.T) {
 	if err := config.Update(dir, prior, original); err != nil {
 		t.Fatal(err)
 	}
-	ui := &startTestUI{answers: []string{"edit", "ticket", "127.0.0.1:9876", "direct"}}
+	ui := &startTestUI{answers: []string{"ticket", "127.0.0.1:9876", "direct"}}
 	called := false
-	err = configure(context.Background(), dir, nil, ui, io.Discard, func(_ context.Context, _ string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
+	err = configure(context.Background(), dir, []string{"--edit"}, ui, io.Discard, func(_ context.Context, _ string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
 		called = true
 		want := original
 		want.Backend, want.Listen, want.RelayURL = "ticket", "127.0.0.1:9876", ""
@@ -113,8 +166,8 @@ func TestConfigureEditDoesNotEchoSavedRelayCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader("edit\n\n\n\n\n"))}
-	err := configure(context.Background(), dir, nil, ui, &output, func(_ context.Context, _ string, c config.Config, _ string, _ setupPrompter, _ io.Writer) error {
+	ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader("\n\n\n\n"))}
+	err := configure(context.Background(), dir, []string{"--edit"}, ui, &output, func(_ context.Context, _ string, c config.Config, _ string, _ setupPrompter, _ io.Writer) error {
 		if c != next {
 			t.Fatal("keeping saved settings changed the relay")
 		}
@@ -176,7 +229,7 @@ func TestConfigureMenuActionsAndNoOpCheck(t *testing.T) {
 			before, _ := os.ReadFile(filepath.Join(dir, "config.json"))
 			called := false
 			ui := &startTestUI{answers: []string{choice}}
-			err := configure(context.Background(), dir, nil, ui, io.Discard, func(_ context.Context, _ string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
+			err := configure(context.Background(), dir, []string{"--menu"}, ui, io.Discard, func(_ context.Context, _ string, c config.Config, action string, _ setupPrompter, _ io.Writer) error {
 				called = true
 				want := choice
 				if choice == "check" {
@@ -271,7 +324,7 @@ func TestConfigureCancellationDoesNotWriteEdits(t *testing.T) {
 }
 
 func TestConfigureRejectsInvalidFlagsBeforeCreatingState(t *testing.T) {
-	for _, args := range [][]string{{"--backend", "both"}, {"--network", "unknown"}, {"--listen", ""}, {"--status", "--backend", "ticket"}, {"--api-key", "--status"}, {"extra"}} {
+	for _, args := range [][]string{{"--backend", "both"}, {"--network", "unknown"}, {"--listen", ""}, {"--status", "--backend", "ticket"}, {"--api-key", "--status"}, {"extra"}, {"--edit", "--menu"}, {"--menu", "--network", "sepolia"}, {"--edit", "--usd", "20"}, {"--usd", "0"}, {"--usd", ""}, {"--usd", "1.0000001"}, {"--usd", "2", "--backend", "ticket"}} {
 		dir := filepath.Join(t.TempDir(), "missing")
 		if err := configure(context.Background(), dir, args, &startTestUI{}, io.Discard, nil); err == nil {
 			t.Fatalf("accepted invalid flags %q", args)
@@ -300,7 +353,7 @@ func TestConfigureAdvertisesPasswordActionOnlyForSepoliaZKAPI(t *testing.T) {
 				var output bytes.Buffer
 				ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(answer))}
 				called := false
-				err := configure(context.Background(), dir, nil, ui, &output, func(_ context.Context, _ string, got config.Config, action string, _ setupPrompter, _ io.Writer) error {
+				err := configure(context.Background(), dir, []string{"--menu"}, ui, &output, func(_ context.Context, _ string, got config.Config, action string, _ setupPrompter, _ io.Writer) error {
 					called = true
 					if !eligible || got != c || action != "password" {
 						t.Fatal("password menu changed settings or dispatched the wrong action")
@@ -311,6 +364,22 @@ func TestConfigureAdvertisesPasswordActionOnlyForSepoliaZKAPI(t *testing.T) {
 					t.Fatalf("incorrect password menu for %s/%s: %v", mode, network, err)
 				}
 			})
+		}
+	}
+}
+
+func TestConfigureProductionPasswordMenuDoesNotEnterFunding(t *testing.T) {
+	clearPasswordEnvironment(t)
+	t.Setenv("OA_ZKAPI_TESTNET_PASSWORD", "test-environment-override")
+	dir, _ := startTestConfig(t)
+	ui := &fundingWizardUI{answers: []string{"password"}}
+	err := configure(context.Background(), dir, []string{"--menu"}, ui, io.Discard, nil)
+	if err == nil || !strings.Contains(err.Error(), "overridden by the environment") || ui.confirms != 0 || ui.asks != 1 {
+		t.Fatal("production password action entered setup or bypassed password handling", err)
+	}
+	for _, name := range []string{"daemon.lock", "funding", "zkapi"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("password menu unexpectedly created %s", name)
 		}
 	}
 }

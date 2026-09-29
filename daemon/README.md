@@ -45,18 +45,28 @@ for version pinning, custom prefixes, and optional `--setup`.
 oa-chat config
 ```
 
-With no configuration, the command creates the private directory and asks
-whether to use **zkAPI** (the default) or **tickets**. zkAPI then asks for
-**Mainnet** (the default) or **Sepolia** (test ETH). It checks what is missing
-and guides ticket import/redemption or wallet funding. It starts temporary
-local services for these checks and stops services it owns when configuration
-finishes. You then run `oa-chat serve` separately.
+With no configuration, the current source creates the private directory using
+**zkAPI on Mainnet with direct HTTPS**. If funding is needed, it prepares a
+recommended **$20 private deposit** and immediately displays the ETH address,
+payment amount, and a QR code in the terminal. No initial mode, network, or
+amount answers are needed. Network fees are extra and shown separately; review
+the quote and confirm before the CLI can deposit. It waits for incoming ETH,
+deposits within the approved amount and fee bounds, and waits for finality.
+Temporary services it starts are stopped when configuration finishes. You then
+run `oa-chat serve` separately.
 
-With an existing profile, `config` displays a redacted status and offers a
-menu to check readiness, edit settings, manage tickets, withdraw private
-credits, return public ETH, show the local API key, or quit. It preserves your
-keys, tickets, and wallet files. Stop a running daemon before editing settings;
-saved settings are available through `oa-chat config --status`.
+This streamlined default and terminal QR are newer than the published `0.4.1`
+bundle; that release still asks initial setup questions. The installation link
+above remains pinned to `0.4.1`.
+
+With an existing profile, `config` displays a redacted status and immediately
+checks readiness using the saved settings. It guides any missing ticket setup
+or funding and preserves your keys, tickets, and wallet files. Use
+`config --edit` to edit settings or `config --menu` to manage tickets, withdraw
+private credits, return public ETH, update the Sepolia password, show the local
+API key, or check setup.
+Stop a running daemon before editing settings; saved settings are available
+through `oa-chat config --status`.
 
 The editor covers the saved access mode, zkAPI network, loopback listener,
 and optional Wisp relay. Both access modes remain available in the same
@@ -69,6 +79,9 @@ For an explicit choice, the same command accepts these settings:
 ```sh
 oa-chat config --backend zkapi --network sepolia
 oa-chat config --backend ticket
+oa-chat config --usd 50
+oa-chat config --edit
+oa-chat config --menu
 oa-chat config --listen 127.0.0.1:8788
 oa-chat config --relay-url wss://YOUR_WISP_RELAY/
 ```
@@ -78,6 +91,10 @@ it. `--zkapi-binary` and `--proof-setup-dir` select custom companion locations
 for source builds. Installed bundles normally discover both automatically.
 Changes are saved; `serve --backend ticket|zkapi` can select a runtime mode
 without changing the saved default.
+`--usd` selects the USD principal for a new deposit only; it is not a saved
+configuration setting and cannot change the amount of a deposit already in
+progress. A ready wallet does not receive another deposit merely because
+`config` is run again.
 
 Configuration defaults to `~/Library/Application Support/oa-chat` on macOS
 and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
@@ -192,11 +209,12 @@ and restart recovery. See the [terminal-flow validation](docs/CLI_ZKAPI.md#termi
 For source builds, use `daemon/scripts/prepare-zkapi.sh` followed by
 `daemon/scripts/build-native.sh`; see [packaging](docs/CLI_PACKAGING.md).
 
-Run `oa-chat config` and choose zkAPI to check readiness and fund the selected
-network. The guided flow follows the web wallet's send-to-address experience:
-choose a USD amount, review the fixed ETH principal and maximum network fee,
-then authorize the deposit. Send ETH to the displayed funding address. The
-wizard waits for it, deposits automatically within the approved bounds, and
+Run `oa-chat config` to check readiness and fund the selected network. New
+profiles use zkAPI on Mainnet without a proxy. The guided flow follows the web
+wallet's send-to-address experience: it quotes a recommended $20 private
+deposit, shows the fixed ETH principal, maximum network fee, and payment QR,
+then asks you to authorize the deposit. Send ETH to the displayed funding
+address. The wizard waits for it, deposits automatically within the approved bounds, and
 waits for finalized activation. A higher fee ceiling requires confirmation.
 It checks model readiness without sending an inference or spending credits.
 
@@ -208,14 +226,14 @@ wallet connection, seed phrase, or imported private key is required.
 
 Sepolia requires the shared testnet password. `config` asks for it with input
 hidden and verifies it before starting the companion or funding. It saves the
-accepted password in an owner-only local file. Use the **password** menu action
-to change it without funding, then restart any running daemon. Unattended
-services can set `OA_ZKAPI_TESTNET_PASSWORD_FILE` to a private password file.
-Mainnet and ticket mode are unaffected. See
+accepted password in an owner-only local file. Use the **password** action in
+`config --menu` to change it without funding, then restart any running daemon.
+Unattended services can set `OA_ZKAPI_TESTNET_PASSWORD_FILE` to a private password
+file. Mainnet and ticket mode are unaffected. See
 [Sepolia authentication](docs/CLI_ZKAPI.md#sepolia-access-password).
 
-Use the **withdraw** menu action to close the full remaining private balance,
-or **return** to send unused public ETH elsewhere. Both ask for a destination,
+Use `config --menu` and its **withdraw** action to close the full remaining
+private balance, or **return** to send unused public ETH elsewhere. Both ask for a destination,
 show the quote, and require explicit approval before signing. The withdrawal
 signer needs public ETH for gas. See [funding and recovery](docs/CLI_ZKAPI.md)
 for reservations, restart behavior, and current protocol limits.
