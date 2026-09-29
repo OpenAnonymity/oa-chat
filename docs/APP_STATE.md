@@ -1,3 +1,44 @@
+## 2026-09-29: Guided CLI setup and automatic funding
+
+- `oa-chat start` creates a missing configuration in the normal private OS
+  directory and keeps existing valid configuration and wallet state. New
+  guided configurations use zkAPI and ask for the network, offering Sepolia;
+  advanced `init` still defaults to Mainnet. Explicit network flags must match
+  an existing profile. Invalid or orphaned wallet state is never overwritten.
+- `install.sh --setup --network sepolia` installs/updates the native pair and
+  then runs the installed absolute CLI with its companion directory first on
+  PATH. It needs no separate PATH/init/serve/funding terminal for the first run.
+  Ordinary installation remains install-only. Active instructions target the
+  follow-up `daemon-v0.3.0`; publication is pending at this checkpoint.
+- Setup authenticates an existing daemon or starts and owns a foreground
+  daemon. It never stops a foreign process. Without an explicit backend flag,
+  an authenticated compatible running mode wins; otherwise the saved default
+  is used. `--backend` selects a mode without rewriting the saved configuration.
+  Startup waits through slow proof-file verification before declaring failure.
+- Funding asks for a USD principal and one interactive authorization for the
+  displayed fixed ETH amount and maximum fee. The terminal prompt reads
+  `/dev/tty`; piped scripts, EOF, and blank confirmation cannot approve spending.
+  Exact-amount quote refreshes retain wallet/network/deployment/commitment/nonce
+  bindings. Setup checks for arriving ETH, approves a fresh quote only within
+  the accepted fee ceiling, and waits for finalized activation. A fee increase
+  requires renewed consent. Unsigned restarts ask again; signed restarts only
+  recover the saved transaction. Lost responses require a successful journal
+  read before any further recovery call; reverts never trigger a new deposit.
+- Readiness checks model availability and its current native spending bound,
+  settlement, and both local and companion-only withdrawal reservations. An
+  existing note below the selected cap cannot be topped up in place. Setup
+  prefers `openai/gpt-4.1-mini`, then the cheapest available model; `--model`
+  overrides the readiness target. No test inference is sent or charged during
+  setup. Ticket mode guides private-file import/redemption and checks models.
+- The ready screen prints the API URL and an absolute, shell-quoted command
+  to retrieve the local API key, without printing the credential. Owned services
+  remain in the terminal; attaching to an existing service returns after checks.
+  See [the guided walkthrough](../daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+- Validation: full Go race suite/vet, Linux command cross-compilation, 26
+  installer regressions, and fresh adversarial review pass. Review fixes cover
+  companion PATH selection, slow-start readiness, and ambiguous recovery.
+  Live Sepolia acceptance and release publication are being recorded separately.
+
 ## 2026-09-29: CLI 0.2.0 prerelease published
 
 - [daemon-v0.2.0](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)

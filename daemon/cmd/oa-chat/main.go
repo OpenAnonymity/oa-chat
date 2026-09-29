@@ -69,6 +69,13 @@ func run(args []string) error {
 	if args[0] == "init" {
 		return initialize(dir, args[1:])
 	}
+	if args[0] == "start" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		ui := &terminalSetupPrompter{out: os.Stdout}
+		defer ui.Close()
+		return runGuidedStart(ctx, dir, args[1:], ui, os.Stdout)
+	}
 	c, err := config.Load(dir)
 	if err != nil {
 		return err
@@ -109,6 +116,9 @@ func help() {
        [--relay-url WSS_URL] [--listen 127.0.0.1:8787]
        [--zkapi-binary PATH] [--proof-setup-dir PATH]
   serve [--backend ticket|zkapi]  Select mode and run the local API
+  start [--network mainnet|sepolia] [--backend ticket|zkapi]
+        [--usd USD] [--model ID] [--listen 127.0.0.1:8787]
+                         Check setup, guide funding, and run the local API
   status                 Show service and private wallet readiness
   api-key                Print the local key to configure your client
   tickets import FILE|-  Import OA exported ticket JSON
@@ -134,7 +144,8 @@ Network proxy is off by default; --relay-url opts into the encrypted Wisp relay.
 No prompts or responses are stored by the daemon. The connected UI may store them.
 One init configures both ticket and zkAPI wallets; serve selects the active mode.
 The saved backend is the default when serve omits --backend.
-Ethereum mainnet is the default; Sepolia requires --network sepolia at init.`)
+init defaults to Ethereum mainnet. start asks for the network on first use.
+start preserves existing configuration; --network must match its saved network.`)
 }
 
 func initialize(dir string, args []string) error {

@@ -108,6 +108,7 @@ class InstallerTests(unittest.TestCase):
         self.download_temp.mkdir()
         self.curl_log = self.root / "curl.jsonl"
         self.exec_log = self.root / "executions.log"
+        self.start_log = self.root / "start-arguments.bin"
         self.forbidden_log = self.root / "forbidden.log"
         for command in ("curl", "uname", "getconf", "sw_vers", "id", "sysctl", "mv", "sudo",
                         "systemctl", "launchctl", "brew"):
@@ -121,6 +122,7 @@ class InstallerTests(unittest.TestCase):
                         TEST_ARTIFACTS=str(self.artifacts),
                         TEST_CURL_LOG=str(self.curl_log),
                         TEST_EXEC_LOG=str(self.exec_log),
+                        TEST_START_LOG=str(self.start_log),
                         TEST_FORBIDDEN_LOG=str(self.forbidden_log),
                         XDG_CONFIG_HOME=str(self.home / ".config"),
                         OA_CHAT_CONFIG_DIR=str(self.home / "private-config"))
@@ -161,10 +163,23 @@ class InstallerTests(unittest.TestCase):
             files["share/oa-chat/proof-setup/" + name] = b"fixture proof asset\n"
         for executable, argument, output in (("oa-chat", "version", "oa-chat " + (binary_version or version)),
                                              ("oa-zkapi", "--help", "zkAPI fixture help")):
+            start_handler = (
+                'if [ "${1:-}" = start ]; then\n'
+                '  [ ! -e "$(dirname "$0")/../lib/oa-chat/.install-lock" ] || exit 92\n'
+                '  for leftover in "$TMPDIR"/oa-chat-install.*; do\n'
+                '    [ ! -e "$leftover" ] || exit 93\n'
+                '  done\n'
+                '  [ "$(command -v oa-zkapi)" = "$(dirname "$0")/oa-zkapi" ] || exit 94\n'
+                '  oa-zkapi --help >/dev/null || exit 95\n'
+                '  printf "%s\\0" "$0" "$@" >> "$TEST_START_LOG"\n'
+                '  exit "${TEST_SETUP_EXIT:-0}"\n'
+                'fi\n'
+            ) if executable == "oa-chat" else ''
             files[executable] = (
                 '#!/bin/sh\n'
                 f'printf "%s\\n" "{executable} $*" >> "$TEST_EXEC_LOG"\n'
-                f'[ "$#" -eq 1 ] && [ "$1" = "{argument}" ] || exit 90\n'
+                + start_handler
+                + f'[ "$#" -eq 1 ] && [ "$1" = "{argument}" ] || exit 90\n'
                 + ('exit 91\n' if runtime_fail == executable else f'printf "%s\\n" "{output}"\n')
             ).encode()
         for name in missing:
@@ -266,11 +281,73 @@ class InstallerTests(unittest.TestCase):
                          {"oa-chat version", "oa-zkapi --help"})
         self.assertFalse((self.home / ".config/systemd").exists())
         self.assertFalse((self.home / "Library/LaunchAgents").exists())
+        self.assertFalse(self.start_log.exists())
+        self.assertIn("Start guided setup: oa-chat start", self.last_result.stdout)
         calls = [json.loads(line) for line in self.curl_log.read_text().splitlines()]
         self.assertEqual(len(calls), 2)
         for args in calls:
             self.assertEqual(args[args.index("--proto") + 1], "=https")
             self.assertEqual(args[args.index("--proto-redir") + 1], "=https")
+
+    def test_piped_setup_uses_installed_binary_and_forwards_network(self):
+        self.fixture()
+        for network in (None, "sepolia", "mainnet"):
+            with self.subTest(network=network):
+                prefix = self.home / ("setup " + (network or "choose network"))
+                arguments = ["--setup"]
+                if network:
+                    arguments += ["--network", network]
+                result = self.run_installer(prefix=prefix, arguments=arguments, piped=True)
+                self.assert_success(result, prefix=prefix)
+                expected = [str(prefix.resolve() / "bin/oa-chat"), "start"]
+                if network:
+                    expected += ["--network", network]
+                self.assertEqual(self.start_log.read_bytes().split(b"\0")[:-1],
+                                 [argument.encode() for argument in expected])
+                self.assertNotIn("Start guided setup: oa-chat start", result.stdout)
+                self.start_log.unlink()
+
+    def test_setup_failure_preserves_install_and_propagates_exit_code(self):
+        self.fixture()
+        self.env["TEST_SETUP_EXIT"] = "17"
+        result = self.run_installer(arguments=("--setup", "--network", "sepolia"), piped=True)
+        self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+        self.assert_installed()
+        self.assertTrue(self.start_log.exists())
+
+    def test_setup_selects_installed_companion_ahead_of_older_path_entry(self):
+        self.fixture()
+        stale_companion = self.fakebin / "oa-zkapi"
+        stale_companion.write_text("#!/bin/sh\nexit 96\n")
+        stale_companion.chmod(0o755)
+        result = self.run_installer(arguments=("--setup", "--network", "sepolia"), piped=True)
+        self.assert_success(result)
+        self.assertTrue(self.start_log.exists())
+
+    def test_setup_upgrade_preserves_old_release_and_hands_off_once(self):
+        self.fixture()
+        self.assert_success(self.run_installer())
+        old_release = (self.prefix / "lib/oa-chat/current").resolve()
+        self.fixture(version="1.2.4")
+        result = self.run_installer(version="1.2.4", arguments=("--network", "sepolia", "--setup"), piped=True)
+        self.assert_success(result, version="1.2.4")
+        self.assertTrue(old_release.is_dir())
+        self.assertIn("Restart any running daemon", result.stdout)
+        self.assertEqual(self.start_log.read_bytes().split(b"\0")[:-1],
+                         [str(self.prefix.resolve() / "bin/oa-chat").encode(), b"start", b"--network", b"sepolia"])
+
+    def test_invalid_setup_arguments_fail_before_download(self):
+        for arguments in (("--network", "sepolia"), ("--setup", "--network"),
+                          ("--setup", "--network", ""), ("--setup", "--network", "local"),
+                          ("--setup", "--network", "sepolia; touch injected"),
+                          ("--setup", "--network", "$(touch injected)"),
+                          ("--setup=true",)):
+            with self.subTest(arguments=arguments):
+                self.assert_rejected(self.run_installer(arguments=arguments, piped=True))
+                self.assertFalse(self.curl_log.exists())
+                self.assertFalse(self.exec_log.exists())
+                self.assertFalse(self.start_log.exists())
+                self.assertFalse((self.root / "injected").exists())
 
     def test_rosetta_downloads_native_arm64(self):
         self.env.update(TEST_OS="Darwin", TEST_ARCH="x86_64", TEST_TRANSLATED="1")

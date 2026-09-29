@@ -9,46 +9,64 @@ including SSE streaming, tool calls, multimodal messages, structured outputs,
 usage events, and reasoning fields. Responses, Assistants, embeddings,
 file-storage, and image-generation endpoints are not implemented.
 
-## Install with one command
+## Install and get ready with one command
 
-Install or update the native binaries and proving assets with the
-[`daemon-v0.2.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0):
-
-```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash
-```
-
-This installs `oa-chat` and `oa-zkapi` under `~/.local/bin` on macOS 13+ or
-Linux with glibc 2.39+, for AMD64 or ARM64. Follow the installer's PATH guidance
-if that directory is not on your PATH. Linux also requires OpenSSL 3, libgcc,
-and CA certificates. The installer checks the archive's SHA-256 checksum and
-both executables before activating the installation. Run it as your normal
-user; it does not need `sudo`, change your shell configuration, or start a
-service.
-
-For an existing one-command installation, stop the daemon and rerun that same
-command with the same prefix, then restart. It updates both binaries and proof
-assets together while retaining your private configuration, tickets, and wallet
-state. It does not migrate legacy ERC-20 notes to the native ETH deployment.
-
-For a new ticket setup, initialize once and import/redeem tickets:
+Guided setup is available in version `0.3.0`. For Sepolia test ETH:
 
 ```sh
-oa-chat init
-oa-chat tickets redeem
-oa-chat serve --backend ticket
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
 ```
 
-For Sepolia zkAPI, follow the [installation-to-inference walkthrough](docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
-Version `0.2.0` includes shared initialization, runtime mode selection, automatic
-model budgets, and terminal deposit/withdrawal quotes.
+The installer checks and installs both binaries and proving assets, then runs
+`oa-chat start` directly. No separate PATH command, initialization, or funding
+terminal is needed for setup. It creates configuration in the default directory
+when missing, starts the local API and companion, and checks the wallet against
+an available model's automatic request cap.
+
+If funding is needed, choose the USD amount (normally $2), review the fixed ETH
+principal and maximum network fee, and confirm once. Send **Sepolia test ETH**
+to the displayed funding address. Setup checks automatically, deposits when
+the required amount arrives, and waits for finalized activation. A higher fee
+ceiling requires another confirmation. When ready, it prints the local API URL
+and a command to retrieve the API key; it does not print the key automatically.
+Leave the terminal running for inference and settlement.
+
+After installation, follow the installer's PATH guidance for future terminals,
+then restart or check an existing setup with:
+
+```sh
+oa-chat start --network sepolia
+```
+
+New guided configurations default to zkAPI. Existing configuration and its
+saved mode are preserved; a compatible running daemon is reused. Use
+`--backend zkapi` to explicitly choose zkAPI for an existing ticket profile,
+or `--backend ticket` for guided ticket import/redemption. Without `--network`,
+a new setup asks which network to use and offers Sepolia. An existing wallet
+is never switched to another network or overwritten to repair a load error.
+See the [full Sepolia walkthrough](docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
+for recovery and sending your first request.
+
+For installation or updates only, omit the setup flags:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash
+```
+
+Run as your normal user on macOS 13+ or Linux with glibc 2.39+, on AMD64 or
+ARM64. Linux also needs OpenSSL 3, libgcc, and CA certificates. Binaries go in
+`~/.local/bin`; no `sudo` or shell-profile changes are needed. Stop an existing
+daemon before upgrading, rerun with the same prefix, and restart afterward.
+Both binaries and proof assets update together while preserving configuration,
+tickets, wallet state, and the previous release. Legacy ERC-20 notes are not
+migrated to the native ETH deployment.
+
+Version `0.3.0` adds this guided flow to the shared initialization, runtime mode
+selection, automatic model budgets, and terminal quotes introduced in `0.2.0`.
 [Installer options and upgrades](docs/CLI_PACKAGING.md#one-command-installation)
-cover version pinning and custom installation directories.
-
-The exact-tag installer URL works for stable releases and GitHub prereleases.
-GitHub's `latest/download` URL excludes prereleases, so use the command above
-for this preview. See [packaging and release validation](docs/CLI_PACKAGING.md).
-A Homebrew tap and an AUR package have not yet been published.
+cover version pinning and custom installation directories. Exact-tag URLs
+support prereleases; GitHub's `latest/download` URL excludes them. A Homebrew
+tap and an AUR package have not yet been published.
 
 ## Build and run ticket mode
 
@@ -167,8 +185,13 @@ and restart recovery. See the [terminal-flow validation](docs/CLI_ZKAPI.md#termi
 For source builds, use `daemon/scripts/prepare-zkapi.sh` followed by
 `daemon/scripts/build-native.sh`; see [packaging](docs/CLI_PACKAGING.md).
 
+Use `oa-chat start --backend zkapi` for guided readiness and funding with your
+saved network. For a new Sepolia configuration, use
+`oa-chat start --backend zkapi --network sepolia`. The advanced manual flow
+remains available:
+
 ```sh
-oa-chat init                 # once, for both modes
+oa-chat init                 # once, for both modes; mainnet unless --network is supplied
 oa-chat serve --backend zkapi
 # In another terminal:
 oa-chat fund
@@ -197,8 +220,10 @@ Ethereum finality before activating the private note.
 
 Ctrl+C stops waiting without deleting saved state. `oa-chat fund --resume`
 recovers a saved transaction; it cannot authorize a new deposit or fee increase.
-Use the same `--config-dir` throughout. Starting the service, showing an address,
-or preparing a quote never broadcasts a transaction.
+Use the same `--config-dir` throughout. `serve`, showing an address, and preparing
+a quote never broadcast a transaction. Guided `start` asks before authorizing
+a new deposit; after that confirmation, it refreshes bounded quotes and deposits
+automatically when the funds arrive.
 
 No browser extension, wallet connection, seed phrase, or imported private key
 is required. The daemon creates a signing key and keeps it in its owner-only
@@ -237,7 +262,9 @@ been removed. See [funding, recovery, and limitations](docs/CLI_ZKAPI.md).
 Upgrade both binaries together with the one-command installer before using
 these commands; `daemon-v0.1.0` predates them.
 
-Ethereum mainnet is the default. Sepolia requires an explicit selection:
+The advanced `init` command defaults to Ethereum mainnet; new guided `start`
+asks for the network with Sepolia offered as the default. For an explicit,
+separate Sepolia profile using the manual commands:
 
 ```sh
 oa-chat --config-dir /path/to/private-sepolia-state init \

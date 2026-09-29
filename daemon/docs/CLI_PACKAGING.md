@@ -7,7 +7,9 @@ who imported tickets or funded the private balance.
 
 ## Local configuration
 
-Run `oa-chat init` before starting the service. Configuration is stored in
+Run `oa-chat start` for guided creation and readiness checks. For explicit
+service-manager setup, run `oa-chat init` before starting the service.
+Configuration is stored in
 `config.json` under Go's `os.UserConfigDir()/oa-chat`: normally
 `~/.config/oa-chat` on Linux and `~/Library/Application Support/oa-chat` on
 macOS. `OA_CHAT_CONFIG_DIR` or a global `--config-dir` selects a separate
@@ -26,12 +28,24 @@ retain their own transcripts under their own storage/privacy settings.
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Install or update to the
-[`daemon-v0.2.0` prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.2.0)
-with:
+AUR. Use version `0.3.0` to install or update and enter guided Sepolia setup:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --setup --network sepolia
+```
+
+`--setup` runs the installed `oa-chat start` after validation, activation, and
+installer cleanup. It puts the installed companion first on PATH for that
+process, including when another version is installed elsewhere. The guided
+flow creates missing default configuration, checks readiness, and asks before
+funding. It waits for incoming ETH and completes the approved deposit without
+manual quote refreshes. See the [Sepolia walkthrough](CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+Prompts read your controlling terminal, never the piped installer script.
+
+For installation or updates only, omit the setup flags:
+
+```sh
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash
 ```
 
 The published script is pinned to its own release version. It downloads the
@@ -43,28 +57,25 @@ runtime libraries with the distribution's package manager. Bash, `curl`,
 `tar`, and either `sha256sum` or `shasum` must be available. No compiler,
 Homebrew, Python, or root access is needed to run the installer.
 
-By default, launchers are installed in `~/.local/bin`. If needed, apply the
-PATH command printed by the installer to the current shell, then run:
-
-```sh
-oa-chat init
-oa-chat serve --backend ticket
-```
-
-Import/redeem tickets or follow the [Sepolia walkthrough](CLI_ZKAPI.md#sepolia-from-installation-to-inference)
-before sending inference requests. The installer does not initialize a
-configuration, import tickets, fund a wallet, start a daemon/service, or edit
-shell startup files.
+Launchers default to `~/.local/bin`. Follow the printed PATH guidance for
+future terminals, then use `oa-chat start` to run setup again. Omit `--network`
+with `--setup` to use an existing configuration's network or answer the new
+configuration's network prompt. `--network` is accepted only with `--setup`
+and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
+The default install-only command does not create configuration, initialize or
+fund wallets, start a daemon, register a service, or edit shell startup files.
+`--setup` starts a foreground process or attaches to a compatible daemon; it
+does not register a background service either.
 
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.2.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.3.0/install.sh | bash -s -- --prefix "$HOME/oa-tools" --setup --network sepolia
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version are `daemon-v0.2.0` and `0.2.0`.
+metadata; the tag and installer version are `daemon-v0.3.0` and `0.3.0`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -76,19 +87,22 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/ins
 `--version MAJOR.MINOR.PATCH` can override the script's pinned version;
 `--help` lists the options. The source file `daemon/install.sh` requires an
 explicit `--version` because its release placeholder is filled only by
-`assemble-release.py`.
+`assemble-release.py`. Guided `start` requires version `0.3.0` or newer.
 
 Stop a running daemon before upgrading, rerun the installation command with
-the same prefix, and restart the daemon afterward. An upgrade retains the
+the same prefix, and restart afterward (`--setup` runs the guided restart).
+The installer does not terminate an existing daemon. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
-wallet state remain in the separate private configuration directory. Reinitializing
-is unnecessary for an existing compatible configuration. After restarting,
-`oa-chat version` should print `oa-chat 0.2.0`. The installer does not migrate
-legacy ERC-20 notes to native ETH; retain their recovery directory and matching
-old client, and use a fresh config for the native deployment.
-Launchers belonging to an unrelated installation are refused; use the existing
-package manager for a Homebrew/package upgrade or choose another prefix.
+wallet state remain in the separate private configuration directory.
+Reinitializing is unnecessary. `oa-chat version` should print `oa-chat 0.3.0`
+after this upgrade. A setup failure leaves the validated installation in place
+and returns the CLI's failure status so you can rerun `start` after addressing
+it. The installer does not migrate legacy ERC-20 notes to native ETH; retain
+their recovery directory and matching old client, and use a fresh config for
+the native deployment. Launchers belonging to an unrelated installation are
+refused; use its package manager for a Homebrew/package upgrade or choose
+another prefix.
 
 The managed layout is:
 
@@ -198,14 +212,13 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-For the `0.2.0` release, select its exact version:
+For the `0.3.0` release, select its exact version:
 
 ```sh
-release_version=0.2.0
+release_version=0.3.0
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
-oa-chat init
-oa-chat serve
+oa-chat start
 ```
 
 The published `daemon-v0.1.0` predates this packaging and has no Nix flake asset.
@@ -260,14 +273,20 @@ its own local signing key; no external wallet is required. `fund --amount ETH`
 or `fund --usd USD` prepares a deposit quote. `withdraw --to ADDRESS` prepares
 a quote for the full private balance after reserving it in the companion.
 `fund return --to ADDRESS [--amount ETH]` quotes a return of unused public ETH.
-Each operation signs only after its corresponding `--approve QUOTE_ID` command;
-`--resume` recovers saved signed bytes without granting new authority.
+These explicit commands sign only after the corresponding `--approve QUOTE_ID`;
+`--resume` recovers saved signed bytes without granting new authority. Guided
+`start` also supports deposits: after confirming a fixed principal and fee
+ceiling, it refreshes quotes and authorizes that same deposit automatically
+when funds arrive. Withdrawals and public returns retain explicit approvals.
 The companion must advertise `bridge_version: 3` for model-selected budgets
-and `withdrawal_bridge_version: 1`; ship both binaries together. Service startup,
-address checks, and quote preparation never broadcast a transaction. Version
-`0.2.0` includes this terminal flow; the historical `0.1.0` release used MetaMask.
-User-facing configuration uses Ethereum mainnet; Sepolia must be selected
-explicitly for testing.
+and `withdrawal_bridge_version: 1`; ship both binaries together. `serve`, address
+checks, and quote preparation never broadcast a transaction. Version
+`0.2.0` introduced the explicit terminal quote flow; `0.3.0` adds guided
+startup and bounded automatic deposits. The historical `0.1.0` release used
+MetaMask.
+Advanced `init` defaults to Ethereum mainnet. Guided `start` asks for the
+network on first use and offers Sepolia; use `--network sepolia` to select it
+explicitly. Existing configurations retain their network.
 
 ## Building a release
 
