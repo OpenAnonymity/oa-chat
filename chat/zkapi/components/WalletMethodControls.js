@@ -460,10 +460,17 @@ export function attachWalletMethodControls(owner) {
         finally { owner.fundingBusy = false; if (owner.isOpen) owner.render(); }
     };
     const on = (name, action) => input(name)?.addEventListener('click', action);
-    on('testnet-password', () => perform(async () => {
-        stopFundingFlow(owner, { preserveAmount: true });
-        await zkapiClient.ensureTestnetAccess({ interactive: true, changePassword: true });
-    }));
+    on('testnet-password', async () => {
+        if (owner.busy || owner.fundingBusy) return;
+        await perform(async () => {
+            stopFundingFlow(owner, { preserveAmount: true });
+            await zkapiClient.ensureTestnetAccess({ interactive: true, changePassword: true });
+        });
+        // Both busy-state renders replace the trigger. Restore focus only
+        // after the final render, using the current button rather than its
+        // disconnected predecessor captured by the password dialog.
+        if (owner.isOpen) owner.overlay?.querySelector('[data-funding-testnet-password]')?.focus?.();
+    });
     root.querySelectorAll('[data-wallet-method]').forEach(button => button.addEventListener('click', () => {
         if (owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false) return;
         if (getWalletMethod() === button.dataset.walletMethod) return;

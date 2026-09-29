@@ -1,3 +1,12 @@
+## 2026-09-29: Sepolia password focus after wallet rerenders
+
+- The wallet's busy and completion renders replace its Enter/Change Sepolia
+  password button. The password action now restores keyboard focus to the
+  current replacement button after completion or dismissal; capturing the old
+  node inside the password dialog left focus on the page after Escape. Closing
+  the underlying wallet view suppresses that restoration. Regression tests
+  replace both trigger nodes and cover accepted, canceled and closed outcomes.
+
 ## 2026-09-29: Shared-password access for Sepolia
 
 - Sepolia can require a single shared service password in the ZKAPI server's
@@ -34,10 +43,14 @@
   fixture verified wrong-password feedback, successful submit, Escape and focus
   restoration. Fresh adversarial review fixed independent waiter cancellation,
   password recovery during pending transactions, and unilateral escape access.
-- Current installation instructions target `daemon-v0.3.3`; release publication
-  and live acceptance are pending. The local AWS SSO authorization expired; the
-  prior deployment VM is offline and direct SSH to Sepolia timed out. No live
-  server, web alias, vault, wallet, or Mainnet deployment changed in this checkpoint.
+- The existing Sepolia server and web deployment now enforce the password.
+  Both direct-origin and same-origin proxy acceptance passed all 16 checks;
+  real CLI/native-companion authentication and a read-only quote also passed.
+  Only server/gateway containers were replaced, preserving the custom database
+  filename and all native deployment pins. Mainnet is unchanged. See the
+  [rollout and rollback record](SEPOLIA_AUTH_DEPLOYMENT_20260929.md).
+- Current installation instructions target `daemon-v0.3.3`; four-platform
+  release packaging is in progress. The compatible web build is already live.
 
 ## 2026-09-29: Separate CLI installation and guided first-time setup
 

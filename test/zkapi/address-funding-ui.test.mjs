@@ -67,6 +67,37 @@ test('saved transactions lock the signer selector but leave Sepolia password rec
     assert.doesNotMatch(html, /data-funding-testnet-password[^>]*disabled/);
 });
 
+for (const outcome of ['accepted', 'canceled', 'closed']) {
+    test(`password action restores the current wallet trigger after ${outcome} without focusing detached buttons`, async () => {
+        const focused = [];
+        let settle;
+        const f = fixture({ client: { config: { funding: { chain_id: 11155111 } },
+            ensureTestnetAccess: () => new Promise((resolve, reject) => {
+                settle = () => outcome === 'canceled'
+                    ? reject(Object.assign(new Error('Sepolia access was canceled.'), { code: 'testnet_auth_canceled' }))
+                    : resolve();
+            }) } });
+        f.owner.isOpen = true;
+        const button = index => {
+            const current = f.field('testnet-password');
+            current.focus = () => focused.push(index);
+            return current;
+        };
+        let renders = 0;
+        const original = button(0);
+        f.owner.render = () => { button(++renders); };
+        f.controls.attachWalletMethodControls(f.owner);
+        const action = original.events.click();
+        assert.equal(renders, 1, 'opening the password dialog first replaces its trigger');
+        assert.deepEqual(focused, []);
+        if (outcome === 'closed') f.owner.isOpen = false;
+        settle();
+        await action;
+        assert.equal(renders, outcome === 'closed' ? 1 : 2);
+        assert.deepEqual(focused, outcome === 'closed' ? [] : [2]);
+    });
+}
+
 function disclosureOwner(f) {
     const accountSource = fs.readFileSync(new URL('../../chat/zkapi/components/AccountModal.js', import.meta.url), 'utf8')
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');

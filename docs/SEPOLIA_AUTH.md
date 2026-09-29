@@ -45,3 +45,7 @@ rewrite/direct fallback, redirect refusal, blocked funding/inference, no
 automatic mutation replay, cancellation during validation, field clearing,
 logger redaction and a Send with an already-active key. The server and CLI
 have separate auth tests in their owning repositories.
+
+The existing Sepolia service is password-protected as of 2026-09-29. See the
+[deployment and verification record](SEPOLIA_AUTH_DEPLOYMENT_20260929.md) for
+source pins, operational preservation and rollback details.
