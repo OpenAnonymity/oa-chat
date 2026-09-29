@@ -682,6 +682,7 @@ function buildUserMessage(message, options = {}) {
                                         type="button"
                                         class="edit-add-files-btn inline-flex items-center justify-center rounded-md transition-colors hover-highlight text-muted-foreground hover:text-foreground h-7 w-7 relative"
                                         data-message-id="${safeMessageId}"
+                                        aria-label="Attach files"
                                         data-tooltip="Attach files"
                                         data-tooltip-position="top"
                                     >
@@ -763,6 +764,7 @@ function buildUserMessage(message, options = {}) {
                     <button
                         class="toggle-scrubber-btn message-action-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground ${message.scrubber.showingOriginal ? 'bg-muted/60' : ''}"
                         data-message-id="${message.id}"
+                        aria-label="${message.scrubber.showingOriginal ? 'Show anonymized' : 'Show original'}"
                         data-tooltip="${message.scrubber.showingOriginal ? 'Show anonymized' : 'Show original'}"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
@@ -1434,6 +1436,7 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
                 <button
                     class="message-action-btn council-lane-action-btn regenerate-council-lane-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     ${laneAttributes}
+                    aria-label="Regenerate this response"
                     data-tooltip="Regenerate this response">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -1701,6 +1704,7 @@ function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml
                 <button
                     class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
+                    aria-label="Fork conversation from here"
                     data-tooltip="Fork conversation from here">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
@@ -1714,6 +1718,7 @@ function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml
                 <button
                     class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
+                    aria-label="Copy message"
                     data-tooltip="Copy message">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
@@ -1722,6 +1727,7 @@ function buildAssistantActionRow(message, citationsToggle = '', extraButtonsHtml
                 <button
                     class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
+                    aria-label="Regenerate response"
                     data-tooltip="Regenerate response">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -2094,6 +2100,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         <button
             class="message-action-btn scrubber-restore-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
             data-message-id="${message.id}"
+            aria-label="${message.scrubber?.restored ? 'Show redacted' : 'Restore PII'}"
             data-tooltip="${message.scrubber?.restored ? 'Show redacted' : 'Restore PII'}">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
@@ -2128,6 +2135,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 <button
                     class="message-action-btn copy-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
+                    aria-label="Copy message"
                     data-tooltip="Copy message">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184" />
@@ -2136,6 +2144,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 <button
                     class="message-action-btn regenerate-message-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
+                    aria-label="Regenerate response"
                     data-tooltip="Regenerate response">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
@@ -2144,6 +2153,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 <button
                     class="message-action-btn fork-conversation-btn flex items-center justify-center w-7 h-7 rounded-md transition-colors hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     data-message-id="${message.id}"
+                    aria-label="Fork conversation from here"
                     data-tooltip="Fork conversation from here">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M2 12h6c6 0 10-4 14-8m-4 0h4v4M8 12c6 0 10 4 14 8m-4 0h4v-4" />
