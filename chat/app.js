@@ -10520,6 +10520,13 @@ class ChatApp {
         this.updateSidebarFilterUI();
     }
 
+    setupPageLifecycleListeners() {
+        // Preserve pending turns only once navigation actually hides the page.
+        // beforeunload can be canceled, leaving the current page active.
+        window.addEventListener('pagehide', () => { this.pageUnloading = true; });
+        window.addEventListener('pageshow', () => { this.pageUnloading = false; });
+    }
+
     /**
      * Sets up all event listeners. Delegates component-specific listeners to respective components.
      */
@@ -10539,10 +10546,7 @@ class ChatApp {
 
         this.setupDeleteHistoryControls();
 
-        // A reload or navigation aborts in-flight requests; their cleanup must
-        // not erase the pending turn the reloaded page is about to show.
-        window.addEventListener('pagehide', () => { this.pageUnloading = true; });
-        window.addEventListener('beforeunload', () => { this.pageUnloading = true; });
+        this.setupPageLifecycleListeners();
 
         // New chat button
         this.elements.newChatBtn.addEventListener('click', () => {

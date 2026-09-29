@@ -939,6 +939,28 @@ export class StationVerifier {
             const { response, data } = result;
             const logData = redactVerifierLogValue(data, keyData.key);
 
+            // Ban verdicts always block, regardless of HTTP status or policy.
+            // Do this before malformed-response or advisory recovery paths.
+            if (data?.status === 'banned' || data?.banned_station) {
+                const error = new Error(redactVerifierLogValue(
+                    data?.banned_station?.reason || data?.detail || 'Station is banned', keyData.key
+                ));
+                error.status = 'banned';
+                networkLogger.logRequest({
+                    type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
+                    status: response.status, request: { station_id: keyData.stationId }, response: logData
+                });
+                return {
+                    status: 'rejected', error,
+                    ...(data?.banned_station ? { bannedStation: {
+                        stationId: logData.banned_station.station_id,
+                        publicKey: logData.banned_station.public_key,
+                        reason: logData.banned_station.reason,
+                        bannedAt: logData.banned_station.banned_at
+                    } } : {})
+                };
+            }
+
             if (!response.ok) {
                 // Production treats this specific response as temporary, not a
                 // failed ownership verdict. Other unverified/refused results block.

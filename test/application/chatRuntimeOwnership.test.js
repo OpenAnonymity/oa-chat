@@ -146,6 +146,27 @@ function backendHarness() {
 }
 
 describe('production ChatApp runtime ownership', () => {
+    test('restored pages resume pending-turn cleanup; canceled navigation never marks unloading', async t => {
+        const app = appHarness();
+        const events = new EventTarget();
+        window.addEventListener = events.addEventListener.bind(events);
+        app.setupPageLifecycleListeners();
+        events.dispatchEvent(new Event('beforeunload'));
+        assert.notEqual(app.pageUnloading, true);
+        const deleted = [];
+        t.mock.method(chatDB, 'deleteMessage', async id => deleted.push(id));
+        const pending = { id: 'interrupted', pendingTurn: true };
+        events.dispatchEvent(new Event('pagehide'));
+        await app.discardPendingTurn(pending);
+        assert.deepEqual(deleted, []);
+        assert.equal(pending.pendingTurn, true);
+        events.dispatchEvent(new Event('pageshow'));
+        assert.equal(app.pageUnloading, false);
+        await app.discardPendingTurn(pending);
+        assert.deepEqual(deleted, ['interrupted']);
+        assert.equal(pending.pendingTurn, undefined);
+    });
+
     let restore;
     let databaseMethods;
     beforeEach(() => {

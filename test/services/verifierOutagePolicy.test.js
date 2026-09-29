@@ -231,3 +231,22 @@ test('background retry upgrades an outage-admitted unattested key once the verif
         assert.equal(results[0]?.status, 'verified');
     } finally { restore(); }
 });
+
+
+for (const policy of ['strict', 'tolerant', 'advisory']) {
+    for (const data of [
+        { status: 'banned' },
+        { status: 'pending', banned_station: { station_id: UNATTESTED.stationId, reason: 'logging detected' } },
+        { status: 'verified', banned_station: { station_id: UNATTESTED.stationId, reason: 'logging detected' } }
+    ]) {
+        test(`${policy}: HTTP 200 with ${data.status} ban data blocks before recovery`, async () => {
+            const { verifier, restore } = withVerifier(policy, { response: { ok: true, status: 200 }, data });
+            try {
+                const result = await verifier.submitKey(ATTESTED);
+                assert.equal(result.status, 'rejected');
+                assert.equal(result.error.status, 'banned');
+                assert.equal(verifier.pendingSubmissions.size, 0);
+            } finally { restore(); }
+        });
+    }
+}
