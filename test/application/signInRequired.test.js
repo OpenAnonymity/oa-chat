@@ -26,7 +26,9 @@ test('a required sign-in opens the dialog whenever the page loads signed out', (
 test('signed out, a send opens the dialog instead of a ticket shortage, and nothing sends from behind a dialog', () => {
     const app = fs.readFileSync(path.join(process.cwd(), 'chat/app.js'), 'utf8');
     const preflight = app.slice(app.indexOf('    async preflightTurnTicketBudget('), app.indexOf('const memoryTickets', app.indexOf('    async preflightTurnTicketBudget(')));
-    assert.match(preflight, /if \(this\.signInRequiredNow\(\) && !accountService\.getState\(\)\?\.accountId\) \{\s*this\.accountModal\?\.open\?\.\(\);\s*return false;/);
+    assert.match(preflight, /await accountService\.reconcileSharedAccount\(\)/);
+    assert.match(preflight, /account\.sessionVerified !== true \|\| account\.status !== 'unlocked'/);
+    assert.match(preflight, /account\.accountScopeReady !== true \|\| account\.ticketSyncReady !== true/);
     const send = app.slice(app.indexOf('    async sendMessage(options = {}) {'), app.indexOf('ensureDatabaseReady', app.indexOf('    async sendMessage(options = {}) {')));
     assert.match(send, /if \(hasOpenModalDialog\(\)\) return;/);
 });

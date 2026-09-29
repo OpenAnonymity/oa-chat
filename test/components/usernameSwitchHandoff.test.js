@@ -102,3 +102,42 @@ test('reusing an idle restoration dialog retires its scheduled old-account expla
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(f.calls, ['continue:winter-owl']);
 });
+
+for (const alreadyOpen of [false, true]) {
+test(`the other window dismisses restoration (login already open: ${alreadyOpen})`, t => {
+    const previousDocument = globalThis.document;
+    globalThis.document = { getElementById: () => null };
+    t.after(() => { globalThis.document = previousDocument; });
+    let state = { accountId: 'x', sessionVerified: !alreadyOpen, status: alreadyOpen ? 'locked' : 'unlocked', authBootstrapComplete: true };
+    let notify;
+    const frames = [];
+    let closed = 0;
+    const service = {
+        getState: () => state,
+        subscribe(fn) { notify = fn; return () => {}; }
+    };
+    const modal = new AccountModal({
+        services: { account: service, sync: { getStatus: () => ({}), subscribe: () => () => {} } },
+        signInRequiredNow: () => true
+    });
+    modal.isOpen = alreadyOpen;
+    modal.open = () => { modal.isOpen = true; modal.render(); };
+    modal.close = ({ afterAuthentication }) => { assert.equal(afterAuthentication, true); modal.isOpen = false; closed += 1; };
+    modal.render = () => frames.push(modal.accountState.accountHandoffPending ? 'restoring' : 'other');
+    modal.maybeAutoPromptPasskey = AccountModal.prototype.maybeAutoPromptPasskey;
+    const update = patch => { state = { ...state, ...patch }; notify(state); };
+    update({ sessionVerified: false, status: 'locked', accountHandoffPending: true });
+    assert.deepEqual(frames, ['restoring']);
+    assert.equal(modal.isOpen, true);
+    // Scope initialization can notify while restoration is still in progress.
+    // An automatic passkey prompt must not run in this state either.
+    modal.maybeAutoPromptPasskey = AccountModal.prototype.maybeAutoPromptPasskey;
+    update({ accountId: 'y', sessionVerified: true, status: 'unlocked', accountScopeReady: true });
+    assert.equal(closed, 0);
+    update({ accountHandoffPending: false });
+    assert.equal(closed, 1);
+    assert.equal(modal.isOpen, false);
+    assert.ok(frames.every(frame => frame === 'restoring'));
+});
+
+}

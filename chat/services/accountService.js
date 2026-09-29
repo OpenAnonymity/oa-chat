@@ -44,6 +44,7 @@ const ACCOUNT_SETTINGS_KEY = 'account-settings';
 // Cross-tab storage event: one tab logged out; the session is gone for all.
 export const ACCOUNT_SIGNED_OUT_EVENT = 'account-signed-out';
 export const ACCOUNT_LOGIN_EVENT = 'account-login-started';
+export const ACCOUNT_LOGIN_COMPLETE_EVENT = 'account-login-complete';
 const ACCOUNT_KEY_BUNDLE = 'account-key-bundle-v1';
 const ACCOUNT_MASTER_CRYPTO_KEY = 'account-master-crypto-key';
 const ACCOUNT_MASTER_KEY_BYTES = 'account-master-key-bytes';  // Legacy; removed after migration
@@ -704,6 +705,7 @@ class AccountService {
             sessionVerified: false,  // True after SuperTokens confirms a current session
             // Becomes true only after the account-bound local wallet scope is active.
             accountScopeReady: false,
+            accountHandoffPending: false,
             // Becomes true after this account's first encrypted sync has settled successfully.
             ticketSyncReady: false,
             googleLinked: false,
@@ -2745,6 +2747,7 @@ class AccountService {
                 throw new Error('Account changed while signing in. Please try again.');
             }
             assertCurrent();
+            storageEvents.broadcast(ACCOUNT_LOGIN_COMPLETE_EVENT, { accountId });
         } catch (error) {
             masterKey?.fill(0);
             if (started) this.lock();
@@ -2880,6 +2883,7 @@ class AccountService {
      * Called by the SuperTokens session event when refresh is expired/revoked.
      */
     async handleTokenInvalidation() {
+        this.state.accountHandoffPending = false;
         const accountId = this.state.accountId;
         this.lock({ accountChanged: true });
         // A stale signed-out window has no account data it is entitled to clear.
@@ -2936,6 +2940,7 @@ class AccountService {
      * - Requires full passkey re-authentication to log back in
      */
     async logout() {
+        this.state.accountHandoffPending = false;
         this.loginGeneration = (this.loginGeneration || 0) + 1;
         this.syncInitializationGeneration += 1;
         // Other tabs share this browser's ticket store but not this object:
@@ -3011,6 +3016,100 @@ class AccountService {
         }
     }
 
+    /** Read the completed sign-in from shared storage without reauthenticating
+     * or reloading the page. Also used on focus/send to catch missed messages. */
+    reconcileSharedAccount() {
+        this.sharedAccountRestoreRequested = true;
+        if (this.sharedAccountRestorePromise) return this.sharedAccountRestorePromise;
+        this.sharedAccountRestorePromise = (async () => {
+            do {
+                this.sharedAccountRestoreRequested = false;
+                await this.restoreSharedAccount();
+            } while (this.sharedAccountRestoreRequested);
+        })().finally(() => { this.sharedAccountRestorePromise = null; });
+        return this.sharedAccountRestorePromise;
+    }
+
+    beginSharedAccountHandoff() {
+        this.state.accountHandoffPending = true;
+        this.lock({ accountChanged: true });
+    }
+
+    async restoreSharedAccount() {
+        if (this.state.busy && !this.state.accountHandoffPending) return;
+        let generation;
+        let restored = false;
+        try {
+            await withAccountDataLock(async () => {
+                const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+                const pending = await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY);
+                if (pending) {
+                    // The exchange holds this lock until it commits. Finding
+                    // its marker after acquiring the lock means it did not
+                    // finish. Keep the marker (and old keys blocked), but let
+                    // the user sign in again instead of spinning forever.
+                    this.lock({ accountChanged: true });
+                    this.setState({ accountHandoffPending: false });
+                    return;
+                }
+                const accountId = normalizeAccountId(settings?.accountId);
+                if (!accountId) {
+                    if (this.state.sessionVerified) this.lock({ accountChanged: true });
+                    this.state.accountHandoffPending = false;
+                    this.notify();
+                    return;
+                }
+                if (accountId === this.state.accountId && !this.state.accountHandoffPending &&
+                    this.state.sessionVerified === true && this.state.accountScopeReady === true &&
+                    this.getSyncKeyMaterial()) return;
+                if (!this.state.accountHandoffPending) this.beginSharedAccountHandoff();
+                generation = this.loginGeneration;
+                const bundle = await chatDB.getSetting(ACCOUNT_KEY_BUNDLE);
+                if (bundle?.accountId !== accountId ||
+                    !(bundle.cryptoKey instanceof CryptoKey) ||
+                    !(bundle.derivationKey instanceof CryptoKey) ||
+                    !(bundle.idKey instanceof CryptoKey)) {
+                    this.state.accountHandoffPending = false;
+                    this.notify();
+                    return;
+                }
+                if (!await sessionService.verifySession()) throw new Error('Sign in to continue.');
+                if (generation !== this.loginGeneration) return;
+                this.cryptoKey = bundle.cryptoKey;
+                this.syncDerivationKey = bundle.derivationKey;
+                this.syncIdKey = bundle.idKey;
+                this.localAccountContinuity = false;
+                this.recoveryPayload = null;
+                this.keyringWrappers = [];
+                Object.assign(this.state, {
+                    accountId, username: settings.username || null,
+                    credentialId: settings.credentialId || null,
+                    encryptionCredentialId: settings.encryptionCredentialId || null,
+                    encryptionMode: inferPersistedEncryptionMode(settings),
+                    googleLinked: !!settings.googleLinked,
+                    oauthProvider: settings.lastOAuthProvider || null,
+                    oauthEmail: settings.oauthEmail || null,
+                    recoveryConfirmed: !!settings.recoveryConfirmed,
+                    recoveryCode: null, recoveryRequired: false,
+                    oauthSetupRequired: false, oauthRecoveryRequired: false,
+                    oauthKeyringRequired: false, oauthLegacyPasskeyRequired: false,
+                    sessionVerified: true, accountScopeReady: false, ticketSyncReady: false,
+                    error: null
+                });
+                restored = true;
+            });
+            if (!restored || generation !== this.loginGeneration) return;
+            const initialized = await this.initializeSync(false);
+            if (generation !== this.loginGeneration) return;
+            if (!initialized) this.lock({ accountChanged: true });
+            this.setState({ accountHandoffPending: false });
+        } catch (error) {
+            if (generation !== undefined && generation !== this.loginGeneration) return;
+            this.lock({ accountChanged: true });
+            this.setState({ accountHandoffPending: false });
+        }
+    }
+
     listenForSignOutElsewhere() {
         if (this.signOutElsewhereUnsubscribe) return;
         try {
@@ -3018,8 +3117,18 @@ class AccountService {
             const stopLoginListener = storageEvents.on(ACCOUNT_LOGIN_EVENT, () => {
                 // This is a different window's sign-in, not a request to unlock
                 // our old Google account. Never auto-open its passkey sheet.
-                this.lock({ accountChanged: true });
+                this.beginSharedAccountHandoff();
+                void this.reconcileSharedAccount();
             });
+            const stopCompleteListener = storageEvents.on(ACCOUNT_LOGIN_COMPLETE_EVENT, () => {
+                void this.reconcileSharedAccount();
+            });
+            const onFocus = () => { void this.reconcileSharedAccount(); };
+            const onVisible = () => {
+                if (document.visibilityState === 'visible') onFocus();
+            };
+            globalThis.window?.addEventListener?.('focus', onFocus);
+            globalThis.document?.addEventListener?.('visibilitychange', onVisible);
             const stopLogoutListener = storageEvents.on(ACCOUNT_SIGNED_OUT_EVENT, payload => {
                 const accountId = payload?.accountId;
                 if (!accountId || this.state.accountId !== accountId) return;
@@ -3028,7 +3137,11 @@ class AccountService {
                 // an expired session here (locked, keys cleared, UI notified).
                 void this.handleTokenInvalidation();
             });
-            this.signOutElsewhereUnsubscribe = () => { stopLoginListener(); stopLogoutListener(); };
+            this.signOutElsewhereUnsubscribe = () => {
+                stopLoginListener(); stopCompleteListener(); stopLogoutListener();
+                globalThis.window?.removeEventListener?.('focus', onFocus);
+                globalThis.document?.removeEventListener?.('visibilitychange', onVisible);
+            };
         } catch (error) {
             console.warn('[AccountService] Could not listen for sign-out in other tabs:', error);
         }

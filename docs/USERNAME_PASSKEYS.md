@@ -186,3 +186,20 @@ wallet using the old keys. Reload restores the new account from the saved bundle
 Scope activation and encrypted sync also check the saved binding under the data
 lock, so safety does not depend on prompt BroadcastChannel delivery. A superseded
 native ceremony is refused before it can replace the shared session.
+
+### Existing windows after a successful switch
+
+An origin-wide sign-in completion notification restores the new saved binding in
+other windows without another passkey prompt or page reload. The start notification
+locks old credentials immediately; reconciliation waits for the account-data lock,
+so it cannot read a half-written key bundle. A pending exchange marker remaining
+after that lock becomes available means authentication did not commit: keep the
+marker, refuse old keys, and return to manual sign-in.
+
+Restoration checks bundle ownership and the shared session before loading keys,
+then activates the account scope with binding checks. It never adopts another
+account's wallet. Focus/visibility and the send preflight catch missed messages.
+While restoring, the existing account loading surface hides the old identity and
+closes on success. Sending is blocked until the account is verified, unlocked,
+and its scope and initial ticket sync are ready. Only event type and account ID
+are broadcast locally; keys, tickets, chats and prompts are not broadcast.

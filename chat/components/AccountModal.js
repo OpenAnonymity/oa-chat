@@ -104,6 +104,18 @@ class AccountModal {
             const previous = this.accountState || {};
             this.accountState = state;
             this.updateTabIndicator();
+            if (this.isOpen && previous.sessionVerified !== true &&
+                state.accountHandoffPending && !previous.accountHandoffPending &&
+                !previous.busy && !this.usernameContinuePending && !this.authenticationExitPending &&
+                this.creationStep === 'idle') {
+                this.sharedAccountHandoffOpen = true;
+            }
+            if (this.sharedAccountHandoffOpen && !state.accountHandoffPending &&
+                state.sessionVerified === true && state.status === 'unlocked' && state.accountScopeReady === true) {
+                this.sharedAccountHandoffOpen = false;
+                this.close({ afterAuthentication: true });
+                return;
+            }
             // The session ended under this tab (Log out or deletion in
             // another tab, an expired session). On the Tickets side that is
             // a signed-out page: show Log in rather than leave a dead chat.
@@ -112,6 +124,7 @@ class AccountModal {
                 !this.isOpen && !this.loggingOut &&
                 this.app?.signInRequiredNow?.() === true
             ) {
+                this.sharedAccountHandoffOpen = state.accountHandoffPending === true;
                 this.open();
                 return;
             }
@@ -620,6 +633,7 @@ class AccountModal {
     close({ afterAuthentication = false } = {}) {
         if (!this.isOpen || !this.overlay) return;
         this.isOpen = false;
+        this.sharedAccountHandoffOpen = false;
         this.usernameLoginIntent = false;
         this.loginViewVersion += 1;
         this.usernameHandoffPending = false;
@@ -1768,8 +1782,8 @@ class AccountModal {
             state.encryptionMode !== 'LEGACY_PASSKEY';
         const usesNamedLogin = usesIdentityLogin || Boolean(state.username);
 
-        if (state.authBootstrapComplete === false) {
-            const accountEmail = state.oauthEmail || state.email;
+        if (state.authBootstrapComplete === false || state.accountHandoffPending) {
+            const accountEmail = state.accountHandoffPending ? null : state.oauthEmail || state.email;
             const email = typeof accountEmail === 'string'
                 ? accountEmail.trim()
                 : '';

@@ -1794,9 +1794,11 @@ test('shared conversation arrival skips startup sign-in but still requires sign-
     const restore = installBrowser();
     const { default: accountService } = await import('../../chat/services/accountService.js');
     const originalWait = accountService.waitForAuthBootstrap;
+    const originalReconcile = accountService.reconcileSharedAccount;
     const originalState = accountService.getState;
     let opened = 0;
     try {
+        accountService.reconcileSharedAccount = async () => {};
         accountService.waitForAuthBootstrap = async () => ({ accountId: null });
         accountService.getState = () => ({ accountId: null });
         const app = Object.create(ChatApp.prototype);
@@ -1819,7 +1821,45 @@ test('shared conversation arrival skips startup sign-in but still requires sign-
         assert.equal(opened, 5);
     } finally {
         accountService.waitForAuthBootstrap = originalWait;
+        accountService.reconcileSharedAccount = originalReconcile;
         accountService.getState = originalState;
+        restore();
+    }
+});
+
+test('send waits for shared account reconciliation and blocks locked or incomplete accounts', async () => {
+    const restore = installBrowser();
+    const { default: accountService } = await import('../../chat/services/accountService.js');
+    const originalState = accountService.getState;
+    const originalReconcile = accountService.reconcileSharedAccount;
+    let current;
+    let reconciled = false;
+    let opened = 0;
+    let notices = 0;
+    try {
+        accountService.reconcileSharedAccount = async () => { await Promise.resolve(); reconciled = true; };
+        accountService.getState = () => { assert.ok(reconciled); return current; };
+        const app = Object.create(ChatApp.prototype);
+        app.signInPolicy = { required: true };
+        app.getPaymentMode = () => 'tickets';
+        app.accountModal = { open() { opened += 1; } };
+        app.showToast = () => { notices += 1; };
+        // No model or wallet methods: reaching them would fail this test,
+        // even when a stale UI had displayed a positive ticket balance.
+        const ready = { accountId: 'account-y', sessionVerified: true, status: 'unlocked', accountScopeReady: true, ticketSyncReady: true };
+        for (const patch of [
+            { sessionVerified: false }, { status: 'locked' },
+            { accountHandoffPending: true }, { accountScopeReady: false }, { ticketSyncReady: false }
+        ]) {
+            current = { ...ready, ...patch };
+            reconciled = false;
+            assert.equal(await app.preflightTurnTicketBudget({}, 'Hello'), false);
+        }
+        assert.equal(opened, 2);
+        assert.equal(notices, 3);
+    } finally {
+        accountService.getState = originalState;
+        accountService.reconcileSharedAccount = originalReconcile;
         restore();
     }
 });

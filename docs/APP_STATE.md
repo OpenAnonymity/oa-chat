@@ -1,8 +1,15 @@
+## 2026-09-28: Restore switched accounts in existing windows
+
+- A completed username sign-in announces that its saved account is ready. Other windows discard old in-memory credentials and load the new account's non-extractable key bundle, verify the shared session, and activate its scoped ticket wallet without reloading or asking for a second passkey. Focus, visibility, and send preflight also reconcile the saved binding when a notification was missed.
+- The existing “Restoring your account…” surface covers the handoff and closes automatically when restoration succeeds. Failed exchanges retain the pending-login security marker but return to manual sign-in, rather than leaving a permanent spinner. No prompt, response, or key material is broadcast.
+- Ticket-mode send preflight now requires a verified, unlocked account and both scope and initial ticket-sync readiness, even if cached ticket counts look sufficient. Restoration never adopts the previous account's tickets.
+- Staging's public manifest on September 28 reported chat `52b065b`, which predates the committed `f200994` banner removal. Its visible “Verification incomplete” warning is old deployed UI, not a new warning path in this checkout.
+
 ## 2026-09-28: Safe username switching and stale login windows
 
 - Username sign-in now authenticates the requested account instead of rejecting it against the locally remembered username. Landing handoffs retain the old account until the native prompt succeeds and suppress that account's Google/legacy auto-unlock surface.
 - Canceling the native prompt preserves the original session, keys, tickets and settings. Successful login publishes the new binding and non-extractable keys atomically, then activates the account's own ticket/preferences snapshot without adopting the old wallet.
-- Shared-cookie exchanges hold the same origin-wide lock as encrypted sync. A persisted pending-login marker prevents old-account sync and key restoration after an uncertain response; a later successful authentication clears it. Other windows lock memory only and can restore the new saved account on reload. See [username switching](USERNAME_PASSKEYS.md#switching-accounts-across-windows-2026-09-28).
+- Shared-cookie exchanges hold the same origin-wide lock as encrypted sync. A persisted pending-login marker prevents old-account sync and key restoration after an uncertain response; a later successful authentication clears it. Other windows lock memory only and restore the new saved account automatically (see the follow-up above). See [username switching](USERNAME_PASSKEYS.md#switching-accounts-across-windows-2026-09-28).
 
 ## 2026-09-28: Verification outage notice placement
 

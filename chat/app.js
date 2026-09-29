@@ -5090,9 +5090,17 @@ class ChatApp {
         // Signed out on a host that requires sign-in: the answer is the Log
         // in dialog, not a ticket shortage (which would open the Welcome
         // offers over a page that cannot buy anything).
-        if (this.signInRequiredNow() && !accountService.getState()?.accountId) {
-            this.accountModal?.open?.();
-            return false;
+        if (this.signInRequiredNow()) {
+            await accountService.reconcileSharedAccount();
+            const account = accountService.getState();
+            if (!account?.accountId || account.sessionVerified !== true || account.status !== 'unlocked') {
+                this.accountModal?.open?.();
+                return false;
+            }
+            if (account.accountHandoffPending || account.accountScopeReady !== true || account.ticketSyncReady !== true) {
+                this.showToast('Your inference tickets are still loading. Try again shortly.', 'info', 5000);
+                return false;
+            }
         }
         if (!this.usesTicketAccess(session)) {
             // An alternate access runtime must authorize its own path. Never
