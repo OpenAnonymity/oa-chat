@@ -413,6 +413,41 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
 
+## Published 0.3.2 separate-setup validation (2026-09-29)
+
+[daemon-v0.3.2](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.2)
+was published from `bee44cfb9b347812499da0cba22c8e04c944909d`, the latest
+main when tagged. All ten [release jobs](https://github.com/OpenAnonymity/oa-chat/actions/runs/36633211044)
+passed. All 21 assembled checksum entries, four clean native source records,
+proof assets, and the exact source-rendered installer were verified; all 12
+uploaded assets match that assembly. Earlier release tags and assets were preserved.
+
+The public HTTPS installer upgraded 0.3.1 to 0.3.2 without `--setup` or a
+network selection. It created no new configuration or daemon, preserved existing
+configuration bytes and private permissions, retained the executable prior
+bundle, and installed the exact CI binary pair. Running `oa-chat start`
+separately with the installed pair first on PATH offered Mainnet and Sepolia.
+An empty answer selected Mainnet, created private configuration, checked the
+model cap, and displayed a live funding quote. Ctrl+C at confirmation exited
+without another keystroke, preserved unsigned progress, and stopped both owned
+services. No transaction was authorized, signed, or broadcast.
+
+The original macOS ARM64 CI pair also reused the funded Sepolia profile with
+no network flag, preserving Sepolia and its balance. Attached and owned starts
+both reached ready without another deposit. Two earlier attempts returned
+`companion_request_failed`; subsequent read-only wallet, withdrawal, and billing
+quote requests all returned HTTP 200. The original cause was not captured, so
+this remains an observed intermittent service failure, not a claimed fix.
+
+Focused race tests cover the default and both explicit network answers/flags,
+saved-profile preservation, invalid/orphan state, consent, and flag safety;
+vet and independent adversarial review passed. This correction changes only
+the new-profile default and documented entry flow. The companion is identical
+to 0.3.1; actual Sepolia deposit, streamed inference, outage verification, and
+settlement remain recorded in the earlier release evidence. Test services were
+stopped and private state retained outside the repository. See the
+[sanitized release record](../packaging/validation/daemon-0.3.2-release-20260929.json).
+
 ## Published 0.3.1 prompt-cancellation validation (2026-09-29)
 
 [daemon-v0.3.1](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.1)

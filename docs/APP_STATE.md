@@ -13,6 +13,22 @@
 - Current instructions target `daemon-v0.3.2`. The earlier release validation
   records remain historical evidence. The installation command selects no
   network and creates no configuration.
+- [0.3.2 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.3.2)
+  from main commit `bee44cfb9b347812499da0cba22c8e04c944909d`. All ten release
+  jobs and all 12 uploaded asset comparisons passed. The public installer
+  upgraded 0.3.1 while preserving existing configuration and the prior bundle;
+  it created no fresh configuration or daemon. Separately invoked setup selected
+  Mainnet on an empty answer, created private configuration, and reached a live
+  funding quote. Cancellation preserved unsigned progress and stopped both services.
+  No Mainnet transaction was authorized. The original CI pair also reused the
+  saved Sepolia network and funded balance for attached and owned readiness.
+- Two initial Sepolia readiness attempts returned `companion_request_failed`.
+  Subsequent read-only wallet, withdrawal, and quote requests returned HTTP 200,
+  and both start modes passed. The exact initial cause remains unconfirmed; this
+  release does not claim to fix intermittent upstream availability. Deposit,
+  inference, and settlement evidence remains scoped to 0.3.0/0.3.1; the companion
+  is byte-identical. See the [0.3.2 release record](../daemon/packaging/validation/daemon-0.3.2-release-20260929.json)
+  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-032-separate-setup-validation-2026-09-29).
 
 ## 2026-09-29: Combined release review follow-up
 
