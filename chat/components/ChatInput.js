@@ -1,3 +1,4 @@
+import { enterKeyAction } from '../domain/composerKeys.js';
 import { setupRadioGroupKeyboard } from '../ui/radioGroupKeyboard.js';
 import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
@@ -48,6 +49,8 @@ export function trimPastedText(text) {
 }
 const MESSAGE_INPUT_PREVIEW_EXPANDED_MIN_HEIGHT_PX = 384;
 const SETTINGS_MENU_WIDTH_PX = 340;
+
+export { enterKeyAction };
 
 export default class ChatInput {
     /**
@@ -264,13 +267,18 @@ export default class ChatInput {
             if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
                 window.oaPendingSend = false; // Clear pending flag if we're handling it live
                 e.preventDefault();
-                if (!this.app.elements.sendBtn.disabled) {
-                    if (this.app.isCurrentSessionStreaming()) {
-                        this.app.stopCurrentSessionStreaming();
-                    } else {
-                        this.clearScrubberPreview();
-                        this.app.sendMessage();
-                    }
+                const pending = this.app.getPendingSend?.() || null;
+                const action = enterKeyAction({
+                    streaming: this.app.isCurrentSessionStreaming() || !!pending,
+                    draft: this.app.elements.messageInput.value,
+                    sendDisabled: this.app.elements.sendBtn.disabled,
+                    pendingText: pending ? pending.rawContent ?? '' : null
+                });
+                if (action === 'stop') {
+                    this.app.stopCurrentSessionStreaming();
+                } else if (action === 'send') {
+                    this.clearScrubberPreview();
+                    this.app.sendMessage();
                 }
             }
         });

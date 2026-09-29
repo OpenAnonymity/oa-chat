@@ -1,6 +1,7 @@
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
+import { enterKeyAction } from './domain/composerKeys.js';
 
 import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
@@ -10742,9 +10743,16 @@ class ChatApp {
                 this.elements.modelPickerModal.classList.contains('hidden') &&
                 !hasOpenModalDialog()) {
                 e.preventDefault();
-                if (this.isCurrentSessionStreaming()) {
+                const pending = this.getPendingSend();
+                const action = enterKeyAction({
+                    streaming: this.isCurrentSessionStreaming() || !!pending,
+                    draft: this.elements.messageInput?.value,
+                    sendDisabled: this.elements.sendBtn.disabled,
+                    pendingText: pending ? pending.rawContent ?? '' : null
+                });
+                if (action === 'stop') {
                     this.stopCurrentSessionStreaming();
-                } else {
+                } else if (action === 'send') {
                     this.sendMessage();
                 }
                 return;
