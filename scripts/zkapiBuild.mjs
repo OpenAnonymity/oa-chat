@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import freshMainnet from '../deployments/zkapi/fresh-20260928/mainnet.json' with { type: 'json' };
 import freshSepolia from '../deployments/zkapi/fresh-20260928/sepolia.json' with { type: 'json' };
+import { patchZkapiSdk, zkapiSdkPatchProvenance } from './patch-zkapi-sdk.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -89,7 +90,10 @@ export function readZkapiBuildConfig({ network, deployment = process.env.OA_ZKAP
 }
 
 export function zkapiBuildPlugins(network) {
-    if (network) return [];
+    if (network) return [{
+        name: 'verify-zkapi-recovery-patch',
+        async setup() { await patchZkapiSdk(); }
+    }];
     return [{
         name: 'omit-disabled-zkapi',
         setup(build) {
@@ -113,6 +117,7 @@ export async function buildZkapiAssets({ network, outDir, repoRoot, build, deplo
     const destination = path.join(outDir, 'zkapi');
     await fs.rm(destination, { recursive: true, force: true });
     if (!network) return null;
+    await patchZkapiSdk(repoRoot);
     const { buildBrowserSdkAssets } = await import('@openanonymity/zkapi-browser-sdk/build');
     const result = await buildBrowserSdkAssets({
         outDir: destination,
@@ -170,6 +175,8 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
     if (!dependency) throw new Error('[build] The zkAPI SDK must be pinned in package-lock.json.');
     const revision = dependency.resolved?.match(/#([0-9a-f]{40})$/)?.[1];
     if (!revision) throw new Error('[build] The zkAPI SDK dependency must resolve to an immutable Git commit.');
+    const recoveryPatch = zkapiSdkPatchProvenance();
+    if (revision !== recoveryPatch.revision) throw new Error('[build] Review the recovery patch for this SDK revision.');
     let oaRevision = process.env.VERCEL_GIT_COMMIT_SHA || null;
     if (!oaRevision) {
         try { oaRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -179,7 +186,7 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
         network,
         ...(sdkAssets?.deployment ? { deployment: sdkAssets.deployment } : {}),
         oaChatRevision: oaRevision,
-        sdk: { version: dependency.version, revision, assets: sdkAssets?.manifest || null },
+        sdk: { version: dependency.version, revision, patches: [recoveryPatch], assets: sdkAssets?.manifest || null },
         files: await artifactFiles(outDir)
     };
 }

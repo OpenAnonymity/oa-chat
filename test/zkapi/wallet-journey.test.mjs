@@ -40,6 +40,9 @@ test('a deposit walks connect → approve → deposit → chain, with test token
 });
 
 test('after a reload the persisted phase places the journey, and a failure marks the step', () => {
+    const interrupted = walletJourney({ kind: 'withdraw', persistedPhase: 'reserving' });
+    assert.deepEqual(states(interrupted), ['proof:upcoming', 'wallet:upcoming', 'chain:upcoming']);
+    assert.equal(interrupted.category, 'Withdrawal preparation paused');
     assert.deepEqual(positionForPersistedPhase('withdraw', 'awaiting_wallet'), { step: 'wallet', state: 'waiting' });
     assert.deepEqual(positionForPersistedPhase('deposit', 'submitted'), { step: 'chain', state: 'active' });
     assert.equal(positionForPersistedPhase('withdraw', ''), null);

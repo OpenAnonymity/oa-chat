@@ -91,6 +91,18 @@ function publicPending(entry) {
     return { hash: entry.hash, transaction: copy(entry.transaction), context: copy(entry.context), kind: entry.kind };
 }
 
+function lastReturn(record) {
+    for (let index = (record?.transactions.length ?? 0) - 1; index >= 0; index--) {
+        const entry = record.transactions[index];
+        if (entry.kind === 'sweep' && entry.outcome) {
+            return { transactionHash: entry.hash, status: entry.outcome.status,
+                destination: entry.authorization.destination, asset: entry.authorization.asset,
+                amount: entry.authorization.amount };
+        }
+    }
+    return null;
+}
+
 /** Browser-owned EIP-1193 signer. Only ensureAddress creates custody; no RPC,
  * initialization or status read signs transactions. Web Locks serialize custody
  * and nonce changes across tabs. The SDK owns private-note state/finality. */
@@ -124,6 +136,7 @@ export class AddressFundingProvider {
     get backedUp() { return this.state.backedUp; }
     get address() { return this.state.backedUp ? this.state.address : null; }
     get pending() { return copy(this.state.pending); }
+    get lastReturn() { return copy(this.state.lastReturn ?? null); }
     get migrationRequired() { return Boolean(this.state.migrationRequired); }
     get hasPendingTransaction() { return Boolean(this.state.pending); }
     get waiting() { return Boolean(this.action); }
@@ -262,6 +275,12 @@ export class AddressFundingProvider {
                         && totalFee > uint(entry.authorization.feeLimitWei, 'authorized fee'))
                     || BigInt(transaction.nonce) >= BigInt(record.highestNonce)) throw new Error();
                 this.validateCall(ctx, record.address, entry.transaction, entry.context, entry.authorization);
+                if (entry.outcome != null) {
+                    if (entry.kind !== 'sweep' || entry.acknowledged !== true || record.pending === entry.hash
+                        || !['confirmed', 'reverted'].includes(entry.outcome.status)
+                        || !HASH.test(entry.outcome.blockHash || '')) throw new Error();
+                    uint(entry.outcome.blockNumber, 'return receipt block', MAX_NONCE);
+                }
                 hashes.add(entry.hash);
             }
             if (record.pending && !hashes.has(record.pending)) throw new Error();
@@ -298,6 +317,7 @@ export class AddressFundingProvider {
         const entry = record?.transactions.find(item => item.hash === record.pending);
         this.state = { exists: true, unlocked: Boolean(record), backedUp: envelope.backedUp,
             address: envelope.address, migrationRequired: envelope.version === 1,
+            lastReturn: lastReturn(record),
             pending: entry ? publicPending(entry) : envelope.pendingHash ? { hash: envelope.pendingHash, locked: true } : null };
         if (requireUnlocked && !record) throw fail('Unlock your payment address with its backup password first.', 'address_locked');
         return record;
@@ -320,6 +340,7 @@ export class AddressFundingProvider {
         try { await this.store.save(ctx.scope, envelope, { createOnly }); } catch { throw fail('The payment address or transaction could not be saved. No new transaction was sent.', 'address_storage'); }
         this.session = session;
         this.state = { exists: true, unlocked: true, backedUp: record.backedUp, address: record.address, migrationRequired: !browserCustody,
+            lastReturn: lastReturn(record),
             pending: publicPending(record.transactions.find(entry => entry.hash === record.pending)) };
         this.changed();
         return envelope;
@@ -853,7 +874,12 @@ export class AddressFundingProvider {
             const record = await this.read(ctx, true);
             if (record.pending === entry.hash) {
                 record.pending = null;
-                record.transactions.find(item => item.hash === entry.hash).acknowledged = true;
+                const saved = record.transactions.find(item => item.hash === entry.hash);
+                saved.acknowledged = true;
+                // Keep the verified terminal result across a close/reload,
+                // atomically with releasing this transaction's pending slot.
+                saved.outcome = { status: receipt.status === '0x1' ? 'confirmed' : 'reverted',
+                    blockHash: receipt.blockHash.toLowerCase(), blockNumber: receipt.blockNumber };
                 await this.save(ctx, record);
             }
         });

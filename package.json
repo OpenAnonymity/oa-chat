@@ -28,14 +28,16 @@
     "vercel:demo-config": "node scripts/generate-demo-vercel-config.mjs",
     "vendor:supertokens": "node scripts/build-supertokens-vendor.mjs",
     "audit:model-labels": "node --no-warnings scripts/audit-model-labels.mjs",
-    "predev": "npm run prepare:nanomem",
+    "predev": "node scripts/patch-zkapi-sdk.mjs && npm run prepare:nanomem",
     "dev": "node scripts/dev-server.mjs",
     "tailwind:build": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --minify",
     "tailwind:watch": "tailwindcss -c tailwind.config.js -i chat/tailwind.input.css -o chat/tailwind.generated.css --watch",
-    "fonts:sync": "node scripts/sync-fonts.mjs"
+    "fonts:sync": "node scripts/sync-fonts.mjs",
+    "postinstall": "node scripts/patch-zkapi-sdk.mjs",
+    "pretest": "node scripts/patch-zkapi-sdk.mjs"
   },
   "dependencies": {
-    "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#76a979bc8d49722cf9de50cb8f4830b3566ca07d",
+    "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#3342c95871e8422bb878ad40072687c241a68a5b",
     "ethers": "6.17.0",
     "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0"

@@ -46,6 +46,11 @@ edited. The wizard guides funding or ticket setup, stops any services it
 started, and exits; `serve` runs the inference API. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
+Sepolia requires the matched password-capable client and companion in `0.4.1`
+or newer. The `0.4.0` companion predates the password requirement and cannot
+serve that deployment. See the
+[0.4.0 validation limitation](#published-040-configserve-validation-2026-09-29).
+
 The optional installer `--setup` runs the installed `oa-chat config` after
 validation, activation, and cleanup, with the matching companion first on
 PATH. Add `--network sepolia` to select test funds explicitly. Configuration
@@ -413,6 +418,61 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Published 0.4.1 Sepolia password validation (2026-09-29)
+
+[0.4.1](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.1)
+is a prerelease from `96c08c6e6ed68adac250c68048e86b985e2c4020`. Its four native
+builds, assembly and four package checks passed. All twelve public downloads
+match the verified CI artifacts. The public HTTPS installer and reinstall
+passed on macOS ARM64 with the matching binaries, retained private bytes and
+modes, and preserved the previous bundle.
+
+Live Sepolia checks exercised hidden password entry, rejection/retry, private
+credential saving, missing/wrong credential startup refusal, and authenticated
+companion startup. An unfunded profile then stopped with configuration guidance.
+No funding, lease, inference or withdrawal was performed. The user's default
+installation was not changed. See the
+[release evidence](../packaging/validation/daemon-0.4.1-release-20260929.json).
+
+## Published 0.4.0 config/serve validation (2026-09-29)
+
+The immutable `daemon-v0.4.0` prerelease points to main commit
+`d89ecf8d160cb2c5f234254280df6d3c1d64134f` at tag creation. Release workflow
+[36638920965](https://github.com/OpenAnonymity/oa-chat/actions/runs/36638920965)
+passed all ten native, assembly, package, and draft jobs. The four native
+archives were built from clean source with the reviewed upstream pins and
+patch hashes. All 21 assembled checksums and all 12 uploaded release assets
+were verified before publication. The macOS ARM64 archive matched the
+original CI artifact used for acceptance.
+
+The native binary's help lists only `config` and `serve`. Checks covered a
+missing profile, ticket setup without an Ethereum-network prompt, editing an
+existing listener, cancellation cleanup, and empty-ticket serve guidance. The
+public HTTPS installer upgraded an isolated 0.3.2 installation to 0.4.0,
+preserved configuration bytes and private modes, retained the old executable,
+and created no fresh configuration or service during installation alone.
+
+Separately invoked public `config` offered both access modes, defaulted zkAPI
+to Mainnet with Sepolia as an option, discovered the matching companion, and
+displayed a live funding address, principal, and maximum network fee. Approval
+was canceled; no transaction was signed or broadcast. The saved unsigned intent
+was retained, owned processes stopped, and public `serve` on that unfunded
+profile exited with `Run oa-chat config` guidance without prompting.
+
+Sepolia live inference was blocked by a deployment compatibility change:
+the protocol billing-quote route returned HTTP 401 `testnet_password_required`
+after password protection was enabled. The 0.4.0 companion predates the required
+auth transport and maps upstream non-2xx quotes to a generic invalid/stale/oracle
+error. That message did not establish stale pricing. A matched client/companion
+auth update is required; no server gate or quote verification was bypassed.
+Earlier successful transactions and inference in the 0.3.0/0.3.1 records remain
+historical evidence, not a live 0.4.0 inference pass.
+
+Full Go race tests, vet, Linux command-test cross-compilation, 26 installer tests,
+11 offline package tests, and an independent adversarial implementation review
+passed. See the [machine-readable release record](../packaging/validation/daemon-0.4.0-release-20260929.json).
+The default user installation and configuration were not modified.
 
 ## Published 0.3.2 separate-setup validation (2026-09-29)
 

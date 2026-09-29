@@ -1719,6 +1719,7 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
 .zkapi-funding-address button:focus-visible { outline: 2px solid hsl(var(--color-ring)); outline-offset: 2px; }
 /* A compact address handoff; long public addresses never widen the dialog. */
 .zkapi-funding-account { margin: 0 0 24px; padding: 18px; border: 1px solid hsl(var(--color-border)); border-radius: 14px; }
+.zkapi-funding-return-outcome { overflow-wrap: anywhere; }
 .zkapi-funding-account h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
 .zkapi-funding-heading { display: flex; align-items: flex-start; gap: 10px; margin: 18px 0 10px; }
 .zkapi-funding-heading h3 { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }

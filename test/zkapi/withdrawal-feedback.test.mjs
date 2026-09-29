@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
+import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
+import { availableWithdrawalEscape } from '../../chat/zkapi/services/withdrawalRecovery.mjs';
+import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import { walletJourney } from '../../chat/zkapi/domain/walletJourney.js';
 
@@ -85,6 +88,130 @@ test('an escape start stays pending without a completed-withdrawal banner', t =>
     assert.equal(modal.view, 'withdraw');
     assert.match(modal.status, /Escape started\. Finalize after/);
     assert.doesNotMatch(modal.status, /Withdrawal confirmed|Funds sent|returned/);
+});
+
+function interruptedMutual(t) {
+    const modal = fixture(t, { prepared: { note_id: 7, phase: 'reserving', mode: 'mutual', destination } });
+    const previousRuntime = walletRuntime.runtime;
+    const previousMode = zkapiClient.browserMode;
+    zkapiClient.browserMode = true;
+    walletRuntime.runtime = { state: { note_id: 7 }, preparedWithdrawal: {
+        operationId: 'withdraw-7', noteId: 7, phase: 'reserving', mode: 'mutual', destination
+    } };
+    t.after(() => { walletRuntime.runtime = previousRuntime; zkapiClient.browserMode = previousMode; });
+    return modal;
+}
+
+test('interrupted mutual-close UI offers an explicit escape choice and shows its safety window before submission', t => {
+    const modal = interruptedMutual(t);
+    let html = modal.renderWithdrawal();
+    assert.match(html, /Withdrawal preparation paused/);
+    assert.match(html, /id="zkapi-use-escape-btn"[^>]*>Use escape hatch/);
+    assert.match(html, /safety window/);
+    assert.doesNotMatch(html, /data-state="active"/);
+    modal.withdrawalEscapeIntent = availableWithdrawalEscape();
+    html = modal.renderWithdrawal();
+    assert.equal(modal.withdrawMode, 'escape');
+    assert.match(html, /then return here to finalize/);
+    assert.match(html, /id="zkapi-withdraw-btn"[^>]*>Start .* escape/);
+    assert.equal(walletRuntime.runtime.preparedWithdrawal.mode, 'mutual', 'selection itself never changes durable transaction state');
+    assert.doesNotMatch(html, /data-step="proof" data-state="complete"/);
+});
+
+test('reopening defaults to the durable withdrawal mode and stale choices cannot carry onto another operation', t => {
+    const modal = interruptedMutual(t);
+    modal.withdrawMode = 'escape';
+    modal.renderWithdrawal();
+    assert.equal(modal.withdrawMode, 'mutual', 'a stale presentation preference is not escape consent');
+    modal.withdrawalEscapeIntent = availableWithdrawalEscape();
+    walletRuntime.runtime.preparedWithdrawal.operationId = 'successor-operation';
+    modal.renderWithdrawal();
+    assert.equal(modal.withdrawalEscapeIntent, null);
+    assert.equal(modal.withdrawMode, 'mutual');
+});
+
+test('a pending or ambiguously retried wallet request cannot offer escape through the recovery UI', t => {
+    const modal = interruptedMutual(t);
+    walletRuntime.runtime.preparedWithdrawal.ambiguousSubmissions = [{ submissionId: 'old-prompt' }];
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-use-escape-btn"/);
+    zkapiClient.config.prepared_withdrawal.phase = 'awaiting_wallet';
+    walletRuntime.runtime.preparedWithdrawal.phase = 'awaiting_wallet';
+    assert.match(modal.renderWithdrawal(), /id="zkapi-recover-withdrawal-btn"/);
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-use-escape-btn"/);
+});
+
+function submissionFixture(t) {
+    const modal = fixture(t);
+    const previousMode = zkapiClient.browserMode;
+    zkapiClient.browserMode = false;
+    t.after(() => { zkapiClient.browserMode = previousMode; });
+    t.mock.method(addressFundingWallet, 'init', async () => {});
+    t.mock.method(addressFundingWallet, 'reload', async () => {});
+    t.mock.method(zkapiClient, 'init', async () => {});
+    t.mock.method(zkapiClient, 'settleActiveLease', async () => {});
+    return modal;
+}
+
+test('a refresh while waiting for the wallet cannot silently switch the chosen withdrawal mode', async t => {
+    const modal = submissionFixture(t);
+    modal.withdrawMode = 'escape';
+    modal.run = async (action, details) => {
+        assert.equal(details.kind, 'escape');
+        modal.withdrawMode = 'mutual';
+        return action(() => {});
+    };
+    let submittedMode;
+    t.mock.method(zkapiClient, 'withdraw', async mode => { submittedMode = mode; return { status: 'submitted' }; });
+    await modal.submitWithdrawal();
+    assert.equal(submittedMode, 'escape');
+});
+
+test('a new private balance arriving during settlement cannot inherit the old withdrawal click', async t => {
+    const modal = submissionFixture(t);
+    modal.run = async action => {
+        zkapiClient.wallet = { note: { ...note, note_id: 8 } };
+        return action(() => {});
+    };
+    const withdraw = t.mock.method(zkapiClient, 'withdraw', async () => assert.fail('must not withdraw a successor note'));
+    await assert.rejects(modal.submitWithdrawal(), /private balance changed/);
+    assert.equal(withdraw.mock.callCount(), 0);
+});
+
+test('escape Continue carries the captured operation and destination through settlement into the SDK', async t => {
+    const modal = interruptedMutual(t);
+    const previousManifest = walletRuntime.manifest;
+    walletRuntime.manifest = { deployment_id: 'host-escape-options' };
+    t.after(() => { walletRuntime.manifest = previousManifest; });
+    t.mock.method(walletRuntime, 'init', async () => {});
+    t.mock.method(walletRuntime, 'reload', async () => {});
+    t.mock.method(addressFundingWallet, 'init', async () => {});
+    t.mock.method(addressFundingWallet, 'reload', async () => {});
+    t.mock.method(zkapiClient, 'init', async () => {});
+    t.mock.method(zkapiClient, 'settleActiveLease', async () => {
+        zkapiClient.config.prepared_withdrawal.destination = `0x${'b'.repeat(40)}`;
+    });
+    modal.withdrawalEscapeIntent = availableWithdrawalEscape();
+    modal.withdrawMode = 'escape';
+    modal.run = async action => action(() => {});
+    const withdraw = t.mock.method(zkapiClient, 'withdraw', async (mode, _report, options) => {
+        assert.equal(mode, 'escape');
+        assert.deepEqual(options, { destination, expectedWithdrawalOperationId: 'withdraw-7' });
+        return { status: 'submitted' };
+    });
+    await modal.submitWithdrawal();
+    assert.equal(withdraw.mock.callCount(), 1);
+});
+
+test('an escape with unresolved retry history offers a status check instead of forgetting its recovery data', t => {
+    const modal = interruptedMutual(t);
+    zkapiClient.config.prepared_withdrawal.mode = 'escape';
+    zkapiClient.config.prepared_withdrawal.phase = 'prepared';
+    Object.assign(walletRuntime.runtime.preparedWithdrawal, { mode: 'escape', phase: 'prepared', clearanceReserved: false });
+    assert.match(modal.renderWithdrawal(), /id="zkapi-cancel-withdrawal-btn"/);
+    walletRuntime.runtime.preparedWithdrawal.ambiguousSubmissions = [{ submissionId: 'unknown-old-prompt' }];
+    const html = modal.renderWithdrawal();
+    assert.doesNotMatch(html, /id="zkapi-cancel-withdrawal-btn"/);
+    assert.match(html, /id="zkapi-sync-withdrawal-btn"/);
 });
 
 test('payment history shows the brief outcome once, outside embedded history disclosures', t => {

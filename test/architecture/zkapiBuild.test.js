@@ -81,10 +81,11 @@ test('Vercel source uploads include only the two reviewed public deployment pin 
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     await fs.copyFile('.vercelignore', path.join(directory, '.vercelignore'));
     execFileSync('git', ['init', '-q', directory]);
-    const included = ['deployments/zkapi/fresh-20260928/mainnet.json', 'deployments/zkapi/fresh-20260928/sepolia.json'];
+    const included = ['deployments/zkapi/fresh-20260928/mainnet.json', 'deployments/zkapi/fresh-20260928/sepolia.json',
+        'patches/zkapi-browser-sdk-wallet-recovery.mjs'];
     const excluded = ['deployments/private/key.json', 'deployments/zkapi/other/mainnet.json',
         'deployments/zkapi/fresh-20260928/secret.json', 'deployments/zkapi/fresh-20260928/nested/secret.json',
-        'deployments/zkapi/fresh-20260928/.env', 'deployments/zkapi/fresh-20260928/.git/config'];
+        'deployments/zkapi/fresh-20260928/.env', 'deployments/zkapi/fresh-20260928/.git/config', 'patches/private-test.json'];
     const ignored = execFileSync('git', ['-c', 'core.excludesFile=.vercelignore', 'check-ignore', '--no-index', '--stdin'], {
         cwd: directory, input: [...included, ...excluded].join('\n') + '\n', encoding: 'utf8'
     }).trim().split('\n');
@@ -152,6 +153,11 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         const provenance = await zkapiBuildProvenance({ network, repoRoot: root, outDir, sdkAssets: result });
         assert.equal(provenance.deployment, 'fresh-20260928');
         assert.deepEqual(provenance.sdk.assets, manifest);
+        assert.equal(provenance.sdk.patches[0].name, 'wallet-recovery-v1');
+        assert.equal(provenance.sdk.patches[0].revision, provenance.sdk.revision);
+        for (const [relative, hash] of Object.entries(provenance.sdk.patches[0].files)) {
+            assert.equal(digest(await fs.readFile(path.join(root, 'node_modules/@openanonymity/zkapi-browser-sdk', relative))), hash);
+        }
         assert.equal(provenance.files['zkapi/sdk-assets.json'], digest(await fs.readFile(path.join(result.directory, 'sdk-assets.json'))));
     }
 });
@@ -222,7 +228,7 @@ test('public deployment provenance excludes and removes host-omitted build metad
     await fs.writeFile(path.join(outDir, 'vendor.js.map'), '{}');
     await fs.writeFile(path.join(outDir, 'vendor.js'), 'export const ok = true;');
     await fs.writeFile(path.join(repoRoot, 'package-lock.json'), JSON.stringify({ packages: {
-        'node_modules/@openanonymity/zkapi-browser-sdk': { version: '0.2.0', resolved: `git+https://github.com/example/sdk.git#${'a'.repeat(40)}` }
+        'node_modules/@openanonymity/zkapi-browser-sdk': { version: '0.2.0', resolved: 'git+https://github.com/OpenAnonymity/zkapi.git#3342c95871e8422bb878ad40072687c241a68a5b' }
     } }));
     const result = await zkapiBuildProvenance({ network: 'sepolia', repoRoot, outDir });
     assert.deepEqual(Object.keys(result.files), ['vendor.js']);

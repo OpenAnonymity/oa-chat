@@ -294,11 +294,20 @@ export class AddressDepositFlow extends DepositAmount {
         } finally { this.verifying = false; }
     }
 
-    async complete() {
-        this.clearQuoteExpiry();
-        await this.store.write(this.scope, null);
+    complete() {
+        const intent = this.intent;
+        const scope = this.scope;
+        this.stop();
         this.intent = null;
+        this.fee = null;
         this.displayQuote = null;
-        this.ready = false;
+        // The SDK has already durably confirmed the deposit. Clearing this
+        // optional amount preference must neither turn that success into an
+        // error nor erase a newer draft another tab has saved in the meantime.
+        void this.writes.catch(() => {}).then(async () => {
+            if (intent && typeof this.store.compareAndSwap === 'function') {
+                await this.store.compareAndSwap(scope, intent, null);
+            }
+        }).catch(() => { /* A stale amount preference never authorizes another deposit. */ });
     }
 }

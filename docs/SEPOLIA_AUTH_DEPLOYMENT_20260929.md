@@ -66,6 +66,16 @@ input, rejection/retry, owner-only save, restored terminal echo, restart
 guidance, and missing/wrong-password rejection before runtime startup. The
 action changed no config, wallet or funding state and started no daemon.
 
+The public [CLI 0.4.1 prerelease](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.1)
+is tagged at `96c08c6e6ed68adac250c68048e86b985e2c4020`. All four native builds,
+assembly and all four package checks passed in
+[CI 36640318697](https://github.com/OpenAnonymity/oa-chat/actions/runs/36640318697).
+All twelve public downloads match the verified artifacts and source provenance.
+The public HTTPS installer and reinstall passed on macOS ARM64, preserving
+private state, modes and the previous bundle without starting setup or services.
+The default user installation was not changed. See the
+[published release record](../daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
+
 The live browser shows the password entry control, clears rejected input,
 reports the rejection, and cancels safely. The challenger checkpoint advanced
 from `11810451` to `11810460` with no pending obligations. All defined container

@@ -132,6 +132,14 @@ test('background withdrawal retry uses its own persisted destination, note and m
     assert.deepEqual(authorizations, [{ kind: 'withdrawal', destination: savedRecipient, mode: 'escape', noteId: 9 }]);
 });
 
+test('explicit escape recovery authorizes escape while retaining the interrupted mutual destination', async t => {
+    const { owner, authorizations } = fixture(t, { config: { funding,
+        prepared_withdrawal: { destination: savedRecipient, mode: 'mutual', phase: 'reserving' } } });
+    owner.withdrawMode = 'escape';
+    await runAddressAction(owner, { kind: 'escape', phase: 'settling' }, () => {}, async () => {});
+    assert.deepEqual(authorizations, [{ kind: 'withdrawal', destination: savedRecipient, mode: 'escape', noteId: 7 }]);
+});
+
 test('finalization authorizes the selected saved note rather than the active note', async t => {
     const { owner, authorizations } = fixture(t, {
         withdrawal: { note_id: 8, destination: savedRecipient },

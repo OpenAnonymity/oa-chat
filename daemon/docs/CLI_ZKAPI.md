@@ -86,6 +86,11 @@ it controls both public funds and private credits.
 
 ## Sepolia: from installation to inference
 
+These steps require `0.4.1` or newer with both matching binaries. The `0.4.0`
+release predates Sepolia's testnet password gate; its generic billing-quote
+error may mask HTTP 401 `testnet_password_required`. See the historical
+[release validation limitation](CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
+
 Use the installation command above, then select Sepolia in configuration:
 
 ```sh

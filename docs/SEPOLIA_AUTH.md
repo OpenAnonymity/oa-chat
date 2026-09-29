@@ -40,6 +40,15 @@ on-chain escape path retains its existing recovery behavior without adding a
 service-password check; the password cannot authorize or block vault contract
 transactions. Existing active-lease settlement prerequisites remain unchanged.
 
+The browser wallet recovery compatibility patch targets auth SDK revision
+`3342c95871e8422bb878ad40072687c241a68a5b`. Its exact source hashes and withdrawal
+replacement preserve the cooperative-only auth check while binding recovery to
+the selected operation. Changing the SDK pin requires reviewing and updating
+this patch too; installation and builds reject a mismatched revision or hash.
+The SDK captures the selected note before password entry and rejects a note
+changed, removed or created while that dialog was open, before withdrawal work
+starts. The recovery patch also rechecks that identity under the wallet lock.
+
 Validation covers header destination boundaries, Mainnet exclusion, same-origin
 rewrite/direct fallback, redirect refusal, blocked funding/inference, no
 automatic mutation replay, cancellation during validation, field clearing,

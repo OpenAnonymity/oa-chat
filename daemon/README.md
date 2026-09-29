@@ -26,6 +26,11 @@ status and guides setup; `serve` runs the configured local inference API.
 For a custom prefix, substitute its `bin` directory in PATH. Keeping that
 directory on your shell PATH lets you use the shorter commands below.
 
+Sepolia requires `0.4.1` or newer, which includes the matching password-capable
+client and companion. `0.4.0` predates the password gate and cannot complete
+Sepolia readiness or inference. See the
+[release validation limitation](docs/CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
+
 Run as your normal user on macOS 13+ or Linux with glibc 2.39+, on AMD64 or
 ARM64. Linux also needs OpenSSL 3, libgcc, and CA certificates. No `sudo` or
 shell-profile changes are needed. Stop the daemon before upgrading, rerun the

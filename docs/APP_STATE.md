@@ -41,23 +41,36 @@
   previously issued provider key. See [the privacy model](PRIVACY_MODEL.md)
   [browser access details](SEPOLIA_AUTH.md), and
   [CLI access instructions](../daemon/docs/CLI_ZKAPI.md).
-- Browser SDK auth is backported onto the deployed `cf56d67` SDK as `76a979b`.
+- Browser SDK auth is backported onto the deployed `cf56d67` SDK, now pinned
+  at `3342c95` (including the password-dialog note-identity guard).
   The current backend also includes the auth implementation. The host does not
   adopt the backend main branch's unrelated native-only SDK interface removals.
-- Validation: 1,097 core + 674 payment tests, 315 stable-SDK tests, the full
+  The later browser recovery patch is retargeted to that exact auth revision
+  and retains its source-hash checks. Its withdrawal replacement preserves the
+  mutual-only auth preflight while binding the expected recovery operation;
+  unilateral escape does not acquire an extra credential prerequisite.
+  Both SDK source branches reject a note changed, removed or created during
+  password entry before withdrawal preparation begins. The locked recovery
+  check protects the later wallet/settlement waits as well.
+- Validation: 1,097 core + 752 payment tests, 318 patched stable-SDK tests, the full
   Rust backend workspace, Go race/vet, native auth/companion tests, both network
   production builds and a macOS ARM64 install/reinstall passed. A browser
   fixture verified wrong-password feedback, successful submit, Escape and focus
   restoration. Fresh adversarial review fixed independent waiter cancellation,
-  password recovery during pending transactions, and unilateral escape access.
+  password recovery during pending transactions, unilateral escape access, and
+  note replacement during the password dialog.
 - The existing Sepolia server and web deployment now enforce the password.
   Both direct-origin and same-origin proxy acceptance passed all 16 checks;
   real CLI/native-companion authentication and a read-only quote also passed.
   Only server/gateway containers were replaced, preserving the custom database
   filename and all native deployment pins. Mainnet is unchanged. See the
   [rollout and rollback record](SEPOLIA_AUTH_DEPLOYMENT_20260929.md).
-- Current installation instructions target `daemon-v0.4.1`; four-platform
-  release packaging is in progress. The compatible web build is already live.
+- [CLI 0.4.1 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.1)
+  from `96c08c6e6ed68adac250c68048e86b985e2c4020`. All four native builds,
+  release assembly and all four package checks passed. All twelve public assets
+  match the verified CI bytes; the public macOS ARM64 installer and reinstall
+  preserved private state, modes and the previous bundle. See the
+  [release record](../daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
 
 ## 2026-09-29: CLI configuration and serving are separate commands
 
@@ -91,8 +104,73 @@
   prompts do not expose legacy command syntax.
 - Installer `--setup` now runs config and exits after readiness. Normal installation
   remains separate, followed by config and then serve. Current source instructions
-  target 0.4.0. Package tests check the public empty-wallet refusal and service
-  stop behavior without funding fixtures or requiring production network access.
+  target 0.4.1, including Sepolia password support. Package tests check the public
+  empty-wallet refusal and service stop behavior without funding fixtures or
+  requiring production network access.
+- [0.4.0 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.0)
+  from `d89ecf8d160cb2c5f234254280df6d3c1d64134f`. All ten release CI jobs passed;
+  the four native bundles and all twelve uploaded assets were verified. The public
+  installer upgraded 0.3.2 while preserving configuration bytes, private modes,
+  and the previous bundle. Native create/edit/cancel checks passed. Separately
+  invoked public config selected Mainnet by default and displayed a live funding
+  quote; approval was canceled. Unfunded serve then exited with config guidance.
+- Live Sepolia inference is **not** a 0.4.0 validation claim. The protocol deployment
+  enabled a password gate during testing; public `/v2/billing/quote` returned
+  HTTP 401 `testnet_password_required`. This companion predates that authentication
+  support. Its generic invalid/stale/finalized-oracle quote error masks upstream
+  non-2xx responses and does not establish oracle staleness. A matched auth-capable
+  client/companion update is required; waiting for finality alone cannot fix 401.
+  No new transaction or inference was sent. See the
+  [release record](../daemon/packaging/validation/daemon-0.4.0-release-20260929.json)
+  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
+
+## 2026-09-29: Browser funding and withdrawal recovery audit
+
+- [Recovery review](ZKAPI_RECOVERY_REVIEW.md) records the interruption matrix,
+  fixes and remaining limits for MetaMask, Send Ethereum and withdrawals.
+- SDK compatibility patch `wallet-recovery-v1` preserves the exact private-note
+  operation after uncertain MetaMask submission and canceled retries, including
+  already-saved affected records. Interrupted replacement prompts retain their
+  original hash/nonce and can recover for another explicit same-nonce attempt.
+  Withdrawal preparation checks its original note under the SDK lock before
+  reservation so a newer note cannot inherit an old delayed wallet callback.
+  Installation, development, tests and enabled builds verify exact source hashes;
+  `build.json` records the patch digest alongside the pinned SDK revision. Review
+  or remove the patch when changing that revision.
+- Withdrawal startup restores `reserving`, unknown background outcomes and
+  unresolved background claims even without sessionStorage. A stale Welcome
+  marker cannot mask them. Prepared mutual withdrawal can explicitly select
+  escape only when the exact local journal has never entered submission; the
+  choice stays bound to its operation/destination and is revalidated under
+  the SDK lock during preparation and submission claim. Cancellation also
+  preserves any earlier ambiguous escape attempt. Changed-root proof regeneration
+  retains recovery history in both reservation and completed-plan writes, while
+  discarding stale proof inputs. Reload defaults to the durable mode. Escape
+  still needs valid proof/tree/RPC services and the contract's challenge window.
+- Confirmed address deposits stop their quote controller and clear the optional
+  host amount intent in the background with compare-and-swap. Cleanup failure
+  cannot change the confirmed outcome or erase another tab's newer draft.
+- Public ETH returns now save their canonical confirmed/reverted outcome in the
+  same encrypted journal transaction that releases the pending slot. The Return
+  leftover ETH disclosure retains it after reload. Post-transaction display
+  refresh failure does not report payment failure. Another return is disabled
+  while a signed transaction remains pending.
+- Signed address recovery still replays identical bytes. There is no fee bump or
+  cancel path; high fees can require waiting, now stated in the UI. Clearing site
+  data or losing the browser profile still loses local custody; account sync
+  does not restore it. These are accepted scope limits, not solved by reload.
+- Validation: 1,096 core and 736 payment tests pass; all 305 patched SDK
+  tests pass, including local EVM transaction tests. Mainnet and Sepolia
+  production builds succeed. Local browser verification covers MetaMask amount
+  restoration and Send Ethereum address/amount/disclosure restoration after
+  reload. A failed network read withheld Deposit with an unavailable estimate;
+  the 390px layout had no horizontal overflow or page errors. No live funded
+  MetaMask transaction, public-chain transfer or deployment was performed.
+  Fresh independent final-diff review approved after its cross-tab and proof
+  regeneration findings were fixed. That review passed 333 focused tests and
+  verified installed SDK hashes against the patch and reconstructed pristine
+  sources. Regressions for the last finding were also verified to fail when
+  only that fix was reversed.
 
 ## 2026-09-29: Separate CLI installation and guided first-time setup
 
