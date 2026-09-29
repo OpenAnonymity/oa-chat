@@ -63,17 +63,40 @@ func (p *terminalSetupPrompter) Printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(p.out, format, args...)
 }
 
+func (p *terminalSetupPrompter) openTerminal() error {
+	if p.input == nil {
+		fd, err := unix.Open("/dev/tty", unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return errors.New("setup needs an interactive terminal; run oa-chat config in a terminal to answer the setup questions")
+		}
+		device := &setupTerminal{fd: fd}
+		p.device, p.input = device, bufio.NewReader(device)
+	}
+	return nil
+}
+
+func (p *terminalSetupPrompter) Secret(ctx context.Context, question string) (string, error) {
+	if err := p.openTerminal(); err != nil {
+		return "", err
+	}
+	if p.device == nil {
+		return "", errors.New("password entry requires a controlling terminal")
+	}
+	restore, err := disableTerminalEcho(p.device.fd)
+	if err != nil {
+		return "", errors.New("could not hide password input")
+	}
+	defer restore()
+	defer p.Printf("\n")
+	return p.Ask(ctx, question, "")
+}
+
 func (p *terminalSetupPrompter) Ask(ctx context.Context, question, fallback string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if p.input == nil {
-		fd, err := unix.Open("/dev/tty", unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return "", errors.New("setup needs an interactive terminal; run oa-chat config in a terminal to answer the setup questions")
-		}
-		device := &setupTerminal{fd: fd}
-		p.device, p.input = device, bufio.NewReader(device)
+	if err := p.openTerminal(); err != nil {
+		return "", err
 	}
 	p.Printf("%s", question)
 	if fallback != "" {
@@ -284,6 +307,7 @@ func (w *setupLogWriter) enable() {
 }
 
 type startRuntime struct {
+	testnet   func(context.Context, string, config.Config, setupPrompter) error
 	active    func(context.Context, config.Config) (config.Config, error)
 	probe     func(context.Context, config.Config) (bool, error)
 	serve     func(context.Context, string, config.Config, io.Writer) error
@@ -303,7 +327,8 @@ func runGuidedStart(ctx context.Context, dir string, args []string, ui setupProm
 		return err
 	}
 	runtime := startRuntime{
-		active: resolveActiveConfig, probe: probeSetupService, serve: serve, companion: checkSetupCompanion,
+		testnet: prepareSepoliaAccess,
+		active:  resolveActiveConfig, probe: probeSetupService, serve: serve, companion: checkSetupCompanion,
 		fund: runGuidedFunding, tickets: runGuidedTickets,
 		interval: 500 * time.Millisecond, timeout: 90 * time.Second,
 	}
@@ -363,6 +388,11 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	if attached {
 		ui.Printf("Using the compatible daemon already running at http://%s.\n", c.Listen)
 	} else {
+		if c.Backend == "zkapi" && runtime.testnet != nil {
+			if err := runtime.testnet(ctx, dir, c, ui); err != nil {
+				return err
+			}
+		}
 		if c.Backend == "zkapi" {
 			ui.Printf("Starting the local API and zkAPI companion...\n")
 		} else {

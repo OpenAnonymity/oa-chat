@@ -281,3 +281,36 @@ func TestConfigureRejectsInvalidFlagsBeforeCreatingState(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigureAdvertisesPasswordActionOnlyForSepoliaZKAPI(t *testing.T) {
+	for _, mode := range []string{"zkapi", "ticket"} {
+		for _, network := range []string{"sepolia", "mainnet"} {
+			t.Run(mode+"/"+network, func(t *testing.T) {
+				dir, previous := startTestConfig(t)
+				c := previous
+				c.Backend, c.ZKAPI.Network = mode, network
+				if err := config.Update(dir, previous, c); err != nil {
+					t.Fatal(err)
+				}
+				eligible := mode == "zkapi" && network == "sepolia"
+				answer := "quit\n"
+				if eligible {
+					answer = "password\n"
+				}
+				var output bytes.Buffer
+				ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(answer))}
+				called := false
+				err := configure(context.Background(), dir, nil, ui, &output, func(_ context.Context, _ string, got config.Config, action string, _ setupPrompter, _ io.Writer) error {
+					called = true
+					if !eligible || got != c || action != "password" {
+						t.Fatal("password menu changed settings or dispatched the wrong action")
+					}
+					return nil
+				})
+				if err != nil || called != eligible || strings.Contains(output.String(), "password,") != eligible {
+					t.Fatalf("incorrect password menu for %s/%s: %v", mode, network, err)
+				}
+			})
+		}
+	}
+}

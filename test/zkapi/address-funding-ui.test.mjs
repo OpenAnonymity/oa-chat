@@ -44,6 +44,119 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         flushMicrotasks() { while (microtasks.length) microtasks.shift()(); } };
 }
 
+test('only Sepolia shows a password action and the action validates without signing', async () => {
+    const checked = [];
+    const f = fixture({ client: { config: { funding: { chain_id: 11155111 } },
+        ensureTestnetAccess: async options => checked.push(options) } });
+    assert.match(f.controls.renderWalletMethod(f.owner), /Enter Sepolia password/);
+    const button = f.field('testnet-password');
+    f.controls.attachWalletMethodControls(f.owner);
+    await button.events.click();
+    assert.equal(checked.length, 1);
+    assert.equal(checked[0].interactive, true);
+    assert.equal(checked[0].changePassword, true);
+    const mainnet = fixture({ client: { config: { funding: { chain_id: 1 } } } });
+    assert.doesNotMatch(mainnet.controls.renderWalletMethod(mainnet.owner), /Sepolia password/);
+});
+
+test('saved transactions lock the signer selector but leave Sepolia password recovery usable', () => {
+    const f = fixture({ wallet: { hasPendingTransaction: true }, client: { config: { funding: { chain_id: 11155111 } } } });
+    const html = f.controls.renderWalletMethod(f.owner);
+    assert.match(html, /data-wallet-method="metamask"[^>]*disabled/);
+    assert.match(html, /data-funding-testnet-password/);
+    assert.doesNotMatch(html, /data-funding-testnet-password[^>]*disabled/);
+});
+
+for (const outcome of ['accepted', 'canceled', 'closed']) {
+    test(`password action restores the current wallet trigger after ${outcome} without focusing detached buttons`, async () => {
+        const focused = [];
+        let settle;
+        const f = fixture({ client: { config: { funding: { chain_id: 11155111 } },
+            ensureTestnetAccess: () => new Promise((resolve, reject) => {
+                settle = () => outcome === 'canceled'
+                    ? reject(Object.assign(new Error('Sepolia access was canceled.'), { code: 'testnet_auth_canceled' }))
+                    : resolve();
+            }) } });
+        f.owner.isOpen = true;
+        const button = index => {
+            const current = f.field('testnet-password');
+            current.focus = () => focused.push(index);
+            return current;
+        };
+        let renders = 0;
+        const original = button(0);
+        f.owner.render = () => { button(++renders); };
+        f.controls.attachWalletMethodControls(f.owner);
+        const action = original.events.click();
+        assert.equal(renders, 1, 'opening the password dialog first replaces its trigger');
+        assert.deepEqual(focused, []);
+        if (outcome === 'closed') f.owner.isOpen = false;
+        settle();
+        await action;
+        assert.equal(renders, outcome === 'closed' ? 1 : 2);
+        assert.deepEqual(focused, outcome === 'closed' ? [] : [2]);
+    });
+}
+
+for (const outcome of ['accepted', 'canceled']) {
+    test(`password trigger focus survives later fee and balance rerenders after ${outcome}`, async () => {
+        let settle;
+        const f = fixture({ client: { config: { funding: { chain_id: 11155111 } },
+            ensureTestnetAccess: () => new Promise((resolve, reject) => {
+                settle = () => outcome === 'canceled'
+                    ? reject(Object.assign(new Error('Sepolia access was canceled.'), { code: 'testnet_auth_canceled' }))
+                    : resolve();
+            }) } });
+        f.owner.isOpen = true;
+        const body = {};
+        let current;
+        let renders = 0;
+        f.owner.overlay.contains = node => node === current;
+        // AccountModal and WelcomePanel both use these real capture/restore
+        // functions around replacing their overlay's innerHTML. Model the DOM
+        // focus reset as well as the later asynchronous hydration callbacks.
+        f.owner.render = () => {
+            const saved = f.controls.captureWalletView(f.owner);
+            if (f.context.document.activeElement === current) f.context.document.activeElement = body;
+            current = f.field('testnet-password');
+            current.generation = ++renders;
+            current.matches = selector => selector === '[data-funding-testnet-password]';
+            current.focus = () => { f.context.document.activeElement = current; };
+            f.controls.attachWalletMethodControls(f.owner);
+            f.controls.restoreWalletView(f.owner, saved);
+        };
+        f.owner.render();
+        current.focus();
+        const action = current.events.click();
+        settle();
+        await action;
+        assert.equal(f.context.document.activeElement, current, 'action focuses its final replacement');
+        for (let update = 0; update < 3; update++) {
+            const previous = current;
+            f.controls.refreshWalletView(f.owner);
+            assert.notEqual(current, previous, 'background update replaces the actual trigger');
+            assert.equal(f.context.document.activeElement, current, 'focus survives the later quote/balance render');
+        }
+        const otherControl = { type: 'button' };
+        f.context.document.activeElement = otherControl;
+        f.controls.refreshWalletView(f.owner);
+        assert.equal(f.context.document.activeElement, otherControl, 'later updates cannot reclaim moved focus');
+        const passwordInput = { type: 'password', value: 'never-copy-this' };
+        f.context.document.activeElement = passwordInput;
+        const saved = f.controls.captureWalletView(f.owner);
+        assert.equal(saved.passwordTriggerFocused, false);
+        assert.doesNotMatch(JSON.stringify(saved), /never-copy-this/);
+        f.owner.render();
+        assert.equal(f.context.document.activeElement, passwordInput, 'underlying render cannot steal focus from password dialog');
+        current.focus();
+        const focused = f.controls.captureWalletView(f.owner);
+        f.owner.isOpen = false;
+        f.context.document.activeElement = body;
+        f.controls.restoreWalletView(f.owner, focused);
+        assert.equal(f.context.document.activeElement, body, 'closed owner suppresses restoration');
+    });
+}
+
 function disclosureOwner(f) {
     const accountSource = fs.readFileSync(new URL('../../chat/zkapi/components/AccountModal.js', import.meta.url), 'utf8')
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');

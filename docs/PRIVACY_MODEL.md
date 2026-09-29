@@ -564,6 +564,22 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 
 ## Optional zkAPI payment SDK
 
+Sepolia deployments can require one shared testnet password before granting
+service access. This is a cohort access credential, not a user account or a
+wallet ownership proof. The browser keeps it in memory; the CLI can retain it
+in an owner-only local file outside account synchronization. Clients send it
+only to the configured Sepolia zkAPI protocol service, never to Ethereum RPC,
+the OA org, the verifier, or the inference provider. Password headers are
+redacted from client activity logs. TLS intermediaries terminating the
+configured service connection can see this shared credential; it does not
+identify individual members of the cohort. Existing proof, note, and provider
+key checks still apply after password authentication.
+
+This gate restricts the hosted testnet service. It does not make public
+Ethereum contracts, on-chain transactions, deployment parameters or proving
+artifacts private, and it cannot revoke an already issued provider key before
+that key's normal expiry. Mainnet uses its existing authorization unchanged.
+
 When enabled, OA Chat can obtain an ephemeral provider key by proving a private
 prepaid note meets a coarse model-tier cap. The SDK owns local note/proof and
 settlement state; it does not receive account identities or chat content. OA's

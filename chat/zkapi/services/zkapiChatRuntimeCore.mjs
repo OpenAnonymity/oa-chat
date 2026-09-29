@@ -220,6 +220,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
         async checkCanSend({ signal, sessionId, modelId, reasoningEnabled, shouldOpenFunding = () => true } = {}) {
             if (signal?.aborted) throw abortError();
             await initializeClient();
+            await client.ensureTestnetAccess?.({ signal, interactive: true });
             if (signal?.aborted) throw abortError();
             const expired = Number(client.note?.expiry_ts) > 0
                 && Number(client.note.expiry_ts) * 1000 <= Date.now();

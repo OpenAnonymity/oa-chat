@@ -58,6 +58,22 @@ function harness(options = {}) {
         refreshed, activity, detach, emit: (value, detail) => subscriber?.(value, detail) };
 }
 
+test('Send checks Sepolia access even when a funded chat already has an active key', async () => {
+    const h = harness();
+    const checked = [];
+    h.client.ensureTestnetAccess = async options => {
+        checked.push(options);
+        throw Object.assign(new Error('Enter the Sepolia password.'), { code: 'testnet_password_required' });
+    };
+    const signal = new AbortController().signal;
+    await assert.rejects(h.runtime.checkCanSend({ sessionId: 'previous', signal }), { code: 'testnet_password_required' });
+    assert.deepEqual(checked, [{ signal, interactive: true }]);
+    assert.equal(h.calls.funding, 0);
+    assert.equal(h.calls.settlement, 0);
+    assert.equal(h.client.activeLease.session_id, 'previous');
+    h.detach();
+});
+
 test('New Chat returns immediately and a fast Send waits behind one background settlement', async () => {
     const settlement = deferred();
     const h = harness({ settle: () => settlement.promise });

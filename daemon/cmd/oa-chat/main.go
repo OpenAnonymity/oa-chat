@@ -204,6 +204,8 @@ func (z zkInference) Complete(ctx context.Context, body json.RawMessage) (*http.
 	var remote *zkapi.Error
 	if errors.As(err, &remote) {
 		switch remote.Code {
+		case "testnet_password_required":
+			return nil, &server.BackendError{Status: 401, Code: "testnet_password_required", Message: remote.Error()}
 		case "invalid_model":
 			return nil, &server.BackendError{Status: 400, Code: "invalid_model", Message: "Select a model from /v1/models."}
 		case "model_budget_unavailable":
@@ -307,6 +309,16 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 		backend = &ticketInference{wallet, client}
 		readiness = ticketReadiness(wallet)
 	} else {
+		password, err := config.SepoliaPassword(dir, c.ZKAPI.Network)
+		if err != nil {
+			return err
+		}
+		checkCtx, checkCancel := context.WithTimeout(ctx, 20*time.Second)
+		err = zkapi.CheckTestnetPassword(checkCtx, c.ZKAPI.Network, password, client)
+		checkCancel()
+		if err != nil {
+			return err
+		}
 		zc := zkConfig(c, client)
 		wallet, err := zkapi.New(zc)
 		if err != nil {
@@ -321,7 +333,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 				return err
 			}
 			defer proxy.Close()
-			cmd, err := zkapi.CompanionCommand(life, zc, zkapi.CompanionConfig{Binary: c.ZKAPI.Binary, SetupDir: c.ZKAPI.ProofSetupDir, StateDir: filepath.Join(dir, "zkapi"), VerifierURL: c.VerifierURL, ProxyURL: proxy.URL})
+			cmd, err := zkapi.CompanionCommand(life, zc, zkapi.CompanionConfig{Binary: c.ZKAPI.Binary, SetupDir: c.ZKAPI.ProofSetupDir, StateDir: filepath.Join(dir, "zkapi"), VerifierURL: c.VerifierURL, ProxyURL: proxy.URL, TestnetPassword: password})
 			if err != nil {
 				return err
 			}

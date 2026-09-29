@@ -53,6 +53,9 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
+	if e.Code == "testnet_password_required" {
+		return "Sepolia password is missing or incorrect; stop the daemon and run oa-chat config to enter the current shared password"
+	}
 	if e.Code == "withdrawal_conflict" || e.Code == "withdrawal_pending" {
 		return "zkAPI withdrawal is reserved; run oa-chat config and choose withdraw to resume the saved destination"
 	}
@@ -172,7 +175,7 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 			_ = json.Unmarshal(failure.Error, &flat)
 			for _, code := range []string{nested.Code, flat, failure.Code} {
 				switch code {
-				case "pending_settlement", "withdrawal_pending", "withdrawal_conflict":
+				case "pending_settlement", "withdrawal_pending", "withdrawal_conflict", "testnet_password_required":
 					return nil, &Error{response.StatusCode, code}
 				}
 			}
@@ -207,7 +210,7 @@ func (c *Client) Check(ctx context.Context) error {
 		return &Error{http.StatusBadGateway, "invalid_companion_response"}
 	}
 	expected, _ := ChainID(c.config.Network)
-	if result.ChainID != expected || result.Mode != "direct_openrouter" || !result.RequireOA || result.BridgeVersion != 3 {
+	if result.ChainID != expected || result.Mode != "direct_openrouter" || !result.RequireOA || result.BridgeVersion != 4 {
 		return &Error{http.StatusBadGateway, "companion_policy_mismatch"}
 	}
 	deployment, _, err := pinnedDeployment(c.config.Network)

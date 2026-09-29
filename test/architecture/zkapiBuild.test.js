@@ -228,7 +228,7 @@ test('public deployment provenance excludes and removes host-omitted build metad
     await fs.writeFile(path.join(outDir, 'vendor.js.map'), '{}');
     await fs.writeFile(path.join(outDir, 'vendor.js'), 'export const ok = true;');
     await fs.writeFile(path.join(repoRoot, 'package-lock.json'), JSON.stringify({ packages: {
-        'node_modules/@openanonymity/zkapi-browser-sdk': { version: '0.2.0', resolved: 'git+https://github.com/OpenAnonymity/zkapi.git#cf56d67e0c1dd4bc3f3c32392478ce242c746446' }
+        'node_modules/@openanonymity/zkapi-browser-sdk': { version: '0.2.0', resolved: 'git+https://github.com/OpenAnonymity/zkapi.git#3342c95871e8422bb878ad40072687c241a68a5b' }
     } }));
     const result = await zkapiBuildProvenance({ network: 'sepolia', repoRoot, outDir });
     assert.deepEqual(Object.keys(result.files), ['vendor.js']);

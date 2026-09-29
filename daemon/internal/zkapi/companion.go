@@ -14,11 +14,12 @@ import (
 // CompanionConfig controls the pinned Rust wallet/prover process. Production
 // uses Ethereum mainnet; no automatic funding transaction is ever submitted.
 type CompanionConfig struct {
-	ProxyURL    string `json:"-"` // authenticated local CONNECT proxy using direct TCP or Wisp
-	Binary      string `json:"binary"`
-	SetupDir    string `json:"setup_dir"`
-	StateDir    string `json:"state_dir"`
-	VerifierURL string `json:"verifier_url"`
+	ProxyURL        string `json:"-"` // authenticated local CONNECT proxy using direct TCP or Wisp
+	Binary          string `json:"binary"`
+	SetupDir        string `json:"setup_dir"`
+	StateDir        string `json:"state_dir"`
+	VerifierURL     string `json:"verifier_url"`
+	TestnetPassword string `json:"-"`
 }
 
 // CompanionCommand creates a supervised child process; the caller owns its
@@ -99,7 +100,7 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 	cmd := exec.CommandContext(ctx, binary, args...)
 	// Explicit environment overrides prevent inherited testnet or legacy mode
 	// settings from silently changing the network and verification policy.
-	drop := []string{"OA_ZKAPI_BRIDGE_TOKEN=", "OA_ZKAPI_CHAIN_ID=", "OA_ZKAPI_REQUEST_LIMIT_MICRO_USD=", "ZKAPI_PROOF_SETUP_DIR=", "ZKAPI_REQUIRE_OA_ORG_KEY_SOURCE=", "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY=", "http_proxy=", "https_proxy=", "all_proxy=", "no_proxy="}
+	drop := []string{"OA_ZKAPI_TESTNET_PASSWORD=", "OA_ZKAPI_TESTNET_PASSWORD_FILE=", "ZKAPI_TESTNET_PASSWORD=", "OA_ZKAPI_BRIDGE_TOKEN=", "OA_ZKAPI_CHAIN_ID=", "OA_ZKAPI_REQUEST_LIMIT_MICRO_USD=", "ZKAPI_PROOF_SETUP_DIR=", "ZKAPI_REQUIRE_OA_ORG_KEY_SOURCE=", "HTTP_PROXY=", "HTTPS_PROXY=", "ALL_PROXY=", "NO_PROXY=", "http_proxy=", "https_proxy=", "all_proxy=", "no_proxy="}
 	for _, entry := range os.Environ() {
 		keep := true
 		for _, prefix := range drop {
@@ -118,5 +119,13 @@ func CompanionCommand(ctx context.Context, config Config, companion CompanionCon
 		cmd.Env = append(cmd.Env, name+"="+companion.ProxyURL)
 	}
 	cmd.Env = append(cmd.Env, "NO_PROXY=", "no_proxy=")
+	cmd.Env = append(cmd.Env, companionTestnetEnvironment(config.Network, companion.TestnetPassword)...)
 	return cmd, nil
+}
+
+func companionTestnetEnvironment(network, password string) []string {
+	if network == "sepolia" && password != "" {
+		return []string{"OA_ZKAPI_TESTNET_PASSWORD=" + password}
+	}
+	return nil
 }

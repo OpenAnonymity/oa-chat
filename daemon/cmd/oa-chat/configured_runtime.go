@@ -20,7 +20,8 @@ func configurationRequired(err error) error {
 
 func configuredRuntime(expected config.Config) startRuntime {
 	return startRuntime{
-		probe: probeSetupService, companion: checkSetupCompanion,
+		testnet: prepareSepoliaAccess,
+		probe:   probeSetupService, companion: checkSetupCompanion,
 		serve: func(ctx context.Context, dir string, c config.Config, out io.Writer) error {
 			return serveSnapshot(ctx, dir, c, expected, out)
 		},
@@ -34,6 +35,7 @@ func configuredRuntime(expected config.Config) startRuntime {
 func runConfiguredServe(ctx context.Context, dir string, c, expected config.Config, out io.Writer) error {
 	ui := &noninteractiveSetup{out: out}
 	runtime := configuredRuntime(expected)
+	runtime.testnet = checkSepoliaAccess
 	runtime.fund = checkConfiguredZKAPI
 	runtime.tickets = checkConfiguredTickets
 	if c.Backend == "ticket" {
@@ -148,6 +150,16 @@ func configuredWalletReady(ctx context.Context, service guidedFundingService, ui
 // Config owns a temporary runtime only for the selected wallet operation. It
 // returns after readiness/recovery, leaving a foreign compatible service alone.
 func runConfigAction(ctx context.Context, dir string, c config.Config, action string, ui setupPrompter, out io.Writer) error {
+	if action == "password" {
+		if c.Backend != "zkapi" || c.ZKAPI.Network != "sepolia" {
+			return errors.New("password configuration applies only to Sepolia zkAPI")
+		}
+		if err := changeSepoliaAccess(ctx, dir, c, ui); err != nil {
+			return err
+		}
+		ui.Printf("Sepolia password saved. Restart any running daemon to use it. Run oa-chat config to check readiness.\n")
+		return nil
+	}
 	savedBackend := c.Backend
 	runtime := configuredRuntime(c)
 	switch action {

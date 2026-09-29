@@ -27,10 +27,10 @@ Client applications retain their own transcripts under their own privacy setting
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Install or update the `0.4.0` prerelease:
+AUR. Install or update the `0.4.1` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
 ```
 
 Configure and then serve separately:
@@ -46,9 +46,9 @@ edited. The wizard guides funding or ticket setup, stops any services it
 started, and exits; `serve` runs the inference API. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
-The `0.4.0` companion predates the Sepolia deployment's new password requirement.
-It cannot currently serve that deployment; a matched authentication-capable
-client/companion update is needed. See the
+Sepolia requires the matched password-capable client and companion in `0.4.1`
+or newer. The `0.4.0` companion predates the password requirement and cannot
+serve that deployment. See the
 [0.4.0 validation limitation](#published-040-configserve-validation-2026-09-29).
 
 The optional installer `--setup` runs the installed `oa-chat config` after
@@ -81,12 +81,12 @@ started before returning. It does not register a background service.
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.0/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash -s -- --prefix "$HOME/oa-tools"
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version are `daemon-v0.4.0` and `0.4.0`.
+metadata; the tag and installer version are `daemon-v0.4.1` and `0.4.1`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -98,7 +98,8 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/ins
 `--version MAJOR.MINOR.PATCH` can override the script's pinned version;
 `--help` lists the options. The source file `daemon/install.sh` requires an
 explicit `--version` because its release placeholder is filled only by
-`assemble-release.py`. The two-command interface requires version `0.4.0` or newer.
+`assemble-release.py`. The two-command interface requires version `0.4.0` or newer;
+Sepolia password support requires `0.4.1` or newer.
 
 Stop a running daemon before upgrading, rerun the installation command with
 the same prefix, and restart afterward (`--setup` checks configuration before you run `serve`).
@@ -106,7 +107,7 @@ The installer does not terminate an existing daemon. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
 wallet state remain in the separate private configuration directory.
-Reinitializing is unnecessary. `oa-chat --version` should print `oa-chat 0.4.0`
+Reinitializing is unnecessary. `oa-chat --version` should print `oa-chat 0.4.1`
 after this upgrade. A setup failure leaves the validated installation in place
 and returns the CLI's failure status so you can rerun `config` after addressing
 it. The installer does not migrate legacy ERC-20 notes to native ETH; retain
@@ -223,10 +224,10 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-For the `0.4.0` release, select its exact version:
+For the `0.4.1` release, select its exact version:
 
 ```sh
-release_version=0.4.0
+release_version=0.4.1
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
 oa-chat config
@@ -291,7 +292,7 @@ refreshes must remain within that consent. Withdrawals and public returns
 show a destination and fee quote and require approval before signing. Saved
 signed transactions recover with their original bytes and nonce.
 
-The companion must advertise `bridge_version: 3` for model-selected budgets
+The companion must advertise `bridge_version: 4` for model-selected budgets and Sepolia password support
 and `withdrawal_bridge_version: 1`; ship both binaries together. `serve`,
 address checks, and quote preparation never authorize wallet transactions.
 Legacy ERC-20 recovery states require their matching old client and a separate
@@ -417,6 +418,22 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Published 0.4.1 Sepolia password validation (2026-09-29)
+
+[0.4.1](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.1)
+is a prerelease from `96c08c6e6ed68adac250c68048e86b985e2c4020`. Its four native
+builds, assembly and four package checks passed. All twelve public downloads
+match the verified CI artifacts. The public HTTPS installer and reinstall
+passed on macOS ARM64 with the matching binaries, retained private bytes and
+modes, and preserved the previous bundle.
+
+Live Sepolia checks exercised hidden password entry, rejection/retry, private
+credential saving, missing/wrong credential startup refusal, and authenticated
+companion startup. An unfunded profile then stopped with configuration guidance.
+No funding, lease, inference or withdrawal was performed. The user's default
+installation was not changed. See the
+[release evidence](../packaging/validation/daemon-0.4.1-release-20260929.json).
 
 ## Published 0.4.0 config/serve validation (2026-09-29)
 

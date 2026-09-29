@@ -191,11 +191,15 @@ function ensureFundingFlow(owner) {
 export function renderWalletMethod(owner) {
     const local = getWalletMethod() === 'address';
     const locked = owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false || addressFundingWallet.hasPendingTransaction;
+    // Authentication does not select a signer or replace its durable request.
+    // A saved pending transaction must not lock users out of API recovery.
+    const accessLocked = owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false;
     return `<section class="zkapi-wallet-method" aria-label="Wallet method">
         <div class="zkapi-wallet-method-options" role="group" aria-label="How to transact">
             <button type="button" data-wallet-method="metamask" aria-pressed="${!local}" ${locked ? 'disabled' : ''}>MetaMask</button>
             <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Send Ethereum</button>
         </div>
+        ${Number(zkapiClient.config?.funding?.chain_id) === 11155111 ? `<button type="button" data-funding-testnet-password class="zkapi-quiet-button" ${accessLocked ? 'disabled' : ''}>${zkapiClient.testnetAuthenticated ? 'Change Sepolia password' : 'Enter Sepolia password'}</button>` : ''}
         ${owner.fundingError ? `<p class="zkapi-funding-error" role="alert">${owner.escapeHtml(owner.fundingError)}</p>` : ''}
     </section>`;
 }
@@ -460,6 +464,17 @@ export function attachWalletMethodControls(owner) {
         finally { owner.fundingBusy = false; if (owner.isOpen) owner.render(); }
     };
     const on = (name, action) => input(name)?.addEventListener('click', action);
+    on('testnet-password', async () => {
+        if (owner.busy || owner.fundingBusy) return;
+        await perform(async () => {
+            stopFundingFlow(owner, { preserveAmount: true });
+            await zkapiClient.ensureTestnetAccess({ interactive: true, changePassword: true });
+        });
+        // Both busy-state renders replace the trigger. Restore focus only
+        // after the final render, using the current button rather than its
+        // disconnected predecessor captured by the password dialog.
+        if (owner.isOpen) owner.overlay?.querySelector('[data-funding-testnet-password]')?.focus?.();
+    });
     root.querySelectorAll('[data-wallet-method]').forEach(button => button.addEventListener('click', () => {
         if (owner.busy || owner.fundingBusy || walletMethodActionBusy() || owner.walletMethodReady === false) return;
         if (getWalletMethod() === button.dataset.walletMethod) return;
@@ -615,6 +630,11 @@ export function captureWalletView(owner) {
     const active = globalThis.document?.activeElement;
     return {
         id: root.contains?.(active) && active?.matches?.('input:not([type=password]), textarea, [data-funding-help-toggle], [data-funding-currency]') ? active.id : null,
+        // Fee/balance callbacks may render again after the password action's
+        // own completion render. Preserve only a currently focused trigger;
+        // never retain this intent after focus moves to another control.
+        passwordTriggerFocused: owner.isOpen && root.contains?.(active)
+            && active?.matches?.('[data-funding-testnet-password]') === true,
         // Keep the actual editable node through balance refreshes. Replacing a
         // focused input between composition/typing events can lose keystrokes.
         preservedInput: root.contains?.(active) && ['funding-usd', 'funding-eth'].includes(active?.id) ? active : null,
@@ -646,6 +666,9 @@ export function restoreWalletView(owner, saved) {
         }
         input?.focus?.({ preventScroll: true });
         if (saved.start != null) input?.setSelectionRange?.(saved.start, saved.end);
+    }
+    if (saved.passwordTriggerFocused && owner.isOpen) {
+        owner.overlay.querySelector('[data-funding-testnet-password]')?.focus?.({ preventScroll: true });
     }
     const scroller = owner.overlay.querySelector('[data-funding-scroll]');
     if (scroller && saved.scroll != null) scroller.scrollTop = saved.scroll;

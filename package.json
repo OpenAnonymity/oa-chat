@@ -37,7 +37,7 @@
     "pretest": "node scripts/patch-zkapi-sdk.mjs"
   },
   "dependencies": {
-    "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#cf56d67e0c1dd4bc3f3c32392478ce242c746446",
+    "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#3342c95871e8422bb878ad40072687c241a68a5b",
     "ethers": "6.17.0",
     "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0"

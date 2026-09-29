@@ -143,7 +143,12 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 		return saveConfiguredSettings(ctx, dir, c, applyConfigureOptions(c, o), ui, out, action)
 	}
 	for {
-		choice, err := ui.Ask(ctx, "Choose: check setup, edit settings, tickets, withdraw, return public ETH, api-key, or quit", "check")
+		choices := "check setup, edit settings, tickets, withdraw, return public ETH, api-key, or quit"
+		sepolia := c.Backend == "zkapi" && c.ZKAPI.Network == "sepolia"
+		if sepolia {
+			choices = "check setup, edit settings, password, tickets, withdraw, return public ETH, api-key, or quit"
+		}
+		choice, err := ui.Ask(ctx, "Choose: "+choices, "check")
 		if err != nil {
 			return err
 		}
@@ -158,13 +163,18 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 			return saveConfiguredSettings(ctx, dir, c, next, ui, out, action)
 		case "tickets", "withdraw", "return":
 			return action(ctx, dir, c, strings.ToLower(strings.TrimSpace(choice)), ui, out)
+		case "password":
+			if sepolia {
+				return action(ctx, dir, c, "password", ui, out)
+			}
+			ui.Printf("Password configuration applies only to Sepolia zkAPI.\n")
 		case "api-key":
 			_, err := fmt.Fprintln(out, c.APIKey)
 			return err
 		case "quit", "q":
 			return nil
 		default:
-			ui.Printf("Enter check, edit, tickets, withdraw, return, api-key, or quit.\n")
+			ui.Printf("Choose one of the listed actions.\n")
 		}
 	}
 }

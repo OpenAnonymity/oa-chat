@@ -171,7 +171,8 @@ class NetworkLogger {
         const sanitized = {};
         const sensitiveHeaders = new Set([
             'authorization', 'proxy-authorization', 'cookie', 'set-cookie',
-            'api-key', 'x-api-key', 'x-auth-token', 'x-access-token', 'x-inference-ticket'
+            'api-key', 'x-api-key', 'x-auth-token', 'x-access-token', 'x-inference-ticket',
+            'x-zkapi-testnet-password'
         ]);
 
         // Tickets can remain usable after transactional rollback, so redact every

@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { ZkapiClient } from '@openanonymity/zkapi-browser-sdk/client';
+import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import patch from '../../patches/zkapi-browser-sdk-wallet-recovery.mjs';
 import { patchZkapiSdk, zkapiSdkPatchProvenance } from '../../scripts/patch-zkapi-sdk.mjs';
 
@@ -70,3 +72,63 @@ test('provenance identifies the exact patch and patched source files', () => {
     assert.equal(record.sha256, digest(JSON.stringify(patch)));
     assert.deepEqual(record.files, Object.fromEntries(patch.files.map(file => [file.file, file.afterSha256])));
 });
+
+test('recovery binding preserves Sepolia mutual authentication and password-free escape', async t => {
+    const previousAuth = walletRuntime.testnetAuth;
+    t.after(() => { walletRuntime.testnetAuth = previousAuth; });
+    let passwordAccepted = false;
+    const prompts = [];
+    walletRuntime.testnetAuth = { async ensure(options) {
+        prompts.push(options);
+        if (!passwordAccepted) throw Object.assign(new Error('Sepolia password required or invalid'), {
+            code: 'testnet_password_required'
+        });
+    } };
+    const client = new ZkapiClient();
+    client.browserMode = true;
+    const options = { destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'saved-withdrawal' };
+    const withdrawals = [];
+    t.mock.method(client, 'performWithdrawal', async (mode, _status, received) => {
+        withdrawals.push({ mode, ...received });
+        return { mode };
+    });
+    assert.deepEqual(await client.withdraw('escape', undefined, options), { mode: 'escape' });
+    assert.deepEqual(prompts, []);
+    assert.deepEqual(withdrawals, [{ mode: 'escape', ...options }]);
+    await assert.rejects(client.withdraw('mutual', undefined, options), { code: 'testnet_password_required' });
+    assert.equal(withdrawals.length, 1, 'denied authentication must not begin withdrawal recovery');
+    passwordAccepted = true;
+    assert.deepEqual(await client.withdraw('mutual', undefined, options), { mode: 'mutual' });
+    assert.deepEqual(withdrawals[1], { mode: 'mutual', ...options });
+    assert.deepEqual(prompts, [{ interactive: true }, { interactive: true }]);
+});
+
+test('recovery operations with the same destination keep distinct in-flight identities', async t => {
+    const client = new ZkapiClient();
+    let complete;
+    t.mock.method(client, 'performWithdrawal', async () => new Promise(resolve => { complete = resolve; }));
+    const options = { destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'original' };
+    const original = client.withdraw('escape', undefined, options);
+    await assert.rejects(client.withdraw('escape', undefined, { ...options, expectedWithdrawalOperationId: 'successor' }),
+        /different withdrawal action is already running/);
+    complete({ mode: 'escape' });
+    assert.deepEqual(await original, { mode: 'escape' });
+});
+
+for (const [originalNote, nextNote] of [[7, 8], [7, null], [null, 8]]) {
+    test(`mutual withdrawal refuses a note changed from ${originalNote} to ${nextNote} during the password dialog`, async t => {
+        const previousAuth = walletRuntime.testnetAuth;
+        t.after(() => { walletRuntime.testnetAuth = previousAuth; });
+        const client = new ZkapiClient();
+        client.browserMode = true;
+        client.wallet = { note: originalNote == null ? null : { note_id: originalNote } };
+        walletRuntime.testnetAuth = { async ensure() {
+            client.wallet.note = nextNote == null ? null : { note_id: nextNote };
+        } };
+        t.mock.method(client, 'assertBalanceNotClaimed', async () => assert.fail('the changed note must never enter withdrawal'));
+        await assert.rejects(client.withdraw('mutual', undefined, {
+            destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'original-withdrawal'
+        }), /private balance changed while withdrawal was opening/i);
+        assert.equal(client.withdrawPromise, null);
+    });
+}

@@ -12,10 +12,10 @@ file-storage, and image-generation endpoints are not implemented.
 ## Install, configure, and serve
 
 The public commands are **`oa-chat config`** and **`oa-chat serve`**. Install or
-update the `0.4.0` prerelease:
+update the `0.4.1` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.0/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
 PATH="$HOME/.local/bin:$PATH" oa-chat config
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
@@ -26,9 +26,9 @@ status and guides setup; `serve` runs the configured local inference API.
 For a custom prefix, substitute its `bin` directory in PATH. Keeping that
 directory on your shell PATH lets you use the shorter commands below.
 
-Sepolia compatibility: `0.4.0` predates the deployment's new testnet password
-gate and cannot currently complete Sepolia readiness or inference. That network
-requires a matched authentication-capable client/companion update. See the
+Sepolia requires `0.4.1` or newer, which includes the matching password-capable
+client and companion. `0.4.0` predates the password gate and cannot complete
+Sepolia readiness or inference. See the
 [release validation limitation](docs/CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
 
 Run as your normal user on macOS 13+ or Linux with glibc 2.39+, on AMD64 or
@@ -205,6 +205,14 @@ unsigned deposits require confirmation again; signed deposits recover the same
 transaction without a new authorization or nonce. Public address ETH becomes
 private inference credit only after deposit activation. No browser extension,
 wallet connection, seed phrase, or imported private key is required.
+
+Sepolia requires the shared testnet password. `config` asks for it with input
+hidden and verifies it before starting the companion or funding. It saves the
+accepted password in an owner-only local file. Use the **password** menu action
+to change it without funding, then restart any running daemon. Unattended
+services can set `OA_ZKAPI_TESTNET_PASSWORD_FILE` to a private password file.
+Mainnet and ticket mode are unaffected. See
+[Sepolia authentication](docs/CLI_ZKAPI.md#sepolia-access-password).
 
 Use the **withdraw** menu action to close the full remaining private balance,
 or **return** to send unused public ETH elsewhere. Both ask for a destination,

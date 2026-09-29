@@ -1,11 +1,11 @@
 // Compatibility repair for the exact pinned SDK. Remove when its upstream fix is pinned.
 export default {
-    revision: 'cf56d67e0c1dd4bc3f3c32392478ce242c746446',
+    revision: '3342c95871e8422bb878ad40072687c241a68a5b',
     files: [
         {
             file: 'sdk/services/browserWalletRuntime.js',
-            beforeSha256: '65540f04dfca699193cf5a3377bff8aa25a1d4d3d4d8c23ad47c859ff5a31d67',
-            afterSha256: 'd544fae3ed07df9a2887f1ff8a4efbf0df94289734a446c52613255a700164fb',
+            beforeSha256: '57e1c18365d4853f4926cc49fbe80f24bda730359c0bbe7b55d4f61e0378942c',
+            afterSha256: '38474ffff126e48265132124de732e4153657121dac1d4a8d177802639617418',
             replacements: [
                 {
                     before: `const LATE_DEPOSIT_TERMINAL_STATUSES = new Set(['confirmed', 'reverted', 'superseded']);`,
@@ -189,8 +189,8 @@ function hasUnresolvedDepositSubmission(pending) {
         },
         {
             file: 'sdk/services/zkapiClient.js',
-            beforeSha256: '03aa06fbfe9f7632042dd83fbaebdb85839b248b1668c4eacf6066926e347194',
-            afterSha256: '94208c3fca60337f843d0af2a345e91930964ca8f28dee430b1648dbb618d1ed',
+            beforeSha256: 'ccdf8393743f1f8ab28fdea1ff378a6ed92b258a026ec32cc9fc19cb8c6eaa4e',
+            afterSha256: 'b1a86533e1cf0859db3759d7e6978d1bf74123d5e6ed46ff898729af987ad84e',
             replacements: [
                 {
                     before: `        await browserWalletRuntime.markPendingDepositUnknown();
@@ -237,9 +237,27 @@ function hasUnresolvedDepositSubmission(pending) {
                 },
                 {
                     before: `    async withdraw(mode, onStatus = () => {}, { destination } = {}) {
+        // The password dialog must not transfer an earlier withdrawal click
+        // to a successor note installed by another tab while it was open.
+        const expectedNoteId = this.note?.note_id;
+        // Unilateral escape remains independent of the service credential.
+        // Only cooperative withdrawal requests the server's authorization.
+        if (mode === 'mutual') await this.ensureTestnetAccess({ interactive: true });
+        if (this.note?.note_id !== expectedNoteId) {
+            throw new Error('The private balance changed while withdrawal was opening. Review the current balance before continuing.');
+        }
         const requestedDestination = normalizeWithdrawalDestination(destination, this.config?.funding);
         const operationKey = \`\${mode}:\${requestedDestination || ''}\`;`,
                     after: `    async withdraw(mode, onStatus = () => {}, { destination, expectedWithdrawalOperationId = null } = {}) {
+        // The password dialog must not transfer an earlier withdrawal click
+        // to a successor note installed by another tab while it was open.
+        const expectedNoteId = this.note?.note_id;
+        // Unilateral escape remains independent of the service credential.
+        // Only cooperative withdrawal requests the server's authorization.
+        if (mode === 'mutual') await this.ensureTestnetAccess({ interactive: true });
+        if (this.note?.note_id !== expectedNoteId) {
+            throw new Error('The private balance changed while withdrawal was opening. Review the current balance before continuing.');
+        }
         const requestedDestination = normalizeWithdrawalDestination(destination, this.config?.funding);
         const operationKey = JSON.stringify([mode, requestedDestination || '', expectedWithdrawalOperationId]);`
                 },

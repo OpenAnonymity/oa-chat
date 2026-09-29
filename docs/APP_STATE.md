@@ -1,3 +1,77 @@
+## 2026-09-29: Sepolia password focus after wallet rerenders
+
+- The wallet's busy and completion renders replace its Enter/Change Sepolia
+  password button. The password action now restores keyboard focus to the
+  current replacement button after completion or dismissal; capturing the old
+  node inside the password dialog left focus on the page after Escape. Closing
+  the underlying wallet view suppresses that restoration. Regression tests
+  replace both trigger nodes and cover accepted, canceled and closed outcomes.
+- Later fee/balance callbacks also replace the button. Wallet view capture now
+  preserves a focused password trigger through those renders. It does not
+  reclaim focus after the user moves elsewhere, retain password input data, or
+  focus a closed view. Tests cover multiple later refreshes and nested dialogs.
+
+## 2026-09-29: Shared-password access for Sepolia
+
+- Sepolia can require a single shared service password in the ZKAPI server's
+  private `ZKAPI_TESTNET_PASSWORD` environment. The server checks it before
+  parsing service requests, proofs, recovery reads, or lease issuance; valid
+  note proofs are still required afterward. Public health advertises the gate;
+  `GET /v2/auth` validates it without requesting a key or spending funds.
+- The browser prompts before Send/funding and keeps the password only in memory.
+  Wallet controls allow entering/changing it. Canceled authentication cannot
+  trigger a funding or inference operation. A rejected service request clears
+  access and is never replayed automatically. The password is excluded from
+  storage, account sync, wallet snapshots, and activity logs.
+- CLI configuration asks through a hidden controlling-terminal prompt before
+  funding. `sepolia-password` is an owner-only file alongside private config;
+  `OA_ZKAPI_TESTNET_PASSWORD` / `OA_ZKAPI_TESTNET_PASSWORD_FILE` override it.
+  The Sepolia `config` menu's password action validates and saves a replacement
+  without starting a daemon or entering funding; `config --status` stays offline.
+  `serve` never prompts and rejects missing/invalid access before companion or
+  funding work. Restart after changing a credential. Native bridge version 4
+  requires the matching binary pair so an older companion cannot omit auth.
+- The browser SDK sends the header only to its configured Sepolia `/v2/` API;
+  the native companion scopes it to the pinned Sepolia protocol server.
+  Neither sends it to RPC, indexer, provider, org or verifier. Redirects are
+  disabled on authenticated requests. Mainnet ignores client password settings
+  and the server refuses an accidentally configured Mainnet testnet password.
+- Deployment preserves the native vault, note database, signing keys and proof
+  assets. This gate does not restrict public Ethereum contracts or revoke a
+  previously issued provider key. See [the privacy model](PRIVACY_MODEL.md)
+  [browser access details](SEPOLIA_AUTH.md), and
+  [CLI access instructions](../daemon/docs/CLI_ZKAPI.md).
+- Browser SDK auth is backported onto the deployed `cf56d67` SDK, now pinned
+  at `3342c95` (including the password-dialog note-identity guard).
+  The current backend also includes the auth implementation. The host does not
+  adopt the backend main branch's unrelated native-only SDK interface removals.
+  The later browser recovery patch is retargeted to that exact auth revision
+  and retains its source-hash checks. Its withdrawal replacement preserves the
+  mutual-only auth preflight while binding the expected recovery operation;
+  unilateral escape does not acquire an extra credential prerequisite.
+  Both SDK source branches reject a note changed, removed or created during
+  password entry before withdrawal preparation begins. The locked recovery
+  check protects the later wallet/settlement waits as well.
+- Validation: 1,097 core + 752 payment tests, 318 patched stable-SDK tests, the full
+  Rust backend workspace, Go race/vet, native auth/companion tests, both network
+  production builds and a macOS ARM64 install/reinstall passed. A browser
+  fixture verified wrong-password feedback, successful submit, Escape and focus
+  restoration. Fresh adversarial review fixed independent waiter cancellation,
+  password recovery during pending transactions, unilateral escape access, and
+  note replacement during the password dialog.
+- The existing Sepolia server and web deployment now enforce the password.
+  Both direct-origin and same-origin proxy acceptance passed all 16 checks;
+  real CLI/native-companion authentication and a read-only quote also passed.
+  Only server/gateway containers were replaced, preserving the custom database
+  filename and all native deployment pins. Mainnet is unchanged. See the
+  [rollout and rollback record](SEPOLIA_AUTH_DEPLOYMENT_20260929.md).
+- [CLI 0.4.1 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.1)
+  from `96c08c6e6ed68adac250c68048e86b985e2c4020`. All four native builds,
+  release assembly and all four package checks passed. All twelve public assets
+  match the verified CI bytes; the public macOS ARM64 installer and reinstall
+  preserved private state, modes and the previous bundle. See the
+  [release record](../daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
+
 ## 2026-09-29: CLI configuration and serving are separate commands
 
 - The public command surface is `oa-chat config` and `oa-chat serve`. Configuration
@@ -30,8 +104,9 @@
   prompts do not expose legacy command syntax.
 - Installer `--setup` now runs config and exits after readiness. Normal installation
   remains separate, followed by config and then serve. Current source instructions
-  target 0.4.0. Package tests check the public empty-wallet refusal and service
-  stop behavior without funding fixtures or requiring production network access.
+  target 0.4.1, including Sepolia password support. Package tests check the public
+  empty-wallet refusal and service stop behavior without funding fixtures or
+  requiring production network access.
 - [0.4.0 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.0)
   from `d89ecf8d160cb2c5f234254280df6d3c1d64134f`. All ten release CI jobs passed;
   the four native bundles and all twelve uploaded assets were verified. The public

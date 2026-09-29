@@ -1,0 +1,309 @@
+{
+  "date_utc": "2026-09-29",
+  "source_commit": "96c08c6e6ed68adac250c68048e86b985e2c4020",
+  "change_scope": "Shared-password Sepolia zkAPI access, integrated with config/serve. Mainnet and ticket mode do not use the password. The credential is scoped to the pinned Sepolia ZKAPI HTTPS service and is not sent to RPC, indexer, identity, verifier, or inference provider services.",
+  "review": {
+    "independent_adversarial_review_approved": true,
+    "reviewed_commit": "96c08c6e6ed68adac250c68048e86b985e2c4020",
+    "remaining_findings": 0
+  },
+  "workflow": {
+    "id": 36640318697,
+    "url": "https://github.com/OpenAnonymity/oa-chat/actions/runs/36640318697",
+    "event": "workflow_dispatch",
+    "head_sha": "96c08c6e6ed68adac250c68048e86b985e2c4020",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "native (macos-15-intel, darwin-amd64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (ubuntu-24.04, linux-amd64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (macos-15, darwin-arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (ubuntu-24.04-arm, linux-arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "assemble",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04-arm)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15-intel)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "draft",
+        "status": "completed",
+        "conclusion": "skipped"
+      }
+    ],
+    "actions_artifacts": [
+      {
+        "id": 11066901335,
+        "name": "linux-arm64",
+        "size_in_bytes": 71521175,
+        "digest": "sha256:82e206797c96b22ca672250873da2ca1c99ab44307880909ee771f0cd9a7a9ee"
+      },
+      {
+        "id": 11066523008,
+        "name": "assembled-release",
+        "size_in_bytes": 189765950,
+        "digest": "sha256:6a8986f268a9fda2dae14832885b9dbae2ac5ca0b076b870f13a6f54002ccae7"
+      },
+      {
+        "id": 11066403007,
+        "name": "darwin-amd64",
+        "size_in_bytes": 23488530,
+        "digest": "sha256:560e2f9b21fdb43104a6bbd6f1cb945a1f13ec8f0b7df8f7cfa1cd6eea9c3e07"
+      },
+      {
+        "id": 11065944039,
+        "name": "darwin-arm64",
+        "size_in_bytes": 22866724,
+        "digest": "sha256:bb73ca65e30ea7e900878ac935a1af1d619ebe774269e55a4d6ed66eace814a3"
+      },
+      {
+        "id": 11065609616,
+        "name": "linux-amd64",
+        "size_in_bytes": 71861753,
+        "digest": "sha256:4a10a80b76d04c3bf7769e37b63c25617899e41018bdec4961de36c989e6ce53"
+      }
+    ]
+  },
+  "release": {
+    "tag": "daemon-v0.4.1",
+    "tag_commit": "96c08c6e6ed68adac250c68048e86b985e2c4020",
+    "url": "https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.1",
+    "release_id": 399585643,
+    "published_at": "2026-09-29T22:57:05Z",
+    "draft": false,
+    "prerelease": true,
+    "latest_flag_requested": false,
+    "asset_count": 12,
+    "assets": [
+      {
+        "name": "install.sh",
+        "size": 14695,
+        "digest": "sha256:93e44ccb0c89c2ec58a4173e18fc9faf22c2a732fa235ea6697e045f59b75dfc"
+      },
+      {
+        "name": "oa-chat-nix.tar.gz",
+        "size": 5134,
+        "digest": "sha256:f103afec90662152901660fcb9df07709a5e414653b7572c56c1060a0894ac8b"
+      },
+      {
+        "name": "oa-chat-packaging.tar.gz",
+        "size": 6477,
+        "digest": "sha256:b33b97f11d840ea5742eb49a5af3f3c25d884d522715f7aa645b1730e522336f"
+      },
+      {
+        "name": "oa-chat_0.4.1_darwin_amd64.tar.gz",
+        "size": 23518959,
+        "digest": "sha256:1ea7742a2dfe1aeed6e5133f39bc2ef81d2b5ca9e0d96b22eed4b7ddba166843"
+      },
+      {
+        "name": "oa-chat_0.4.1_darwin_arm64.tar.gz",
+        "size": 22896465,
+        "digest": "sha256:2ef982aa22dec34452a902d1e4f78f3fc4b90c638a2199f8988e0747c35761c0"
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_amd64.deb",
+        "size": 24092986,
+        "digest": "sha256:da13c906d8aea902aa0a5b8ebfbf8eb5e995fc4360ad23d0cba3bdb4ea477088"
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_amd64.rpm",
+        "size": 24108262,
+        "digest": "sha256:bf7815039573282d1ad898dd239acb116f3d6c75dfc8a0f99ba1ed3fb5694a10"
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_amd64.tar.gz",
+        "size": 23808149,
+        "digest": "sha256:7b192b788d333dbdcbf9ad5b6a283b9d0965404fd41f34757bf207710fbe0910"
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_arm64.deb",
+        "size": 24042988,
+        "digest": "sha256:0693a58b30f3803a7d605438e4efe90e395688356542129bec3ff904f0891c43"
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_arm64.rpm",
+        "size": 24023235,
+        "digest": "sha256:c8427a4197f6fba2a0bff28746a0fd3d9a5307f73a235ea9c3e6707055825c41"
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_arm64.tar.gz",
+        "size": 23623673,
+        "digest": "sha256:446706d9ef3cf828f324c9fe0111c12036780aa3d36156dac27b0be06cc63af4"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 1871,
+        "digest": "sha256:726793a9e93634e43af25f29fd5882350818e65e37d3c5adf172644a3aafde4a"
+      }
+    ]
+  },
+  "artifact_verification": {
+    "all_assembled_checksums_verified": true,
+    "all_12_published_downloads_byte_identical_to_validated_ci": true,
+    "all_4_native_archives_have_clean_exact_source": true,
+    "upstream_pins_and_maintained_patches_verified": true,
+    "installer_matches_version_pinned_source": true,
+    "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+    "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+    "companion_patch_sha256": "9aecb9123949fc8b4b6f2a975f2c66eeb88518ec3f9f657cc5c08a0c7a792039",
+    "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+    "native_binaries": [
+      {
+        "name": "oa-chat_0.4.1_darwin_amd64.tar.gz",
+        "sha256": "1ea7742a2dfe1aeed6e5133f39bc2ef81d2b5ca9e0d96b22eed4b7ddba166843",
+        "binary_sha256": {
+          "oa-chat": "497936945ea022790a65e640db3f25bacd12e8f9b6f6a87f6a8243114063f899",
+          "oa-zkapi": "d249127e4566fbca5a5dddc11dc19cc094190f7b41d2d985bc09f3cf58f18c1a"
+        }
+      },
+      {
+        "name": "oa-chat_0.4.1_darwin_arm64.tar.gz",
+        "sha256": "2ef982aa22dec34452a902d1e4f78f3fc4b90c638a2199f8988e0747c35761c0",
+        "binary_sha256": {
+          "oa-chat": "e118bd3bec60cd1a8e788f73e6af866c3915d41d035edc6b68d6687cb9b5b660",
+          "oa-zkapi": "a7e5b3f52625a15f8e700d6b3e1b3c55bad7db6a5d9905f213de6af1473aa5ac"
+        }
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_amd64.tar.gz",
+        "sha256": "7b192b788d333dbdcbf9ad5b6a283b9d0965404fd41f34757bf207710fbe0910",
+        "binary_sha256": {
+          "oa-chat": "1634a5dad85401fbc73a34f036eda2b6187a150e901103f2a69926b257b57ac1",
+          "oa-zkapi": "34e6b050e6c52b906cee5a278bbaba0e1dfbe51ee89866e5befe4a10e874602c"
+        }
+      },
+      {
+        "name": "oa-chat_0.4.1_linux_arm64.tar.gz",
+        "sha256": "446706d9ef3cf828f324c9fe0111c12036780aa3d36156dac27b0be06cc63af4",
+        "binary_sha256": {
+          "oa-chat": "477a116fd4b3e9b2a91a5099390e05c3eaaa2f4e460c1e7143dee370f5cf4b55",
+          "oa-zkapi": "fcd970f66cafbe1b42df9eaa35063d996ae8d78a0703bb139445506e988c6dbe"
+        }
+      }
+    ]
+  },
+  "redundant_tag_workflow": {
+    "id": 36642349218,
+    "conclusion": "cancelled",
+    "reason": "Reused the complete, passing workflow_dispatch release artifacts at the identical tagged commit; canceled the redundant tag-triggered build before its draft stage. Other release runs were not changed."
+  },
+  "local_validation": {
+    "full_go_race_suite_passed": true,
+    "go_vet_passed": true,
+    "linux_amd64_cross_build_passed": true,
+    "native_typed_auth_error_test_passed": true,
+    "exact_prepared_native_source_verified": true,
+    "local_darwin_arm64_archive_sha256": "1de7ed45be8ec04899395c9e0af5dc97741231ac54b17796b5ea7732ea067436",
+    "local_build_source_clean": true,
+    "native_upgrade_reinstall_versions": [
+      "0.3.3 local candidate",
+      "0.4.1",
+      "0.4.1"
+    ],
+    "configuration_bytes_and_private_modes_preserved": true,
+    "previous_bundles_retained": true,
+    "ci_darwin_arm64_install_reinstall_passed": true
+  },
+  "live_sepolia_config": {
+    "version": "0.4.1",
+    "checks": [
+      {
+        "check": "temporary_profile_created",
+        "passed": true
+      },
+      {
+        "check": "serve_missing_rejected_before_runtime",
+        "passed": true
+      },
+      {
+        "check": "serve_wrong_rejected_before_runtime",
+        "passed": true
+      },
+      {
+        "check": "sepolia_password_menu_visible",
+        "passed": true
+      },
+      {
+        "check": "password_input_echo_disabled",
+        "passed": true
+      },
+      {
+        "check": "wrong_password_retried_without_saving",
+        "passed": true
+      },
+      {
+        "check": "accepted_password_saved_privately",
+        "passed": true
+      },
+      {
+        "check": "password_action_no_runtime_or_wallet_changes",
+        "passed": true
+      },
+      {
+        "check": "password_never_echoed_and_terminal_restored",
+        "passed": true
+      },
+      {
+        "check": "restart_guidance_displayed",
+        "passed": true
+      }
+    ]
+  },
+  "live_sepolia_serve": {
+    "version": "0.4.1",
+    "source_commit": "96c08c6e6ed68adac250c68048e86b985e2c4020",
+    "authenticated_native_started": true,
+    "unfunded_readiness_rejected_noninteractively": true,
+    "companion_stopped_after_failure": true,
+    "paid_operations": false,
+    "passed": true
+  },
+  "public_https_installer": {
+    "version": "0.4.1",
+    "platform": "darwin-arm64",
+    "public_https_installer": true,
+    "install_and_reinstall_passed": true,
+    "paired_binaries_match_ci": true,
+    "source_provenance_verified": true,
+    "private_bytes_and_modes_preserved": true,
+    "previous_bundles_retained": true,
+    "setup_or_services_started": false,
+    "default_user_installation_changed": false,
+    "paid_operations": false
+  },
+  "financial_test_scope": "No funding was authorized, no transaction was signed or broadcast, no lease or provider credential was issued, and no inference was sent. Authentication and startup tests used fresh temporary private profiles; correct-password serve stopped at the expected unfunded readiness check. Temporary profiles were removed and owned services stopped. The default user installation and configuration were not modified."
+}
