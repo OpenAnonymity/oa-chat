@@ -1,3 +1,24 @@
+## 2026-09-29: Payment feedback published to staging and Sepolia
+
+- Both public apps now include the reviewed payment fixes from core
+  `0e99a12e45aeac73539a335f9fb7a30f1f009bc2`.
+- [Staging](https://staging.openanonymity.ai) uses Commercial
+  `a84fb399ec3bfbc62644b902a0e28837382df0f2`, build `UVQ2UL6V`, deployment
+  `dpl_7UaSuvpWUfhHsd7LS5ZN5bjoQuYa`. Its Git release and live verification
+  workflows passed, including all nine public route/provenance checks.
+- [Sepolia](https://oa-wallet-eth-sepolia.vercel.app) uses build `3V62H6JR`,
+  deployment `dpl_4KV5LypB3hT63yjXBZbtxXzswiMC`. The Node 24 Vercel prebuilt
+  output matched all 489 manifest hashes. An independent authenticated check
+  matched ten deployed assets, including both proving keys and WASM, before
+  promotion. The canonical URL then reported the same build and healthy API.
+  An unfunded browser smoke test showed the new instructions, live fee/QR,
+  disabled Deposit, and the restored address, open details and scrolled view
+  after reload.
+- Both retain `fresh-20260928`, their respective Mainnet/Sepolia vaults, the
+  existing staging organization routes, and the pinned SDK/verifier policy.
+  Sepolia's deployment error-log scan was empty. Release verification did not
+  perform funded wallet transactions.
+
 ## 2026-09-29: CLI native ETH deployment and verifier outage parity
 
 - The CLI source now embeds the fresh Mainnet/Sepolia manifests used by staging
