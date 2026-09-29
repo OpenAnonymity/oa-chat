@@ -456,6 +456,7 @@ async function fetchJson(
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     let response;
+    let data = null;
     try {
         response = await sessionService.fetch(`${ORG_API_BASE}${path}`, {
             method,
@@ -466,14 +467,21 @@ async function fetchJson(
                 : JSON.stringify(body || {}),
             signal: controller.signal
         });
+        // The deadline covers the body as well: a stalled body must fail,
+        // never read as an empty success.
+        try {
+            data = await response.json();
+        } catch (error) {
+            if (controller.signal.aborted) {
+                const timeout = new Error(`Account request timed out after ${timeoutMs}ms`);
+                timeout.name = 'TimeoutError';
+                timeout.isBodyTimeout = true;
+                throw timeout;
+            }
+            data = null;
+        }
     } finally {
         clearTimeout(timeoutId);
-    }
-    let data = null;
-    try {
-        data = await response.json();
-    } catch (error) {
-        data = null;
     }
     if (!response.ok) {
         // Detect token invalidation (e.g., after recovery on another device)

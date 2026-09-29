@@ -803,6 +803,17 @@ class TicketClient {
                             },
                             error: error.message
                         });
+                        if (error?.isBodyTimeout) {
+                            // The org answered but never finished the reply. It may
+                            // or may not have redeemed the ticket; a retry finds out
+                            // (an already-spent ticket is skipped automatically).
+                            const timeout = new Error('The key request timed out before the org finished replying. Please try again.');
+                            timeout.name = 'TimeoutError';
+                            timeout.code = 'KEY_REQUEST_TIMEOUT';
+                            timeout.retryable = true;
+                            timeout.cause = error;
+                            throw timeout;
+                        }
                         throw error;
                     }
 

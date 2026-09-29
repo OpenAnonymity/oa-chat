@@ -121,6 +121,18 @@ function sleep(ms) {
  * @throws {Error} If all attempts fail or a non-retryable error occurs
  */
 export async function fetchRetry(url, init = {}, config = {}) {
+    const { response } = await fetchRetryWithDeadline(url, init, config, false);
+    return response;
+}
+
+/**
+ * Same loop as fetchRetry. With holdDeadline the per-attempt timeout keeps
+ * running after the headers arrive, so the caller can read the body under the
+ * same deadline; it must call release() when done. Without it the timeout is
+ * cleared as soon as the response is returned, as before.
+ * @returns {Promise<{response: Response, signal: AbortSignal|null, release: function}>}
+ */
+async function fetchRetryWithDeadline(url, init = {}, config = {}, holdDeadline = false) {
     const {
         maxAttempts = DEFAULT_CONFIG.maxAttempts,
         baseDelayMs = DEFAULT_CONFIG.baseDelayMs,
@@ -146,6 +158,7 @@ export async function fetchRetry(url, init = {}, config = {}) {
         }
 
         let timeoutId = null;
+        let handedOff = false;
         try {
             // Determine the signal to use
             let fetchSignal = externalSignal || null;
@@ -193,7 +206,17 @@ export async function fetchRetry(url, init = {}, config = {}) {
             }
 
             // Non-retryable status or success - return response
-            return response;
+            if (holdDeadline) {
+                handedOff = true;
+                const release = () => {
+                    if (timeoutId !== null) {
+                        clearTimeout(timeoutId);
+                        timeoutId = null;
+                    }
+                };
+                return { response, signal: fetchSignal, release };
+            }
+            return { response, signal: fetchSignal, release: () => {} };
 
         } catch (error) {
             // Check if this is a user-initiated abort
@@ -225,7 +248,7 @@ export async function fetchRetry(url, init = {}, config = {}) {
             // Non-retryable error or final attempt
             throw error;
         } finally {
-            if (timeoutId !== null) {
+            if (timeoutId !== null && !handedOff) {
                 clearTimeout(timeoutId);
             }
         }
@@ -272,11 +295,18 @@ function createLinkedSignal(signal1, signal2) {
  * @throws {Error} If request fails or JSON parsing fails
  */
 export async function fetchRetryJson(url, init = {}, config = {}) {
-    const response = await fetchRetry(url, init, config);
+    // The request deadline covers the body too: a server that sends headers
+    // and then stalls must not hold the caller (and any lock it owns) forever.
+    const { response, signal, release } = await fetchRetryWithDeadline(url, init, config, true);
+    let text;
+    try {
+        text = await readBodyTextWithDeadline(response, signal, config);
+    } finally {
+        release();
+    }
 
     // Try to parse JSON
     const contentType = response.headers.get('content-type') || '';
-    const text = await response.text();
 
     let data = null;
     if (text && (contentType.includes('application/json') || text.trim().startsWith('{') || text.trim().startsWith('['))) {
@@ -291,6 +321,65 @@ export async function fetchRetryJson(url, init = {}, config = {}) {
     }
 
     return { response, data, text };
+}
+
+function cancelResponseBody(response) {
+    try {
+        const cancelled = response?.body?.cancel?.();
+        if (cancelled && typeof cancelled.catch === 'function') cancelled.catch(() => {});
+    } catch {
+        // A locked or already-consumed body cannot be cancelled; the read is
+        // abandoned either way.
+    }
+}
+
+function createBodyAbortError(config, signal) {
+    const userAbort = !!config.signal?.aborted;
+    const error = new Error(userAbort
+        ? 'Request aborted'
+        : `${config.context || 'Request'} response body timed out after ${config.timeoutMs ?? DEFAULT_CONFIG.timeoutMs}ms`);
+    error.name = userAbort ? 'AbortError' : 'TimeoutError';
+    error.isUserAbort = userAbort;
+    error.isBodyTimeout = !userAbort;
+    error.signal = signal;
+    return error;
+}
+
+/**
+ * Read a response body as text, giving up when the request signal aborts.
+ * Native fetch rejects the read itself when its signal aborts; the race also
+ * covers fetch-compatible transports (the relay) that ignore the signal once
+ * headers have been delivered.
+ */
+export async function readBodyTextWithDeadline(response, signal, config = {}) {
+    const textPromise = response.text();
+    if (!signal) return textPromise;
+    // Never surface a rejection after the race has settled.
+    textPromise.catch(() => {});
+    if (signal.aborted) {
+        cancelResponseBody(response);
+        throw createBodyAbortError(config, signal);
+    }
+    let onAbort = null;
+    const aborted = new Promise((_, reject) => {
+        onAbort = () => {
+            cancelResponseBody(response);
+            reject(createBodyAbortError(config, signal));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+        return await Promise.race([textPromise, aborted]);
+    } catch (error) {
+        // A native abort surfaces as the transport's own AbortError; normalise
+        // it so callers see one shape for "the deadline passed mid-body".
+        if (signal.aborted && error?.name === 'AbortError' && !error.isUserAbort && !error.isBodyTimeout) {
+            throw createBodyAbortError(config, signal);
+        }
+        throw error;
+    } finally {
+        if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
 }
 
 // Export default config for reference
