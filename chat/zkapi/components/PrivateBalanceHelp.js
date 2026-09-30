@@ -30,9 +30,7 @@ export function updatePrivateBalanceExpiryState(root, note, now = Date.now()) {
     if (badge) {
         badge.textContent = expired ? 'expired' : 'ready';
         badge.classList.toggle('badge-status-success', !expired);
-        for (const name of ['bg-amber-100', 'text-amber-800', 'dark:bg-amber-500/15', 'dark:text-amber-200']) {
-            badge.classList.toggle(name, expired);
-        }
+        badge.classList.toggle('zkapi-pill--neutral', expired);
     }
     const notice = root.querySelector('[data-private-balance-expired-notice]');
     if (notice && notice.hidden !== !expired) notice.hidden = !expired;

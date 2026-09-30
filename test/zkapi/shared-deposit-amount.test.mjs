@@ -321,6 +321,6 @@ test('Send Ethereum names a failed estimate instead of "Updating the ETH amountâ
     assert.doesNotMatch(html, /Updating the ETH amount|when the estimate is ready/);
     assert.equal((html.match(/Temporary price read failure\./g) || []).length, 1);
     assert.match(html, /aria-describedby="zkapi-amount-error"/);
-    assert.match(html, /Retrying automatically\. Changing the amount or switching between USD and ETH also starts a new estimate\./);
+    assert.match(html, /Retrying automatically\. Changing the amount or its currency also starts a new estimate\./);
     assert.match(html, /data-funding-copy/, 'the address stays available');
 });

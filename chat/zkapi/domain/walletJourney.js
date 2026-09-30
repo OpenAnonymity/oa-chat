@@ -5,7 +5,7 @@
 // The persisted phase is what a reload has, so the same list is drawn
 // after one, with the current step waiting and its actions underneath.
 
-const STATES = ['complete', 'active', 'waiting', 'upcoming', 'error'];
+const STATES = ['complete', 'active', 'waiting', 'paused', 'upcoming', 'error'];
 
 function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, nativeEth = false, escapePeriod = '' } = {}) {
     if (kind === 'deposit') {
@@ -13,7 +13,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             { id: 'connect', label: 'Connect MetaMask' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             ...(!nativeEth ? [{ id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' }] : []),
-            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'This transfer moves funds from your wallet into your zkAPI balance.' },
+            { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Moves the funds from your wallet into your private balance.' },
             { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
     }
@@ -22,10 +22,10 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
         ...(hasLease ? [{ id: 'settle', label: 'Settle the active chat key', detail: 'Finishes the open chat and confirms its usage.' }] : []),
         escape
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
-            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server is authorizing your withdrawal, and your device is creating the withdrawal proof.' },
+            : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server authorizes it and this device makes the proof.' },
         escape
             ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
-            : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Confirm the transaction to return your remaining balance to your wallet.' },
+            : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Approve the transaction in MetaMask.' },
         escape
             ? { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
             : { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
@@ -57,11 +57,13 @@ export function classifyWalletStatus(kind, message = '') {
 /** Where a persisted phase (what survives a reload) puts the journey. */
 export function positionForPersistedPhase(kind, phase = '') {
     switch (String(phase || '')) {
+        // Saved work that waits for the person's Continue: the step it
+        // stopped at is paused — marked as the current one, not running.
         case 'reserving':
-            return { step: 'proof', state: 'upcoming' };
+            return { step: 'proof', state: 'paused' };
         case 'prepared':
         case 'retry_exact':
-            return kind === 'deposit' ? { step: 'deposit', state: 'upcoming' } : { step: 'wallet', state: 'upcoming' };
+            return kind === 'deposit' ? { step: 'deposit', state: 'paused' } : { step: 'wallet', state: 'paused' };
         case 'awaiting_wallet':
             return kind === 'deposit' ? { step: 'deposit', state: 'waiting' } : { step: 'wallet', state: 'waiting' };
         case 'submitted':
@@ -100,8 +102,7 @@ export function walletJourney({ kind, message = '', persistedPhase = '', last = 
         kind,
         position,
         category: kind === 'deposit' ? 'Adding your balance' : kind === 'escape' ? 'Starting account recovery'
-            : persistedPhase === 'reserving' ? 'Withdrawal preparation paused'
-                : ['prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal ready to continue' : 'Withdrawal',
+            : ['reserving', 'prepared', 'retry_exact'].includes(persistedPhase) ? 'Withdrawal, paused' : 'Withdrawal',
         steps: steps.map((step, i) => ({
             ...step,
             state: i < index ? 'complete' : i === index ? (failed ? 'error' : state) : 'upcoming'

@@ -32,7 +32,7 @@ test('withdrawal amount does not claim funds were already returned before submis
     const modal = fixture(t);
     const html = modal.renderWithdrawal();
     assert.match(html, /Amount to withdraw/);
-    assert.match(html, /Your MetaMask wallet pays the network fee separately/);
+    assert.match(html, /To your MetaMask account\. MetaMask pays the network fee\./);
     assert.doesNotMatch(html, /Returned to MetaMask/);
 });
 
@@ -57,8 +57,9 @@ test('native withdrawal amount retains exact ETH when the USD quote is unavailab
 test('saved withdrawal names its unchanged destination without pretending it is running', t => {
     const modal = fixture(t, { prepared: { phase: 'prepared', mode: 'mutual', destination } });
     const html = modal.renderWithdrawal();
-    assert.match(html, /Withdrawal ready to continue/);
-    assert.match(html, /keeps the same destination when you switch payment methods/);
+    assert.match(html, /aria-label="Withdrawal, paused"/);
+    assert.match(html, /zkapi-meta">To 0xaaaaaaa…aaaaaaaaa · Mutual close/, 'the saved destination is named once, beside the method');
+    assert.match(html, /data-step="wallet" data-state="paused" aria-current="step"/);
     assert.match(html, /Nothing has been sent yet/);
     assert.doesNotMatch(html, /Returning your balance|Returned to MetaMask/);
 });
@@ -105,7 +106,8 @@ function interruptedMutual(t) {
 test('interrupted mutual-close UI offers an explicit escape choice and shows its safety window before submission', t => {
     const modal = interruptedMutual(t);
     let html = modal.renderWithdrawal();
-    assert.match(html, /Withdrawal preparation paused/);
+    assert.match(html, /Paused before MetaMask/);
+    assert.match(html, /data-step="proof" data-state="paused"/);
     assert.match(html, /id="zkapi-use-escape-btn"[^>]*>Use escape hatch/);
     assert.match(html, /safety window/);
     assert.doesNotMatch(html, /data-state="active"/);

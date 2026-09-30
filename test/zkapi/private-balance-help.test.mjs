@@ -122,5 +122,5 @@ test('crossing the expiry deadline patches only readiness and the unclaimed-bala
     assert.equal(badge.textContent, 'expired');
     assert.equal(notice.hidden, false);
     assert.equal(classes.has('badge-status-success'), false);
-    assert.equal(classes.has('bg-amber-100'), true);
+    assert.equal(classes.has('zkapi-pill--neutral'), true, 'expired is a neutral state, never yellow');
 });

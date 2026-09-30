@@ -304,9 +304,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
                     compact: 'Check withdrawal'
                 }
             : {
-                title: 'Withdrawal ready to finish',
-                detail: 'No transaction is moving. Finish withdrawing or set this balance aside.',
-                compact: 'Withdrawal ready'
+                title: 'Withdrawal paused',
+                detail: 'Nothing has been sent. Continue it from Withdraw, or set this balance aside.',
+                compact: 'Withdrawal paused'
             };
     const depositCopy = pendingDeposit?.phase === 'submitted'
         ? {

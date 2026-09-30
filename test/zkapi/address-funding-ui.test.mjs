@@ -258,7 +258,7 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.match(waiting, /Amount to send<\/dt><dd>0\.0055 ETH/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
-    assert.match(waiting, /sending wallet charges its own transfer fee separately/);
+    assert.match(waiting, /from any wallet; it charges its own transfer fee/);
     assert.match(waiting, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
     assert.match(waiting, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock/i);
@@ -324,13 +324,13 @@ test('the visible send amount shows USD for the remaining transfer including fee
     assert.match(heading, /zkapi-funding-send-usd">≈ \$3\.00 USD/);
     assert.doesNotMatch(heading, /\$10\.00|\$11\.00/);
     assert.match(html, /data-funding-help-panel[^>]+hidden/);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
+    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<details class="zkapi-funding-return"/);
     assert.ok(details, 'cost details are in the collapsed transaction breakdown');
     assert.match(details[1], /data-funding-progress/);
     assert.match(details[1], /role="progressbar"/);
     assert.match(details[1], /zkapi-funding-progress-required|zkapi-funding-progress-optional/);
     assert.match(details[1], /Already at this address/);
-    assert.match(html, /Transaction breakdown <svg/);
+    assert.match(html, /Transaction breakdown<\/span><svg/);
     assert.match(html, /zkapi-funding-summary">Deposit ≈ \$10\.00 · Fee allowance ≈ \$1\.00<\/p>/);
     assert.doesNotMatch(html.replace(details[1], ''), /data-funding-progress|Already at this address|Estimated actual network fee|Optional buffer/);
     assert.doesNotMatch(html, /Recommended to send|more is required for the deposit and network fee allowance/);
@@ -436,9 +436,10 @@ test('a quotable saved address deposit omits the legacy resume button that lacks
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
     const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
     const account = Object.create(AccountModal.prototype);
-    Object.assign(account, { busy: false, renderOutcome: () => 'saved status', renderWithdrawalStatusLink: () => '' });
+    Object.assign(account, { busy: false, escapeHtml, renderOutcome: () => 'saved status', renderWithdrawalStatusLink: () => '' });
     const html = account.renderBalance();
-    assert.equal(html, 'saved status');
+    assert.match(html, /saved status/);
+    assert.doesNotMatch(html, /data-funding-next|data-funding-usd/);
     assert.doesNotMatch(html, /zkapi-deposit-btn|Resume with MetaMask/);
 });
 
@@ -458,7 +459,7 @@ test('explicit address retry preparation cannot sign and returns to the quoted f
         .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
     const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
     const account = Object.create(AccountModal.prototype);
-    Object.assign(account, { busy: false, fundingFlow: { ready: true },
+    Object.assign(account, { busy: false, escapeHtml, fundingFlow: { ready: true },
         setStatus(value) { this.status = value; },
         async run(action, details) {
             assert.equal(details.phase, 'local', 'review never enters provider signing authorization');
@@ -496,7 +497,7 @@ for (const phase of ['prepared', 'retry_exact']) {
             .replace(/^import[\s\S]*?;\n/gm, '').replace('export default class AccountModal', 'class AccountModal');
         const AccountModal = vm.runInNewContext(`${text}\nAccountModal;`, f.context);
         const account = Object.create(AccountModal.prototype);
-        Object.assign(account, { busy: false, renderOutcome: () => '', renderWithdrawalStatusLink: () => '' });
+        Object.assign(account, { busy: false, escapeHtml, renderOutcome: () => '', renderWithdrawalStatusLink: () => '' });
         const html = account.renderBalance();
         assert.match(html, /id="zkapi-check-deposit-btn"/);
         assert.doesNotMatch(html, /id="zkapi-deposit-btn"/);
@@ -1221,19 +1222,18 @@ test('manual deposit keeps instructions in the breakdown and shows a concise exa
         status: { ethBalance: '5000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /In your own wallet/);
-    assert.match(html, /choose <strong>Sepolia<\/strong>/);
+    assert.match(html, /from any wallet/);
+    assert.match(html, /Send ETH on <strong>Sepolia<\/strong>/);
     assert.match(html, /Only your deposit is added to the private balance/);
     assert.match(html, /This browser’s receiving address/);
     assert.match(html, /0\.00045 ETH still needed/);
     assert.match(html, /data-funding-next[^>]*disabled[^>]*>Deposit/);
     assert.doesNotMatch(html, /Waiting for funds|>Next</);
-    assert.match(html, /confirm the transfer in your wallet/);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<div class="zkapi-funding-address">/);
+    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<details class="zkapi-funding-return"/);
     assert.ok(details);
-    assert.match(details[1], /In your own wallet/);
+    assert.match(details[1], /from any wallet/);
     assert.match(details[1], /Only your deposit is added/);
-    assert.doesNotMatch(html.replace(details[1], ''), /In your own wallet|Only your deposit is added|confirm the transfer|zkapi-funding-address-label/);
+    assert.doesNotMatch(html.replace(details[1], ''), /from any wallet|Only your deposit is added|zkapi-funding-address-label/);
 });
 
 test('failed refresh keeps fee details but suppresses QR and deposit authorization', () => {

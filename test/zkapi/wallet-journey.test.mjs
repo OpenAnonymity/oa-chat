@@ -41,12 +41,14 @@ test('a deposit walks connect → approve → deposit → chain, with test token
 
 test('after a reload the persisted phase places the journey, and a failure marks the step', () => {
     const interrupted = walletJourney({ kind: 'withdraw', persistedPhase: 'reserving' });
-    assert.deepEqual(states(interrupted), ['proof:upcoming', 'wallet:upcoming', 'chain:upcoming']);
-    assert.equal(interrupted.category, 'Withdrawal preparation paused');
+    // Saved work waiting for Continue marks the step it stopped at as the
+    // current one (paused), so the page reads as it did before the reload.
+    assert.deepEqual(states(interrupted), ['proof:paused', 'wallet:upcoming', 'chain:upcoming']);
+    assert.equal(interrupted.category, 'Withdrawal, paused');
     assert.deepEqual(positionForPersistedPhase('withdraw', 'awaiting_wallet'), { step: 'wallet', state: 'waiting' });
     assert.deepEqual(positionForPersistedPhase('deposit', 'submitted'), { step: 'chain', state: 'active' });
     assert.equal(positionForPersistedPhase('withdraw', ''), null);
-    assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'prepared' })), ['proof:complete', 'wallet:upcoming', 'chain:upcoming']);
+    assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'prepared' })), ['proof:complete', 'wallet:paused', 'chain:upcoming']);
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'awaiting_wallet' })), ['proof:complete', 'wallet:waiting', 'chain:upcoming']);
     assert.deepEqual(states(walletJourney({ kind: 'deposit', persistedPhase: 'dropped_or_pending' })), ['connect:complete', 'approve:complete', 'deposit:complete', 'chain:active']);
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'awaiting_wallet', failed: true })), ['proof:complete', 'wallet:error', 'chain:upcoming']);
