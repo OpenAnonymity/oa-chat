@@ -443,7 +443,7 @@ func TestGuidedStartAttachedServiceIsNotStopped(t *testing.T) {
 	if err := guidedStart(context.Background(), dir, startOptions{usd: "2", model: "test/model"}, ui, io.Discard, runtime); err != nil {
 		t.Fatal(err)
 	}
-	if !funded || !strings.Contains(ui.output.String(), "existing daemon continues running") || strings.Contains(ui.output.String(), c.APIKey) || !strings.Contains(ui.output.String(), setupExecutable()+" --config-dir "+shellQuoteSetup(dir)) {
+	if !funded || !strings.Contains(ui.output.String(), "existing daemon continues running") || strings.Contains(ui.output.String(), c.APIKey) || strings.Contains(ui.output.String(), dir) || !strings.Contains(ui.output.String(), "API key: not required (localhost only).") {
 		t.Fatal("attach readiness or safe client instructions are missing")
 	}
 }
@@ -644,5 +644,24 @@ func TestGuidedStartStopsOwnServiceOnSetupFailure(t *testing.T) {
 				t.Fatal("failed setup left a daemon running or reported ready")
 			}
 		})
+	}
+}
+
+func TestClientConnectionInstructionsUseSimpleCommands(t *testing.T) {
+	c, err := config.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, require := range []bool{false, true} {
+		c.RequireAPIKey = require
+		ui := &fundingWizardUI{}
+		showClientConnection(c, ui)
+		showCustomProfileHint("/private/a-user/profile", ui)
+		if strings.Contains(ui.String(), c.APIKey) || strings.Contains(ui.String(), "/private/a-user") || strings.Contains(ui.String(), "--config-dir '") {
+			t.Fatal("connection instructions exposed private paths or credentials")
+		}
+		if require != strings.Contains(ui.String(), "oa-chat config --api-key") || (!require && !strings.Contains(ui.String(), "API key: not required (localhost only).")) {
+			t.Fatal("connection instructions did not match inference authentication")
+		}
 	}
 }

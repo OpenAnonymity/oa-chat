@@ -18,7 +18,7 @@ type configureAction func(context.Context, string, config.Config, string, setupP
 type configureOptions struct {
 	backend, network, listen, relay, binary, proofs string
 	usd                                             string
-	status, apiKey, edit, menu                      bool
+	status, apiKey, edit, menu, requireAPIKey       bool
 	fields                                          map[string]bool
 }
 
@@ -35,6 +35,7 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	f.StringVar(&o.usd, "usd", "", "skip the new-deposit USD amount prompt (prompt default: 20; network fees are extra)")
 	f.BoolVar(&o.status, "status", false, "show saved configuration status without setup")
 	f.BoolVar(&o.apiKey, "api-key", false, "print the local inference API key explicitly")
+	f.BoolVar(&o.requireAPIKey, "require-api-key", false, "require a local API key for inference (default: no key required)")
 	f.BoolVar(&o.edit, "edit", false, "edit mode, network, listener, and transport interactively")
 	f.BoolVar(&o.menu, "menu", false, "open configuration and wallet management actions")
 	if err := f.Parse(args); err != nil {
@@ -115,7 +116,7 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 		if o.apiKey || o.menu {
 			return errors.New("configuration is missing; run oa-chat config to create it")
 		}
-		ui.Printf("Configuration: %s\nStatus: not configured.\n", dir)
+		ui.Printf("Configuration: not configured.\n")
 		if o.status {
 			return nil
 		}
@@ -146,8 +147,8 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 		if err != nil {
 			return err
 		}
-		ui.Printf("Created private configuration. Back up %s to preserve both wallets and their recovery state.\n", dir)
-		showConfigureSummary(dir, c, ui)
+		ui.Printf("Created private configuration. Back up your configuration directory to preserve both wallets and their recovery state.\n")
+		showConfigureSummary(c, ui)
 		return action(ctx, dir, c, "setup", ui, out)
 	}
 	if err != nil {
@@ -161,7 +162,7 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 		_, err := fmt.Fprintln(out, c.APIKey)
 		return err
 	}
-	showConfigureSummary(dir, c, ui)
+	showConfigureSummary(c, ui)
 	if o.status {
 		return nil
 	}
@@ -225,6 +226,9 @@ func applyConfigureOptions(c config.Config, o configureOptions) config.Config {
 	if o.fields["network"] {
 		c.ZKAPI.Network = o.network
 	}
+	if o.fields["require-api-key"] {
+		c.RequireAPIKey = o.requireAPIKey
+	}
 	if o.fields["listen"] {
 		c.Listen = o.listen
 	}
@@ -240,12 +244,13 @@ func applyConfigureOptions(c config.Config, o configureOptions) config.Config {
 	return c
 }
 
-func showConfigureSummary(dir string, c config.Config, ui setupPrompter) {
+func showConfigureSummary(c config.Config, ui setupPrompter) {
 	transport := "direct HTTPS"
 	if c.RelayURL != "" {
 		transport = "Wisp relay enabled"
 	}
-	ui.Printf("Configuration: %s\nSaved mode: %s\nzkAPI network: %s\nOpenAI base URL: http://%s/v1\nTransport: %s\nLocal API credential: configured (use config --api-key to display it).\n", dir, c.Backend, c.ZKAPI.Network, c.Listen, transport)
+	ui.Printf("Configuration: saved.\nSaved mode: %s\nzkAPI network: %s\nTransport: %s\n", c.Backend, c.ZKAPI.Network, transport)
+	showClientConnection(c, ui)
 	ui.Printf("Change settings: oa-chat config --edit\nWallet actions: oa-chat config --menu\nUse the same --config-dir for these commands if set.\n")
 }
 
@@ -261,7 +266,7 @@ func saveConfiguredSettings(ctx context.Context, dir string, previous, next conf
 			ui.Printf("Selected %s. Your %s wallet and recovery files remain saved separately in this configuration directory.\n", next.ZKAPI.Network, previous.ZKAPI.Network)
 		}
 		ui.Printf("Saved configuration.\n")
-		showConfigureSummary(dir, next, ui)
+		showConfigureSummary(next, ui)
 	}
 	return action(ctx, dir, next, "setup", ui, out)
 }

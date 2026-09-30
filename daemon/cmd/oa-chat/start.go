@@ -267,7 +267,7 @@ func prepareStartConfig(ctx context.Context, dir string, options startOptions, u
 		if options.backend != "" {
 			c.Backend = options.backend
 		}
-		ui.Printf("Using configuration: %s\n", dir)
+		ui.Printf("Using saved configuration.\n")
 		return c, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -311,7 +311,7 @@ func prepareStartConfig(ctx context.Context, dir string, options startOptions, u
 	}
 	c, err = config.Load(dir) // Also creates the separate owner-only management credential.
 	if err == nil {
-		ui.Printf("Created configuration: %s\nBack up this directory to preserve your wallet and recovery state.\n", dir)
+		ui.Printf("Created private configuration. Back up your configuration directory to preserve your wallet and recovery state.\n")
 	}
 	return c, err
 }
@@ -488,7 +488,9 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	if options.setupOnly {
 		return nil
 	}
-	ui.Printf("\nReady for inference.\nOpenAI base URL: http://%s/v1\nGet your local API key: %s --config-dir %s config --api-key\n", c.Listen, setupExecutable(), shellQuoteSetup(dir))
+	ui.Printf("\nReady for inference.\n")
+	showClientConnection(c, ui)
+	showCustomProfileHint(dir, ui)
 	if attached {
 		ui.Printf("The existing daemon continues running.\n")
 		return nil
@@ -500,16 +502,21 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	return result
 }
 
-func shellQuoteSetup(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+// Keep machine-specific paths out of normal configuration and serve output.
+func showClientConnection(c config.Config, ui setupPrompter) {
+	ui.Printf("OpenAI base URL: http://%s/v1\n", c.Listen)
+	if c.RequireAPIKey {
+		ui.Printf("API key: required. Get it with oa-chat config --api-key.\n")
+	} else {
+		ui.Printf("API key: not required (localhost only).\n")
+	}
 }
 
-func setupExecutable() string {
-	executable, err := os.Executable()
-	if err != nil {
-		return "oa-chat"
+func showCustomProfileHint(dir string, ui setupPrompter) {
+	defaultDir, err := config.DefaultDir()
+	if err != nil || filepath.Clean(dir) != filepath.Clean(defaultDir) {
+		ui.Printf("For this custom profile, keep using the same --config-dir option.\n")
 	}
-	return shellQuoteSetup(executable)
 }
 
 func probeSetupService(ctx context.Context, c config.Config) (bool, error) {

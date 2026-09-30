@@ -425,8 +425,8 @@ func TestWithdrawPendingContinuesOnlyTheSameSavedDestination(t *testing.T) {
 	}
 }
 
-func TestInferenceConflictDistinguishesWithdrawalFromSettlement(t *testing.T) {
-	for _, code := range []string{"withdrawal_pending", "withdrawal_conflict", "pending_settlement", "unknown"} {
+func TestInferenceConflictDistinguishesWithdrawalFromUnknownConflict(t *testing.T) {
+	for _, code := range []string{"withdrawal_pending", "withdrawal_conflict", "unknown"} {
 		t.Run(code, func(t *testing.T) {
 			bridge := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -464,8 +464,8 @@ func TestInferenceConflictDistinguishesWithdrawalFromSettlement(t *testing.T) {
 				if backend.Code != "withdrawal_pending" || !strings.Contains(backend.Message, "saved destination") || strings.Contains(backend.Message, "settling") {
 					t.Fatalf("withdrawal confused with settlement: %+v", backend)
 				}
-			} else if backend.Code != "settlement_pending" {
-				t.Fatalf("settlement regression: %+v", backend)
+			} else if backend.Code != "wallet_conflict" {
+				t.Fatalf("unknown conflict misclassified: %+v", backend)
 			}
 		})
 	}

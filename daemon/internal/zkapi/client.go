@@ -38,11 +38,13 @@ type Config struct {
 }
 
 type Client struct {
-	leaseMu    sync.Mutex
-	usedLeases map[[32]byte]uint64
-	config     Config
-	local      *http.Client
-	inference  *http.Client
+	leaseMu        sync.Mutex
+	usedLeases     map[[32]byte]uint64
+	requestSlot    chan struct{}
+	settlementPoll time.Duration
+	config         Config
+	local          *http.Client
+	inference      *http.Client
 }
 
 // Error is safe to return to API consumers: raw companion/provider messages
@@ -100,7 +102,7 @@ func New(config Config) (*Client, error) {
 	inference.CheckRedirect = noRedirect
 	inference.Jar = nil
 	local := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext}, CheckRedirect: noRedirect, Timeout: 4 * time.Minute}
-	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64)}, nil
+	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64), requestSlot: make(chan struct{}, 1), settlementPoll: 5 * time.Second}, nil
 }
 
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -137,6 +139,9 @@ func Manifest(network string) (string, error) {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, body []byte) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.config.ClientURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -151,10 +156,16 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 	}
 	response, err := local.Do(req)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, &Error{http.StatusBadGateway, "companion_unavailable"}
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 2<<20+1))
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	if err != nil || len(data) > 2<<20 {
 		return nil, &Error{http.StatusBadGateway, "invalid_companion_response"}
 	}
@@ -175,7 +186,7 @@ func (c *Client) request(ctx context.Context, method, path string, body []byte) 
 			_ = json.Unmarshal(failure.Error, &flat)
 			for _, code := range []string{nested.Code, flat, failure.Code} {
 				switch code {
-				case "pending_settlement", "withdrawal_pending", "withdrawal_conflict", "testnet_password_required":
+				case "lease_pending", "pending_settlement", "withdrawal_pending", "withdrawal_conflict", "testnet_password_required":
 					return nil, &Error{response.StatusCode, code}
 				}
 			}
@@ -224,15 +235,25 @@ func (c *Client) Check(ctx context.Context) error {
 // Raw SSE bytes remain available to the gateway immediately; no fake streaming
 // or complete-response buffering occurs in either Go or the proof companion.
 func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Response, error) {
-	if err := c.Check(ctx); err != nil {
+	// Keep one owner through the entire provider response, not just through
+	// obtaining its headers. A queued caller must never spend a lease after
+	// cancellation, including when cancellation races with an available slot.
+	select {
+	case c.requestSlot <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	release := func() { <-c.requestSlot }
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	limit, err := c.requestBudget(ctx, body)
-	if err != nil {
-		return nil, err
-	}
-	leaseBody, _ := json.Marshal(map[string]uint64{"request_limit_micro_usd": limit})
-	leaseJSON, err := c.request(ctx, http.MethodPost, "/oa/v1/lease", leaseBody)
+	leaseJSON, err := c.waitForLease(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +283,9 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 	}
 	c.usedLeases[hash] = lease.ExpiresAt
 	c.leaseMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.InferenceBaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create inference request: %w", err)
@@ -279,9 +303,94 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 		}
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, &Error{http.StatusBadGateway, "inference_transport_failed"}
 	}
+	// EOF, explicit close, or cancellation all end ownership. The HTTP
+	// gateway still owns draining/copying the response, so streams stay live.
+	response.Body = holdResponseSlot(ctx, response.Body, release)
+	transferred = true
 	return response, nil
+}
+
+func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := c.Check(ctx); err != nil {
+			return nil, err
+		}
+		// Read policy after queueing and again after each settlement wait, so
+		// a disabled model or changed spending tier cannot use stale pricing.
+		limit, err := c.requestBudget(ctx, body)
+		if err != nil {
+			return nil, err
+		}
+		leaseBody, _ := json.Marshal(map[string]uint64{"request_limit_micro_usd": limit})
+		lease, err := c.request(ctx, http.MethodPost, "/oa/v1/lease", leaseBody)
+		var pending *Error
+		if !errors.As(err, &pending) || pending.Status != http.StatusConflict || (pending.Code != "lease_pending" && pending.Code != "pending_settlement") {
+			return lease, err
+		}
+		// These codes explicitly withhold a new key. Never retry a lost or
+		// malformed reply, another conflict, or provider inference: issuance
+		// may already have committed and provider keys remain single-use.
+		timer := time.NewTimer(c.settlementPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+type serializedResponseBody struct {
+	io.ReadCloser
+	once    sync.Once
+	release func()
+	stopMu  sync.Mutex
+	stop    func() bool
+	closed  bool
+}
+
+func holdResponseSlot(ctx context.Context, body io.ReadCloser, release func()) io.ReadCloser {
+	wrapped := &serializedResponseBody{ReadCloser: body, release: release}
+	stop := context.AfterFunc(ctx, func() { _ = wrapped.Close() })
+	wrapped.stopMu.Lock()
+	if wrapped.closed {
+		stop()
+	} else {
+		wrapped.stop = stop
+	}
+	wrapped.stopMu.Unlock()
+	return wrapped
+}
+
+func (b *serializedResponseBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		_ = b.Close()
+	}
+	return n, err
+}
+
+func (b *serializedResponseBody) Close() error {
+	var err error
+	b.once.Do(func() {
+		b.stopMu.Lock()
+		b.closed = true
+		if b.stop != nil {
+			b.stop()
+		}
+		b.stopMu.Unlock()
+		err = b.ReadCloser.Close()
+		b.release()
+	})
+	return err
 }
 
 func usableVerification(verified bool, status, detail string) bool {

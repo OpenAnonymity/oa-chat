@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +35,10 @@ type API struct {
 	backend Backend
 	key     [32]byte
 	slots   chan struct{}
+	pending chan struct{}
+	// RequireAPIKey opts into bearer authentication for inference routes. Local
+	// management always requires its credentials, regardless of this setting.
+	RequireAPIKey bool
 	// Admin is optional local wallet management. All of its routes require the
 	// private CLI credential; an inference API key cannot authorize wallet use.
 	Admin           http.Handler
@@ -56,7 +61,7 @@ func New(backend Backend, key string, concurrency int) (*API, error) {
 	if concurrency < 1 || concurrency > 64 {
 		return nil, errors.New("concurrency must be between 1 and 64")
 	}
-	return &API{backend: backend, key: sha256.Sum256([]byte(key)), slots: make(chan struct{}, concurrency)}, nil
+	return &API{backend: backend, key: sha256.Sum256([]byte(key)), slots: make(chan struct{}, concurrency), pending: make(chan struct{}, concurrency+64)}, nil
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -72,12 +77,20 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, []byte(`{"status":"ok"}`))
 		return
 	}
-	header := r.Header.Get("Authorization")
-	key := sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer ")))
-	if !strings.HasPrefix(header, "Bearer ") || subtle.ConstantTimeCompare(key[:], a.key[:]) != 1 {
-		w.Header().Set("WWW-Authenticate", "Bearer")
-		writeError(w, 401, "invalid_api_key", "A valid local OA Chat API key is required.")
-		return
+	keylessInference := !a.RequireAPIKey && (r.URL.Path == "/v1/models" || r.URL.Path == "/v1/chat/completions")
+	if keylessInference {
+		if !localInferenceRequest(r) {
+			writeError(w, 403, "local_connection_required", "Connect to this API through localhost.")
+			return
+		}
+	} else {
+		header := r.Header.Get("Authorization")
+		key := sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer ")))
+		if !strings.HasPrefix(header, "Bearer ") || subtle.ConstantTimeCompare(key[:], a.key[:]) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			writeError(w, 401, "invalid_api_key", "A valid local OA Chat API key is required.")
+			return
+		}
 	}
 	if r.URL.Path == "/admin/status" {
 		if r.Method != http.MethodGet {
@@ -120,6 +133,36 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, 404, "not_found", "Use /v1/models or /v1/chat/completions.")
 	}
+}
+
+// The listener is restricted to a numeric loopback address by configuration.
+// Check the actual peer too, and reject attacker-controlled Host names to stop
+// DNS rebinding. Forwarded headers never establish local trust. A valid bearer
+// credential cannot weaken these checks when inference is configured keyless.
+func localInferenceRequest(r *http.Request) bool {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || !loopbackIP(peer) {
+		return false
+	}
+	host, port, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		host, port = r.Host, "80"
+	}
+	if !strings.EqualFold(host, "localhost") && !loopbackIP(host) {
+		return false
+	}
+	if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		_, localPort, err := net.SplitHostPort(local.String())
+		if err != nil || port != localPort {
+			return false
+		}
+	}
+	return true
+}
+
+func loopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Only inference inputs cross the boundary. In particular user, metadata,
@@ -181,11 +224,16 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 415, "unsupported_media_type", "Use Content-Type: application/json.")
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+	defer cancel()
+	// Bound total uploads and queued requests while allowing ordinary UI bursts
+	// to wait. Read the body before waiting so net/http can notice a disconnected
+	// client and cancel its queued request without spending anonymous access.
 	select {
-	case a.slots <- struct{}{}:
-		defer func() { <-a.slots }()
+	case a.pending <- struct{}{}:
+		defer func() { <-a.pending }()
 	default:
-		writeError(w, 429, "busy", "Too many concurrent requests. Retry after a running request finishes.")
+		writeError(w, 429, "busy", "The local request queue is full. Retry after a running request finishes.")
 		return
 	}
 	// Bound slow uploads separately from long-running inference/streaming.
@@ -202,10 +250,25 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_request_error", err.Error())
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
-	defer cancel()
+	select {
+	case a.slots <- struct{}{}:
+		defer func() { <-a.slots }()
+	case <-ctx.Done():
+		writeError(w, 408, "request_cancelled", "The request was canceled while waiting for inference.")
+		return
+	}
+	// A slot and cancellation may become ready together. Never spend access for
+	// a request that was already canceled when it reached the front of the queue.
+	if ctx.Err() != nil {
+		writeError(w, 408, "request_cancelled", "The request was canceled while waiting for inference.")
+		return
+	}
 	response, err := a.backend.Complete(ctx, clean)
 	if err != nil {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			writeError(w, 408, "request_cancelled", "The request was canceled or timed out while waiting for inference.")
+			return
+		}
 		// Transport/issuer errors may include secrets, submitted JSON or URLs.
 		// Do not expose them to either HTTP clients or service logs.
 		var safe *BackendError
@@ -213,7 +276,7 @@ func (a *API) complete(w http.ResponseWriter, r *http.Request) {
 			writeError(w, safe.Status, safe.Code, safe.Message)
 			return
 		}
-		writeError(w, 502, "anonymous_access_failed", "Anonymous access could not be prepared. Check ticket balance or funding with oa-chat status; relay and verifier availability are also required.")
+		writeError(w, 502, "anonymous_access_failed", "Anonymous access could not be prepared. Check ticket balance or funding with oa-chat config; relay and verifier availability are also required.")
 		return
 	}
 	if response == nil || response.Body == nil {

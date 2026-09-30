@@ -33,7 +33,9 @@ func TestServeReadinessDoesNotAuthorizeOrPrepareWalletOperations(t *testing.T) {
 		failure string
 	}{
 		{"unfunded", zkapi.WalletReadiness{}, "no private balance"},
-		{"settlement", zkapi.WalletReadiness{HasNote: true, PendingRequest: true, Balance: 999999}, "awaiting settlement"},
+		{"settlement", zkapi.WalletReadiness{HasNote: true, PendingRequest: true, Balance: 999999}, ""},
+		{"settlement with balance reserved", zkapi.WalletReadiness{HasNote: true, PendingRequest: true}, ""},
+		{"settlement with withdrawal", zkapi.WalletReadiness{HasNote: true, PendingRequest: true, WithdrawalPending: true}, "withdrawal is reserved"},
 		{"withdrawal", zkapi.WalletReadiness{HasNote: true, WithdrawalPending: true, Balance: 999999}, "withdrawal is reserved"},
 		{"low positive balance", zkapi.WalletReadiness{HasNote: true, Balance: 1}, ""},
 		{"empty balance", zkapi.WalletReadiness{HasNote: true}, "private balance is empty"},

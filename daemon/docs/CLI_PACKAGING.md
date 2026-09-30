@@ -17,11 +17,16 @@ fund a wallet with `sudo`.
 
 Run `oa-chat serve` after configuration finishes. It checks prerequisites
 without prompting and directs you to `oa-chat config` if anything is missing.
-Use `config --status` to inspect saved settings and `config --api-key` to explicitly
-print the local client token. This token authenticates clients to the daemon;
-it is not a ticket, wallet secret, or provider API key. Wallet management uses
-a separate owner-only `management-token`, which the CLI manages automatically.
-Do not share it with inference clients. The API accepts only loopback listeners.
+Use `config --status` to inspect saved settings. Normal output hides filesystem
+paths and suggests commands as `oa-chat`. The API accepts only loopback listeners
+and defaults to `127.0.0.1:8787`. Inference needs no API key by default, including
+profiles without a `require_api_key` field. Set `config --require-api-key` to
+require local client authentication, or `--require-api-key=false` to disable it.
+`config --api-key` explicitly prints that local key when needed. It is not a
+ticket, wallet secret, or provider API key. Administration still requires the
+local key; wallet management additionally requires the separate owner-only
+`management-token`, which the CLI manages automatically. Do not share the owner
+credential with inference clients.
 Client applications retain their own transcripts under their own privacy settings.
 
 ## One-command installation
@@ -54,9 +59,9 @@ management. Configuration stops any
 services it started and exits; `serve` runs the inference API. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
-The automatic waiting flow and model-independent setup checks described here are
-newer than published `0.4.2`. That installer still provides the release's initial
-deposit-approval prompt and model-specific setup check.
+Automatic funding waits, model-independent setup, key-free local inference,
+shorter command output, and queued zkAPI requests described here are newer than
+published `0.4.2`. That installer still provides the original release behavior.
 
 Sepolia requires the matched password-capable client and companion in `0.4.1`
 or newer. The `0.4.0` companion predates the password requirement and cannot
@@ -426,10 +431,20 @@ inference.
 ## Open WebUI
 
 Open WebUI accepts OpenAI-compatible base URLs in its Admin Settings →
-Connections screen. Set the URL to `http://127.0.0.1:8787/v1` and provide the
-daemon's local API token. Keep Open WebUI's own authentication enabled for
-shared deployments. The daemon forwards each upstream streaming chunk when
-it arrives; it does not wait for the completion to finish.
+Connections screen. Set the URL to `http://127.0.0.1:8787/v1` and leave the API
+key blank, selecting no authentication if available. A placeholder such as
+`local` works when the client insists on a key. If you enabled
+`oa-chat config --require-api-key`, use `oa-chat config --api-key` instead.
+Keep Open WebUI's own authentication enabled for shared deployments. The daemon
+forwards each upstream streaming chunk when it arrives.
+
+Concurrent zkAPI calls queue, including title and other background requests.
+Each gets a fresh anonymous key after earlier inference and lease settlement.
+Settlement can take minutes, so multiple background requests can add substantial
+waiting. Current Open WebUI defaults to no total client timeout and no streaming
+idle cap; configured timeouts must cover queueing and inference. See the
+[connection guide](../README.md#connect-open-webui) for task-model and timeout
+settings. Queueing does not change billing or reuse provider keys.
 
 For Docker, `127.0.0.1` inside a container addresses that container, so a
 normal bridged container cannot reach a loopback-only host daemon. On Linux,

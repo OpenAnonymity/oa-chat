@@ -17,10 +17,9 @@ The public CLI has two commands: `config` and `serve`. Install or update the
 curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 ```
 
-The automatic funding wait and model-independent configuration and startup checks
-described below are in current source after `0.4.2`. That published bundle asks
-for deposit approval before waiting and still checks the lowest available model
-cap during setup; it does not include these adjustments.
+Automatic funding waits, model-independent setup, key-free local inference,
+shorter command output, and queued zkAPI requests described below are in current
+source after `0.4.2`. The installer still provides the original release behavior.
 
 Then configure it:
 
@@ -75,8 +74,9 @@ For zkAPI setup:
    It deposits within the approved bounds and waits for finalized activation.
    Unused public ETH stays at the funding address.
 3. **Run the inference service.** Configuration stops services it started and
-   exits when ready. It prints the endpoint, the command for your local API key,
-   and the command to serve. An existing service it reused is left running.
+   exits when ready. It prints the endpoint and `oa-chat serve` without exposing
+   filesystem paths. Default local inference needs no API key. An existing
+   service it reused is left running.
 
 To supply the amount without the prompt, run `oa-chat config --usd 50`
 with the desired USD amount. This option is not saved and does not replace the
@@ -92,16 +92,24 @@ Leave `serve` running for inference and settlement. It uses your saved settings
 and performs noninteractive readiness checks. If something is missing, it
 explains what needs attention and directs you to `oa-chat config`.
 For a custom installation prefix, substitute its `bin` directory in PATH.
+An existing note awaiting inference settlement may resume serving immediately;
+new requests wait automatically. A missing note or withdrawal reservation still
+blocks startup and directs you to configuration/recovery.
 
-`config --status` shows the redacted saved settings without a menu. `config --api-key`
-explicitly prints the local API key for your inference client. The wizard does
-not print credentials automatically. Both access modes remain configured;
+`config --status` shows the redacted saved settings without a menu. The listener
+defaults to `127.0.0.1:8787` and supports only loopback addresses. Inference needs
+no API key unless you enable `oa-chat config --require-api-key`; use
+`--require-api-key=false` to disable it again. When enabled, `config --api-key`
+prints the local key for your inference client. The wizard does not print
+credentials or actual filesystem paths automatically. Both access modes remain
+configured;
 `serve --backend ticket|zkapi` selects the runtime mode without rewriting the
 saved default.
 
-Configuration and service startup require a positive available private balance
-and check wallet state without looking up a model or its cap. The terminal shows
-the private ETH balance. Each inference request checks the cap for its selected
+Configuration and service startup check wallet state without looking up a model
+or its cap. A ready note needs a positive available balance; `serve` also accepts
+an existing note whose balance is temporarily reserved by pending inference.
+The terminal shows the private ETH balance. Each inference request checks the cap for its selected
 model, so a configured wallet can still have insufficient funds for a particular
 request. An active note cannot be topped up in place; close it before funding a
 replacement. Public ETH alone is not private inference credit.
@@ -167,25 +175,27 @@ for proof authorization, and is separate from the local inference API key.
 
 ### Optional streaming request
 
-Run this in another terminal while `serve` remains running. Use the printed
-API-key command and endpoint instead for a custom prefix, directory, or listener:
+Run this in another terminal while `serve` remains running. Use its printed
+endpoint if you configured another listener:
 
 ```sh
-OA_LOCAL_API_KEY=$("$HOME/.local/bin/oa-chat" config --api-key)
-printf 'Authorization: Bearer %s\n' "$OA_LOCAL_API_KEY" | \
-  curl --fail-with-body --silent --show-error --no-buffer --header @- \
-    -H 'Content-Type: application/json' \
-    http://127.0.0.1:8787/v1/chat/completions \
-    -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Say hello in one sentence."}],"stream":true,"max_tokens":64}'
-unset OA_LOCAL_API_KEY
+curl --fail-with-body --silent --show-error --no-buffer \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:8787/v1/chat/completions \
+  -d '{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"Say hello in one sentence."}],"stream":true,"max_tokens":64}'
 ```
+
+No key is needed with default settings. If you enabled `--require-api-key`, add
+an `Authorization: Bearer` header containing the output of
+`oa-chat config --api-key`. This local key is never forwarded upstream.
 
 Choose an available model from `GET /v1/models`; each entry includes its
 `oa_request_limit_micro_usd` (1,000,000 means a $1 cap). Success streams `data:`
 events followed by `data: [DONE]`. The cap is selected automatically and actual
-usage is settled afterward. Another request can return `409 settlement_pending`
-for up to about five minutes. Keep the daemon running and retry after its
-foreground status reports that settlement is no longer pending. `402 funding_required`
+usage is settled afterward. Concurrent requests wait their turn and then wait
+for the previous lease to settle before getting a fresh key. This can take minutes
+per earlier request; keep the daemon and client connection running. Canceling a
+queued request stops its wait. `402 funding_required`
 means the private balance cannot cover the requested model's cap. An eligible
 trusted-station verifier outage may continue as `verifier-unavailable`;
 explicit verification refusals still block access.
@@ -391,12 +401,16 @@ hardening. This is a local source/build validation, not a published release.
 
 ## Privacy boundaries
 
-The local inference API bearer key and owner-only `management-token` are
-distinct. All wallet management routes, including quotes and public-fund
-returns, require both credentials. The safe `/admin/status` mode metadata
-requires only the API key. Browser-origin requests are rejected and there is
-no wildcard CORS. The companion creates a fresh HTTP client for each remote call so neither
-pooled connections nor a previous client's TLS state group independent
+Local inference is unauthenticated by default on a loopback-only listener.
+This permits other local processes to use the inference balance; enable
+`config --require-api-key` when you need a client credential. The generated local
+API key and owner-only `management-token` remain distinct. Administration stays
+authenticated even with key-free inference: wallet management routes, including
+quotes and public-fund returns, require both credentials; `/admin/status` mode
+metadata requires the local API key. Browser-origin requests are rejected, and
+there is no wildcard CORS. Key-free inference also verifies the loopback peer
+and Host header. The companion creates a
+fresh HTTP client for each remote call so neither pooled connections nor a previous client's TLS state group independent
 proof/lease requests. The companion authenticates every
 route, including reset, health, and its upstream funding UI.
 
@@ -470,16 +484,24 @@ transaction hash and private recovery record.
 requests from one funded wallet.** A generic OpenAI request carries no trusted
 conversation boundary, so the Go daemon must not reuse a provider key across
 API calls. Each eligible lease is durably marked as handed out once before its
-key is returned. A repeated or concurrent call receives HTTP 409 until the
-previous private-state transition settles. This also prevents key reuse after
-a crash or a lost local HTTP reply.
+key is returned. The daemon handles requests one at a time and waits through
+known pending settlement before obtaining a fresh key for the next call. The
+companion's single-use guard still applies, including after a crash or lost
+local HTTP reply. Queueing does not reuse a key, alter the previous cap, replay
+an inference request, or bypass a refused verification result. Canceling while
+queued ends that request's wait.
 
 The successful September 10 request had approximately 4.5 minutes of usable
 lease lifetime, followed by a five-second settlement grace period. The next
 independent request waits for that signed private-state transition, even if
 inference finishes much earlier. Open WebUI background title/tag/follow-up
-requests also consume separate access and can encounter this limit. Immediate
-repeat requests remain an unresolved deployment requirement.
+requests also consume separate access and now wait in the same queue. Several
+queued tasks can therefore take several settlement intervals. Open WebUI's
+current client timeout defaults to no total limit and its streaming idle limit
+is unset; any configured limits, including a reverse proxy's, must accommodate
+the wait before the first chunk. See the [Open WebUI connection guide](../README.md#connect-open-webui).
+Immediate independent issuance remains a server/protocol requirement; the queue
+changes how clients wait, not how quickly the deployed lease can settle.
 
 **Historical ERC-20 validation (September 10), not native-release evidence.** The successful streamed request settled
 with `usage_usd: 0.000723` and `charge_applied: 723`, reducing the private balance

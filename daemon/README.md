@@ -27,10 +27,11 @@ For a custom prefix, substitute its `bin` directory in PATH. Keeping that
 directory on your shell PATH lets you use the shorter commands below.
 
 Current source starts watching for funding immediately and asks you to press
-Enter once funds arrive. It also makes zkAPI configuration and startup independent
-of model selection, as described below. These changes postdate the published
-`0.4.2` bundle, which asks for deposit approval before waiting and still checks
-the lowest available model cap during setup.
+Enter once funds arrive. It also makes setup independent of models, serves local
+inference without an API key by default, and queues zkAPI requests while earlier
+requests settle. Runtime instructions use `oa-chat` and hide local file paths.
+These changes postdate the published `0.4.2` bundle; the installer above still
+provides that release.
 
 Sepolia requires `0.4.1` or newer, which includes the matching password-capable
 client and companion. `0.4.0` predates the password gate and cannot complete
@@ -89,6 +90,7 @@ oa-chat config --usd 50
 oa-chat config --edit
 oa-chat config --menu
 oa-chat config --listen 127.0.0.1:8788
+oa-chat config --require-api-key
 oa-chat config --relay-url wss://YOUR_WISP_RELAY/
 ```
 
@@ -145,10 +147,21 @@ it sees connection metadata. A configured relay fails closed without direct
 fallback. Editing configuration preserves existing nonempty relay settings
 unless you explicitly change them.
 
-`oa-chat config --api-key` explicitly prints the random **local** API key for
-connecting your client. It is not an inference-provider key. Normal status and
-setup output never print it automatically. Keep credentials and wallet/recovery
-files out of public logs and bug reports.
+The listener defaults to `127.0.0.1:8787` and accepts only loopback addresses.
+Local inference requires **no API key by default**, including existing profiles
+that omit `require_api_key`. To require a key, stop the service and run
+`oa-chat config --require-api-key`; `--require-api-key=false` disables that
+requirement again. With key authentication enabled, `oa-chat config --api-key`
+prints the local client key. This key never reaches the inference provider.
+
+The daemon still generates a local key for authenticated administration, and
+wallet management additionally requires its separate owner credential. Removing
+inference authentication does not expose those routes. Other local processes
+can use the default inference endpoint, so enable key authentication when that
+local access is not intended. Normal status and setup output hide credentials
+and filesystem paths; suggested commands use `oa-chat`. Custom profiles continue
+to use the selected configuration directory. Keep private recovery files out of
+public logs and bug reports.
 
 ### Run inference
 
@@ -165,6 +178,9 @@ mode for this run, pass `--backend ticket` or `--backend zkapi`.
 zkAPI startup checks wallet state and a positive private balance without a model
 lookup. Starting the service does not guarantee that the balance covers every
 model; the selected model's cap is enforced when an inference request arrives.
+A saved note with pending inference settlement can still start serving; new
+requests wait for settlement automatically. A missing note or withdrawal
+reservation still needs configuration/recovery.
 
 ### Foreground status and logs
 
@@ -195,8 +211,12 @@ Add an OpenAI-compatible connection in **Admin Panel → Settings → Connection
 | Setting | Value |
 | --- | --- |
 | API base URL | `http://127.0.0.1:8787/v1` |
-| API key | Output of `oa-chat config --api-key` |
+| API key | Leave blank; select no authentication if available |
 | Model | Select from the daemon's model list |
+
+If the client requires a nonempty key field, use a placeholder such as `local`;
+default inference ignores it. If you enabled `--require-api-key`, use the output
+of `oa-chat config --api-key` instead.
 
 The endpoint must be reachable from the **Open WebUI backend process**.
 The daemon binds only to numeric loopback addresses. Container loopback and
@@ -205,11 +225,26 @@ networking, or an SSH tunnel. Do not expose the daemon on `0.0.0.0` to work
 around this. The integration test ran both processes in the same container
 namespace on a separate Docker host, with only the UI forwarded locally.
 
-Automatic titles, tags, and follow-up suggestions cause extra API requests,
-each consuming separate anonymous access. Disable these tasks for one paid
-request per send, and with zkAPI servers awaiting lease settlement.
-Browser JavaScript connects through its UI backend; the daemon's inference
-API rejects browser Origins and does not enable arbitrary CORS access.
+Open WebUI may send extra requests for titles, tags, and other background tasks.
+The daemon handles zkAPI requests one at a time, waiting for the previous lease
+to settle before obtaining a fresh key for the next request. Each task consumes
+separate anonymous access. Queued requests can wait minutes per preceding lease;
+queueing does not shorten the deployed protocol's settlement interval. Stopping
+a queued request cancels its wait. Optionally disable background tasks or route
+them to a separate local task model to reduce both delay and paid requests. See
+[Open WebUI's background-task explanation](https://docs.openwebui.com/faq/#q-why-am-i-seeing-multiple-api-requests-when-i-only-send-one-message-why-is-my-token-usage-higher-than-expected).
+
+Open WebUI's current `AIOHTTP_CLIENT_TIMEOUT` defaults to no timeout, and
+`AIOHTTP_CLIENT_STREAM_IDLE_TIMEOUT` is unset by default. If you configured
+finite limits, allow for the queued settlement waits plus inference, including
+the wait before the first response chunk. Reverse-proxy timeouts can also limit
+that wait. See [Open WebUI's client timeout settings](https://docs.openwebui.com/reference/env-configuration/#aiohttp-client).
+The daemon's own 30-minute request limit includes queueing, settlement, and
+inference. It admits up to 64 waiting requests beyond the configured concurrency;
+larger bursts receive a queue-full response.
+Browser JavaScript connects through its UI backend; the daemon rejects browser
+Origins and does not enable arbitrary CORS access. Key-free inference also
+checks the loopback peer and rejects unexpected Host headers.
 
 ## zkAPI and funding
 
@@ -285,9 +320,11 @@ authentication, and verification policy.
 
 The deployed zkAPI protocol may keep one private-wallet lease outstanding
 until expiry and settlement (currently up to five minutes on Sepolia). A lease
-is handed to the API only once, including across restarts. Another request
-returns `409 settlement_pending` until a fresh key is available, avoiding
-cross-chat key reuse. See [zkAPI integration and server prerequisites](docs/CLI_ZKAPI.md)
+is handed to the API only once, including across restarts. The daemon queues
+subsequent requests and waits through known pending settlement before acquiring
+a fresh key. This avoids cross-chat key reuse without rejecting normal overlap.
+Other failures, such as insufficient funds or refused verification, still return
+an error; a canceled request stops waiting. See [zkAPI integration and server prerequisites](docs/CLI_ZKAPI.md)
 for the settlement limitation and the undeployed server proposal, which requires
 a different billing policy and is unsuitable for the tested metered deployment.
 

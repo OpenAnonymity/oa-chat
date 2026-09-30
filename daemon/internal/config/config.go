@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -35,7 +34,8 @@ type Config struct {
 	ManagementToken string `json:"-"`
 	Listen          string `json:"listen"`
 	APIKey          string `json:"api_key"`
-	Backend         string `json:"backend"` // default for serve; both wallets are always configured
+	RequireAPIKey   bool   `json:"require_api_key"` // opt in to bearer authentication for loopback inference
+	Backend         string `json:"backend"`         // default for serve; both wallets are always configured
 	OrgURL          string `json:"org_url"`
 	VerifierURL     string `json:"verifier_url"`
 	RelayURL        string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp
@@ -155,7 +155,7 @@ func EnsureDir(dir string) error {
 		return errors.New("config directory must be a real directory")
 	}
 	if info.Mode().Perm()&0077 != 0 {
-		return fmt.Errorf("config directory must be private: chmod 700 %q", dir)
+		return errors.New("config directory must be private (chmod 700)")
 	}
 	return nil
 }

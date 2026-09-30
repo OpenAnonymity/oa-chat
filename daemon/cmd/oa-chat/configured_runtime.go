@@ -130,14 +130,15 @@ func configuredWalletReady(ctx context.Context, service guidedFundingService, ui
 	if err != nil {
 		return err
 	}
-	if state.PendingRequest {
-		return errors.New("a previous inference is awaiting settlement; complete wallet recovery")
-	}
 	if state.WithdrawalPending {
 		return errors.New("a private withdrawal is reserved; complete wallet recovery")
 	}
 	if !state.HasNote {
 		return errors.New("the zkAPI wallet has no private balance; configure funding")
+	}
+	if state.PendingRequest {
+		ui.Printf("A previous inference is settling; new requests will wait automatically.\n")
+		return nil
 	}
 	return checkSetupBalance(state, ui)
 }
@@ -188,7 +189,10 @@ func runConfigActionWithUSD(ctx context.Context, dir string, c config.Config, ac
 			suffix = " --backend " + c.Backend
 			label = "Ticket mode ready. Your saved default mode is unchanged."
 		}
-		ui.Printf("\n%s\nOpenAI base URL: http://%s/v1\nGet your local API key: %s --config-dir %s config --api-key\nRun %s --config-dir %s serve%s to serve inference.\n", label, c.Listen, setupExecutable(), shellQuoteSetup(dir), setupExecutable(), shellQuoteSetup(dir), suffix)
+		ui.Printf("\n%s\n", label)
+		showClientConnection(c, ui)
+		ui.Printf("Run oa-chat serve%s to serve inference.\n", suffix)
+		showCustomProfileHint(dir, ui)
 	} else {
 		ui.Printf("\nWallet operation complete. Run oa-chat config to check readiness before serving.\n")
 	}

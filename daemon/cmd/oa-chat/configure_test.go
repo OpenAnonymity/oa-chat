@@ -399,3 +399,44 @@ func TestConfigureProductionPasswordMenuDoesNotEnterFunding(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigureAPIKeyRequirementCanBeEnabledAndDisabled(t *testing.T) {
+	dir, original := startTestConfig(t)
+	for _, require := range []bool{true, false} {
+		args := []string{"--require-api-key"}
+		if !require {
+			args[0] += "=false"
+		}
+		ui := &fundingWizardUI{}
+		err := configure(context.Background(), dir, args, ui, io.Discard, func(_ context.Context, _ string, c config.Config, _ string, _ setupPrompter, _ io.Writer) error {
+			if c.RequireAPIKey != require || c.APIKey != original.APIKey || c.ManagementToken != original.ManagementToken {
+				t.Fatal("authentication edit lost owner credentials or ignored the option")
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, err := config.Load(dir)
+		if err != nil || saved.RequireAPIKey != require {
+			t.Fatal("authentication preference was not saved", err)
+		}
+		if strings.Contains(ui.String(), dir) || strings.Contains(ui.String(), original.APIKey) {
+			t.Fatal("normal configuration output revealed private paths or credentials")
+		}
+	}
+}
+
+func TestConfigureOutputHidesProfilePaths(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private-profile-unique")
+	for _, args := range [][]string{{"--status"}, nil, {"--status"}} {
+		ui := &fundingWizardUI{}
+		err := configure(context.Background(), dir, args, ui, io.Discard, func(context.Context, string, config.Config, string, setupPrompter, io.Writer) error { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(ui.String(), dir) || strings.Contains(ui.String(), "private-profile-unique") {
+			t.Fatal("configuration display leaked a filesystem path")
+		}
+	}
+}

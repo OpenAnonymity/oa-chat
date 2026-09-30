@@ -66,11 +66,22 @@ trust boundary; an externally hosted UI can see/store the user's content just
 as its own operator permits. The daemon cannot anonymize content that the user has
 already disclosed to that UI.
 
-The local API key authenticates only the UI-to-daemon hop and never reaches OA
-services or the provider. Incoming cookies, identity headers, and top-level
+Local inference accepts no-key requests by default on a loopback-only listener.
+Other local processes can use this endpoint, so `config --require-api-key` opts
+in to a local client credential. That credential authenticates only the
+UI-to-daemon hop and never reaches OA services or the provider. Browser Origins
+are rejected regardless of the inference-key setting. Key-free inference also
+checks the actual loopback peer and rejects unexpected Host headers.
+Incoming cookies, identity headers, and top-level
 account/storage metadata are stripped. Ticket requests get distinct
-provider keys under the verification/outage policy below; zkAPI leases are single-use across API requests and process
-restarts. The daemon stores no chat history and creates no request-log files.
+provider keys under the verification/outage policy below; zkAPI leases are
+single-use across API requests and process restarts. Concurrent zkAPI requests
+wait one at a time, including through known pending settlement, before receiving
+separate fresh keys. A canceled queued request stops waiting. The queue lives
+only in the local daemon and does not add a server-side prompt queue, persistent
+request history, or key reuse. The existing lease lifetime and signed settlement
+can still delay each queued request by minutes. The daemon stores no chat history
+and creates no request-log files.
 Its foreground `serve` command emits operational metadata to stdout: local
 readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
 and lifecycle events. Shell redirection and service managers may retain that
@@ -96,10 +107,11 @@ for deployed-service prerequisites and the zkAPI settlement constraint.
 The CLI's Ethereum address-funding route generates an Ethereum signing key
 locally and retains it in an owner-only file alongside its private recovery
 state. No external wallet connection or OA account identity is required.
-All funding, withdrawal, and public-return management uses a separate
-owner-only local credential; the inference API key shared with a UI cannot
-authorize wallet transactions. The authenticated runtime-mode status is the
-only admin endpoint available with the inference credential alone.
+All funding, withdrawal, and public-return management requires the generated
+local API credential plus a separate owner-only management credential. Inference
+being key-free does not expose those routes; the API key shared with an opted-in
+UI alone cannot authorize wallet transactions. The authenticated runtime-mode
+status is the only admin endpoint available with the API credential alone.
 Funding address balances, incoming transfers, approvals, vault deposits, and
 withdrawal amounts and destinations
 are public Ethereum activity visible to the configured RPC (accessed directly

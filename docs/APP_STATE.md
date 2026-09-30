@@ -1,3 +1,48 @@
+## 2026-09-30: Simplify local CLI access and queue zkAPI requests
+
+- Current source uses `oa-chat` in runtime instructions and hides actual binary,
+  configuration, and companion paths from normal status/readiness output.
+  Profile selection still honors the existing environment/global directory
+  setting; hiding paths does not move files or create a new wallet.
+- Inference defaults to no API key on the existing loopback-only listener
+  (`127.0.0.1:8787`). Missing `require_api_key` also means false for older
+  profiles. `config --require-api-key` opts in and
+  `config --require-api-key=false` disables it. Clients can leave the key blank;
+  a placeholder works when their UI requires a value. The generated local key
+  remains available through `config --api-key` and still authenticates admin
+  status; wallet management requires the separate owner credential as well.
+  Origin/Host guards and the numeric loopback listener restriction remain.
+- Concurrent zkAPI inference requests wait one at a time. Known pending lease
+  settlement delays the next key acquisition instead of rejecting routine
+  overlap, including Open WebUI title and other background tasks. Each request
+  still receives a fresh, single-use provider key; no inference is replayed or
+  shared across calls. Cancellation stops a queued wait. The queue does not
+  change signed settlement, actual-usage accounting, or protocol lease lifetime.
+  The 30-minute request context includes queueing and settlement; HTTP admission
+  permits configured concurrency plus 64 pending requests, then rejects overload.
+  `serve` accepts an existing note awaiting inference settlement even if the
+  available balance is temporarily zero, announcing that new requests will wait.
+  Missing notes and withdrawal reservations still block startup.
+- Open WebUI's official FAQ confirms one message can produce extra task calls.
+  Its current total client timeout defaults to no limit and streaming idle cap
+  is unset. Configured limits must allow for queueing plus inference, possibly
+  minutes per earlier lease. Optional background-task disabling or a separate
+  local task model reduces delay and spending; it is not required to handle
+  concurrent calls. See the [connection guide](../daemon/README.md#connect-open-webui)
+  for source links and container reachability constraints.
+- These source changes postdate published `0.4.2`; no prerelease is part of this
+  change. Earlier release and live-test entries remain evidence of their named
+  versions. No live Mainnet inference or wallet transaction is needed for this
+  change.
+- Validation: the full daemon `go test -race ./...` suite and `go vet ./...`
+  pass, as does the Linux amd64 cross-build. A real loopback HTTP integration
+  test sends a streamed chat and overlapping title request without real API
+  credentials, waits through a fixture `lease_pending` response, and verifies
+  fresh keys and successful responses. Other regressions cover concurrent
+  bursts, stream lifetime, queued disconnects, settlement cancellation, changed
+  model policy, non-retryable failures, admin auth, loopback/Host guards, and
+  hidden paths. All services in these tests are fixtures; no live funds were used.
+
 ## 2026-09-30: Wait for CLI funding before asking to deposit
 
 - Current source replaces the initial automatic-deposit yes/no question with

@@ -36,10 +36,14 @@ current ETH balance and remaining payment. Send ETH on the selected network to
 the displayed address. Once enough arrives, review the fixed principal and maximum
 fee and **press Enter to continue** with the deposit. Configuration deposits,
 waits for finality, and exits. `serve`
-then runs the local inference API; missing prerequisites point back to `config`.
+then runs the loopback-only inference API without an API key by default; missing
+prerequisites point back to `config`. Use `oa-chat config --require-api-key` to
+require local client authentication. zkAPI requests queue while earlier requests
+settle, with a fresh anonymous key for each request.
 
-The automatic waiting flow and model-independent setup checks are newer than
-the published `0.4.2` bundle; the installer above still provides that release.
+Automatic funding waits, model-independent setup, key-free local inference,
+shorter command output, and queued zkAPI requests are newer than the published
+`0.4.2` bundle; the installer above still provides that release.
 
 Stop the daemon before upgrading or editing configuration. Installation updates
 both binaries and preserves private state. See the

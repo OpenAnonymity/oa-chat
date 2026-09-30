@@ -103,6 +103,7 @@ func apiServer(t *testing.T, b Backend) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
+	a.RequireAPIKey = true
 	s := httptest.NewServer(a)
 	t.Cleanup(s.Close)
 	return s
@@ -309,6 +310,7 @@ func TestVerificationHeadersExposeOnlyLocalStatusEnums(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				api.RequireAPIKey = true
 				r := request(t, "http://localhost", `{"model":"test/model","messages":[{"role":"user","content":"hi"}]}`)
 				// A UI cannot assert verification by supplying response-like headers.
 				r.Header.Set("X-OA-Verification-Status", "verified")

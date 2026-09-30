@@ -165,7 +165,7 @@ func initialize(dir string, args []string) error {
 	if err := config.Init(dir, c); err != nil {
 		return err
 	}
-	fmt.Printf("Initialized ticket and zkAPI configuration at %s\nAPI base: http://%s/v1\nRun oa-chat serve --backend ticket or oa-chat serve --backend zkapi.\nUse oa-chat api-key to configure your client's bearer key.\n", filepath.Join(dir, "config.json"), c.Listen)
+	fmt.Printf("Initialized ticket and zkAPI configuration.\nAPI base: http://%s/v1\nRun oa-chat serve --backend ticket or oa-chat serve --backend zkapi.\n", c.Listen)
 	return nil
 }
 
@@ -220,7 +220,7 @@ func (z zkInference) Complete(ctx context.Context, body json.RawMessage) (*http.
 			if remote.Code == "withdrawal_pending" || remote.Code == "withdrawal_conflict" {
 				return nil, &server.BackendError{Status: 409, Code: "withdrawal_pending", Message: "The private balance is reserved for withdrawal. Run oa-chat config --menu and choose withdraw to recover the saved destination."}
 			}
-			return nil, &server.BackendError{Status: 409, Code: "settlement_pending", Message: "The previous anonymous lease is settling. Retry after settlement; a provider key is never reused across API requests."}
+			return nil, &server.BackendError{Status: 409, Code: "wallet_conflict", Message: "The wallet could not safely prepare fresh anonymous access. Run oa-chat config to check its state."}
 		}
 	}
 	return response, err
@@ -368,6 +368,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	if err != nil {
 		return err
 	}
+	api.RequireAPIKey = c.RequireAPIKey
 	api.Status = server.ServiceStatus{Backend: c.Backend}
 	if c.Backend == "zkapi" {
 		api.Status.Network = c.ZKAPI.Network
@@ -390,7 +391,11 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	if c.Backend == "zkapi" {
 		logger.Printf("zkAPI network: %s", c.ZKAPI.Network)
 	}
-	logger.Print("Use oa-chat config --api-key to configure your client; Ctrl+C stops the service")
+	if c.RequireAPIKey {
+		logger.Print("Use oa-chat config --api-key to configure your client; Ctrl+C stops the service")
+	} else {
+		logger.Print("Localhost inference needs no API key; Ctrl+C stops the service")
+	}
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)

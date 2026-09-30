@@ -201,6 +201,7 @@ func TestServeCommandWritesStatusAndLogsToStdout(t *testing.T) {
 	// Ticket mode must work even when the saved default is zkAPI and its
 	// companion/proving assets are absent. Selecting a mode cannot mutate them.
 	c.Backend = "zkapi"
+	c.RequireAPIKey = true // Exercise explicit authentication while the default is keyless.
 	c.ZKAPI.Binary = filepath.Join(t.TempDir(), "missing-companion")
 	c.ZKAPI.ProofSetupDir = filepath.Join(t.TempDir(), "missing-proof-assets")
 	// Configuration requires a nonzero port; release a local ephemeral port just
