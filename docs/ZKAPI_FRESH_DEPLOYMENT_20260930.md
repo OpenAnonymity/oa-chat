@@ -254,3 +254,71 @@ this doc; publishing precise amounts could also identify the test wallet on-chai
 This acceptance covers Sepolia deposit, verified inference, settlement, mutual
 withdrawal and browser persistence. Mainnet funded activity, live escape/challenge
 handling and the encrypted network relay were not exercised.
+
+## Additional Send Ethereum and CLI acceptance
+
+The same canonical Sepolia build was exercised through **Send Ethereum** with a
+fresh browser-held funding signer. The user's MetaMask supplied test ETH to that
+address; the browser signer then submitted the vault deposit and mutual close
+itself. Funding detection, the deposit, verified GPT-4o-mini inference and the
+return of the unused private balance all succeeded. The page shows zero private
+balance and no active key. The inference used direct HTTPS with the relay off.
+
+The separate **Return leftover ETH** action also submitted a successful native
+transfer back to the user's MetaMask. That recipient has delegated account code,
+so this test supplied an exact amount and retained a small public fee reserve.
+The action preserved its signed journal while awaiting Ethereum finality;
+**Check saved transaction** resumed that same transaction. Deposit, private
+withdrawal and public funding return are distinct operations and must each be
+accounted for. Finality and reload acceptance for this extended
+test passed: all four browser transactions are finalized, the private note is
+Closed and its nullifier consumed at the finalized checkpoint, and exact funding,
+usage, refunds, receipt fees and the remaining public fee reserve reconcile.
+Reload preserved the response, history, address and pending public-return journal;
+resuming that same journal subsequently displayed **Return confirmed** and cleared
+it without creating another transfer.
+
+The installed CLI release and source revision
+`2f018b921afbcf8b3ccbe724ae3d875bafc6b14a` still embedded the September 28
+Sepolia deployment. Its manifest is a compiled trust pin, not a runtime backend
+switch. An isolated test build updates only the Sepolia manifest, canonical
+browser fixture, manifest URL and payment-QR test fixture to the fresh deployment.
+It preserves Mainnet configuration and rejects mismatched existing profiles.
+The reviewed fix is proposed in [zkapi PR #3](https://github.com/OpenAnonymity/zkapi/pull/3).
+This is not acceptance of the unchanged released binary. A separate fresh CLI
+profile and loopback ports avoid the user's existing wallet and running daemon.
+The normal CLI finalized its deposit and served one successful OpenAI-compatible
+GPT-4o-mini request with station verification `verified`. This check requires a
+successful status and nonempty assistant output, not an exact-text match. Model
+listing also succeeded. Its lease settled and the private withdrawal receipt
+succeeded. Deposit and withdrawal are finalized, with the Closed note and
+consumed nullifier verified at the finalized checkpoint. The separate public
+return is also finalized and leaves a small fee reserve. An expired unsigned
+return quote failed closed; a newly reviewed quote
+for the same amount and recipient completed without creating a duplicate
+transaction. Gracefully stopping the isolated processes and restarting the same
+binary/profile through the normal return menu recovered the identical signed
+transaction, funding address and zero private balance without another quote or
+approval. The resumed return completed normally after finality. A final restart
+snapshot confirmed the same funding address, zero private balance, no active
+note or inference request, and completed withdrawal/return state with no pending
+wallet operation. The isolated API and helper processes were then stopped and
+their ports verified closed; the protected profile and recovery files remain.
+
+A post-test AWS snapshot found all eleven containers running, all eight
+configured healthchecks healthy and no pending challenges. Both challenger
+checkpoints had advanced; Sepolia had scanned beyond the CLI withdrawal block.
+
+The native Go build, pure-Go tests, vet and 42 installer/helper/package tests
+passed for that four-file update, which received independent review. The
+installed native helper was reused only after checking its source/patch metadata
+and the four proving artifact hashes against this deployment. Some race tests
+could not run because this Mac has not accepted the Xcode license; the license
+was not accepted as part of testing. The PR's Linux and macOS CI subsequently
+passed the full Go race tests and vet checks, covering that local limitation.
+
+Protected evidence is under `e2e-send-eth/` and `e2e-cli-sepolia/` in the private
+deployment root. The new receipt checker requires the deposit signer and payout
+recipient separately, verifies exact calldata/events and captured finalized
+state, and passed 13 offline tests plus independent review. Public documentation
+omits the test accounts, transaction hashes, note identifiers and exact amounts.

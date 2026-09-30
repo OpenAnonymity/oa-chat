@@ -27,6 +27,22 @@
   direct-call fee metadata can be absent. Both wallet confirmations displayed a
   malicious-site warning that the user handled personally; its cause remains
   unresolved, and successful transactions do not establish a false positive.
+- Additional acceptance passed **Send Ethereum** with a browser-held signer
+  and the relocated CLI with an isolated profile, including finalized refunds,
+  public ETH returns, reload/restart recovery and final cleanup. See the
+  [extended acceptance record](ZKAPI_FRESH_DEPLOYMENT_20260930.md#additional-send-ethereum-and-cli-acceptance)
+  for current completion status and evidence. Browser direct-call receipts
+  expose the deposit fee metadata that can be absent for MetaMask's wrapper.
+  Public funding return has its own signed journal and waits for finality;
+  reload preserves that journal and the browser address. The shared Sepolia
+  password must be entered again after reload. A delegated MetaMask recipient
+  has account code, so the public-return form requires an exact ETH amount.
+- The relocated CLI's embedded Sepolia manifest still selected the September 28
+  vault at the tested source revision. The isolated acceptance build replaces
+  the Sepolia pins with this deployment; it is not the unchanged installed
+  release. [zkapi PR #3](https://github.com/OpenAnonymity/zkapi/pull/3) contains
+  the reviewed fix. Existing profiles with different pins must remain rejected and
+  available for their original recovery flow, never silently repointed.
 - Startup/update commands must use `sudo zkapi-compose mainnet|sepolia ...` on
   the host so the separate project and read-only nginx privacy override are
   always selected. Caddy request objects and nginx request-bearing error logs
