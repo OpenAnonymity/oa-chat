@@ -1,3 +1,30 @@
+## 2026-09-30: A deposit keeps one page; Send ETH holds its layout while the quote loads
+
+- **One page for a deposit in motion.** `depositInMotion()` (busy, journey
+  `deposit`, no note) makes `buildDialogMarkup` render only
+  `renderDepositInMotion()`: "Deposit $X", the steps, one action row, and
+  the address as a receipt (`renderFundingAccount(owner, { receipt: true })`).
+  It is the same page as a saved submitted/awaiting deposit, so when the SDK
+  persists `pending_deposit` nothing rearranges; `pageKey()` treats both as
+  `deposit-progress`. Before, the Send ETH run showed its status as a loose
+  line under the funding rows (the address branch rendered `renderProgress`
+  below everything), then jumped to the pending page. A real page change
+  fades in (`fadeInPage`) under the height glide.
+- **Send ETH steps say what the browser does.** `walletJourney` takes
+  `addressFunding`: deposit steps "Prepare funding address" → "Send the
+  deposit" → "Waiting for Ethereum confirmation", withdraw "Send your
+  withdrawal"; with Send ETH nothing is `waiting` on the person (the browser
+  signs), so "confirm in your funding account" is gone. First steps now have
+  a detail line too, so the list keeps its height as the current step moves.
+  The busy label for a deposit is "Depositing…" unless MetaMask is waiting.
+- **Nothing moves while the quote loads.** While a transfer is expected, the
+  QR keeps its footprint (`QR_PLACEHOLDER`), Deposit its place
+  (`DEPOSIT_PLACEHOLDER`, never `data-funding-next`) and the breakdown its
+  row (`BREAKDOWN_PLACEHOLDER`, not a `[data-funding-help]` row). The text
+  beside the QR has `min-height: 9.5rem` (8.5rem stacked on phones). The QR
+  fades in once when it replaces the placeholder (`revealFundingQr`).
+- The return explanation is back inside the row: the header is one line.
+
 ## 2026-09-30: Dialog height glides; buffer info; return cue in the header; reload keeps open rows
 
 - **Card resize.** `AccountModal.render()` reads the dialog's height before

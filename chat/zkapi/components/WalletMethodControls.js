@@ -269,8 +269,20 @@ function fundingHelpId(owner, kind) {
     return `zkapi-${scope}-funding-${kind}-help`;
 }
 
-// What the ETH at the funding address is, and that it can go back. With ETH
-// there it shows under the row's header; otherwise inside the row.
+// What the ETH at the funding address is, and that it can go back. The row's
+// header stays one line; this opens with it.
+// The QR's footprint, drawn empty. The caption keeps its line but not its words.
+const QR_PLACEHOLDER = '<figure class="zkapi-funding-qr is-pending" data-funding-qr-placeholder aria-hidden="true"><span class="zkapi-funding-qr-slot"></span><figcaption>Scan to pay</figcaption></figure>';
+
+// Deposit's place while there is nothing to deposit yet: the same disabled
+// button, but not the real control (no data-funding-next), so it can never
+// authorize anything.
+const DEPOSIT_PLACEHOLDER = '<button class="zkapi-primary-button w-full zkapi-funding-next-pending" type="button" disabled>Deposit</button>';
+
+// The breakdown row's place before there is a quote to break down: the same
+// header, not yet openable, and not a [data-funding-help] row.
+const BREAKDOWN_PLACEHOLDER = '<div class="zkapi-funding-help t-acc" data-funding-help-pending data-open="false"><button type="button" class="zkapi-funding-help-toggle t-acc-head" disabled><span class="zkapi-funding-help-label">Transaction breakdown</span><span class="t-acc-chevron"><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button></div>';
+
 const RETURN_EXPLANATION = 'This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit. This browser holds it, so clearing the site’s data would lose it. You can return it to your wallet below.';
 
 // A disclosure row in the dialog's own idiom (label, chevron, hairline), for
@@ -282,14 +294,11 @@ function fundingHelpIsOpen(owner, kind) {
     return kind === 'return' ? owner.fundingReturnOpen === true : owner.fundingHelpOpen === kind;
 }
 
-// A description, when given, stays visible under the header whether the row
-// is open or not; the panel below holds only what acts on it.
-function fundingHelp(owner, kind, label, content, note = '', description = '') {
+function fundingHelp(owner, kind, label, content, note = '') {
     const id = fundingHelpId(owner, kind);
     const open = fundingHelpIsOpen(owner, kind);
     return `<div class="zkapi-funding-help t-acc" data-funding-help="${kind}" data-open="${open}">
-        <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle t-acc-head" aria-expanded="${open}" aria-controls="${id}"${description ? ` aria-describedby="${id}-description"` : ''}><span class="zkapi-funding-help-label">${label}${note ? `<span class="zkapi-guide-note">${note}</span>` : ''}</span><span class="t-acc-chevron"><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button>
-        ${description ? `<p id="${id}-description" class="zkapi-funding-help-description">${description}</p>` : ''}
+        <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle t-acc-head" aria-expanded="${open}" aria-controls="${id}"><span class="zkapi-funding-help-label">${label}${note ? `<span class="zkapi-guide-note">${note}</span>` : ''}</span><span class="t-acc-chevron"><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button>
         <div id="${id}" data-funding-help-panel class="zkapi-funding-help-panel t-acc-panel" role="region" aria-label="${label}" ${open ? '' : 'inert'}><div class="t-acc-panel-inner"><div class="zkapi-funding-help-body">${content}</div></div></div>
     </div>`;
 }
@@ -419,7 +428,7 @@ export function fundingInstructionsVisible(owner) {
 
 const SPINNER = '<span class="zkapi-pill-spinner" aria-hidden="true"></span>';
 
-export function renderFundingAccount(owner, { destination = true, rows = true, pending = true } = {}) {
+export function renderFundingAccount(owner, { destination = true, rows = true, pending = true, receipt: receiptOnly = false } = {}) {
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
     const wallet = addressFundingWallet;
@@ -438,7 +447,9 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     </section>`;
     if (!wallet.address) return `<section class="zkapi-funding-account"><p class="zkapi-helper" role="status">${escape(flow?.error || (native ? 'Preparing your address…' : 'ETH funding is not available on this deployment yet.'))}</p></section>`;
     const intent = flow?.intent;
-    const funding = canFund(owner) && native;
+    // receiptOnly: a deposit is under way, so the address shows as a receipt
+    // (balance, return) rather than as instructions to send to it.
+    const funding = !receiptOnly && canFund(owner) && native;
     const savedFunding = funding && Boolean(zkapiClient.config?.pending_deposit);
     const freshQuote = fundingQuoteFresh(flow?.fee);
     // Public transfer instructions can retain their last estimate while fees
@@ -484,6 +495,12 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const quoted = funding && intent && displayTotal != null && !flow.dirty;
     const qr = quoted && !flow.error && sendsAmount ? renderFundingPaymentQr({ address: wallet.address,
         chainId: Number(zkapiClient.config?.funding?.chain_id), amountWei: remaining }) : '';
+    // While a transfer is still expected, the QR keeps its place even before
+    // it can be drawn (first quote, a new amount, a refresh that failed), so
+    // nothing under it moves when it arrives. Once the address is funded it
+    // is no longer needed and the space goes with it.
+    const expectsTransfer = funding && !ready && !displayedRequiredCovered && (recommendedRemaining == null || recommendedRemaining > 0n);
+    const qrSlot = qr || (expectsTransfer ? QR_PLACEHOLDER : '');
     const status = ready ? 'Funds received.'
         : !availableKnown ? 'Checking balance…'
             : updating ? 'Updating fee estimate…'
@@ -497,8 +514,8 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         </dl>
         ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. Its fee estimate refreshes before you continue.</p>' : ''}` : '';
     const fundingView = !funding ? '' : quoted ? `
-        <div class="zkapi-funding-pay${qr ? ' has-qr' : ''}">
-            ${qr}
+        <div class="zkapi-funding-pay${qrSlot ? ' has-qr' : ''}">
+            ${qrSlot}
             <div class="zkapi-funding-pay-main">
                 <h3 class="zkapi-funding-send-amount">${sendHeading}</h3>
                 <p class="zkapi-funding-summary">Deposit ${fundingSummaryAmount(owner, intent.depositWei)} · Fee allowance ${fundingSummaryAmount(owner, displayFee.feeReserveWei)}</p>
@@ -508,7 +525,8 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         ${sendAddress}
         <button data-funding-next class="zkapi-primary-button w-full" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Deposit</button>
         ${showFlowError ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}` : `
-        <div class="zkapi-funding-pay">
+        <div class="zkapi-funding-pay${qrSlot ? ' has-qr' : ''}">
+            ${qrSlot}
             <div class="zkapi-funding-pay-main">
                 <h3 class="zkapi-funding-send-amount zkapi-funding-send-pending">${fundingLoading}</h3>
                 <p class="zkapi-funding-status" role="status">${failed ? '' : SPINNER}<span>${fundingLoadingNote}</span></p>
@@ -516,6 +534,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
             </div>
         </div>
         ${sendAddress}
+        ${expectsTransfer ? DEPOSIT_PLACEHOLDER : ''}
         ${showFlowError ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`;
     const addressBalance = owner.fundingFlow ? null : owner.fundingStatus?.ethBalance;
     // Outside the funding view a flow's balance may predate the deposit, so the
@@ -532,12 +551,12 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         ${withdrawalDestination}
         ${pending && wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><p class="zkapi-note">Checking resends the same signed transaction. It never creates a new payment or raises its fee.</p><button data-funding-recover class="zkapi-primary-button w-full" type="button" ${disabled}>Check saved transaction</button>${owner.fundingNoticeScope === 'pending' && owner.fundingNotice ? `<p class="zkapi-helper" role="status">${escape(owner.fundingNotice)}</p>` : ''}</div>` : ''}
         ${rows ? `<div class="zkapi-funding-rows">
-            ${quoted ? fundingHelp(owner, 'quote', 'Transaction breakdown', breakdown) : ''}
+            ${quoted ? fundingHelp(owner, 'quote', 'Transaction breakdown', breakdown) : expectsTransfer ? BREAKDOWN_PLACEHOLDER : ''}
             ${receipt}
             ${fundingHelp(owner, 'return', 'Return ETH to your wallet', `${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
                     ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
                     : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
-                ${leftover ? '' : `<p class="zkapi-note">${RETURN_EXPLANATION}</p>`}
+                <p class="zkapi-note">${RETURN_EXPLANATION}</p>
                 <div class="zkapi-funding-return-fields">
                     <label class="zkapi-funding-field"><span>Your wallet address</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
                     ${!native ? `<label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
@@ -545,7 +564,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
                 </div>
                 ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
                 <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ETH</button></div>`,
-                leftover ? `${leftover} at this address` : '', leftover ? RETURN_EXPLANATION : '')}
+                leftover ? `${leftover} at this address` : '')}
         </div>` : ''}
 
     </section>`;
@@ -589,6 +608,18 @@ function playWalletMethodSwitch(owner) {
     }
 }
 
+// The QR fades into the place its placeholder held, once. Later renders of
+// the same QR (balance polls) don't replay it.
+function revealFundingQr(owner) {
+    const root = owner.overlay;
+    const qr = root?.querySelector?.('[data-funding-payment-qr] svg');
+    const waited = owner.fundingQrPending === true;
+    owner.fundingQrPending = Boolean(root?.querySelector?.('[data-funding-qr-placeholder]'));
+    if (!qr || !waited || !motionAllowed(root)) return;
+    qr.animate?.([{ opacity: 0, transform: 'scale(0.97)', filter: 'blur(2px)' }, { opacity: 1, transform: 'none', filter: 'none' }],
+        { duration: 220, easing: EASE_OUT });
+}
+
 // USD ⇄ ETH: the arrows make a half turn (the icon lands on itself) while
 // the unit swaps in with a slight blur, so the button says what it did.
 function playCurrencySwitch(owner) {
@@ -621,6 +652,7 @@ export function attachWalletMethodControls(owner) {
     attachFundingHelp(owner);
     playWalletMethodSwitch(owner);
     playCurrencySwitch(owner);
+    revealFundingQr(owner);
     const input = name => root.querySelector(`[data-funding-${name}]`);
     const value = name => input(name)?.value || '';
     const perform = async action => {

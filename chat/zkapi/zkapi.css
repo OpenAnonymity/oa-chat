@@ -1881,6 +1881,20 @@ html.dark .zkapi-segmented::before { background: hsl(var(--color-foreground) / 0
     box-shadow: 0 0 0 1px hsl(var(--color-foreground) / 0.08);
 }
 .zkapi-funding-qr figcaption { color: hsl(var(--color-muted-foreground)); font-size: 0.6875rem; line-height: 1.2; }
+/* The QR's footprint before it can be drawn: same size, same ring, no code. */
+.zkapi-funding-qr-slot {
+    display: block;
+    width: 7.5rem;
+    aspect-ratio: 1;
+    border-radius: 0.625rem;
+    background: hsl(var(--color-foreground) / 0.04);
+    box-shadow: 0 0 0 1px hsl(var(--color-foreground) / 0.08);
+}
+.zkapi-funding-qr.is-pending figcaption { visibility: hidden; }
+/* Beside the QR, the text column keeps the height of its tallest state (the
+   amount to send with its status), so an estimate turning into an amount,
+   or one status line into two, never moves the address below. */
+.zkapi-funding-pay.has-qr .zkapi-funding-pay-main { min-height: 9.5rem; }
 .zkapi-funding-send-amount {
     display: flex;
     flex-direction: column;
@@ -1923,7 +1937,7 @@ html.dark .zkapi-segmented::before { background: hsl(var(--color-foreground) / 0
 .zkapi-funding-available { margin: 0; }
 .zkapi-funding-address { display: flex; gap: 0.5rem; min-width: 0; }
 .zkapi-funding-address .zkapi-secondary-button { height: 2.25rem; padding-inline: 0.875rem; }
-.zkapi-funding-account [data-funding-next] { margin: 0; }
+.zkapi-funding-account [data-funding-next], .zkapi-funding-account .zkapi-funding-next-pending { margin: 0; }
 
 /* Detail rows: the fee breakdown, the funding address, a leftover return.
    Same row as "Payment history": label, chevron, a hairline above. */
@@ -1962,7 +1976,9 @@ html.dark .zkapi-segmented::before { background: hsl(var(--color-foreground) / 0
     cursor: pointer;
     transition: color 160ms var(--zkapi-ease);
 }
-.zkapi-funding-help-toggle:hover { color: hsl(var(--color-foreground)); }
+.zkapi-funding-help-toggle:hover:not(:disabled) { color: hsl(var(--color-foreground)); }
+.zkapi-funding-help-toggle:disabled { cursor: default; color: hsl(var(--color-foreground) / 0.45); }
+.zkapi-funding-help-toggle:disabled .zkapi-funding-help-chevron { opacity: 0.5; }
 .zkapi-funding-help-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
 .zkapi-funding-help-chevron {
     flex-shrink: 0;
@@ -1981,9 +1997,6 @@ html.dark .zkapi-segmented::before { background: hsl(var(--color-foreground) / 0
 .zkapi-funding-help > .t-acc-panel { margin-inline: -4px; }
 .zkapi-funding-help.t-acc[data-open="true"] .t-acc-panel-inner { filter: none; }
 .zkapi-funding-help-body { display: flex; flex-direction: column; gap: 0.75rem; padding: 0 4px 1.25rem; }
-/* Visible under the header, open or closed: what this row is about. */
-.zkapi-funding-help-description { margin: -0.5rem 0 1rem; max-width: 34rem; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; line-height: 1.5; text-wrap: pretty; }
-.zkapi-funding-help[data-open="true"] > .zkapi-funding-help-description { margin-bottom: 0.875rem; }
 /* The Settings info button, sized to sit on a cost row's text. */
 .zkapi-funding-costs .zkapi-cost-info { width: 1.25rem; height: 1.25rem; margin: -0.125rem 0 -0.125rem -0.3125rem; }
 .zkapi-funding-costs .zkapi-cost-info svg { width: 0.8125rem; height: 0.8125rem; }
@@ -2060,6 +2073,9 @@ html[data-keyboard-nav] .zkapi-funding-currency:focus-visible { outline: 2px sol
 .zkapi-funding-help-panel .zkapi-note { font-size: 0.75rem; }
 @media (max-width: 420px) {
     .zkapi-funding-pay.has-qr { grid-template-columns: minmax(0, 1fr); justify-items: start; }
+    /* Stacked under the QR, the text keeps the height of the amount to send,
+       so the address doesn't move when the estimate turns into an amount. */
+    .zkapi-funding-pay.has-qr .zkapi-funding-pay-main { min-height: 8.5rem; }
 }
 
 /* ---------- One page for work in motion ----------
@@ -2150,7 +2166,7 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .dark .zkapi-step[data-state="error"] .zkapi-step-mark,
 .dark #payment-balance-modal .text-destructive { color: #fca5a5; }
 
-#zkapi-deposit-btn, #welcome-fund-btn, .zkapi-funding-account [data-funding-next] {
+#zkapi-deposit-btn, #welcome-fund-btn, .zkapi-funding-account [data-funding-next], .zkapi-funding-account .zkapi-funding-next-pending {
     min-height: 44px; height: auto; padding: 10px 16px;
     white-space: normal; line-height: 1.35;
 }

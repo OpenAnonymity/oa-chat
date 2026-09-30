@@ -287,17 +287,14 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     const leftover = helpRow(ready, 'return');
     const explanation = /This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit\. This browser holds it, so clearing the site’s data would lose it\. You can return it to your wallet below\./;
     const header = ready.slice(ready.indexOf('data-funding-help="return"'), ready.indexOf('data-funding-help-panel', ready.indexOf('data-funding-help="return"')));
-    assert.match(header, /<p id="[^"]+-return-help-description" class="zkapi-funding-help-description">/, 'with ETH there, the cue shows under the header, open or closed');
-    assert.match(header, explanation);
-    assert.match(header, /data-funding-help-toggle[^>]*aria-describedby="[^"]+-return-help-description"/);
-    assert.doesNotMatch(leftover.body, explanation, 'said once');
+    assert.doesNotMatch(header, explanation, 'the header is one line; the text opens with the row');
+    assert.match(leftover.body, explanation);
     assert.equal(leftover.open, false);
     assert.match(leftover.body, /<span>Your wallet address<\/span>[\s\S]*<span>Amount \(ETH\)<\/span>[^]*placeholder="All"/);
     assert.match(leftover.body, /data-funding-return-eth[^>]*>Return ETH<\/button>/, 'not "Send ETH", which names the funding method above');
     assert.match(ready, /Return ETH to your wallet<span class="zkapi-guide-note">0\.0055 ETH at this address<\/span>/);
     const empty = helpRow(waiting, 'return');
-    assert.doesNotMatch(waiting, /zkapi-funding-help-description/, 'nothing at the address, nothing added to the page');
-    assert.match(empty.body, explanation, 'the row itself still explains');
+    assert.match(empty.body, explanation, 'the row explains itself whether or not ETH is there');
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
@@ -1391,4 +1388,46 @@ test('an open breakdown survives a reload whose first render shows the address r
     assert.equal(f.owner.fundingHelpOpen, 'quote', 'restored state waits for its own row');
     assert.equal(f.owner.fundingReturnOpen, true);
     assert.equal(receipt.dataset.open, 'false', 'and never opens another row');
+});
+
+test('while the amount to send is being worked out, the QR, Deposit and breakdown keep their places', () => {
+    const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00', config: { funding: { chain_id: 1 } } } });
+    Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow({ intent: null, fee: null, totalWei: null, remainingWei: null }) });
+    const loading = controls.renderFundingAccount(owner);
+    assert.match(loading, /Estimating the deposit network fee/);
+    assert.match(loading, /class="zkapi-funding-pay has-qr"/);
+    assert.match(loading, /<figure class="zkapi-funding-qr is-pending" data-funding-qr-placeholder aria-hidden="true"><span class="zkapi-funding-qr-slot"><\/span>/);
+    assert.doesNotMatch(loading, /data-funding-payment-qr/);
+    assert.match(loading, /<button class="zkapi-primary-button w-full zkapi-funding-next-pending" type="button" disabled>Deposit<\/button>/);
+    assert.doesNotMatch(loading, /data-funding-next\b/, 'the stand-in can never authorize a deposit');
+    assert.match(loading, /data-funding-help-pending[^>]*><button [^>]*disabled><span class="zkapi-funding-help-label">Transaction breakdown/);
+    assert.doesNotMatch(loading, /data-funding-help="quote"/);
+
+    Object.assign(owner, { fundingFlow: quotedFlow() });
+    const quoted = controls.renderFundingAccount(owner);
+    assert.match(quoted, /data-funding-payment-qr/);
+    assert.doesNotMatch(quoted, /data-funding-qr-placeholder|zkapi-funding-next-pending|data-funding-help-pending/);
+
+    Object.assign(owner, { fundingFlow: quotedFlow({ ready: true, remainingWei: '0', status: { ethBalance: '5500000000000000' } }) });
+    const funded = controls.renderFundingAccount(owner);
+    assert.doesNotMatch(funded, /data-funding-qr-placeholder|data-funding-payment-qr|zkapi-funding-next-pending/, 'once funded, no QR and no stand-ins');
+    assert.match(funded, /class="zkapi-funding-pay"/);
+});
+
+test('the QR fades in once when it replaces its placeholder, not on later renders', () => {
+    const f = fixture();
+    const { doc } = motionDocument();
+    const animated = [];
+    let current = 'placeholder';
+    const svg = { animate: frames => animated.push(frames) };
+    Object.assign(f.owner, { overlay: { ownerDocument: doc, contains: () => false, querySelectorAll: () => [],
+        querySelector: selector => selector === '[data-funding-qr-placeholder]' ? (current === 'placeholder' ? {} : null)
+            : selector === '[data-funding-payment-qr] svg' ? (current === 'qr' ? svg : null) : null } });
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(animated.length, 0);
+    current = 'qr';
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(animated.length, 1);
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(animated.length, 1, 'a balance poll re-render does not replay it');
 });

@@ -157,6 +157,24 @@ export default class AccountModal {
         glide.oncancel = settle;
     }
 
+    /** Which page the dialog shows. A deposit keeps one page from its first
+     *  step to its confirmation, whether or not the SDK has saved it yet. */
+    pageKey() {
+        const pending = zkapiClient.config?.pending_deposit;
+        if (!zkapiClient.note && (this.depositInMotion()
+            || ['submitted', 'dropped_or_pending', 'awaiting_wallet', 'ambiguous'].includes(pending?.phase))) return 'deposit-progress';
+        return `${this.view}:${zkapiClient.note ? 'balance' : 'funding'}:${this.depositBalanceRefreshPending ? 'refreshing' : ''}`;
+    }
+
+    // A new page settles in under the height glide rather than cutting in.
+    fadeInPage() {
+        const content = this.overlay?.querySelector?.('[data-funding-scroll]');
+        if (typeof content?.animate !== 'function') return;
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+        content.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
+            { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+    }
+
     handleDisclosureMotion(animating) {
         this.disclosureAnimating = animating;
         if (!animating && this.disclosureRefreshPending && this.canRefreshContent()) {
@@ -291,6 +309,7 @@ export default class AccountModal {
         this.view = view;
         this.isOpen = true;
         this.renderedMarkup = null;
+        this.renderedPage = null;
         // Cancel on a new withdrawal goes back where it came from.
         this.withdrawEntry = null;
         this.withdrawConfirmed = false;
@@ -326,6 +345,7 @@ export default class AccountModal {
         if (!this.isOpen || this.busy) return;
         this.isOpen = false;
         this.renderedMarkup = null;
+        this.renderedPage = null;
         this.pointerPressed = false;
         cancelWalletModalRestore(this);
         this.clearTransientOutcome();
@@ -474,6 +494,7 @@ export default class AccountModal {
             hasLease: Boolean(zkapiClient.activeLease),
             tokenSymbol: zkapiClient.billingTokenSymbol || 'USDC',
             nativeEth: zkapiClient.isNativeEthFunding,
+            addressFunding: getWalletMethod() === 'address',
             demoMint: Boolean(zkapiClient.config?.funding?.demo_mint_enabled),
             escapePeriod: typeof zkapiClient.escapePeriodPhrase === 'function' ? zkapiClient.escapePeriodPhrase() : ''
         });
@@ -502,7 +523,42 @@ export default class AccountModal {
 
     /** What the disabled primary says while the steps run. */
     busyLabel(journey) {
-        return journey?.steps?.some(step => step.state === 'waiting') ? 'Waiting for MetaMask…' : 'Working…';
+        return journey?.steps?.some(step => step.state === 'waiting') ? 'Waiting for MetaMask…'
+            : journey?.kind === 'deposit' ? 'Depositing…' : 'Working…';
+    }
+
+    /** A deposit this dialog is running right now, before the SDK has saved
+     *  it as submitted. It gets the same page as a submitted one — the
+     *  amount, the steps, one row of actions — from the first click, so the
+     *  dialog doesn't rearrange itself halfway through. */
+    depositInMotion() {
+        return this.busy && this.journeyKind === 'deposit' && !zkapiClient.note && !this.depositBalanceRefreshPending
+            && !['withdraw', 'withdrawals'].includes(this.view);
+    }
+
+    depositInMotionAmount() {
+        const units = zkapiClient.config?.pending_deposit?.amount ?? this.fundingDepositIntent?.amount
+            ?? this.fundingFlow?.intent?.amount ?? this.depositAmountFlow?.intent?.amount ?? this.sharedDepositIntent?.amount;
+        if (units != null) return zkapiClient.formatMoney(units);
+        const typed = this.fundingInputCurrency === 'eth' ? null : this.depositAmount;
+        return typed && /^\d+(?:\.\d+)?$/.test(String(typed)) ? `$${Number(typed).toFixed(2)}` : '';
+    }
+
+    renderDepositInMotion(address) {
+        const journey = this.currentJourney('deposit', { message: this.status });
+        const amount = this.depositInMotionAmount();
+        return `
+            <div class="zkapi-stack">
+                <section class="zkapi-figure-block" aria-label="Deposit in progress">
+                    <p class="zkapi-balance-caption">Deposit</p>
+                    ${amount ? `<p class="zkapi-balance-amount">${this.escapeHtml(amount)}</p>` : ''}
+                    <p class="zkapi-meta">Saved in this browser. Closing or reloading loses nothing.</p>
+                </section>
+                ${this.renderJourney(journey)}
+                <div class="zkapi-actions"><button class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label>${this.busyLabel(journey)}</span></button><button id="zkapi-deposit-dismiss-btn" class="zkapi-quiet-button" type="button" disabled>Close</button></div>
+                ${address ? this.literal(renderFundingAccount(this, { receipt: true })) : ''}
+                <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
+            </div>`;
     }
 
     /** New words fade in over the old ones; the row itself never moves. */
@@ -1076,6 +1132,7 @@ export default class AccountModal {
                         <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
                     </div>`;
             }
+            if (this.depositInMotion()) return this.renderDepositInMotion(address);
             const resumingDeposit = pendingDeposit
                 && ['prepared', 'retry_exact'].includes(pendingDeposit.phase);
             if (address && (!pendingDeposit || canQuotePendingAddressDeposit())) return `<div class="zkapi-stack">
@@ -1445,7 +1502,8 @@ export default class AccountModal {
             const pending = zkapiClient.config?.pending_deposit;
             const choosing = !zkapiClient.note && !this.depositBalanceRefreshPending
                 && (!pending || ['prepared', 'retry_exact'].includes(pending.phase));
-            body = `${this.literal(renderDepositAmount(this))}${this.literal(renderWalletMethod(this, { choose: choosing }))}${fundingInstructionsVisible(this) ? this.literal(renderFundingAccount(this)) : ''}${this.renderBalance(fundingSetup)}`;
+            body = this.depositInMotion() ? this.renderBalance(fundingSetup)
+                : `${this.literal(renderDepositAmount(this))}${this.literal(renderWalletMethod(this, { choose: choosing }))}${fundingInstructionsVisible(this) ? this.literal(renderFundingAccount(this)) : ''}${this.renderBalance(fundingSetup)}`;
         }
         return `
             <div role="dialog" aria-modal="true" aria-labelledby="zkapi-payment-title" class="${MODAL_CLASSES}">
@@ -1490,6 +1548,9 @@ export default class AccountModal {
         const helpFocus = capturePrivateBalanceHelpFocus(this.overlay);
         this.overlay.innerHTML = markup;
         this.renderedMarkup = markup;
+        const page = this.pageKey();
+        const pageChanged = Boolean(this.renderedPage) && this.renderedPage !== page;
+        this.renderedPage = page;
 
         this.disclosureAnimating = false;
         this.disclosureRefreshPending = false;
@@ -1512,6 +1573,7 @@ export default class AccountModal {
         restoreWalletView(this, walletView);
         finishWalletModalRestore(this, { hydrating: isFundingViewHydrating(this), method: getWalletMethod() });
         this.glideDialogHeight(previousHeight);
+        if (pageChanged) this.fadeInPage();
         this.rememberRunningModal();
         this.overlay.querySelector('#zkapi-payment-close')?.addEventListener('click', () => this.close());
         const depositInput = this.overlay.querySelector('#zkapi-deposit-amount');
