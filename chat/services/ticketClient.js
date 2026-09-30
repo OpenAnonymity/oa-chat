@@ -35,10 +35,16 @@ import ticketCodeRecoveryStore from './ticketCodeRecoveryStore.js';
 import syncService from './encryptedSyncService.js';
 import accountService from './accountService.js';
 import { TicketCodeRedeemer } from '../application/ticketCodeRedeemer.js';
+import { LegacyTicketTransfer } from '../application/legacyTicketTransfer.js';
+import sessionService from './sessionService.js';
 import { ORG_API_BASE } from './orgEndpoints.js';
 import {
-    getStructuredTicketError
+    getStructuredTicketError,
+    normalizeTicketKeyId
 } from '../domain/ticketKeys.js';
+
+const LEGACY_TRANSFER_PATH = '/api/billing/legacy-transfer';
+const LEGACY_TRANSFER_WAIT_MS = 20000;
 
 class TicketClient {
     constructor() {
@@ -91,6 +97,16 @@ class TicketClient {
             error.code = 'TICKET_KEY_INVALIDATED';
             error.status = status;
             error.invalidatedKeyId = parsed.invalidatedKeyId;
+            error.serverMessage = parsed.message;
+            return error;
+        }
+
+        if (parsed.code === 'TICKET_KEY_LEGACY') {
+            // Previous-org tickets: nothing was spent and they must be kept.
+            const error = new Error('Your tickets from the previous version are being moved. Please try again in a moment.');
+            error.code = 'TICKET_KEY_LEGACY';
+            error.status = status;
+            error.legacyKeyId = normalizeTicketKeyId(parsed.detail?.legacy_key_id);
             error.serverMessage = parsed.message;
             return error;
         }
@@ -526,20 +542,22 @@ class TicketClient {
         );
     }
 
+    async getReadyWalletScope() {
+        const account = accountService.getState();
+        if (!account.isReady || (account.accountId && (
+            !account.sessionVerified || account.status !== 'unlocked' ||
+            !account.accountScopeReady || !account.ticketSyncReady
+        ))) throw new Error('Wait for your ticket wallet to finish opening, then retry redemption.');
+        return syncService.assertAccountDataAccess();
+    }
+
     getCodeRedeemer() {
         if (!this.codeRedeemer) {
             this.codeRedeemer = new TicketCodeRedeemer({
                 pendingStore: ticketCodeRecoveryStore,
                 privacyPass: this.ppExtension,
                 ticketStore: this.ticketStore,
-                getAccountScope: async () => {
-                    const account = accountService.getState();
-                    if (!account.isReady || (account.accountId && (
-                        !account.sessionVerified || account.status !== 'unlocked' ||
-                        !account.accountScopeReady || !account.ticketSyncReady
-                    ))) throw new Error('Wait for your ticket wallet to finish opening, then retry redemption.');
-                    return syncService.assertAccountDataAccess();
-                },
+                getAccountScope: () => this.getReadyWalletScope(),
                 fetchIssuer: async () => {
                     const { data } = await networkProxy.fetchWithRetryJson(
                         `${ORG_API_BASE}/api/ticket/issue/public-key`,
@@ -567,6 +585,142 @@ class TicketClient {
             });
         }
         return this.codeRedeemer;
+    }
+
+    getLegacyTransfer() {
+        if (!this.legacyTransfer) {
+            const url = `${ORG_API_BASE}${LEGACY_TRANSFER_PATH}`;
+            this.legacyTransfer = new LegacyTicketTransfer({
+                fetchInfo: async () => {
+                    const { response, data } = await networkProxy.fetchWithRetryJson(
+                        url,
+                        { cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' } },
+                        { context: 'Ticket move status', maxAttempts: 2, timeoutMs: 10000 }
+                    );
+                    // An org without the transfer answers 404: nothing to move.
+                    if (response.status === 404) return { enabled: false };
+                    if (!response.ok) throw new Error(`Ticket move status unavailable (${response.status})`);
+                    return data;
+                },
+                // Signed-in request: it needs the account session, so it goes
+                // through the session transport, not the relay.
+                submit: async (tickets) => {
+                    const response = await sessionService.fetch(url, {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                        body: JSON.stringify({ tickets })
+                    });
+                    let data = null;
+                    try { data = await response.json(); } catch { data = null; }
+                    if (!response.ok) {
+                        const parsed = getStructuredTicketError(data, `Ticket move failed (${response.status})`);
+                        const error = new Error(parsed.message);
+                        error.code = parsed.code || undefined;
+                        error.status = response.status;
+                        throw error;
+                    }
+                    return data;
+                },
+                listTickets: () => this.ticketStore.getTickets(),
+                removeTickets: (tickets, options) => this.ticketStore.removeTickets(tickets, options),
+                holdKeyIds: keyIds => this.ticketStore.setHeldKeyIds(keyIds),
+                pendingStore: ticketCodeRecoveryStore,
+                getAccountScope: () => this.getReadyWalletScope(),
+                redeemPending: () => this.getCodeRedeemer().run(null)
+            });
+        }
+        return this.legacyTransfer;
+    }
+
+    /**
+     * Move tickets from the previous production org into this wallet. Runs
+     * once at a time; callers share the in-flight run.
+     */
+    runLegacyTransfer() {
+        if (!this.legacyTransferRun) {
+            this.legacyTransferRun = (async () => {
+                try {
+                    const result = await this.getLegacyTransfer().run();
+                    if (result?.moved > 0 && typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('legacy-tickets-moved', {
+                            detail: { moved: result.moved }
+                        }));
+                    }
+                    return result;
+                } finally {
+                    this.legacyTransferRun = null;
+                    this.ticketStore.emitUpdate?.();
+                }
+            })();
+            this.ticketStore.emitUpdate?.();
+        }
+        return this.legacyTransferRun;
+    }
+
+    isLegacyTransferRunning() {
+        return Boolean(this.legacyTransferRun);
+    }
+
+    /** Wait (bounded) for a running move so a send sees the moved tickets. */
+    async awaitLegacyTransfer(timeoutMs = LEGACY_TRANSFER_WAIT_MS) {
+        const run = this.legacyTransferRun;
+        if (!run) return;
+        let timer = null;
+        try {
+            await Promise.race([
+                run.catch(() => {}),
+                new Promise(resolve => { timer = setTimeout(resolve, timeoutMs); })
+            ]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    getHeldTicketCount() {
+        return this.ticketStore.getHeldCount?.() || 0;
+    }
+
+    /**
+     * Start moving previous-org tickets automatically once a signed-in
+     * wallet is open. Retries a failed move a few times with backoff; a
+     * later sign-in (or a TICKET_KEY_LEGACY answer) tries again.
+     */
+    startLegacyTransferWatcher() {
+        if (this.legacyTransferWatcher) return;
+        const attempts = new Map();
+        const check = () => {
+            const account = accountService.getState();
+            if (!account?.accountId || account.sessionVerified !== true ||
+                account.status !== 'unlocked' || account.accountScopeReady !== true ||
+                account.ticketSyncReady !== true) return;
+            const state = attempts.get(account.accountId) || { done: false, tries: 0, timer: null };
+            attempts.set(account.accountId, state);
+            if (state.done || state.timer || this.legacyTransferRun) return;
+            this.runLegacyTransfer().then(result => {
+                if (result?.redeemError) throw result.redeemError;
+                state.done = true;
+            }).catch(error => {
+                state.tries += 1;
+                console.warn('Moving tickets from the previous version will be retried:', error);
+                if (state.tries < 4) {
+                    state.timer = setTimeout(() => {
+                        state.timer = null;
+                        check();
+                    }, Math.min(10 * 60 * 1000, 30000 * 2 ** (state.tries - 1)));
+                }
+            });
+        };
+        this.legacyTransferWatcher = accountService.subscribe(check);
+        check();
+    }
+
+    handleLegacyTicketError(error) {
+        if (error?.code !== 'TICKET_KEY_LEGACY') return;
+        if (error.legacyKeyId) this.ticketStore.setHeldKeyIds([error.legacyKeyId]);
+        this.runLegacyTransfer().catch(transferError => {
+            console.warn('Moving tickets from the previous version will be retried:', transferError);
+        });
     }
 
     alphaRegister(invitationCode, progressCallback) {
@@ -707,6 +861,7 @@ class TicketClient {
             };
         } catch (error) {
             this.notifyTicketKeyInvalidation(error);
+            this.handleLegacyTicketError(error);
             console.error('Ticket split error:', error);
             throw error;
         }
@@ -885,6 +1040,7 @@ class TicketClient {
             };
         } catch (error) {
             this.notifyTicketKeyInvalidation(error);
+            this.handleLegacyTicketError(error);
             console.error('Request API key error:', error);
             throw error;
         }
@@ -1009,6 +1165,7 @@ class TicketClient {
             return result;
         } catch (error) {
             this.notifyTicketKeyInvalidation(error);
+            this.handleLegacyTicketError(error);
             console.error('Request confidential API key error:', error);
             throw error;
         }

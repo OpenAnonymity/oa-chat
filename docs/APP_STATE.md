@@ -1,3 +1,9 @@
+## 2026-09-30: Move tickets from the previous production org
+
+- Tickets signed by the previous org's key are moved once, automatically, after sign-in (`application/legacyTicketTransfer.js`, started by `ticketClient.startLegacyTransferWatcher()` from app init). The org checks them against the previous org's public key and answers with a redeem code; the code is saved to the durable code-recovery store before the old tickets are removed (with tombstones), then redeemed through the normal `TicketCodeRedeemer`. A crash leaves either the old tickets or a saved code, never neither. `recovered_codes` returns codes the same account already received for tickets another tab or device moved.
+- While the org advertises the transfer (`GET /api/billing/legacy-transfer`), those tickets are held: they stay in the wallet and count, but `consumeTickets`/`peekTickets` never select them. Send preflight waits (bounded) for a running move and never treats held tickets as a shortage, so no automatic reload can be triggered by them. The org answers a legacy ticket on any spend path with 409 `TICKET_KEY_LEGACY` (never `TICKET_KEY_INVALIDATED`, which would delete them); the client then holds the key and starts the move.
+- The POST uses the account-session transport, which only allows `/auth` and `/api/billing`, hence the `/api/billing/...` path. While a move runs, the extension ticket snapshot reports `busy`, so commercial empty-wallet logic does not read the wallet as empty.
+
 ## 2026-09-30: Prepare fresh zkAPI deployment and clean browser wallets
 
 - The candidate `fresh-20260930` profile selects separate Mainnet and Sepolia

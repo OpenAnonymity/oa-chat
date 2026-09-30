@@ -666,18 +666,14 @@ class ChatApp {
                     if (signal?.aborted || after.accountId !== before.accountId) {
                         throw new DOMException('Account changed', 'AbortError');
                     }
-                    return toExtensionTicketSnapshot(
-                        this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
-                            { ticketCount: 0, maxShareCount: 0, busy: false }, after
-                    );
+                    return toExtensionTicketSnapshot(this.getExtensionTicketToolsSnapshot(), after);
                 },
                 getPendingEntitlementClaim,
                 prepareEntitlementBatch,
                 publishPreparedTicketUpdate,
                 releasePreparedTicketPublication,
                 getIssuerPublicKey: signal => this.getExtensionTicketIssuer(signal),
-                getToolsSnapshot: () => this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
-                    Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                getToolsSnapshot: () => this.getExtensionTicketToolsSnapshot(),
                 subscribe: (listener) => {
                     if (typeof listener !== 'function') return () => {};
                     let active = true;
@@ -686,8 +682,7 @@ class ChatApp {
                         if (!active || !ready) return;
                         try {
                             listener(toExtensionTicketSnapshot(
-                                this.rightPanel?.getMembershipTicketToolsSnapshot?.()
-                                || Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false }),
+                                this.getExtensionTicketToolsSnapshot(),
                                 getAccountSnapshot()
                             ));
                         } catch (error) {
@@ -1310,6 +1305,16 @@ class ChatApp {
     /** Notify `listener` whenever the nodes mounted into `name` change. */
     subscribeExtensionSlot(name, listener) {
         return this.extensionSlots.subscribe(name, listener);
+    }
+
+    getExtensionTicketToolsSnapshot() {
+        const tools = this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
+            Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false });
+        // While previous-version tickets are being moved the wallet is not
+        // settled: extensions must not read it as empty.
+        return ticketClient.isLegacyTransferRunning?.()
+            ? Object.freeze({ ...tools, busy: true })
+            : tools;
     }
 
     detectInitialLinkContext() {
@@ -2752,6 +2757,18 @@ class ChatApp {
         // Initialize preference-backed layout only after account context exists.
         void this.initWideMode();
         void this.initSidebarVisibility();
+
+        // Tickets from the previous production org move into this wallet
+        // automatically once it is open (see application/legacyTicketTransfer.js).
+        if (this.features.accounts) {
+            window.addEventListener('legacy-tickets-moved', event => {
+                const moved = Number(event?.detail?.moved) || 0;
+                if (moved > 0) {
+                    this.showToast(`Moved ${moved} ${moved === 1 ? 'ticket' : 'tickets'} from your previous wallet`, 'success');
+                }
+            });
+            ticketClient.startLegacyTransferWatcher?.();
+        }
 
         window.addEventListener('oa-db-versionchange', () => {
             this.showToast('Chat storage updated in another tab. Reload to continue.', 'error');
@@ -5165,14 +5182,27 @@ class ChatApp {
             this.floatingPanel?.showMessage?.(message, 'error', 7000);
             return false;
         }
+        // A move of previous-version tickets may be finishing right now.
+        await ticketClient.awaitLegacyTransfer?.();
+        const heldTickets = ticketClient.getHeldTicketCount?.() || 0;
         const budget = buildTurnTicketBudget({
-            availableTickets: ticketClient.getTicketCount(),
+            availableTickets: ticketClient.getTicketCount() - heldTickets,
             inferenceTickets: inference.tickets,
             memoryTickets,
             modelLabel: inference.label
         });
 
         if (budget.sufficient) return true;
+
+        if (heldTickets > 0) {
+            // Old tickets are still waiting to move: never treat that as a
+            // shortage (which could start an automatic reload purchase).
+            void ticketClient.runLegacyTransfer?.().catch(() => {});
+            const message = 'Your tickets from the previous version are still being moved. Try again in a moment.';
+            this.showToast(message, 'info', 6000);
+            this.floatingPanel?.showMessage?.(message, 'info', 6000);
+            return false;
+        }
 
         const accountState = accountService.getState();
         if (accountState?.accountId && (
