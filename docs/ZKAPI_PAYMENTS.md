@@ -940,3 +940,21 @@ show confirmed deposit / refreshing balance, without claiming ready-to-chat or
 formatting a missing projection as zero. Their transient UI guard suppresses
 new funding/quote controls and clears only when the exact confirmed note ID
 arrives from the SDK. Wallet persistence and eligibility remain SDK-owned.
+
+### Withdrawal recovery clarity (2026-09-30)
+
+Send attempts with a withdrawal-reserved balance stay in chat and explain that
+Balance details holds recovery; they never reopen the dialog automatically.
+Funds remain blocked until the SDK resolves the withdrawal. A mutual-close server
+reservation cannot be cancelled, even without a transaction hash. Its dismissal
+is **Close** and explains that the withdrawal stays saved; **Cancel** is reserved
+for an unsubmitted escape with no reservation or unresolved submission history.
+The fresh mutual form discloses this before approval. Send ETH still checks its
+network-fee reserve before settling access or requesting server clearance.
+
+The balance card labels reserved funds directly, without a Withdrawing pill.
+The fee-address disclosure explains the browser-held ETH separately from private
+chat funds and omits a previous deposit's fee. Expiry help uses OA's shared
+`oa-panel-help` typography in both locations, with concise private-balance expiry
+copy (the service may claim the original deposit after expiry). Normal empty-key
+status inherits OA's wording after settlement; active settlement errors stay visible.

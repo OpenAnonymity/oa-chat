@@ -224,3 +224,12 @@ test('payment history shows the brief outcome once, outside embedded history dis
     assert.match(modal.renderWithdrawalRecords(), /zkapi-outcome[^>]*>Withdrawal confirmed\./);
     assert.doesNotMatch(modal.renderWithdrawalRecords({ inline: true }), /zkapi-outcome/);
 });
+
+
+test('reserved mutual withdrawal never calls dismissal Cancel', t => {
+    const modal = interruptedMutual(t);
+    const html = modal.renderWithdrawal();
+    assert.match(html, /id="zkapi-withdraw-dismiss-btn"[^>]*>Close<\/button>/);
+    assert.doesNotMatch(html, /id="zkapi-cancel-withdrawal-btn"/);
+    assert.match(html, /can no longer be cancelled or used for chat/);
+});

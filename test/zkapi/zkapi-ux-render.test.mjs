@@ -636,7 +636,7 @@ test('live UI facades render New Chat settlement state in sidebar and right pane
         message: 'Finished.'
     };
     assert.match(sidebar.buildSessionHTML(oldChat), /Private key settled/);
-    assert.equal(panel.getMissingApiKeyStatus().badge, 'Ready');
+    assert.deepEqual(panel.getMissingApiKeyStatus(), { label: 'Requested on message send', badge: 'Pending', badgeClass: 'bg-muted/30 text-muted-foreground' });
 });
 
 test('time-only ticks use a separate channel from semantic client changes', () => {

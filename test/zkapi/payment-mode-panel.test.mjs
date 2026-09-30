@@ -226,7 +226,7 @@ for (const commercial of [false, true]) {
                     assert.match(html, /04:12/);
                     assert.equal(panel.getKeyDisplayInfo().hoverContentHtml, null);
                 } else {
-                    assert.ok(html.includes(mode === 'tickets' ? 'Requested on message send' : 'Key created when you send'));
+                    assert.ok(html.includes('Requested on message send'));
                     assert.match(html, /To be assigned/);
                 }
                 assert.ok(html.indexOf('Ephemeral Access Key') < html.indexOf('Network Proxy'));

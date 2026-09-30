@@ -1214,23 +1214,22 @@ export default class AccountModal {
         const percent = claimed ? 0 : this.progressPercent(note);
         const withdrawing = !claimed && zkapiClient.withdrawalBlocksChat;
         const withdrawalPhase = zkapiClient.activeWithdrawal?.phase;
-        // A balance that is closing is a state, not an alarm: a neutral pill
-        // and one line, with the way back to its withdrawal as the action.
+        // Describe saved work beside its recovery action, not as a readiness badge.
         const withdrawingLine = ['submitted', 'late_submitted'].includes(withdrawalPhase) ? 'A withdrawal was submitted. Check its status before using this balance.'
             : withdrawalPhase === 'dropped_or_pending' ? 'The withdrawal has no receipt yet. Open it to check or resubmit.'
             : withdrawalPhase === 'awaiting_wallet' ? 'MetaMask may still be open. Open the withdrawal to check it.'
             : withdrawalPhase === 'ambiguous' ? 'MetaMask did not return a transaction. Open the withdrawal to check it.'
-            : 'This balance is being withdrawn. Nothing has been sent yet.';
+            : 'Withdrawal paused. This balance is reserved and cannot be used for chat. Open the withdrawal to review the network fee and next step.';
         return `
             <div class="zkapi-stack">
                 <div class="zkapi-balance-card">
                     <div class="zkapi-balance-top">
                         <div>
-                            <p class="zkapi-balance-caption">Available</p>
+                            <p class="zkapi-balance-caption">${withdrawing ? 'Reserved for withdrawal' : 'Available'}</p>
                             <p class="zkapi-balance-amount">${zkapiClient.formatMoney(available)}</p>
                             ${zkapiClient.isNativeEthFunding ? `<p class="zkapi-balance-eth">${this.escapeHtml(zkapiClient.formatBillingAmount(available))} ETH</p>` : ''}
                         </div>
-                        <span ${!claimed && !withdrawing ? 'data-private-balance-readiness' : ''} class="zkapi-pill ${claimed || withdrawing || expired ? 'zkapi-pill--neutral' : 'badge-status-success'}">${claimed ? 'claimed' : withdrawing ? (['submitted', 'late_submitted'].includes(withdrawalPhase) ? 'submitted' : 'withdrawing') : expired ? 'expired' : 'ready'}</span>
+                        ${withdrawing ? '' : `<span ${!claimed ? 'data-private-balance-readiness' : ''} class="zkapi-pill ${claimed || expired ? 'zkapi-pill--neutral' : 'badge-status-success'}">${claimed ? 'claimed' : expired ? 'expired' : 'ready'}</span>`}
                     </div>
                     <div class="zkapi-bar"><div class="zkapi-bar-fill" style="width:${percent}%"></div></div>
                     <div class="zkapi-balance-foot"><span>${claimed ? 'Claimed after expiry' : `${zkapiClient.formatMoney(spent)} used of ${zkapiClient.formatMoney(note.deposit_amount)}`}</span><span class="inline-flex items-center gap-1"><span data-zkapi-balance-expiry>${privateBalanceExpiryLabel(zkapiClient, note.expiry_ts)}</span>${privateBalanceHelpButton('modal', 'expiry', this.privateBalanceHelpOpen?.expiry)}</span></div>
@@ -1241,7 +1240,7 @@ export default class AccountModal {
                 ${withdrawing ? `<p class="zkapi-note">${withdrawingLine}</p>` : ''}
                 <div class="zkapi-actions">
                     ${this.busy ? this.renderProgress(this.status || 'Working…') : `
-                    ${claimed ? '' : withdrawing ? '<button id="zkapi-continue-withdrawal-btn" class="zkapi-primary-button" type="button">Continue withdrawal</button>' : '<button id="zkapi-withdraw-view-btn" class="zkapi-secondary-button" type="button">Withdraw</button>'}
+                    ${claimed ? '' : withdrawing ? '<button id="zkapi-continue-withdrawal-btn" class="zkapi-primary-button" type="button">Review withdrawal</button>' : '<button id="zkapi-withdraw-view-btn" class="zkapi-secondary-button" type="button">Withdraw</button>'}
                     <button id="zkapi-refresh-btn" class="zkapi-secondary-button" type="button">Refresh</button>
                     ${claimed ? '<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button">Start a new balance</button>' : ''}
                     ${zkapiClient.config?.funding?.demo_mint_enabled ? '<button id="zkapi-mint-token-btn" class="zkapi-secondary-button" type="button">Get 10 test ZKAPI</button>' : ''}`}
@@ -1434,7 +1433,7 @@ export default class AccountModal {
             // saved and this page comes back when the dialog is reopened.
             const dismiss = cancelable
                 ? '<button id="zkapi-cancel-withdrawal-btn" class="zkapi-quiet-button" type="button">Cancel</button>'
-                : `<button id="zkapi-withdraw-dismiss-btn" class="zkapi-quiet-button" type="button" ${this.busy ? 'disabled' : ''}>${submissionActive ? 'Close' : 'Cancel'}</button>`;
+                : `<button id="zkapi-withdraw-dismiss-btn" class="zkapi-quiet-button" type="button" ${this.busy ? 'disabled' : ''}>Close</button>`;
             const primary = this.busy || this.startingAfterInit
                 ? `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label>${walletMethodText(this.startingAfterInit ? 'Getting ready…' : this.busyLabel(journey))}</span></button>`
                 : submissionActive
@@ -1460,6 +1459,7 @@ export default class AccountModal {
                 <div class="zkapi-stack">
                     ${figure('Amount to withdraw', `To ${this.escapeHtml(destination)} · ${this.escapeHtml(methodName)}`)}
                     ${this.renderJourney(journey, { detail: busyJourney ? '' : notice })}
+                    ${prepared && clearanceReserved && !submissionActive && !busyJourney ? '<p class="zkapi-note">The server has reserved this balance for withdrawal, so it can no longer be cancelled or used for chat. Closing this window keeps your withdrawal saved.</p>' : ''}
                     ${this.renderOutcome()}
                     ${getWalletMethod() === 'address' && !submissionActive && !busyJourney ? this.literal(renderWithdrawalFees(this)) : ''}
                     <div class="zkapi-actions">${primary}${secondary}${dismiss}</div>
@@ -1486,6 +1486,7 @@ export default class AccountModal {
                     </label>
                 </fieldset>
                 ${this.literal(renderWithdrawalFees(this))}
+                ${this.withdrawMode === 'mutual' ? '<p class="zkapi-note">Once the server approves, this balance is reserved for withdrawal and cannot be used for chat or cancelled.</p>' : ''}
                 <label class="zkapi-check"><input id="zkapi-withdraw-confirm" type="checkbox" ${confirmed ? 'checked' : ''} /><span>I understand that withdrawing closes this private balance.</span></label>
                 ${activeLease ? '<p data-active-lease-notice class="zkapi-note">Your open chat key settles first.</p>' : ''}
                 ${this.renderOutcome()}

@@ -5765,3 +5765,16 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
 - Regression coverage: `accountSignInCompletion.test.js` and
   `accountCompletionBroadcast.test.js`. Real Google and passkey prompts still
   require the staging browser acceptance test after this patch is integrated.
+
+## 2026-09-30: Withdrawal dismissal and quiet recovery
+
+- A blocked send no longer opens withdrawal recovery repeatedly. It stays blocked
+  with an explanatory message pointing to Balance details. Explicit balance-panel
+  actions still open recovery, and OA/zkAPI mode isolation remains enforced.
+- A reserved mutual close cannot restore spendability by clearing browser state.
+  The UI now discloses this before approval and labels dismissal Close. Only an
+  SDK-confirmed cancellable escape offers Cancel. Existing stranded balances need
+  their fee funded to finish (or the existing recovery options).
+- Removed the misleading withdrawing readiness pill, old-key success history, and
+  old deposit fee from the current fee-address explanation. Private expiry help
+  uses the same OA help class in panel and dialog.

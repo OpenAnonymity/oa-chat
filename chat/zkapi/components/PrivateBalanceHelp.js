@@ -9,7 +9,7 @@ const HELP = {
     expiry: {
         label: 'What happens when my private balance expires?',
         title: 'Withdraw before this deadline',
-        text: 'This deadline belongs to your private balance, not a temporary chat key. Expiry does not automatically refund funds. Withdraw before the deadline to return unused funds to an address you choose; used funds go to the service. After the deadline, the service treasury can claim the full original deposit.'
+        text: 'Withdraw your unused balance before it expires. Funds are not returned automatically. After expiry, the service can claim the full original deposit.'
     }
 };
 
@@ -46,7 +46,7 @@ export function privateBalanceHelpButton(scope, kind, open = false) {
 export function privateBalanceHelpContent(scope, kind, open = false) {
     const help = HELP[kind];
     return `<div id="zkapi-${scope}-${kind}-help" data-zkapi-help-content="${kind}" ${open ? '' : 'hidden'}>
-        <div class="mt-2 rounded-lg border border-border bg-muted/5 p-2 text-[10px] leading-relaxed text-muted-foreground">
+        <div class="oa-panel-help mt-2">
             <p class="font-medium text-foreground">${help.title}</p><p class="mt-1">${help.text}</p>
         </div>
     </div>`;

@@ -51,11 +51,10 @@ test('billing and expiry help have distinct accessible controls and truthful wit
         }
     }
     const expiry = privateBalanceHelpContent('panel', 'expiry', true);
-    assert.match(expiry, /not a temporary chat key/);
-    assert.match(expiry, /does not automatically refund/);
-    assert.match(expiry, /address you choose/);
-    assert.match(expiry, /used funds go to the service/);
-    assert.match(expiry, /service treasury can claim the full original deposit/);
+    assert.match(expiry, /oa-panel-help/);
+    assert.match(expiry, /Withdraw your unused balance before it expires/);
+    assert.match(expiry, /Funds are not returned automatically/);
+    assert.match(expiry, /service can claim the full original deposit/);
     assert.doesNotMatch(expiry, / hidden>/);
     assert.match(privateBalanceHelpContent('panel', 'billing'), /No account or Google sign-in is required/);
     assert.match(privateBalanceGuide('billing'), /No account or Google sign-in is required/);

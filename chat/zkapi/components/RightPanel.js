@@ -294,13 +294,6 @@ export default class RightPanel extends SharedRightPanel {
                 badgeClass: 'bg-muted text-muted-foreground'
             };
         }
-        if (transition?.phase === 'ready') {
-            return {
-                label: 'Previous key closed · fresh key requested on send',
-                badge: 'Ready',
-                badgeClass: 'badge-status-success'
-            };
-        }
         if (transition?.phase === 'error') {
             return {
                 label: 'Previous key could not be closed',
@@ -308,7 +301,7 @@ export default class RightPanel extends SharedRightPanel {
                 badgeClass: 'bg-destructive/10 text-destructive'
             };
         }
-        return { label: 'Key created when you send', badge: 'Ready', badgeClass: 'badge-status-success' };
+        return super.getMissingApiKeyStatus();
     }
 
     attachTopSectionEventListeners() {

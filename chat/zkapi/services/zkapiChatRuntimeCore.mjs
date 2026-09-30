@@ -224,7 +224,13 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             if (signal?.aborted) throw abortError();
             const expired = Number(client.note?.expiry_ts) > 0
                 && Number(client.note.expiry_ts) * 1000 <= Date.now();
-            if (client.withdrawalBlocksChat || !client.hasNote || expired || client.noteExpiryClaim) {
+            if (client.withdrawalBlocksChat) {
+                // Recovery is an explicit balance-panel action. Repeated send
+                // attempts must not trap the person in the withdrawal dialog.
+                if (shouldOpenFunding()) context?.showToast?.('This private balance is reserved for withdrawal. Open Balance details to review the fee and finish, or cancel if available.', 'info', 9000);
+                return false;
+            }
+            if (!client.hasNote || expired || client.noteExpiryClaim) {
                 if (shouldOpenFunding()) context?.openFunding();
                 return false;
             }

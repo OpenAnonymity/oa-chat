@@ -446,16 +446,19 @@ test('failed pre-response request discards its prompt preview without touching s
     assert.equal(h.saved.length, 1);
 });
 
-test('funding gate respects cancellation, unavailable funds and withdrawal recovery', async () => {
+test('withdrawal recovery blocks sends without repeatedly opening the dialog', async () => {
     const h = harness();
     assert.equal(await h.runtime.checkCanSend(), true);
     h.client.withdrawalBlocksChat = true;
     assert.equal(await h.runtime.checkCanSend(), false);
-    assert.equal(h.calls.funding, 1);
+    assert.equal(await h.runtime.checkCanSend(), false);
+    assert.equal(h.calls.funding, 0);
     const controller = new AbortController();
     controller.abort();
     await assert.rejects(h.runtime.checkCanSend({ signal: controller.signal }), /canceled/);
-    assert.equal(h.calls.funding, 1);
+    assert.equal(h.calls.funding, 0);
+    h.client.withdrawalBlocksChat = false;
+    assert.equal(await h.runtime.checkCanSend(), true, 'a safely cancelled withdrawal releases chat');
 });
 
 test('expired and treasury-claimed balances open recovery without granting private access', async () => {

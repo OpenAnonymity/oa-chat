@@ -575,7 +575,7 @@ test('stale USD pricing leaves exact ETH fees visible without a fictitious conve
     assert.doesNotMatch(html, /≈ —|NaN|undefined/);
 });
 
-test('a confirmed deposit displays its receipt fee separately from the current public balance after reopening', () => {
+test('fee address explains the current public balance without showing an unrelated old deposit fee', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$1.00',
         note: { note_id: 3 }, deposits: [
             { status: 'confirmed', noteId: 2, fundingAddress: recipient, feeWei: '999000000000000000' },
@@ -583,15 +583,15 @@ test('a confirmed deposit displays its receipt fee separately from the current p
         ] } });
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: { ethBalance: '250000000000000' } });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Actual deposit network fee<\/dt><dd>0\.00035 ETH/);
-    assert.match(html, /Currently at this address: 0\.00025 ETH/);
-    assert.match(html, /may also hold ETH from other transfers/);
+    assert.doesNotMatch(html, /Actual deposit network fee|0\.00035 ETH/);
+    assert.match(html, /Available for fees: 0\.00025 ETH/);
+    assert.match(html, /separate from your private chat balance/);
     assert.doesNotMatch(html, /0\.999 ETH/);
     owner.fundingFlow = { status: { ethBalance: '5500000000000000' } };
     owner.fundingStatus = owner.fundingFlow.status;
     const transitioning = controls.renderFundingAccount(owner);
-    assert.match(transitioning, /Actual deposit network fee<\/dt><dd>0\.00035 ETH/);
-    assert.match(transitioning, /Currently at this address: — ETH/);
+    assert.doesNotMatch(transitioning, /Actual deposit network fee|0\.00035 ETH/);
+    assert.match(transitioning, /Available for fees: — ETH/);
     assert.doesNotMatch(transitioning, /0\.0055 ETH/);
 });
 
@@ -601,7 +601,7 @@ test('confirmation without a matched account receipt never invents a paid fee or
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: null });
     const html = controls.renderFundingAccount(owner);
     assert.doesNotMatch(html, /Actual deposit network fee|unused fee buffer remains|0\.00035 ETH/);
-    assert.match(html, /Currently at this address: — ETH/);
+    assert.match(html, /Available for fees: — ETH/);
 });
 
 test('closing a private note leaves public ETH return controls accessible in the new-deposit view', () => {

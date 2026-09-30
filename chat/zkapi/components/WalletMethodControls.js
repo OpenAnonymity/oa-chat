@@ -375,17 +375,10 @@ function attachFundingHelp(owner) {
 }
 
 function renderFundingReceipt(owner) {
-    const noteId = zkapiClient.note?.note_id;
-    const record = noteId == null ? null : zkapiClient.deposits?.find(entry => entry.status === 'confirmed'
-        && entry.noteId === Number(noteId)
-        && entry.fundingAddress?.toLowerCase() === addressFundingWallet.address?.toLowerCase());
-    const hasFee = record && /^\d+$/.test(String(record.feeWei));
-    // A newly confirmed note can render before its prefunding controller has
-    // stopped. Never call that pre-transaction balance the remaining balance.
+    // A confirmed deposit may render before its funding controller stops.
     const balance = owner.fundingFlow ? null : owner.fundingStatus?.ethBalance;
-    return `<p class="zkapi-helper">Currently at this address: ${renderFundingWei(owner, balance)}</p>
-        ${hasFee ? `<dl class="zkapi-funding-breakdown" aria-label="Confirmed deposit costs"><div><dt>Actual deposit network fee</dt><dd>${renderFundingWei(owner, record.feeWei)}</dd></div></dl>
-        <p class="zkapi-note">Unused fee ETH stays here, apart from your private balance, and may also hold ETH from other transfers. Keep it for future fees or return it.</p>` : ''}`;
+    return `<p class="zkapi-note">This browser holds ETH at this address to pay Ethereum network fees. It is separate from your private chat balance. You can keep it for withdrawal fees or return it to your wallet below.</p>
+        <p class="zkapi-helper">Available for fees: ${renderFundingWei(owner, balance)}</p>`;
 }
 
 export function renderDepositAmount(owner) {
@@ -445,6 +438,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         <label class="zkapi-funding-field"><span>Existing password</span><input data-funding-legacy-password type="password" autocomplete="current-password" ${disabled} /></label>
         <button data-funding-migrate class="zkapi-primary-button w-full" type="button" ${disabled}>Use this address</button>
     </section>`;
+    if (!wallet.address && zkapiClient.note && owner.view !== 'withdraw') return '';
     if (!wallet.address) return `<section class="zkapi-funding-account"><p class="zkapi-helper" role="status">${escape(flow?.error || (native ? 'Preparing your address…' : 'ETH funding is not available on this deployment yet.'))}</p></section>`;
     const intent = flow?.intent;
     // receiptOnly: a deposit is under way, so the address shows as a receipt
@@ -541,7 +535,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     // summary uses the same settled balance as the receipt.
     const knownBalance = funding ? (availableKnown ? available : null) : addressBalance;
     const leftover = /^\d+$/.test(String(knownBalance)) && BigInt(knownBalance) > 0n ? `${escape(sendEthText(knownBalance))} ETH` : '';
-    const receipt = funding ? '' : fundingHelp(owner, 'receipt', 'Funding address',
+    const receipt = funding ? '' : fundingHelp(owner, 'receipt', 'ETH for network fees',
         `${renderFundingReceipt(owner)}${address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
         /^\d+$/.test(String(addressBalance)) ? `${escape(sendEthText(addressBalance))} ETH` : '');
     const withdrawalDestination = owner.view === 'withdraw' && destination ? `<label class="zkapi-funding-field"><span>Your wallet address on ${escape(network)}</span><input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label>
