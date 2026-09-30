@@ -1,3 +1,33 @@
+## 2026-09-30: Send ETH motion — sliding signer pill, accordion rows, swap icon
+
+- **MetaMask / Send ETH slides.** `.zkapi-segmented` uses the toolbar's
+  Transitions.dev "Tabs sliding" timing (`--tabs-dur`, `--tabs-ease`), but the
+  pill is a `::before` placed by `data-active`: two equal segments, so nothing
+  is measured (the toolbar's `slideTabs` measures offsets, which are 0 while
+  the dialog is hidden). The dialog re-renders with innerHTML, so the click
+  records `owner.walletMethodSlideFrom`; `playWalletMethodSwitch` draws the new
+  control once with `data-from` (no transition), forces style, and removes it
+  so the pill travels. It holds background renders for `--tabs-dur` through
+  `handleDisclosureMotion`, because address hydration re-renders immediately
+  and a fresh control would cut the slide short. The content after the control
+  fades in (WAAPI, 240 ms).
+- **Transaction breakdown and Return leftover ETH are the `t-acc` accordion**
+  (grid rows 0fr → 1fr, blur-fade, chevron flip), like Payment history.
+  `fundingHelp` renders both; a closed panel is `inert` (tests use that, not
+  `hidden`). Rows open independently: `owner.fundingHelpOpen` (quote/receipt,
+  persisted for reload) and `owner.fundingReturnOpen`. Escape closes the row
+  holding focus, else the last opened, and only then the dialog. The panel
+  has `margin-inline: -4px` with matching body padding so focus rings survive
+  the inner `overflow: hidden`; at rest the inner has `filter: none` for crisp
+  text. The native `<details>` return (and its capture/restore) is gone.
+- **Currency toggle.** Roomier swap arrows (14 px, 6.5 units apart); on a
+  person's switch (`owner.currencySwitching`) the arrows make a half turn
+  (the icon lands on itself) and the unit blurs in.
+- **Copy.** The breakdown has no notes; the rows say it. The custody line
+  moved into Return leftover ETH ("Its key is kept in this browser, so don’t
+  clear this site’s data."). The address caption is "Send to this address from
+  your wallet" with the network as a tag; the amount label is "Send" again.
+
 ## 2026-09-30: Send ETH — copy on the button, one instruction, a short breakdown
 
 - **Copy answers on the button.** The copy control is an icon button whose two

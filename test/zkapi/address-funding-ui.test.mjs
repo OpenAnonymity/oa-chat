@@ -22,7 +22,7 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
     const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, DepositAmount, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
         walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
-        formatFundingAmount, confirm,
+        formatFundingAmount, confirm, motionDuration: () => 250,
         queueMicrotask: callback => microtasks.push(callback),
         setTimeout: callback => { const id = timers.size + 1; timers.set(id, callback); return id; },
         clearTimeout: id => timers.delete(id),
@@ -246,6 +246,17 @@ function quotedFlow(overrides = {}) {
     };
 }
 
+// One accordion row of the funding section: whether its panel is open (not
+// inert), the markup of its body, and the page without that row.
+function helpRow(html, kind) {
+    const start = html.lastIndexOf('<div class="zkapi-funding-help', html.indexOf(`data-funding-help="${kind}"`));
+    if (start < 0 || html.indexOf(`data-funding-help="${kind}"`) < 0) return null;
+    const next = html.indexOf('<div class="zkapi-funding-help t-acc"', start + 1);
+    const segment = next < 0 ? html.slice(start) : html.slice(start, next);
+    const panel = segment.match(/<div [^>]*data-funding-help-panel[^>]*>/)[0];
+    return { open: !/\binert\b/.test(panel), body: segment.match(/<div class="zkapi-funding-help-body">([\s\S]*)$/)[1], rest: html.replace(segment, '') };
+}
+
 test('ordinary native funding keeps the fee breakdown available and enables Deposit only when funded', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
@@ -258,19 +269,22 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.match(waiting, /Amount to send<\/dt><dd[^>]*>0\.0055 ETH/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
-    assert.match(waiting, /To this address on Ethereum Mainnet/);
+    assert.match(waiting, /Send to this address from your wallet<\/span><span class="zkapi-funding-network">Ethereum Mainnet<\/span>/);
     assert.match(waiting, /Usually arrives within a minute/);
     assert.match(waiting, new RegExp(`data-funding-address[^>]*>${recipient}</div>`), 'the whole address is shown, never cut off');
     assert.match(waiting, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock/i);
     assert.match(waiting, /Return leftover ETH/);
-    assert.doesNotMatch(waiting, /<details[^>]*open/);
+    assert.equal(helpRow(waiting, 'quote').open, false);
+    assert.equal(helpRow(waiting, 'return').open, false);
+    assert.match(waiting, /data-funding-help="quote" data-open="false"/);
     Object.assign(owner.fundingFlow, { ready: true, remainingWei: '0', status: { ethBalance: '5500000000000000' } });
     const ready = controls.renderFundingAccount(owner);
     assert.match(ready, /Funds received/);
     assert.doesNotMatch(ready, /Send 0(?:\.0)? ETH|Received/);
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
-    assert.match(ready, /its dollar value moves with the price/);
+    assert.doesNotMatch(helpRow(ready, 'quote').body, /zkapi-note/, 'the breakdown is only numbers');
+    assert.match(helpRow(ready, 'return').body, /Its key is kept in this browser, so don’t clear this site’s data/);
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
@@ -279,7 +293,7 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send from your wallet 0\.0015 ETH more/);
+    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send 0\.0015 ETH more/);
     assert.match(html, /Already at this address/);
     assert.match(html, /0\.004 ETH/);
     assert.match(html, /Amount to send<\/dt><dd[^>]*>0\.0015 ETH/);
@@ -324,19 +338,21 @@ test('the visible send amount shows USD for the remaining transfer including fee
     assert.match(heading, /0\.0015/);
     assert.match(heading, /zkapi-funding-send-usd">≈ \$3\.00 USD/);
     assert.doesNotMatch(heading, /\$10\.00|\$11\.00/);
-    assert.match(html, /data-funding-help-panel[^>]+hidden/);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<details class="zkapi-funding-return"/);
-    assert.ok(details, 'cost details are in the collapsed transaction breakdown');
-    assert.match(details[1], /data-funding-progress/);
-    assert.match(details[1], /role="progressbar"/);
-    assert.match(details[1], /zkapi-funding-progress-required|zkapi-funding-progress-optional/);
-    assert.match(details[1], /Already at this address/);
-    assert.match(html, /Transaction breakdown<\/span><svg/);
+    const details = helpRow(html, 'quote');
+    assert.equal(details.open, false, 'cost details are in the collapsed transaction breakdown');
+    assert.match(details.body, /data-funding-progress/);
+    assert.match(details.body, /role="progressbar"/);
+    assert.match(details.body, /zkapi-funding-progress-required|zkapi-funding-progress-optional/);
+    assert.match(details.body, /Already at this address/);
+    assert.match(html, /Transaction breakdown<\/span><span class="t-acc-chevron">/);
     assert.match(html, /zkapi-funding-summary">Deposit ≈ \$10\.00 · Fee allowance ≈ \$1\.00<\/p>/);
-    assert.doesNotMatch(html.replace(details[1], ''), /data-funding-progress|Already at this address|Estimated actual network fee|Optional buffer/);
+    assert.doesNotMatch(details.rest, /data-funding-progress|Already at this address|Estimated actual network fee|Optional buffer/);
     assert.doesNotMatch(html, /Recommended to send|more is required for the deposit and network fee allowance/);
     owner.fundingHelpOpen = 'quote';
-    assert.doesNotMatch(controls.renderFundingAccount(owner), /data-funding-help-panel[^>]+hidden/);
+    const opened = controls.renderFundingAccount(owner);
+    assert.equal(helpRow(opened, 'quote').open, true);
+    assert.match(opened, /data-funding-help="quote" data-open="true"[\s\S]*?aria-expanded="true"/);
+    assert.equal(helpRow(opened, 'return').open, false, 'rows open on their own');
 });
 
 test('an unavailable USD conversion keeps exact ETH visible without a zero dollar estimate', () => {
@@ -394,7 +410,7 @@ test('an expired quote retains the QR and open breakdown but disables Deposit wh
     assert.match(html, /Updating fee estimate/);
     assert.match(html, /data-funding-next[^>]*disabled/);
     assert.match(html, /data-funding-payment-qr/);
-    assert.doesNotMatch(html, /data-funding-help-panel[^>]*hidden/);
+    assert.equal(helpRow(html, 'quote').open, true);
     assert.match(html, /0\.0055/);
     assert.match(html, /data-funding-address/);
 });
@@ -585,7 +601,7 @@ test('closing a private note leaves public ETH return controls accessible in the
     assert.match(html, /Amount to deposit/);
     assert.match(html, /Return leftover ETH/);
     assert.match(html, /data-funding-return-eth/);
-    assert.doesNotMatch(html, /<details[^>]*open/);
+    assert.equal(helpRow(html, 'return').open, false);
     owner.fundingFlow = { status: { ethBalance: '15208600000000000' }, ready: false };
     assert.match(controls.renderFundingAccount(owner), /Return leftover ETH/);
     owner.fundingFlow.status.ethBalance = '0';
@@ -604,7 +620,7 @@ test('public ETH return is available without a saved intent, USD price or succes
     assert.match(html, /Return leftover ETH/);
     assert.match(html, /data-funding-return-eth/);
     assert.match(html, new RegExp(`data-funding-address[^>]*>${recipient}</div>`));
-    assert.doesNotMatch(html, /<details[^>]*open/);
+    assert.equal(helpRow(html, 'return').open, false);
     assert.doesNotMatch(html, /data-funding-next/);
 });
 
@@ -1234,17 +1250,16 @@ test('manual deposit keeps instructions in the breakdown and shows a concise exa
         status: { ethBalance: '5000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /To this address on Sepolia/);
-    assert.match(html, /Only your deposit is added to the private balance/);
+    assert.match(html, /Send to this address from your wallet<\/span><span class="zkapi-funding-network">Sepolia/);
     assert.match(html, /This browser’s receiving address/);
     assert.match(html, /0\.00045 ETH still needed/);
     assert.match(html, /data-funding-next[^>]*disabled[^>]*>Deposit/);
     assert.doesNotMatch(html, /Waiting for funds|>Next</);
-    const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<details class="zkapi-funding-return"/);
-    assert.ok(details);
-    assert.match(details[1], /Only your deposit is added/);
-    assert.doesNotMatch(details[1], /data-funding-address/, 'the address stays on the page, not in the breakdown');
-    assert.doesNotMatch(html.replace(details[1], ''), /Only your deposit is added|zkapi-funding-address-label/);
+    const details = helpRow(html, 'quote');
+    assert.equal(details.open, false);
+    assert.match(details.body, /Network fee<small>/);
+    assert.doesNotMatch(details.body, /data-funding-address|zkapi-note/, 'the address stays on the page; the breakdown is only numbers');
+    assert.doesNotMatch(details.rest, /zkapi-funding-address-label|Only your deposit is added/);
 });
 
 test('failed refresh keeps fee details but suppresses QR and deposit authorization', () => {
@@ -1255,7 +1270,8 @@ test('failed refresh keeps fee details but suppresses QR and deposit authorizati
     const html = f.controls.renderFundingAccount(f.owner);
     assert.match(html, /Transaction breakdown/);
     assert.match(html, /0\.0055/);
-    assert.doesNotMatch(html, /data-funding-help-panel[^>]*hidden|data-funding-payment-qr/);
+    assert.equal(helpRow(html, 'quote').open, true);
+    assert.doesNotMatch(html, /data-funding-payment-qr/);
     assert.match(html, /data-funding-next[^>]*disabled/);
 });
 
@@ -1272,4 +1288,81 @@ test('expiry pauses Deposit without requesting an optional top-up from an alread
     assert.match(html, /Updating fee estimate/);
     assert.match(html, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number/);
+});
+
+function motionDocument({ reduced = false } = {}) {
+    const listeners = {};
+    const timers = [];
+    const view = { matchMedia: () => ({ matches: reduced }), setTimeout: (callback, ms) => { timers.push({ callback, ms }); return timers.length; }, clearTimeout() {} };
+    const doc = { defaultView: view, activeElement: null, addEventListener: (type, listener) => { listeners[type] = listener; }, removeEventListener() {} };
+    return { doc, listeners, timers };
+}
+
+test('breakdown and return rows open on their own, stay inert while closed, and hold renders while they move', () => {
+    const f = fixture();
+    const { doc, listeners, timers } = motionDocument();
+    const row = kind => {
+        const button = { events: {}, attributes: {}, addEventListener(type, listener) { this.events[type] = listener; },
+            setAttribute(name, value) { this.attributes[name] = value; }, focus() { doc.activeElement = this; } };
+        const panel = { inert: true };
+        const help = { dataset: { fundingHelp: kind, open: 'false' }, contains: node => node === button,
+            querySelector: selector => selector === '[data-funding-help-toggle]' ? button : selector === '[data-funding-help-panel]' ? panel : null };
+        return { help, button, panel };
+    };
+    const quote = row('quote');
+    const leftover = row('return');
+    const motion = [];
+    Object.assign(f.owner, { handleDisclosureMotion: moving => motion.push(moving), overlay: {
+        ownerDocument: doc, querySelector: () => null, contains: () => false,
+        querySelectorAll: selector => selector === '[data-funding-help]' ? [quote.help, leftover.help] : [] } });
+    f.controls.attachWalletMethodControls(f.owner);
+    quote.button.events.click();
+    assert.equal(f.owner.fundingHelpOpen, 'quote');
+    assert.equal(quote.help.dataset.open, 'true');
+    assert.equal(quote.panel.inert, false);
+    assert.equal(quote.button.attributes['aria-expanded'], 'true');
+    assert.deepEqual(motion, [true], 'background renders wait for the panel');
+    assert.equal(timers.at(-1).ms, 250);
+    timers.at(-1).callback();
+    assert.deepEqual(motion, [true, false]);
+    leftover.button.events.click();
+    assert.equal(f.owner.fundingReturnOpen, true);
+    assert.equal(f.owner.fundingHelpOpen, 'quote', 'opening one row leaves the other as it was');
+    const escape = () => { const event = { key: 'Escape', prevented: false, preventDefault() { this.prevented = true; }, stopPropagation() {} }; listeners.keydown(event); return event.prevented; };
+    assert.equal(escape(), true);
+    assert.equal(f.owner.fundingReturnOpen, false, 'Escape closes the row opened last');
+    assert.equal(leftover.panel.inert, true);
+    assert.equal(doc.activeElement, leftover.button, 'focus returns to its trigger');
+    doc.activeElement = quote.button;
+    assert.equal(escape(), true);
+    assert.equal(f.owner.fundingHelpOpen, null);
+    assert.equal(escape(), false, 'with every row closed, Escape is left to the dialog');
+});
+
+for (const reduced of [false, true]) {
+    test(`switching MetaMask ↔ Send ETH ${reduced ? 'jumps under reduced motion' : 'slides the pill from where it was and eases the new content in'}`, () => {
+        const f = fixture();
+        const { doc } = motionDocument({ reduced });
+        const drawnFrom = [];
+        const animated = [];
+        const content = { animate: frames => animated.push(frames), nextElementSibling: null };
+        const bar = { dataset: { active: 'address' }, closest: () => ({ nextElementSibling: content }),
+            get offsetWidth() { drawnFrom.push(this.dataset.from); return 320; } };
+        Object.assign(f.owner, { walletMethodSlideFrom: 'metamask', overlay: { ownerDocument: doc, contains: () => false,
+            querySelectorAll: () => [], querySelector: selector => selector === '.zkapi-segmented' ? bar : null } });
+        f.controls.attachWalletMethodControls(f.owner);
+        assert.deepEqual(drawnFrom, reduced ? [] : ['metamask'], 'the new control is first drawn with the pill where it was');
+        assert.equal(bar.dataset.from, undefined, 'then released to travel');
+        assert.equal(animated.length, reduced ? 0 : 1);
+        assert.equal(f.owner.walletMethodSlideFrom, null, 'a later render never replays it');
+        f.controls.attachWalletMethodControls(f.owner);
+        assert.equal(animated.length, reduced ? 0 : 1);
+    });
+}
+
+test('the signer control names its active choice for the sliding pill', () => {
+    const f = fixture({ method: 'address' });
+    assert.match(f.controls.renderWalletMethod(f.owner), /class="zkapi-segmented"[^>]*data-active="address"/);
+    const metamask = fixture({ method: 'metamask' });
+    assert.match(metamask.controls.renderWalletMethod(metamask.owner), /data-active="metamask"/);
 });

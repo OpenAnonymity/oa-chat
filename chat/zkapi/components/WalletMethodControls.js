@@ -5,6 +5,7 @@ import { AddressDepositFlow } from '../services/addressDepositFlow.mjs';
 import { DepositAmount } from '../services/depositAmount.mjs';
 import { renderFundingPaymentQr } from './FundingPaymentQr.js';
 import { renderFundingProgress } from './FundingProgress.js';
+import { motionDuration } from '../../ui/uiMotion.js';
 import { getWalletMethod, setWalletMethod, prepareWalletMethod, walletMethodActionBusy } from '../services/walletMethod.mjs';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
 
@@ -50,6 +51,7 @@ export function stopFundingFlow(owner, { preserveAmount = false } = {}) {
     stopFundingStatus(owner);
     owner.fundingStatus = null;
     owner.fundingHelpOpen = null;
+    owner.fundingReturnOpen = false;
     owner.disposeFundingHelp?.();
     owner.disposeFundingHelp = null;
 }
@@ -203,7 +205,7 @@ export function renderWalletMethod(owner, { choose = true } = {}) {
     const error = owner.fundingError ? `<p class="zkapi-funding-error" role="alert">${owner.escapeHtml(owner.fundingError)}</p>` : '';
     if (!choose && !password && !error) return '';
     return `<section class="zkapi-wallet-method" aria-label="Wallet method">
-        ${choose ? `<div class="zkapi-segmented" role="group" aria-label="How to pay">
+        ${choose ? `<div class="zkapi-segmented" role="group" aria-label="How to pay" data-active="${local ? 'address' : 'metamask'}">
             <button type="button" data-wallet-method="metamask" aria-pressed="${!local}" ${locked ? 'disabled' : ''}>MetaMask</button>
             <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Send ETH</button>
         </div>` : ''}
@@ -268,13 +270,20 @@ function fundingHelpId(owner, kind) {
 }
 
 // A disclosure row in the dialog's own idiom (label, chevron, hairline), for
-// detail that is there when wanted: the fee breakdown, the funding address.
+// detail that is there when wanted: the fee breakdown, the funding address,
+// a leftover return. It opens with the app's Transitions.dev accordion
+// (grid rows 0fr → 1fr, a blur-fade, the chevron flipping), like Payment
+// history. A closed panel is inert, so nothing in it can be reached.
+function fundingHelpIsOpen(owner, kind) {
+    return kind === 'return' ? owner.fundingReturnOpen === true : owner.fundingHelpOpen === kind;
+}
+
 function fundingHelp(owner, kind, label, content, note = '') {
     const id = fundingHelpId(owner, kind);
-    const open = owner.fundingHelpOpen === kind;
-    return `<div class="zkapi-funding-help" data-funding-help="${kind}" data-open="${open}">
-        <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle" aria-expanded="${open}" aria-controls="${id}"><span class="zkapi-funding-help-label">${label}${note ? `<span class="zkapi-guide-note">${note}</span>` : ''}</span><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></button>
-        <div id="${id}" data-funding-help-panel class="zkapi-funding-help-panel" role="region" aria-label="${label}" ${open ? '' : 'hidden'}>${content}</div>
+    const open = fundingHelpIsOpen(owner, kind);
+    return `<div class="zkapi-funding-help t-acc" data-funding-help="${kind}" data-open="${open}">
+        <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle t-acc-head" aria-expanded="${open}" aria-controls="${id}"><span class="zkapi-funding-help-label">${label}${note ? `<span class="zkapi-guide-note">${note}</span>` : ''}</span><span class="t-acc-chevron"><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button>
+        <div id="${id}" data-funding-help-panel class="zkapi-funding-help-panel t-acc-panel" role="region" aria-label="${label}" ${open ? '' : 'inert'}><div class="t-acc-panel-inner"><div class="zkapi-funding-help-body">${content}</div></div></div>
     </div>`;
 }
 
@@ -291,37 +300,59 @@ function attachFundingHelp(owner) {
     owner.disposeFundingHelp?.();
     owner.disposeFundingHelp = null;
     const root = owner.overlay;
-    const help = root.querySelector('[data-funding-help]');
-    const button = root.querySelector('[data-funding-help-toggle]');
-    const panel = root.querySelector('[data-funding-help-panel]');
-    if (!help || !button || !panel) {
-        // Address hydration can render several times before this panel exists.
-        // Closing or changing methods already clears its presentation state.
-        return;
-    }
-    if (owner.fundingHelpOpen !== help.dataset.fundingHelp) owner.fundingHelpOpen = null;
-    const setOpen = open => {
-        owner.fundingHelpOpen = open ? help.dataset.fundingHelp : null;
-        panel.hidden = !open;
-        help.dataset.open = String(open);
-        button.setAttribute('aria-expanded', String(open));
+    const rows = [...(root.querySelectorAll?.('[data-funding-help]') || [])].map(help => ({
+        help, kind: help.dataset.fundingHelp,
+        button: help.querySelector('[data-funding-help-toggle]'), panel: help.querySelector('[data-funding-help-panel]')
+    })).filter(row => row.button && row.panel);
+    // Address hydration can render several times before these rows exist.
+    // Closing or changing methods already clears their presentation state.
+    if (!rows.length) return;
+    const details = rows.find(row => row.kind !== 'return');
+    if (details && owner.fundingHelpOpen !== details.kind) owner.fundingHelpOpen = null;
+    const view = root.ownerDocument?.defaultView;
+    let motionTimer;
+    const setOpen = (row, open) => {
+        if (row.kind === 'return') owner.fundingReturnOpen = open;
+        else owner.fundingHelpOpen = open ? row.kind : null;
+        if (open) owner.fundingHelpLast = row.kind;
+        // Hold background re-renders until the panel has settled: a fresh
+        // render would draw the final state and cut the motion short.
+        const duration = view ? Math.max(motionDuration(row.help, open ? '--acc-expand' : '--acc-collapse', 250),
+            motionDuration(row.help, '--acc-chevron', 250)) : 0;
+        if (duration > 0 && owner.handleDisclosureMotion) {
+            view.clearTimeout(motionTimer);
+            owner.handleDisclosureMotion(true);
+            motionTimer = view.setTimeout(() => owner.handleDisclosureMotion(false), duration);
+        }
+        row.help.dataset.open = String(open);
+        row.panel.inert = !open;
+        row.button.setAttribute('aria-expanded', String(open));
         owner.rememberRunningModal?.();
     };
-    const toggle = () => setOpen(panel.hidden);
+    const handlers = rows.map(row => {
+        const toggle = () => setOpen(row, !fundingHelpIsOpen(owner, row.kind));
+        row.button.addEventListener('click', toggle);
+        return [row.button, toggle];
+    });
     const escape = event => {
-        if (event.key !== 'Escape' || panel.hidden) return;
+        if (event.key !== 'Escape') return;
+        const open = rows.filter(row => fundingHelpIsOpen(owner, row.kind));
+        if (!open.length) return;
+        const active = root.ownerDocument?.activeElement;
+        const row = open.find(entry => entry.help.contains?.(active))
+            || open.find(entry => entry.kind === owner.fundingHelpLast) || open.at(-1);
         event.preventDefault();
         event.stopPropagation();
-        setOpen(false);
-        button.focus({ preventScroll: true });
+        setOpen(row, false);
+        row.button.focus({ preventScroll: true });
     };
     const document = root.ownerDocument || globalThis.document;
-    button.addEventListener('click', toggle);
-    // Capture Escape before the enclosing dialog handles it. A second Escape
+    // Capture Escape before the enclosing dialog handles it. A later Escape
     // still closes the dialog normally.
     document?.addEventListener?.('keydown', escape, true);
     owner.disposeFundingHelp = () => {
-        button.removeEventListener('click', toggle);
+        view?.clearTimeout(motionTimer);
+        for (const [button, toggle] of handlers) button.removeEventListener('click', toggle);
         document?.removeEventListener?.('keydown', escape, true);
     };
 }
@@ -367,7 +398,7 @@ export function renderDepositAmount(owner) {
     const width = Math.max(3, String(amount ?? '').length + 0.5);
     return `<section class="zkapi-deposit-amount" aria-label="${saved ? 'Saved deposit amount' : 'Deposit amount'}">
         <label class="zkapi-balance-caption" for="funding-${currency}">${saved ? 'Saved deposit amount' : 'Amount to deposit'}</label>
-        <div class="zkapi-amount-figure">${currency === 'usd' ? '<span class="zkapi-amount-prefix" aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${currency} id="funding-${currency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${label}" ${describedBy ? `aria-invalid="true" aria-describedby="${describedBy}"` : ''} style="width:${width}ch" value="${owner.escapeHtml(amount)}" ${saved ? 'readonly' : ''} ${disabled ? 'disabled' : ''} /><button data-funding-currency id="funding-currency" class="zkapi-funding-currency" type="button" aria-label="Switch amount to ${currency === 'usd' ? 'ETH' : 'USD'}" ${disabled || saved || addressFundingWallet.hasPendingTransaction ? 'disabled' : ''}>${label}<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5.5h9.5M10 3l2.5 2.5L10 8M13 10.5H3.5M6 8l-2.5 2.5L6 13"/></svg></button></div>
+        <div class="zkapi-amount-figure">${currency === 'usd' ? '<span class="zkapi-amount-prefix" aria-hidden="true">$</span>' : ''}<input data-funding-amount data-funding-${currency} id="funding-${currency}" inputmode="decimal" autocomplete="off" aria-label="Amount to add in ${label}" ${describedBy ? `aria-invalid="true" aria-describedby="${describedBy}"` : ''} style="width:${width}ch" value="${owner.escapeHtml(amount)}" ${saved ? 'readonly' : ''} ${disabled ? 'disabled' : ''} /><button data-funding-currency id="funding-currency" class="zkapi-funding-currency" type="button" aria-label="Switch amount to ${currency === 'usd' ? 'ETH' : 'USD'}" data-unit="${label}" ${disabled || saved || addressFundingWallet.hasPendingTransaction ? 'disabled' : ''}><span class="zkapi-funding-currency-unit">${label}</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 4.75h10.5M11.25 2.75l2 2-2 2M13.25 11.25H2.75M4.75 9.25l-2 2 2 2"/></svg></button></div>
         ${flowError && !local ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${owner.escapeHtml(flow.error)}</p>` : ''}
     </section>`;
 }
@@ -431,16 +462,16 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const sendUsdReference = `<span class="zkapi-funding-send-usd">${sendUsd ? `≈ ${escape(sendUsd)} USD` : 'USD estimate unavailable'}</span>`;
     const sendsAmount = !ready && !displayedRequiredCovered && recommendedRemaining != null && recommendedRemaining > 0n;
     const sendHeading = ready ? 'Ready to deposit' : displayedRequiredCovered ? 'Funds received' : recommendedRemaining == null ? 'Checking your funding address…' : recommendedRemaining === 0n ? 'Funds available'
-        : `<span class="zkapi-funding-send-label">Send from your wallet</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(sendEthText(remaining))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
+        : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(sendEthText(remaining))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
     const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
     // The whole address stays visible: it wraps on a narrow screen rather
     // than hiding its tail. Copy answers on the button itself (copy → check);
     // nothing else on the page moves. Only a blocked clipboard adds a line.
     const address = `<div class="zkapi-funding-address"><div id="zkapi-funding-address" data-funding-address class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" spellcheck="false" aria-label="This browser’s receiving address">${escape(wallet.address)}</div><button data-funding-copy class="zkapi-secondary-button zkapi-copy-button" type="button" aria-label="Copy address" title="Copy address" data-copied="${owner.addressCopied ? 'true' : 'false'}"><svg class="zkapi-copy-face" data-face="copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.75"/><path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5c0 .97.78 1.75 1.75 1.75h.25"/></svg><svg class="zkapi-copy-face" data-face="copied" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-6"/></svg></button><span class="zkapi-visually-hidden" role="status" data-funding-copy-status></span></div>
         <p data-funding-notice class="zkapi-helper zkapi-funding-notice" role="status">${owner.fundingNoticeScope === 'return' || (owner.fundingNoticeScope === 'pending' && wallet.hasPendingTransaction) ? '' : escape(owner.fundingNotice || '')}</p>`;
-    // With the heading this reads as one instruction: send this much from
-    // your wallet, to this address, on this network.
-    const sendAddress = `<div class="zkapi-funding-to"><p class="zkapi-balance-caption">To this address on ${escape(network)}</p>${address}</div>`;
+    // Said once, over the field: where the ETH goes and where it comes from,
+    // with the network as a tag beside it.
+    const sendAddress = `<div class="zkapi-funding-to"><p class="zkapi-funding-to-head"><span class="zkapi-balance-caption">Send to this address from your wallet</span><span class="zkapi-funding-network">${escape(network)}</span></p>${address}</div>`;
     const quoted = funding && intent && displayTotal != null && !flow.dirty;
     const qr = quoted && !flow.error && sendsAmount ? renderFundingPaymentQr({ address: wallet.address,
         chainId: Number(zkapiClient.config?.funding?.chain_id), amountWei: remaining }) : '';
@@ -455,9 +486,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         <dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
             <div class="zkapi-funding-total"><dt>${displayedRequiredCovered ? 'Optional buffer remaining' : 'Amount to send'}</dt><dd${remaining == null ? '' : ` title="${escape(formatFundingAmount(remaining, 18))} ETH"`}>${escape(sendEthText(remaining))} ETH${fundingUsdValue(remaining) ? ` <span>≈ ${escape(fundingUsdValue(remaining))}</span>` : ''}</dd></div>
         </dl>
-        <p class="zkapi-note">Only your deposit is added to the private balance. The fee is an allowance: what isn’t spent stays at this address.</p>
-        ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. Its fee estimate refreshes before you continue.</p>' : ''}
-        <p class="zkapi-note">This browser holds the address’s key, so keep its site data. Your balance is held in ETH; its dollar value moves with the price.</p>` : '';
+        ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. Its fee estimate refreshes before you continue.</p>' : ''}` : '';
     const fundingView = !funding ? '' : quoted ? `
         <div class="zkapi-funding-pay${qr ? ' has-qr' : ''}">
             ${qr}
@@ -496,24 +525,72 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         ${rows ? `<div class="zkapi-funding-rows">
             ${quoted ? fundingHelp(owner, 'quote', 'Transaction breakdown', breakdown) : ''}
             ${receipt}
-            <details class="zkapi-funding-return" data-funding-details="return"><summary><span class="zkapi-funding-help-label">Return leftover ETH${leftover ? `<span class="zkapi-guide-note">${leftover} here</span>` : ''}</span><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
-                <div class="zkapi-funding-return-body">
-                ${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
+            ${fundingHelp(owner, 'return', 'Return leftover ETH', `${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
                     ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
                     : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
-                <p class="zkapi-note">Sends ETH left at this address back to your wallet. To withdraw your private balance, use Withdraw.</p>
+                <p class="zkapi-note">For ETH left at this address, not your private balance. Its key is kept in this browser, so don’t clear this site’s data.</p>
                 <div class="zkapi-funding-return-fields">
                     <label class="zkapi-funding-field"><span>To your wallet</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
                     ${!native ? `<label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
                     <label class="zkapi-funding-field zkapi-funding-field--amount"><span>ETH</span><input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="All" title="Leave blank to send all remaining ETH (a small fee reserve may remain). Enter an exact amount for a smart-contract recipient." value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>
                 </div>
                 ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
-                <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ETH</button></div>
-                </div>
-            </details>
+                <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ETH</button></div>`,
+                leftover ? `${leftover} here` : '')}
         </div>` : ''}
 
     </section>`;
+}
+
+const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
+
+function motionAllowed(root) {
+    const view = root?.ownerDocument?.defaultView;
+    return Boolean(view && !view.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+}
+
+// Transitions.dev "Tabs sliding" for the signer choice. The dialog is
+// re-rendered with innerHTML, so the new control is drawn where the pill
+// was (data-from, no transition), and then released to travel to the new
+// choice. The two segments are equal, so the pill is pure CSS: nothing is
+// measured, and it is right even while the dialog is hidden.
+function playWalletMethodSwitch(owner) {
+    const from = owner.walletMethodSlideFrom;
+    owner.walletMethodSlideFrom = null;
+    const root = owner.overlay;
+    const bar = root?.querySelector?.('.zkapi-segmented');
+    if (!from || !bar?.dataset || bar.dataset.active === from || !motionAllowed(root)) return;
+    bar.dataset.from = from;
+    void bar.offsetWidth;
+    delete bar.dataset.from;
+    // Address hydration renders again right away; hold those background
+    // renders until the pill lands, or a fresh control would cut it short.
+    const view = root.ownerDocument.defaultView;
+    const duration = motionDuration(bar, '--tabs-dur', 250);
+    if (duration > 0 && owner.handleDisclosureMotion) {
+        view.clearTimeout(owner.walletMethodSlideTimer);
+        owner.handleDisclosureMotion(true);
+        owner.walletMethodSlideTimer = view.setTimeout(() => owner.handleDisclosureMotion(false), duration);
+    }
+    // What changes with the choice arrives softly instead of cutting in.
+    let next = bar.closest?.('.zkapi-wallet-method')?.nextElementSibling;
+    for (; next; next = next.nextElementSibling) {
+        next.animate?.([{ opacity: 0, transform: 'translateY(4px)', filter: 'blur(2px)' }, { opacity: 1, transform: 'none', filter: 'none' }],
+            { duration: 240, easing: EASE_OUT });
+    }
+}
+
+// USD ⇄ ETH: the arrows make a half turn (the icon lands on itself) while
+// the unit swaps in with a slight blur, so the button says what it did.
+function playCurrencySwitch(owner) {
+    const button = owner.overlay?.querySelector?.('[data-funding-currency]');
+    const unit = button?.dataset?.unit;
+    const previous = owner.shownCurrencyUnit;
+    owner.shownCurrencyUnit = unit ?? previous;
+    if (!owner.currencySwitching || !unit || !previous || unit === previous || !motionAllowed(owner.overlay)) return;
+    button.querySelector('svg')?.animate?.([{ transform: 'rotate(-180deg)' }, { transform: 'rotate(0deg)' }], { duration: 360, easing: EASE_OUT });
+    button.querySelector('.zkapi-funding-currency-unit')?.animate?.([{ opacity: 0, filter: 'blur(2px)', transform: 'translateY(3px)' }, { opacity: 1, filter: 'none', transform: 'none' }],
+        { duration: 220, easing: EASE_OUT });
 }
 
 // A blocked clipboard leaves the address selected for the keyboard.
@@ -533,6 +610,8 @@ function selectAddress(node) {
 export function attachWalletMethodControls(owner) {
     const root = owner.overlay;
     attachFundingHelp(owner);
+    playWalletMethodSwitch(owner);
+    playCurrencySwitch(owner);
     const input = name => root.querySelector(`[data-funding-${name}]`);
     const value = name => input(name)?.value || '';
     const perform = async action => {
@@ -564,6 +643,9 @@ export function attachWalletMethodControls(owner) {
         owner.fundingNoticeScope = '';
         owner.clearTransientOutcome?.();
         stopFundingFlow(owner, { preserveAmount: true });
+        // The next render starts the pill where it is now (see
+        // playWalletMethodSwitch), so it slides across instead of jumping.
+        owner.walletMethodSlideFrom = getWalletMethod();
         try { setWalletMethod(button.dataset.walletMethod); }
         catch (error) { owner.fundingError = error.message; }
         owner.rememberRunningModal?.();
@@ -610,7 +692,8 @@ export function attachWalletMethodControls(owner) {
         const focusToggle = globalThis.document?.activeElement === input('currency');
         clearTimeout(owner.fundingEditTimer);
         owner.fundingEditTimer = null;
-        await perform(async () => {
+        owner.currencySwitching = true;
+        try { await perform(async () => {
             if (!flow.intent && owner.preferDepositInput && !flow.initializing) {
                 // An explicit draft gets the same exact conversion as a settled
                 // amount, even if it was typed before the first quote finished.
@@ -640,7 +723,7 @@ export function attachWalletMethodControls(owner) {
                 owner.sharedDepositIntent = flow.intent;
                 owner.preferDepositInput = true;
             }
-        });
+        }); } finally { owner.currencySwitching = false; }
         if (focusToggle && owner.isOpen && amountFlow(owner) === flow) input('currency')?.focus?.({ preventScroll: true });
     });
     on('next', () => owner.submitAddressDeposit?.());
@@ -749,17 +832,12 @@ export function captureWalletView(owner) {
         // focused input between composition/typing events can lose keystrokes.
         preservedInput: root.contains?.(active) && ['funding-usd', 'funding-eth'].includes(active?.id) ? active : null,
         start: active?.selectionStart, end: active?.selectionEnd,
-        scroll: root.querySelector('[data-funding-scroll]')?.scrollTop,
-        details: Array.from(root.querySelectorAll?.('[data-funding-details][open]') || [], element => element.dataset.fundingDetails)
+        scroll: root.querySelector('[data-funding-scroll]')?.scrollTop
     };
 }
 
 export function restoreWalletView(owner, saved) {
     if (!saved) return;
-    for (const key of saved.details || []) {
-        const details = owner.overlay.querySelector(`[data-funding-details="${key}"]`);
-        if (details) details.open = true;
-    }
     if (saved.id) {
         let input = owner.overlay.querySelector(`#${saved.id}`);
         if (input && saved.preservedInput) {
