@@ -1,13 +1,27 @@
-## 2026-09-30: Prepare fresh zkAPI deployment and clean browser wallets
+## 2026-09-30: Fresh zkAPI deployment live with clean browser wallets
 
-- The new Oregon VM and release images are ready, but contracts and the live
-  cutover await funding. See the [deployment handoff](ZKAPI_FRESH_DEPLOYMENT_20260930.md)
-  for exact addresses, reviewed transaction plans, image hashes and remaining
-  acceptance steps. Existing canonical sites continue using their old backends.
-- The candidate `fresh-20260930` profile selects separate Mainnet and Sepolia
-  services on the new AWS host. Its public pins are deployment preparation;
-  contract finality and live frontend cutover are not yet verified by this entry.
-  Build and proxy generation must select the same explicit profile and network.
+- Both canonical sites now use the new Oregon VM with separate fresh Mainnet
+  and Sepolia signing keys, finalized vaults, data directories and challengers.
+  See the [deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md) for exact
+  contracts, transaction receipts, image hashes, source revisions and evidence.
+- `fresh-20260930` is deployed at `oa-wallet-eth-sepolia.vercel.app` and
+  `staging.openanonymity.ai`. Public implementation `856a714` remains the
+  Commercial core pin. Commercial main includes the profile and all concurrent
+  landing updates through `1d7f850`; normal Git release gates remain enabled.
+  Build and proxy generation select the same explicit profile and network.
+- Direct checks pass on both services; canonical proxy checks pass 24 Sepolia
+  and 20 Mainnet cases. Eight healthchecks pass, and both funded challengers
+  advance with no pending work. Existing Sepolia password gating is preserved;
+  Mainnet remains ungated. No funded lifecycle transaction was run.
+- Startup/update commands must use `sudo zkapi-compose mainnet|sepolia ...` on
+  the host so the separate project and read-only nginx privacy override are
+  always selected. Caddy request objects and nginx request-bearing error logs
+  are suppressed; isolated synthetic failures verified no credential/query leak.
+- Publicnode stopped serving the original verifier's historical state through
+  its free endpoint before both deployment stages completed. Reviewed read-only
+  archive wrappers completed exact historical
+  receipt-block verification without changing signed transactions or runtime RPC
+  pins. Sepolia archive reads require pacing/backoff; retain the operator evidence.
 - The user approved a clean reset without old-balance recovery UI. This profile
   bundles the existing SDK with a new network-specific wallet database,
   `zkapi-browser-wallet-fresh-20260930-{network}-v1`. The build verifies the exact
@@ -25,8 +39,8 @@
 - Focused validation passes all 12 build/profile tests, including execution of
   the actual bundled SDK stores to verify independent Mainnet/Sepolia writes and
   preservation of the old note, lease, journal and funding-address record.
-  The full local suite passes 1,098 core and 752 payment tests. These checks do
-  not establish live contract, server or frontend deployment acceptance. See
+  The full local suite passes 1,098 core and 752 payment tests. Independent live
+  contract/server/frontend acceptance is recorded in the deployment record. See
   [the profile and storage details](ZKAPI_PAYMENTS.md#september-30-clean-reset-profile).
 
 ## 2026-09-30: Command-line daemon moved to zkapi
