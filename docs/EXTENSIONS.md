@@ -101,7 +101,13 @@ temporary zero used while IndexedDB is loading. It is the supported seam for a
 downstream opt-in refill experience to notice a transition to zero. For a
 signed-in account, `readyForAutomaticBilling` remains false until initial
 encrypted sync succeeds; consumers must not initiate a charge before it is
-true. These reuse the browser-wallet operations already used by
+true. `movingTickets` is the number of previous-version tickets waiting to
+move or moving (see the ticket move in `docs/APP_STATE.md`); while it is above
+zero the wallet is not empty in any sense a host should act on, and hosts may
+say so (the commercial Welcome does). During a move `ticketCount` holds at its
+value from the start of the move instead of dipping while the old tickets are
+removed before the new ones are redeemed. These reuse the browser-wallet
+operations already used by
 the standalone UI. Snapshots expose counts and busy state only; operations
 return aggregate counts or the intentionally shareable split code/link, never
 wallet ticket material, account credentials, billing identifiers, or inference
@@ -336,3 +342,16 @@ selects zkAPI through the existing payment-mode runtime in the current page.
 That runtime opens funding when needed and preserves active-response guards.
 It does not directly request a wallet connection or submit a transaction.
 Render the wallet button disabled while busy.
+
+`startChatApp({ signIn: { releasePreviousVersionAccounts: true } })` lets a
+host that runs against a new org forget, on first load, an account saved by the
+previous production client (a record with none of this client's fields and no
+key bundle, sync scope, or pending login). The account could never sign in
+here: the old passkeys belong to the previous org's relying party. The cleanup
+is the same as Forget saved account, without a server sign-out, and the
+browser's tickets are never touched: they stay unscoped, a new account adopts
+them, and the ticket move runs. Only an explicit boolean `true` turns it on.
+
+`context.ui.showLoadingToast(message)` shows the app's loading toast and
+returns a function that stops it; hosts use it for work that finishes on its
+own (adding free-trial tickets) instead of a dialog of their own.

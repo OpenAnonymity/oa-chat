@@ -373,6 +373,12 @@ class ChatApp {
             // Trusted host presentation only; account operations stay in AccountModal.
             renderEntry: typeof options.signIn?.renderEntry === 'function' ? options.signIn.renderEntry : null
         });
+        // A host that replaced an earlier production client may forget the
+        // accounts that client saved: they were not carried over (see
+        // accountService.releasePreviousVersionAccount).
+        if (options.signIn?.releasePreviousVersionAccounts === true) {
+            accountService.configure({ releasePreviousVersionAccounts: true });
+        }
         this.extensionHost = new ExtensionHost();
         this.extensionSlots = this.extensionHost.slots;
         this.ticketManagementAction = null;
@@ -743,7 +749,9 @@ class ChatApp {
                 registerTicketManagement: handler => this.registerTicketManagementAction(handler),
                 registerFirstAccountReady: handler => this.registerFirstAccountReadyHandler(handler),
                 registerLoggedOut: handler => this.registerLoggedOutHandler(handler),
-                showToast: (...args) => this.showToast(...args)
+                showToast: (...args) => this.showToast(...args),
+                // Returns a stop function; the next toast also replaces it.
+                showLoadingToast: message => this.showLoadingToast(String(message || ''))
             })
         });
     }
@@ -1310,11 +1318,13 @@ class ChatApp {
     getExtensionTicketToolsSnapshot() {
         const tools = this.rightPanel?.getMembershipTicketToolsSnapshot?.() ||
             Object.freeze({ ticketCount: 0, maxShareCount: 0, busy: false });
+        // Previous-version tickets waiting to move, or moving: a count only.
+        const movingTickets = ticketClient.getMovingTicketCount?.() || 0;
         // While previous-version tickets are being moved the wallet is not
         // settled: extensions must not read it as empty.
         return ticketClient.isLegacyTransferRunning?.()
-            ? Object.freeze({ ...tools, busy: true })
-            : tools;
+            ? Object.freeze({ ...tools, busy: true, movingTickets })
+            : Object.freeze({ ...tools, movingTickets });
     }
 
     detectInitialLinkContext() {
@@ -2761,6 +2771,22 @@ class ChatApp {
         // Tickets from the previous production org move into this wallet
         // automatically once it is open (see application/legacyTicketTransfer.js).
         if (this.features.accounts) {
+            // The move shows in the loading toast while it runs, then in the
+            // success toast (which replaces it). A move that could not finish
+            // just clears the loading toast; it is retried later.
+            let stopMoveToast = null;
+            window.addEventListener('legacy-tickets-moving', event => {
+                const tickets = Number(event?.detail?.tickets) || 0;
+                if (tickets <= 0) return;
+                stopMoveToast?.();
+                stopMoveToast = this.showLoadingToast(
+                    `Moving your ${tickets} ${tickets === 1 ? 'ticket' : 'tickets'} from the previous version…`
+                );
+            });
+            window.addEventListener('legacy-tickets-move-settled', () => {
+                stopMoveToast?.();
+                stopMoveToast = null;
+            });
             window.addEventListener('legacy-tickets-moved', event => {
                 const moved = Number(event?.detail?.moved) || 0;
                 if (moved > 0) {

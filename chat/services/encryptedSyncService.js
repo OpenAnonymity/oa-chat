@@ -30,7 +30,7 @@ import {
 
 const SYNC_SALT = 'oa-sync-v1';
 const HMAC_SALT = 'oa-sync-id-v1';
-const SYNC_ACCOUNT_SCOPE_KEY = 'sync-account-scope';
+export const SYNC_ACCOUNT_SCOPE_KEY = 'sync-account-scope';
 const SYNC_ACCOUNT_SCOPE_PREFIX = 'sync-account-data:';
 const SYNC_UNCLAIMED_SCOPE_KEY = 'sync-unclaimed-data';
 const ACCOUNT_SETTINGS_KEY = 'account-settings';
@@ -291,7 +291,21 @@ export class SyncService {
         this.localScopeAccountId = accountId || null;
     }
 
+    /**
+     * A host step that must settle before the saved account picks the data
+     * scope (forgetting an account saved by the previous production client).
+     * Without it, a store could open under a scope that is about to go away
+     * and stay empty for the rest of the page. The gate must not itself wait
+     * on a scope bootstrap.
+     */
+    setLocalScopeGate(gate) {
+        this.localScopeGate = typeof gate === 'function' ? gate : null;
+    }
+
     async bootstrapLocalAccountScope() {
+        // Also when a scope is already set: a read that ran before the host
+        // configured the gate may have picked the account being forgotten.
+        if (this.localScopeGate) await this.localScopeGate();
         if (this.localScopeAccountId) {
             return this.localScopeAccountId;
         }

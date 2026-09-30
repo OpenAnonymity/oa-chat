@@ -30,7 +30,8 @@ function harness({ legacy = 3, current = 1, info = {} } = {}) {
         redeemCalls: 0,
         accountId: 'account-a',
         codes: 0,
-        events: []
+        events: [],
+        started: []
     };
     let queue = Promise.resolve();
     h.respond = tickets => ({
@@ -73,6 +74,7 @@ function harness({ legacy = 3, current = 1, info = {} } = {}) {
             }
         },
         getAccountScope: async () => h.accountId,
+        onStart: ({ tickets }) => { h.started.push(tickets); },
         redeemPending: async () => {
             h.redeemCalls += 1;
             if (h.failRedeem) throw new Error('Relay unavailable');
@@ -88,7 +90,8 @@ function harness({ legacy = 3, current = 1, info = {} } = {}) {
 test('old tickets become a saved code, leave the wallet, and the code is redeemed', async () => {
     const h = harness();
     const result = await h.transfer().run();
-    assert.deepEqual(result, { status: 'moved', moved: 3, redeemError: null });
+    assert.deepEqual(result, { status: 'moved', moved: 3, redeemed: true, redeemError: null });
+    assert.deepEqual(h.started, [3]);
     assert.deepEqual(h.held, [LEGACY_KEY]);
     assert.equal(h.submits.length, 1);
     assert.equal(h.submits[0].length, 3, 'only previous-org tickets are sent');
@@ -213,4 +216,28 @@ test('a signed-out wallet sends nothing', async () => {
     h.accountId = null;
     assert.equal((await h.transfer().run()).status, 'signed-out');
     assert.equal(h.submits.length, 0);
+});
+
+test('the host hears that a move started, with the count, before anything is sent', async () => {
+    const h = harness({ legacy: 4 });
+    h.options.onStart = ({ tickets }) => { h.events.push(`start:${tickets}`); };
+    await h.transfer().run();
+    assert.deepEqual(h.events.slice(0, 2), ['start:4', 'submit']);
+});
+
+test('nothing to move means no start signal', async () => {
+    const h = harness({ legacy: 0 });
+    await h.transfer().run();
+    assert.deepEqual(h.started, []);
+});
+
+test('a failed redeem reports redeemed: false; the next run reports redeemed: true', async () => {
+    const h = harness();
+    h.failRedeem = true;
+    const first = await h.transfer().run();
+    assert.equal(first.redeemed, false);
+    h.failRedeem = false;
+    const second = await h.transfer().run();
+    assert.equal(second.moved, 0);
+    assert.equal(second.redeemed, true);
 });

@@ -177,9 +177,15 @@ class RightPanel {
         });
     }
 
+    /** The count shown: held steady while previous-version tickets move. */
+    readTicketCount() {
+        const tickets = this.app.services.tickets;
+        return Number((tickets.getVisibleTicketCount?.() ?? tickets.getTicketCount()) || 0);
+    }
+
     initializeState() {
         // Load initial ticket count
-        this.ticketCount = this.app.services.tickets.getTicketCount();
+        this.ticketCount = this.readTicketCount();
         // Only auto-show form when no tickets if user hasn't explicitly set a preference
         if (this.ticketCount === 0 && this.invitationFormPreference === null) {
             this.showInvitationForm = true;
@@ -281,7 +287,7 @@ class RightPanel {
     }
 
     getMembershipTicketToolsSnapshot() {
-        const ticketCount = Number(this.app.services.tickets.getTicketCount?.() || 0);
+        const ticketCount = Number(this.readTicketCount() || 0);
         this.ticketCount = ticketCount;
         return Object.freeze({
             ticketCount,
@@ -470,7 +476,7 @@ class RightPanel {
         // Listen for ticket updates
         window.addEventListener('tickets-updated', () => {
             const previousTicketCount = this.ticketCount;
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
             // Only auto-show form when tickets run out if user hasn't explicitly set a preference
             if (this.ticketCount === 0 && previousTicketCount > 0 && this.invitationFormPreference === null) {
                 this.showInvitationForm = true;
@@ -778,7 +784,7 @@ class RightPanel {
 
             this.smoothProgress.stop();
             this.registrationProgress = null;
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
 
             if (this.pendingInvitationSource) {
                 const ticketCount = this.getInvitationTicketCount(invitationCode) ?? this.pendingInvitationTickets;
@@ -815,7 +821,12 @@ class RightPanel {
             this.registrationError = this.getTicketCodeRegistrationError(error);
             this.smoothProgress.stop();
             this.registrationProgress = null;
-            if (options.throwOnError) throw new Error(this.registrationError);
+            if (options.throwOnError) {
+                // Keep the org's code (e.g. TRIAL_PAUSED) for the caller.
+                const failure = new Error(this.registrationError);
+                if (typeof error?.code === 'string') failure.code = error.code;
+                throw failure;
+            }
             return null;
         } finally {
             this.isRegistering = false;
@@ -858,7 +869,7 @@ class RightPanel {
             const payload = JSON.parse(rawText);
             const result = await this.app.services.tickets.importTickets(payload);
 
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
             this.loadNextTicket();
 
             const totalAdded = result.addedActive + result.addedArchived;
@@ -981,7 +992,7 @@ class RightPanel {
 
         try {
             const result = await this.app.services.tickets.splitTickets(normalizedCount);
-            this.ticketCount = this.app.services.tickets.getTicketCount();
+            this.ticketCount = this.readTicketCount();
             this.loadNextTicket();
             const splitResult = Object.freeze({
                 code: result.code,

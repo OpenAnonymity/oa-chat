@@ -19,6 +19,7 @@ test('signed-in ticket counts are not billing-ready before encrypted sync', () =
         ticketCount: 0,
         maxShareCount: 0,
         busy: false,
+        movingTickets: 0,
         readyForAutomaticBilling: false
     });
     assert.equal('tickets' in pending, false);
@@ -53,4 +54,15 @@ test('anonymous ticket counts become billing-ready after local storage initializ
         }).readyForAutomaticBilling,
         true
     );
+});
+
+test('previous-version tickets reach extensions as a count only', () => {
+    const snapshot = toExtensionTicketSnapshot(
+        { ticketCount: 541, maxShareCount: 50, busy: true, movingTickets: 541, tickets: ['secret'] },
+        { accountId: null, isReady: true }
+    );
+    assert.equal(snapshot.movingTickets, 541);
+    assert.equal(toExtensionTicketSnapshot({ movingTickets: -3 }, {}).movingTickets, 0);
+    assert.equal(toExtensionTicketSnapshot({ movingTickets: 'x' }, {}).movingTickets, 0);
+    assert.equal('tickets' in snapshot, false);
 });

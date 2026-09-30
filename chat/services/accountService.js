@@ -31,7 +31,7 @@ import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 import sessionService from './sessionService.js';
 import storageEvents from './storageEvents.js';
-import syncService from './encryptedSyncService.js';
+import syncService, { SYNC_ACCOUNT_SCOPE_KEY as SYNC_ACCOUNT_SCOPE_SETTING } from './encryptedSyncService.js';
 import {
     createEncryptionKeyWrapper,
     createEncryptionKeyWrapperFromPrf,
@@ -693,6 +693,24 @@ export async function bootstrapDesktopOAuthSession(
     return session;
 }
 
+// Fields every account record written by this client carries (some may be
+// null). The previous production client (oa-chat origin/prod 420e4cb) wrote
+// only { accountId, credentialId, recoveryConfirmed, updatedAt }.
+const CURRENT_ACCOUNT_RECORD_FIELDS = Object.freeze([
+    'username',
+    'encryptionCredentialId',
+    'encryptionMode',
+    'googleLinked',
+    'lastOAuthProvider',
+    'oauthEmail'
+]);
+
+/** True for an account record that only the previous client could have written. */
+export function isPreviousVersionAccountRecord(settings) {
+    if (!settings || typeof settings !== 'object' || !settings.accountId) return false;
+    return !CURRENT_ACCOUNT_RECORD_FIELDS.some(field => Object.prototype.hasOwnProperty.call(settings, field));
+}
+
 class AccountService {
     constructor() {
         this.state = {
@@ -747,6 +765,10 @@ class AccountService {
         this.syncDerivationKey = null;
         this.syncIdKey = null;
         this.localAccountContinuity = false;
+        // Host policy (configure): forget accounts saved by the previous client.
+        this.releasePreviousVersionAccounts = false;
+        this.releasedPreviousVersionAccount = false;
+        this.previousVersionRelease = null;
         // Invalidates async scope activation/sync work across lock, logout,
         // account switching, and a newer initialization attempt.
         this.syncInitializationGeneration = 0;
@@ -1156,6 +1178,84 @@ class AccountService {
         });
     }
 
+    /**
+     * Host policy, set once before init(). With releasePreviousVersionAccounts
+     * an account saved by the previous production client is forgotten on first
+     * load: its accounts were not carried over to this org, so the saved record
+     * could only turn every sign-up into a failing login.
+     */
+    configure({ releasePreviousVersionAccounts } = {}) {
+        if (releasePreviousVersionAccounts !== undefined) {
+            this.releasePreviousVersionAccounts = releasePreviousVersionAccounts === true;
+            // The wallet and preferences pick their data scope from the saved
+            // account; they wait for the release so they never open under the
+            // account being forgotten.
+            syncService.setLocalScopeGate(this.releasePreviousVersionAccounts
+                ? () => this.releasePreviousVersionAccountIfNeeded()
+                : null);
+        }
+    }
+
+    /** The release check, once per page; shared by init() and the scope gate. */
+    releasePreviousVersionAccountIfNeeded() {
+        if (!this.releasePreviousVersionAccounts || !chatDB) return Promise.resolve(false);
+        if (!this.previousVersionRelease) {
+            this.previousVersionRelease = (async () => {
+                if (!chatDB.db && typeof chatDB.init === 'function') await chatDB.init();
+                const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
+                if (!settings?.accountId || !(await this.shouldReleasePreviousVersionAccount(settings))) return false;
+                await this.releasePreviousVersionAccount(settings);
+                // Something may have read the saved account for its data scope
+                // before the host configured this (a preference read at
+                // startup). Drop that scope, and let stores that opened under
+                // it reopen under the anonymous one. Not awaited: listeners may
+                // bootstrap the scope, which waits on this promise.
+                if (syncService.getLocalAccountScope() === settings.accountId) {
+                    syncService.setLocalAccountScope(null);
+                    void syncService.notifyAccountScopeChanged(null);
+                }
+                return true;
+            })().catch(error => {
+                console.warn('[AccountService] Could not forget an account saved by the previous version:', error);
+                return false;
+            });
+        }
+        return this.previousVersionRelease;
+    }
+
+    async shouldReleasePreviousVersionAccount(settings) {
+        if (!this.releasePreviousVersionAccounts || !isPreviousVersionAccountRecord(settings)) {
+            return false;
+        }
+        // Anything this client writes for an account means it has been here:
+        // an unlocked key bundle, an account data scope, or a login in flight.
+        // A read that fails keeps the account: releasing is never a guess.
+        try {
+            const [bundle, scope, loginPending] = await Promise.all([
+                chatDB.getSetting(ACCOUNT_KEY_BUNDLE),
+                chatDB.getSetting(SYNC_ACCOUNT_SCOPE_SETTING),
+                chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)
+            ]);
+            return !bundle && !scope && !loginPending;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Forget a previous-version account the way Forget saved account does,
+     * locally only: its session belonged to the previous org, so there is no
+     * server sign-out. The wallet, chats and settings stay; a new account on
+     * this browser adopts the wallet and the ticket move runs after sign-up.
+     */
+    async releasePreviousVersionAccount(settings) {
+        await this.clearPersistedMasterKey(settings.accountId);
+        await chatDB.deleteSetting(ACCOUNT_SETTINGS_KEY);
+        this.resetSavedAccountState();
+        this.releasedPreviousVersionAccount = true;
+        console.info('[AccountService] Forgot an account saved by the previous version; tickets and chats stay.');
+    }
+
     async init() {
         if (this.state.isReady) return;
         this.listenForSignOutElsewhere();
@@ -1169,6 +1269,7 @@ class AccountService {
             if (!chatDB.db && typeof chatDB.init === 'function') {
                 await chatDB.init();
             }
+            await this.releasePreviousVersionAccountIfNeeded();
             // Load account settings (accountId, credentialId, etc.)
             const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
             if (settings?.accountId) {
@@ -3155,8 +3256,8 @@ class AccountService {
         }
     }
 
-    async clearLocalAccount() {
-        await this.logout();  // Use logout instead of lock for full cleanup
+    /** Forget the saved account's identity in memory (Forget saved account). */
+    resetSavedAccountState() {
         this.cancelPendingOAuthAccount();
         this.state.accountId = null;
         this.state.username = null;
@@ -3178,6 +3279,11 @@ class AccountService {
         this.recoveryPayload = null;
         this.keyringWrappers = [];
         this.localAccountContinuity = false;
+    }
+
+    async clearLocalAccount() {
+        await this.logout();  // Use logout instead of lock for full cleanup
+        this.resetSavedAccountState();
         // Delete account settings from IndexedDB (not just set to null)
         if (chatDB) {
             await chatDB.deleteSetting(ACCOUNT_SETTINGS_KEY).catch(() => {});

@@ -75,6 +75,24 @@ class TicketClient {
         return this.ticketStore.getCount();
     }
 
+    /**
+     * The count to show. While previous-version tickets are being moved, the
+     * old ones leave the wallet before their replacements are signed; the
+     * count shown holds at its value from the start of the move so it never
+     * dips to zero (or doubles) on the way. Spending logic keeps using
+     * getTicketCount().
+     */
+    getVisibleTicketCount() {
+        const count = this.ticketStore.getCount();
+        return this.legacyMove ? Math.max(count, this.legacyMove.baseline) : count;
+    }
+
+    /** Previous-version tickets waiting to move, or being moved right now. */
+    getMovingTicketCount() {
+        if (this.legacyMove) return this.legacyMove.tickets;
+        return this.ticketStore.getHeldCount?.() || 0;
+    }
+
     getArchivedTicketCount() {
         return this.ticketStore.getArchiveCount();
     }
@@ -587,21 +605,65 @@ class TicketClient {
         return this.codeRedeemer;
     }
 
+    async fetchLegacyTransferInfo() {
+        const url = `${ORG_API_BASE}${LEGACY_TRANSFER_PATH}`;
+        const { response, data } = await networkProxy.fetchWithRetryJson(
+            url,
+            { cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' } },
+            { context: 'Ticket move status', maxAttempts: 2, timeoutMs: 10000 }
+        );
+        // An org without the transfer answers 404: nothing to move.
+        if (response.status === 404) return { enabled: false };
+        if (!response.ok) throw new Error(`Ticket move status unavailable (${response.status})`);
+        return data;
+    }
+
+    /**
+     * Learn the previous org's key before anyone signs in, so previous-version
+     * tickets are held from spending and counted as moving from the first
+     * screen after sign-up. Only a wallet that already holds tickets asks.
+     */
+    async primeLegacyTransfer() {
+        if (this.legacyTransferPrimed) return;
+        this.legacyTransferPrimed = true;
+        try {
+            await this.ticketStore.init?.();
+            if (!this.ticketStore.getCount()) {
+                // Nothing to hold yet. On the first load after a previous-
+                // version account is released, the wallet opens only after
+                // this runs; the watcher asks again when tickets appear.
+                this.legacyTransferPrimed = false;
+                return;
+            }
+            const info = await this.fetchLegacyTransferInfo();
+            const keyId = normalizeTicketKeyId(info?.key_id);
+            if (info?.enabled === true && keyId && !this.legacyTransferRun) {
+                this.ticketStore.setHeldKeyIds([keyId]);
+                this.ticketStore.emitUpdate?.();
+            }
+        } catch (error) {
+            // The move itself fetches the same status again after sign-in.
+            this.legacyTransferPrimed = false;
+            console.warn('Ticket move status could not be read yet:', error);
+        }
+    }
+
+    handleLegacyMoveStart(tickets) {
+        const count = Math.max(0, Number(tickets) || 0);
+        if (!count) return;
+        this.legacyMove = { tickets: count, baseline: this.ticketStore.getCount() };
+        if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('legacy-tickets-moving', { detail: { tickets: count } }));
+        }
+        this.ticketStore.emitUpdate?.();
+    }
+
     getLegacyTransfer() {
         if (!this.legacyTransfer) {
             const url = `${ORG_API_BASE}${LEGACY_TRANSFER_PATH}`;
             this.legacyTransfer = new LegacyTicketTransfer({
-                fetchInfo: async () => {
-                    const { response, data } = await networkProxy.fetchWithRetryJson(
-                        url,
-                        { cache: 'no-store', credentials: 'omit', headers: { Accept: 'application/json' } },
-                        { context: 'Ticket move status', maxAttempts: 2, timeoutMs: 10000 }
-                    );
-                    // An org without the transfer answers 404: nothing to move.
-                    if (response.status === 404) return { enabled: false };
-                    if (!response.ok) throw new Error(`Ticket move status unavailable (${response.status})`);
-                    return data;
-                },
+                fetchInfo: () => this.fetchLegacyTransferInfo(),
+                onStart: ({ tickets }) => this.handleLegacyMoveStart(tickets),
                 // Signed-in request: it needs the account session, so it goes
                 // through the session transport, not the relay.
                 submit: async (tickets) => {
@@ -640,17 +702,36 @@ class TicketClient {
     runLegacyTransfer() {
         if (!this.legacyTransferRun) {
             this.legacyTransferRun = (async () => {
+                let result = null;
                 try {
-                    const result = await this.getLegacyTransfer().run();
-                    if (result?.moved > 0 && typeof window !== 'undefined') {
-                        window.dispatchEvent(new CustomEvent('legacy-tickets-moved', {
-                            detail: { moved: result.moved }
-                        }));
-                    }
+                    result = await this.getLegacyTransfer().run();
                     return result;
                 } finally {
+                    const wasMoving = Boolean(this.legacyMove);
+                    this.legacyMove = null;
                     this.legacyTransferRun = null;
                     this.ticketStore.emitUpdate?.();
+                    // A move counts as done once its new tickets are in the
+                    // wallet. When the redeem fails, the saved code is redeemed
+                    // by a later run, which then announces the earlier count.
+                    let moved = 0;
+                    if (result?.redeemError) {
+                        this.unannouncedLegacyMove = (this.unannouncedLegacyMove || 0) + (Number(result.moved) || 0);
+                    } else if (result) {
+                        moved = Number(result.moved) || 0;
+                        if (result.redeemed && this.unannouncedLegacyMove) {
+                            moved += this.unannouncedLegacyMove;
+                            this.unannouncedLegacyMove = 0;
+                        }
+                    }
+                    if (typeof window !== 'undefined') {
+                        if (wasMoving) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-move-settled', { detail: { moved } }));
+                        }
+                        if (moved > 0) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-moved', { detail: { moved } }));
+                        }
+                    }
                 }
             })();
             this.ticketStore.emitUpdate?.();
@@ -688,6 +769,12 @@ class TicketClient {
      */
     startLegacyTransferWatcher() {
         if (this.legacyTransferWatcher) return;
+        void this.primeLegacyTransfer();
+        if (typeof window !== 'undefined') {
+            window.addEventListener('tickets-updated', () => {
+                if (!this.legacyTransferPrimed) void this.primeLegacyTransfer();
+            });
+        }
         const attempts = new Map();
         const check = () => {
             const account = accountService.getState();

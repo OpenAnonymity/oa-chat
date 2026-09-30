@@ -31,12 +31,13 @@ export class LegacyTicketTransfer {
         pendingStore,
         getAccountScope,
         redeemPending,
+        onStart = () => {},
         lockManager = globalThis.navigator?.locks,
         now = () => new Date().toISOString()
     }) {
         Object.assign(this, {
             fetchInfo, submit, listTickets, removeTickets, holdKeyIds,
-            pendingStore, getAccountScope, redeemPending, lockManager, now
+            pendingStore, getAccountScope, redeemPending, onStart, lockManager, now
         });
     }
 
@@ -67,6 +68,9 @@ export class LegacyTicketTransfer {
         const legacy = this.listTickets()
             .filter(ticket => ticket?.finalized_ticket && getTicketKeyId(ticket) === keyId)
             .sort((a, b) => (a.finalized_ticket < b.finalized_ticket ? -1 : a.finalized_ticket > b.finalized_ticket ? 1 : 0));
+
+        // Only a count leaves here: the host shows that a move is running.
+        if (legacy.length) this.onStart({ tickets: legacy.length });
 
         let moved = 0;
         let savedCodes = 0;
@@ -108,9 +112,11 @@ export class LegacyTicketTransfer {
         // Redeem whatever codes are waiting, including ones saved by an
         // earlier run that stopped before redeeming.
         let redeemError = null;
+        let redeemed = false;
         if (savedCodes > 0 || (await this.pendingStore.list(scope)).length > 0) {
             try {
                 await this.redeemPending();
+                redeemed = true;
             } catch (error) {
                 redeemError = error;
             }
@@ -118,6 +124,7 @@ export class LegacyTicketTransfer {
         return {
             status: stopped || (legacy.length ? 'moved' : 'none'),
             moved,
+            redeemed,
             redeemError
         };
     }
