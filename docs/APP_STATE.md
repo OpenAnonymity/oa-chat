@@ -1,5 +1,9 @@
 ## 2026-09-30: Prepare fresh zkAPI deployment and clean browser wallets
 
+- The new Oregon VM and release images are ready, but contracts and the live
+  cutover await funding. See the [deployment handoff](ZKAPI_FRESH_DEPLOYMENT_20260930.md)
+  for exact addresses, reviewed transaction plans, image hashes and remaining
+  acceptance steps. Existing canonical sites continue using their old backends.
 - The candidate `fresh-20260930` profile selects separate Mainnet and Sepolia
   services on the new AWS host. Its public pins are deployment preparation;
   contract finality and live frontend cutover are not yet verified by this entry.
