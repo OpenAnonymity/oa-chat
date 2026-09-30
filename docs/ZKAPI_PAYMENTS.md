@@ -958,3 +958,20 @@ chat funds and omits a previous deposit's fee. Expiry help uses OA's shared
 `oa-panel-help` typography in both locations, with concise private-balance expiry
 copy (the service may claim the original deposit after expiry). Normal empty-key
 status inherits OA's wording after settlement; active settlement errors stay visible.
+
+### Compact fees and retryable fee reads (2026-09-30)
+
+The fee card keeps the reserve, available ETH and a short explanation visible;
+there is no reserve disclosure. Funded quotes refresh automatically. Check again
+appears on failure, and shortfalls retain the copyable address and Check for ETH.
+Ethereum block/history reads retry one complete anchored pair before failing.
+Validation is unchanged; no signing or broadcast is automatically retried. An
+`address_fee_data` failure is a neutral pause. A successful scoped fee read clears
+only that warning, without submitting or hiding an unrelated error.
+
+Set aside is no longer offered in the withdrawal dialog. The SDK can park
+prepared withdrawals, but its atomic guard does not cover all ambiguous-history
+states or bind the clicked UI identity across tabs. Removing this action avoids
+moving an unresolved or different balance from a stale dialog. Close preserves
+the withdrawal for later. Existing parked records remain accessible in history.
+Both methods share three progress markers; Send ETH uses browser-send wording.

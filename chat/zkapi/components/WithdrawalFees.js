@@ -45,6 +45,9 @@ export async function refreshWithdrawalFees(owner, { force = false } = {}) {
         const quote = await addressFundingWallet.getWithdrawalFeeBudget(owner.withdrawMode);
         if (owner.withdrawalFees !== state || scope !== withdrawalFeeScope(owner) || !needsWithdrawalFees(owner)) return false;
         state.quote = quote;
+        // A successful read resolves only a fee-read warning, never another
+        // transaction error or an increased-fee approval requirement.
+        if (owner.outcome?.withdrawalFeeIssue === 'address_fee_data') owner.clearTransientOutcome();
     } catch {
         state.error = 'Couldn’t check the fee or available ETH. Check your connection and try again.';
     } finally {
@@ -69,20 +72,20 @@ export function renderWithdrawalFees(owner) {
         return renderFundingWei(owner, ((wei + (up ? unit - 1n : 0n)) / unit * unit).toString());
     };
     const heading = '<p class="zkapi-balance-caption">ETH for the network fee</p>';
-    const explanation = '<p class="zkapi-note">Paid by your Send ETH address, separately from your private balance.</p>';
-    if (!quote) return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee">${heading}${explanation}
+    const explanation = '<p class="zkapi-helper">Separate from your private balance. Actual fees may be lower; unused ETH stays here.</p>';
+    if (!quote) return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee">${heading}
         <p class="zkapi-helper" role="status">${state?.error || 'Checking the fee reserve and available ETH…'}</p>
         ${state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button" type="button">Check again</button>' : ''}</section>`;
     const short = BigInt(quote.shortfallWei) > 0n;
-    return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee">${heading}${explanation}
+    return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee">${heading}
         <dl class="zkapi-funding-breakdown"><div><dt>${quote.mode === 'escape' ? 'Reserve for both transactions' : 'Fee reserve to start'}</dt><dd>${amount(quote.feeReserveWei)}</dd></div>
         <div><dt>Already available</dt><dd>${amount(quote.balanceWei, false)}</dd></div></dl>
-        <details class="zkapi-note"><summary>About this reserve</summary><p>A conservative reserve, not a charge. The exact fee is calculated after preparation; unused ETH stays at this address.${quote.mode === 'escape' ? ' Finalizing later needs a second transaction. Fees may change during the wait.' : ''}</p></details>
-        <p class="zkapi-helper" role="status">${state.error ? escape(state.error) : state.loading ? 'Updating fee and balance…' : short ? `Add ${amount(quote.shortfallWei)} to continue.` : 'Enough ETH available to start.'}</p>
+        ${explanation}${quote.mode === 'escape' ? '<p class="zkapi-helper">Includes both transactions. Fees may change during the wait.</p>' : ''}
+        <p class="zkapi-helper" role="status">${state.error ? escape(state.error) : state.loading ? 'Updating fee and balance…' : short ? `Add ${amount(quote.shortfallWei)} to continue.` : 'Fee covered.'}</p>
         ${short ? `<p class="zkapi-note">Send the additional ETH on ${escape(zkapiClient.networkName())} to this fee-paying address:</p>
         <div class="zkapi-funding-address"><div class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" aria-label="Fee-paying address">${escape(quote.address)}</div>
         <button data-withdrawal-fee-copy class="zkapi-secondary-button" type="button">Copy</button></div>` : ''}
-        <button data-withdrawal-fee-refresh class="zkapi-quiet-button" type="button" ${state.loading || owner.busy ? 'disabled' : ''}>${short ? 'Check for ETH' : 'Refresh fee'}</button>
+        ${short || state.error ? `<button data-withdrawal-fee-refresh class="zkapi-quiet-button" type="button" ${state.loading || owner.busy ? 'disabled' : ''}>${short ? 'Check for ETH' : 'Check again'}</button>` : ''}
     </section>`;
 }
 

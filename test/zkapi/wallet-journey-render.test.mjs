@@ -103,7 +103,7 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         const ready = modalWith().renderWithdrawal();
         assert.match(ready, /data-step="proof" data-state="complete"/);
         assert.match(ready, /id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" >Continue in MetaMask/);
-        assert.match(ready, /id="zkapi-park-withdrawal-btn"/, "a mutual close already holds a clearance: set aside, not cancel");
+        assert.doesNotMatch(ready, /id="zkapi-park-withdrawal-btn"/, "withdrawal recovery does not offer set aside");
     } finally { Object.assign(zkapiClient, original); }
 });
 

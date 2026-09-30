@@ -231,5 +231,16 @@ test('reserved mutual withdrawal never calls dismissal Cancel', t => {
     const html = modal.renderWithdrawal();
     assert.match(html, /id="zkapi-withdraw-dismiss-btn"[^>]*>Close<\/button>/);
     assert.doesNotMatch(html, /id="zkapi-cancel-withdrawal-btn"/);
-    assert.match(html, /can no longer be cancelled or used for chat/);
+    assert.match(html, /can’t be cancelled/);
+});
+
+
+test('withdrawal recovery cannot set aside a balance even with a prepared journal', t => {
+    const modal = interruptedMutual(t);
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
+    zkapiClient.config.prepared_withdrawal.phase = 'prepared';
+    walletRuntime.runtime.preparedWithdrawal.phase = 'prepared';
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
+    walletRuntime.runtime.preparedWithdrawal.ambiguousSubmissions = [{ submissionId: 'unknown' }];
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
 });

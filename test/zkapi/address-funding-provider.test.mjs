@@ -1628,3 +1628,27 @@ test('withdrawal preflight fails closed for stale fees and the wrong network', a
     await assert.rejects(h.provider.getWithdrawalFeeBudget());
     assert.equal(h.sent.length, 0);
 });
+
+
+test('a transient fee-history read retries the anchored pair before signing once', async () => {
+    const h = harness();
+    await h.ready();
+    let reads = 0;
+    h.provider.transport = async (url, options) => {
+        if (JSON.parse(options.body).method === 'eth_feeHistory' && ++reads === 1) throw new Error('temporary read failure');
+        return h.init.transport(url, options);
+    };
+    await h.send();
+    assert.equal(reads, 2);
+    assert.equal(h.sent.length, 1);
+    assert.equal(h.calls.filter(call => call.method === 'eth_getBlockByNumber' && call.params[0] === 'latest').length, 2);
+});
+
+test('persistently invalid fee history stops after two reads without sending', async () => {
+    const h = harness();
+    await h.ready();
+    h.rpc.feeHistory = { oldestBlock: '0x0' };
+    await assert.rejects(h.send(), { addressCode: 'address_fee_data' });
+    assert.equal(h.calls.filter(call => call.method === 'eth_feeHistory').length, 2);
+    assert.equal(h.sent.length, 0);
+});

@@ -5778,3 +5778,15 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
 - Removed the misleading withdrawing readiness pill, old-key success history, and
   old deposit fee from the current fee-address explanation. Private expiry help
   uses the same OA help class in panel and dialog.
+
+## 2026-09-30: Compact withdrawal fee review
+
+- Removed the reserve disclosure and funded-state refresh button; fee polling and
+  pre-submit validation remain. Shortfalls and failed reads keep explicit retry.
+- Fee data failures retry one validated block/history pair, then pause neutrally.
+  Successful refresh clears only the marked fee-read outcome, fixing the stale
+  red warning alongside a subsequently funded quote. No automatic transaction retry.
+- Removed Set aside from the withdrawal dialog, including its click handler:
+  the SDK park guard does not atomically cover all ambiguous-history cases or
+  validate the identity shown by a stale tab. Close still preserves recovery.
+  Existing parked records stay accessible. Shared progress markers are unchanged.

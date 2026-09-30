@@ -520,17 +520,23 @@ export class AddressFundingProvider {
         if (gasLimit < 21_000n) throw fail('Invalid transaction gas limit.');
         let baseFee;
         let maxPriorityFeePerGas;
-        try {
-            const block = await this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]);
-            const blockNumber = feeQuantity(block?.number, MAX_NONCE);
-            const timestamp = feeQuantity(block?.timestamp, MAX_NONCE);
-            baseFee = feeQuantity(block?.baseFeePerGas);
-            const history = await this.rpc(ctx, 'eth_feeHistory', [hex(BigInt(LOW_FEE_HISTORY_BLOCKS)), hex(blockNumber), [LOW_FEE_REWARD_PERCENTILE]]);
-            maxPriorityFeePerGas = lowPriorityFee(history, blockNumber, baseFee);
-            const now = BigInt(Math.floor(Date.now() / 1000));
-            if (timestamp + MAX_FEE_BLOCK_AGE_SECONDS < now || timestamp > now + MAX_FEE_BLOCK_FUTURE_SECONDS) throw fail('Stale network fee history.');
-        } catch {
-            throw this.paymentFailure('address_fee_data');
+        // Retry the read pair once: an RPC replica can briefly lag the latest
+        // block. Each attempt still validates the full, anchored fee history.
+        // This never retries signing or broadcasting a transaction.
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const block = await this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]);
+                const blockNumber = feeQuantity(block?.number, MAX_NONCE);
+                const timestamp = feeQuantity(block?.timestamp, MAX_NONCE);
+                baseFee = feeQuantity(block?.baseFeePerGas);
+                const history = await this.rpc(ctx, 'eth_feeHistory', [hex(BigInt(LOW_FEE_HISTORY_BLOCKS)), hex(blockNumber), [LOW_FEE_REWARD_PERCENTILE]]);
+                maxPriorityFeePerGas = lowPriorityFee(history, blockNumber, baseFee);
+                const now = BigInt(Math.floor(Date.now() / 1000));
+                if (timestamp + MAX_FEE_BLOCK_AGE_SECONDS < now || timestamp > now + MAX_FEE_BLOCK_FUTURE_SECONDS) throw fail('Stale network fee history.');
+                break;
+            } catch {
+                if (attempt === 1) throw this.paymentFailure('address_fee_data');
+            }
         }
         // EIP-1559 bounds a full block's base-fee increase to 12.5%, with
         // a one-wei minimum. Low pricing uses recent low bids and only 25%

@@ -46,7 +46,7 @@ test('funding the displayed reserve enables readiness without starting a withdra
     const { owner, quote } = fixture(t);
     await refreshWithdrawalFees(owner);
     assert.equal(withdrawalFeeReady(owner), true);
-    assert.match(renderWithdrawalFees(owner), /Enough ETH available/);
+    assert.match(renderWithdrawalFees(owner), /Fee covered/);
     assert.doesNotMatch(renderWithdrawalFees(owner), /data-withdrawal-fee-copy/);
     quote.expiresAt = Date.now() - 1;
     assert.equal(withdrawalFeeReady(owner), false);
@@ -73,7 +73,7 @@ test('failed balance reads clear readiness even if an earlier quote had enough E
     await refreshWithdrawalFees(owner, { force: true });
     assert.equal(withdrawalFeeReady(owner), false);
     assert.match(renderWithdrawalFees(owner), /Couldn’t check/);
-    assert.doesNotMatch(renderWithdrawalFees(owner), /RPC internal details|Enough ETH/);
+    assert.doesNotMatch(renderWithdrawalFees(owner), /RPC internal details|Fee covered/);
 });
 
 test('a higher fee on click requires another review even when fully funded', async t => {
@@ -86,4 +86,20 @@ test('a higher fee on click requires another review even when fully funded', asy
     assert.match(owner.outcome.message, /Review the updated reserve/);
     await owner.submitWithdrawal();
     assert.equal(run.mock.callCount(), 1, 'a second explicit click approves the now visible reserve');
+});
+
+
+test('fresh fee reads clear a fee-read warning without replaying the withdrawal', async t => {
+    const { owner } = fixture(t);
+    const run = t.mock.method(owner, 'run', () => assert.fail('refresh must not send'));
+    owner.outcome = { withdrawalFeeIssue: 'address_fee_data', message: 'Old fee failure', tone: 'info' };
+    owner.status = 'Old fee failure'; owner.statusError = true;
+    await refreshWithdrawalFees(owner);
+    assert.equal(owner.outcome, null);
+    assert.equal(owner.statusError, false);
+    assert.equal(run.mock.callCount(), 0);
+    assert.doesNotMatch(renderWithdrawalFees(owner), /<details|<summary|About this reserve|data-withdrawal-fee-refresh/);
+    owner.outcome = { message: 'Different transaction error', tone: 'error' };
+    await refreshWithdrawalFees(owner, { force: true });
+    assert.equal(owner.outcome.message, 'Different transaction error');
 });
