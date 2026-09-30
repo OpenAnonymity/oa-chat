@@ -107,8 +107,12 @@ by default, or through opt-in Wisp) and chain observers. They are not made
 anonymous by removing a wallet connection. Funding is command-line only:
 quoting prepares local recovery data. The `config --menu` actions ask for explicit
 approval of the displayed principal, destination, and fee allowance before
-withdrawals or public returns. Its guided deposit asks once to authorize a fixed
-principal and maximum network fee before waiting for incoming ETH. A new profile
+withdrawals or public returns. Its guided deposit starts waiting for incoming ETH
+automatically, showing the receiving account balance and remaining payment. Once
+funds cover the fixed principal and required fees, it displays the principal and
+maximum network fee and asks the user to press Enter to continue with the deposit.
+That Enter authorizes only the displayed operation and fee ceiling; waiting and
+balance updates do not authorize signing. A new profile
 defaults to Mainnet and direct HTTPS. A new deposit asks for a USD amount with
 $20 as the default on Enter; `--usd` supplies that amount without the prompt.
 Saved deposits retain their fixed ETH principal without another amount prompt.
@@ -119,7 +123,9 @@ the payment instructions; signing keys, note secrets, and local credentials neve
 enter the QR. The guided deposit refreshes short-lived quotes
 and may approve them automatically only for that same network, deployment,
 funding address, private-note commitment, principal, and nonce, within the
-accepted fee ceiling. A higher ceiling requires new confirmation. Piped
+accepted fee ceiling. It requotes after Enter before signing. An insufficient
+balance resumes waiting and requires another Enter after funding; a higher fee
+ceiling requires fresh confirmation only once sufficiently funded. Piped
 installer text is never treated as consent; interactive answers come from the
 controlling terminal. Unsigned progress requires consent again after restart;
 signed progress reuses its original transaction. A reverted transaction is

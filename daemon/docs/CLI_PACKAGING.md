@@ -42,14 +42,21 @@ PATH="$HOME/.local/bin:$PATH" oa-chat serve
 
 `config` creates a missing profile with zkAPI on Mainnet and direct
 HTTPS. For a new deposit, it asks for the USD amount with $20 as the default on
-Enter, then displays the ETH quote, payment address, amount, and terminal QR.
+Enter, then displays the ETH quote, payment address, amount, receiving balance,
+and terminal QR. It immediately waits for funds, updating the balance and remaining
+payment every five seconds. Once enough ETH covers the principal and required fees,
+it asks you to press Enter to deposit within the displayed principal and fee bounds.
 `config --backend ticket` or `config --network sepolia` selects another mode or
 network; `config --usd 50` supplies a new deposit's amount without the prompt.
 Saved deposits resume their fixed ETH amount. Existing profiles show their saved
 settings and immediately check readiness. Use `config --edit` for settings or `config --menu` for wallet
-management. Deposit approval remains explicit. Configuration stops any
+management. Configuration stops any
 services it started and exits; `serve` runs the inference API. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
+
+The automatic waiting flow and model-independent setup checks described here are
+newer than published `0.4.2`. That installer still provides the release's initial
+deposit-approval prompt and model-specific setup check.
 
 Sepolia requires the matched password-capable client and companion in `0.4.1`
 or newer. The `0.4.0` companion predates the password requirement and cannot
@@ -294,17 +301,19 @@ separate state.
 
 Current source also checks private wallet state and a positive balance during
 configuration and startup without fetching model pricing or selecting a model.
-Model caps are enforced for each inference request. This change postdates the
-published `0.4.2` bundle; the release validation below describes its original
-behavior.
+Model caps are enforced for each inference request. This and the automatic
+funding wait below postdate the published `0.4.2` bundle; the release validation
+below describes its original behavior.
 
 `config` checks readiness and guides funding; `config --menu` offers withdrawals,
 public ETH returns, and Sepolia password changes. The local signer requires no
 external wallet connection. New guided deposits ask for a USD amount, defaulting
-to $20 on Enter, then show the ETH quote and terminal QR. Saved deposits retain
-their fixed ETH principal without another amount prompt. Setup asks for approval
-of the fixed principal and maximum fee before waiting for funds; automatic quote
-refreshes must remain within that consent. Withdrawals and public returns
+to $20 on Enter, then show the ETH quote, receiving balance, and terminal QR. Saved
+deposits retain their fixed ETH principal without another amount prompt. Setup
+immediately waits for funds and updates the receiving balance and shortfall every
+five seconds. Once sufficiently funded, Enter authorizes the displayed fixed
+principal and maximum fee. It requotes before signing and requires fresh consent
+if the fee ceiling increases or funding becomes insufficient. Withdrawals and public returns
 show a destination and fee quote and require approval before signing. Saved
 signed transactions recover with their original bytes and nonce.
 

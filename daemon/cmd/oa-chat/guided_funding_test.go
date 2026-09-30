@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -14,9 +15,9 @@ import (
 
 type fundingWizardUI struct {
 	bytes.Buffer
-	answers        []string
-	confirmations  []bool
-	asks, confirms int
+	answers                   []string
+	confirmations             []bool
+	asks, confirms, continues int
 }
 
 func (u *fundingWizardUI) Printf(format string, args ...any) { fmt.Fprintf(&u.Buffer, format, args...) }
@@ -33,6 +34,16 @@ func (u *fundingWizardUI) Confirm(context.Context, string) (bool, error) {
 	u.confirms++
 	if len(u.confirmations) == 0 {
 		return false, errors.New("unexpected approval request")
+	}
+	result := u.confirmations[0]
+	u.confirmations = u.confirmations[1:]
+	return result, nil
+}
+
+func (u *fundingWizardUI) Continue(context.Context, string) (bool, error) {
+	u.continues++
+	if len(u.confirmations) == 0 {
+		return false, errors.New("unexpected deposit continuation")
 	}
 	result := u.confirmations[0]
 	u.confirmations = u.confirmations[1:]
@@ -136,7 +147,7 @@ func TestGuidedFundingWaitsForMoneyThenApprovesFreshFixedQuote(t *testing.T) {
 		return q, nil
 	}
 	f.approve = func(id string) (zkapi.AddressFundingStatus, error) {
-		if id != fmt.Sprintf("%064x", 4) {
+		if id != fmt.Sprintf("%064x", 5) {
 			t.Fatal("approved a stale quote")
 		}
 		return wizardState("deposit_pending"), nil
@@ -146,10 +157,10 @@ func TestGuidedFundingWaitsForMoneyThenApprovesFreshFixedQuote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.approveCalls != 1 || f.resumeCalls != 1 || f.quoteCalls != 4 || polls != 3 || u.confirms != 1 || u.asks != 1 {
+	if f.approveCalls != 1 || f.resumeCalls != 1 || f.quoteCalls != 5 || polls != 3 || u.confirms != 0 || u.continues != 1 || u.asks != 1 {
 		t.Fatalf("unexpected flow: %+v polls=%d UI=%+v", f, polls, u)
 	}
-	for _, want := range []string{"Funding address:", "Waiting for ETH:", "Funds received.", "Deposit finalized.", "Private balance:"} {
+	for _, want := range []string{"Funding address:", "Waiting for ETH:", "Funds available.", "Deposit finalized.", "Private balance:"} {
 		if !strings.Contains(u.String(), want) {
 			t.Fatalf("missing %q", want)
 		}
@@ -163,7 +174,7 @@ func TestGuidedFundingReadyWalletDoesNotAskOrDeposit(t *testing.T) {
 	if err := guidedFunding(context.Background(), f, "", u, immediateWizardPoll); err != nil {
 		t.Fatal(err)
 	}
-	if u.asks+u.confirms+f.quoteCalls+f.approveCalls != 0 {
+	if u.asks+u.confirms+u.continues+f.quoteCalls+f.approveCalls != 0 {
 		t.Fatal("ready wallet triggered funding")
 	}
 	if !strings.Contains(u.String(), "Private balance: 0.000000001 ETH.") || strings.Contains(u.String(), "model") {
@@ -185,8 +196,8 @@ func TestGuidedFundingAmountPromptAndExplicitAmount(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newWizardFixture()
-			f.quote = func(_ int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
-				if amount != 0 || usd != test.want {
+			f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
+				if (n == 1 && (amount != 0 || usd != test.want)) || (n > 1 && (amount != 750001 || usd != 0)) {
 					t.Fatal("wrong selected deposit")
 				}
 				q := wizardQuote()
@@ -196,7 +207,7 @@ func TestGuidedFundingAmountPromptAndExplicitAmount(t *testing.T) {
 			var output bytes.Buffer
 			u := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(test.input + "no\n"))}
 			err := guidedFunding(context.Background(), f, test.explicit, u, immediateWizardPoll)
-			if err == nil || !strings.Contains(err.Error(), "declined") || f.quoteCalls != 1 || f.approveCalls+f.resumeCalls != 0 {
+			if err == nil || !strings.Contains(err.Error(), "declined") || f.quoteCalls != 2 || f.approveCalls+f.resumeCalls != 0 {
 				t.Fatal("amount selection did not stop at declined consent", err)
 			}
 			if strings.Count(output.String(), "Deposit amount in USD (network fees are extra) [20]: ") != test.prompts {
@@ -262,7 +273,7 @@ func TestGuidedFundingDeclineNeverApproves(t *testing.T) {
 	if err := guidedFunding(context.Background(), f, "2", u, immediateWizardPoll); err == nil {
 		t.Fatal("decline did not stop")
 	}
-	if f.approveCalls != 0 || f.quoteCalls != 1 {
+	if f.approveCalls != 0 || f.quoteCalls != 2 || u.confirms != 0 || u.continues != 1 {
 		t.Fatal("decline authorized funding")
 	}
 }
@@ -284,7 +295,7 @@ func TestGuidedFundingFeeIncreaseNeedsNewConsent(t *testing.T) {
 			f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
 				q := wizardQuote()
 				q.InputMicroUSD = usd
-				if n > 1 {
+				if n > 2 {
 					q.FeeReserveWei = "31000"
 					q.FeeBufferWei = "6000"
 					q.RecommendedTotalWei = "750001000031000"
@@ -292,7 +303,7 @@ func TestGuidedFundingFeeIncreaseNeedsNewConsent(t *testing.T) {
 				return q, nil
 			}
 			err := guidedFunding(context.Background(), f, "2", u, immediateWizardPoll)
-			if (err == nil) != accept || u.confirms != 2 {
+			if (err == nil) != accept || (u.confirms != 0 || u.continues != 2) {
 				t.Fatalf("wrong increased fee approval: %v", err)
 			}
 			expected := 0
@@ -302,7 +313,7 @@ func TestGuidedFundingFeeIncreaseNeedsNewConsent(t *testing.T) {
 			if f.approveCalls != expected {
 				t.Fatal("increased fee signed without approval")
 			}
-			if accept && f.quoteCalls != 3 {
+			if accept && f.quoteCalls != 4 {
 				t.Fatal("quote not refreshed after renewed consent")
 			}
 		})
@@ -352,7 +363,7 @@ func TestGuidedFundingCancellationLeavesUnsignedIntent(t *testing.T) {
 		return q, nil
 	}
 	err := guidedFunding(context.Background(), f, "2", u, func(context.Context) error { return context.Canceled })
-	if !errors.Is(err, context.Canceled) || f.approveCalls != 0 {
+	if !errors.Is(err, context.Canceled) || f.approveCalls != 0 || u.confirms+u.continues != 0 {
 		t.Fatal("cancellation authorized an unsigned deposit")
 	}
 }
@@ -364,7 +375,7 @@ func TestGuidedFundingRestartRecoversOnlySavedTransaction(t *testing.T) {
 	if err := guidedFunding(context.Background(), f, "2", u, immediateWizardPoll); err != nil {
 		t.Fatal(err)
 	}
-	if f.resumeCalls != 1 || f.quoteCalls+f.approveCalls+u.confirms+u.asks != 0 {
+	if f.resumeCalls != 1 || f.quoteCalls+f.approveCalls+u.confirms+u.continues+u.asks != 0 {
 		t.Fatal("restart created a new deposit")
 	}
 }
@@ -382,7 +393,7 @@ func TestGuidedFundingSavedUnsignedPrincipalIsPreserved(t *testing.T) {
 	if err := guidedFunding(context.Background(), f, "3", u, immediateWizardPoll); err != nil {
 		t.Fatal(err)
 	}
-	if u.asks != 0 || u.confirms != 1 {
+	if u.asks != 0 || u.confirms != 0 || u.continues != 1 {
 		t.Fatal("saved intent did not require fresh consent")
 	}
 }
@@ -457,5 +468,141 @@ func TestGuidedFundingLostResumeAndStatusRepliesDoNotRepeatRecovery(t *testing.T
 	}
 	if f.resumeCalls != 1 || f.approveCalls != 0 || reads != 3 {
 		t.Fatal("failed status read allowed another transaction recovery call")
+	}
+}
+
+// Keep quote arithmetic valid while exercising receiving-account changes.
+func wizardBalance(q zkapi.AddressPaymentQuote, balance string) zkapi.AddressPaymentQuote {
+	q.BalanceWei = balance
+	b, _ := new(big.Int).SetString(balance, 10)
+	remaining := func(total string) string {
+		n, _ := new(big.Int).SetString(total, 10)
+		n.Sub(n, b)
+		if n.Sign() < 0 {
+			n.SetInt64(0)
+		}
+		return n.String()
+	}
+	q.ShortfallWei, q.RecommendedTopUpWei = remaining(q.RequiredTotalWei), remaining(q.RecommendedTotalWei)
+	return q
+}
+
+func TestGuidedFundingPartialPaymentsAndFeesUpdateWithoutPrompting(t *testing.T) {
+	f := newWizardFixture()
+	u := &fundingWizardUI{}
+	f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
+		q := wizardQuote()
+		q.InputMicroUSD = usd
+		balance := "0"
+		if n >= 2 {
+			balance = "100000000000000"
+		}
+		if n >= 3 {
+			q.FeeReserveWei, q.FeeBufferWei = "31000", "6000"
+			q.RecommendedTotalWei = "750001000031000"
+		}
+		return wizardBalance(q, balance), nil
+	}
+	polls := 0
+	err := guidedFunding(context.Background(), f, "20", u, func(context.Context) error {
+		polls++
+		if u.continues+u.confirms+f.approveCalls != 0 {
+			t.Fatal("waiting for funds asked for consent or signed a transaction")
+		}
+		if polls == 2 {
+			return context.Canceled
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || f.quoteCalls != 3 {
+		t.Fatal("waiting did not poll automatically", err)
+	}
+	for _, want := range []string{
+		"Waiting for ETH: receiving account balance 0.000000000000000000 ETH; still needed 0.000750001000025000 ETH.",
+		"Waiting for ETH: receiving account balance 0.000100000000000000 ETH; still needed 0.000650001000025000 ETH.",
+		"?value=650001000030000", "?value=650001000031000",
+	} {
+		if !strings.Contains(u.String(), want) {
+			t.Fatalf("missing updated payment information %q", want)
+		}
+	}
+}
+
+func TestGuidedFundingBalanceDropRequiresAnotherEnter(t *testing.T) {
+	f := newWizardFixture()
+	u := &fundingWizardUI{confirmations: []bool{true, true}}
+	f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
+		q := wizardQuote()
+		q.InputMicroUSD, q.ID = usd, fmt.Sprintf("%064x", n)
+		if n == 3 {
+			// Funds disappear after the first Enter, before signing.
+			return wizardBalance(q, "0"), nil
+		}
+		return q, nil
+	}
+	f.approve = func(id string) (zkapi.AddressFundingStatus, error) {
+		if u.continues != 2 || id != fmt.Sprintf("%064x", 5) {
+			t.Fatal("old consent or a stale quote authorized the deposit")
+		}
+		return wizardState("active"), nil
+	}
+	polls := 0
+	if err := guidedFunding(context.Background(), f, "20", u, func(context.Context) error { polls++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if polls != 1 || f.approveCalls != 1 || u.confirms != 0 || !strings.Contains(u.String(), "Waiting for ETH again") {
+		t.Fatal("balance drop did not return to automatic waiting")
+	}
+}
+
+func TestGuidedFundingValidatesFreshQuoteAfterEnter(t *testing.T) {
+	for _, change := range []string{"amount", "balance arithmetic", "fee arithmetic"} {
+		t.Run(change, func(t *testing.T) {
+			f := newWizardFixture()
+			u := &fundingWizardUI{confirmations: []bool{true}}
+			f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
+				q := wizardQuote()
+				q.InputMicroUSD = usd
+				if n >= 3 {
+					switch change {
+					case "amount":
+						q.Amount++
+					case "balance arithmetic":
+						q.BalanceWei = "0" // Deliberately retain the old zero shortfall.
+					case "fee arithmetic":
+						q.FeeReserveWei = "1"
+					}
+				}
+				return q, nil
+			}
+			err := guidedFunding(context.Background(), f, "20", u, immediateWizardPoll)
+			if err == nil || f.approveCalls != 0 || u.continues != 1 || f.quoteCalls != 3 {
+				t.Fatal("post-Enter quote was not independently validated", err)
+			}
+		})
+	}
+}
+
+func TestGuidedFundingRefreshFailurePreservesVisibleBalanceWithoutApproval(t *testing.T) {
+	f := newWizardFixture()
+	u := &fundingWizardUI{}
+	f.quote = func(n int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
+		if n > 1 {
+			return zkapi.AddressPaymentQuote{}, errors.New("network unavailable")
+		}
+		q := wizardBalance(wizardQuote(), "100000000000000")
+		q.InputMicroUSD = usd
+		return q, nil
+	}
+	f.address = func() zkapi.AddressFundingStatus {
+		s := wizardState("waiting_funds")
+		s.TransactionHash = ""
+		return s
+	}
+	err := guidedFunding(context.Background(), f, "20", u, func(context.Context) error { return context.Canceled })
+	if !errors.Is(err, context.Canceled) || f.approveCalls+u.continues+u.confirms != 0 ||
+		!strings.Contains(u.String(), "receiving account balance 0.000100000000000000 ETH") ||
+		!strings.Contains(u.String(), "Could not refresh the funding quote") {
+		t.Fatal("refresh failure hid the last balance or authorized a transaction", err)
 	}
 }

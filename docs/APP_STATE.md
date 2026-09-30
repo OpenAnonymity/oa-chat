@@ -1,3 +1,36 @@
+## 2026-09-30: Wait for CLI funding before asking to deposit
+
+- Current source replaces the initial automatic-deposit yes/no question with
+  immediate polling. After the USD amount prompt ($20 on Enter), configuration
+  displays the fixed ETH principal, fee quote, receiving address and balance,
+  and terminal payment QR. It checks every five seconds and shows balance and
+  shortfall updates as funds arrive. Changed payment amounts refresh the payment
+  instructions and QR; the saved deposit's fixed principal is preserved.
+- Once the receiving address has enough ETH for the principal and required fees,
+  configuration shows the current principal and maximum fee, then asks the user
+  to press Enter to continue with the deposit. `cancel` or Ctrl+C stops without
+  discarding progress. Waiting and amount entry do not authorize a transaction;
+  Enter authorizes only the displayed operation and fee ceiling. The optional
+  recommended fee buffer does not prevent continuation when required funds are
+  already present.
+- The CLI requotes after Enter and before signing. If funds become insufficient,
+  it resumes waiting and requires Enter again after funding. A higher fee ceiling
+  requires fresh consent only when sufficiently funded. Unsigned restarts follow
+  this same flow; signed recovery retains the original transaction and nonce.
+  Confirmation reads the controlling terminal, never piped installer text.
+- Mainnet/direct defaults, model-independent wallet checks, network separation,
+  Sepolia authentication, and `serve` readiness behavior are unchanged. These
+  source changes postdate published `0.4.2`; no release is part of this change.
+  Earlier entries below remain historical validation for their named versions.
+  See the [current funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+- Validation: the complete daemon `go test -race ./...` suite and `go vet ./...`
+  pass. Funding regressions cover partial transfers, balance/QR updates without
+  consent, fresh quotes after Enter, fee increases, insufficient balances after
+  Enter, cancellation, and saved transaction recovery. Real PTY tests verify
+  that piped or queued Enter cannot authorize a deposit, while fresh Enter,
+  cancellation, EOF, Ctrl+C, and timeout behave correctly. Linux amd64
+  cross-build passes. All funding tests use fixtures; no funds were spent.
+
 ## 2026-09-30: CLI deposits and startup are independent of models
 
 - Current source removes model discovery, model-specific balance messages, and

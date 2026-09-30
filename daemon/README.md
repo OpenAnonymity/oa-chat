@@ -26,9 +26,11 @@ status and guides setup; `serve` runs the configured local inference API.
 For a custom prefix, substitute its `bin` directory in PATH. Keeping that
 directory on your shell PATH lets you use the shorter commands below.
 
-Current source makes zkAPI configuration and startup independent of model
-selection, as described below. This adjustment postdates the published `0.4.2`
-bundle, which still checks the lowest available model cap during setup.
+Current source starts watching for funding immediately and asks you to press
+Enter once funds arrive. It also makes zkAPI configuration and startup independent
+of model selection, as described below. These changes postdate the published
+`0.4.2` bundle, which asks for deposit approval before waiting and still checks
+the lowest available model cap during setup.
 
 Sepolia requires `0.4.1` or newer, which includes the matching password-capable
 client and companion. `0.4.0` predates the password gate and cannot complete
@@ -52,10 +54,14 @@ oa-chat config
 With no configuration, `config` creates the private directory using
 **zkAPI on Mainnet with direct HTTPS**. If funding is needed, it prepares a
 new deposit by asking for the USD amount; **press Enter to use $20**. It then
-displays the ETH address, payment amount, and a QR code in the terminal. No
-initial mode or network answers are needed. Network fees are extra and shown
-separately; review the quote and confirm before the CLI can deposit. It waits for incoming ETH,
-deposits within the approved amount and fee bounds, and waits for finality.
+displays the ETH address, payment amount, current receiving balance, and a QR code
+in the terminal. No initial mode or network answers are needed. Network fees are
+extra and shown separately. The CLI immediately waits for incoming ETH, checking
+every five seconds and updating the balance and remaining payment. Once enough
+ETH covers the principal and required fees, it shows the current fixed principal
+and maximum fee and asks you to **press Enter to continue with the deposit**.
+It then deposits within those bounds and waits for finality. Enter `cancel` or
+press Ctrl+C to stop while keeping saved progress.
 Temporary services it starts are stopped when configuration finishes. You then
 run `oa-chat serve` separately.
 
@@ -223,15 +229,19 @@ For source builds, use `daemon/scripts/prepare-zkapi.sh` followed by
 Run `oa-chat config` to check readiness and fund the selected network. New
 profiles use zkAPI on Mainnet without a proxy. The guided flow follows the web
 wallet's send-to-address experience: it asks for a USD deposit amount with $20
-as the default, then shows the fixed ETH principal, maximum network fee, and
-payment QR, and asks you to authorize the deposit. Send ETH to the displayed funding
-address. The wizard waits for it, deposits automatically within the approved bounds, and
-waits for finalized activation. A higher fee ceiling requires confirmation.
+as the default, then shows the fixed ETH principal, maximum network fee, payment
+QR, and current receiving balance. It starts waiting automatically and updates
+the balance and remaining payment every five seconds. Send ETH to the displayed
+funding address. Once enough ETH arrives, review the current principal and fee
+ceiling and press Enter to deposit. The wizard refreshes the quote before signing
+and waits for finalized activation. If the balance becomes insufficient, it waits
+again and requires another Enter when funded. A higher fee ceiling requires fresh
+approval once enough ETH covers the revised quote.
 It checks the private ETH balance and wallet state without fetching model
 pricing, acquiring inference access, or sending a test request.
 
 Ctrl+C keeps saved progress. Rerun `config` and check readiness to continue:
-unsigned deposits require confirmation again; signed deposits recover the same
+unsigned deposits require Enter again once sufficiently funded; signed deposits recover the same
 transaction without a new authorization or nonce. Public address ETH becomes
 private inference credit only after deposit activation. No browser extension,
 wallet connection, seed phrase, or imported private key is required.

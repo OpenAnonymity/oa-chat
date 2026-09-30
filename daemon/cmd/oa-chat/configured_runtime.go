@@ -63,6 +63,9 @@ func (p *noninteractiveSetup) Ask(context.Context, string, string) (string, erro
 func (p *noninteractiveSetup) Confirm(context.Context, string) (bool, error) {
 	return false, errors.New("funding needs your approval; run oa-chat config")
 }
+func (p *noninteractiveSetup) Continue(context.Context, string) (bool, error) {
+	return false, errors.New("funding needs your approval; run oa-chat config")
+}
 func (p *noninteractiveSetup) Printf(format string, args ...any) {
 	fmt.Fprintf(p.out, format, args...)
 }

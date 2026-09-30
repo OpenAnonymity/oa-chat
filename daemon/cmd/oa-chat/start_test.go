@@ -51,6 +51,11 @@ func (u *startTestUI) Confirm(ctx context.Context, question string) (bool, error
 	return answer == "yes", err
 }
 
+func (u *startTestUI) Continue(ctx context.Context, question string) (bool, error) {
+	answer, err := u.Ask(ctx, question, "")
+	return err == nil && answer == "", err
+}
+
 func (u *startTestUI) Printf(format string, args ...any) {
 	u.mu.Lock()
 	defer u.mu.Unlock()

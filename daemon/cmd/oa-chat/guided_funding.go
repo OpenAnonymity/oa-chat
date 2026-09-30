@@ -210,7 +210,7 @@ func showSetupDeposit(ui setupPrompter, q zkapi.AddressPaymentQuote) error {
 	if _, err := paymentRequestURI(q); err != nil {
 		return err
 	}
-	ui.Printf("\n%s\nFunding address: %s\nPrivate deposit: %s ETH\nEstimated network fee: %s ETH\nMaximum network fee: %s ETH\n", fundingNetwork(q.ChainID), q.Address, fundingUnits(q.PrincipalWei, 18), fundingUnits(q.ExpectedFeeWei, 18), fundingUnits(q.FeeReserveWei, 18))
+	ui.Printf("\n%s\nFunding address: %s\nReceiving account balance: %s ETH\nPrivate deposit: %s ETH\nEstimated network fee: %s ETH\nMaximum network fee: %s ETH\n", fundingNetwork(q.ChainID), q.Address, fundingUnits(q.BalanceWei, 18), fundingUnits(q.PrincipalWei, 18), fundingUnits(q.ExpectedFeeWei, 18), fundingUnits(q.FeeReserveWei, 18))
 	ui.Printf("Required top-up: %s ETH\nRecommended top-up including fee buffer: %s ETH\n", fundingUnits(q.ShortfallWei, 18), fundingUnits(q.RecommendedTopUpWei, 18))
 	return printSetupPaymentQR(setupUIWriter{ui}, q)
 }
@@ -222,22 +222,18 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 	if err := showSetupDeposit(ui, initial); err != nil {
 		return err
 	}
-	approved, err := ui.Confirm(ctx, "Automatically deposit this fixed amount when funds arrive, within the maximum network fee shown above?")
-	if err != nil {
-		return err
-	}
-	if !approved {
-		return errors.New("automatic deposit declined; no transaction was authorized")
-	}
-	ceiling := initial.FeeReserveWei
-	ui.Printf("Send ETH on %s to %s. Keep this command running; it checks every five seconds, deposits automatically, and waits for finality. Ctrl+C preserves progress.\n", fundingNetwork(initial.ChainID), initial.Address)
-	lastProgress, retrying := "", false
+	ui.Printf("Watching the receiving account on %s at %s; checking every five seconds. Once enough ETH arrives, press Enter to continue with the deposit. Ctrl+C preserves progress.\n", fundingNetwork(initial.ChainID), initial.Address)
+	showSetupFundingProgress(ui, initial)
+	lastProgress := initial.BalanceWei + ":" + initial.ShortfallWei
+	displayed := initial
+	approved, retrying := false, false
+	ceiling := ""
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// A fresh exact-amount quote prevents the 30-second manual approval
-		// expiry from turning into repeated prompts while the user sends ETH.
+		// Refresh the fixed principal while waiting and again after Enter so a
+		// potentially long terminal pause never approves an expired quote.
 		quote, err := service.Quote(ctx, initial.Amount, 0)
 		if err != nil {
 			// Another owner command may have advanced the journal. A failed
@@ -268,27 +264,40 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 		if !sameSetupDeposit(initial, quote) {
 			return errors.New("the saved deposit changed while waiting; stopped without approving another transaction")
 		}
-		if !setupFeeWithin(quote, ceiling) {
+		if _, err := paymentRequestURI(quote); err != nil {
+			return err
+		}
+		if quote.BalanceWei != displayed.BalanceWei || quote.RequiredTotalWei != displayed.RequiredTotalWei || quote.FeeReserveWei != displayed.FeeReserveWei {
+			ui.Printf("\nPayment information updated.\n")
 			if err := showSetupDeposit(ui, quote); err != nil {
 				return err
 			}
-			approved, err := ui.Confirm(ctx, "Network fees increased. Allow the new maximum network fee shown above for this same deposit?")
-			if err != nil {
-				return err
-			}
-			if !approved {
-				return errors.New("increased fee allowance declined; no new transaction was authorized")
-			}
-			ceiling = quote.FeeReserveWei
-			continue // Refresh after a potentially long interactive prompt.
+			displayed = quote
 		}
-		balance, ok := new(big.Int).SetString(quote.BalanceWei, 10)
-		required, valid := new(big.Int).SetString(quote.RequiredTotalWei, 10)
-		if !ok || !valid {
-			return errors.New("invalid deposit balance or required amount")
+		progress := quote.BalanceWei + ":" + quote.ShortfallWei
+		if progress != lastProgress {
+			showSetupFundingProgress(ui, quote)
+			lastProgress = progress
 		}
+		balance, _ := new(big.Int).SetString(quote.BalanceWei, 10)
+		required, _ := new(big.Int).SetString(quote.RequiredTotalWei, 10)
 		if balance.Cmp(required) >= 0 {
-			ui.Printf("Funds received. Depositing %s ETH; waiting for Ethereum finality (usually about 15 minutes).\n", fundingUnits(quote.PrincipalWei, 18))
+			if !approved || !setupFeeWithin(quote, ceiling) {
+				if approved {
+					ui.Printf("Network fees increased; review the updated maximum before continuing.\n")
+				}
+				ui.Printf("Ready to deposit %s ETH. Maximum network fee: %s ETH.\n", fundingUnits(quote.PrincipalWei, 18), fundingUnits(quote.FeeReserveWei, 18))
+				proceed, err := ui.Continue(ctx, "Press Enter to continue with this deposit, or type cancel")
+				if err != nil {
+					return err
+				}
+				if !proceed {
+					return errors.New("deposit declined; no transaction was authorized")
+				}
+				approved, ceiling = true, quote.FeeReserveWei
+				continue // Recheck identity, balance, and fees after terminal input.
+			}
+			ui.Printf("Depositing %s ETH; waiting for Ethereum finality (usually about 15 minutes).\n", fundingUnits(quote.PrincipalWei, 18))
 			state, approveErr := service.Approve(ctx, quote.ID)
 			if approveErr != nil {
 				// An HTTP error does not tell us whether signing committed.
@@ -307,15 +316,22 @@ func waitAndDeposit(ctx context.Context, service guidedFundingService, initial z
 			}
 			return finishGuidedDeposit(ctx, service, state, ui, wait)
 		}
-		progress := quote.BalanceWei + ":" + quote.ShortfallWei
-		if progress != lastProgress {
-			ui.Printf("Waiting for ETH: available %s ETH; still needed %s ETH.\n", fundingUnits(quote.BalanceWei, 18), fundingUnits(quote.ShortfallWei, 18))
-			lastProgress = progress
+		if approved {
+			ui.Printf("The receiving balance no longer covers the deposit and fees. Waiting for ETH again; press Enter again once funded.\n")
+			approved, ceiling = false, ""
 		}
 		if err := wait(ctx); err != nil {
 			return err
 		}
 	}
+}
+
+func showSetupFundingProgress(ui setupPrompter, quote zkapi.AddressPaymentQuote) {
+	if quote.ShortfallWei == "0" {
+		ui.Printf("Funds available. Receiving account balance: %s ETH.\n", fundingUnits(quote.BalanceWei, 18))
+		return
+	}
+	ui.Printf("Waiting for ETH: receiving account balance %s ETH; still needed %s ETH.\n", fundingUnits(quote.BalanceWei, 18), fundingUnits(quote.ShortfallWei, 18))
 }
 
 func sameSetupFunding(state zkapi.AddressFundingStatus, quote zkapi.AddressPaymentQuote) bool {

@@ -25,6 +25,7 @@ import (
 type setupPrompter interface {
 	Ask(context.Context, string, string) (string, error)
 	Confirm(context.Context, string) (bool, error)
+	Continue(context.Context, string) (bool, error)
 	Printf(string, ...any)
 }
 
@@ -170,6 +171,38 @@ func (p *terminalSetupPrompter) Confirm(ctx context.Context, question string) (b
 			return false, nil
 		default:
 			p.Printf("Please enter yes or no.\n")
+		}
+	}
+}
+
+// Continue accepts a fresh Enter only after the payment is ready. Discard both
+// reader lookahead and terminal input accumulated while waiting for funds so an
+// earlier keypress cannot authorize the newly displayed deposit.
+func (p *terminalSetupPrompter) Continue(ctx context.Context, question string) (bool, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if err := p.openTerminal(); err != nil {
+			return false, err
+		}
+		if p.device != nil {
+			p.input.Reset(p.device)
+			if err := flushTerminalInput(p.device.fd); err != nil {
+				return false, errors.New("could not clear pending setup input; run oa-chat config again to continue")
+			}
+		}
+		answer, err := p.Ask(ctx, question, "")
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(answer) {
+		case "":
+			return true, nil
+		case "cancel", "no", "n":
+			return false, nil
+		default:
+			p.Printf("Press Enter to continue, or type cancel.\n")
 		}
 	}
 }

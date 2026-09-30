@@ -19,13 +19,17 @@ import (
 func TestConfigureDefaultPromptsThenShowsTwentyDollarPayment(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	service := newWizardFixture()
-	service.quote = func(_ int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
-		if amount != 0 || usd != 20_000_000 {
-			t.Fatal("default config did not quote a new $20 deposit")
-		}
+	service.quote = func(call int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
 		q := wizardQuote()
-		q.InputMicroUSD, q.BalanceWei = usd, "0"
-		q.ShortfallWei, q.RecommendedTopUpWei = q.RequiredTotalWei, q.RecommendedTotalWei
+		if call == 1 {
+			if amount != 0 || usd != 20_000_000 {
+				t.Fatal("default config did not quote a new $20 deposit")
+			}
+			q.InputMicroUSD, q.BalanceWei = usd, "0"
+			q.ShortfallWei, q.RecommendedTopUpWei = q.RequiredTotalWei, q.RecommendedTotalWei
+		} else if amount != q.Amount || usd != 0 {
+			t.Fatal("funding refresh did not preserve the fixed ETH principal")
+		}
 		return q, nil
 	}
 	var output bytes.Buffer
@@ -36,10 +40,10 @@ func TestConfigureDefaultPromptsThenShowsTwentyDollarPayment(t *testing.T) {
 		}
 		return guidedFunding(ctx, service, "", prompt, immediateWizardPoll)
 	})
-	if err == nil || !strings.Contains(err.Error(), "declined") || service.quoteCalls != 1 || service.approveCalls+service.resumeCalls != 0 {
-		t.Fatal("default config did not reach payment consent without authorizing it", err)
+	if err == nil || !strings.Contains(err.Error(), "declined") || service.quoteCalls != 2 || service.approveCalls+service.resumeCalls != 0 {
+		t.Fatal("default config did not wait for funding before declining the deposit", err)
 	}
-	for _, want := range []string{"Deposit amount in USD (network fees are extra) [20]:", "Selected deposit: $20", "Funding address:", "Scan with an Ethereum wallet:", "?value=750001000030000", "config --edit", "config --menu"} {
+	for _, want := range []string{"Deposit amount in USD (network fees are extra) [20]:", "Selected deposit: $20", "Funding address:", "Scan with an Ethereum wallet:", "?value=750001000030000", "config --edit", "config --menu", "Receiving account balance: 0.000000000000000000 ETH", "Waiting for ETH: receiving account balance 0.000000000000000000 ETH", "Payment information updated.", "Funds available. Receiving account balance: 0.001000000000000000 ETH.", "Press Enter to continue with this deposit, or type cancel:"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("payment display missing %q", want)
 		}
@@ -47,7 +51,10 @@ func TestConfigureDefaultPromptsThenShowsTwentyDollarPayment(t *testing.T) {
 	if strings.Index(output.String(), "Deposit amount in USD") > strings.Index(output.String(), "Funding address:") {
 		t.Fatal("payment shown before amount selection")
 	}
-	for _, unwanted := range []string{"openai/gpt-4.1-mini", "request cap", "enough for"} {
+	if strings.Index(output.String(), "Waiting for ETH:") > strings.Index(output.String(), "Funds available.") || strings.Index(output.String(), "Funds available.") > strings.Index(output.String(), "Press Enter to continue with this deposit") {
+		t.Fatal("continuation prompt appeared before waiting and showing the funded balance")
+	}
+	for _, unwanted := range []string{"openai/gpt-4.1-mini", "request cap", "enough for", "Automatically deposit this fixed amount", "(yes/no)"} {
 		if strings.Contains(output.String(), unwanted) {
 			t.Fatalf("deposit setup described model affordability: %q", unwanted)
 		}

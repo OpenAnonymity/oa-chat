@@ -31,10 +31,15 @@ resume their fixed ETH amount. `config --network sepolia` selects test ETH;
 password with input hidden before funding; Mainnet and ticket mode are
 unaffected. Existing settings and wallet state are preserved.
 
-If funding is needed, approve the displayed principal and maximum fee, then
-send ETH on the selected network to the displayed address. Configuration waits
-for the funds, deposits automatically, waits for finality, and exits. `serve`
+Configuration immediately starts watching the receiving address and shows its
+current ETH balance and remaining payment. Send ETH on the selected network to
+the displayed address. Once enough arrives, review the fixed principal and maximum
+fee and **press Enter to continue** with the deposit. Configuration deposits,
+waits for finality, and exits. `serve`
 then runs the local inference API; missing prerequisites point back to `config`.
+
+The automatic waiting flow and model-independent setup checks are newer than
+the published `0.4.2` bundle; the installer above still provides that release.
 
 Stop the daemon before upgrading or editing configuration. Installation updates
 both binaries and preserves private state. See the

@@ -17,9 +17,10 @@ The public CLI has two commands: `config` and `serve`. Install or update the
 curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 ```
 
-The model-independent configuration and startup checks described below are in
-current source after `0.4.2`. That published bundle still checks the lowest
-available model cap during setup; it does not include this adjustment.
+The automatic funding wait and model-independent configuration and startup checks
+described below are in current source after `0.4.2`. That published bundle asks
+for deposit approval before waiting and still checks the lowest available model
+cap during setup; it does not include these adjustments.
 
 Then configure it:
 
@@ -31,8 +32,8 @@ The configuration command shows the saved status first. With no profile, it
 creates the normal private directory using **zkAPI on Mainnet
 with direct HTTPS** and walks through what is missing. For a new deposit, it asks
 for the USD amount, with **$20 as the default when you press Enter**, then
-displays the ETH payment address, amount, and terminal QR before requesting
-deposit approval. Use `config --backend ticket` for tickets or
+displays the ETH payment address, amount, current receiving balance, and terminal
+QR and immediately starts waiting for funds. Use `config --backend ticket` for tickets or
 `config --network sepolia` for test ETH. The private
 directory is `~/Library/Application Support/oa-chat` on macOS or
 `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`. Global
@@ -58,15 +59,21 @@ For zkAPI setup:
 2. **Fund if needed.** Enter a USD deposit amount or press Enter for $20.
    A new deposit accepts a positive amount without a model-specific minimum.
    Review the chosen principal, its fixed ETH amount, network, funding address,
-   and maximum network fee, then approve the automatic deposit. Send the displayed
+   and maximum network fee. The CLI starts waiting automatically. Send the displayed
    top-up in **ETH on that network**
    to the funding address, not the vault. Scan the terminal QR in a compatible
    Ethereum wallet or copy the address and amount. The recommended transfer
    includes the principal, fee allowance, and an optional fee buffer, less any
    ETH already at the funding address. Leave configuration running: it checks
-   every five seconds, refreshes fee quotes within the approved bounds, deposits when
-   enough ETH arrives, and waits for finalized activation. A higher fee ceiling
-   requires another confirmation. Unused public ETH stays at the funding address.
+   every five seconds and updates the receiving balance, shortfall, and payment
+   instructions as they change. Once enough ETH covers the principal and required
+   fees, it displays the current fixed principal and maximum fee and asks you to
+   **press Enter to continue with the deposit**. Enter `cancel` or press Ctrl+C to
+   stop. After Enter, it refreshes the quote before signing. If funds are no longer
+   sufficient, it resumes waiting and asks for Enter again once funded. A higher
+   fee ceiling requires fresh approval only after enough funds are available.
+   It deposits within the approved bounds and waits for finalized activation.
+   Unused public ETH stays at the funding address.
 3. **Run the inference service.** Configuration stops services it started and
    exits when ready. It prints the endpoint, the command for your local API key,
    and the command to serve. An existing service it reused is left running.
@@ -100,7 +107,8 @@ request. An active note cannot be topped up in place; close it before funding a
 replacement. Public ETH alone is not private inference credit.
 
 Ctrl+C preserves progress. Run `config` again to check readiness and continue.
-An unsigned deposit retains its fixed amount and asks for consent again;
+An unsigned deposit retains its fixed amount, resumes waiting immediately, and
+asks for Enter again once sufficiently funded;
 a signed deposit resumes its saved transaction without authorizing another.
 A reverted transaction or withdrawal reservation requires explicit recovery.
 Back up the complete private directory, including `funding/` and `zkapi/`;
@@ -214,9 +222,11 @@ vault does not fund a private note.
 The deposit quote separates principal, expected fees, required fee allowance,
 recommended buffer, and exact top-up. Fee quotes expire after 30 seconds;
 automatic refresh keeps the USD-selected deposit's original ETH principal
-fixed. Your terminal approval authorizes that principal and maximum fee.
-A higher fee ceiling requires a new approval. No token approval or mint is
-needed. Configuration waits for finalized activation after signing. Canceling
+fixed. Waiting and quoting do not authorize signing. Once the address holds enough
+ETH, pressing Enter at the deposit prompt authorizes only the displayed operation
+and maximum fee. A fresh quote is checked after Enter and before signing; a higher
+fee ceiling requires new approval once sufficiently funded. No token approval or
+mint is needed. Configuration waits for finalized activation after signing. Canceling
 and resuming retains the same signed bytes and nonce. Unused fee allowance
 remains at the local address.
 
