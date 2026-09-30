@@ -6,6 +6,36 @@
     <base href="/">
     <title>oa-chat</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <script data-oa-link-normalizer>
+        // Runs during parsing, before any deferred script (analytics included)
+        // can report the address, so identifiers never leave the browser in a
+        // form a tracker keeps. A conversation link is `/?c=<id>`; links made
+        // before 2026-09-30 say `?s=`, which Fathom forwards, and are rewritten
+        // (mirrors services/conversationLink.js, which the app runs again at
+        // startup). A `/tickets/<code>` path becomes `?tickets=<code>`, which
+        // the app reads the same way and which no tracker forwards.
+        (function () {
+            try {
+                const url = new URL(window.location.href);
+                let changed = false;
+                const ticketPath = url.pathname.match(/^\/tickets\/([^\/?#]+)/i);
+                if (ticketPath) {
+                    url.pathname = '/';
+                    if (!url.searchParams.has('tickets')) url.searchParams.set('tickets', decodeURIComponent(ticketPath[1]));
+                    changed = true;
+                }
+                if (url.searchParams.has('s')) {
+                    const id = url.searchParams.get('s');
+                    url.searchParams.delete('s');
+                    if (!url.searchParams.has('c')) url.searchParams.set('c', id);
+                    changed = true;
+                }
+                if (changed) window.history.replaceState(window.history.state, '', url.toString());
+            } catch (error) {
+                console.warn('Unable to normalize the page address:', error);
+            }
+        })();
+    </script>
     <script>
         (function () {
             try {
@@ -135,7 +165,9 @@
                     } catch { return false; }
                 })();
 
-                const hasSharedSession = new URLSearchParams(window.location.search).has('s');
+                // Mirrors services/conversationLink.js (`?c=`, legacy `?s=`).
+                const linkParams = new URLSearchParams(window.location.search);
+                const hasSharedSession = linkParams.has('c') || linkParams.has('s');
 
                 if (dismissed || hasTickets || hasSharedSession) {
                     document.documentElement.setAttribute('data-welcome-hidden', 'true');

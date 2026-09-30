@@ -1,4 +1,5 @@
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
+import { hasConversationParam } from '../services/conversationLink.js';
 /**
  * Welcome Panel Component
  * First-run welcome modal for new users, invite code redemption, and account creation prompt.
@@ -82,7 +83,7 @@ class WelcomePanel {
         // Don't show if user already has tickets
         if (this.app.services.tickets.getTicketCount() > 0) return false;
         // Don't show if loading a shared conversation
-        if (new URLSearchParams(window.location.search).has('s')) return false;
+        if (hasConversationParam(window.location.search)) return false;
         return true;
     }
 

@@ -1,5 +1,6 @@
 import { attachFundingDisclosures } from './FundingDisclosures.js';
 import { showSurface, hideSurface } from '../../ui/uiMotion.js';
+import { hasConversationParam } from '../../services/conversationLink.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { depositOperationId, isWalletCancellation, resetCanceledDeposit } from '../services/canceledDeposit.mjs';
 import { readWelcomeModalIntent, writeWelcomeModalIntent } from '../services/welcomeModalIntent.mjs';
@@ -64,7 +65,7 @@ export default class WelcomePanel {
         if (readWelcomeModalIntent()) return true;
         return !zkapiClient.hasNote
             && localStorage.getItem(DISMISSED_KEY) !== 'true'
-            && !new URLSearchParams(window.location.search).has('s');
+            && !hasConversationParam(window.location.search);
     }
 
     open() {

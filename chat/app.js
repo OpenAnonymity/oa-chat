@@ -45,6 +45,7 @@ import {
 import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
 import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
+import { hasConversationParam, readConversationParam, setConversationParam, deleteConversationParam, normalizeConversationAddress } from './services/conversationLink.js';
 import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
@@ -608,7 +609,7 @@ class ChatApp {
         if (!this.signInRequiredNow() || !this.accountModal) return false;
         // Conversation links are readable without signing in. This only skips
         // the automatic startup dialog; sending still uses the normal preflight.
-        if (new URLSearchParams(window.location.search).get('s')?.trim()) return false;
+        if (readConversationParam(window.location.search)?.trim()) return false;
         const state = await accountService.waitForAuthBootstrap();
         if (state?.accountId && state.status === 'unlocked') return false;
         this.accountModal.open?.();
@@ -1319,7 +1320,7 @@ class ChatApp {
             }
 
             const params = url.searchParams;
-            return params.has('tickets') || params.has('sharing') || params.has('s');
+            return params.has('tickets') || params.has('sharing') || hasConversationParam(params);
         } catch (error) {
             return false;
         }
@@ -2892,7 +2893,7 @@ class ChatApp {
             }
         });
         if (selection) this.state.currentSessionId = selection.kind === 'conversation' ? selection.sessionId : null;
-        if (!new URLSearchParams(window.location.search).has('s')) this.restoringInitialConversation = false;
+        if (!hasConversationParam(window.location.search)) this.restoringInitialConversation = false;
 
         const [
             storedModelPreference,
@@ -3102,10 +3103,14 @@ class ChatApp {
             }, 0);
         }
 
+        // A pre-rename `?s=` conversation link becomes `?c=` before anything
+        // reads or reports the address (see services/conversationLink.js).
+        normalizeConversationAddress();
+
         // Capture ticket codes from URL before session handling (cleans URL if needed)
         this.captureTicketCodeFromUrl();
 
-        // Check for session in URL (?s=sessionId)
+        // Check for session in URL (?c=sessionId)
         const finishInitialNavigation = () => {
             this.restoringInitialConversation = false;
             this.uiOptions.presentation?.renderComposer?.(this.getCurrentSession());
@@ -3216,15 +3221,14 @@ class ChatApp {
     }
 
     /**
-     * Check URL for session parameter (?s=sessionId)
+     * Check URL for session parameter (?c=sessionId; legacy ?s= still read)
      * - First checks if it's a local session by ID
      * - Then checks if it's a local session by shareId (owned shares)
      * - Then checks if it's a local session by importedFrom (imported shares)
      * - If not found locally, tries to fetch as shared session from org
      */
     async checkForUrlSession() {
-        const params = new URLSearchParams(window.location.search);
-        const sessionId = params.get('s');
+        const sessionId = readConversationParam(window.location.search);
 
         if (!sessionId) {
             // No URL params - update URL to reflect current session (if any)
@@ -3258,8 +3262,7 @@ class ChatApp {
         // Do not turn that stale local address into a remote share lookup.
         const localNavigationId = window.history.state?.oaLocalSessionId;
         if (typeof localNavigationId === 'string' && this.normalizeId(localNavigationId) === normalizedInput) {
-            const url = new URL(window.location);
-            url.searchParams.delete('s');
+            const url = deleteConversationParam(new URL(window.location));
             const navigationState = { ...window.history.state };
             delete navigationState.oaLocalSessionId;
             window.history.replaceState(navigationState, '', url);
@@ -3683,8 +3686,7 @@ class ChatApp {
         if (this.state.sessions.some(session => session.id === sessionId)) {
             navigationState.oaLocalSessionId = sessionId;
         }
-        const url = new URL(window.location);
-        url.searchParams.set('s', sessionId);
+        const url = setConversationParam(new URL(window.location), sessionId);
         window.history.replaceState(navigationState, '', url);
     }
 
@@ -3699,8 +3701,7 @@ class ChatApp {
         }
 
         // Session ID is used for both local and shared URLs
-        const url = new URL(window.location.origin + window.location.pathname);
-        url.searchParams.set('s', session.id);
+        const url = setConversationParam(new URL(window.location.origin + window.location.pathname), session.id);
 
         await navigator.clipboard.writeText(url.toString());
         this.showToast('Link copied to clipboard', 'success');

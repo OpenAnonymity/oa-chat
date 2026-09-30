@@ -1,3 +1,5 @@
+import { hasConversationParam } from './conversationLink.js';
+
 const NAVIGATION_KEY = 'oa-chat-navigation-v1';
 const LEGACY_KEY = 'oa-current-session';
 
@@ -39,7 +41,7 @@ export function readNavigationSelection(storage = tabStorage()) {
 
 export async function restoreNavigationSelection({ search = '', loadSession, storage = tabStorage() }) {
     // Explicit links retain the ordinary local/shared-link resolution path.
-    if (new URLSearchParams(search).has('s')) return null;
+    if (hasConversationParam(search)) return null;
     const selection = readNavigationSelection(storage);
     if (selection?.kind !== 'conversation') return selection;
     if (await loadSession(selection.sessionId)) return selection;
@@ -49,6 +51,6 @@ export async function restoreNavigationSelection({ search = '', loadSession, sto
 // Shared by the fast first paint and app bootstrap. Explicit links take priority
 // even when this tab last selected New Chat.
 export function isConversationRestorePending({ search = '', storage = tabStorage() } = {}) {
-    return new URLSearchParams(search).has('s') ||
+    return hasConversationParam(search) ||
         readNavigationSelection(storage)?.kind === 'conversation';
 }

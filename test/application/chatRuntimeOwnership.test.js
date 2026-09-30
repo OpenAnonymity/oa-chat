@@ -175,7 +175,7 @@ describe('production ChatApp runtime ownership', () => {
     });
     afterEach(() => { Object.assign(chatDB, databaseMethods); restore(); });
 
-    function installNavigation(url = 'http://localhost/?s=one', state = {}) {
+    function installNavigation(url = 'http://localhost/?c=one', state = {}) {
         window.location = new URL(url);
         window.history = {
             state,
@@ -189,8 +189,10 @@ describe('production ChatApp runtime ownership', () => {
     test('reload of a locally visited chat deleted in another tab never tries a share download', async () => {
         const app = appHarness();
         app.state.sessions = [{ id: 'one' }];
+        // A pre-rename `?s=` address: writing the current chat replaces it with `?c=`.
         installNavigation('http://localhost/?s=one&view=test#billing', { unrelated: true });
         app.updateUrlWithSession('one');
+        assert.equal(window.location.search, '?view=test&c=one');
         // Model a fresh startup after the IndexedDB row was removed elsewhere.
         const restored = appHarness();
         restored.state.sessions = [];
@@ -217,11 +219,11 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(window.location.search, '');
     });
 
-    for (const marker of [undefined, 'different-chat']) {
-        test(`external and legacy share links still load with marker ${marker}`, async t => {
+    for (const [marker, param] of [[undefined, 'c'], ['different-chat', 'c'], [undefined, 's'], ['different-chat', 's']]) {
+        test(`external and legacy share links (?${param}=) still load with marker ${marker}`, async t => {
             const app = appHarness();
             app.state.sessions = [];
-            installNavigation('http://localhost/?s=shared-chat', { oaLocalSessionId: marker });
+            installNavigation(`http://localhost/?${param}=shared-chat`, { oaLocalSessionId: marker });
             for (const method of ['getSession', 'findSessionByShareId', 'findSessionByImportedFrom', 'findSessionByForkedFrom']) {
                 t.mock.method(chatDB, method, async () => undefined);
             }
@@ -235,12 +237,12 @@ describe('production ChatApp runtime ownership', () => {
     test('storage errors do not get misreported as a deleted local chat', async () => {
         const app = appHarness();
         app.state.sessions = [];
-        installNavigation('http://localhost/?s=one', { oaLocalSessionId: 'one' });
+        installNavigation('http://localhost/?c=one', { oaLocalSessionId: 'one' });
         chatDB.getSession = async () => { throw new Error('IndexedDB unavailable'); };
         app.showToast = () => assert.fail('Do not report missing data when storage fails');
         app.importSharedSession = () => assert.fail('Storage failure must not become a share lookup');
         await assert.rejects(app.checkForUrlSession(), /IndexedDB unavailable/);
-        assert.equal(window.location.search, '?s=one');
+        assert.equal(window.location.search, '?c=one');
     });
 
     test('an old search result stays in the normal sidebar after opening and new activity', async () => {
@@ -1826,7 +1828,7 @@ test('shared conversation arrival skips startup sign-in but still requires sign-
         app.signInPolicy = { required: true };
         app.getPaymentMode = () => 'tickets';
         app.accountModal = { open() { opened += 1; } };
-        for (const search of ['?s=01m24-vns1h-1jeze-svet6e', '?s=shared&view=read']) {
+        for (const search of ['?c=01m24-vns1h-1jeze-svet6e', '?c=shared&view=read', '?s=01m24-vns1h-1jeze-svet6e', '?s=shared&view=read']) {
             window.location.search = search;
             assert.equal(await app.openSignInIfRequired(), false);
         }
@@ -1835,11 +1837,11 @@ test('shared conversation arrival skips startup sign-in but still requires sign-
         // This must stop before any wallet, model, or inference work.
         assert.equal(await app.preflightTurnTicketBudget({}, 'Continue this conversation'), false);
         assert.equal(opened, 1);
-        for (const search of ['', '?s=', '?s=%20', '?subject=shared']) {
+        for (const search of ['', '?c=', '?c=%20', '?s=', '?s=%20', '?subject=shared']) {
             window.location.search = search;
             assert.equal(await app.openSignInIfRequired(), true);
         }
-        assert.equal(opened, 5);
+        assert.equal(opened, 7);
     } finally {
         accountService.waitForAuthBootstrap = originalWait;
         accountService.reconcileSharedAccount = originalReconcile;
