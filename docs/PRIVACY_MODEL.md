@@ -109,11 +109,17 @@ and adds no server-side prompt queue or persistent request history. The existing
 lease lifetime and signed settlement can still delay requests needing fresh
 access by minutes. The daemon stores no chat history and creates no request-log
 files.
-Its foreground `serve` command emits operational metadata to stdout: local
-readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
-and lifecycle events. Shell redirection and service managers may retain that
-metadata. Prompts, responses, credentials, raw URLs, and private wallet/proof
-details never enter these logs. Its proof
+Its foreground `serve` command emits operational metadata to stdout: allowlisted
+inference route/method labels, HTTP status, timing, and locally numbered zkAPI
+key-session starts and settled ends. At the user's request, each settled end
+also shows the actual session charge and remaining private balance in ETH.
+Shell redirection and service managers may retain this financial and activity
+metadata. Routine companion readiness/retry and admin traffic are not printed.
+Prompts, responses, credentials, raw URLs, raw session identifiers, wallet
+secrets, and proofs never enter these logs. Session reports come from an
+authenticated loopback event feed with a bounded in-memory buffer; they add no
+remote reporting or persistent ledger. The displayed session numbers are local
+labels, not provider key identifiers. Its proof
 companion receives no prompts/responses or model IDs. The daemon reads the
 public model-tier map and provider catalog anonymously and sends only the model's reviewed coarse
 USD spending bucket to the companion. Native ETH conversion uses the verified

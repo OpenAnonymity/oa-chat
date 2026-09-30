@@ -19,12 +19,8 @@ func TestRequestLogsContainOnlyAllowlistedMetadata(t *testing.T) {
 		name, method, target, want string
 	}{
 		{"inference", http.MethodPost, "/v1/chat/completions?secret=query", "method=POST route=/v1/chat/completions"},
-		{"unknown", "SECRET-METHOD", "/private-secret?capability=query", "method=OTHER route=OTHER"},
-		{"removed funding page", http.MethodGet, "/funding/private-secret?capability=query", "method=GET route=OTHER"},
-		{"address", http.MethodGet, "/admin/funding/address?secret=query", "method=GET route=/admin/funding/address"},
-		{"quote approval", http.MethodPost, "/admin/funding/approve?secret=query", "method=POST route=/admin/funding/approve"},
-		{"public return", http.MethodPost, "/admin/return/approve?secret=query", "method=POST route=/admin/return/approve"},
-		{"withdrawal", http.MethodPost, "/admin/withdrawal?secret=query", "method=POST route=/admin/withdrawal"},
+		{"models", http.MethodGet, "/v1/models?secret=query", "method=GET route=/v1/models"},
+		{"unknown method", "SECRET-METHOD", "/v1/chat/completions?capability=query", "method=OTHER route=/v1/chat/completions"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
@@ -53,14 +49,32 @@ func TestRequestLogsContainOnlyAllowlistedMetadata(t *testing.T) {
 	}
 }
 
-func TestRequestLogsSkipHealthPolling(t *testing.T) {
-	var output bytes.Buffer
-	handler := LogRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}), log.New(&output, "", 0))
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if output.Len() != 0 {
-		t.Fatalf("health polling produced logs: %q", output.String())
+func TestRequestLogsSkipInternalAndNonInferenceRoutes(t *testing.T) {
+	for _, target := range []string{
+		"/healthz", "/admin/status", "/admin/funding/address", "/admin/funding/deposit",
+		"/admin/funding/quote", "/admin/funding/approve", "/admin/withdrawal",
+		"/admin/withdrawal/quote", "/admin/withdrawal/approve", "/admin/return",
+		"/admin/return/quote", "/admin/return/approve", "/funding/private-secret",
+		"/private-secret", "/v1/chat/completions/private-secret", "/v1/models/private-secret",
+	} {
+		for _, method := range []string{http.MethodGet, http.MethodPost, "SECRET-METHOD"} {
+			t.Run(method+target, func(t *testing.T) {
+				var output bytes.Buffer
+				handler := LogRequests(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.Header().Set("X-OA-Verification-Status", "verifier-unavailable")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = io.WriteString(w, "response-secret")
+				}), log.New(&output, "", 0))
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, httptest.NewRequest(method, target+"?secret=query", nil))
+				if output.Len() != 0 {
+					t.Fatalf("non-inference request produced logs: %q", output.String())
+				}
+				if w.Code != http.StatusForbidden || w.Body.String() != "response-secret" {
+					t.Fatal("log filtering changed the response")
+				}
+			})
+		}
 	}
 }
 

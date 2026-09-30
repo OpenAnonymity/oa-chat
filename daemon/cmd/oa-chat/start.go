@@ -429,11 +429,7 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 				return err
 			}
 		}
-		if c.Backend == "zkapi" {
-			ui.Printf("Starting the local API and zkAPI companion...\n")
-		} else {
-			ui.Printf("Starting the local API...\n")
-		}
+		ui.Printf("Starting the local API...\n")
 		done = make(chan error, 1)
 		go func() {
 			done <- runtime.serve(life, dir, c, logs)

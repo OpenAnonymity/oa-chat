@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -26,12 +25,6 @@ type readinessTicketCounter func(context.Context) (int, error)
 
 func (f readinessTicketCounter) CountContext(ctx context.Context) (int, error) { return f(ctx) }
 
-type readinessWalletReader func(context.Context) (json.RawMessage, error)
-
-func (f readinessWalletReader) WalletStatus(ctx context.Context) (json.RawMessage, error) {
-	return f(ctx)
-}
-
 func TestTicketReadinessReportsOnlyAggregateState(t *testing.T) {
 	for _, test := range []struct {
 		name  string
@@ -51,44 +44,6 @@ func TestTicketReadinessReportsOnlyAggregateState(t *testing.T) {
 					t.Fatal("wallet did not receive the bounded polling context")
 				}
 				return test.count, test.err
-			}))
-			if got := read(ctx); got != test.want {
-				t.Fatalf("readiness = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestZKReadinessAllowlistedFlagsAndRedactedFailures(t *testing.T) {
-	const unavailable = "zkAPI wallet status unavailable; retrying status"
-	for _, test := range []struct {
-		name string
-		data string
-		err  error
-		want string
-	}{
-		{name: "empty", data: `{"has_note":false,"pending_request":false}`, want: "zkAPI companion ready; no private balance loaded; run oa-chat config to add funding"},
-		{name: "loaded", data: `{"has_note":true,"pending_request":false,"balance":"secret-balance","note_id":"secret-note","private_key":"secret-key"}`, want: "zkAPI companion ready; private balance loaded"},
-		{name: "legacy optional pending", data: `{"has_note":true}`, want: "zkAPI companion ready; private balance loaded"},
-		{name: "pending", data: `{"has_note":true,"pending_request":true}`, want: "zkAPI companion ready; private wallet awaiting settlement"},
-		{name: "pending before note", data: `{"has_note":false,"pending_request":true}`, want: "zkAPI companion ready; private wallet awaiting settlement"},
-		{name: "remote error", data: `{"has_note":true}`, err: errors.New("secret-token https://secret-user:secret-password@example.test/?capability=secret"), want: "zkAPI companion unavailable or not ready; retrying status"},
-		{name: "malformed", data: `{"has_note":true,"private_key":"secret-key"`, want: unavailable},
-		{name: "missing readiness", data: `{"private_key":"secret-key"}`, want: unavailable},
-		{name: "null document", data: `null`, want: unavailable},
-		{name: "null readiness", data: `{"has_note":null}`, want: unavailable},
-		{name: "string readiness", data: `{"has_note":"secret-key"}`, want: unavailable},
-		{name: "string pending", data: `{"has_note":true,"pending_request":"secret-key"}`, want: unavailable},
-		{name: "array document", data: `["secret-key"]`, want: unavailable},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			read := zkReadiness(readinessWalletReader(func(got context.Context) (json.RawMessage, error) {
-				if got != ctx {
-					t.Fatal("wallet did not receive the bounded polling context")
-				}
-				return json.RawMessage(test.data), test.err
 			}))
 			if got := read(ctx); got != test.want {
 				t.Fatalf("readiness = %q, want %q", got, test.want)

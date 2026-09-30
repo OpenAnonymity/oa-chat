@@ -328,6 +328,20 @@ address checks, and quote preparation never authorize wallet transactions.
 Legacy ERC-20 recovery states require their matching old client and a separate
 profile; the native deployment does not migrate them.
 
+Current source also requires an updated companion for terminal session activity
+reports. Its status advertises `session_events_version: 1`; the authenticated
+local `/oa/v1/session-events` feed uses event schema `version: 1` and supplies
+key-session starts and validated signed-settlement charge/balance events. The Go daemon formats those
+amounts in ETH and suppresses routine readiness/retry chatter. An older
+companion cannot supply those reports, and the daemon warns after about a minute
+of consecutive reporting failures instead of displaying an estimated cost.
+Update both binaries even when an older companion still satisfies the inference
+bridge versions above.
+This reporting change postdates the published `0.4.2` bundle. It does not alter
+the proof assets or create a persistent financial ledger. Captured stdout now
+intentionally includes session cost and remaining private balance; Homebrew
+logs and systemd journals may retain that metadata.
+
 ## Building a release
 
 Use a clean, reviewed checkout and a fresh companion directory. Run these

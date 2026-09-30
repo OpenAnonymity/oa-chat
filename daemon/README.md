@@ -31,7 +31,9 @@ Enter once funds arrive. It also makes setup independent of models, serves local
 inference without an API key by default, and reuses ephemeral keys for a short
 window to handle related bursts of requests. zkAPI requests still queue while
 earlier inference or settlement is pending. Runtime instructions use `oa-chat`
-and hide local file paths.
+and hide local file paths. Normal service logs show inference requests and
+zkAPI key sessions, including their settled cost and remaining private balance,
+without routine companion readiness/retry messages.
 These changes postdate the published `0.4.2` bundle; the installer above still
 provides that release.
 
@@ -224,26 +226,55 @@ A saved note with pending inference settlement can still start serving; new
 requests wait for settlement automatically. A missing note or withdrawal
 reservation still needs configuration/recovery.
 
-### Foreground status and logs
+### Foreground activity and logs
 
-`oa-chat serve` writes timestamped status and operational logs to standard
-output. It shows the API address, backend, transport mode, and startup/shutdown
-events. It checks wallet readiness immediately and every five seconds, printing
-only changes: available ticket count, or zkAPI companion readiness, whether a
-private balance is loaded, and whether settlement is pending. These checks do
-not acquire inference access or spend funds; they do not establish upstream
-availability or guarantee that a balance covers a request.
+`oa-chat serve` writes timestamped activity to standard output. After startup
+instructions, normal activity shows:
 
-Requests produce start and completion lines with an allowlisted method/route,
-HTTP status, elapsed time, and an aborted indication for interrupted requests.
-Health probes are silent. Streaming output continues to flush immediately.
-Prompts, responses, headers, model names, query strings, wallet
-secrets, and raw companion/HTTP diagnostics are excluded. Command failures
-still return a nonzero exit status with a diagnostic on stderr.
+- Inference API requests on `GET /v1/models` and `POST /v1/chat/completions`,
+  with start/completion, HTTP status, elapsed time, and an aborted indication
+  when interrupted.
+- A locally numbered OpenRouter key session starting in zkAPI mode.
+- That session ending after signed settlement, with its actual ETH charge and
+  the remaining private ETH balance.
 
-For example, `oa-chat serve > oa-chat.log` captures operational output. The
-daemon does not create log files itself; shell redirection or your service
-manager can retain this activity metadata. Homebrew services use their
+For example, excluding timestamp prefixes:
+
+```text
+zkAPI OpenRouter key session 1 started
+zkAPI OpenRouter key session 1 ended (settled); cost: 0.000000028 ETH; balance remaining: 0.001121532 ETH
+```
+
+A key session may cover several requests within the configured reuse window.
+The displayed cost is the settled charge for the entire key session, not the
+key's spending cap or an estimate from one response. The reuse window ending
+does not immediately settle the key. Its final cost and balance can appear
+minutes after the last response. Streaming still flushes immediately.
+
+Routine companion startup, readiness, retry, and pending-settlement checks stay
+quiet, as do health/admin requests. Readiness and recovery continue internally.
+A companion process exiting is still a service failure; the daemon itself does
+not restart that process. An external service manager may restart the daemon.
+Missing configuration, fatal failures, and verification warnings remain visible.
+
+Session reporting requires the matching updated `oa-zkapi` binary. If reporting
+fails for 12 consecutive polls (about a minute), the CLI prints one warning to
+run `oa-chat config` and check that both binaries are up to date. A successful
+poll clears that failure count. Brief failures stay quiet; no charge is guessed.
+Events are held in a bounded local memory buffer, not an accounting ledger.
+A session recovered after restart can produce an end report without its earlier
+start, labeled `Previous zkAPI OpenRouter key session`; completed history from
+before the restart is not reconstructed. If the buffer overflows between polls,
+the CLI warns that some session history is no longer available and shows the
+retained events.
+
+Prompts, responses, headers, model names, query strings, provider keys, raw
+session identifiers, wallet secrets, proofs, and raw companion/HTTP diagnostics
+are excluded. Command failures return a nonzero exit status with a diagnostic
+on stderr. Session cost and remaining private balance are intentionally visible
+in these logs. For example, `oa-chat serve > oa-chat.log` captures this financial
+and activity metadata. The daemon does not create log files itself; shell
+redirection or your service manager can retain them. Homebrew services use their
 configured log file and systemd captures stdout in the journal.
 
 ## Connect Open WebUI

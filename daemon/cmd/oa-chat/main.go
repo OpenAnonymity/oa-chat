@@ -310,6 +310,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	var funding *zkapi.FundingHandler
 	var childDone chan error
 	var readiness func(context.Context) string
+	var sessions sessionEventReader
 	if c.Backend == "ticket" {
 		wallet, err := ticketBackend(dir, c, client)
 		if err != nil {
@@ -334,7 +335,6 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 			return err
 		}
 		if !c.ZKAPI.ExternalCompanion {
-			logger.Print("Starting zkAPI companion")
 			// Keep the local HTTPS-only bridge in both routing modes so the
 			// companion cannot follow a redirect to plaintext HTTP.
 			proxy, err := relay.StartConnectProxy(life, c.RelayURL)
@@ -367,7 +367,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 			}()
 		}
 		backend = zkInference{wallet}
-		readiness = zkReadiness(wallet)
+		sessions = wallet
 		funding, err = zkapi.NewFundingHandler(wallet, "http://"+c.Listen, filepath.Join(dir, "funding"))
 		if err != nil {
 			return err
@@ -411,7 +411,11 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	statusDone := make(chan struct{})
 	go func() {
 		defer close(statusDone)
-		monitorReadiness(life, logger, readiness, 5*time.Second)
+		if sessions != nil {
+			monitorSessions(life, logger, sessions, 5*time.Second)
+		} else {
+			monitorReadiness(life, logger, readiness, 5*time.Second)
+		}
 	}()
 	var result error
 	select {
@@ -421,7 +425,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 			result = errors.New("local API server stopped unexpectedly")
 		}
 	case <-childDone:
-		result = errors.New("zkAPI companion stopped; check its installation, proving setup, and deployment availability")
+		result = errors.New("zkAPI service stopped unexpectedly; run oa-chat config to check the installation, then restart oa-chat serve")
 	}
 	if result != nil {
 		// These lifecycle errors are fixed local messages, never raw child output.

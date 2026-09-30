@@ -561,6 +561,47 @@ flow used an owned temporary Wisp helper on the staging host through SSH.
 That helper has a four-hour runtime limit and depends on its SSH forward; the
 production relay was not changed and there was no direct-transport fallback.
 
+### Terminal session activity
+
+During normal serving, the terminal shows HTTP activity only for `/v1/models`
+and `/v1/chat/completions`, plus OpenRouter key-session starts and settled ends.
+Routine companion startup, readiness, status retries, and pending-settlement
+messages stay hidden. Those checks and recovery retries continue internally;
+they do not acquire a key or spend funds. A companion process exiting remains
+a fatal service failure rather than an automatic restart inside the daemon.
+Missing setup and fixed verification warnings are still reported.
+
+Each new key session receives a local ordinal. When its signed settlement has
+been validated and applied, the end report shows the actual charge and resulting
+private balance in ETH. Conversion uses exact integer billing units (gwei),
+not floating-point estimates. The report covers every request sharing that key;
+neither its cap nor a provider response's usage estimate is presented as the
+settled cost. The default 60-second reuse window governs eligibility to reuse a
+key, not its settlement deadline. The final end/cost line may therefore appear
+minutes after the last inference response.
+
+The matching Rust companion supplies these typed events on the authenticated
+loopback `/oa/v1/session-events` endpoint with event schema `version: 1`;
+its status advertises `session_events_version: 1`. The Go daemon polls every
+five seconds with a three-second timeout. The event buffer holds at most 128
+events in memory and includes no prompts, responses, provider keys, note
+secrets, or proofs. Normal output uses local session numbers, never raw remote
+session identifiers. This is a recent-activity feed, not a durable ledger:
+settlement recovered after a restart may appear as an end without a start, and
+completed events from an earlier process are not reconstructed. An unmatched
+settlement is labeled `Previous zkAPI OpenRouter key session`. A buffer gap
+prints `Some session history is no longer available; showing retained sessions.`
+A missing or unavailable event feed stays quiet until 12 consecutive polls
+fail (about a minute), then prints one warning to check the installation with
+`oa-chat config` and update both binaries. A successful read resets the failure
+count. This reporting failure never causes a guessed cost to be substituted.
+
+Session cost and private balance deliberately enter stdout. Terminal capture,
+shell redirection, and service-manager logs can retain that financial metadata.
+The daemon creates no separate request or accounting log file. See
+[foreground activity](../README.md#foreground-activity-and-logs) and the
+[local-client privacy boundary](../../docs/PRIVACY_MODEL.md#local-api-clients).
+
 ## Recovery and refilling
 
 The Go recovery record is under `funding/<network>/pending-deposit.json` in the

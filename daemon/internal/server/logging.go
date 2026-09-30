@@ -6,7 +6,9 @@ import (
 	"time"
 )
 
-// LogRequests reports only fixed route/method labels, response status and timing.
+// LogRequests reports only inference API activity using fixed route/method
+// labels, response status and timing. Internal status and management polling
+// stays quiet during routine operation.
 // Never add request data or arbitrary error values here: local funding URLs,
 // transport errors and companion output can contain private capabilities.
 func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
@@ -14,12 +16,12 @@ func LogRequests(next http.Handler, logger *log.Logger) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Health polling is frequent and carries no useful inference activity.
-		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+		route := logRoute(r.URL.Path)
+		if route == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		method, route := logMethod(r.Method), logRoute(r.URL.Path)
+		method := logMethod(r.Method)
 		started := time.Now()
 		response := &logResponseWriter{ResponseWriter: w}
 		returned := false
@@ -56,13 +58,10 @@ func logMethod(method string) string {
 
 func logRoute(path string) string {
 	switch path {
-	case "/healthz", "/v1/models", "/v1/chat/completions", "/admin/status",
-		"/admin/withdrawal", "/admin/withdrawal/quote", "/admin/withdrawal/approve",
-		"/admin/funding/address", "/admin/funding/deposit", "/admin/funding/quote", "/admin/funding/approve",
-		"/admin/return", "/admin/return/quote", "/admin/return/approve":
+	case "/v1/models", "/v1/chat/completions":
 		return path
 	}
-	return "OTHER"
+	return ""
 }
 
 type logResponseWriter struct {

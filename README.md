@@ -46,9 +46,14 @@ share its aggregate cap. Set `key_reuse_window_seconds` in `config.json` to 0 to
 require a fresh key per call, or an integer up to 300 to change the fixed window.
 See [key reuse configuration](daemon/README.md#ephemeral-key-reuse). zkAPI queues
 requests and still waits for lease settlement when fresh access is needed.
+Normal service output shows inference requests and zkAPI key-session starts and
+ends, with the settled session cost and remaining private balance in ETH.
+Routine companion readiness and retry messages stay quiet. See
+[foreground activity](daemon/README.md#foreground-activity-and-logs).
 
 Automatic funding waits, model-independent setup, key-free local inference,
-shorter command output, queued zkAPI requests, and bounded key reuse are newer
+shorter command output, queued zkAPI requests, bounded key reuse, and session
+activity reports are newer
 than the published `0.4.2` bundle; the installer above still provides that release.
 
 Stop the daemon before upgrading or editing configuration. Installation updates

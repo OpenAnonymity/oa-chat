@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index 7b7750c..555496d 100644
+index 7b7750c..dff648a 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -3246,6 +3246,7 @@ dependencies = [
@@ -10,7 +10,11 @@ index 7b7750c..555496d 100644
   "sha3",
   "tempfile",
   "thiserror",
-@@ -3257,6 +3258,7 @@ dependencies = [
+@@ -3254,9 +3255,11 @@ dependencies = [
+  "tower-http",
+  "tracing",
+  "tracing-subscriber 0.3.23",
++ "uuid",
   "zkapi-auth",
   "zkapi-client",
   "zkapi-core",
@@ -144,7 +148,7 @@ index 594cbe6..eefe04e 100644
              chain_id: 11155111,
              rpc_url: "https://rpc.example".to_string(),
 diff --git a/crates/zkapi-clientd/Cargo.toml b/crates/zkapi-clientd/Cargo.toml
-index c52ce9f..f9a2968 100644
+index c52ce9f..745061c 100644
 --- a/crates/zkapi-clientd/Cargo.toml
 +++ b/crates/zkapi-clientd/Cargo.toml
 @@ -11,6 +11,7 @@ path = "src/main.rs"
@@ -155,11 +159,12 @@ index c52ce9f..f9a2968 100644
  zkapi-core = { path = "../../protocol/rust/crates/zkapi-core" }
  zkapi-types = { path = "../../protocol/rust/crates/zkapi-types" }
  zkapi-auth = { path = "../zkapi-auth" }
-@@ -24,6 +25,7 @@ reqwest = { workspace = true }
+@@ -24,6 +25,8 @@ reqwest = { workspace = true }
  serde = { workspace = true }
  serde_json = { workspace = true }
  sha3 = { workspace = true }
 +sha2 = "0.10"
++uuid = { workspace = true }
  thiserror = { workspace = true }
  tokio = { workspace = true }
  tower = { workspace = true }
@@ -196,7 +201,7 @@ index ebde330..bcfc691 100644
              chain_id: 1,
              contract_address: Felt252::ZERO,
 diff --git a/crates/zkapi-clientd/src/error.rs b/crates/zkapi-clientd/src/error.rs
-index 6f82083..807bddf 100644
+index 6f82083..d60669d 100644
 --- a/crates/zkapi-clientd/src/error.rs
 +++ b/crates/zkapi-clientd/src/error.rs
 @@ -4,6 +4,14 @@ use zkapi_client::error::ClientError;
@@ -308,7 +313,7 @@ index 6952f58..cb8c9ab 100644
              .send()
              .await
 diff --git a/crates/zkapi-clientd/src/lib.rs b/crates/zkapi-clientd/src/lib.rs
-index 2cbde2c..452f232 100644
+index 2cbde2c..9c3f9ac 100644
 --- a/crates/zkapi-clientd/src/lib.rs
 +++ b/crates/zkapi-clientd/src/lib.rs
 @@ -4,6 +4,7 @@ pub mod error;
@@ -319,12 +324,14 @@ index 2cbde2c..452f232 100644
 
  pub use config::{AuthConfig, ModelDescriptor, RequestMode};
  pub use routes::{build_router, run};
-@@ -14,3 +15,5 @@ pub use service::{
+@@ -14,3 +15,7 @@ pub use service::{
      ServerAttestationSnapshot, ServerHealthSnapshot, ServerSnapshot, WalletStatus,
      WithdrawalChainStatus, WithdrawalMode, WithdrawalPlan, ZkapiConfig, CREDITS_PER_USD,
  };
 +
 +mod oa_native;
++
++mod oa_events;
 diff --git a/crates/zkapi-clientd/src/main.rs b/crates/zkapi-clientd/src/main.rs
 index 3b94253..2709888 100644
 --- a/crates/zkapi-clientd/src/main.rs
@@ -338,6 +345,245 @@ index 3b94253..2709888 100644
          protocol_version: args.protocol_version,
          chain_id: args.chain_id,
          contract_address: Felt252::from_hex(&args.contract_address)
+diff --git a/crates/zkapi-clientd/src/oa_events.rs b/crates/zkapi-clientd/src/oa_events.rs
+new file mode 100644
+index 0000000..560c947
+--- /dev/null
++++ b/crates/zkapi-clientd/src/oa_events.rs
+@@ -0,0 +1,233 @@
++//! Bounded operational accounting for the authenticated local Go bridge.
++//!
++//! This is deliberately not a durable ledger. It retains no provider keys,
++//! note identifiers, proofs, or response payloads. Only the caller of verified
++//! wallet recovery may record a settlement.
++
++use std::collections::VecDeque;
++use std::sync::Mutex;
++
++use serde::Serialize;
++use sha2::{Digest, Sha256};
++use zkapi_types::wire::RequestResponseV2;
++
++const EVENT_LIMIT: usize = 128;
++
++#[derive(Clone, Serialize)]
++pub(crate) struct SessionEvent {
++    sequence: u64,
++    kind: &'static str,
++    session_id: String,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    charge_units: Option<String>,
++    #[serde(skip_serializing_if = "Option::is_none")]
++    balance_units: Option<String>,
++}
++
++#[derive(Serialize)]
++pub(crate) struct SessionEventsSnapshot {
++    version: u32,
++    instance_id: String,
++    first_sequence: u64,
++    next_sequence: u64,
++    events: Vec<SessionEvent>,
++}
++
++pub(crate) struct SessionEvents {
++    instance_id: String,
++    queue: Mutex<EventQueue>,
++}
++
++struct EventQueue {
++    next_sequence: u64,
++    events: VecDeque<SessionEvent>,
++}
++
++impl SessionEvents {
++    pub(crate) fn new() -> Self {
++        Self {
++            instance_id: uuid::Uuid::new_v4().simple().to_string(),
++            queue: Mutex::new(EventQueue {
++                next_sequence: 1,
++                events: VecDeque::new(),
++            }),
++        }
++    }
++
++    pub(crate) fn snapshot(&self) -> SessionEventsSnapshot {
++        let queue = self
++            .queue
++            .lock()
++            .unwrap_or_else(|poison| poison.into_inner());
++        SessionEventsSnapshot {
++            version: 1,
++            instance_id: self.instance_id.clone(),
++            first_sequence: queue
++                .events
++                .front()
++                .map_or(queue.next_sequence, |event| event.sequence),
++            next_sequence: queue.next_sequence,
++            events: queue.events.iter().cloned().collect(),
++        }
++    }
++
++    pub(crate) fn started(&self, request_id: &str) {
++        self.record("started", request_id, None, None);
++    }
++
++    /// Call only after wallet.recover() has verified and installed the signed
++    /// next state, while still holding the wallet mutex. This preserves event
++    /// ordering when issuance resumes immediately after settlement.
++    pub(crate) fn settled(&self, response: &RequestResponseV2, balance: Option<u128>) {
++        let Some(balance) = balance else { return };
++        // Other authenticated request kinds can also use wallet recovery.
++        // Match only the two server-defined lease settlement payload types;
++        // no raw response text enters the feed.
++        let Ok(payload) = serde_json::from_str::<serde_json::Value>(&response.response_payload)
++        else {
++            return;
++        };
++        if !matches!(
++            payload.get("type").and_then(serde_json::Value::as_str),
++            Some("oa_org_ephemeral_lease_settlement" | "openrouter_ephemeral_lease_settlement")
++        ) {
++            return;
++        }
++        self.record(
++            "settled",
++            &response.client_request_id,
++            Some(response.charge_applied.to_string()),
++            Some(balance.to_string()),
++        );
++    }
++
++    fn record(
++        &self,
++        kind: &'static str,
++        request_id: &str,
++        charge_units: Option<String>,
++        balance_units: Option<String>,
++    ) {
++        let session_id = format!("{:x}", Sha256::digest(request_id.as_bytes()));
++        let mut queue = self
++            .queue
++            .lock()
++            .unwrap_or_else(|poison| poison.into_inner());
++        // Recovery is serialized and consumes its durable journal once. This
++        // additional bounded guard makes repeated observations idempotent and
++        // prevents a late start from following an already observed settlement.
++        if queue.events.iter().any(|event| {
++            event.session_id == session_id && (kind == "started" || event.kind == kind)
++        }) {
++            return;
++        }
++        let sequence = queue.next_sequence;
++        queue.next_sequence += 1;
++        queue.events.push_back(SessionEvent {
++            sequence,
++            kind,
++            session_id,
++            charge_units,
++            balance_units,
++        });
++        if queue.events.len() > EVENT_LIMIT {
++            queue.events.pop_front();
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    fn settled_response(id: &str, charge: u128) -> RequestResponseV2 {
++        serde_json::from_value(json!({
++            "status":"finalized", "client_request_id":id, "request_nullifier":"0x0",
++            "response_code":200,
++            "response_payload":json!({"type":"oa_org_ephemeral_lease_settlement", "secret_payload":"not exported"}).to_string(),
++            "response_hash":"0x0", "charge_applied":charge,
++            "next_commitment":{"x":"0x0","y":"0x1"}, "next_anchor":"0x1", "blind_delta_srv":"0x0",
++            "next_state_signature":{"r_x":"0x0","r_y":"0x1","s":"0x0"}
++        })).unwrap()
++    }
++
++    #[test]
++    fn session_events_order_zero_charge_dedup_and_redaction() {
++        let events = SessionEvents::new();
++        let empty = events.snapshot();
++        assert_eq!((empty.first_sequence, empty.next_sequence), (1, 1));
++        events.started("private-request-id");
++        events.started("private-request-id");
++        events.settled(&settled_response("private-request-id", 0), Some(u128::MAX));
++        events.settled(&settled_response("private-request-id", 0), Some(u128::MAX));
++        events.started("private-request-id");
++        events.started("next-session");
++        let snapshot = events.snapshot();
++        assert_eq!(snapshot.instance_id.len(), 32);
++        assert!(snapshot
++            .instance_id
++            .bytes()
++            .all(|byte| byte.is_ascii_hexdigit()));
++        assert_eq!((snapshot.first_sequence, snapshot.next_sequence), (1, 4));
++        assert_eq!(
++            snapshot
++                .events
++                .iter()
++                .map(|event| (event.sequence, event.kind))
++                .collect::<Vec<_>>(),
++            vec![(1, "started"), (2, "settled"), (3, "started")]
++        );
++        assert_eq!(snapshot.events[0].session_id, snapshot.events[1].session_id);
++        assert_eq!(snapshot.events[1].charge_units.as_deref(), Some("0"));
++        assert_eq!(
++            snapshot.events[1].balance_units.as_deref(),
++            Some(u128::MAX.to_string().as_str())
++        );
++        let output = serde_json::to_string(&snapshot).unwrap();
++        for secret in [
++            "private-request-id",
++            "secret_payload",
++            "not exported",
++            "next_anchor",
++            "response_payload",
++        ] {
++            assert!(!output.contains(secret));
++        }
++        let start = serde_json::to_value(&snapshot.events[0]).unwrap();
++        assert_eq!(start.as_object().unwrap().len(), 3);
++    }
++
++    #[test]
++    fn session_events_bounded_history_and_instance_reset() {
++        let events = SessionEvents::new();
++        for id in 0..140 {
++            events.started(&id.to_string());
++        }
++        let snapshot = events.snapshot();
++        assert_eq!(snapshot.events.len(), EVENT_LIMIT);
++        assert_eq!((snapshot.first_sequence, snapshot.next_sequence), (13, 141));
++        assert_eq!(snapshot.events.last().unwrap().sequence, 140);
++        let restarted = SessionEvents::new().snapshot();
++        assert_ne!(snapshot.instance_id, restarted.instance_id);
++        assert_eq!((restarted.first_sequence, restarted.next_sequence), (1, 1));
++    }
++
++    #[test]
++    fn session_events_skip_nonlease_and_unknown_balance() {
++        let events = SessionEvents::new();
++        let mut response = settled_response("receipt", 123);
++        events.settled(&response, None);
++        response.response_payload = "{}".into();
++        events.settled(&response, Some(456));
++        response.response_payload = "invalid".into();
++        events.settled(&response, Some(456));
++        assert!(events.snapshot().events.is_empty());
++        // Restart recovery may legitimately have no retained start event.
++        events.settled(&settled_response("receipt", 123), Some(456));
++        let event = &events.snapshot().events[0];
++        assert_eq!(event.kind, "settled");
++        assert_eq!(event.charge_units.as_deref(), Some("123"));
++        assert_eq!(event.balance_units.as_deref(), Some("456"));
++    }
++}
 diff --git a/crates/zkapi-clientd/src/oa_native.rs b/crates/zkapi-clientd/src/oa_native.rs
 new file mode 100644
 index 0000000..52b5adf
@@ -1453,7 +1699,7 @@ index 0000000..a1c8287
 +    }
 +}
 diff --git a/crates/zkapi-clientd/src/routes.rs b/crates/zkapi-clientd/src/routes.rs
-index bebd5c4..6270e31 100644
+index bebd5c4..009e9fc 100644
 --- a/crates/zkapi-clientd/src/routes.rs
 +++ b/crates/zkapi-clientd/src/routes.rs
 @@ -18,7 +18,8 @@ use std::io;
@@ -1466,7 +1712,7 @@ index bebd5c4..6270e31 100644
  use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
  use axum::response::{Html, IntoResponse, Response};
  use axum::routing::{get, post};
-@@ -50,11 +51,30 @@ struct WithdrawBody {
+@@ -50,11 +51,31 @@ struct WithdrawBody {
      destination: String,
  }
 
@@ -1488,6 +1734,7 @@ index bebd5c4..6270e31 100644
          .route("/favicon.ico", get(funding_favicon))
          .route("/health", get(healthz))
 +        .route("/oa/v1/status", get(oa_bridge_status))
++        .route("/oa/v1/session-events", get(oa_session_events))
 +        .route("/oa/v1/lease", post(oa_bridge_lease))
 +        .route("/oa/v1/billing/quote", get(oa_billing_quote))
 +        .route("/oa/v1/withdraw/status", get(oa_withdrawal_status))
@@ -1497,7 +1744,7 @@ index bebd5c4..6270e31 100644
          .route("/healthz", get(healthz))
          .route("/request", post(core_request))
          .route("/status", get(wallet_status))
-@@ -92,9 +112,82 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
+@@ -92,9 +113,89 @@ pub fn build_router(service: Arc<AuthService>) -> Router {
          .route("/zkapi/v1/inference", post(zkapi_inference))
          .route("/funding/{*path}", get(funding_asset))
          .layer(local_cors_layer())
@@ -1525,6 +1772,13 @@ index bebd5c4..6270e31 100644
 +
 +async fn oa_bridge_status(State(service): State<Arc<AuthService>>) -> Json<Value> {
 +    Json(service.oa_bridge_status())
++}
++
++async fn oa_session_events(State(service): State<Arc<AuthService>>, headers: HeaderMap) -> Response {
++    if headers.contains_key(header::ORIGIN) {
++        return StatusCode::FORBIDDEN.into_response();
++    }
++    Json(service.oa_session_events()).into_response()
 +}
 +
 +async fn oa_deposit_path(State(service): State<Arc<AuthService>>) -> Response {
@@ -1580,10 +1834,41 @@ index bebd5c4..6270e31 100644
  /// A deliberately narrow CORS policy.
  ///
  /// The funding UI is served by this same daemon, so it is same-origin and does
-@@ -703,6 +796,40 @@ fn openai_error(err: AuthError) -> Response {
+@@ -703,6 +804,71 @@ fn openai_error(err: AuthError) -> Response {
 
  #[cfg(test)]
  mod tests {
++    #[tokio::test]
++    async fn session_events_are_authenticated_browser_blocked_and_no_store() {
++        let directory = tempfile::tempdir().unwrap();
++        let service = AuthService::new(AuthConfig { state_dir: directory.path().to_path_buf(), ..Default::default() }).unwrap();
++        let router = build_router_with_token(service, Some("companion-test-token-thirty-two-characters".into()));
++        for (token, origin, expected) in [
++            (None, None, StatusCode::UNAUTHORIZED),
++            (Some("Bearer wrong"), None, StatusCode::UNAUTHORIZED),
++            (Some("Bearer companion-test-token-thirty-two-characters"), Some("http://localhost"), StatusCode::FORBIDDEN),
++            (Some("Bearer companion-test-token-thirty-two-characters"), Some("https://external.example"), StatusCode::FORBIDDEN),
++            (Some("Bearer companion-test-token-thirty-two-characters"), None, StatusCode::OK),
++        ] {
++            let mut request = axum::http::Request::builder().uri("/oa/v1/session-events");
++            if let Some(token) = token { request = request.header("Authorization", token); }
++            if let Some(origin) = origin { request = request.header("Origin", origin); }
++            let response = router.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
++            assert_eq!(response.status(), expected);
++            if expected == StatusCode::OK {
++                assert_eq!(response.headers()["cache-control"], "no-store");
++                let body = response.into_body().collect().await.unwrap().to_bytes();
++                let value: Value = serde_json::from_slice(&body).unwrap();
++                assert_eq!(value.as_object().unwrap().len(), 5);
++                assert_eq!(value["version"], 1);
++                assert_eq!(value["first_sequence"], 1);
++                assert_eq!(value["next_sequence"], 1);
++                assert!(value["events"].as_array().unwrap().is_empty());
++                assert_eq!(value["instance_id"].as_str().unwrap().len(), 32);
++            }
++        }
++    }
++
 +    #[tokio::test]
 +    async fn oa_bridge_budget_rejects_missing_unreviewed_and_extra_input_before_wallet_work() {
 +        let service = AuthService::new(AuthConfig::default()).unwrap();
@@ -1611,7 +1896,7 @@ index bebd5c4..6270e31 100644
 +    async fn oa_bridge_requires_authentication_for_every_route() {
 +        let service = AuthService::new(AuthConfig::default()).unwrap();
 +        let router = build_router_with_token(service, Some("companion-test-token-thirty-two-characters".into()));
-+        for path in ["/oa/v1/status", "/oa/v1/lease", "/oa/v1/billing/quote", "/oa/v1/deposit/path", "/oa/v1/withdraw/status", "/oa/v1/withdraw/prepare", "/oa/v1/withdraw/confirm", "/funding", "/wallet/reset", "/health"] {
++        for path in ["/oa/v1/status", "/oa/v1/session-events", "/oa/v1/lease", "/oa/v1/billing/quote", "/oa/v1/deposit/path", "/oa/v1/withdraw/status", "/oa/v1/withdraw/prepare", "/oa/v1/withdraw/confirm", "/funding", "/wallet/reset", "/health"] {
 +            let response = router.clone().oneshot(axum::http::Request::builder().uri(path).body(Body::empty()).unwrap()).await.unwrap();
 +            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 +        }
@@ -1621,7 +1906,7 @@ index bebd5c4..6270e31 100644
      use axum::body::Body;
      use axum::http::StatusCode;
      use http_body_util::BodyExt;
-@@ -738,12 +865,12 @@ mod tests {
+@@ -738,12 +904,12 @@ mod tests {
              ..Default::default()
          })
          .unwrap();
@@ -1636,7 +1921,7 @@ index bebd5c4..6270e31 100644
                      .uri("/funding")
                      .body(Body::empty())
                      .unwrap(),
-@@ -770,7 +897,7 @@ mod tests {
+@@ -770,7 +936,7 @@ mod tests {
              let stylesheet = router
                  .clone()
                  .oneshot(
@@ -1645,7 +1930,7 @@ index bebd5c4..6270e31 100644
                          .uri("/funding/styles.css")
                          .body(Body::empty())
                          .unwrap(),
-@@ -797,7 +924,7 @@ mod tests {
+@@ -797,7 +963,7 @@ mod tests {
                  let response = router
                      .clone()
                      .oneshot(
@@ -1654,7 +1939,7 @@ index bebd5c4..6270e31 100644
                              .uri(path)
                              .body(Body::empty())
                              .unwrap(),
-@@ -811,7 +938,7 @@ mod tests {
+@@ -811,7 +977,7 @@ mod tests {
              let response = router
                  .clone()
                  .oneshot(
@@ -1663,7 +1948,7 @@ index bebd5c4..6270e31 100644
                          .uri(path)
                          .body(Body::empty())
                          .unwrap(),
-@@ -831,7 +958,7 @@ mod tests {
+@@ -831,7 +997,7 @@ mod tests {
          let models = router
              .clone()
              .oneshot(
@@ -1672,7 +1957,7 @@ index bebd5c4..6270e31 100644
                      .uri("/v1/models")
                      .body(Body::empty())
                      .unwrap(),
-@@ -845,7 +972,7 @@ mod tests {
+@@ -845,7 +1011,7 @@ mod tests {
          let health = router
              .clone()
              .oneshot(
@@ -1681,7 +1966,7 @@ index bebd5c4..6270e31 100644
                      .uri("/health")
                      .body(Body::empty())
                      .unwrap(),
-@@ -857,7 +984,7 @@ mod tests {
+@@ -857,7 +1023,7 @@ mod tests {
          let settled = router
              .clone()
              .oneshot(
@@ -1690,7 +1975,7 @@ index bebd5c4..6270e31 100644
                      .method("POST")
                      .uri("/wallet/settle")
                      .body(Body::empty())
-@@ -870,7 +997,7 @@ mod tests {
+@@ -870,7 +1036,7 @@ mod tests {
          let config = router
              .clone()
              .oneshot(
@@ -1699,7 +1984,7 @@ index bebd5c4..6270e31 100644
                      .uri("/funding/config")
                      .body(Body::empty())
                      .unwrap(),
-@@ -883,7 +1010,7 @@ mod tests {
+@@ -883,7 +1049,7 @@ mod tests {
          assert_eq!(value["chain_id"], 1);
          assert_eq!(value["demo_rpc_url"], "http://127.0.0.1:48654");
          assert_eq!(value["demo_billing_token_address"], "0xabc");
@@ -1708,7 +1993,7 @@ index bebd5c4..6270e31 100644
          assert_eq!(value["suggested_deposit_amount"], 2468);
          assert!(value.get("demo_private_key").is_none());
          assert_eq!(value["demo_note_ttl_seconds"], 1234);
-@@ -892,7 +1019,7 @@ mod tests {
+@@ -892,7 +1058,7 @@ mod tests {
              let removed = router
                  .clone()
                  .oneshot(
@@ -1717,7 +2002,7 @@ index bebd5c4..6270e31 100644
                          .method("POST")
                          .uri(path)
                          .body(Body::empty())
-@@ -906,7 +1033,7 @@ mod tests {
+@@ -906,7 +1072,7 @@ mod tests {
          let withdrawal_confirm = router
              .clone()
              .oneshot(
@@ -1726,7 +2011,7 @@ index bebd5c4..6270e31 100644
                      .method("POST")
                      .uri("/wallet/withdraw/confirm")
                      .body(Body::empty())
-@@ -918,7 +1045,7 @@ mod tests {
+@@ -918,7 +1084,7 @@ mod tests {
 
          let demo = router
              .oneshot(
@@ -1736,7 +2021,7 @@ index bebd5c4..6270e31 100644
                      .body(Body::empty())
                      .unwrap(),
 diff --git a/crates/zkapi-clientd/src/service.rs b/crates/zkapi-clientd/src/service.rs
-index 6b0305d..6338b4f 100644
+index 6b0305d..b33bdbf 100644
 --- a/crates/zkapi-clientd/src/service.rs
 +++ b/crates/zkapi-clientd/src/service.rs
 @@ -35,6 +35,71 @@ use zkapi_types::wire::{
@@ -1913,7 +2198,7 @@ index 6b0305d..6338b4f 100644
  fn default_openrouter_key_source() -> String {
      "openrouter".to_string()
  }
-@@ -476,10 +604,10 @@ pub struct AuthService {
+@@ -476,10 +604,11 @@ pub struct AuthService {
      config: AuthConfig,
      wallet_mutex: Arc<Mutex<()>>,
      indexer: IndexerClient,
@@ -1922,10 +2207,11 @@ index 6b0305d..6338b4f 100644
      direct_request_mutex: Arc<tokio::sync::RwLock<()>>,
      prepared_withdrawal: tokio::sync::Mutex<Option<WithdrawalPlan>>,
 +    oa_banned_stations: Mutex<std::collections::HashSet<String>>,
++    oa_session_events: Arc<crate::oa_events::SessionEvents>,
  }
 
  impl AuthService {
-@@ -491,17 +619,191 @@ impl AuthService {
+@@ -491,17 +620,201 @@ impl AuthService {
              indexer: IndexerClient::new(config.indexer_url.clone()),
              config,
              wallet_mutex: Arc::new(Mutex::new(())),
@@ -1938,6 +2224,7 @@ index 6b0305d..6338b4f 100644
              direct_request_mutex: Arc::new(tokio::sync::RwLock::new(())),
              prepared_withdrawal: tokio::sync::Mutex::new(prepared_withdrawal),
 +            oa_banned_stations: Mutex::new(Default::default()),
++            oa_session_events: Arc::new(crate::oa_events::SessionEvents::new()),
          }))
      }
 
@@ -1946,6 +2233,7 @@ index 6b0305d..6338b4f 100644
 +    pub fn oa_bridge_status(&self) -> serde_json::Value {
 +        serde_json::json!({
 +            "bridge_version": 4,
++            "session_events_version": 1,
 +            "deployment_id": self.config.deployment_id,
 +            "contract_address": self.config.contract_address,
 +            "billing_asset": self.config.billing_asset,
@@ -1956,6 +2244,10 @@ index 6b0305d..6338b4f 100644
 +            "mode": self.config.request_mode,
 +            "require_oa_org_key_source": self.config.require_oa_org_key_source,
 +        })
++    }
++
++    pub(crate) fn oa_session_events(&self) -> crate::oa_events::SessionEventsSnapshot {
++        self.oa_session_events.snapshot()
 +    }
 +
 +    async fn oa_check_spending(&self) -> Result<(), AuthError> {
@@ -1986,6 +2278,7 @@ index 6b0305d..6338b4f 100644
 +        let mut lease = self.direct_lease.lock().await;
 +        let config = self.config.clone();
 +        let wallet_mutex = self.wallet_mutex.clone();
++        let session_events = self.oa_session_events.clone();
 +        let indexer = self.indexer.clone();
 +        let trusted_roots = self.trusted_roots();
 +        let result = spawn_blocking(move || {
@@ -2011,7 +2304,9 @@ index 6b0305d..6338b4f 100644
 +                    if existing.as_ref().is_some_and(|record| !record.complete) {
 +                        return Err(AuthError::PendingSettlement);
 +                    }
-+                    wallet.recover().await?;
++                    if let Some(response) = wallet.recover().await? {
++                        session_events.settled(&response, wallet.state().map(|state| state.current_balance));
++                    }
 +                    if wallet.get_pending_journal()?.is_some() { return Err(AuthError::PendingSettlement); }
 +                }
 +                let state = wallet.state().ok_or(AuthError::NoActiveNote)?;
@@ -2078,6 +2373,7 @@ index 6b0305d..6338b4f 100644
 +        let guard = self.ready_direct_lease(request_limit_micro_usd).await?;
 +        let lease = guard.as_ref().ok_or_else(|| AuthError::Wallet("lease disappeared".into()))?;
 +        reserve_oa_bridge_lease(&self.config.state_dir, &lease.client_request_id)?;
++        self.oa_session_events.started(&lease.client_request_id);
 +        Ok(serde_json::json!({
 +            "api_key": lease.api_key,
 +            "base_url": lease.openrouter_api_base,
@@ -2122,7 +2418,7 @@ index 6b0305d..6338b4f 100644
      pub fn default_model(&self) -> &str {
          self.config
              .models
-@@ -551,7 +853,7 @@ impl AuthService {
+@@ -551,7 +864,7 @@ impl AuthService {
              } else {
                  config.request_charge_cap
              };
@@ -2131,7 +2427,7 @@ index 6b0305d..6338b4f 100644
                  return Ok(None);
              }
              // The wallet normally removes this file after settlement. Treat
-@@ -596,6 +898,7 @@ impl AuthService {
+@@ -596,6 +909,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -2139,7 +2435,7 @@ index 6b0305d..6338b4f 100644
              if wallet.state().is_some() {
                  return Err(AuthError::InvalidInput(
                      "wallet already has an active note".to_string(),
-@@ -634,6 +937,8 @@ impl AuthService {
+@@ -634,6 +948,8 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -2148,15 +2444,28 @@ index 6b0305d..6338b4f 100644
              wallet.confirm_deposit(
                  request.secret,
                  request.note_id,
-@@ -655,6 +960,7 @@ impl AuthService {
+@@ -648,6 +964,7 @@ impl AuthService {
+     pub async fn recover(&self) -> Result<RecoverResult, AuthError> {
+         let config = self.config.clone();
+         let wallet_mutex = self.wallet_mutex.clone();
++        let session_events = self.oa_session_events.clone();
+         let trusted_roots = self.trusted_roots();
+         spawn_blocking(move || {
+             let _guard = wallet_mutex
+@@ -655,8 +972,12 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
 +            crate::oa_withdrawal::check_spending(&config, wallet.state().map(|state| state.note_id))?;
              let runtime = current_thread_runtime()?;
              let recovered = runtime.block_on(wallet.recover())?;
++            if let Some(response) = recovered.as_ref() {
++                session_events.settled(response, wallet.state().map(|state| state.current_balance));
++            }
              let request = recovered.as_ref().map(|response| {
-@@ -780,6 +1086,8 @@ impl AuthService {
+                 core_response(response, wallet.state().map(|state| state.current_balance))
+             });
+@@ -780,6 +1101,8 @@ impl AuthService {
                  .lock()
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
@@ -2165,7 +2474,7 @@ index 6b0305d..6338b4f 100644
              let state_path = config.state_dir.join("note_state.json");
              let journal_path = config.state_dir.join("pending_journal.json");
              let prepared_path = prepared_withdrawal_path(&config.state_dir);
-@@ -806,6 +1114,13 @@ impl AuthService {
+@@ -806,6 +1129,13 @@ impl AuthService {
 
      pub fn funding_config(&self) -> FundingConfig {
          FundingConfig {
@@ -2179,7 +2488,7 @@ index 6b0305d..6338b4f 100644
              contract_address: self.config.contract_address,
              chain_id: self.config.chain_id,
              indexer_url: self.config.indexer_url.clone(),
-@@ -814,7 +1129,7 @@ impl AuthService {
+@@ -814,7 +1144,7 @@ impl AuthService {
              suggested_deposit_amount: self.config.suggested_deposit_amount,
              demo_rpc_url: self.config.demo_rpc_url.clone(),
              demo_billing_token_address: self.config.demo_billing_token_address.clone(),
@@ -2188,7 +2497,7 @@ index 6b0305d..6338b4f 100644
              demo_note_ttl_seconds: self.config.demo_note_ttl_seconds,
          }
      }
-@@ -835,6 +1150,7 @@ impl AuthService {
+@@ -835,6 +1165,7 @@ impl AuthService {
          request: CoreRequest,
          session_id: Option<&str>,
      ) -> Result<CoreResponse, AuthError> {
@@ -2196,7 +2505,7 @@ index 6b0305d..6338b4f 100644
          if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
              return Err(AuthError::WithdrawalPending(format!(
                  "{} withdrawal for note {} is prepared; finish it before sending more requests",
-@@ -868,6 +1184,7 @@ impl AuthService {
+@@ -868,6 +1199,7 @@ impl AuthService {
          request: CoreRequest,
          session_id: Option<&str>,
      ) -> Result<StreamingCoreResponse, AuthError> {
@@ -2204,7 +2513,7 @@ index 6b0305d..6338b4f 100644
          if let Some(plan) = self.prepared_withdrawal.lock().await.as_ref() {
              return Err(AuthError::WithdrawalPending(format!(
                  "{} withdrawal for note {} is prepared; finish it before sending more requests",
-@@ -937,7 +1254,7 @@ impl AuthService {
+@@ -937,7 +1269,7 @@ impl AuthService {
                  // the retryable prompt-free proof remains in the wallet
                  // journal. Use it to retire or recover the authoritative
                  // server-side lease.
@@ -2213,7 +2522,7 @@ index 6b0305d..6338b4f 100644
                  let Some(lease) = self.find_direct_lease_for_withdrawal(&request).await? else {
                      tracing::warn!(
                          client_request_id = %request.client_request_id,
-@@ -1091,6 +1408,7 @@ impl AuthService {
+@@ -1091,6 +1423,7 @@ impl AuthService {
          &self,
          lease_slot: &mut Option<ActiveOpenRouterLease>,
          session_id: &str,
@@ -2221,7 +2530,7 @@ index 6b0305d..6338b4f 100644
      ) -> Result<(), AuthError> {
          if lease_slot
              .as_ref()
-@@ -1123,7 +1441,7 @@ impl AuthService {
+@@ -1123,7 +1456,7 @@ impl AuthService {
          // explicit settlement, credit exhaustion, or a key rejection.
          let _ = self.recover().await?;
          *lease_slot = Some(
@@ -2230,7 +2539,7 @@ index 6b0305d..6338b4f 100644
                  .await?,
          );
          Ok(())
-@@ -1197,7 +1515,7 @@ impl AuthService {
+@@ -1197,7 +1530,7 @@ impl AuthService {
          loop {
              let request_guard = self.direct_request_mutex.clone().read_owned().await;
              let mut lease_slot = self.direct_lease.lock().await;
@@ -2239,7 +2548,7 @@ index 6b0305d..6338b4f 100644
                  .await?;
              let lease = lease_slot
                  .as_mut()
-@@ -1208,14 +1526,15 @@ impl AuthService {
+@@ -1208,14 +1541,15 @@ impl AuthService {
                          "OA lease lost its verification evidence".to_string(),
                      )
                  })?;
@@ -2257,7 +2566,7 @@ index 6b0305d..6338b4f 100644
              }
              let client_request_id = lease.client_request_id.clone();
              let mut reserved_lease = lease.clone();
-@@ -1300,14 +1619,15 @@ impl AuthService {
+@@ -1300,14 +1634,15 @@ impl AuthService {
              let evidence = lease.verification.clone().ok_or_else(|| {
                  AuthError::KeyVerification("OA lease lost its verification evidence".to_string())
              })?;
@@ -2275,7 +2584,7 @@ index 6b0305d..6338b4f 100644
          }
          let url = format!(
              "{}{}",
-@@ -1326,8 +1646,7 @@ impl AuthService {
+@@ -1326,8 +1661,7 @@ impl AuthService {
          expires_at: u64,
      ) -> Result<reqwest::Response, AuthError> {
          for attempt in 1..=DIRECT_REMOTE_MAX_ATTEMPTS {
@@ -2285,7 +2594,7 @@ index 6b0305d..6338b4f 100644
                  .post(url)
                  .bearer_auth(api_key)
                  .header("content-type", "application/json")
-@@ -1387,21 +1706,25 @@ impl AuthService {
+@@ -1387,21 +1721,25 @@ impl AuthService {
      async fn issue_direct_openrouter_lease(
          &self,
          session_id: String,
@@ -2316,7 +2625,7 @@ index 6b0305d..6338b4f 100644
              let status = response.status();
              let body = response
                  .text()
-@@ -1412,6 +1735,13 @@ impl AuthService {
+@@ -1412,6 +1750,13 @@ impl AuthService {
                      .map_err(|error| AuthError::Serialization(error.to_string()))?;
                  let extensions: OpenRouterLeaseExtensions = serde_json::from_str(&body)
                      .map_err(|error| AuthError::Serialization(error.to_string()))?;
@@ -2330,7 +2639,7 @@ index 6b0305d..6338b4f 100644
                  if lease.api_key.is_empty() || lease.expires_at <= now_seconds() {
                      return Err(AuthError::Wallet(
                          "server returned an unusable OpenRouter lease".to_string(),
-@@ -1466,10 +1796,17 @@ impl AuthService {
+@@ -1466,10 +1811,17 @@ impl AuthService {
                      settle_after: lease.settle_after,
                      verification,
                      verified,
@@ -2348,7 +2657,7 @@ index 6b0305d..6338b4f 100644
                  if error.error_code == "stale_root" && !retried_stale_root {
                      self.clear_pending_request().await?;
                      retried_stale_root = true;
-@@ -1535,117 +1872,77 @@ impl AuthService {
+@@ -1535,117 +1887,77 @@ impl AuthService {
          api_key: &str,
          expires_at: u64,
          evidence: &OaKeyVerificationEvidence,
@@ -2511,8 +2820,9 @@ index 6b0305d..6338b4f 100644
 +            return Err(AuthError::KeyVerification("verifier response binding mismatch".into()));
 +        }
 +        oa_verifier_outage(Some(status), &result, expires_at, evidence)
-+    }
-+
+     }
+
+-    async fn prepare_direct_lease_request(&self) -> Result<ApiRequestV2, AuthError> {
 +    fn check_request_budget(&self, request: &ApiRequestV2, limit: u128) -> Result<(), AuthError> {
 +        if let Some(quote) = crate::oa_native::saved_quote(&self.config, &request.payload)? {
 +            let expected = quote.budget_units(limit)?.max(self.config.request_charge_cap);
@@ -2521,14 +2831,13 @@ index 6b0305d..6338b4f 100644
 +            }
 +        }
 +        Ok(())
-     }
-
--    async fn prepare_direct_lease_request(&self) -> Result<ApiRequestV2, AuthError> {
++    }
++
 +    async fn prepare_direct_lease_request(&self, request_limit_micro_usd: Option<u128>) -> Result<ApiRequestV2, AuthError> {
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
          let indexer = self.indexer.clone();
-@@ -1655,6 +1952,7 @@ impl AuthService {
+@@ -1655,6 +1967,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, Vec::new())?;
@@ -2536,7 +2845,7 @@ index 6b0305d..6338b4f 100644
              let authorization = serde_json::to_string(&OpenRouterLeaseAuthorization::default())
                  .map_err(|error| AuthError::Serialization(error.to_string()))?;
              if wallet.has_pending_request() {
-@@ -1663,7 +1961,7 @@ impl AuthService {
+@@ -1663,7 +1976,7 @@ impl AuthService {
                          "an older pending request has no retryable request body".to_string(),
                      )
                  })?;
@@ -2545,7 +2854,7 @@ index 6b0305d..6338b4f 100644
                      return Err(AuthError::LeasePending(
                          "a non-lease zkAPI request is still pending".to_string(),
                      ));
-@@ -1676,6 +1974,13 @@ impl AuthService {
+@@ -1676,6 +1989,13 @@ impl AuthService {
              let (active_root, siblings) = runtime.block_on(async move {
                  Ok::<_, AuthError>((indexer.root().await?, indexer.note_path(note_id).await?))
              })?;
@@ -2559,7 +2868,7 @@ index 6b0305d..6338b4f 100644
              let payload_hash = compute_payload_hash(authorization.as_bytes());
              wallet
                  .prepare_request(&authorization, payload_hash, active_root, siblings)
-@@ -1684,6 +1989,42 @@ impl AuthService {
+@@ -1684,6 +2004,42 @@ impl AuthService {
          .await
      }
 
@@ -2602,7 +2911,7 @@ index 6b0305d..6338b4f 100644
      async fn clear_pending_request(&self) -> Result<(), AuthError> {
          let config = self.config.clone();
          let wallet_mutex = self.wallet_mutex.clone();
-@@ -1693,6 +2034,7 @@ impl AuthService {
+@@ -1693,6 +2049,7 @@ impl AuthService {
                  .map_err(|error| AuthError::Wallet(error.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, Vec::new())?;
@@ -2610,7 +2919,7 @@ index 6b0305d..6338b4f 100644
              wallet.clear_pending_request()?;
              Ok(())
          })
-@@ -1703,16 +2045,15 @@ impl AuthService {
+@@ -1703,16 +2060,15 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<OpenRouterLeaseStatusResponse, AuthError> {
@@ -2630,7 +2939,7 @@ index 6b0305d..6338b4f 100644
              .json()
              .await
              .map_err(|error| AuthError::Serialization(error.to_string()))
-@@ -1722,12 +2063,10 @@ impl AuthService {
+@@ -1722,12 +2078,10 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<Option<OpenRouterLeaseStatusResponse>, AuthError> {
@@ -2645,7 +2954,7 @@ index 6b0305d..6338b4f 100644
              .send()
              .await
              .map_err(|error| AuthError::Wallet(error.to_string()))?;
-@@ -1736,7 +2075,7 @@ impl AuthService {
+@@ -1736,7 +2090,7 @@ impl AuthService {
          }
          let response = response
              .error_for_status()
@@ -2654,7 +2963,7 @@ index 6b0305d..6338b4f 100644
          response
              .json()
              .await
-@@ -1748,16 +2087,15 @@ impl AuthService {
+@@ -1748,16 +2102,15 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<RecoveryResponseV2, AuthError> {
@@ -2674,7 +2983,7 @@ index 6b0305d..6338b4f 100644
              .json()
              .await
              .map_err(|error| AuthError::Serialization(error.to_string()))
-@@ -1767,17 +2105,16 @@ impl AuthService {
+@@ -1767,17 +2120,16 @@ impl AuthService {
          &self,
          nullifier: &Felt252,
      ) -> Result<RecoveryResponseV2, AuthError> {
@@ -2695,7 +3004,7 @@ index 6b0305d..6338b4f 100644
              .json()
              .await
              .map_err(|error| AuthError::Serialization(error.to_string()))
-@@ -1787,7 +2124,7 @@ impl AuthService {
+@@ -1787,7 +2139,7 @@ impl AuthService {
          &self,
          client_request_id: &str,
      ) -> Result<(), AuthError> {
@@ -2704,7 +3013,7 @@ index 6b0305d..6338b4f 100644
          if request.client_request_id != client_request_id {
              return Err(AuthError::LeasePending(
                  "pending proof does not match the rejected OpenRouter lease".to_string(),
-@@ -1795,16 +2132,15 @@ impl AuthService {
+@@ -1795,16 +2147,15 @@ impl AuthService {
          }
          let deadline = Instant::now() + DIRECT_LEASE_RETIRE_MAX_WAIT;
          let status = loop {
@@ -2724,7 +3033,15 @@ index 6b0305d..6338b4f 100644
              let http_status = response.status();
              let body = response
                  .text()
-@@ -1911,6 +2247,7 @@ impl AuthService {
+@@ -1903,6 +2254,7 @@ impl AuthService {
+         self.ensure_scheme_agreement().await?;
+         let config = self.config.clone();
+         let wallet_mutex = self.wallet_mutex.clone();
++        let session_events = self.oa_session_events.clone();
+         let indexer = self.indexer.clone();
+         let trusted_roots = self.trusted_roots();
+         spawn_blocking(move || {
+@@ -1911,6 +2263,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let mut wallet = load_wallet(&config, trusted_roots)?;
@@ -2732,7 +3049,18 @@ index 6b0305d..6338b4f 100644
              let payload = serde_json::to_string(&request)
                  .map_err(|err| AuthError::Serialization(err.to_string()))?;
              let payload_hash = hash_payload(&payload);
-@@ -2033,6 +2370,7 @@ impl AuthService {
+@@ -1918,7 +2271,9 @@ impl AuthService {
+
+             runtime.block_on(async move {
+                 if wallet.has_pending_request() {
+-                    let _ = wallet.recover().await?;
++                    if let Some(response) = wallet.recover().await? {
++                        session_events.settled(&response, wallet.state().map(|state| state.current_balance));
++                    }
+                 }
+
+                 let note_id = wallet.state().ok_or(AuthError::NoActiveNote)?.note_id;
+@@ -2033,6 +2388,7 @@ impl AuthService {
                  .map_err(|err| AuthError::Wallet(err.to_string()))?;
              let _lockfile = acquire_wallet_lock(&config.state_dir)?;
              let wallet = load_wallet(&config, trusted_roots)?;
@@ -2740,7 +3068,7 @@ index 6b0305d..6338b4f 100644
              let runtime = current_thread_runtime()?;
 
              runtime.block_on(async move {
-@@ -2164,8 +2502,7 @@ impl AuthService {
+@@ -2164,8 +2520,7 @@ impl AuthService {
                  "deployment does not advertise an RPC URL for withdrawal confirmation".to_string(),
              )
          })?;
@@ -2750,7 +3078,7 @@ index 6b0305d..6338b4f 100644
              .post(rpc_url)
              .json(&serde_json::json!({
                  "jsonrpc": "2.0",
-@@ -2397,7 +2734,7 @@ fn hash_payload(payload: &str) -> Felt252 {
+@@ -2397,7 +2752,7 @@ fn hash_payload(payload: &str) -> Felt252 {
      compute_payload_hash(payload.as_bytes())
  }
 
@@ -2759,7 +3087,7 @@ index 6b0305d..6338b4f 100644
      SystemTime::now()
          .duration_since(UNIX_EPOCH)
          .unwrap_or_default()
-@@ -2674,7 +3011,18 @@ fn load_wallet(
+@@ -2674,7 +3029,18 @@ fn load_wallet(
      config: &AuthConfig,
      trusted_epoch_roots: Vec<EpochRoots>,
  ) -> Result<Wallet, AuthError> {
@@ -2779,7 +3107,7 @@ index 6b0305d..6338b4f 100644
  }
 
  fn acquire_wallet_lock(state_dir: &Path) -> Result<std::fs::File, AuthError> {
-@@ -2917,7 +3265,7 @@ mod wallet_lifecycle_tests {
+@@ -2917,7 +3283,7 @@ mod wallet_lifecycle_tests {
 
      #[tokio::test]
      async fn low_balance_note_is_preserved_and_active_slot_is_cleared() {
@@ -2788,7 +3116,7 @@ index 6b0305d..6338b4f 100644
 
          let retired = service
              .retire_low_balance_note()
-@@ -2926,22 +3274,22 @@ mod wallet_lifecycle_tests {
+@@ -2926,22 +3292,22 @@ mod wallet_lifecycle_tests {
              .expect("low-balance note should be retired");
 
          assert_eq!(retired.note_id, 18);
@@ -2815,7 +3143,7 @@ index 6b0305d..6338b4f 100644
          PendingRequestJournal::write(
              &pending_directory.path().join("pending_journal.json"),
              &PendingRequestJournal {
-@@ -3346,3 +3694,270 @@ mod tests {
+@@ -3346,3 +3712,359 @@ mod tests {
          assert!(!commitment.is_zero());
      }
  }
@@ -3084,5 +3412,94 @@ index 6b0305d..6338b4f 100644
 +        }
 +        *reply.lock().unwrap()=original;service.refresh_unaccepted_native_request(request).await.unwrap();
 +        assert!(PendingRequestJournal::read(&config.state_dir.join("pending_journal.json")).unwrap().is_none());server.abort();
++    }
++}
++
++#[cfg(test)]
++mod oa_session_recovery_tests {
++    use super::*;
++    use axum::{extract::State, routing::get, Json, Router};
++    use serde_json::json;
++    use zkapi_client::journal::PendingRequestJournal;
++    use zkapi_proof::compact::{rerandomize, server_update, CompactSigner};
++    use zkapi_types::wire::CurvePointWire;
++
++    #[tokio::test]
++    async fn session_events_only_follow_verified_recovery_and_never_repeat() {
++        for charge in [0u128, 7] {
++            let directory = tempfile::tempdir().unwrap();
++            let signer = CompactSigner::from_seed(&Felt252::from_u64(99));
++            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
++            let config = AuthConfig {
++                state_dir: directory.path().to_path_buf(),
++                protocol_version: 2,
++                chain_id: 1,
++                request_charge_cap: 100,
++                state_signing_key: signer.public_key(),
++                protocol_server_url: format!("http://{}", listener.local_addr().unwrap()),
++                ..Default::default()
++            };
++            let mut wallet = load_wallet(&config, Vec::new()).unwrap();
++            wallet.confirm_deposit(Felt252::from_u64(42), 7, 1000, 4_000_000_000).unwrap();
++            let note = wallet.state().unwrap();
++            let nullifier = core_v2::nullifier(&note.secret_s, &note.current_anchor);
++            let anonymous = rerandomize(&CurvePointWire {
++                x: note.current_commitment_x, y: note.current_commitment_y,
++            }, &Felt252::ONE).unwrap();
++            let next_commitment = server_update(&anonymous, charge, &Felt252::ONE).unwrap();
++            let next_anchor = Felt252::from_u64(123);
++            let message = core_v2::state_message(note.protocol_version, note.chain_id,
++                &note.contract_address, &next_commitment.x, &next_commitment.y, &next_anchor);
++            let payload = json!({"type":"oa_org_ephemeral_lease_settlement", "secret":"receipt-metadata"}).to_string();
++            let response = RequestResponseV2 {
++                status: "finalized".into(), client_request_id: "receipt-session".into(),
++                request_nullifier: nullifier, response_code: 200,
++                response_hash: zkapi_types::canonical_response_hash(payload.as_bytes()), response_payload: payload,
++                charge_applied: charge, next_commitment, next_anchor, blind_delta_srv: Felt252::ONE,
++                next_state_signature: signer.sign(&message), policy_reason_code: None, policy_evidence_hash: None,
++            };
++            PendingRequestJournal::write(&config.state_dir.join("pending_journal.json"), &PendingRequestJournal {
++                exists:true, client_request_id: response.client_request_id.clone(), nullifier,
++                payload_hash:Felt252::ONE, user_rerandomization:Felt252::ONE, created_at_ms:1, prepared_request:None,
++            }).unwrap();
++            let reply = Arc::new(Mutex::new(json!({"status":"pending","nullifier_status":"reserved"})));
++            let router = Router::new().route("/v2/requests/receipt-session", get(
++                |State(reply): State<Arc<Mutex<Value>>>| async move { Json(reply.lock().unwrap().clone()) }
++            )).with_state(reply.clone());
++            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
++            let service = AuthService::new(config.clone()).unwrap();
++            service.oa_session_events.started(&response.client_request_id);
++            assert!(!service.recover().await.unwrap().recovered);
++            for failure in ["identity", "hash", "signature"] {
++                let mut invalid = response.clone();
++                match failure {
++                    "identity" => invalid.client_request_id = "another-request".into(),
++                    "hash" => invalid.response_payload = "{}".into(),
++                    _ => invalid.next_state_signature.s = Felt252::ZERO,
++                }
++                *reply.lock().unwrap() = json!({"status":"finalized","nullifier_status":"finalized","request_response":invalid});
++                assert!(service.recover().await.is_err(), "{failure}");
++                let snapshot = serde_json::to_value(service.oa_session_events()).unwrap();
++                assert_eq!(snapshot["events"].as_array().unwrap().len(), 1);
++                assert!(config.state_dir.join("pending_journal.json").exists());
++            }
++            *reply.lock().unwrap() = json!({"status":"finalized","nullifier_status":"finalized","request_response":response});
++            // Two observers race recovery. The wallet mutex must produce just
++            // one signed settlement event before either can issue new access.
++            let (first, second) = tokio::join!(service.recover(), service.recover());
++            assert_ne!(first.unwrap().recovered, second.unwrap().recovered);
++            let snapshot = serde_json::to_value(service.oa_session_events()).unwrap();
++            let events = snapshot["events"].as_array().unwrap();
++            assert_eq!(events.len(), 2);
++            assert_eq!(events[0]["kind"], "started");
++            assert_eq!(events[1]["kind"], "settled");
++            assert_eq!(events[0]["session_id"], events[1]["session_id"]);
++            assert_eq!(events[1]["charge_units"], charge.to_string());
++            assert_eq!(events[1]["balance_units"], (1000-charge).to_string());
++            assert!(!snapshot.to_string().contains("receipt-metadata"));
++            assert!(!snapshot.to_string().contains("receipt-session"));
++            assert!(!config.state_dir.join("pending_journal.json").exists());
++            server.abort();
++        }
 +    }
 +}

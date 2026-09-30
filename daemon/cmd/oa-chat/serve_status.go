@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -22,36 +21,6 @@ func ticketReadiness(wallet ticketCounter) func(context.Context) string {
 			return "Ticket wallet: 0 tickets; run oa-chat config to import or redeem tickets"
 		}
 		return fmt.Sprintf("Ticket wallet: %d tickets available", count)
-	}
-}
-
-type walletStatusReader interface {
-	WalletStatus(context.Context) (json.RawMessage, error)
-}
-
-func zkReadiness(wallet walletStatusReader) func(context.Context) string {
-	return func(ctx context.Context) string {
-		// WalletStatus also checks the companion's network and key-source policy.
-		data, err := wallet.WalletStatus(ctx)
-		if err != nil {
-			return "zkAPI companion unavailable or not ready; retrying status"
-		}
-		// Only typed, allowlisted readiness flags may reach stdout. Never log the
-		// raw wallet JSON, balances, note IDs, proof details, or remote errors.
-		var state struct {
-			HasNote        *bool `json:"has_note"`
-			PendingRequest bool  `json:"pending_request"`
-		}
-		if json.Unmarshal(data, &state) != nil || state.HasNote == nil {
-			return "zkAPI wallet status unavailable; retrying status"
-		}
-		if state.PendingRequest {
-			return "zkAPI companion ready; private wallet awaiting settlement"
-		}
-		if !*state.HasNote {
-			return "zkAPI companion ready; no private balance loaded; run oa-chat config to add funding"
-		}
-		return "zkAPI companion ready; private balance loaded"
 	}
 }
 

@@ -1,3 +1,52 @@
+## 2026-09-30: CLI inference and settled-session activity
+
+- Current source hides routine zkAPI companion startup, readiness, retry, and
+  pending-settlement chatter during `serve`. HTTP activity logs are limited to
+  `/v1/models` and `/v1/chat/completions`; health and admin requests stay quiet.
+  Configuration errors, fatal process failures, and verification warnings stay
+  visible. Status/recovery retries do not imply automatic process restart: if
+  the companion exits, the daemon still fails, and any restart belongs to an
+  external service manager.
+- Normal zkAPI activity shows a locally numbered OpenRouter key session starting
+  and ending. The end comes from a verified, applied signed settlement and
+  includes its actual charge and resulting private balance, converted from
+  integer gwei to exact ETH text. Cost applies to the whole key session, which
+  may include several requests. The configured reuse deadline (60 seconds by
+  default) does not end the protocol lease or settle its cost; an end report
+  can arrive minutes after the final response. No usage estimate or spending
+  cap substitutes for a settled charge.
+- The matching updated Rust companion exposes authenticated loopback
+  `/oa/v1/session-events` (`version: 1`, status capability
+  `session_events_version: 1`) with at most 128 typed events in memory. Go polls
+  every five seconds with a three-second timeout. Raw keys,
+  remote identifiers, wallet secrets, proofs, prompts, and responses stay out
+  of terminal reports. This feed is not a durable ledger: restart clears its
+  history, although recovery can emit an end for a session begun before that
+  restart; an unmatched end is labeled `Previous zkAPI OpenRouter key session`.
+  Buffer gaps produce a fixed warning before showing retained events. Twelve
+  consecutive failed polls (about a minute) produce one fixed reporting warning
+  directing the user to `oa-chat config` and matched binaries; a successful read
+  resets that count. No cost is fabricated. Ship both binaries together for the
+  new output.
+- User authorization explicitly includes showing cost and private balance.
+  Those financial amounts may consequently persist in redirected stdout,
+  Homebrew logs, or systemd journals; the daemon itself creates no log files.
+  The [privacy model](PRIVACY_MODEL.md#local-api-clients),
+  [CLI activity guide](../daemon/README.md#foreground-activity-and-logs), and
+  [zkAPI details](../daemon/docs/CLI_ZKAPI.md#terminal-session-activity) describe
+  these boundaries. No public release is implied; published `0.4.2` and earlier
+  local builds do not include the updated session-event companion.
+- Validation: full daemon `go test -race ./...`, `go vet ./...`, Linux amd64
+  cross-build, all 51 companion library tests, and native companion release
+  build pass. Tests cover real signed wallet recovery (zero/nonzero charges,
+  invalid signature/hash/identity rejection, concurrent exactly-once events),
+  authentication/Origin rejection, exact amount formatting, retained-history
+  gaps, restart recovery, silent transient failures, sustained reporting errors,
+  and inference-only HTTP logging with streaming preserved. Native companion
+  smoke checks in isolated empty state verify the feed and new process IDs
+  across restarts. Exact pinned-source/patch verification and a fresh adversarial
+  review pass. No live inference, external services, or funds were used.
+
 ## 2026-09-30: Bounded CLI key reuse for nearby inference requests
 
 - User-approved source behavior now reuses an acquired anonymous OpenRouter key
@@ -1586,6 +1635,9 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 
 ## 2026-09-27: CLI foreground status and logs
 
+- Historical behavior below is superseded by the September 30 session-activity
+  entry: current output hides routine readiness updates and intentionally shows
+  settled session charges and remaining private balances.
 - `oa-chat serve` sends timestamped startup/shutdown, API request start/end,
   and wallet readiness updates to stdout. Readiness is checked immediately
   and every five seconds with a three-second deadline; only changes print.
@@ -1601,7 +1653,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - The daemon creates no log file, but stdout redirection, Homebrew services,
   and systemd may retain operational activity metadata. `oa-chat status` retains
   its JSON output; fatal command diagnostics still use stderr. See
-  [foreground logging](../daemon/README.md#foreground-status-and-logs) and the
+  [foreground logging](../daemon/README.md#foreground-activity-and-logs) and the
   [local client privacy model](PRIVACY_MODEL.md#local-api-clients).
 - Full Go race tests, vet, and build passed. A built-binary smoke check and
   subprocess regression verify stdout status/request/lifecycle output, clean
