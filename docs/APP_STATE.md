@@ -1,3 +1,33 @@
+## 2026-09-30: Send ETH — copy on the button, one instruction, a short breakdown
+
+- **Copy answers on the button.** The copy control is an icon button whose two
+  faces (copy, check) share one grid cell and cross-fade, so its width never
+  changes; a visually hidden `role="status"` says "Address copied" and it
+  resets after 1.8 s (`owner.addressCopied` keeps the check through a
+  re-render). The old "Receiving address copied." line under the field made
+  the page jump; only a blocked clipboard still adds a line, and then the
+  whole address is selected (`selectAddress`, a DOM Range).
+- **The address is never cut off.** It is a read-only `role="textbox"` div
+  that wraps on a narrow screen instead of an `<input>` whose tail was hidden
+  by an ellipsis at 375 px. People verify the start and the end.
+- **One instruction without a paragraph.** The heading label is "Send from
+  your wallet", the amount under it, and the caption over the address "To this
+  address on <network>". The old "Send ETH on <network> from any wallet; it
+  charges its own transfer fee…" note is gone. The wait line adds "Usually
+  arrives within a minute of sending." (balance polled at `latest` every 5 s).
+- **Transaction breakdown.** `renderFundingProgress` is a thin bar plus a short
+  list: Deposit, Network fee (with "about X expected"), Optional buffer, and
+  "Already at this address −X". Values are dollars when the price is known,
+  with the exact ETH in `title`; exact ETH otherwise. Then one "Amount to
+  send" total (ETH rounded up to 1e-6, ≈ USD) and two short notes. The exact
+  story stays in the progressbar's `aria-valuetext`. `availableWei: null`
+  means an unknown balance: no bar and no credit row, instead of an empty bar.
+  The summary line's "Fee allowance" is Network fee + Optional buffer.
+- **Return leftover ETH** shows "X ETH here" in its summary, one line of
+  context, and "To your wallet" / "ETH" (placeholder "All") side by side
+  (stacked under 420 px). Notices now carry `fundingNoticeScope`
+  (`address`, `pending`, `return`) so a return or recovery result appears next
+  to the control that caused it, not under the address.
 ## 2026-09-30: Switch-day staging preflight
 
 - The staged release combines the ticket-move/free-trial client with the current deployed Private balance UI and upstream deployment documentation. The legacy move event tests install and restore their window dispatcher per test so the shared bundled test runner cannot silently replace the listener.

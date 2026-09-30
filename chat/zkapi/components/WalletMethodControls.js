@@ -235,6 +235,14 @@ function fundingSummaryAmount(owner, value) {
     return usd ? `≈ ${owner.escapeHtml(usd)}` : `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH`;
 }
 
+// A cost line in the breakdown: dollars when the price is known (the exact
+// ETH on hover), otherwise the exact ETH. The amount to send stands alone.
+function fundingShort(owner, value) {
+    const usd = fundingUsdValue(value);
+    const eth = `${formatFundingAmount(value, 18)} ETH`;
+    return usd ? `<span title="${owner.escapeHtml(eth)}">${owner.escapeHtml(usd)}</span>` : owner.escapeHtml(eth);
+}
+
 function intentCurrency(intent) {
     return intent?.inputCurrency || (intent?.usdAmount === null ? 'eth' : 'usd');
 }
@@ -423,27 +431,33 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const sendUsdReference = `<span class="zkapi-funding-send-usd">${sendUsd ? `≈ ${escape(sendUsd)} USD` : 'USD estimate unavailable'}</span>`;
     const sendsAmount = !ready && !displayedRequiredCovered && recommendedRemaining != null && recommendedRemaining > 0n;
     const sendHeading = ready ? 'Ready to deposit' : displayedRequiredCovered ? 'Funds received' : recommendedRemaining == null ? 'Checking your funding address…' : recommendedRemaining === 0n ? 'Funds available'
-        : `<span class="zkapi-funding-send-label">Send</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(sendEthText(remaining))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
+        : `<span class="zkapi-funding-send-label">Send from your wallet</span> <span class="zkapi-funding-send-value"><span class="zkapi-funding-send-number">${escape(sendEthText(remaining))}</span> <span>ETH${availableKnown && BigInt(available) > 0n ? ' more' : ''}</span></span>${sendUsdReference}`;
     const savedDestination = zkapiClient.config?.prepared_withdrawal?.destination || zkapiClient.withdrawal?.destination;
-    const address = `<div class="zkapi-funding-address"><input data-funding-address readonly spellcheck="false" aria-label="This browser’s receiving address" value="${escape(wallet.address)}" /><button data-funding-copy class="zkapi-secondary-button" type="button" aria-label="Copy address">Copy</button></div>`;
+    // The whole address stays visible: it wraps on a narrow screen rather
+    // than hiding its tail. Copy answers on the button itself (copy → check);
+    // nothing else on the page moves. Only a blocked clipboard adds a line.
+    const address = `<div class="zkapi-funding-address"><div id="zkapi-funding-address" data-funding-address class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" spellcheck="false" aria-label="This browser’s receiving address">${escape(wallet.address)}</div><button data-funding-copy class="zkapi-secondary-button zkapi-copy-button" type="button" aria-label="Copy address" title="Copy address" data-copied="${owner.addressCopied ? 'true' : 'false'}"><svg class="zkapi-copy-face" data-face="copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.75"/><path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5c0 .97.78 1.75 1.75 1.75h.25"/></svg><svg class="zkapi-copy-face" data-face="copied" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-6"/></svg></button><span class="zkapi-visually-hidden" role="status" data-funding-copy-status></span></div>
+        <p data-funding-notice class="zkapi-helper zkapi-funding-notice" role="status">${owner.fundingNoticeScope === 'return' || (owner.fundingNoticeScope === 'pending' && wallet.hasPendingTransaction) ? '' : escape(owner.fundingNotice || '')}</p>`;
+    // With the heading this reads as one instruction: send this much from
+    // your wallet, to this address, on this network.
+    const sendAddress = `<div class="zkapi-funding-to"><p class="zkapi-balance-caption">To this address on ${escape(network)}</p>${address}</div>`;
     const quoted = funding && intent && displayTotal != null && !flow.dirty;
     const qr = quoted && !flow.error && sendsAmount ? renderFundingPaymentQr({ address: wallet.address,
         chainId: Number(zkapiClient.config?.funding?.chain_id), amountWei: remaining }) : '';
     const status = ready ? 'Funds received.'
         : !availableKnown ? 'Checking balance…'
             : updating ? 'Updating fee estimate…'
-                : BigInt(available) === 0n ? 'Waiting for ETH…'
+                : BigInt(available) === 0n ? 'Waiting for ETH…<small>Usually arrives within a minute of sending.</small>'
                     : `${escape(sendEthText(flow.requiredRemainingWei))} ETH still needed.`;
-    const breakdown = quoted ? `${availableKnown ? renderFundingProgress({ availableWei: available, depositWei: intent.depositWei,
-            requiredFeeWei: displayFee.requiredFeeWei, feeBufferWei: displayFee.feeBufferWei,
-            renderAmount: value => renderFundingWei(owner, value) }) : balanceLine}
+    const breakdown = quoted ? `${renderFundingProgress({ availableWei: availableKnown ? available : null, depositWei: intent.depositWei,
+            requiredFeeWei: displayFee.requiredFeeWei, feeBufferWei: displayFee.feeBufferWei, expectedFeeWei: displayFee.expectedFeeWei,
+            renderAmount: value => fundingShort(owner, value) })}
         <dl class="zkapi-funding-breakdown" aria-label="Deposit cost estimate">
-            <div><dt>Estimated actual network fee</dt><dd>${renderFundingWei(owner, displayFee.expectedFeeWei)}</dd></div>
-            <div class="zkapi-funding-total"><dt>${displayedRequiredCovered ? 'Optional buffer remaining' : 'Amount to send'}</dt><dd>${renderFundingWei(owner, remaining)}</dd></div>
+            <div class="zkapi-funding-total"><dt>${displayedRequiredCovered ? 'Optional buffer remaining' : 'Amount to send'}</dt><dd${remaining == null ? '' : ` title="${escape(formatFundingAmount(remaining, 18))} ETH"`}>${escape(sendEthText(remaining))} ETH${fundingUsdValue(remaining) ? ` <span>≈ ${escape(fundingUsdValue(remaining))}</span>` : ''}</dd></div>
         </dl>
-        <p class="zkapi-note">Send ETH on <strong>${escape(network)}</strong> from any wallet; it charges its own transfer fee. Only your deposit is added to the private balance. Unused fee ETH stays at this address.</p>
+        <p class="zkapi-note">Only your deposit is added to the private balance. The fee is an allowance: what isn’t spent stays at this address.</p>
         ${savedFunding ? '<p class="zkapi-note">Your saved deposit keeps its original ETH amount. Its fee estimate refreshes before you continue.</p>' : ''}
-        <p class="zkapi-note">Your balance holds ETH. Its USD value changes with the ETH price. Keep this browser’s site data to keep access.</p>` : '';
+        <p class="zkapi-note">This browser holds the address’s key, so keep its site data. Your balance is held in ETH; its dollar value moves with the price.</p>` : '';
     const fundingView = !funding ? '' : quoted ? `
         <div class="zkapi-funding-pay${qr ? ' has-qr' : ''}">
             ${qr}
@@ -453,7 +467,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
                 <p class="zkapi-funding-status" role="status">${!ready && availableKnown && !updating ? SPINNER : ''}<span>${status}</span></p>
             </div>
         </div>
-        ${address}
+        ${sendAddress}
         <button data-funding-next class="zkapi-primary-button w-full" type="button" ${disabled || !ready || wallet.hasPendingTransaction ? 'disabled' : ''}>Deposit</button>
         ${showFlowError ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}` : `
         <div class="zkapi-funding-pay">
@@ -463,9 +477,13 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
                 ${balanceLine}
             </div>
         </div>
-        ${address}
+        ${sendAddress}
         ${showFlowError ? `<p id="zkapi-amount-error" class="zkapi-funding-error" role="alert">${escape(flow.error)}</p>` : ''}`;
     const addressBalance = owner.fundingFlow ? null : owner.fundingStatus?.ethBalance;
+    // Outside the funding view a flow's balance may predate the deposit, so the
+    // summary uses the same settled balance as the receipt.
+    const knownBalance = funding ? (availableKnown ? available : null) : addressBalance;
+    const leftover = /^\d+$/.test(String(knownBalance)) && BigInt(knownBalance) > 0n ? `${escape(sendEthText(knownBalance))} ETH` : '';
     const receipt = funding ? '' : fundingHelp(owner, 'receipt', 'Funding address',
         `${renderFundingReceipt(owner)}${address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
         /^\d+$/.test(String(addressBalance)) ? `${escape(sendEthText(addressBalance))} ETH` : '');
@@ -474,26 +492,42 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     return `<section class="zkapi-funding-account${funding ? ' is-funding' : ''}" aria-label="This browser’s receiving address">
         ${fundingView}
         ${withdrawalDestination}
-        ${pending && wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><p class="zkapi-note">Checking resends the same signed transaction. It never creates a new payment or raises its fee.</p><button data-funding-recover class="zkapi-primary-button w-full" type="button" ${disabled}>Check saved transaction</button></div>` : ''}
+        ${pending && wallet.hasPendingTransaction ? `<div class="zkapi-funding-pending"><p class="zkapi-helper">Your transaction is saved. Check it to resume.</p><p class="zkapi-note">Checking resends the same signed transaction. It never creates a new payment or raises its fee.</p><button data-funding-recover class="zkapi-primary-button w-full" type="button" ${disabled}>Check saved transaction</button>${owner.fundingNoticeScope === 'pending' && owner.fundingNotice ? `<p class="zkapi-helper" role="status">${escape(owner.fundingNotice)}</p>` : ''}</div>` : ''}
         ${rows ? `<div class="zkapi-funding-rows">
             ${quoted ? fundingHelp(owner, 'quote', 'Transaction breakdown', breakdown) : ''}
             ${receipt}
-            <details class="zkapi-funding-return" data-funding-details="return"><summary><span>Return leftover ETH</span><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
+            <details class="zkapi-funding-return" data-funding-details="return"><summary><span class="zkapi-funding-help-label">Return leftover ETH${leftover ? `<span class="zkapi-guide-note">${leftover} here</span>` : ''}</span><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5 8 10.5 12 6.5"/></svg></summary>
                 <div class="zkapi-funding-return-body">
                 ${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
                     ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
                     : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
-                <p class="zkapi-note">For extra ETH at this browser’s address only. To withdraw your private balance, use Withdraw, and keep enough ETH here for its fee.</p>
-                <label class="zkapi-funding-field"><span>Destination on ${escape(network)}</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
-                ${!native ? `<label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
-                <label class="zkapi-funding-field"><span>ETH amount (optional)</span><input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="Leave blank for remaining ETH" value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>
-                <p class="zkapi-note">Enter an exact amount for a smart-contract recipient. A small fee reserve may remain after returning all ETH to a regular account.</p>
+                <p class="zkapi-note">Sends ETH left at this address back to your wallet. To withdraw your private balance, use Withdraw.</p>
+                <div class="zkapi-funding-return-fields">
+                    <label class="zkapi-funding-field"><span>To your wallet</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
+                    ${!native ? `<label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
+                    <label class="zkapi-funding-field zkapi-funding-field--amount"><span>ETH</span><input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="All" title="Leave blank to send all remaining ETH (a small fee reserve may remain). Enter an exact amount for a smart-contract recipient." value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>
+                </div>
+                ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
                 <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Send ETH</button></div>
                 </div>
             </details>
-        </div>
-        <p data-funding-notice class="zkapi-helper zkapi-funding-notice" role="status">${escape(owner.fundingNotice || '')}</p>` : ''}
+        </div>` : ''}
+
     </section>`;
+}
+
+// A blocked clipboard leaves the address selected for the keyboard.
+function selectAddress(node) {
+    if (!node) return;
+    node.focus?.();
+    if (typeof node.select === 'function') { node.select(); return; }
+    try {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const selection = document.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    } catch { /* The address is still focused and fully visible. */ }
 }
 
 export function attachWalletMethodControls(owner) {
@@ -527,6 +561,7 @@ export function attachWalletMethodControls(owner) {
         if (getWalletMethod() === button.dataset.walletMethod) return;
         owner.fundingError = '';
         owner.fundingNotice = '';
+        owner.fundingNoticeScope = '';
         owner.clearTransientOutcome?.();
         stopFundingFlow(owner, { preserveAmount: true });
         try { setWalletMethod(button.dataset.walletMethod); }
@@ -614,8 +649,26 @@ export function attachWalletMethodControls(owner) {
         return perform(async () => { await addressFundingWallet.migrateLegacy(password); stopFundingFlow(owner); });
     });
     on('copy', async () => {
-        try { await navigator.clipboard.writeText(addressFundingWallet.address); owner.fundingNotice = 'Receiving address copied.'; }
-        catch { input('address')?.focus(); input('address')?.select(); owner.fundingNotice = 'Copy the selected address with your keyboard.'; }
+        try {
+            await navigator.clipboard.writeText(addressFundingWallet.address);
+            // Said on the button (Copy → ✓ Copied) and to assistive tech.
+            owner.addressCopied = true;
+            const button = input('copy');
+            if (button?.dataset) button.dataset.copied = 'true';
+            if (input('copy-status')) input('copy-status').textContent = 'Address copied';
+            clearTimeout(owner.addressCopiedTimer);
+            owner.addressCopiedTimer = setTimeout(() => {
+                owner.addressCopied = false;
+                const current = input('copy');
+                if (current?.dataset) current.dataset.copied = 'false';
+                if (input('copy-status')) input('copy-status').textContent = '';
+            }, 1800);
+            return;
+        } catch {
+            selectAddress(input('address'));
+            owner.fundingNoticeScope = 'address';
+            owner.fundingNotice = 'Copy the selected address with your keyboard.';
+        }
         if (input('notice')) input('notice').textContent = owner.fundingNotice;
         clearTimeout(owner.fundingNoticeTimer);
         owner.fundingNoticeTimer = setTimeout(() => {
@@ -628,6 +681,7 @@ export function attachWalletMethodControls(owner) {
         try {
             const returning = addressFundingWallet.pending?.kind === 'sweep';
             const result = await addressFundingWallet.recoverPending();
+            owner.fundingNoticeScope = 'pending';
             owner.fundingNotice = result?.status === 'pending'
                 ? 'Waiting for final network confirmation. Your transaction stays saved; check again later. If network fees exceed its saved fee, it may need to wait until they fall.'
                 : returning && result?.status === 'confirmed' ? 'Return confirmed.'
@@ -657,6 +711,7 @@ export function attachWalletMethodControls(owner) {
             try {
                 const hash = await addressFundingWallet.withAuthorizedAction({ kind: 'sweep', destination: to, asset, amount: units }, () => asset === 'eth'
                     ? addressFundingWallet.transferEth(to, units) : addressFundingWallet.transferTokens(to, units));
+                owner.fundingNoticeScope = 'return';
                 owner.fundingNotice = `Transfer submitted: ${hash}. Check the saved transaction before another transfer.`;
                 try {
                     owner.fundingStatus = await addressFundingWallet.getStatus();

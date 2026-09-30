@@ -253,13 +253,14 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.match(waiting, /Amount to deposit/);
     assert.match(waiting, /0\.005 ETH/);
     assert.match(waiting, /data-funding-progress/);
-    assert.match(waiting, /Estimated actual network fee<\/dt><dd>0\.0004 ETH/);
+    assert.match(waiting, /Network fee<small>about <span title="0\.0004 ETH">/);
     assert.match(waiting, /Optional buffer/);
-    assert.match(waiting, /Amount to send<\/dt><dd>0\.0055 ETH/);
+    assert.match(waiting, /Amount to send<\/dt><dd[^>]*>0\.0055 ETH/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
-    assert.match(waiting, /from any wallet; it charges its own transfer fee/);
-    assert.match(waiting, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
+    assert.match(waiting, /To this address on Ethereum Mainnet/);
+    assert.match(waiting, /Usually arrives within a minute/);
+    assert.match(waiting, new RegExp(`data-funding-address[^>]*>${recipient}</div>`), 'the whole address is shown, never cut off');
     assert.match(waiting, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock/i);
     assert.match(waiting, /Return leftover ETH/);
@@ -269,7 +270,7 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.match(ready, /Funds received/);
     assert.doesNotMatch(ready, /Send 0(?:\.0)? ETH|Received/);
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
-    assert.match(ready, /Its USD value changes with the ETH price/);
+    assert.match(ready, /its dollar value moves with the price/);
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
@@ -278,10 +279,10 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send 0\.0015 ETH more/);
+    assert.match(html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '), /Send from your wallet 0\.0015 ETH more/);
     assert.match(html, /Already at this address/);
     assert.match(html, /0\.004 ETH/);
-    assert.match(html, /Amount to send<\/dt><dd>0\.0015 ETH/);
+    assert.match(html, /Amount to send<\/dt><dd[^>]*>0\.0015 ETH/);
     assert.doesNotMatch(html, /Received/);
 });
 
@@ -378,6 +379,7 @@ test('a missing balance never presents the full funding requirement as a known t
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Checking your funding address/);
     assert.match(html, /Amount to send<\/dt><dd>— ETH/);
+    assert.doesNotMatch(html, /role="progressbar"|Already at this address/, 'an unknown balance is not drawn as empty');
     assert.doesNotMatch(html, /<h3>Send/);
     assert.match(html, /data-funding-next[^>]*disabled/);
 });
@@ -407,7 +409,7 @@ test('a definitely unsubmitted saved deposit refreshes its quote with the origin
     assert.match(html, /data-funding-usd[^>]*value="10" readonly/);
     assert.doesNotMatch(html, /value="999"/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
-    assert.match(html, /Estimated actual network fee/);
+    assert.match(html, /Network fee/);
     assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
 });
 
@@ -421,7 +423,7 @@ test('a saved ETH deposit from MetaMask shows its fixed principal and current US
     assert.match(html, /aria-label="Saved deposit amount"/);
     assert.match(html, /data-funding-eth[^>]*value="0\.005" readonly/);
     assert.match(html, /saved deposit keeps its original ETH amount/);
-    assert.match(html, /Estimated actual network fee/);
+    assert.match(html, /Network fee/);
     assert.doesNotMatch(html, /data-funding-usd|value="999"|value="" readonly/);
     owner.fundingFlow.intent = null;
     const loading = controls.renderFundingAccount(owner);
@@ -542,7 +544,8 @@ test('stale USD pricing leaves exact ETH fees visible without a fictitious conve
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '—' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Estimated actual network fee<\/dt><dd>0\.0004 ETH<\/dd>/);
+    assert.match(html, /about 0\.0004 ETH expected/);
+    assert.match(html, /Deposit<\/dt><dd>0\.005 ETH<\/dd>/);
     assert.doesNotMatch(html, /≈ —|NaN|undefined/);
 });
 
@@ -600,7 +603,7 @@ test('public ETH return is available without a saved intent, USD price or succes
     assert.match(html, /ETH\/USD reference price is unavailable/);
     assert.match(html, /Return leftover ETH/);
     assert.match(html, /data-funding-return-eth/);
-    assert.match(html, new RegExp(`data-funding-address[^>]*value="${recipient}"`));
+    assert.match(html, new RegExp(`data-funding-address[^>]*>${recipient}</div>`));
     assert.doesNotMatch(html, /<details[^>]*open/);
     assert.doesNotMatch(html, /data-funding-next/);
 });
@@ -1036,11 +1039,18 @@ test('copy remains usable while funding waits without changing the active action
     f.owner.fundingWait = new AbortController();
     f.owner.render = () => { assert.fail('copy must not replace the funding wait UI'); };
     const notice = f.field('notice');
+    const status = f.field('copy-status');
     const button = f.field('copy');
+    button.dataset = { copied: 'false' };
     f.controls.attachWalletMethodControls(f.owner);
     await button.events.click();
     assert.deepEqual(copied, [recipient]);
-    assert.equal(notice.textContent, 'Receiving address copied.');
+    assert.equal(button.dataset.copied, 'true', 'the button itself answers');
+    assert.equal(status.textContent, 'Address copied');
+    assert.equal(notice.textContent, undefined, 'nothing else on the page moves');
+    [...f.timers.values()].at(-1)();
+    assert.equal(button.dataset.copied, 'false');
+    assert.equal(status.textContent, '');
     assert.equal(f.owner.busy, true);
     assert.equal(f.owner.fundingBusy, false);
     assert.equal(f.owner.fundingWait.signal.aborted, false);
@@ -1053,12 +1063,14 @@ test('a denied clipboard permission selects the funding address without interrup
     const address = f.field('address', recipient);
     const selected = [];
     address.focus = () => selected.push('focus');
-    address.select = () => selected.push('select');
+    const selection = { removeAllRanges: () => selected.push('clear'), addRange: range => selected.push(`select ${range.node === address}`) };
+    f.context.document.createRange = () => ({ selectNodeContents(node) { this.node = node; } });
+    f.context.document.getSelection = () => selection;
     const notice = f.field('notice');
     const button = f.field('copy');
     f.controls.attachWalletMethodControls(f.owner);
     await button.events.click();
-    assert.deepEqual(selected, ['focus', 'select']);
+    assert.deepEqual(selected, ['focus', 'clear', 'select true']);
     assert.match(notice.textContent, /Copy the selected address/);
     assert.equal(f.owner.busy, true);
 });
@@ -1222,8 +1234,7 @@ test('manual deposit keeps instructions in the breakdown and shows a concise exa
         status: { ethBalance: '5000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /from any wallet/);
-    assert.match(html, /Send ETH on <strong>Sepolia<\/strong>/);
+    assert.match(html, /To this address on Sepolia/);
     assert.match(html, /Only your deposit is added to the private balance/);
     assert.match(html, /This browser’s receiving address/);
     assert.match(html, /0\.00045 ETH still needed/);
@@ -1231,9 +1242,9 @@ test('manual deposit keeps instructions in the breakdown and shows a concise exa
     assert.doesNotMatch(html, /Waiting for funds|>Next</);
     const details = html.match(/<div [^>]*data-funding-help-panel[^>]*hidden>([\s\S]*?)<\/div>\s*<\/div>\s*<details class="zkapi-funding-return"/);
     assert.ok(details);
-    assert.match(details[1], /from any wallet/);
     assert.match(details[1], /Only your deposit is added/);
-    assert.doesNotMatch(html.replace(details[1], ''), /from any wallet|Only your deposit is added|zkapi-funding-address-label/);
+    assert.doesNotMatch(details[1], /data-funding-address/, 'the address stays on the page, not in the breakdown');
+    assert.doesNotMatch(html.replace(details[1], ''), /Only your deposit is added|zkapi-funding-address-label/);
 });
 
 test('failed refresh keeps fee details but suppresses QR and deposit authorization', () => {

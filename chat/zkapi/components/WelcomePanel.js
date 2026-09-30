@@ -232,7 +232,7 @@ export default class WelcomePanel {
             }
             const pending = pendingDepositMessage(error, zkapiClient.config?.pending_deposit);
             this.notice = pending || (rejected ? 'Deposit canceled.' : isIndexerLag(error) ? zkapiErrorMessage(error) : '');
-            if (error?.code === 'address_wait_stopped') this.fundingNotice = error.message;
+            if (error?.code === 'address_wait_stopped') { this.fundingNoticeScope = 'address'; this.fundingNotice = error.message; }
             this.error = this.notice || error?.code === 'address_wait_stopped' ? '' : error.shortMessage || error.message || String(error);
             if (rejected) {
                 const notice = this.notice;
