@@ -241,7 +241,10 @@ export default class RightPanel extends SharedRightPanel {
             && statusBadge === walletMethodText('Waiting for MetaMask');
         const depositStatus = !claimed && !hasError && experience.primary.tone !== 'error'
             && experience.primary.phase === 'deposit-recovery';
-        const quietProgress = badgeBusy || walletWaiting || depositStatus;
+        // A withdrawal or recovery waiting on the person is a state, not a
+        // warning: it reads as the same quiet line as progress, never yellow.
+        const actionableStatus = !claimed && !hasError && experience.primary.tone !== 'error' && actionableState;
+        const quietProgress = badgeBusy || walletWaiting || depositStatus || actionableStatus;
         const statusSpinning = badgeBusy || walletWaiting || (depositStatus && pendingDeposit?.phase === 'submitted');
 
         return `
@@ -252,7 +255,7 @@ export default class RightPanel extends SharedRightPanel {
                         <span class="text-xs font-medium">Private balance: <span class="font-semibold">${balance}</span></span>
                         ${privateBalanceHelpButton('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                     </div>
-                    ${quietProgress ? '' : `<span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : actionableState || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : this.escapeHtml(statusBadge)}</span>`}
+                    ${quietProgress ? '' : `<span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : actionableState || expired ? 'bg-muted text-muted-foreground' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : this.escapeHtml(statusBadge)}</span>`}
                 </div>
                 ${quietProgress ? `<div class="zkapi-wallet-status" role="status"><span class="${statusSpinning ? 'zkapi-pill-spinner' : 'zkapi-wallet-status-dot'}" aria-hidden="true"></span><span>${this.escapeHtml(statusBadge)}</span></div>` : ''}
                 ${privateBalanceHelpContent('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
@@ -288,7 +291,7 @@ export default class RightPanel extends SharedRightPanel {
             return {
                 label: 'Closing previous chat key',
                 badge: 'Settling',
-                badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200'
+                badgeClass: 'bg-muted text-muted-foreground'
             };
         }
         if (transition?.phase === 'ready') {

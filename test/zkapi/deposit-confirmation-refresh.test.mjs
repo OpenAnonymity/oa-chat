@@ -17,7 +17,7 @@ function fixture() {
     const noop = () => {};
     const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false,
         parseTokenAmount, zkapiClient: client, getWalletMethod: () => 'metamask', walletMethodText: value => value,
-        renderDepositAmount: () => '', prepareDepositAmount: async () => '0.005', renderWalletMethod: () => '', renderFundingAccount: () => '', attachWalletMethodControls: noop,
+        renderDepositAmount: () => '', prepareDepositAmount: async () => '0.005', renderWalletMethod: () => '', renderFundingAccount: () => '', fundingInstructionsVisible: () => false, syncWalletFlows: noop, attachWalletMethodControls: noop,
         captureWalletView: noop, restoreWalletView: noop, captureFundingDisclosureView: noop,
         restoreFundingDisclosureView: noop, capturePrivateBalanceHelpFocus: noop,
         restorePrivateBalanceHelpFocus: noop, captureFundingSetupView: noop,

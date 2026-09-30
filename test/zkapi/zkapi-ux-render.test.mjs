@@ -616,7 +616,7 @@ test('live UI facades render New Chat settlement state in sidebar and right pane
     assert.deepEqual(panel.getMissingApiKeyStatus(), {
         label: 'Closing previous chat key',
         badge: 'Settling',
-        badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-500\/15 dark:text-amber-200'
+        badgeClass: 'bg-muted text-muted-foreground'
     });
 
     app.newChatSettlementState = {
@@ -1352,8 +1352,9 @@ test('a missing withdrawal receipt exposes safe same-nonce replacement', () => {
 
     try {
         const html = modal.renderWithdrawal();
-        assert.match(html, /No receipt was found/);
-        assert.match(html, /Resubmit with original nonce/);
+        assert.match(html, /No receipt yet/);
+        assert.match(html, /resubmit it with its original nonce/);
+        assert.match(html, /id="zkapi-retry-dropped-withdrawal-btn"[^>]*>Resubmit</);
         assert.match(html, /id="zkapi-sync-withdrawal-btn"/);
         assert.doesNotMatch(html, /id="zkapi-withdraw-btn"/);
     } finally {

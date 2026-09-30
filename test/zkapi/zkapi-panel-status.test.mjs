@@ -171,3 +171,10 @@ test('submitted and unknown deposits use neutral status lines, not warning pills
         if (phase === 'ambiguous') assert.doesNotMatch(html, /zkapi-pill-spinner/);
     }
 });
+
+test('a withdrawal waiting to continue reads as a neutral status line, never a yellow pill', () => {
+    const html = renderPanel({ config: { ux_proposal: 'quiet', prepared_withdrawal: { phase: 'prepared', mode: 'mutual', clearance_reserved: true } },
+        withdrawal: { phase: 'prepared', mode: 'mutual' } });
+    assert.match(html, /class="zkapi-wallet-status" role="status"><span class="zkapi-wallet-status-dot"/);
+    assert.doesNotMatch(html, /bg-amber-100|text-amber-800/);
+});

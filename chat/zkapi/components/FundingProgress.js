@@ -67,7 +67,6 @@ export function renderFundingProgress({ availableWei, depositWei, requiredFeeWei
             <span class="zkapi-funding-progress-required" aria-hidden="true"></span>
         </div>
         <div class="zkapi-funding-progress-chart-key" aria-hidden="true"><span><i class="zkapi-funding-progress-required-key"></i>Required total</span>${optionalKey}</div>
-        <p class="zkapi-funding-progress-caption">Blue shows the current balance, including any ETH left from earlier deposits.</p>
         <dl class="zkapi-funding-progress-legend">${breakdown}</dl>
         <dl class="zkapi-funding-progress-totals">
             <div><dt>Required total</dt><dd>${renderAmount(required.toString())}</dd></div>

@@ -1,3 +1,70 @@
+## 2026-09-30: Reload brings the dialog back at once; a click during startup is kept
+
+- After a reload the Private balance dialog waited for `initWalletClient()`,
+  i.e. the whole of `zkapiClient.init()` including
+  `reconcileBrowserWithdrawalsOnLoad` (late attempts, submission claims,
+  `syncWithdrawal`, background withdrawals, expiry history — chain reads
+  through MetaMask). With a saved withdrawal that can take many seconds, so
+  the dialog looked like it never came back. Restoration now needs only the
+  saved wallet: the signer choice (`initWalletMethod`) and the SDK's local
+  snapshot (`zkapiClient.config` set by its first refresh, which is
+  published before reconciliation). Nothing is sent by restoring.
+- `run()` used to return silently while `walletMethodReady === false`, so a
+  Continue during startup did nothing and had to be clicked again (once the
+  dialog restores early, that window is exactly when people click). The click
+  is now kept: the primary shows "Getting ready…" and the action runs once
+  `walletReady` resolves. Further clicks are ignored; closing the dialog
+  meanwhile abandons it.
+- Harness (`?slow=8000`): before, the dialog appeared at 8.2 s and a click at
+  0.6 s never ran; after, it appears at ~0.25 s and the one click runs when
+  startup ends. `wallet-modal-restore` tests now start from an empty SDK
+  (`config: null`), as a fresh page does.
+
+## 2026-09-30: Private balance dialog — one page for work in motion, theme-aligned funding
+
+- **Lost clicks after a reload ("click Continue twice").** Every SDK change
+  (price every 60 s, reconcile on focus, withdrawal sync after a reload)
+  rebuilt the whole dialog with `innerHTML`. A button replaced between
+  pointerdown and pointerup gets no click in Chromium, so the first click after
+  a reload was usually eaten. `AccountModal.render()` now (1) skips a render
+  whose markup is identical to what is on screen (`renderedMarkup`), keeping
+  focus, hover and typed text, and (2) defers any render while a pointer is
+  pressed inside the overlay, flushing it after the click. The same rebuild
+  also unchecked "I understand…" on the withdraw form; that choice is now
+  model state (`withdrawConfirmed`).
+- **Same page before and after a reload.** A started withdrawal (busy, or any
+  saved `prepared_withdrawal`) renders one layout: amount, "To <destination> ·
+  <method>", the steps, one action row, recovery choices under "Other options".
+  Only the current step differs: running while busy, `paused` after a reload
+  (`positionForPersistedPhase` maps reserving/prepared/retry_exact to a new
+  `paused` state, drawn as a marked-but-still step). The action row is the
+  primary (Continue in MetaMask, or the phase's check), phase recovery
+  (Recover withdrawal / Resubmit / Try again) and **Cancel**: a plan nothing
+  has been sent for and that holds no clearance is dropped
+  (`cancelPreparedWithdrawal`); anything else only closes the dialog — the
+  mutual-close clearance is irreversible, so the saved withdrawal stays and
+  this page returns with the dialog. After a submission the button reads
+  Close. Escape hatch and Set aside live in the "Other options" disclosure.
+  Pending deposits follow the same shape. The visible steps title is gone
+  (the dialog title names the work); the list keeps it as its aria-label.
+- **Funding UI in the dialog's vocabulary.** The signer choice is a
+  two-segment control (the toolbar's OA | zkAPI switch), shown only while
+  choosing how to deposit or starting a new withdrawal. The deposit amount is
+  the figure (`$ 5.00  USD ⇄`). Send ETH puts the QR beside the amount to send
+  (rounded **up** to 0.000001 ETH for typing; the QR and breakdown stay exact
+  wei), then the address, then Deposit. Transaction breakdown, Funding address
+  and Return leftover ETH are disclosure rows like Payment history — no card
+  inside the card. View bodies pass through `walletMethodText`; the method
+  control and funding section are inserted afterwards via `literal()` so the
+  "MetaMask" segment is never rewritten.
+- **No yellow for normal states.** A paused/actionable withdrawal is a quiet
+  status line in the System Panel ("Withdrawal paused"), and a neutral pill /
+  one line in the balance view with a Continue withdrawal action. Payment
+  history records are hairline-separated rows.
+- Harness: the dialog renders standalone with mocked SDK modules through an
+  import map (no build step), which is how every state above was screenshot
+  and click-tested in Chromium, light and night, desktop and 375 px.
+
 ## 2026-09-30: Release previous-version accounts and a steady count during the ticket move
 
 - Browsers that used the previous production client keep `account-settings` = `{accountId, credentialId, recoveryConfirmed, updatedAt}` plus the master key. Old accounts are not imported into the new org (different passkey RP ID), so that record stranded people: every username was treated as a login, the org answered 401/404, and the passkey prompt failed before anyone found "start a new account". With the host policy `signIn.releasePreviousVersionAccounts` (commercial sets it), `accountService.init()` forgets such a record before binding it: `isPreviousVersionAccountRecord()` (none of the current-client fields) and no `account-key-bundle-v1`, `sync-account-scope`, or `account-login-pending`. The cleanup is `clearLocalAccount` without the server logout (`resetSavedAccountState()` was extracted for it). Tested against a browser profile written by old prod: all 541 tickets stayed and sign-up then worked normally. The wallet stays unscoped, so the new account adopts it and the move runs.

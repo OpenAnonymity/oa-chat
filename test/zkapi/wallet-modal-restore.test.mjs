@@ -5,7 +5,7 @@ import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 
-function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, savedWelcome = false, blockedStorage = false, withdrawals = [] } = {}) {
+function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, savedWelcome = false, blockedStorage = false, withdrawals = [], earlySnapshot = false } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals };
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
@@ -25,12 +25,21 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
         setItem(key, value) { if (blockedStorage) throw new Error('Storage blocked'); storage.set(key, value); },
         removeItem(key) { if (blockedStorage) throw new Error('Storage blocked'); storage.delete(key); }
     } };
+    // A fresh page: the SDK has read nothing until its first refresh.
+    Object.assign(zkapiClient, { config: null, wallet: { note: null }, withdrawal: null, withdrawals: [] });
     let loaded;
     const loading = new Promise(resolve => { loaded = resolve; });
     let subscriber;
     t.mock.method(zkapiClient, 'subscribe', fn => { subscriber = fn; return () => {}; });
     t.mock.method(zkapiClient, 'subscribeClock', () => () => {});
     t.mock.method(zkapiClient, 'init', async () => {
+        if (earlySnapshot) {
+            // The SDK reads the saved wallet first and publishes it, then
+            // keeps init() running while it checks the chain.
+            await Promise.resolve();
+            Object.assign(zkapiClient, { config, wallet: { note }, withdrawal, withdrawals });
+            subscriber?.({}, { reason: 'runtime' });
+        }
         await loading;
         Object.assign(zkapiClient, { config, wallet: { note }, withdrawal, withdrawals });
         if (failInit) throw new Error('Refresh unavailable');
@@ -420,4 +429,32 @@ test('a fresh tab restores a signed public ETH return without SDK or tab present
     assert.equal(f.modal.isOpen, true);
     assert.equal(f.modal.view, 'fund');
     f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+});
+
+test('a reload shows the saved withdrawal as soon as the wallet is read, not after startup checks the chain', async t => {
+    const prepared = { phase: 'reserving', mode: 'mutual', clearance_reserved: true };
+    const f = setup(t, { config: { prepared_withdrawal: prepared }, note: { note_id: 7 },
+        savedModal: { view: 'withdraw', mode: 'mutual', method: 'metamask' }, earlySnapshot: true });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.modal.walletMethodReady, false, 'startup is still checking the chain');
+    assert.equal(f.modal.isOpen, true, 'the dialog is back without waiting for it');
+    assert.equal(f.modal.view, 'withdraw');
+    f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    await f.load();
+    assert.equal(f.modal.isOpen, true);
+});
+
+test('a Continue click during startup is kept and runs once the wallet is ready', async t => {
+    const f = setup(t, { config: { prepared_withdrawal: { phase: 'prepared', mode: 'mutual' } }, note: { note_id: 7 },
+        savedModal: { view: 'withdraw', mode: 'mutual', method: 'metamask' }, earlySnapshot: true });
+    await new Promise(resolve => setImmediate(resolve));
+    let calls = 0;
+    const running = f.modal.run(async () => { calls++; }, null);
+    assert.equal(f.modal.startingAfterInit, true, 'the click is acknowledged, not dropped');
+    assert.equal(f.modal.run(async () => { calls++; }, null) instanceof Promise, true);
+    assert.equal(calls, 0);
+    await f.load();
+    await running;
+    assert.equal(calls, 1, 'one click, one action — a second click during startup is not a second action');
+    assert.equal(f.modal.startingAfterInit, false);
 });
