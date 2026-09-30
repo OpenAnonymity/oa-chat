@@ -16,7 +16,7 @@ import (
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/zkapi"
 )
 
-func TestConfigureDefaultShowsTwentyDollarPaymentBeforeOnlyConsent(t *testing.T) {
+func TestConfigureDefaultPromptsThenShowsTwentyDollarPayment(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	service := newWizardFixture()
 	service.quote = func(_ int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
@@ -28,20 +28,24 @@ func TestConfigureDefaultShowsTwentyDollarPaymentBeforeOnlyConsent(t *testing.T)
 		q.ShortfallWei, q.RecommendedTopUpWei = q.RequiredTotalWei, q.RecommendedTotalWei
 		return q, nil
 	}
-	ui := &fundingWizardUI{confirmations: []bool{false}}
+	var output bytes.Buffer
+	ui := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader("\nno\n"))}
 	err := configure(context.Background(), dir, nil, ui, io.Discard, func(ctx context.Context, _ string, c config.Config, action string, prompt setupPrompter, _ io.Writer) error {
 		if action != "setup" || c.Backend != "zkapi" || c.ZKAPI.Network != "mainnet" || c.RelayURL != "" {
 			t.Fatal("fresh config did not select Mainnet without proxying")
 		}
 		return guidedFunding(ctx, service, "", "", prompt, immediateWizardPoll)
 	})
-	if err == nil || !strings.Contains(err.Error(), "declined") || ui.asks != 0 || ui.confirms != 1 || service.quoteCalls != 1 || service.approveCalls+service.resumeCalls != 0 {
-		t.Fatal("default config did not reach only payment consent without authorizing it", err)
+	if err == nil || !strings.Contains(err.Error(), "declined") || service.quoteCalls != 1 || service.approveCalls+service.resumeCalls != 0 {
+		t.Fatal("default config did not reach payment consent without authorizing it", err)
 	}
-	for _, want := range []string{"Recommended deposit: $20", "Funding address:", "Scan with an Ethereum wallet:", "?value=750001000030000", "config --edit", "config --menu"} {
-		if !strings.Contains(ui.String(), want) {
+	for _, want := range []string{"Deposit amount in USD (network fees are extra) [20]:", "Selected deposit: $20", "Funding address:", "Scan with an Ethereum wallet:", "?value=750001000030000", "config --edit", "config --menu"} {
+		if !strings.Contains(output.String(), want) {
 			t.Fatalf("payment display missing %q", want)
 		}
+	}
+	if strings.Index(output.String(), "Deposit amount in USD") > strings.Index(output.String(), "Funding address:") {
+		t.Fatal("payment shown before amount selection")
 	}
 }
 

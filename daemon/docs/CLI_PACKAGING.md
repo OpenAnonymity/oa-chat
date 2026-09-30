@@ -41,14 +41,15 @@ PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
 Current source creates a missing profile with zkAPI on Mainnet and direct
-HTTPS. When funding is needed, it displays a recommended $20 deposit quote, ETH payment address,
-amount, and terminal QR. `config --backend ticket` or `config --network sepolia`
-selects another mode or network; `config --usd 50` chooses another principal
-for a new deposit. Existing profiles show their saved settings and immediately
-check readiness. Use `config --edit` for settings or `config --menu` for wallet
+HTTPS. For a new deposit, it asks for the USD amount with $20 as the default on
+Enter, then displays the ETH quote, payment address, amount, and terminal QR.
+`config --backend ticket` or `config --network sepolia` selects another mode or
+network; `config --usd 50` supplies a new deposit's amount without the prompt.
+Saved deposits resume their fixed ETH amount. Existing profiles show their saved
+settings and immediately check readiness. Use `config --edit` for settings or `config --menu` for wallet
 management. Deposit approval remains explicit. Configuration stops any
 services it started and exits; `serve` runs the inference API. The published
-`0.4.1` installer above predates the automatic $20 quote and QR and still asks
+`0.4.1` installer above predates these streamlined defaults and QR and still asks
 initial setup questions. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
@@ -294,8 +295,10 @@ separate state.
 
 `config` checks readiness and guides funding; `config --menu` offers withdrawals,
 public ETH returns, and Sepolia password changes. The local signer requires no
-external wallet connection. Guided deposits show a recommended $20 quote and
-terminal QR, then ask for approval of the fixed principal and maximum fee before waiting for funds; automatic quote
+external wallet connection. New guided deposits ask for a USD amount, defaulting
+to $20 on Enter, then show the ETH quote and terminal QR. Saved deposits retain
+their fixed ETH principal without another amount prompt. Setup asks for approval
+of the fixed principal and maximum fee before waiting for funds; automatic quote
 refreshes must remain within that consent. Withdrawals and public returns
 show a destination and fee quote and require approval before signing. Saved
 signed transactions recover with their original bytes and nonce.

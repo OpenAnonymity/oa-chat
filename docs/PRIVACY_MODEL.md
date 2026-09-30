@@ -109,8 +109,10 @@ quoting prepares local recovery data. The `config --menu` actions ask for explic
 approval of the displayed principal, destination, and fee allowance before
 withdrawals or public returns. Its guided deposit asks once to authorize a fixed
 principal and maximum network fee before waiting for incoming ETH. A new profile
-defaults to Mainnet and direct HTTPS and prepares a recommended $20 quote without
-initial setup questions; displaying this quote does not authorize a transaction.
+defaults to Mainnet and direct HTTPS. A new deposit asks for a USD amount with
+$20 as the default on Enter; `--usd` supplies that amount without the prompt.
+Saved deposits retain their fixed ETH principal without another amount prompt.
+Entering an amount and displaying its quote do not authorize a transaction.
 The terminal payment QR is generated locally and contains only the public funding
 address, chain ID, and exact recommended ETH top-up. No external QR service sees
 the payment instructions; signing keys, note secrets, and local credentials never

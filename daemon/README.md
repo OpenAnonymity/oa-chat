@@ -47,10 +47,10 @@ oa-chat config
 
 With no configuration, the current source creates the private directory using
 **zkAPI on Mainnet with direct HTTPS**. If funding is needed, it prepares a
-recommended **$20 private deposit** and immediately displays the ETH address,
-payment amount, and a QR code in the terminal. No initial mode, network, or
-amount answers are needed. Network fees are extra and shown separately; review
-the quote and confirm before the CLI can deposit. It waits for incoming ETH,
+new deposit by asking for the USD amount; **press Enter to use $20**. It then
+displays the ETH address, payment amount, and a QR code in the terminal. No
+initial mode or network answers are needed. Network fees are extra and shown
+separately; review the quote and confirm before the CLI can deposit. It waits for incoming ETH,
 deposits within the approved amount and fee bounds, and waits for finality.
 Temporary services it starts are stopped when configuration finishes. You then
 run `oa-chat serve` separately.
@@ -91,9 +91,10 @@ it. `--zkapi-binary` and `--proof-setup-dir` select custom companion locations
 for source builds. Installed bundles normally discover both automatically.
 Changes are saved; `serve --backend ticket|zkapi` can select a runtime mode
 without changing the saved default.
-`--usd` selects the USD principal for a new deposit only; it is not a saved
-configuration setting and cannot change the amount of a deposit already in
-progress. A ready wallet does not receive another deposit merely because
+`--usd` selects the USD principal for a new deposit and skips the amount prompt;
+it is not a saved configuration setting and cannot change the amount of a deposit already in
+progress. Saved deposits resume their fixed ETH principal without another
+amount prompt. A ready wallet does not receive another deposit merely because
 `config` is run again.
 
 Configuration defaults to `~/Library/Application Support/oa-chat` on macOS
@@ -211,9 +212,9 @@ For source builds, use `daemon/scripts/prepare-zkapi.sh` followed by
 
 Run `oa-chat config` to check readiness and fund the selected network. New
 profiles use zkAPI on Mainnet without a proxy. The guided flow follows the web
-wallet's send-to-address experience: it quotes a recommended $20 private
-deposit, shows the fixed ETH principal, maximum network fee, and payment QR,
-then asks you to authorize the deposit. Send ETH to the displayed funding
+wallet's send-to-address experience: it asks for a USD deposit amount with $20
+as the default, then shows the fixed ETH principal, maximum network fee, and
+payment QR, and asks you to authorize the deposit. Send ETH to the displayed funding
 address. The wizard waits for it, deposits automatically within the approved bounds, and
 waits for finalized activation. A higher fee ceiling requires confirmation.
 It checks model readiness without sending an inference or spending credits.

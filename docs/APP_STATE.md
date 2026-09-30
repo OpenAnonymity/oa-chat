@@ -1,3 +1,22 @@
+## 2026-09-29: Ask for the CLI deposit amount with a $20 default
+
+- Plain `oa-chat config` now asks how much to deposit in USD before preparing a
+  new deposit. Pressing Enter selects $20. It then shows the ETH payment address,
+  amount, and locally generated terminal QR before the separate transaction
+  consent prompt. New profiles still default to zkAPI on Mainnet with direct HTTPS.
+- `config --usd AMOUNT` skips the amount prompt for a new deposit. Existing
+  unsigned deposits resume their saved fixed ETH principal without asking for
+  another amount or repricing it; signed deposits recover the original transaction.
+  Ready wallets are only checked for readiness. This supersedes the automatic
+  amount selection described in the earlier entry below; its validation records
+  remain evidence for that earlier revision.
+- Validation: CLI command-package race tests and vet passed. Prompt tests cover
+  Enter accepting $20, custom amounts, invalid and below-cap input retries,
+  ended input before quoting, and payment display after amount selection.
+  Existing consent and recovery tests passed; fresh adversarial review approved.
+- No release was published for this adjustment. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
+  and [funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+
 ## 2026-09-29: CLI defaults go directly to a $20 ETH payment
 
 - In current source, plain `oa-chat config` shows status and immediately checks

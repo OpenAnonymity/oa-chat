@@ -32,7 +32,7 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	f.StringVar(&o.relay, "relay-url", "", "optional Wisp relay URL; empty selects direct HTTPS")
 	f.StringVar(&o.binary, "zkapi-binary", "", "path to the installed zkAPI companion")
 	f.StringVar(&o.proofs, "proof-setup-dir", "", "path to the installed proving assets")
-	f.StringVar(&o.usd, "usd", "", "USD principal for a new deposit (default: 20; network fees are extra)")
+	f.StringVar(&o.usd, "usd", "", "skip the new-deposit USD amount prompt (prompt default: 20; network fees are extra)")
 	f.BoolVar(&o.status, "status", false, "show saved configuration status without setup")
 	f.BoolVar(&o.apiKey, "api-key", false, "print the local inference API key explicitly")
 	f.BoolVar(&o.edit, "edit", false, "edit mode, network, listener, and transport interactively")

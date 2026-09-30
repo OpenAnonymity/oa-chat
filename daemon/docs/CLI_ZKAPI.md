@@ -25,16 +25,16 @@ PATH="$HOME/.local/bin:$PATH" oa-chat config
 
 The configuration command shows the saved status first. With no profile, the
 current source creates the normal private directory using **zkAPI on Mainnet
-with direct HTTPS** and walks through what is missing. It prepares a recommended
-**$20 private deposit** without first asking for a mode, network, or amount,
-and displays the ETH payment address, amount, and terminal QR before requesting
+with direct HTTPS** and walks through what is missing. For a new deposit, it asks
+for the USD amount, with **$20 as the default when you press Enter**, then
+displays the ETH payment address, amount, and terminal QR before requesting
 deposit approval. Use `config --backend ticket` for tickets or
 `config --network sepolia` for test ETH. The private
 directory is `~/Library/Application Support/oa-chat` on macOS or
 `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`. Global
 `--config-dir` or `OA_CHAT_CONFIG_DIR` selects another directory.
 
-Automatic $20 quoting and the terminal QR are newer than the published `0.4.1`
+These streamlined defaults and the terminal QR are newer than the published `0.4.1`
 bundle. The installation command above still installs that release, which asks
 the initial mode, network, and deposit-amount questions.
 
@@ -54,9 +54,10 @@ For zkAPI setup:
    private balance, pending settlement, and withdrawal reservations. Sepolia
    validates its saved access password or asks for one before starting the
    companion or funding. Setup does not acquire inference access or send a test request.
-2. **Fund if needed.** Review the recommended $20 principal, its fixed ETH
-   amount, network, funding address, and maximum network fee, then approve the
-   automatic deposit. Send the displayed top-up in **ETH on that network**
+2. **Fund if needed.** Enter a USD deposit amount or press Enter for $20.
+   Review the chosen principal, its fixed ETH amount, network, funding address,
+   and maximum network fee, then approve the automatic deposit. Send the displayed
+   top-up in **ETH on that network**
    to the funding address, not the vault. Scan the terminal QR in a compatible
    Ethereum wallet or copy the address and amount. The recommended transfer
    includes the principal, fee allowance, and an optional fee buffer, less any
@@ -68,9 +69,10 @@ For zkAPI setup:
    exits when ready. It prints the endpoint, the command for your local API key,
    and the command to serve. An existing service it reused is left running.
 
-To choose a different principal for a new deposit, run `oa-chat config --usd 50`
+To supply the amount without the prompt, run `oa-chat config --usd 50`
 with the desired USD amount. This option is not saved and does not replace the
-fixed ETH amount of a deposit already in progress. An existing ready private
+fixed ETH amount of a deposit already in progress. Saved deposits resume that
+amount without prompting for it again. An existing ready private
 balance is checked without preparing another deposit.
 
 ```sh

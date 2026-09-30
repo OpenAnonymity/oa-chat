@@ -154,6 +154,27 @@ func setupUSD(amount uint64) string {
 
 const defaultSetupDepositMicroUSD uint64 = 20_000_000
 
+func chooseSetupDepositUSD(ctx context.Context, usdText string, minimum uint64, ui setupPrompter) (uint64, error) {
+	interactive := usdText == ""
+	for {
+		if interactive {
+			var err error
+			usdText, err = ui.Ask(ctx, "Deposit amount in USD (network fees are extra)", setupUSD(defaultSetupDepositMicroUSD))
+			if err != nil {
+				return 0, err
+			}
+		}
+		usd, err := parseFundingAmountForAsset(usdText, 6, "USD")
+		if err == nil && usd < minimum {
+			err = fmt.Errorf("deposit must be at least $%s for the selected model", setupUSD(minimum))
+		}
+		if err == nil || !interactive {
+			return usd, err
+		}
+		ui.Printf("%s. Please enter a deposit amount in USD.\n", err)
+	}
+}
+
 func guidedFunding(ctx context.Context, service guidedFundingService, usdText, modelID string, ui setupPrompter, wait func(context.Context) error) error {
 	models, err := service.Models(ctx)
 	if err != nil {
@@ -191,16 +212,11 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 		}
 		var usd uint64
 		if state.Amount == 0 {
-			usd = max(defaultSetupDepositMicroUSD, model.Budget)
-			if usdText != "" {
-				usd, err = parseFundingAmountForAsset(usdText, 6, "USD")
-				if err != nil || usd < model.Budget {
-					return fmt.Errorf("deposit must be at least $%s for the selected model", setupUSD(model.Budget))
-				}
-				ui.Printf("Selected deposit: $%s (network fees are extra).\n", setupUSD(usd))
-			} else {
-				ui.Printf("Recommended deposit: $%s (network fees are extra). Saved deposits keep their original amount.\n", setupUSD(usd))
+			usd, err = chooseSetupDepositUSD(ctx, usdText, model.Budget, ui)
+			if err != nil {
+				return err
 			}
+			ui.Printf("Selected deposit: $%s (network fees are extra).\n", setupUSD(usd))
 		} else {
 			ui.Printf("Resuming the saved fixed deposit of %s ETH.\n", fundingUnits(strconv.FormatUint(state.Amount, 10), 9))
 			if usdText != "" {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -121,7 +122,7 @@ func immediateWizardPoll(ctx context.Context) error { return ctx.Err() }
 
 func TestGuidedFundingWaitsForMoneyThenApprovesFreshFixedQuote(t *testing.T) {
 	f := newWizardFixture()
-	u := &fundingWizardUI{confirmations: []bool{true}}
+	u := &fundingWizardUI{answers: []string{"20"}, confirmations: []bool{true}}
 	f.quote = func(call int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
 		if call == 1 {
 			if usd != 20_000_000 || amount != 0 {
@@ -151,7 +152,7 @@ func TestGuidedFundingWaitsForMoneyThenApprovesFreshFixedQuote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.approveCalls != 1 || f.resumeCalls != 1 || f.quoteCalls != 4 || polls != 3 || u.confirms != 1 || u.asks != 0 {
+	if f.approveCalls != 1 || f.resumeCalls != 1 || f.quoteCalls != 4 || polls != 3 || u.confirms != 1 || u.asks != 1 {
 		t.Fatalf("unexpected flow: %+v polls=%d UI=%+v", f, polls, u)
 	}
 	for _, want := range []string{"Funding address:", "Waiting for ETH:", "Funds received.", "Deposit finalized.", "Private balance ready:"} {
@@ -173,32 +174,51 @@ func TestGuidedFundingReadyWalletDoesNotAskOrDeposit(t *testing.T) {
 	}
 }
 
-func TestGuidedFundingAutomaticRecommendationAndExplicitAmount(t *testing.T) {
+func TestGuidedFundingAmountPromptAndExplicitAmount(t *testing.T) {
 	for _, test := range []struct {
-		name, input  string
-		budget, want uint64
+		name, explicit, input string
+		budget, want          uint64
+		prompts               int
 	}{
-		{"default", "", 1_000_000, 20_000_000},
-		{"higher model tier", "", 6_000_000, 20_000_000},
-		{"explicit", "3.000001", 1_000_000, 3_000_001},
+		{"enter accepts default", "", "\n", 1_000_000, 20_000_000, 1},
+		{"higher model tier", "", "\n", 6_000_000, 20_000_000, 1},
+		{"custom", "", " 12.50 \n", 1_000_000, 12_500_000, 1},
+		{"invalid then custom", "", "abc\n0\n-5\n0.50\n1.0000001\n1000001\n3.000001\n", 1_000_000, 3_000_001, 7},
+		{"explicit", "3.000001", "", 1_000_000, 3_000_001, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newWizardFixture()
 			f.models[0].Budget = test.budget
 			f.quote = func(_ int, amount, usd uint64) (zkapi.AddressPaymentQuote, error) {
 				if amount != 0 || usd != test.want {
-					t.Fatal("wrong recommended or explicit deposit")
+					t.Fatal("wrong selected deposit")
 				}
 				q := wizardQuote()
 				q.InputMicroUSD = usd
 				return q, nil
 			}
-			u := &fundingWizardUI{confirmations: []bool{false}}
-			err := guidedFunding(context.Background(), f, test.input, "", u, immediateWizardPoll)
-			if err == nil || !strings.Contains(err.Error(), "declined") || u.asks != 0 || u.confirms != 1 || f.approveCalls != 0 {
-				t.Fatal("recommendation asked setup questions or authorized a deposit", err)
+			var output bytes.Buffer
+			u := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(test.input + "no\n"))}
+			err := guidedFunding(context.Background(), f, test.explicit, "", u, immediateWizardPoll)
+			if err == nil || !strings.Contains(err.Error(), "declined") || f.quoteCalls != 1 || f.approveCalls+f.resumeCalls != 0 {
+				t.Fatal("amount selection did not stop at declined consent", err)
+			}
+			if strings.Count(output.String(), "Deposit amount in USD (network fees are extra) [20]: ") != test.prompts {
+				t.Fatal("incorrect amount prompt or default")
 			}
 		})
+	}
+}
+
+func TestGuidedFundingAmountInputEndsBeforeQuoting(t *testing.T) {
+	for _, input := range []string{"", "invalid\n"} {
+		f := newWizardFixture()
+		var output bytes.Buffer
+		u := &terminalSetupPrompter{out: &output, input: bufio.NewReader(strings.NewReader(input))}
+		err := guidedFunding(context.Background(), f, "", "", u, immediateWizardPoll)
+		if err == nil || !strings.Contains(err.Error(), "input ended") || f.quoteCalls+f.approveCalls+f.resumeCalls != 0 {
+			t.Fatal("ended amount input prepared or authorized a deposit", err)
+		}
 	}
 }
 

@@ -22,8 +22,10 @@ PATH="$HOME/.local/bin:$PATH" oa-chat serve
 
 In current source, `config` shows status and checks setup immediately. Missing
 profiles default to **zkAPI on Mainnet with direct HTTPS**. If funding is needed,
-it displays a recommended **$20 deposit**, its ETH payment address and amount,
-and a terminal QR code. `config --network sepolia` selects test ETH;
+it asks how much to deposit in USD, with **$20 selected by pressing Enter**,
+then displays the ETH payment address, amount, and a terminal QR code.
+`config --usd 50` supplies the amount directly for a new deposit; saved deposits
+resume their fixed ETH amount. `config --network sepolia` selects test ETH;
 `config --backend ticket` selects tickets. Use `config --edit` for settings or
 `config --menu` for wallet management. Sepolia asks for its shared access
 password with input hidden before funding; Mainnet and ticket mode are
