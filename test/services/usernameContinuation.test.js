@@ -71,12 +71,40 @@ test('username continuation reserves new names and selects login only on a typed
         await assert.rejects(accountService.prepareUsernameContinuation('not-an-email@example.com'));
         assert.deepEqual(requests, []);
 
+        // A browser that remembers an account: its own name is a login with
+        // no request at all.
         accountService.state.accountId = '1234567890123456';
-        assert.deepEqual(await accountService.prepareUsernameContinuation('another-name'), { kind: 'login' });
-        accountService.state.accountId = null;
-        accountService.localAccountContinuity = true;
-        assert.deepEqual(await accountService.prepareUsernameContinuation('another-name'), { kind: 'login' });
+        accountService.state.username = 'saved-owl';
+        assert.deepEqual(await accountService.prepareUsernameContinuation('Saved-Owl'), { kind: 'login' });
         assert.deepEqual(requests, []);
+
+        // Another existing name is still a login (switching accounts)...
+        const other = { accountId: '6543210987654321', challengeId: 'challenge-456' };
+        sessionService.fetch = async (url, options) => {
+            requests.push({ url, body: JSON.parse(options.body) });
+            return url.endsWith('/auth/challenge') ? challengeResponse : response;
+        };
+        challengeResponse = jsonResponse(200, other);
+        assert.deepEqual(await accountService.prepareUsernameContinuation('another-name'), {
+            kind: 'login', challenge: { username: 'another-name', data: other }
+        });
+
+        // ...but a new name is not sent to a login that can only fail: it says
+        // which account this browser remembers, and never reserves the name.
+        requests = [];
+        challengeResponse = { ok: false, status: 401, json: async () => ({ code: 'AUTHENTICATION_FAILED' }) };
+        await assert.rejects(accountService.prepareUsernameContinuation('another-name'), error => {
+            assert.equal(error.code, 'SAVED_ACCOUNT_MISMATCH');
+            assert.match(error.message, /This browser remembers \u201csaved-owl\u201d\. Forget it to create a new account\./);
+            return true;
+        });
+        assert.equal(requests.length, 1);
+        assert.ok(requests[0].url.endsWith('/auth/challenge'));
+        accountService.state.accountId = null;
+        accountService.state.username = null;
+        accountService.localAccountContinuity = true;
+        await assert.rejects(accountService.prepareUsernameContinuation('another-name'), /This browser remembers another account/);
+        assert.equal(accountService.getPendingAccountId(), null);
     } finally {
         accountService.cancelPendingAccount();
         sessionService.fetch = originalFetch;

@@ -30,6 +30,7 @@ import { ORG_API_BASE, ORG_AUTH_ORIGIN } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { generateRecoveryCode, isValidRecoveryCode, normalizeRecoveryCode } from './recoveryCode.js';
 import sessionService from './sessionService.js';
+import { isAmbiguousAccountFailure, toFriendlyAccountError } from '../domain/accountErrors.js';
 import storageEvents from './storageEvents.js';
 import syncService, { SYNC_ACCOUNT_SCOPE_KEY as SYNC_ACCOUNT_SCOPE_SETTING } from './encryptedSyncService.js';
 import {
@@ -593,16 +594,7 @@ export function waitForOAuthPopup(popup, provider, {
 /** The word the person types to delete their account; the org checks the same literal. */
 export const DELETE_ACCOUNT_CONFIRMATION = 'DELETE';
 
-export function toFriendlyAccountError(error) {
-    if (!error) return 'Unexpected error';
-    if (error.name === 'AbortError') return 'Request timed out, please try again';
-    if (error.name === 'NotAllowedError') return 'Passkey prompt was cancelled';
-    if (error.code === 'ENCRYPTION_PASSKEY_NOT_AVAILABLE') return error.message;
-    if (error.code === 'ACCOUNT_KEY_PERSIST_FAILED') return error.message;
-    if (error.name === 'OperationError') return 'Invalid recovery code, please check and try again';
-    if (error.name === 'TokenInvalidatedError') return 'Session expired, please sign in again';
-    return error.message || 'Unexpected error';
-}
+export { isAmbiguousAccountFailure, toFriendlyAccountError };
 
 const toFriendlyError = toFriendlyAccountError;
 
@@ -709,6 +701,43 @@ const CURRENT_ACCOUNT_RECORD_FIELDS = Object.freeze([
 export function isPreviousVersionAccountRecord(settings) {
     if (!settings || typeof settings !== 'object' || !settings.accountId) return false;
     return !CURRENT_ACCOUNT_RECORD_FIELDS.some(field => Object.prototype.hasOwnProperty.call(settings, field));
+}
+
+export const SAVED_ACCOUNT_MISMATCH = 'SAVED_ACCOUNT_MISMATCH';
+
+function savedAccountMismatchError(state = {}) {
+    const saved = state.username
+        ? `\u201c${state.username}\u201d`
+        : state.oauthEmail || state.email || 'another account';
+    const error = new Error(`This browser remembers ${saved}. Forget it to create a new account.`);
+    error.code = SAVED_ACCOUNT_MISMATCH;
+    return error;
+}
+
+// A username reservation lives on the server for about a minute. The dialog
+// holds it in memory for a retry with the same name; this copy carries it
+// across a reload or a trip Back to the landing page, so that retry is not
+// refused as "unavailable". It holds only what /auth/init returned (account
+// number, name, challenge), never key material.
+const HELD_REGISTRATION_STORAGE_KEY = 'oa-held-username-registration-v1';
+export const HELD_REGISTRATION_MS = 55000;
+
+function readHeldRegistration() {
+    try {
+        const saved = JSON.parse(globalThis.sessionStorage?.getItem(HELD_REGISTRATION_STORAGE_KEY) || 'null');
+        return saved && typeof saved === 'object' ? saved : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeHeldRegistration(value) {
+    try {
+        if (value) globalThis.sessionStorage?.setItem(HELD_REGISTRATION_STORAGE_KEY, JSON.stringify(value));
+        else globalThis.sessionStorage?.removeItem(HELD_REGISTRATION_STORAGE_KEY);
+    } catch {
+        // Storage may be blocked; the in-memory hold still covers this page.
+    }
 }
 
 class AccountService {
@@ -1552,13 +1581,20 @@ class AccountService {
         const username = validateUsername(usernameInput);
         // A saved partition must be unlocked or explicitly forgotten, never
         // replaced by a new reservation just because the user edited the name.
-        if (this.state.accountId || this.localAccountContinuity) return { kind: 'login' };
+        const savedAccount = Boolean(this.state.accountId || this.localAccountContinuity);
+        if (savedAccount && this.state.username === username) return { kind: 'login' };
         try {
             const data = await fetchJson('/auth/challenge', { username });
             return { kind: 'login', challenge: { username, data } };
         } catch (error) {
             // This is the pre-ceremony lookup only, never a failed assertion.
             if (error.status !== 401 || error.code !== 'AUTHENTICATION_FAILED') throw error;
+        }
+        if (savedAccount) {
+            // A new name on a browser that remembers another account: say so,
+            // and offer the way out (Forget), instead of a login for a name
+            // that does not exist ("Authentication failed", forever).
+            throw savedAccountMismatchError(this.state);
         }
         if (lookupOnly) return { kind: 'register' };
         try {
@@ -1612,10 +1648,19 @@ class AccountService {
             username: confirmedUsername,
             masterKey,
             initData,       // Store server response for passkey registration
+            reservedAt: Date.now(),
             credential: null,
             prfBytes: null,
             recoveryCode: null
         };
+        if (confirmedUsername) {
+            writeHeldRegistration({
+                username: confirmedUsername,
+                accountId,
+                initData,
+                at: this.pendingAccount.reservedAt
+            });
+        }
 
         return accountId;
     }
@@ -1647,12 +1692,16 @@ class AccountService {
             username
         );
 
-        // Trigger passkey creation (user interaction required)
+        // Trigger passkey creation (user interaction required). Closing the
+        // dialog ends the ceremony too (abortPasskeyCeremony), so a sheet the
+        // page no longer waits for cannot keep the next attempt busy.
         let credential;
+        const ceremony = typeof AbortController === 'function' ? new AbortController() : null;
+        this.passkeyCeremony = ceremony;
         try {
-            credential = await navigator.credentials.create({ publicKey });
+            credential = await navigator.credentials.create(ceremony ? { publicKey, signal: ceremony.signal } : { publicKey });
         } catch (error) {
-            if (this.pendingAccount !== pending) return false;
+            if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
             // User cancelled or other WebAuthn error - don't clear pending account
             // so they can retry with the same account number
             if (error.name === 'NotAllowedError') {
@@ -1660,11 +1709,12 @@ class AccountService {
                 this.notify();
                 return false;
             }
-            this.state.error = error.message || 'Passkey creation failed';
+            this.state.error = toFriendlyError(error) || 'Passkey creation failed';
             this.notify();
             return false;
         }
 
+        if (this.passkeyCeremony === ceremony) this.passkeyCeremony = null;
         if (this.pendingAccount !== pending) return false;
         if (!credential) {
             this.state.error = 'Passkey creation failed';
@@ -1672,11 +1722,36 @@ class AccountService {
             return false;
         }
 
-        // Extract PRF output
-        const prfBytes = getPrfOutput(credential);
+        // Extract PRF output. Some authenticators (security keys, some
+        // password managers) only report that PRF is enabled when the passkey
+        // is created and give the value on the first use: ask once, locally.
+        let prfBytes = getPrfOutput(credential);
+        if (!prfBytes && credential.getClientExtensionResults?.()?.prf?.enabled === true) {
+            try {
+                const assertion = await navigator.credentials.get({
+                    publicKey: {
+                        challenge: crypto.getRandomValues(new Uint8Array(32)),
+                        rpId: publicKey.rp?.id || undefined,
+                        allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
+                        userVerification: 'required',
+                        timeout: 60000,
+                        extensions: { prf: { eval: { first: prfInput } } }
+                    }
+                });
+                prfBytes = getPrfOutput(assertion);
+            } catch (error) {
+                if (this.pendingAccount !== pending) return false;
+                this.state.error = error?.name === 'NotAllowedError'
+                    ? 'Passkey creation was cancelled'
+                    : toFriendlyError(error);
+                this.notify();
+                return false;
+            }
+            if (this.pendingAccount !== pending) return false;
+        }
         if (!prfBytes) {
             this.state.prfSupported = false;
-            this.state.error = 'Passkey did not return PRF output, your authenticator may not support this feature';
+            this.state.error = 'This passkey can\u2019t encrypt your account. Try a passkey saved in your browser, phone or password manager.';
             this.notify();
             return false;
         }
@@ -1757,17 +1832,32 @@ class AccountService {
 
         // Register with server
         assertCurrent();
-        await fetchJson('/auth/register', {
-            accountId,
-            username: username || undefined,
-            credential: credentialToJSON(credential),
-            wrappedKeyPasskey: wrappedPasskey,
-            wrappedKeyRecovery: wrappedRecovery || undefined,
-            recoveryCodeHash: recoveryCodeHash || undefined
-        });
+        try {
+            await fetchJson('/auth/register', {
+                accountId,
+                username: username || undefined,
+                credential: credentialToJSON(credential),
+                wrappedKeyPasskey: wrappedPasskey,
+                wrappedKeyRecovery: wrappedRecovery || undefined,
+                recoveryCodeHash: recoveryCodeHash || undefined
+            });
+        } finally {
+            // /auth/register spends the challenge whatever it answers: the
+            // reservation cannot be picked up again after this.
+            if (username) writeHeldRegistration(null);
+        }
         assertCurrent();
         const sessionVerified = await sessionService.doesSessionExist();
         assertCurrent();
+        if (username && !sessionVerified) {
+            // The account exists, but this browser kept no session (cookies
+            // blocked for the site). Saying "created" here would leave a
+            // signed-out page that looks signed in.
+            const error = new Error('Your account was created, but this browser didn\u2019t keep you signed in. Allow cookies for this site, then sign in with your passkey.');
+            error.code = 'SESSION_NOT_ESTABLISHED';
+            error.accountCreated = true;
+            throw error;
+        }
 
         // Success - update state
         this.masterKey = masterKey;
@@ -1918,6 +2008,60 @@ class AccountService {
      * Cancel pending account creation and cleanup.
      * Zeros out the master key for security.
      */
+    /** End a passkey sheet the page no longer waits for (the dialog closed). */
+    abortPasskeyCeremony() {
+        const ceremony = this.passkeyCeremony;
+        this.passkeyCeremony = null;
+        try { ceremony?.abort(); } catch { /* already settled */ }
+    }
+
+    /** When the pending username reservation was made (ms), for holds. */
+    getPendingReservedAt() {
+        return this.pendingAccount?.reservedAt || null;
+    }
+
+    /**
+     * Pick up this browser's own reservation of `usernameInput` after the page
+     * was reloaded or left: the server still holds the name (and its
+     * challenge) for about a minute and would refuse a new reservation.
+     * Returns { username, accountId, at } and makes it the pending account,
+     * or null when there is nothing usable to resume.
+     */
+    resumeHeldRegistration(usernameInput) {
+        const saved = readHeldRegistration();
+        if (!saved) return null;
+        let username;
+        try {
+            username = validateUsername(usernameInput);
+        } catch {
+            return null;
+        }
+        const accountId = normalizeAccountId(saved.accountId);
+        const fresh = Number.isFinite(saved.at) && Date.now() - saved.at < HELD_REGISTRATION_MS;
+        if (!fresh || !accountId || !saved.initData) {
+            writeHeldRegistration(null);
+            return null;
+        }
+        if (saved.username !== username || this.state.accountId || this.localAccountContinuity) return null;
+        this.cancelPendingAccount();
+        this.pendingAccount = {
+            accountId,
+            username,
+            masterKey: crypto.getRandomValues(new Uint8Array(32)),
+            initData: saved.initData,
+            reservedAt: saved.at,
+            credential: null,
+            prfBytes: null,
+            recoveryCode: null
+        };
+        return { username, accountId, at: saved.at };
+    }
+
+    /** The server refused this reservation: nothing to resume. */
+    forgetHeldRegistration() {
+        writeHeldRegistration(null);
+    }
+
     cancelPendingAccount() {
         this.pendingAccountGeneration += 1;
         if (this.pendingAccount?.masterKey) {
