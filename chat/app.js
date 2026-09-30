@@ -2885,14 +2885,6 @@ class ChatApp {
                 console.warn('Scrubber init failed:', error);
             });
 
-            if (!this.features.accounts) {
-                // Accountless compositions never bootstrap authentication/sync.
-            } else if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(() => accountService.maybeAutoUnlock());
-            } else {
-                setTimeout(() => accountService.maybeAutoUnlock(), 800);
-            }
-
             await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
             networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));
 

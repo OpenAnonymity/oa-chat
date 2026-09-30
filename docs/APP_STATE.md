@@ -5743,3 +5743,25 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
 - `createPaymentModeUi` gates saved and late dialog opens on the active zkAPI
   mode. Moving to OA hides the dialog without canceling any authorized transaction
   or clearing the SDK journal. An old same-tab marker cannot reopen over OA.
+
+## 2026-09-30: Google handoff and external sign-in completion
+
+- Removed `maybeAutoUnlock` and its idle/timer startup scheduling. A remembered
+  username must not independently start a passkey ceremony during the landing
+  page's Google completion handoff. Explicit username login and the Google
+  encryption-passkey setup/unlock steps remain in AccountModal.
+- An open login dialog closes when authentication and the account wallet scope
+  become ready outside its own handler. Registration, recovery and OAuth handlers
+  retain ownership of completion/Welcome routing; already signed-in Account
+  settings remain open during ordinary updates.
+- A busy OAuth completion now reports a sign-in error without clearing the other
+  operation's busy state. A null completion cannot silently fall back to login
+  without an error; existing specific service errors are preserved.
+- Google key unlock (including deferred sync recovery), locally restored Google
+  login and new account registration broadcast the existing account-login-complete
+  event after the current verified account scope is ready. The payload contains
+  only the account ID. Other tabs reconcile saved state using their existing
+  listener; focus/send reconciliation remains the fallback.
+- Regression coverage: `accountSignInCompletion.test.js` and
+  `accountCompletionBroadcast.test.js`. Real Google and passkey prompts still
+  require the staging browser acceptance test after this patch is integrated.

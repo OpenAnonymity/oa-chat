@@ -1792,6 +1792,7 @@ class AccountService {
 
         // Initialize and enable sync for new account
         await this.initializeSync(true);
+        this.broadcastAccountReady(accountId);
 
         return true;
     }
@@ -1962,7 +1963,10 @@ class AccountService {
         const handoffToken = !isDesktopOAuth && !link && completionToken
             ? String(completionToken)
             : null;
-        if (this.state.busy) return null;
+        if (this.state.busy) {
+            this.setError('Could not finish signing in. Another sign-in is in progress. Please try again.');
+            return null;
+        }
         if (link) {
             this.setError(
                 `${providerConfig.label} uses a separate privacy partition and cannot be connected to an existing OA account`
@@ -2129,6 +2133,7 @@ class AccountService {
                 this.updateStatus();
                 this.notify();
                 await this.initializeSync(false);
+                this.broadcastAccountReady(accountId);
                 return { status: 'unlocked', accountId };
             }
 
@@ -2355,7 +2360,7 @@ class AccountService {
                 void this.initializeSync(newAccount, {
                     awaitInitialSync: true,
                     throwOnFailure: true
-                }).catch(retryError => {
+                }).then(() => this.broadcastAccountReady(expectedAccountId)).catch(retryError => {
                     console.warn(
                         '[Account] Encrypted data restoration retry paused:',
                         String(retryError?.code || retryError?.name || 'UNKNOWN')
@@ -2363,6 +2368,7 @@ class AccountService {
                 });
             }, 1000);
         }
+        this.broadcastAccountReady(expectedAccountId);
         return true;
     }
 
@@ -2603,6 +2609,7 @@ class AccountService {
             
             // Initialize and enable sync for new account
             await this.initializeSync(true);
+            this.broadcastAccountReady(accountId);
             
             return true;
         } catch (error) {
@@ -3114,6 +3121,21 @@ class AccountService {
         );
     }
 
+    /** Publish only a completed, locally usable binding; receiving tabs load
+     * its saved key themselves. Never broadcast keys or an obsolete account. */
+    broadcastAccountReady(expectedAccountId) {
+        if (!expectedAccountId || this.state.accountId !== expectedAccountId ||
+            this.state.sessionVerified !== true || this.state.accountScopeReady !== true) return;
+        try {
+            storageEvents.init();
+            storageEvents.broadcast(ACCOUNT_LOGIN_COMPLETE_EVENT, { accountId: expectedAccountId });
+        } catch (error) {
+            // Focus/send reconciliation remains the fallback. A notification
+            // failure must not undo an otherwise successful authentication.
+            console.warn('[AccountService] Could not announce completed sign-in:', error);
+        }
+    }
+
     /** Log out in one tab ends the session for every tab of this browser. */
     broadcastSignedOut() {
         if (!this.state.accountId) return;
@@ -3290,23 +3312,6 @@ class AccountService {
         }
         this.updateStatus();
         this.notify();
-    }
-
-    async maybeAutoUnlock() {
-        // Skip if already unlocked (session restored from IndexedDB)
-        if (this.getSyncKeyMaterial()) return;
-        
-        if (!this.state.accountId || !this.state.passkeySupported || this.state.busy) return;
-        if (this.state.googleLinked) return;
-        if (typeof PublicKeyCredential?.isConditionalMediationAvailable !== 'function') return;
-        const supportsConditional = await PublicKeyCredential.isConditionalMediationAvailable();
-        if (!supportsConditional) return;
-        const options = { mediation: 'silent', silent: true };
-        if (this.state.username) {
-            await this.unlockWithUsername(this.state.username, options);
-        } else {
-            await this.unlockWithPasskey(this.state.accountId, options);
-        }
     }
 
     formatAccountId(accountId) {

@@ -270,45 +270,6 @@ test('username login returns the exact opaque challenge transaction ID', async (
     }
 });
 
-test('conditional auto-unlock retains the saved username login path', async () => {
-    const originalState = { ...accountService.state };
-    const originalUsernameUnlock = accountService.unlockWithUsername;
-    const originalPasskeyUnlock = accountService.unlockWithPasskey;
-    const originalCredential = globalThis.PublicKeyCredential;
-    const calls = [];
-
-    Object.assign(accountService.state, {
-        accountId: '1234567890123456',
-        username: 'winter-owl',
-        googleLinked: false,
-        passkeySupported: true,
-        busy: false
-    });
-    accountService.unlockWithUsername = async (...args) => calls.push(['username', ...args]);
-    accountService.unlockWithPasskey = async (...args) => calls.push(['accountId', ...args]);
-    globalThis.PublicKeyCredential = {
-        isConditionalMediationAvailable: async () => true
-    };
-
-    try {
-        await accountService.maybeAutoUnlock();
-        assert.deepEqual(calls, [[
-            'username',
-            'winter-owl',
-            { mediation: 'silent', silent: true }
-        ]]);
-    } finally {
-        accountService.unlockWithUsername = originalUsernameUnlock;
-        accountService.unlockWithPasskey = originalPasskeyUnlock;
-        Object.assign(accountService.state, originalState);
-        if (originalCredential === undefined) {
-            delete globalThis.PublicKeyCredential;
-        } else {
-            globalThis.PublicKeyCredential = originalCredential;
-        }
-    }
-});
-
 test('username accounts use identity-backed deferred redemption sync', async () => {
     const originalState = { ...accountService.state };
     const originalSyncDerivationKey = accountService.syncDerivationKey;
