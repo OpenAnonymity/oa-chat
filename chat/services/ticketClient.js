@@ -707,8 +707,19 @@ class TicketClient {
                     result = await this.getLegacyTransfer().run();
                     return result;
                 } finally {
-                    const wasMoving = Boolean(this.legacyMove);
-                    this.legacyMove = null;
+                    // A run that only redeems a move's saved code (the move
+                    // itself settled earlier) has nothing to settle again.
+                    const wasMoving = Boolean(this.legacyMove) && !this.legacyMove.awaitingRedeem;
+                    // The old tickets have left the wallet and their code is
+                    // saved, but the new ones are not issued yet (the redeem
+                    // failed and is retried). They are still moving: keep the
+                    // count where it was rather than drop it to zero and show
+                    // "Get tickets" to someone who has tickets on the way.
+                    const awaitingRedeem = Boolean(result?.redeemError) &&
+                        (Number(result?.moved) > 0 || Boolean(this.legacyMove?.awaitingRedeem));
+                    this.legacyMove = awaitingRedeem && this.legacyMove
+                        ? { ...this.legacyMove, awaitingRedeem: true }
+                        : null;
                     this.legacyTransferRun = null;
                     this.ticketStore.emitUpdate?.();
                     // A move counts as done once its new tickets are in the

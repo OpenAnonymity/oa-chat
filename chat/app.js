@@ -4084,6 +4084,9 @@ class ChatApp {
 
         const toast = document.createElement('div');
         toast.id = 'app-toast';
+        // Announced like any other status: the spinner alone says nothing.
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
         // Use same styling as showToast for consistency
         toast.className = 'fixed left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-lg text-sm border border-border/50 bg-muted text-foreground  flex items-center gap-2';
 

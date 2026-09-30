@@ -101,17 +101,31 @@ test('a move announces start, settle and success, in that order', () => withStor
 test('a failed redeem settles quietly, and the retry announces the earlier move', () => withStore(fakeStore(541, 541), async () => {
     ticketClient.legacyTransfer = fakeTransfer(
         { status: 'moved', moved: 541, redeemed: false, redeemError: new Error('relay down') },
-        { tickets: 541 }
+        { tickets: 541, during: () => { ticketClient.ticketStore.count = 0; } }
     );
     await ticketClient.runLegacyTransfer();
     assert.deepEqual(events, [
         ['legacy-tickets-moving', { tickets: 541 }],
         ['legacy-tickets-move-settled', { moved: 0 }]
     ]);
+    // The old tickets are gone and the new ones not issued yet: they are
+    // still on their way, so the count holds instead of showing zero.
+    assert.equal(ticketClient.getVisibleTicketCount(), 541);
+    assert.equal(ticketClient.getMovingTicketCount(), 541);
+    assert.equal(ticketClient.getTicketCount(), 0, 'spending logic still sees the real wallet');
     events.length = 0;
-    ticketClient.legacyTransfer = fakeTransfer({ status: 'none', moved: 0, redeemed: true, redeemError: null });
+    // A retry that fails again keeps holding.
+    ticketClient.legacyTransfer = fakeTransfer({ status: 'none', moved: 0, redeemed: false, redeemError: new Error('relay down') });
+    await ticketClient.runLegacyTransfer();
+    assert.deepEqual(events, []);
+    assert.equal(ticketClient.getVisibleTicketCount(), 541);
+    ticketClient.legacyTransfer = fakeTransfer({ status: 'none', moved: 0, redeemed: true, redeemError: null }, {
+        during: () => { ticketClient.ticketStore.count = 541; }
+    });
     await ticketClient.runLegacyTransfer();
     assert.deepEqual(events, [['legacy-tickets-moved', { moved: 541 }]]);
+    assert.equal(ticketClient.legacyMove, null);
+    assert.equal(ticketClient.getVisibleTicketCount(), 541);
 }));
 
 test('an early status read holds previous-version tickets before sign-in', () => withStore(fakeStore(541), async () => {
