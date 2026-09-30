@@ -1,3 +1,25 @@
+## 2026-09-30: Reload brings the dialog back at once; a click during startup is kept
+
+- After a reload the Private balance dialog waited for `initWalletClient()`,
+  i.e. the whole of `zkapiClient.init()` including
+  `reconcileBrowserWithdrawalsOnLoad` (late attempts, submission claims,
+  `syncWithdrawal`, background withdrawals, expiry history — chain reads
+  through MetaMask). With a saved withdrawal that can take many seconds, so
+  the dialog looked like it never came back. Restoration now needs only the
+  saved wallet: the signer choice (`initWalletMethod`) and the SDK's local
+  snapshot (`zkapiClient.config` set by its first refresh, which is
+  published before reconciliation). Nothing is sent by restoring.
+- `run()` used to return silently while `walletMethodReady === false`, so a
+  Continue during startup did nothing and had to be clicked again (once the
+  dialog restores early, that window is exactly when people click). The click
+  is now kept: the primary shows "Getting ready…" and the action runs once
+  `walletReady` resolves. Further clicks are ignored; closing the dialog
+  meanwhile abandons it.
+- Harness (`?slow=8000`): before, the dialog appeared at 8.2 s and a click at
+  0.6 s never ran; after, it appears at ~0.25 s and the one click runs when
+  startup ends. `wallet-modal-restore` tests now start from an empty SDK
+  (`config: null`), as a fresh page does.
+
 ## 2026-09-30: Private balance dialog — one page for work in motion, theme-aligned funding
 
 - **Lost clicks after a reload ("click Continue twice").** Every SDK change

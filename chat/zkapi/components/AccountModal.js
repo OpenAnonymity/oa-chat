@@ -15,7 +15,7 @@ import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } f
 import { walletJourney } from '../domain/walletJourney.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { canQuotePendingAddressDeposit, runAddressAction, withdrawalDestination } from '../services/addressFunding.js';
-import { getWalletMethod, initWalletClient, prepareWalletMethod, setWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
+import { getWalletMethod, initWalletClient, initWalletMethod, prepareWalletMethod, setWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
 import { attachWalletMethodControls, captureWalletView, fundingInstructionsVisible, refreshWalletView, renderDepositAmount, prepareDepositAmount, renderFundingAccount, renderFundingWei, renderWalletMethod, restoreWalletView, stopFundingFlow, isFundingViewHydrating, syncWalletFlows } from './WalletMethodControls.js';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
@@ -112,10 +112,18 @@ export default class AccountModal {
             this.restorePendingOperation();
             if (this.isOpen) this.render();
         };
-        void initWalletClient().then(finishInit, error => {
+        this.walletReady = initWalletClient().then(finishInit, error => {
             this.fundingError = error.message;
             finishInit();
         });
+        // A reload must bring the dialog back as soon as the saved wallet is
+        // read. Startup then checks the chain (every saved withdrawal,
+        // through MetaMask), which can take many seconds; restoring only
+        // after that made the dialog look like it never came back.
+        void initWalletMethod().then(() => {
+            this.walletMethodKnown = true;
+            this.restorePendingOperation();
+        }, () => {});
 
         window.addEventListener('zkapi-payment-required', (event) => {
             this.open(event.detail?.view || 'fund');
@@ -180,8 +188,15 @@ export default class AccountModal {
     // the steps back where they were. Opening only refreshes status; a wallet
     // request still needs the user's own click. A close, or any manual open
     // during startup, wins over restoration.
+    /** The saved wallet is readable: the signer choice is known and the SDK
+     *  has loaded its local snapshot, even if startup is still checking the
+     *  chain. Enough to put the saved view back; nothing is sent from here. */
+    savedStateReadable() {
+        return this.restoreStateReady || (this.walletMethodKnown === true && zkapiClient.config != null);
+    }
+
     restorePendingOperation() {
-        if (!this.restorePendingOnInit || !this.restoreStateReady) return;
+        if (!this.restorePendingOnInit || !this.savedStateReadable()) return;
         const saved = this.readRunningModal();
         const withdrawalNeedsRecovery = [...IN_MOTION_PHASES, 'reserving', 'prepared', 'retry_exact']
             .includes(zkapiClient.config?.prepared_withdrawal?.phase)
@@ -532,7 +547,17 @@ export default class AccountModal {
     }
 
     async run(action, activityDetails = null) {
-        if (this.busy || this.fundingBusy || this.walletMethodReady === false) return;
+        if (this.busy || this.fundingBusy || this.startingAfterInit) return;
+        if (this.walletMethodReady === false) {
+            // Startup is still checking the chain. Keep the click instead of
+            // dropping it: the button says so, and the action goes ahead once
+            // the wallet is ready. Closing the dialog meanwhile abandons it.
+            if (!this.walletReady) return;
+            this.startingAfterInit = true;
+            if (this.isOpen) this.render();
+            try { await this.walletReady; } finally { this.startingAfterInit = false; }
+            if (!this.isOpen) return;
+        }
         cancelWalletModalRestore(this);
         this.clearTransientOutcome();
         this.withdrawalCompleted = false;
@@ -1081,7 +1106,9 @@ export default class AccountModal {
                             : `<div class="zkapi-actions">
                             ${this.busy
                                 ? this.renderProgress(this.status || 'Waiting for MetaMask…')
-                                : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${resumingDeposit ? 'Resume with MetaMask' : 'Continue with MetaMask'}</button>`}
+                                : this.startingAfterInit
+                                    ? '<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span>Getting ready…</button>'
+                                    : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${resumingDeposit ? 'Resume with MetaMask' : 'Continue with MetaMask'}</button>`}
                         </div>`}
                     </section>
                     <div class="zkapi-guides">
@@ -1302,8 +1329,8 @@ export default class AccountModal {
             const dismiss = cancelable
                 ? '<button id="zkapi-cancel-withdrawal-btn" class="zkapi-quiet-button" type="button">Cancel</button>'
                 : `<button id="zkapi-withdraw-dismiss-btn" class="zkapi-quiet-button" type="button" ${this.busy ? 'disabled' : ''}>${submissionActive ? 'Close' : 'Cancel'}</button>`;
-            const primary = this.busy
-                ? `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label>${walletMethodText(this.busyLabel(journey))}</span></button>`
+            const primary = this.busy || this.startingAfterInit
+                ? `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label>${walletMethodText(this.startingAfterInit ? 'Getting ready…' : this.busyLabel(journey))}</span></button>`
                 : submissionActive
                     ? `<button id="zkapi-sync-withdrawal-btn" class="${submitted ? 'zkapi-quiet-button' : 'zkapi-primary-button'}" type="button">${submitted ? 'Check now' : 'Check transaction'}</button>`
                     : prepared && !clearanceReserved && !selectedEscape && !cancelable
@@ -1356,7 +1383,9 @@ export default class AccountModal {
                 ${activeLease ? '<p data-active-lease-notice class="zkapi-note">Your open chat key settles first.</p>' : ''}
                 ${this.renderOutcome()}
                 <div class="zkapi-actions">
-                    <button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${confirmed ? '' : 'disabled'}>${this.withdrawMode === 'mutual' ? 'Close balance and withdraw' : `Start ${zkapiClient.escapePeriodLabel()} escape`}</button>
+                    ${this.startingAfterInit
+                        ? '<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span>Getting ready…</button>'
+                        : `<button id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" ${confirmed ? '' : 'disabled'}>${this.withdrawMode === 'mutual' ? 'Close balance and withdraw' : `Start ${zkapiClient.escapePeriodLabel()} escape`}</button>`}
                     <button id="zkapi-withdraw-dismiss-btn" class="zkapi-quiet-button" type="button">Cancel</button>
                 </div>
                 ${address ? this.literal(renderFundingAccount(this, { destination: false, pending: false })) : ''}
