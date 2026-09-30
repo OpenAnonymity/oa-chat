@@ -167,7 +167,11 @@ func configure(ctx context.Context, dir string, args []string, ui setupPrompter,
 		_, err := fmt.Fprintln(out, c.APIKey)
 		return err
 	}
-	showConfigureSummary(c, ui)
+	if o.menu {
+		ui.Printf("Wallet menu (zkAPI network: %s).\n", c.ZKAPI.Network)
+	} else {
+		showConfigureSummary(c, ui)
+	}
 	if o.status {
 		return nil
 	}

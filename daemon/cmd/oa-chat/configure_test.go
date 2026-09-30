@@ -263,6 +263,9 @@ func TestConfigureMenuActionsAndNoOpCheck(t *testing.T) {
 			if !bytes.Equal(before, after) {
 				t.Fatal("menu action rewrote configuration")
 			}
+			if !strings.Contains(ui.output.String(), "Wallet menu") || strings.Contains(ui.output.String(), "OpenAI base URL") || strings.Contains(ui.output.String(), "Ephemeral key reuse") || strings.Contains(ui.output.String(), "Wallet actions:") {
+				t.Fatal("wallet menu repeated the full configuration banner", ui.output.String())
+			}
 		})
 	}
 }

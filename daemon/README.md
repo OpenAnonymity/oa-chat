@@ -79,6 +79,14 @@ API key, or check setup.
 Stop a running daemon before editing settings; saved settings are available
 through `oa-chat config --status`.
 
+The wallet menu uses a compact banner. Choose **withdraw**, enter the destination,
+and review the full private balance and maximum network fee. If more ETH is
+needed for gas, it shows the receiving address and terminal QR code, then waits
+and updates the receiving balance automatically. Press Enter once funded to
+withdraw; the command checks fresh fees again and waits for finality. Saved
+signed withdrawals resume without another approval. The detailed configuration
+summary remains available through `config --status`.
+
 The editor covers the saved access mode, zkAPI network, loopback listener,
 and optional Wisp relay. Both access modes remain available in the same
 profile. Mainnet and Sepolia funding and wallet state stay separated; changing

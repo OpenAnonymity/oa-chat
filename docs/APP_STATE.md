@@ -1,3 +1,37 @@
+## 2026-09-30: Guided withdrawal with automatic gas funding
+
+- `config --menu` now shows a compact network banner; `config --status` keeps
+  the full saved settings. Withdrawal hides temporary-runtime startup chatter
+  and uses a dedicated guided flow instead of chaining verbose legacy commands.
+- A new withdrawal asks for the destination once. A saved reservation keeps its
+  destination. The concise summary shows the full private payout and destination;
+  when gas is insufficient, the deposit-style local terminal QR shows only the
+  ETH fee top-up to the local signing address. It waits automatically, updates
+  receiving balance/shortfall, and asks Enter to withdraw once funded. It
+  refreshes quotes after Enter. Normal fee changes within the displayed buffer
+  do not repeat the QR or full quote dump; partial incoming funds update the
+  QR's remaining payment so scanning it does not ask for the original top-up.
+- Quote refresh keeps chain/deployment/contract/address/note/destination/amount/
+  clearance binding/nonce/retry hash fixed. The amount is frozen at the first
+  successful quote, after any preceding inference settlement. Fee ceilings and
+  balance are checked again after terminal input; an increase beyond consent
+  or renewed funding shortage requires another Enter. The optional buffer never
+  blocks a sufficiently funded withdrawal.
+- Signed pending withdrawals resume the existing hash without another approval;
+  ambiguous approval replies inspect durable state before recovery. A revert
+  never automatically authorizes another transaction. Explicit recovery can
+  select a fresh reviewed retry of the exact failed hash or confirm a matching
+  independently submitted payout. Public ETH return is unchanged.
+- Shared payment QR validation now accepts native withdrawals with zero public
+  principal (including closing a zero-balance private note) and fee-only totals.
+  It still validates the pinned deployment, recipient, exact quantities, and
+  fee/shortfall arithmetic before showing payment instructions. Neither private
+  note binding nor withdrawal destination enters the fee QR.
+- Validation: full daemon race tests, `go vet ./...`, Linux amd64 build, and
+  focused guided-withdrawal race tests passed. Fresh adversarial review approved
+  the final diff, including partial-payment QR updates and recovery boundaries.
+  No live wallet transaction is part of this UX change.
+
 ## 2026-09-30: CLI inference and settled-session activity
 
 - Current source hides routine zkAPI companion startup, readiness, retry, and

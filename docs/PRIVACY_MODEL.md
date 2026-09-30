@@ -175,7 +175,17 @@ ceiling requires fresh confirmation only once sufficiently funded. Piped
 installer text is never treated as consent; interactive answers come from the
 controlling terminal. Unsigned progress requires consent again after restart;
 signed progress reuses its original transaction. A reverted transaction is
-never retried automatically. Configuration stops any temporary services it owns
+never retried automatically. Guided withdrawal uses the same ETH payment QR
+and balance-waiting UI for gas shortages. Its QR contains only the local signing
+address, chain, and fee top-up; the private payout is excluded from that payment
+amount. It shows the full withdrawal amount and destination once and requires
+Enter with a displayed maximum fee once funded. Fresh quotes retain the same
+note, destination, principal, clearance binding, nonce, network, deployment,
+and any explicitly selected failed-transaction retry hash. A fee increase beyond
+the approved ceiling or a renewed balance shortage requires another Enter.
+An already signed withdrawal resumes the saved transaction without authorizing
+another; ambiguous approval replies are inspected before any recovery call.
+Configuration stops any temporary services it owns
 when finished; `serve`
 checks readiness without prompting and points missing prerequisites back to
 `config`. Configuration and service startup check wallet state and a positive

@@ -210,7 +210,7 @@ func (p *terminalSetupPrompter) Continue(ctx context.Context, question string) (
 type startOptions struct {
 	network, backend, usd, model, listen string
 	prepared                             *config.Config
-	setupOnly, checkOnly                 bool
+	setupOnly, checkOnly, quietStartup   bool
 }
 
 func parseStartOptions(args []string) (startOptions, error) {
@@ -408,10 +408,12 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	if options.model != "" {
 		ui.Printf("The legacy --model option does not affect funding; select a model on each inference request.\n")
 	}
-	if c.Backend == "zkapi" {
-		ui.Printf("Mode: %s; network: %s.\n", c.Backend, c.ZKAPI.Network)
-	} else {
-		ui.Printf("Mode: ticket.\n")
+	if !options.quietStartup {
+		if c.Backend == "zkapi" {
+			ui.Printf("Mode: %s; network: %s.\n", c.Backend, c.ZKAPI.Network)
+		} else {
+			ui.Printf("Mode: ticket.\n")
+		}
 	}
 	attached, err := runtime.probe(ctx, c)
 	if err != nil {
@@ -422,14 +424,18 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 	logs := &setupLogWriter{out: out, enabled: options.checkOnly}
 	var done chan error
 	if attached {
-		ui.Printf("Using the compatible daemon already running at http://%s.\n", c.Listen)
+		if !options.quietStartup {
+			ui.Printf("Using the compatible daemon already running at http://%s.\n", c.Listen)
+		}
 	} else {
 		if c.Backend == "zkapi" && runtime.testnet != nil {
 			if err := runtime.testnet(ctx, dir, c, ui); err != nil {
 				return err
 			}
 		}
-		ui.Printf("Starting the local API...\n")
+		if !options.quietStartup {
+			ui.Printf("Starting the local API...\n")
+		}
 		done = make(chan error, 1)
 		go func() {
 			done <- runtime.serve(life, dir, c, logs)

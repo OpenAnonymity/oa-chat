@@ -644,21 +644,42 @@ Preserve its wallet state when changing to a separate funded state directory.
 
 Run `oa-chat config --menu` with the same configuration directory and choose the
 **withdraw** menu action. Configuration starts temporary services if needed.
-The action shows status, asks for the receiving address, and displays a fee
-quote. Approval authorizes withdrawal of the **entire remaining private
-balance** to that saved destination; there is no partial private withdrawal.
+The action asks for the destination address for a new withdrawal and shows one
+concise summary of the **entire remaining private balance** and destination;
+there is no partial private withdrawal. An existing reserved destination is
+reused. If the local address lacks ETH for gas, the same terminal payment UI
+as deposit shows a fee-funding QR code and automatically checks the receiving
+balance every five seconds. The QR sends only gas funds to the local address,
+never the private payout amount to the destination. Balance and remaining-fee
+updates replace repeated quote dumps; the QR updates after a partial payment,
+when the required fee total exceeds the previously displayed buffered target,
+or when a funded operation needs funding again. An optional fee buffer is not required
+to continue.
+
+Once funded, the action displays the maximum network fee and asks **Enter to
+withdraw**, or `cancel`. It refreshes the quote after Enter and binds that
+approval to the same network, deployment, address, note, destination, principal,
+clearance binding, retry hash, and signing nonce. A larger maximum fee needs
+another Enter. A balance drop resumes the funding wait and requires another
+Enter once funded. No manual command rerun is needed for ordinary fee funding.
+Approving the destination alone does not authorize signing.
 The daemon generates the withdrawal proof and uses its existing local Ethereum
 key to submit `mutualClose` only after quote approval. No browser extension, wallet connection, seed
 phrase, or imported key is needed. ETH for gas must be available at the displayed
-local signing address, on the configured network. The displayed Low EIP-1559
-quote fixes the maximum approved fee allowance, expires after 30 seconds, and
-must be refreshed when stale. Finalized status shows the actual network fee.
+local signing address, on the configured network. The Low EIP-1559 quote
+expires after 30 seconds and is refreshed automatically within the approved
+fee ceiling. Finalized status shows the actual network fee.
 
 An outstanding inference must settle first. Preparing a withdrawal saves a
 reservation before requesting clearance and blocks further inference on that note. The
 destination cannot change after starting; there is no cancellation that resumes
 spending a reserved note. Proof preparation can take several minutes. Ctrl+C
 stops waiting; rerun `config --menu` and choose **withdraw** to recover saved signed progress.
+Signed pending withdrawals resume directly without another address prompt,
+quote, or approval. The command prints concise submitted/finalized progress,
+and uses the saved transaction only. An ambiguous approval response triggers
+status inspection, never blind approval of a second quote. If it cannot confirm
+that a transaction was signed, it directs the user to recover saved progress.
 An uncertain broadcast reuses the identical signed transaction. Only a finalized
 revert permits a fresh transaction, following a new quote and approval, with
 the same note, destination, balance, and nullifier.

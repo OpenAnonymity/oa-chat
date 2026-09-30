@@ -179,6 +179,18 @@ func TestConfigPaymentRequiresConsentAndRejectsReplacedQuote(t *testing.T) {
 				s := fundingCLITestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path == prefix+"/quote" {
 						quote := paymentTestQuote(kind)
+						if kind == "withdrawal" {
+							quote.Binding = "fixed-withdrawal-binding"
+							if r.Method == http.MethodPost {
+								gets++
+								if outcome == "replaced" && gets >= 2 {
+									quote.Binding = "changed-withdrawal-binding"
+								}
+								if outcome == "changed-destination" {
+									quote.Destination = "0x4444444444444444444444444444444444444444"
+								}
+							}
+						}
 						if r.Method == http.MethodGet {
 							gets++
 							if outcome == "replaced" && gets >= 2 {
@@ -199,6 +211,7 @@ func TestConfigPaymentRequiresConsentAndRejectsReplacedQuote(t *testing.T) {
 						}
 						if kind == "withdrawal" {
 							state := withdrawalTestStatus("complete")
+							state["deployment_id"] = paymentTestQuote(kind).DeploymentID
 							state["transaction_hash"] = "0x" + strings.Repeat("b", 64)
 							_ = json.NewEncoder(w).Encode(state)
 						} else {
@@ -208,7 +221,9 @@ func TestConfigPaymentRequiresConsentAndRejectsReplacedQuote(t *testing.T) {
 					}
 					if r.URL.Path == prefix {
 						if kind == "withdrawal" {
-							_ = json.NewEncoder(w).Encode(withdrawalTestStatus("ready"))
+							state := withdrawalTestStatus("ready")
+							state["deployment_id"] = paymentTestQuote(kind).DeploymentID
+							_ = json.NewEncoder(w).Encode(state)
 						} else {
 							_ = json.NewEncoder(w).Encode(returnTestStatus("ready"))
 						}
@@ -226,6 +241,9 @@ func TestConfigPaymentRequiresConsentAndRejectsReplacedQuote(t *testing.T) {
 				if outcome == "approved" {
 					if err != nil || approvals != 1 {
 						t.Fatalf("approval failed: %v, posts=%d", err, approvals)
+					}
+					if action == "withdraw" && (ui.asks != 1 || ui.continues != 1 || ui.confirms != 0 || strings.Contains(ui.String(), "withdrawal quote") || strings.Contains(ui.String(), "Payment URI:") || strings.Contains(ui.String(), "Local signing address:")) {
+						t.Fatal("funded withdrawal asked extra questions or printed verbose payment details", ui.String())
 					}
 				} else if err == nil || approvals != 0 {
 					t.Fatalf("unsafe approval: %v, posts=%d", err, approvals)

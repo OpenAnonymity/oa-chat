@@ -14,7 +14,7 @@ import (
 const paymentQRColors = "\x1b[38;2;0;0;0;48;2;255;255;255m"
 const paymentQRReset = "\x1b[0m"
 
-// paymentRequestURI uses only the public top-up from an authenticated deposit
+// paymentRequestURI uses only the public top-up from an authenticated payment
 // quote. ERC-681 value is integer wei, including the quoted fee buffer after
 // subtracting ETH already at the funding address, never the vault principal.
 func paymentRequestURI(q zkapi.AddressPaymentQuote) (string, error) {
@@ -28,7 +28,23 @@ func paymentRequestURI(q zkapi.AddressPaymentQuote) (string, error) {
 	default:
 		return "", invalid
 	}
-	if q.Kind != "deposit" || q.Amount == 0 || q.Destination != "" || !fundingAddress(q.Address) || strings.EqualFold(q.Address, q.Contract) || !zkapi.MatchesDeployment(network, q.DeploymentID, q.Contract) {
+	if !fundingAddress(q.Address) || strings.EqualFold(q.Address, q.Contract) || !zkapi.MatchesDeployment(network, q.DeploymentID, q.Contract) {
+		return "", invalid
+	}
+	expectedPrincipal := new(big.Int)
+	switch q.Kind {
+	case "deposit":
+		if q.Amount == 0 || q.Destination != "" {
+			return "", invalid
+		}
+		expectedPrincipal.Mul(new(big.Int).SetUint64(q.Amount), big.NewInt(1_000_000_000))
+	case "withdrawal":
+		if _, err := zkapi.NormalizeWithdrawalDestination(q.Destination); err != nil || q.NoteID > 0xffffffff || q.Binding == "" {
+			return "", invalid
+		}
+		// The payout comes from the private note. This payment is gas only,
+		// sent to the local signing address, never to the payout destination.
+	default:
 		return "", invalid
 	}
 	values := make([]*big.Int, 9)
@@ -43,7 +59,7 @@ func paymentRequestURI(q zkapi.AddressPaymentQuote) (string, error) {
 	}
 	principal, balance, fee, reserve, buffer := values[0], values[1], values[2], values[3], values[4]
 	total, recommended, shortfall, topUp := values[5], values[6], values[7], values[8]
-	if principal.Cmp(new(big.Int).Mul(new(big.Int).SetUint64(q.Amount), big.NewInt(1_000_000_000))) != 0 ||
+	if principal.Cmp(expectedPrincipal) != 0 ||
 		total.Cmp(new(big.Int).Add(principal, fee)) != 0 ||
 		recommended.Cmp(new(big.Int).Add(principal, reserve)) != 0 ||
 		buffer.Cmp(new(big.Int).Sub(reserve, fee)) != 0 {

@@ -35,6 +35,53 @@ func TestPaymentRequestURI(t *testing.T) {
 	}
 }
 
+func TestWithdrawalPaymentQRFundsOnlyFees(t *testing.T) {
+	q := paymentTestQuote("withdrawal")
+	q.Binding = "private-clearance-binding"
+	q.BalanceWei, q.ShortfallWei, q.RecommendedTopUpWei = "10000", "15000", "20000"
+	uri, err := paymentRequestURI(q)
+	if err != nil || uri != "ethereum:"+q.Address+"@1?value=20000" {
+		t.Fatal("withdrawal QR included the private payout or wrong recipient", uri, err)
+	}
+	var out bytes.Buffer
+	if err := printSetupPaymentQR(&out, q); err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{q.Binding, q.Destination, q.Contract} {
+		if strings.Contains(out.String(), secret) {
+			t.Fatal("fee payment instructions included private operation details")
+		}
+	}
+	q.Amount = 0 // Closing an empty private note still needs transaction fees.
+	if _, err := paymentRequestURI(q); err != nil {
+		t.Fatal("zero-balance note closure cannot fund fees", err)
+	}
+	q.BalanceWei, q.ShortfallWei, q.RecommendedTopUpWei = "25000", "0", "5000"
+	out.Reset()
+	if err := printSetupPaymentQR(&out, q); err != nil || out.Len() != 0 {
+		t.Fatal("optional withdrawal fee buffer requested another transfer", err)
+	}
+}
+
+func TestWithdrawalPaymentQRRejectsPrincipalAndUnboundDestination(t *testing.T) {
+	for name, mutate := range map[string]func(*zkapi.AddressPaymentQuote){
+		"principal":           func(q *zkapi.AddressPaymentQuote) { q.PrincipalWei = "99971000000000" },
+		"missing destination": func(q *zkapi.AddressPaymentQuote) { q.Destination = "" },
+		"invalid destination": func(q *zkapi.AddressPaymentQuote) { q.Destination += "?value=1" },
+		"missing binding":     func(q *zkapi.AddressPaymentQuote) { q.Binding = "" },
+		"invalid note":        func(q *zkapi.AddressPaymentQuote) { q.NoteID = 1 << 32 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			q := paymentTestQuote("withdrawal")
+			q.Binding = "fixed-binding"
+			mutate(&q)
+			if _, err := paymentRequestURI(q); err == nil {
+				t.Fatal("unsafe withdrawal payment accepted")
+			}
+		})
+	}
+}
+
 func TestPaymentRequestURIRejectsMismatchedQuote(t *testing.T) {
 	for name, mutate := range map[string]func(*zkapi.AddressPaymentQuote){
 		"wrong kind":           func(q *zkapi.AddressPaymentQuote) { q.Kind = "withdrawal" },
