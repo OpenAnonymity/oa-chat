@@ -2196,22 +2196,7 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 
 /* Where to send: one caption over the field. */
 .zkapi-funding-to { display: flex; flex-direction: column; gap: 0.375rem; }
-.zkapi-funding-to-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.25rem 0.75rem; margin: 0; }
-.zkapi-funding-to-head > .zkapi-balance-caption { text-wrap: pretty; }
-.zkapi-funding-network {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.1875rem 0.5rem;
-    border-radius: 999px;
-    background: hsl(var(--color-foreground) / 0.06);
-    color: hsl(var(--color-muted-foreground));
-    font-size: 0.6875rem;
-    font-weight: 500;
-    line-height: 1;
-    white-space: nowrap;
-}
-.zkapi-funding-network::before { content: ''; width: 0.375rem; height: 0.375rem; border-radius: 50%; background: currentColor; opacity: 0.55; }
+.zkapi-funding-to-head { margin: 0; text-wrap: pretty; }
 .zkapi-funding-to > .zkapi-funding-notice { margin: 0; }
 .zkapi-funding-status small { display: block; margin-top: 0.0625rem; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; }
 .zkapi-funding-status > span { min-width: 0; }

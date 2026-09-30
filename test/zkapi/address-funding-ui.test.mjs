@@ -269,12 +269,12 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.match(waiting, /Amount to send<\/dt><dd[^>]*>0\.0055 ETH/);
     assert.doesNotMatch(waiting, /low network fee|take longer|slow/i);
     assert.doesNotMatch(waiting, /Maximum contract fee reserve/);
-    assert.match(waiting, /Send to this address from your wallet<\/span><span class="zkapi-funding-network">Ethereum Mainnet<\/span>/);
+    assert.match(waiting, /Send from your wallet to this address on Ethereum Mainnet<\/p>/);
     assert.match(waiting, /Usually arrives within a minute/);
     assert.match(waiting, new RegExp(`data-funding-address[^>]*>${recipient}</div>`), 'the whole address is shown, never cut off');
     assert.match(waiting, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(waiting, /password|backup|restore|data-funding-lock/i);
-    assert.match(waiting, /Return leftover ETH/);
+    assert.match(waiting, /Return ETH to your wallet/);
     assert.equal(helpRow(waiting, 'quote').open, false);
     assert.equal(helpRow(waiting, 'return').open, false);
     assert.match(waiting, /data-funding-help="quote" data-open="false"/);
@@ -284,7 +284,11 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.doesNotMatch(ready, /Send 0(?:\.0)? ETH|Received/);
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(helpRow(ready, 'quote').body, /zkapi-note/, 'the breakdown is only numbers');
-    assert.match(helpRow(ready, 'return').body, /Its key is kept in this browser, so don’t clear this site’s data/);
+    const leftover = helpRow(ready, 'return');
+    assert.match(leftover.body, /ETH that isn’t deposited, like unused fee allowance, stays at this address\. This browser holds it, so clearing the site’s data would lose it\./);
+    assert.match(leftover.body, /<span>Your wallet address<\/span>[\s\S]*<span>Amount \(ETH\)<\/span>[^]*placeholder="All"/);
+    assert.match(leftover.body, /data-funding-return-eth[^>]*>Return ETH<\/button>/, 'not "Send ETH", which names the funding method above');
+    assert.match(ready, /Return ETH to your wallet<span class="zkapi-guide-note">0\.0055 ETH at this address<\/span>/);
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
@@ -599,14 +603,14 @@ test('closing a private note leaves public ETH return controls accessible in the
     Object.assign(owner, { view: 'balance', isOpen: true, fundingStatus: { ethBalance: '15208600000000000' } });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /Amount to deposit/);
-    assert.match(html, /Return leftover ETH/);
+    assert.match(html, /Return ETH to your wallet/);
     assert.match(html, /data-funding-return-eth/);
     assert.equal(helpRow(html, 'return').open, false);
     owner.fundingFlow = { status: { ethBalance: '15208600000000000' }, ready: false };
-    assert.match(controls.renderFundingAccount(owner), /Return leftover ETH/);
+    assert.match(controls.renderFundingAccount(owner), /Return ETH to your wallet/);
     owner.fundingFlow.status.ethBalance = '0';
     owner.fundingStatus.ethBalance = '0';
-    assert.match(controls.renderFundingAccount(owner), /Return leftover ETH/);
+    assert.match(controls.renderFundingAccount(owner), /Return ETH to your wallet/);
 });
 
 test('public ETH return is available without a saved intent, USD price or successful balance read', () => {
@@ -617,7 +621,7 @@ test('public ETH return is available without a saved intent, USD price or succes
         fundingFlow: { intent: null, status: null, error: 'The ETH/USD reference price is unavailable.', ready: false } });
     const html = controls.renderFundingAccount(owner);
     assert.match(html, /ETH\/USD reference price is unavailable/);
-    assert.match(html, /Return leftover ETH/);
+    assert.match(html, /Return ETH to your wallet/);
     assert.match(html, /data-funding-return-eth/);
     assert.match(html, new RegExp(`data-funding-address[^>]*>${recipient}</div>`));
     assert.equal(helpRow(html, 'return').open, false);
@@ -1250,7 +1254,7 @@ test('manual deposit keeps instructions in the breakdown and shows a concise exa
         status: { ethBalance: '5000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(html, /Send to this address from your wallet<\/span><span class="zkapi-funding-network">Sepolia/);
+    assert.match(html, /Send from your wallet to this address on Sepolia<\/p>/);
     assert.match(html, /This browser’s receiving address/);
     assert.match(html, /0\.00045 ETH still needed/);
     assert.match(html, /data-funding-next[^>]*disabled[^>]*>Deposit/);

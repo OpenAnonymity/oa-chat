@@ -20,13 +20,20 @@
   has `margin-inline: -4px` with matching body padding so focus rings survive
   the inner `overflow: hidden`; at rest the inner has `filter: none` for crisp
   text. The native `<details>` return (and its capture/restore) is gone.
+- **Return ETH to your wallet** (was "Return leftover ETH"). Before a deposit
+  the ETH at the address is what was just sent, not leftover, so the row is
+  named for what it does, shows "X ETH at this address", explains where such
+  ETH comes from and that the browser holds it, labels "Your wallet address"
+  and "Amount (ETH)" (blank = all), and its button says "Return ETH" — "Send
+  ETH" already names the funding method in the switch above.
 - **Currency toggle.** Roomier swap arrows (14 px, 6.5 units apart); on a
   person's switch (`owner.currencySwitching`) the arrows make a half turn
   (the icon lands on itself) and the unit blurs in.
 - **Copy.** The breakdown has no notes; the rows say it. The custody line
-  moved into Return leftover ETH ("Its key is kept in this browser, so don’t
-  clear this site’s data."). The address caption is "Send to this address from
-  your wallet" with the network as a tag; the amount label is "Send" again.
+  moved into the return row. The address caption is one sentence, "Send from
+  your wallet to this address on <network>" (no separate network tag: the same
+  address exists on every EVM network and the app only watches this one); the
+  amount label is "Send" again.
 
 ## 2026-09-30: Send ETH — copy on the button, one instruction, a short breakdown
 
