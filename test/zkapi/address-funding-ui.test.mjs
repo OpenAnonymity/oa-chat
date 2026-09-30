@@ -285,7 +285,7 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(helpRow(ready, 'quote').body, /zkapi-note/, 'the breakdown is only numbers');
     const leftover = helpRow(ready, 'return');
-    assert.match(leftover.body, /ETH that isn’t deposited, like unused fee allowance, stays at this address\. This browser holds it, so clearing the site’s data would lose it\./);
+    assert.match(leftover.body, /This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit\. This browser holds it, so clearing the site’s data would lose it\. You can return it to your wallet below\./);
     assert.match(leftover.body, /<span>Your wallet address<\/span>[\s\S]*<span>Amount \(ETH\)<\/span>[^]*placeholder="All"/);
     assert.match(leftover.body, /data-funding-return-eth[^>]*>Return ETH<\/button>/, 'not "Send ETH", which names the funding method above');
     assert.match(ready, /Return ETH to your wallet<span class="zkapi-guide-note">0\.0055 ETH at this address<\/span>/);

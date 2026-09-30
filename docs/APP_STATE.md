@@ -22,8 +22,9 @@
   text. The native `<details>` return (and its capture/restore) is gone.
 - **Return ETH to your wallet** (was "Return leftover ETH"). Before a deposit
   the ETH at the address is what was just sent, not leftover, so the row is
-  named for what it does, shows "X ETH at this address", explains where such
-  ETH comes from and that the browser holds it, labels "Your wallet address"
+  named for what it does, shows "X ETH at this address", says it isn't in the
+  private balance (sent but not deposited, or fee left over) and that the
+  browser holds it, labels "Your wallet address"
   and "Amount (ETH)" (blank = all), and its button says "Return ETH" — "Send
   ETH" already names the funding method in the switch above.
 - **Currency toggle.** Roomier swap arrows (14 px, 6.5 units apart); on a
