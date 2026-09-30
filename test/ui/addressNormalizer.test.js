@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import path from 'node:path';
 
 // The inline <script data-oa-link-normalizer> in chat/index.html rewrites
 // pre-rename `?s=` links and `/tickets/<code>` paths during parsing, before a
 // deferred analytics script can report them. Run it against a fake window.
-const html = await readFile(new URL('../../chat/index.html', import.meta.url), 'utf8');
+// The unit-test runner bundles tests into /tmp and runs them from the repo
+// root, so repository files are read relative to cwd, not to this file.
+const html = fs.readFileSync(path.join(process.cwd(), 'chat', 'index.html'), 'utf8');
 const match = html.match(/<script data-oa-link-normalizer>([\s\S]*?)<\/script>/);
 assert.ok(match, 'index.html carries the address normalizer');
 
