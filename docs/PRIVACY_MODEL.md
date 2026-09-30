@@ -126,9 +126,12 @@ signed progress reuses its original transaction. A reverted transaction is
 never retried automatically. Configuration stops any temporary services it owns
 when finished; `serve`
 checks readiness without prompting and points missing prerequisites back to
-`config`. The wizard checks only local readiness and public model policy; it
-does not send a test inference or acquire access merely to
-check setup. The signing key and private-note secret never enter account
+`config`. Configuration and service startup check wallet state and a positive
+private balance without selecting a model or fetching model pricing. New
+deposits accept a positive USD amount without a model-specific minimum. Each
+inference request checks the selected model's coarse spending cap before
+acquiring access. The wizard does not send a test inference or acquire access
+merely to check setup. The signing key and private-note secret never enter account
 synchronization or inference requests. Backups of the private configuration
 directory control both public funds and private notes.
 

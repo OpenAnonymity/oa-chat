@@ -35,7 +35,8 @@ func TestServeReadinessDoesNotAuthorizeOrPrepareWalletOperations(t *testing.T) {
 		{"unfunded", zkapi.WalletReadiness{}, "no private balance"},
 		{"settlement", zkapi.WalletReadiness{HasNote: true, PendingRequest: true, Balance: 999999}, "awaiting settlement"},
 		{"withdrawal", zkapi.WalletReadiness{HasNote: true, WithdrawalPending: true, Balance: 999999}, "withdrawal is reserved"},
-		{"low balance", zkapi.WalletReadiness{HasNote: true, Balance: 1}, "below"},
+		{"low positive balance", zkapi.WalletReadiness{HasNote: true, Balance: 1}, ""},
+		{"empty balance", zkapi.WalletReadiness{HasNote: true}, "private balance is empty"},
 		{"ready", zkapi.WalletReadiness{HasNote: true, Balance: 999999}, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -234,13 +235,5 @@ func TestConfigPaymentRequiresConsentAndRejectsReplacedQuote(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestReadinessSelectsAffordableModelRatherThanPreferredHigherCap(t *testing.T) {
-	models := []setupModel{{ID: "openai/gpt-4.1-mini", Budget: 1_000_000}, {ID: "provider/lower-cap", Budget: 100_000}}
-	model, err := selectReadinessModel(models)
-	if err != nil || model.ID != "provider/lower-cap" {
-		t.Fatalf("readiness forced a more expensive model: %v", err)
 	}
 }

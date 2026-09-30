@@ -1,3 +1,33 @@
+## 2026-09-30: CLI deposits and startup are independent of models
+
+- Current source removes model discovery, model-specific balance messages, and
+  the lowest-model-cap prerequisite from zkAPI configuration and `serve`
+  startup. Configuration checks the companion, wallet presence, private ETH
+  balance, pending settlement, and withdrawal state. A positive available
+  private balance is sufficient to finish setup; it does not promise that every
+  model can be used. Each inference request still checks the selected model's
+  current cap before acquiring access.
+- A new deposit asks for a positive USD amount, with $20 on Enter, without a
+  model-specific minimum. The payment quote, terminal QR, explicit principal and
+  fee consent, and existing signed/unsigned deposit recovery bounds are unchanged.
+  Saved deposits retain their fixed ETH principal. An active note still cannot
+  be topped up in place.
+- Model-policy availability can no longer prevent depositing or starting an
+  otherwise configured wallet. Model metadata and budget checks remain in model
+  listing and inference, where they apply to the user's actual selection. Setup
+  does not acquire a key or send a test inference.
+- The hidden legacy `start --model` option remains accepted for compatibility
+  but prints that it does not affect funding. Public `config` has no model option.
+- Full Go race tests and vet passed, including per-request budget enforcement.
+  Regression tests accept small positive deposits/balances, reject empty wallets,
+  assert reservation-specific recovery errors, and exclude model affordability
+  messages from deposit setup. Focused race tests passed after review tightened
+  the reservation fixtures; fresh adversarial review approved the final diff.
+- This source adjustment postdates published `0.4.2`; no new release is part of
+  this change. The release and validation entries below remain evidence of those
+  earlier versions. See the [CLI guide](../daemon/README.md#configure-or-edit-a-profile)
+  and [funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+
 ## 2026-09-30: CLI 0.4.2 prerelease published
 
 - [0.4.2 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.2)

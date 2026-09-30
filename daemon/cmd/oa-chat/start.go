@@ -186,7 +186,7 @@ func parseStartOptions(args []string) (startOptions, error) {
 	f.StringVar(&options.network, "network", "", "network for new setup; must match an existing wallet")
 	f.StringVar(&options.backend, "backend", "", "ticket or zkapi (new setup: zkapi; otherwise saved default)")
 	f.StringVar(&options.usd, "usd", "", "preferred USD deposit amount; spending still requires confirmation")
-	f.StringVar(&options.model, "model", "", "check readiness for this model's automatic request budget")
+	f.StringVar(&options.model, "model", "", "deprecated compatibility option; select the model on each inference request")
 	f.StringVar(&options.listen, "listen", "", "loopback API address for new setup")
 	if err := f.Parse(args); err != nil {
 		return options, err
@@ -370,7 +370,10 @@ func guidedStart(ctx context.Context, dir string, options startOptions, ui setup
 		}
 	}
 	if c.Backend == "ticket" && (options.usd != "" || options.model != "") {
-		return errors.New("--usd and --model apply to zkapi setup; select --backend zkapi for model-based ETH funding")
+		return errors.New("--usd and the legacy --model option apply to zkapi setup; select --backend zkapi for ETH funding")
+	}
+	if options.model != "" {
+		ui.Printf("The legacy --model option does not affect funding; select a model on each inference request.\n")
 	}
 	if c.Backend == "zkapi" {
 		ui.Printf("Mode: %s; network: %s.\n", c.Backend, c.ZKAPI.Network)

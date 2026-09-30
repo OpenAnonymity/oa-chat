@@ -34,7 +34,7 @@ func TestConfigureDefaultPromptsThenShowsTwentyDollarPayment(t *testing.T) {
 		if action != "setup" || c.Backend != "zkapi" || c.ZKAPI.Network != "mainnet" || c.RelayURL != "" {
 			t.Fatal("fresh config did not select Mainnet without proxying")
 		}
-		return guidedFunding(ctx, service, "", "", prompt, immediateWizardPoll)
+		return guidedFunding(ctx, service, "", prompt, immediateWizardPoll)
 	})
 	if err == nil || !strings.Contains(err.Error(), "declined") || service.quoteCalls != 1 || service.approveCalls+service.resumeCalls != 0 {
 		t.Fatal("default config did not reach payment consent without authorizing it", err)
@@ -46,6 +46,11 @@ func TestConfigureDefaultPromptsThenShowsTwentyDollarPayment(t *testing.T) {
 	}
 	if strings.Index(output.String(), "Deposit amount in USD") > strings.Index(output.String(), "Funding address:") {
 		t.Fatal("payment shown before amount selection")
+	}
+	for _, unwanted := range []string{"openai/gpt-4.1-mini", "request cap", "enough for"} {
+		if strings.Contains(output.String(), unwanted) {
+			t.Fatalf("deposit setup described model affordability: %q", unwanted)
+		}
 	}
 }
 

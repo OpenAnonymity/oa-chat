@@ -2,12 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -16,17 +13,10 @@ import (
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/zkapi"
 )
 
-type setupModel struct {
-	ID     string `json:"id"`
-	Budget uint64 `json:"oa_request_limit_micro_usd"`
-}
-
 // The wizard uses the same owner-authenticated quote/approval endpoints as
 // manual funding. It never reads signing keys or signs transactions itself.
 type guidedFundingService interface {
-	Models(context.Context) ([]setupModel, error)
 	Readiness(context.Context) (zkapi.WalletReadiness, error)
-	Budget(context.Context, uint64) (uint64, error)
 	Address(context.Context) (zkapi.AddressFundingStatus, error)
 	Withdrawal(context.Context) (zkapi.AddressWithdrawalStatus, error)
 	Quote(context.Context, uint64, uint64) (zkapi.AddressPaymentQuote, error)
@@ -39,29 +29,8 @@ type localGuidedFunding struct {
 	wallet *zkapi.Client
 }
 
-func (s localGuidedFunding) Models(ctx context.Context) ([]setupModel, error) {
-	// Exercise the same authenticated endpoint inference clients will use.
-	raw, err := localRequest(ctx, s.config, http.MethodGet, "/v1/models")
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Data []setupModel `json:"data"`
-	}
-	if json.Unmarshal(raw, &result) != nil || len(result.Data) == 0 {
-		return nil, errors.New("no available models; retry when the model service is available")
-	}
-	return result.Data, nil
-}
 func (s localGuidedFunding) Readiness(ctx context.Context) (zkapi.WalletReadiness, error) {
 	return s.wallet.Readiness(ctx)
-}
-func (s localGuidedFunding) Budget(ctx context.Context, usd uint64) (uint64, error) {
-	q, err := s.wallet.NativeUSDQuote(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("cannot verify a current ETH price for the model cap: %w", err)
-	}
-	return q.GweiForUSD(usd)
 }
 func (s localGuidedFunding) Address(ctx context.Context) (zkapi.AddressFundingStatus, error) {
 	return requestFunding(ctx, s.config, http.MethodGet, "/admin/funding/address", nil)
@@ -83,7 +52,7 @@ func (s localGuidedFunding) Resume(ctx context.Context, amount uint64) (zkapi.Ad
 	return requestFunding(ctx, s.config, http.MethodPost, "/admin/funding/deposit", map[string]uint64{"amount": amount})
 }
 
-func runGuidedFunding(ctx context.Context, c config.Config, usdText, model string, ui setupPrompter) error {
+func runGuidedFunding(ctx context.Context, c config.Config, usdText, _ string, ui setupPrompter) error {
 	transport, err := relay.NewClient(c.RelayURL)
 	if err != nil {
 		return err
@@ -92,60 +61,7 @@ func runGuidedFunding(ctx context.Context, c config.Config, usdText, model strin
 	if err != nil {
 		return err
 	}
-	return guidedFunding(ctx, localGuidedFunding{c, wallet}, usdText, model, ui, waitFundingPoll)
-}
-
-func selectSetupModel(models []setupModel, id string) (setupModel, error) {
-	eligible := make([]setupModel, 0, len(models))
-	for _, model := range models {
-		if model.ID == "" || strings.TrimSpace(model.ID) != model.ID || model.Budget == 0 || model.Budget > 6_000_000 {
-			return setupModel{}, errors.New("invalid model budget metadata")
-		}
-		if id != "" && model.ID == id {
-			return model, nil
-		}
-		eligible = append(eligible, model)
-	}
-	if id != "" {
-		return setupModel{}, errors.New("selected model is unavailable; choose an ID from /v1/models")
-	}
-	for _, model := range eligible {
-		if model.ID == "openai/gpt-4.1-mini" {
-			return model, nil
-		}
-	}
-	sort.Slice(eligible, func(i, j int) bool {
-		if eligible[i].Budget != eligible[j].Budget {
-			return eligible[i].Budget < eligible[j].Budget
-		}
-		return eligible[i].ID < eligible[j].ID
-	})
-	if len(eligible) == 0 {
-		return setupModel{}, errors.New("no eligible inference models")
-	}
-	return eligible[0], nil
-}
-
-// Readiness needs enough balance for at least one available model. The client
-// still chooses a model per request, whose own cap is checked by inference.
-func selectReadinessModel(models []setupModel) (setupModel, error) {
-	selected, err := selectSetupModel(models, "")
-	if err != nil {
-		return selected, err
-	}
-	for _, candidate := range models {
-		if candidate.Budget < selected.Budget {
-			selected = candidate
-		}
-	}
-	return selected, nil
-}
-
-func selectGuidedModel(models []setupModel, id string) (setupModel, error) {
-	if id != "" {
-		return selectSetupModel(models, id)
-	}
-	return selectReadinessModel(models)
+	return guidedFunding(ctx, localGuidedFunding{c, wallet}, usdText, ui, waitFundingPoll)
 }
 
 func setupUSD(amount uint64) string {
@@ -154,7 +70,7 @@ func setupUSD(amount uint64) string {
 
 const defaultSetupDepositMicroUSD uint64 = 20_000_000
 
-func chooseSetupDepositUSD(ctx context.Context, usdText string, minimum uint64, ui setupPrompter) (uint64, error) {
+func chooseSetupDepositUSD(ctx context.Context, usdText string, ui setupPrompter) (uint64, error) {
 	interactive := usdText == ""
 	for {
 		if interactive {
@@ -165,9 +81,6 @@ func chooseSetupDepositUSD(ctx context.Context, usdText string, minimum uint64, 
 			}
 		}
 		usd, err := parseFundingAmountForAsset(usdText, 6, "USD")
-		if err == nil && usd < minimum {
-			err = fmt.Errorf("deposit must be at least $%s for the selected model", setupUSD(minimum))
-		}
 		if err == nil || !interactive {
 			return usd, err
 		}
@@ -175,22 +88,14 @@ func chooseSetupDepositUSD(ctx context.Context, usdText string, minimum uint64, 
 	}
 }
 
-func guidedFunding(ctx context.Context, service guidedFundingService, usdText, modelID string, ui setupPrompter, wait func(context.Context) error) error {
-	models, err := service.Models(ctx)
-	if err != nil {
-		return err
-	}
-	model, err := selectGuidedModel(models, modelID)
-	if err != nil {
-		return err
-	}
-	ui.Printf("Checking private balance for %q (automatic request cap $%s).\n", model.ID, setupUSD(model.Budget))
+func guidedFunding(ctx context.Context, service guidedFundingService, usdText string, ui setupPrompter, wait func(context.Context) error) error {
+	ui.Printf("Checking wallet status...\n")
 	ready, err := waitSetupWallet(ctx, service, ui, wait)
 	if err != nil {
 		return err
 	}
 	if ready.HasNote {
-		return checkSetupBalance(ctx, service, ready, model, ui)
+		return checkSetupBalance(ready, ui)
 	}
 
 	state, err := service.Address(ctx)
@@ -212,7 +117,7 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 		}
 		var usd uint64
 		if state.Amount == 0 {
-			usd, err = chooseSetupDepositUSD(ctx, usdText, model.Budget, ui)
+			usd, err = chooseSetupDepositUSD(ctx, usdText, ui)
 			if err != nil {
 				return err
 			}
@@ -231,13 +136,6 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 		if (usd != 0 && quote.InputMicroUSD != usd) || (state.Amount != 0 && quote.Amount != state.Amount) || !strings.EqualFold(quote.Address, state.Address) || quote.ChainID != state.ChainID || quote.DeploymentID != state.DeploymentID {
 			return errors.New("deposit quote changed the selected wallet or amount; stopped setup")
 		}
-		bound, err := service.Budget(ctx, model.Budget)
-		if err != nil {
-			return err
-		}
-		if quote.Amount < bound {
-			return errors.New("the saved deposit is below this model's current cap; select a lower-budget model or review funding with oa-chat config")
-		}
 		if err := waitAndDeposit(ctx, service, quote, ui, wait); err != nil {
 			return err
 		}
@@ -251,17 +149,7 @@ func guidedFunding(ctx context.Context, service guidedFundingService, usdText, m
 	if !ready.HasNote {
 		return errors.New("deposit recovery did not activate the private balance; run oa-chat config with the same configuration")
 	}
-	// Finality may take many minutes. Read the live cap again before claiming
-	// readiness; no test inference is sent and no anonymous access is consumed.
-	models, err = service.Models(ctx)
-	if err != nil {
-		return err
-	}
-	model, err = selectSetupModel(models, model.ID)
-	if err != nil {
-		return err
-	}
-	return checkSetupBalance(ctx, service, ready, model, ui)
+	return checkSetupBalance(ready, ui)
 }
 
 func waitSetupWallet(ctx context.Context, service guidedFundingService, ui setupPrompter, wait func(context.Context) error) (zkapi.WalletReadiness, error) {
@@ -296,15 +184,13 @@ func waitSetupWallet(ctx context.Context, service guidedFundingService, ui setup
 	}
 }
 
-func checkSetupBalance(ctx context.Context, service guidedFundingService, state zkapi.WalletReadiness, model setupModel, ui setupPrompter) error {
-	bound, err := service.Budget(ctx, model.Budget)
-	if err != nil {
-		return err
+// Wallet setup is independent of model choice. Inference checks the selected
+// model's request cap against the current private balance on every request.
+func checkSetupBalance(state zkapi.WalletReadiness, ui setupPrompter) error {
+	if state.Balance == 0 {
+		return errors.New("the private balance is empty; choose withdraw in oa-chat config --menu to close this note before adding funding")
 	}
-	if state.Balance < bound {
-		return fmt.Errorf("the existing private balance is below the $%s cap for %q; choose withdraw in oa-chat config --menu to close this note before adding funding", setupUSD(model.Budget), model.ID)
-	}
-	ui.Printf("Private balance ready: %s ETH; enough for %q. Request caps are selected automatically for each model.\n", fundingUnits(strconv.FormatUint(state.Balance, 10), 9), model.ID)
+	ui.Printf("Private balance: %s ETH.\n", fundingUnits(strconv.FormatUint(state.Balance, 10), 9))
 	return nil
 }
 

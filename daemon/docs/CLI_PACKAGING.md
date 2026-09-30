@@ -292,6 +292,12 @@ zkAPI on Mainnet with direct HTTPS. Use `config --edit` or `config --network
 sepolia` to select test ETH. Changing modes or networks retains each wallet's
 separate state.
 
+Current source also checks private wallet state and a positive balance during
+configuration and startup without fetching model pricing or selecting a model.
+Model caps are enforced for each inference request. This change postdates the
+published `0.4.2` bundle; the release validation below describes its original
+behavior.
+
 `config` checks readiness and guides funding; `config --menu` offers withdrawals,
 public ETH returns, and Sepolia password changes. The local signer requires no
 external wallet connection. New guided deposits ask for a USD amount, defaulting

@@ -136,15 +136,7 @@ func configuredWalletReady(ctx context.Context, service guidedFundingService, ui
 	if !state.HasNote {
 		return errors.New("the zkAPI wallet has no private balance; configure funding")
 	}
-	models, err := service.Models(ctx)
-	if err != nil {
-		return err
-	}
-	model, err := selectReadinessModel(models)
-	if err != nil {
-		return err
-	}
-	return checkSetupBalance(ctx, service, state, model, ui)
+	return checkSetupBalance(state, ui)
 }
 
 // Config owns a temporary runtime only for the selected wallet operation. It

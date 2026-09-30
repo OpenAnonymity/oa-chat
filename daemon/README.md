@@ -26,6 +26,10 @@ status and guides setup; `serve` runs the configured local inference API.
 For a custom prefix, substitute its `bin` directory in PATH. Keeping that
 directory on your shell PATH lets you use the shorter commands below.
 
+Current source makes zkAPI configuration and startup independent of model
+selection, as described below. This adjustment postdates the published `0.4.2`
+bundle, which still checks the lowest available model cap during setup.
+
 Sepolia requires `0.4.1` or newer, which includes the matching password-capable
 client and companion. `0.4.0` predates the password gate and cannot complete
 Sepolia readiness or inference. See the
@@ -93,6 +97,13 @@ progress. Saved deposits resume their fixed ETH principal without another
 amount prompt. A ready wallet does not receive another deposit merely because
 `config` is run again.
 
+zkAPI configuration checks the companion, private wallet balance, pending
+settlement, and withdrawal state. It displays the private ETH balance without
+selecting a model or fetching model pricing. Any positive available private
+balance is enough to finish configuration; each inference request checks the
+budget required by the model selected for that request. New deposits accept a
+positive USD amount without a model-specific minimum.
+
 Configuration defaults to `~/Library/Application Support/oa-chat` on macOS
 and `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`.
 `OA_CHAT_CONFIG_DIR` or global `--config-dir DIR` selects another directory.
@@ -145,6 +156,9 @@ tickets, funding, or companion prerequisites are missing, it explains the
 problem and directs you to `oa-chat config`. It does not begin a funding flow.
 Stop it with Ctrl+C before changing settings. To use another configured access
 mode for this run, pass `--backend ticket` or `--backend zkapi`.
+zkAPI startup checks wallet state and a positive private balance without a model
+lookup. Starting the service does not guarantee that the balance covers every
+model; the selected model's cap is enforced when an inference request arrives.
 
 ### Foreground status and logs
 
@@ -213,7 +227,8 @@ as the default, then shows the fixed ETH principal, maximum network fee, and
 payment QR, and asks you to authorize the deposit. Send ETH to the displayed funding
 address. The wizard waits for it, deposits automatically within the approved bounds, and
 waits for finalized activation. A higher fee ceiling requires confirmation.
-It checks model readiness without sending an inference or spending credits.
+It checks the private ETH balance and wallet state without fetching model
+pricing, acquiring inference access, or sending a test request.
 
 Ctrl+C keeps saved progress. Rerun `config` and check readiness to continue:
 unsigned deposits require confirmation again; signed deposits recover the same

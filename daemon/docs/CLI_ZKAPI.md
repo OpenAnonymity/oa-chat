@@ -17,6 +17,10 @@ The public CLI has two commands: `config` and `serve`. Install or update the
 curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 ```
 
+The model-independent configuration and startup checks described below are in
+current source after `0.4.2`. That published bundle still checks the lowest
+available model cap during setup; it does not include this adjustment.
+
 Then configure it:
 
 ```sh
@@ -46,11 +50,13 @@ replaced with a fresh wallet. Keep legacy ERC-20 recovery profiles separate.
 For zkAPI setup:
 
 1. **Check readiness.** Configuration starts temporary local services or uses
-   a compatible existing service. It checks the companion, model availability,
-   private balance, pending settlement, and withdrawal reservations. Sepolia
+   a compatible existing service. It checks the companion, private wallet and
+   ETH balance, pending settlement, and withdrawal reservations. It does not
+   select a model or fetch model pricing. Sepolia
    validates its saved access password or asks for one before starting the
    companion or funding. Setup does not acquire inference access or send a test request.
 2. **Fund if needed.** Enter a USD deposit amount or press Enter for $20.
+   A new deposit accepts a positive amount without a model-specific minimum.
    Review the chosen principal, its fixed ETH amount, network, funding address,
    and maximum network fee, then approve the automatic deposit. Send the displayed
    top-up in **ETH on that network**
@@ -86,10 +92,12 @@ not print credentials automatically. Both access modes remain configured;
 `serve --backend ticket|zkapi` selects the runtime mode without rewriting the
 saved default.
 
-The readiness check uses an available model with the lowest cap. Each inference
-request still checks the cap for its selected model. An active note below the
-lowest available cap must be closed before funding a replacement; it cannot
-be topped up in place. Public ETH alone is not private inference credit.
+Configuration and service startup require a positive available private balance
+and check wallet state without looking up a model or its cap. The terminal shows
+the private ETH balance. Each inference request checks the cap for its selected
+model, so a configured wallet can still have insufficient funds for a particular
+request. An active note cannot be topped up in place; close it before funding a
+replacement. Public ETH alone is not private inference credit.
 
 Ctrl+C preserves progress. Run `config` again to check readiness and continue.
 An unsigned deposit retains its fixed amount and asks for consent again;
