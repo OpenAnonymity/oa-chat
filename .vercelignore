@@ -23,6 +23,10 @@
 /deployments/zkapi/fresh-20260928/*
 !/deployments/zkapi/fresh-20260928/mainnet.json
 !/deployments/zkapi/fresh-20260928/sepolia.json
+!/deployments/zkapi/fresh-20260930
+/deployments/zkapi/fresh-20260930/*
+!/deployments/zkapi/fresh-20260930/mainnet.json
+!/deployments/zkapi/fresh-20260930/sepolia.json
 !/package.json
 !/package-lock.json
 !/vercel.json

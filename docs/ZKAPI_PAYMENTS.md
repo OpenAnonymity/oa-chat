@@ -147,6 +147,35 @@ same-origin proxy routing use the same selected profile. Unset retains the
 SDK defaults. The Commercial staging composition explicitly selects the fresh
 Mainnet profile; see [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260928.md).
 
+### September 30 clean-reset profile
+
+`OA_ZKAPI_DEPLOYMENT=fresh-20260930` selects the prepared September 30
+Mainnet or Sepolia pins. Set it in both build and route-generation commands
+above, together with the selected network. These candidate pins identify the
+new server origins and planned vaults; profile availability alone does not
+establish contract finality, endpoint acceptance or frontend publication.
+The `fresh-20260928` profile remains available with its original pins.
+
+The user approved starting with fresh browser balances and no old-balance
+recovery UI. For this profile only, the app bundle uses the SDK database
+`zkapi-browser-wallet-fresh-20260930-mainnet-v1` or
+`zkapi-browser-wallet-fresh-20260930-sepolia-v1`. A build plugin checks the
+full SHA-256 of the pinned SDK's `browserWalletStore.js` and changes only its
+database-name declaration in the bundle. It neither edits the installed SDK
+nor upgrades its revision. The SDK's existing transaction and cross-tab locks
+remain in place; `build.json` records the selected database and checked source
+hash under `zkapi.walletStorage`.
+
+Old private notes, leases, deposit/withdrawal journals and archived history
+remain untouched in `zkapi-browser-wallet-v1`; the new profile does not load
+or migrate them. The separate `oa-zkapi-address-funding-v1` signer store is
+unchanged and remains keyed by chain, vault and asset. Its old encrypted
+accounts and public-ETH return journals stay stored, while the new vault gets
+a fresh scope. No startup transaction, deletion or recovery action occurs.
+Old data is retained without a recovery route: access would require the old
+matching configuration on the same browser origin. Preserving an immutable
+deployment at a different hostname does not provide access to this local data.
+
 SDK `cf56d67` enables the verified native-ETH Mainnet configuration following
 the September 28 rollout; the earlier `migration_required` guard is removed.
 Building alone does not deploy or fund backend infrastructure. The generator

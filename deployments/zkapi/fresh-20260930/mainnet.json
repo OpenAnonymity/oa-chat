@@ -1,0 +1,41 @@
+{
+  "deployment_manifest_url": "https://mainnet.100.21.48.23.sslip.io/config.json",
+  "allowed_deployment_manifest_urls": [
+    "https://mainnet.100.21.48.23.sslip.io/config.json"
+  ],
+  "trusted_deployment": {
+    "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
+    "chain_id": 1,
+    "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
+    "billing_token_address": null,
+    "protocol_server_url": "https://mainnet.100.21.48.23.sslip.io",
+    "indexer_url": "https://mainnet.100.21.48.23.sslip.io",
+    "request_charge_cap": 50000,
+    "state_signing_key": {
+      "x": "0x2094c5f9e183a8aef5be682556a17aa4dbafdb03fd6e6a97d75a03efed2fe5a4",
+      "y": "0x11c7bbbeb288a09378e6721bd06ed5cc95b87046ff8cf6733e46ced0af1300d7"
+    },
+    "clearance_signing_key": {
+      "x": "0x12d2b4547d9de0a359fc26abcf5e66cd359be83b53167850c9070540a8045cec",
+      "y": "0x11cc3f621d6d39b557b4bb64826ebaaeda04f98910f116e307d6650177dead82"
+    },
+    "rpc_url": "https://ethereum-rpc.publicnode.com",
+    "billing_asset": "native_eth",
+    "billing_unit": "gwei",
+    "native_asset_wei_per_unit": "1000000000",
+    "native_price_feed_address": "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419",
+    "native_price_feed_decimals": 8,
+    "native_price_max_age_seconds": 4500,
+    "request_proving_key_sha256": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
+    "withdrawal_proving_key_sha256": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
+    "circuit_id": "zkapi-v2-note-bound-v1",
+    "verifier_url": "https://verifier2.openanonymity.ai",
+    "openrouter_inference_base": "https://openrouter.ai/api/v1"
+  },
+  "proving_keys_base_url": "./proofs/",
+  "credits_per_usd": null,
+  "billing_token_symbol": "ETH",
+  "billing_token_decimals": 9,
+  "require_oa_key_source": true,
+  "deployment_api_proxy_path": "/zkapi-deployment/"
+}

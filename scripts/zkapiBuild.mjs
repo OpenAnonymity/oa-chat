@@ -6,14 +6,29 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import freshMainnet from '../deployments/zkapi/fresh-20260928/mainnet.json' with { type: 'json' };
 import freshSepolia from '../deployments/zkapi/fresh-20260928/sepolia.json' with { type: 'json' };
+import resetMainnet from '../deployments/zkapi/fresh-20260930/mainnet.json' with { type: 'json' };
+import resetSepolia from '../deployments/zkapi/fresh-20260930/sepolia.json' with { type: 'json' };
 import { patchZkapiSdk, zkapiSdkPatchProvenance } from './patch-zkapi-sdk.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const DEPLOYMENTS = {
+    'fresh-20260928': { mainnet: freshMainnet, sepolia: freshSepolia },
+    'fresh-20260930': { mainnet: resetMainnet, sepolia: resetSepolia }
+};
+const WALLET_STORE_SHA256 = '1a6ff5b9e23c56ee1eed87c35a2e8391d1fb30f9a0ee6d7fa2dffbedc598f48d';
+
+function walletStorage(network, deployment) {
+    if (deployment !== 'fresh-20260930') return null;
+    return {
+        database: `zkapi-browser-wallet-${deployment}-${network}-v1`,
+        sourceSha256: WALLET_STORE_SHA256
+    };
+}
 
 export function resolveZkapiDeployment(environment = process.env) {
     const value = environment.OA_ZKAPI_DEPLOYMENT || '';
-    if (!['', 'fresh-20260928'].includes(value)) {
-        throw new Error('[build] OA_ZKAPI_DEPLOYMENT must be fresh-20260928, or unset for SDK defaults.');
+    if (value && !Object.hasOwn(DEPLOYMENTS, value)) {
+        throw new Error('[build] OA_ZKAPI_DEPLOYMENT must be fresh-20260928, fresh-20260930, or unset for SDK defaults.');
     }
     if (value && !['sepolia', 'mainnet'].includes(environment.OA_ZKAPI_NETWORK)) {
         throw new Error('[build] OA_ZKAPI_DEPLOYMENT requires an explicit OA_ZKAPI_NETWORK.');
@@ -83,16 +98,38 @@ export function readZkapiBuildConfig({ network, deployment = process.env.OA_ZKAP
         // Vercel evaluates a bundled config outside this package before its
         // SDK dependency is installed. Embed public pins; the asset build below
         // still verifies their circuit and hashes against emitted proof bytes.
-        return structuredClone(network === 'mainnet' ? freshMainnet : freshSepolia);
+        return structuredClone(DEPLOYMENTS[deployment][network]);
     }
     const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
     return JSON.parse(readFileSync(path.join(sdkRoot, 'sdk/assets/config', `${network}.json`), 'utf8'));
 }
 
-export function zkapiBuildPlugins(network) {
+export function zkapiBuildPlugins(network, deployment = process.env.OA_ZKAPI_DEPLOYMENT || '') {
+    resolveZkapiNetwork({ OA_ZKAPI_NETWORK: network, OA_ZKAPI_DEPLOYMENT: deployment });
+    const storage = walletStorage(network, deployment);
     if (network) return [{
         name: 'verify-zkapi-recovery-patch',
-        async setup() { await patchZkapiSdk(); }
+        async setup(build) {
+            await patchZkapiSdk();
+            if (!storage) return;
+            const sdkRoot = path.dirname(fileURLToPath(import.meta.resolve('@openanonymity/zkapi-browser-sdk/package.json')));
+            const storePath = path.join(sdkRoot, 'sdk/services/browserWalletStore.js');
+            // The requested reset uses a new database without touching old
+            // notes or the separately vault-scoped funding signer. Transform
+            // only this exact SDK module in the bundle, never the installed SDK.
+            build.onLoad({ filter: /[\\/]sdk[\\/]services[\\/]browserWalletStore\.js$/ }, async args => {
+                if (args.path !== storePath) return null;
+                const source = await fs.readFile(storePath, 'utf8');
+                const declaration = "const DB_NAME = 'zkapi-browser-wallet-v1';";
+                if (digest(source) !== storage.sourceSha256 || source.split(declaration).length !== 2) {
+                    throw new Error('[build] Review the wallet storage namespace for this SDK source.');
+                }
+                return {
+                    contents: source.replace(declaration, `const DB_NAME = ${JSON.stringify(storage.database)};`),
+                    loader: 'js', resolveDir: path.dirname(storePath)
+                };
+            });
+        }
     }];
     return [{
         name: 'omit-disabled-zkapi',
@@ -185,6 +222,7 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
     return {
         network,
         ...(sdkAssets?.deployment ? { deployment: sdkAssets.deployment } : {}),
+        ...(walletStorage(network, sdkAssets?.deployment) ? { walletStorage: walletStorage(network, sdkAssets.deployment) } : {}),
         oaChatRevision: oaRevision,
         sdk: { version: dependency.version, revision, patches: [recoveryPatch], assets: sdkAssets?.manifest || null },
         files: await artifactFiles(outDir)

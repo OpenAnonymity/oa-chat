@@ -1,3 +1,30 @@
+## 2026-09-30: Prepare fresh zkAPI deployment and clean browser wallets
+
+- The candidate `fresh-20260930` profile selects separate Mainnet and Sepolia
+  services on the new AWS host. Its public pins are deployment preparation;
+  contract finality and live frontend cutover are not yet verified by this entry.
+  Build and proxy generation must select the same explicit profile and network.
+- The user approved a clean reset without old-balance recovery UI. This profile
+  bundles the existing SDK with a new network-specific wallet database,
+  `zkapi-browser-wallet-fresh-20260930-{network}-v1`. The build verifies the exact
+  pinned SDK storage source before changing only its database-name declaration,
+  and records the namespace in `build.json`. Installed SDK files stay unchanged.
+- Old notes, leases and pending transaction journals remain in their original
+  database. They are neither imported nor deleted. The separate funding-address
+  store remains keyed by chain, vault and asset, so the fresh vault gets a new
+  address scope while old encrypted signer records remain stored. Existing
+  origins therefore start fresh without discarding their old local data.
+- The previous profile and default SDK builds retain their original storage.
+  No recovery route or automatic conversion is added. Restoring an old browser
+  wallet would require its matching configuration on the original browser origin;
+  a different hostname cannot access that origin's IndexedDB.
+- Focused validation passes all 12 build/profile tests, including execution of
+  the actual bundled SDK stores to verify independent Mainnet/Sepolia writes and
+  preservation of the old note, lease, journal and funding-address record.
+  The full local suite passes 1,098 core and 752 payment tests. These checks do
+  not establish live contract, server or frontend deployment acceptance. See
+  [the profile and storage details](ZKAPI_PAYMENTS.md#september-30-clean-reset-profile).
+
 ## 2026-09-30: Command-line daemon moved to zkapi
 
 - The daemon source, installer, packages and client workflows now live under
