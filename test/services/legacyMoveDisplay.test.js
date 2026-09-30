@@ -5,11 +5,6 @@ const events = [];
 globalThis.window ??= {};
 globalThis.window.addEventListener ??= () => {};
 globalThis.window.location ??= { href: 'http://localhost/', origin: 'http://localhost', hostname: 'localhost' };
-const realDispatch = globalThis.window.dispatchEvent;
-globalThis.window.dispatchEvent = event => {
-    if (String(event?.type || '').startsWith('legacy-tickets')) events.push([event.type, event.detail]);
-    return realDispatch?.call(globalThis.window, event) ?? true;
-};
 
 const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
 
@@ -31,12 +26,25 @@ function fakeStore(count, held = 0) {
 }
 
 function withStore(store, fn) {
+    // The bundled runner shares browser shims across suites. Install the
+    // listener during this test, after other suites have registered theirs.
+    const previousWindow = globalThis.window;
+    globalThis.window ??= {};
+    const testWindow = globalThis.window;
+    const previousDispatch = testWindow.dispatchEvent;
+    testWindow.dispatchEvent = event => {
+        if (String(event?.type || '').startsWith('legacy-tickets')) events.push([event.type, event.detail]);
+        return true;
+    };
     const original = ticketClient.ticketStore;
     ticketClient.ticketStore = store;
     ticketClient.legacyMove = null;
     ticketClient.unannouncedLegacyMove = 0;
     events.length = 0;
-    return Promise.resolve(fn()).finally(() => {
+    return Promise.resolve().then(fn).finally(() => {
+        if (previousDispatch === undefined) delete testWindow.dispatchEvent;
+        else testWindow.dispatchEvent = previousDispatch;
+        globalThis.window = previousWindow;
         ticketClient.ticketStore = original;
         ticketClient.legacyMove = null;
         ticketClient.legacyTransfer = null;

@@ -1,3 +1,8 @@
+## 2026-09-30: Switch-day staging preflight
+
+- The staged release combines the ticket-move/free-trial client with the current deployed Private balance UI and upstream deployment documentation. The legacy move event tests install and restore their window dispatcher per test so the shared bundled test runner cannot silently replace the listener.
+- Production follow-up: the org can replay a completed transfer after the migration deadline, but the browser currently exits when transfer info reports `enabled: false`. Before closing a production window, add recovery of the exact outstanding transfer request before releasing held old tickets. Do not reopen new transfers merely to recover a lost response. This does not block testing an open future-dated window on staging.
+
 ## 2026-09-30: Reload brings the dialog back at once; a click during startup is kept
 
 - After a reload the Private balance dialog waited for `initWalletClient()`,
