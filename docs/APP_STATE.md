@@ -1,3 +1,47 @@
+## 2026-09-30: Sign-up robustness (stress-tested against a stateful org fake)
+
+Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
+`docs/SIGNUP_STRESS_2026-09-30.md`.
+
+- **Focus during a passkey wait.** The untitled card is invisible
+  (`data-waiting="true"`), but `focusModal()` used to put focus on its Close,
+  so a second Enter closed the dialog and abandoned the sign-up. Focus now
+  stays on the dialog, and `getModalFocusable()` skips the hidden card's
+  controls.
+- **Saved account, new name.** `prepareUsernameContinuation` used to send
+  every name to login when an account was saved (a signed-out or expired
+  one included): "Authentication failed", forever. The saved name is still a
+  login with no request, and another existing name is still a login. A new
+  name throws `SAVED_ACCOUNT_MISMATCH` ("This browser remembers "x". Forget
+  it to create a new account."), and the form then shows Forget saved account
+  (`savedAccountMismatch`). Forget keeps the typed name.
+- **Reservation across a reload.** `prepareAccount` also writes
+  `oa-held-username-registration-v1` to sessionStorage (name, account number,
+  init options, `at`; no key material). `takeHeldRegistration` falls back to
+  `resumeHeldRegistration()` (fresh master key, same challenge) for 55 s.
+  `/auth/register` clears it, because it spends the challenge whatever it
+  answers. Holds now count from `getPendingReservedAt()`, not from the
+  dismissal.
+- **Unconfirmed finish.** A register failure without an answer
+  (`isAmbiguousAccountFailure`: abort/timeout, fetch TypeError, 5xx), or
+  `SESSION_NOT_ESTABLISHED` (the account was made but no session was kept),
+  sets `registrationUnconfirmed`. Try again then looks the name up and runs
+  the username unlock if it exists.
+- **Errors.** `chat/domain/accountErrors.js` (pure, re-exported by
+  accountService) turns browser, proxy and WebAuthn text into plain lines.
+  The org's own sentences pass through.
+- **Sheets.** A refusal under `SHEET_REFUSED_MS` right after a click on
+  Create passkey (`sheetFromClick`) now says the browser didn't open the
+  prompt. Registration asks once for PRF when the credential reports
+  `prf.enabled` without a value. Closing the dialog calls
+  `abortPasskeyCeremony()`.
+- **Ticket move.** When the move's redeem fails, `legacyMove` is kept with
+  `awaitingRedeem`, so the visible count holds until a retry redeems the saved
+  code. A run that only redeems does not dispatch `move-settled` again.
+- **Toasts** above the composer move above a full-width bottom sheet
+  (`[aria-modal]` spanning ≥ 90% of the width and reaching the bottom). The
+  loading toast has `role="status"`.
+
 ## 2026-09-30: Dialog height glides; buffer info; return cue in the header; reload keeps open rows
 
 - **Card resize.** `AccountModal.render()` reads the dialog's height before
