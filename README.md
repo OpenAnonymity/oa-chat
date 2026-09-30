@@ -4,62 +4,10 @@ A ChatGPT-like AI chat app that implements [unlinkable inference](https://openan
 
 The web app runs entirely in the browser. Each session uses a fresh ephemeral access key obtained via blind signatures, so no party — including the OA system and the inference provider — can link your identity to your inference activity or link sessions to each other.
 
-For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
-
-The CLI has two commands: **`config`** for setup and changes, and **`serve`**
-for inference. Install or update the `0.4.2` prerelease:
-
-```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
-```
-
-Then configure and run:
-
-```sh
-PATH="$HOME/.local/bin:$PATH" oa-chat config
-PATH="$HOME/.local/bin:$PATH" oa-chat serve
-```
-
-`config` shows status and checks setup immediately. Missing
-profiles default to **zkAPI on Mainnet with direct HTTPS**. If funding is needed,
-it asks how much to deposit in USD, with **$20 selected by pressing Enter**,
-then displays the ETH payment address, amount, and a terminal QR code.
-`config --usd 50` supplies the amount directly for a new deposit; saved deposits
-resume their fixed ETH amount. `config --network sepolia` selects test ETH;
-`config --backend ticket` selects tickets. Use `config --edit` for settings or
-`config --menu` for wallet management. Sepolia asks for its shared access
-password with input hidden before funding; Mainnet and ticket mode are
-unaffected. Existing settings and wallet state are preserved.
-
-Configuration immediately starts watching the receiving address and shows its
-current ETH balance and remaining payment. Send ETH on the selected network to
-the displayed address. Once enough arrives, review the fixed principal and maximum
-fee and **press Enter to continue** with the deposit. Configuration deposits,
-waits for finality, and exits. `serve`
-then runs the loopback-only inference API without an API key by default; missing
-prerequisites point back to `config`. Use `oa-chat config --require-api-key` to
-require local client authentication. Both access modes reuse an ephemeral key for
-nearby requests in the same ticket tier or zkAPI budget bucket for 60 seconds
-by default. The provider
-can link calls sharing a key, including different chats or local clients, and they
-share its aggregate cap. Set `key_reuse_window_seconds` in `config.json` to 0 to
-require a fresh key per call, or an integer up to 300 to change the fixed window.
-See [key reuse configuration](daemon/README.md#ephemeral-key-reuse). zkAPI queues
-requests and still waits for lease settlement when fresh access is needed.
-Normal service output shows inference requests and zkAPI key-session starts and
-ends, with the settled session cost and remaining private balance in ETH.
-Routine companion readiness and retry messages stay quiet. See
-[foreground activity](daemon/README.md#foreground-activity-and-logs).
-
-Automatic funding waits, model-independent setup, key-free local inference,
-shorter command output, queued zkAPI requests, bounded key reuse, and session
-activity reports are newer
-than the published `0.4.2` bundle; the installer above still provides that release.
-
-Stop the daemon before upgrading or editing configuration. Installation updates
-both binaries and preserves private state. See the
-[CLI guide](daemon/README.md) and
-[installer options](daemon/docs/CLI_PACKAGING.md#one-command-installation).
+For Open WebUI and other OpenAI-compatible clients, the command-line daemon
+has moved to [zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd) in `OpenAnonymity/zkapi`.
+It provides a local streaming API funded with private ETH, with a short mainnet
+quick start. Ticket support remains in this web app; the new daemon is zkAPI-only.
 
 ### Highlights
 - **Unlinkable inference**: Every session uses an ephemeral, blind-signature-backed access key. The inference provider sees anonymous requests with no way to identify the user behind them or link them across sessions.

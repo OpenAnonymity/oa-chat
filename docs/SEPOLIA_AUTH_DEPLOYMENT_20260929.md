@@ -96,7 +96,7 @@ All twelve public downloads match the verified artifacts and source provenance.
 The public HTTPS installer and reinstall passed on macOS ARM64, preserving
 private state, modes and the previous bundle without starting setup or services.
 The default user installation was not changed. See the
-[published release record](../daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
+[published release record](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
 
 The live browser shows the password entry control, clears rejected input,
 reports the rejection, and cancels safely. The challenger checkpoint advanced
@@ -108,4 +108,4 @@ These acceptance checks are read-only: no deposit, new provider key, inference,
 settlement or withdrawal was performed. Earlier funded native ETH acceptance
 is recorded in [the fresh deployment report](ZKAPI_FRESH_DEPLOYMENT_20260928.md).
 See [browser behavior](SEPOLIA_AUTH.md) and
-[CLI instructions](../daemon/docs/CLI_ZKAPI.md) for client usage.
+[CLI instructions](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd/docs/CLI_ZKAPI.md) for client usage.

@@ -63,140 +63,23 @@ link them across sessions. See blog post
 
 ### Local API clients
 
-The optional [Go daemon](../daemon/README.md) is another client-side implementation. An
-OpenAI-compatible UI sends its prompt to the user's loopback daemon, which
-obtains unlinkably issued access and forwards inference over direct HTTPS by
-default. An empty or omitted `relay_url` disables the external network proxy; setting a
-Wisp URL opts in to destination TLS over that relay. Existing nonempty relay
-settings remain enabled. Direct mode exposes the source IP to destination
-services and uses local DNS, allowing network-metadata correlation across
-issuance, redemption, and inference despite the cryptographic unlinkability
-of tickets and fresh keys. The UI process and daemon host are inside the user's
-trust boundary; an externally hosted UI can see/store the user's content just
-as its own operator permits. The daemon cannot anonymize content that the user has
-already disclosed to that UI.
+The command-line client has moved to
+[zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd) in `OpenAnonymity/zkapi` and now supports only zkAPI private
+ETH balances. Its [privacy and recovery boundaries](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd/docs/PRIVACY.md)
+describe local authentication, direct HTTPS and optional relay metadata,
+bounded ephemeral-key reuse, financial activity logs, and transaction consent.
 
-Local inference accepts no-key requests by default on a loopback-only listener.
-Other local processes can use this endpoint, so `config --require-api-key` opts
-in to a local client credential. That credential authenticates only the
-UI-to-daemon hop and never reaches OA services or the provider. Browser Origins
-are rejected regardless of the inference-key setting. Key-free inference also
-checks the actual loopback peer and rejects unexpected Host headers.
-Incoming cookies, identity headers, and top-level
-account/storage metadata are stripped. Both ticket and zkAPI modes retain an
-acquired key in daemon memory for a fixed 60-second window by default, bounded by
-earlier credential expiry. Reuse never extends that deadline. Every request
-checks live model policy and may reuse only the same ticket-price tier in ticket
-mode or the same reviewed USD bucket in zkAPI mode. Eligibility is evaluated when
-a request reaches execution, so queue time counts against the window.
+The local client defaults to a loopback-only, key-free inference API. Admin and
+wallet routes remain separately authenticated. Prompts go directly from the
+client to the inference provider, never through the wallet/prover helper or OA
+backend. Direct HTTPS reveals source IP; key reuse intentionally makes requests
+within the reuse window linkable by the provider. Wallet funding and withdrawal
+remain public Ethereum activity. No deployed endpoint or protocol is changed by
+the repository move.
 
-The top-level `key_reuse_window_seconds` config value accepts integers from 0 to
-300; omitted means 60, including existing profiles, and 0 requires fresh access
-for every call. The provider can link all calls using the same key. There is no
-trusted conversation identifier, so this intentionally includes unrelated chats
-and local clients. The original aggregate key cap is shared, not reset per call.
-Ticket requests may share a key concurrently. zkAPI responses remain serialized;
-when fresh access is required, they wait through known pending settlement. The
-companion's durable one-handoff guard still prevents handing a lease to Go twice,
-including after a crash or lost local reply. Go's cache never survives restart.
-Provider HTTP errors, transport/read errors, cancellation, and interrupted
-responses discard the cached key for future calls; inference is never retried
-automatically. HTTP-200 bodies and event streams remain opaque passthrough and
-application-level error events are not interpreted for cache invalidation.
-
-A canceled queued request stops waiting. The queue lives only in the local daemon
-and adds no server-side prompt queue or persistent request history. The existing
-lease lifetime and signed settlement can still delay requests needing fresh
-access by minutes. The daemon stores no chat history and creates no request-log
-files.
-Its foreground `serve` command emits operational metadata to stdout: allowlisted
-inference route/method labels, HTTP status, timing, and locally numbered zkAPI
-key-session starts and settled ends. At the user's request, each settled end
-also shows the actual session charge and remaining private balance in ETH.
-Shell redirection and service managers may retain this financial and activity
-metadata. Routine companion readiness/retry and admin traffic are not printed.
-Prompts, responses, credentials, raw URLs, raw session identifiers, wallet
-secrets, and proofs never enter these logs. Session reports come from an
-authenticated loopback event feed with a bounded in-memory buffer; they add no
-remote reporting or persistent ledger. The displayed session numbers are local
-labels, not provider key identifiers. Its proof
-companion receives no prompts/responses or model IDs. The daemon reads the
-public model-tier map and provider catalog anonymously and sends only the model's reviewed coarse
-USD spending bucket to the companion. Native ETH conversion uses the verified
-quote bound to that request; neither the exact wallet balance nor prompt size
-is used to choose a bucket. It always uses an authenticated
-loopback CONNECT bridge that rejects plaintext HTTP and HTTP downgrades. The
-bridge opens destination TCP directly by default, or carries destination TLS
-through opt-in Wisp. Environment proxy variables are ignored. Opt-in Wisp resolves
-destination DNS and hides the source IP from destination services, while the
-relay can observe connection metadata. A configured relay failure never falls
-back to direct HTTPS. Destination certificate validation, station/key binding,
-and the same verification policy apply in either mode. The daemon matches the
-web outage eligibility described below and exposes `verifier-unavailable`
-response metadata plus a fixed operational warning. It checks each acquired
-key once and retains the verification result through its reuse window; unlike
-retained browser sessions, it has no background verification retry queue. See
-the CLI documentation for deployed-service prerequisites and the zkAPI settlement constraint.
-
-The CLI's Ethereum address-funding route generates an Ethereum signing key
-locally and retains it in an owner-only file alongside its private recovery
-state. No external wallet connection or OA account identity is required.
-All funding, withdrawal, and public-return management requires the generated
-local API credential plus a separate owner-only management credential. Inference
-being key-free does not expose those routes; the API key shared with an opted-in
-UI alone cannot authorize wallet transactions. The authenticated runtime-mode
-status is the only admin endpoint available with the API credential alone.
-Funding address balances, incoming transfers, approvals, vault deposits, and
-withdrawal amounts and destinations
-are public Ethereum activity visible to the configured RPC (accessed directly
-by default, or through opt-in Wisp) and chain observers. They are not made
-anonymous by removing a wallet connection. Funding is command-line only:
-quoting prepares local recovery data. The `config --menu` actions ask for explicit
-approval of the displayed principal, destination, and fee allowance before
-withdrawals or public returns. Its guided deposit starts waiting for incoming ETH
-automatically, showing the receiving account balance and remaining payment. Once
-funds cover the fixed principal and required fees, it displays the principal and
-maximum network fee and asks the user to press Enter to continue with the deposit.
-That Enter authorizes only the displayed operation and fee ceiling; waiting and
-balance updates do not authorize signing. A new profile
-defaults to Mainnet and direct HTTPS. A new deposit asks for a USD amount with
-$20 as the default on Enter; `--usd` supplies that amount without the prompt.
-Saved deposits retain their fixed ETH principal without another amount prompt.
-Entering an amount and displaying its quote do not authorize a transaction.
-The terminal payment QR is generated locally and contains only the public funding
-address, chain ID, and exact recommended ETH top-up. No external QR service sees
-the payment instructions; signing keys, note secrets, and local credentials never
-enter the QR. The guided deposit refreshes short-lived quotes
-and may approve them automatically only for that same network, deployment,
-funding address, private-note commitment, principal, and nonce, within the
-accepted fee ceiling. It requotes after Enter before signing. An insufficient
-balance resumes waiting and requires another Enter after funding; a higher fee
-ceiling requires fresh confirmation only once sufficiently funded. Piped
-installer text is never treated as consent; interactive answers come from the
-controlling terminal. Unsigned progress requires consent again after restart;
-signed progress reuses its original transaction. A reverted transaction is
-never retried automatically. Guided withdrawal uses the same ETH payment QR
-and balance-waiting UI for gas shortages. Its QR contains only the local signing
-address, chain, and fee top-up; the private payout is excluded from that payment
-amount. It shows the full withdrawal amount and destination once and requires
-Enter with a displayed maximum fee once funded. Fresh quotes retain the same
-note, destination, principal, clearance binding, nonce, network, deployment,
-and any explicitly selected failed-transaction retry hash. A fee increase beyond
-the approved ceiling or a renewed balance shortage requires another Enter.
-An already signed withdrawal resumes the saved transaction without authorizing
-another; ambiguous approval replies are inspected before any recovery call.
-Configuration stops any temporary services it owns
-when finished; `serve`
-checks readiness without prompting and points missing prerequisites back to
-`config`. Configuration and service startup check wallet state and a positive
-private balance without selecting a model or fetching model pricing. New
-deposits accept a positive USD amount without a model-specific minimum. Each
-inference request checks the selected model's policy before acquiring or reusing
-access. Fresh access checks its coarse spending cap; calls reusing a key share
-that key's remaining aggregate cap. The wizard does not send a test inference or
-acquire access merely to check setup. The signing key and private-note secret never enter account
-synchronization or inference requests. Backups of the private configuration
-directory control both public funds and private notes.
+The historical dual-mode OA Chat daemon and its ticket privacy analysis remain
+in [the pre-migration source](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md). This web app's ticket
+privacy model below continues to apply to the browser.
 
 ### 1. Ticket issuance (blind signatures)
 

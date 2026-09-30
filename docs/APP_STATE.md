@@ -1,3 +1,25 @@
+## 2026-09-30: Command-line daemon moved to zkapi
+
+- The daemon source, installer, packages and client workflows now live under
+  [OpenAnonymity/zkapi/zkapi-clientd](https://github.com/OpenAnonymity/zkapi/tree/main/zkapi-clientd). The executables are
+  `zkapi-clientd` and its private `zkapi-walletd` helper. The public commands
+  remain `config` and `serve`; ticket wallet/import/redemption/inference and
+  mode-selection prompts are removed from the moved client.
+- Web ticket flows remain unchanged. Live mainnet/Sepolia manifests, contracts,
+  org/verifier services, provider URLs and wallet recovery semantics are retained.
+  The pinned historical Rust helper is prepared separately; current operator
+  source and proving keys are not modified by the move.
+- The new subdirectory README contains the mainnet install/config/serve quick
+  start. Packaging and privacy detail live in its docs. Existing funded zkAPI
+  profiles are reused safely; no wallet is migrated or spent by this change.
+- The prior daemon history below and its linked validation records refer to
+  the final pre-migration OA Chat commit, rather than claiming old acceptance
+  results for the renamed client. Old release assets remain available for recovery.
+- Migration validation in the destination passes the full Go race suite, vet,
+  Linux cross-build, native Darwin Go/Rust bundle build and isolated native
+  install/reinstall, plus installer/package/source-preparation regressions and
+  fresh adversarial review. User wallet state and running processes are untouched.
+
 ## 2026-09-30: Guided withdrawal with automatic gas funding
 
 - `config --menu` now shows a compact network banner; `config --status` keeps
@@ -66,8 +88,8 @@
   Those financial amounts may consequently persist in redirected stdout,
   Homebrew logs, or systemd journals; the daemon itself creates no log files.
   The [privacy model](PRIVACY_MODEL.md#local-api-clients),
-  [CLI activity guide](../daemon/README.md#foreground-activity-and-logs), and
-  [zkAPI details](../daemon/docs/CLI_ZKAPI.md#terminal-session-activity) describe
+  [CLI activity guide](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#foreground-activity-and-logs), and
+  [zkAPI details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#terminal-session-activity) describe
   these boundaries. No public release is implied; published `0.4.2` and earlier
   local builds do not include the updated session-event companion.
 - Validation: full daemon `go test -race ./...`, `go vet ./...`, Linux amd64
@@ -114,7 +136,7 @@
 - These source changes postdate published `0.4.2` and the earlier local
   `0.4.3-dev.c7a51a2` build. They require an updated binary; no published release
   is implied. Historical release/live-run evidence below remains unchanged.
-  See [key reuse configuration](../daemon/README.md#ephemeral-key-reuse) and
+  See [key reuse configuration](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#ephemeral-key-reuse) and
   [privacy boundaries](PRIVACY_MODEL.md#local-api-clients).
 - Validation: the full daemon `go test -race ./...` suite, `go vet ./...`,
   and Linux amd64 cross-build pass. Focused race checks also pass after the
@@ -157,7 +179,7 @@
   is unset. Configured limits must allow for queueing plus inference, possibly
   minutes per earlier lease. Optional background-task disabling or a separate
   local task model reduces delay and spending; it is not required to handle
-  concurrent calls. See the [connection guide](../daemon/README.md#connect-open-webui)
+  concurrent calls. See the [connection guide](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#connect-open-webui)
   for source links and container reachability constraints.
 - These source changes postdate published `0.4.2`; no prerelease is part of this
   change. Earlier release and live-test entries remain evidence of their named
@@ -196,7 +218,7 @@
   Sepolia authentication, and `serve` readiness behavior are unchanged. These
   source changes postdate published `0.4.2`; no release is part of this change.
   Earlier entries below remain historical validation for their named versions.
-  See the [current funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+  See the [current funding walkthrough](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
 - Validation: the complete daemon `go test -race ./...` suite and `go vet ./...`
   pass. Funding regressions cover partial transfers, balance/QR updates without
   consent, fresh quotes after Enter, fee increases, insufficient balances after
@@ -232,8 +254,8 @@
   the reservation fixtures; fresh adversarial review approved the final diff.
 - This source adjustment postdates published `0.4.2`; no new release is part of
   this change. The release and validation entries below remain evidence of those
-  earlier versions. See the [CLI guide](../daemon/README.md#configure-or-edit-a-profile)
-  and [funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+  earlier versions. See the [CLI guide](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#configure-or-edit-a-profile)
+  and [funding walkthrough](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
 
 ## 2026-09-30: CLI 0.4.2 prerelease published
 
@@ -256,7 +278,7 @@
   and a custom $12.50. Independent QR decoding recovered each exact live payment
   URI. Both consent prompts were declined; no funds were spent or inference
   sent. All owned services stopped, and isolated private profiles were retained.
-  See the [sanitized release evidence](../daemon/packaging/validation/daemon-0.4.2-release-20260930.json).
+  See the [sanitized release evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.4.2-release-20260930.json).
 
 ## 2026-09-29: Ask for the CLI deposit amount with a $20 default
 
@@ -275,8 +297,8 @@
   ended input before quoting, and payment display after amount selection.
   Existing consent and recovery tests passed; fresh adversarial review approved.
 - No release was published at the time of this adjustment; it is included in
-  the 0.4.2 release above. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
-  and [funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+  the 0.4.2 release above. See the [current CLI guide](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#configure-or-edit-a-profile)
+  and [funding walkthrough](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
 
 ## 2026-09-29: CLI defaults go directly to a $20 ETH payment
 
@@ -328,8 +350,8 @@
 - These changes originally postdated published 0.4.1 and are included in the
   0.4.2 release above. Sepolia password support is preserved.
   The 0.4.0 and 0.4.1 release evidence
-  below remains historical evidence for those bundles. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
-  and [funding details](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
+  below remains historical evidence for those bundles. See the [current CLI guide](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#configure-or-edit-a-profile)
+  and [funding details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
 
 ## 2026-09-29: Sepolia password focus after wallet rerenders
 
@@ -373,7 +395,7 @@
   assets. This gate does not restrict public Ethereum contracts or revoke a
   previously issued provider key. See [the privacy model](PRIVACY_MODEL.md)
   [browser access details](SEPOLIA_AUTH.md), and
-  [CLI access instructions](../daemon/docs/CLI_ZKAPI.md).
+  [CLI access instructions](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md).
 - Browser SDK auth is backported onto the deployed `cf56d67` SDK, now pinned
   at `3342c95` (including the password-dialog note-identity guard).
   The current backend also includes the auth implementation. The host does not
@@ -403,7 +425,7 @@
   release assembly and all four package checks passed. All twelve public assets
   match the verified CI bytes; the public macOS ARM64 installer and reinstall
   preserved private state, modes and the previous bundle. See the
-  [release record](../daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
+  [release record](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.4.1-release-20260929.json).
 
 ## 2026-09-29: CLI configuration and serving are separate commands
 
@@ -454,8 +476,8 @@
   non-2xx responses and does not establish oracle staleness. A matched auth-capable
   client/companion update is required; waiting for finality alone cannot fix 401.
   No new transaction or inference was sent. See the
-  [release record](../daemon/packaging/validation/daemon-0.4.0-release-20260929.json)
-  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
+  [release record](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.4.0-release-20260929.json)
+  and [validation details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#published-040-configserve-validation-2026-09-29).
 
 ## 2026-09-29: Browser funding and withdrawal recovery audit
 
@@ -534,8 +556,8 @@
   and both start modes passed. The exact initial cause remains unconfirmed; this
   release does not claim to fix intermittent upstream availability. Deposit,
   inference, and settlement evidence remains scoped to 0.3.0/0.3.1; the companion
-  is byte-identical. See the [0.3.2 release record](../daemon/packaging/validation/daemon-0.3.2-release-20260929.json)
-  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-032-separate-setup-validation-2026-09-29).
+  is byte-identical. See the [0.3.2 release record](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.3.2-release-20260929.json)
+  and [validation details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#published-032-separate-setup-validation-2026-09-29).
 
 ## 2026-09-29: Combined release review follow-up
 
@@ -569,8 +591,8 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   and the previous bundle, opened the live funding prompt, and canceled on Ctrl+C
   without another keystroke. Its outer interrupted shell pipeline returned 1;
   direct CLI cancellation returned 0. No transaction was signed by that check.
-  See [patch evidence](../daemon/packaging/validation/daemon-0.3.1-release-20260929.json)
-  and [release validation](../daemon/docs/CLI_PACKAGING.md#published-031-prompt-cancellation-validation-2026-09-29).
+  See [patch evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.3.1-release-20260929.json)
+  and [release validation](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#published-031-prompt-cancellation-validation-2026-09-29).
 
 - The final public 0.3.0 acceptance check exposed a macOS terminal edge case:
   Ctrl+C at an unanswered confirmation stopped the companion, but the CLI's
@@ -641,7 +663,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - The ready screen prints the API URL and an absolute, shell-quoted command
   to retrieve the local API key, without printing the credential. Owned services
   remain in the terminal; attaching to an existing service returns after checks.
-  See [the guided walkthrough](../daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
+  See [the guided walkthrough](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference).
 - Validation: full Go race suite/vet, Linux command cross-compilation, 26
   installer regressions, and fresh adversarial review pass. Review fixes cover
   companion PATH selection, slow-start readiness, and ambiguous recovery.
@@ -649,8 +671,8 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   The real Sepolia deposit finalized and the CI pair streamed and settled an
   inference. A final macOS prompt-cancellation check found that Ctrl+C could
   require Enter to exit the terminal read; a patch release addresses it. See
-  [release evidence](../daemon/packaging/validation/daemon-0.3.0-release-20260929.json)
-  and [validation details](../daemon/docs/CLI_PACKAGING.md#published-030-guided-setup-validation-2026-09-29).
+  [release evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.3.0-release-20260929.json)
+  and [validation details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#published-030-guided-setup-validation-2026-09-29).
 
 ## 2026-09-29: CLI 0.2.0 prerelease published
 
@@ -670,7 +692,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   proofs without source-build overrides; 393 budgeted models, authentication
   boundaries, and a live $2 deposit quote passed. No additional funds were sent.
   The funded acceptance earlier today uses the unchanged runtime/patches.
-- [Release evidence](../daemon/packaging/validation/daemon-0.2.0-release-20260929.json)
+- [Release evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/daemon-0.2.0-release-20260929.json)
   distinguishes published-binary checks from the funded acceptance and links
   both CI runs. All temporary test services stopped cleanly.
 
@@ -686,7 +708,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   successful build jobs, complete checksums, and all native source commits,
   then repeats the original four-runner Nix/Homebrew/Arch checks. It never
   builds, retags, or publishes. Publication remains gated on those checks.
-  See [packaging](../daemon/docs/CLI_PACKAGING.md#building-a-release).
+  See [packaging](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#building-a-release).
 
 ## 2026-09-29: CLI 0.2.0 prerelease preparation
 
@@ -700,7 +722,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   upgrading and restart it afterward. Existing compatible configs need no
   reinitialization. An old ERC-20 note cannot be migrated to the native vault;
   retain its matching client/recovery state separately.
-- [The Sepolia walkthrough](../daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
+- [The Sepolia walkthrough](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#sepolia-from-installation-to-inference)
   now covers install/PATH/version, explicit Sepolia initialization, consistent
   `OA_CHAT_CONFIG_DIR` across terminals, quote/send/refresh/approve/finality,
   status, model budget discovery, and streaming inference. API credentials go
@@ -767,7 +789,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   and unsettled transactions must be resolved before returning their gas funds.
   Management operations require the owner credential, separate from the API key
   shared with inference clients. Back up the whole private config directory.
-- See [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md) for current commands and
+- See [CLI zkAPI](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md) for current commands and
   recovery. Earlier sections below describe historical implementations and
   acceptance runs; the previous native-flow result does not itself validate the
   new fee-quote flow.
@@ -778,7 +800,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   no new nonce or active private note. Both actual fees fit the approved limits.
   The full Go race suite/vet, Rust checks, native installation and Linux/macOS
   installer CI passed. Public ETH return has automated coverage but was not
-  broadcast in this run. See the [sanitized evidence](../daemon/packaging/validation/sepolia-cli-quotes-20260929.json).
+  broadcast in this run. See the [sanitized evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/sepolia-cli-quotes-20260929.json).
 
 ## 2026-09-29: Payment feedback published to staging and Sepolia
 
@@ -814,7 +836,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   directories and use their matching release. Prepared requests preserve the
   frozen quote and original cap across restart; settlement checks the same
   quote. That revision defaulted new requests to a $1 cap; the automatic
-  model policy above now selects $1/$2/$3/$4.50/$6. Full details: [CLI zkAPI](../daemon/docs/CLI_ZKAPI.md).
+  model policy above now selects $1/$2/$3/$4.50/$6. Full details: [CLI zkAPI](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md).
 - Both CLI backends support the browser's eligible verifier outage behavior.
   Recent attestation permits transport/gateway outage continuation; 429 and
   exact ownership-check errors follow the existing browser exception. Explicit
@@ -828,7 +850,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   treasury share, closed note and consumed nullifier. Withdrawal finalized at
   checkpoint 11805799; restart/repeat retained completion with no new transaction
   (chain nonce 2). No private note or pending settlement remains. Exact evidence:
-  [native CLI validation](../daemon/packaging/validation/sepolia-native-cli-20260929.json).
+  [native CLI validation](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/sepolia-native-cli-20260929.json).
   Deposit/withdrawal restart checks preserve signed bytes and nonce. Mainnet
   passed read-only startup/catalog checks; no Mainnet transaction was sent.
 - Sepolia briefly returned `native_quote_expired` while a newer oracle round
@@ -1092,8 +1114,8 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   macOS/ARM64 builds. Nix generated-unit checks do not certify a complete NixOS
   boot. No funded inference, transactions, or package publication occurred.
   Trial containers/images were removed and unrelated Docker workloads retained.
-  See [Docker trial details](../daemon/docs/CLI_PACKAGING.md#rockypika-docker-package-trials-2026-09-28)
-  and [sanitized evidence](../daemon/packaging/validation/rockypika-packages-20260928.json).
+  See [Docker trial details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#rockypika-docker-package-trials-2026-09-28)
+  and [sanitized evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/rockypika-packages-20260928.json).
 
 ## 2026-09-28: Daemon distribution preparation
 
@@ -1123,7 +1145,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - Release CI gates draft creation on native piped installation/reinstallation,
   manifest/payload checks, Homebrew validation, native Arch makepkg, and Nix
   package/module checks. Manual dispatch requires an explicit version and
-  creates no release. See [release preparation](../daemon/docs/CLI_PACKAGING.md#building-a-release).
+  creates no release. See [release preparation](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#building-a-release).
 - These source changes do not replace the published `daemon-v0.1.0` binaries.
   A new reviewed tag/build and publication are still needed to distribute
   current funding/withdrawal, direct-network defaults, and logging behavior.
@@ -1134,7 +1156,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   Homebrew, and Nix packaging passed with real published Linux AMD64 archives;
   those mechanics checks do not certify current-source Linux behavior. The
   new four-platform CI matrix, actual Linux service boot, and funded inference
-  remain separate. See [dated validation](../daemon/docs/CLI_PACKAGING.md#distribution-preparation-validation-2026-09-28).
+  remain separate. See [dated validation](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#distribution-preparation-validation-2026-09-28).
 
 ## 2026-09-27: CLI package distribution status
 
@@ -1146,7 +1168,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - The recorded macOS ARM64 Homebrew install/test/service lifecycle passed;
   Arch installation and Linux service boot remain unverified. Nix packaging
   is absent: no derivation, flake, service module, or Nix CI. See
-  [packaging status](../daemon/docs/CLI_PACKAGING.md#nix--nixos).
+  [packaging status](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#nix--nixos).
 - The published prerelease predates address-based funding/withdrawal,
   opt-in CLI relay defaults, and foreground status/logging. Package manifest
   generation does not publish newer source changes.
@@ -1687,7 +1709,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - The daemon creates no log file, but stdout redirection, Homebrew services,
   and systemd may retain operational activity metadata. `oa-chat status` retains
   its JSON output; fatal command diagnostics still use stderr. See
-  [foreground logging](../daemon/README.md#foreground-activity-and-logs) and the
+  [foreground logging](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#foreground-activity-and-logs) and the
   [local client privacy model](PRIVACY_MODEL.md#local-api-clients).
 - Full Go race tests, vet, and build passed. A built-binary smoke check and
   subprocess regression verify stdout status/request/lifecycle output, clean
@@ -1710,7 +1732,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   HTTPS certificate and station/key verification remain mandatory.
 - Direct mode uses local DNS and reveals the source IP to destination services,
   so network metadata can correlate requests despite blind issuance and fresh
-  provider keys. See [CLI setup](../daemon/README.md#build-and-run-ticket-mode)
+  provider keys. See [CLI setup](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md#build-and-run-ticket-mode)
   and [the privacy model](PRIVACY_MODEL.md#local-api-clients).
 - Full Go race tests, vet, and build passed; changed relay/command packages
   passed a final race-test rerun. Coverage includes direct routing, destination
@@ -1720,9 +1742,9 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 
 ## 2026-09-27: Daemon documentation lives with the daemon
 
-- The daemon entry point is [daemon/README.md](../daemon/README.md). Supporting
-  [packaging](../daemon/docs/CLI_PACKAGING.md), [ticket](../daemon/docs/CLI_TICKETS.md),
-  and [zkAPI](../daemon/docs/CLI_ZKAPI.md) guides and their screenshots live in
+- The daemon entry point is [daemon/README.md](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md). Supporting
+  [packaging](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md), [ticket](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_TICKETS.md),
+  and [zkAPI](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md) guides and their screenshots live in
   `daemon/docs/`; keep future daemon-specific documentation there.
 - Native release and Linux package sources use the relocated packaging guide.
   Installed packages retain the existing `CLI_PACKAGING.md` filename.
@@ -1791,13 +1813,13 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 - Both native binaries must be rebuilt: the companion now advertises `withdrawal_bridge_version: 1`, persists its exact note/destination reservation before requesting clearance, and blocks inference and legacy mutation paths until closure. Go freezes the recipient, shares the existing transaction journal and nonce history, replays identical signed bytes after uncertainty, and accepts a refreshed proof/new nonce only after reporting a finalized revert and another explicit command.
 - Closure requires a canonical finalized successful receipt with the exact vault `MutualClose` event in both Go and Rust. Private recovery archives are durable before the active note disappears. Completed retries are idempotent and cannot touch a newer note. Go finishes its closure bookkeeping before any funding entry point can prepare another deposit. A missing note without confirmed closure still requires recovery.
 - A separate owner-only `management-token` is required in addition to the inference API key for withdrawal management. Commands bind every request to their original note ID; retry authorization names the exact reverted hash once, so concurrent or suspended polling cannot authorize a new attempt or withdraw a later note. If someone else relays the identical payout first and the local transaction finalizes reverted, `--confirm SUCCESSFUL_HASH` can recover that independently verified payout without signing again.
-- See [CLI withdrawal and recovery](../daemon/docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet). The published `daemon-v0.1.0` bundle predates these changes; no updated release is implied by source changes.
-- Live Sepolia withdrawal completed on September 23 UTC (September 22 Pacific) after the gas top-up. Note 58 paid its remaining 99971 test-token units to the selected destination in [transaction 0x085471…bdf1a](https://sepolia.etherscan.io/tx/0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a). Exact vault event, historical recipient balance delta, treasury payment, consumed nullifier, closed note, and canonical finality passed. Restarting during finality kept the same signed bytes; restarting after completion and repeating the CLI/management request kept the signer nonce at 3. Both processes report completion, private recovery archives remain, and the same address is ready for funding again (no second live deposit claimed). Gas cost was 0.007434784766264632 test ETH; remaining public ETH stays at the local signer. Temporary services were stopped and closed-state backups retained. See the [acceptance evidence](../daemon/packaging/validation/sepolia-cli-withdrawal.json).
+- See [CLI withdrawal and recovery](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet). The published `daemon-v0.1.0` bundle predates these changes; no updated release is implied by source changes.
+- Live Sepolia withdrawal completed on September 23 UTC (September 22 Pacific) after the gas top-up. Note 58 paid its remaining 99971 test-token units to the selected destination in [transaction 0x085471…bdf1a](https://sepolia.etherscan.io/tx/0x0854712a98b32c420aa5f9a012674b057ea9e0e69541e6aa4a553f7e0b8bdf1a). Exact vault event, historical recipient balance delta, treasury payment, consumed nullifier, closed note, and canonical finality passed. Restarting during finality kept the same signed bytes; restarting after completion and repeating the CLI/management request kept the signer nonce at 3. Both processes report completion, private recovery archives remain, and the same address is ready for funding again (no second live deposit claimed). Gas cost was 0.007434784766264632 test ETH; remaining public ETH stays at the local signer. Temporary services were stopped and closed-state backups retained. See the [acceptance evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/sepolia-cli-withdrawal.json).
 
 ## 2026-09-22: Live Sepolia CLI address funding and cancellation recovery
 
 - The manual CLI flow passed against the pinned legacy Sepolia deployment: a fresh locally generated address received 0.1 demo tokens and gas, signed its own approval/deposit, waited for canonical finality, and activated note 58. Restarting during confirmation retained the exact signed transaction. No external wallet connection was used.
-- One verified `openai/gpt-4o-mini` stream returned HTTP 200 and 40 content events; automatic signed settlement charged 29 microcredits and left 99971. Restarting again and repeating the same funding command preserved the reduced balance and did not send another deposit. See [CLI acceptance details](../daemon/docs/CLI_ZKAPI.md#live-address-funding-acceptance-2026-09-22) and [sanitized evidence](../daemon/packaging/validation/sepolia-address-funding.json).
+- One verified `openai/gpt-4o-mini` stream returned HTTP 200 and 40 content events; automatic signed settlement charged 29 microcredits and left 99971. Restarting again and repeating the same funding command preserved the reduced balance and did not send another deposit. See [CLI acceptance details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#live-address-funding-acceptance-2026-09-22) and [sanitized evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/sepolia-address-funding.json).
 - The default relay failed TLS, so the test used a temporary remote Wisp helper through SSH with destination TLS intact. Test services were stopped and private recovery state retained outside the repo. The existing independent-request settlement wait remains; this does not validate the newer note-bound deployment, mainnet, browser UX, or a new release.
 - Ctrl+C during the local funding HTTP request previously reported an unavailable daemon. Cancellation now gives neutral same-command resumption guidance; read-only `fund` cancellation never suggests selecting `--amount`. Focused regression tests, the full Go race suite, vet/build and fresh review passed.
 
@@ -2486,7 +2508,7 @@ reading code alone.
 - The published `daemon-v0.1.0` installer still installs the earlier MetaMask
   implementation. Address funding needs a build of this revision and a future
   native release. Existing Sepolia live validation below belongs to the older
-  implementation. See [CLI funding](../daemon/docs/CLI_ZKAPI.md) for recovery and limitations.
+  implementation. See [CLI funding](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md) for recovery and limitations.
 
 ## 2026-09-22: First CLI prerelease published and installation verified
 
@@ -2508,7 +2530,7 @@ reading code alone.
   default prefix. Both executables and all five proof assets passed. Linux
   reinstallation retained the previous release, activated a complete new one,
   and left no configuration or stale lock. See the
-  [dated validation record](../daemon/docs/CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
+  [dated validation record](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#published-prerelease-validation-2026-09-22).
 
 ## 2026-09-21: One-command CLI installer
 
@@ -2516,7 +2538,7 @@ reading code alone.
   ARM64 bundles into a user-owned prefix, defaulting to `~/.local`. It checks
   the OS/runtime baseline and both executables before switching the active
   release. It never initializes configuration, funds a wallet, changes shell
-  startup files, or starts a service. See [installation and upgrades](../daemon/docs/CLI_PACKAGING.md#one-command-installation).
+  startup files, or starts a service. See [installation and upgrades](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#one-command-installation).
 - Release assembly fills the script's single `@@VERSION@@` placeholder,
   includes `install.sh` in `SHA256SUMS`, and attaches it to the draft daemon
   release. The published script downloads its own exact version; it does not
@@ -2552,18 +2574,18 @@ reading code alone.
   First visible content arrived at 13.815 seconds, with eight partial-content
   frames before completion at 15.277 seconds. These timings include access
   preparation and browser rendering. See the
-  [browser evidence](../daemon/packaging/validation/openwebui-sepolia-stream.json).
+  [browser evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/openwebui-sepolia-stream.json).
 - Independent read-only settlement checks observed `finalized` at 20:56:01 UTC:
   actual usage/charge was 0.000723 USDC (723 microcredits), balance changed
   100000 → 99277, pending cleared, and exactly one durable key handoff existed.
   The 0.05-USDC lease limit is a cap, not the debit. The earlier rejected lease
   settled without reducing the balance. The undeployed early-settlement patch
   assumes full-cap billing and is unsuitable for this metered deployment;
-  redesign and validation are required before using it. See [details](../daemon/docs/CLI_ZKAPI.md).
+  redesign and validation are required before using it. See [details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md).
 - After settlement, one new independent direct SSE request passed HTTP 200,
   delivered 100 content events, first content at 7.081 seconds and `[DONE]`
   at 7.843 seconds. Catalog and authentication checks passed. See the
-  [API evidence](../daemon/packaging/validation/sepolia-direct-stream.json).
+  [API evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/sepolia-direct-stream.json).
   Browser content frames are not SSE token counts; the API test verifies raw
   framing separately. Automatic Open WebUI background tasks were disabled.
   This second lease finalized at 21:03:36 UTC, charging 65 microcredits
@@ -2572,7 +2594,7 @@ reading code alone.
 - Remaining limits: each provider key is handed out once, so independent API
   calls wait for the prior lease's settlement (about 4.5 minutes plus grace in
   this deployment). The Go CLI did not implement withdrawal at this September
-  10 revision; the current [CLI withdrawal flow](../daemon/docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet)
+  10 revision; the current [CLI withdrawal flow](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md#withdraw-without-connecting-a-wallet)
   is documented separately. Public Sepolia metadata does not disclose its
   OA-org issuer URL, so that issuer's staging
   status remains unknown. The live tests used the owned temporary Wisp helper
@@ -2617,8 +2639,8 @@ reading code alone.
 
 - The standalone `daemon/` Go module exposes OpenAI models/chat completions
   with immediate SSE flushing for Open WebUI and other clients. See
-  [CLI setup and validation](../daemon/README.md), [ticket recovery](../daemon/docs/CLI_TICKETS.md),
-  [zkAPI companion/funding](../daemon/docs/CLI_ZKAPI.md), and [packaging](../daemon/docs/CLI_PACKAGING.md).
+  [CLI setup and validation](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md), [ticket recovery](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_TICKETS.md),
+  [zkAPI companion/funding](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_ZKAPI.md), and [packaging](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md).
 - Ticket blinding uses CIRCL with browser interoperability tests. Wallet
   mutations use a process-shared lock and durable reservations. Each API call
   obtains a separately verified key; client identity headers/metadata are stripped.
@@ -2642,7 +2664,7 @@ reading code alone.
 - Open WebUI streaming passed both with the deterministic fixture and with
   real staging tickets/OpenRouter inference. The live browser recorded 38
   content updates, first content at 3.329 seconds and completion at 6.095 seconds.
-  Evidence and screenshots are linked from [the daemon README](../daemon/README.md). Its automatic title/tag
+  Evidence and screenshots are linked from [the daemon README](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/README.md). Its automatic title/tag
   requests cost extra access and conflict with pending zkAPI settlement.
 - Homebrew install/start/stop passed. Linux packages were built and inspected;
   publishing and Linux boot tests remain distinct from that validation record.
