@@ -1,0 +1,41 @@
+{
+  "deployment_manifest_url": "https://sepolia.100.21.48.23.sslip.io/config.json",
+  "allowed_deployment_manifest_urls": [
+    "https://sepolia.100.21.48.23.sslip.io/config.json"
+  ],
+  "trusted_deployment": {
+    "deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930",
+    "chain_id": 11155111,
+    "contract_address": "0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F",
+    "billing_token_address": null,
+    "protocol_server_url": "https://sepolia.100.21.48.23.sslip.io",
+    "indexer_url": "https://sepolia.100.21.48.23.sslip.io",
+    "request_charge_cap": 50000,
+    "state_signing_key": {
+      "x": "0x25a4453190e930f9716eebcab165170706d31d1b3969d106a50d7ae374a23d61",
+      "y": "0x1b0f74306dfce1371752a0d7c7d27359c398b8305798492fd1095074c0639953"
+    },
+    "clearance_signing_key": {
+      "x": "0x2b8dc190013bb10de72398ca462027f21b7a35eb6cb957b9319d76bd3c3c1b7d",
+      "y": "0xa6744dc1bc99bf78b29d6e76db2a0b5598c79d1ce2377b9044aa9dc323dd963"
+    },
+    "rpc_url": "https://ethereum-sepolia-rpc.publicnode.com",
+    "billing_asset": "native_eth",
+    "billing_unit": "gwei",
+    "native_asset_wei_per_unit": "1000000000",
+    "native_price_feed_address": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+    "native_price_feed_decimals": 8,
+    "native_price_max_age_seconds": 4500,
+    "request_proving_key_sha256": "c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584",
+    "withdrawal_proving_key_sha256": "8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668",
+    "circuit_id": "zkapi-v2-note-bound-v1",
+    "verifier_url": "https://verifier2.openanonymity.ai",
+    "openrouter_inference_base": "https://openrouter.ai/api/v1"
+  },
+  "proving_keys_base_url": "./proofs/",
+  "credits_per_usd": null,
+  "billing_token_symbol": "ETH",
+  "billing_token_decimals": 9,
+  "require_oa_key_source": true,
+  "deployment_api_proxy_path": "/zkapi-deployment/"
+}

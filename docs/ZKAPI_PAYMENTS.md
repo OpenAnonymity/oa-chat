@@ -144,8 +144,38 @@ The selector accepts only repository-reviewed profiles, requires an explicit
 network, and verifies the selected chain, circuit and proof hashes before
 publishing. Browser configuration, SDK asset hashes, build provenance and
 same-origin proxy routing use the same selected profile. Unset retains the
-SDK defaults. The Commercial staging composition explicitly selects the fresh
-Mainnet profile; see [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260928.md).
+SDK defaults. Commercial staging now explicitly selects the September 30 fresh
+Mainnet profile; see [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
+
+### September 30 clean-reset profile
+
+`OA_ZKAPI_DEPLOYMENT=fresh-20260930` selects the live September 30 Mainnet or
+Sepolia pins. Both finalized vaults and isolated services on the new AWS VM passed
+independent acceptance; the existing Sepolia and Mainnet staging sites now use
+this profile. Set it in both build and route-generation commands above, together
+with the selected network. See [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md)
+for exact receipts and canonical verification. The `fresh-20260928` profile
+remains available with its original pins.
+
+The user approved starting with fresh browser balances and no old-balance
+recovery UI. For this profile only, the app bundle uses the SDK database
+`zkapi-browser-wallet-fresh-20260930-mainnet-v1` or
+`zkapi-browser-wallet-fresh-20260930-sepolia-v1`. A build plugin checks the
+full SHA-256 of the pinned SDK's `browserWalletStore.js` and changes only its
+database-name declaration in the bundle. It neither edits the installed SDK
+nor upgrades its revision. The SDK's existing transaction and cross-tab locks
+remain in place; `build.json` records the selected database and checked source
+hash under `zkapi.walletStorage`.
+
+Old private notes, leases, deposit/withdrawal journals and archived history
+remain untouched in `zkapi-browser-wallet-v1`; the new profile does not load
+or migrate them. The separate `oa-zkapi-address-funding-v1` signer store is
+unchanged and remains keyed by chain, vault and asset. Its old encrypted
+accounts and public-ETH return journals stay stored, while the new vault gets
+a fresh scope. No startup transaction, deletion or recovery action occurs.
+Old data is retained without a recovery route: access would require the old
+matching configuration on the same browser origin. Preserving an immutable
+deployment at a different hostname does not provide access to this local data.
 
 SDK `cf56d67` enables the verified native-ETH Mainnet configuration following
 the September 28 rollout; the earlier `migration_required` guard is removed.
