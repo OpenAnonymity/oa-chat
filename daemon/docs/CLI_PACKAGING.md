@@ -27,10 +27,10 @@ Client applications retain their own transcripts under their own privacy setting
 ## One-command installation
 
 The shell installer uses the same native release archives as Homebrew and
-AUR. Install or update the `0.4.1` prerelease:
+AUR. Install or update the `0.4.2` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 ```
 
 Configure and then serve separately:
@@ -40,7 +40,7 @@ PATH="$HOME/.local/bin:$PATH" oa-chat config
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-Current source creates a missing profile with zkAPI on Mainnet and direct
+`config` creates a missing profile with zkAPI on Mainnet and direct
 HTTPS. For a new deposit, it asks for the USD amount with $20 as the default on
 Enter, then displays the ETH quote, payment address, amount, and terminal QR.
 `config --backend ticket` or `config --network sepolia` selects another mode or
@@ -48,9 +48,7 @@ network; `config --usd 50` supplies a new deposit's amount without the prompt.
 Saved deposits resume their fixed ETH amount. Existing profiles show their saved
 settings and immediately check readiness. Use `config --edit` for settings or `config --menu` for wallet
 management. Deposit approval remains explicit. Configuration stops any
-services it started and exits; `serve` runs the inference API. The published
-`0.4.1` installer above predates these streamlined defaults and QR and still asks
-initial setup questions. See the
+services it started and exits; `serve` runs the inference API. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
 Sepolia requires the matched password-capable client and companion in `0.4.1`
@@ -78,7 +76,7 @@ Launchers default to `~/.local/bin`. In a future terminal, run
 guidance to use the shorter `oa-chat config` command. For a custom prefix,
 substitute its `bin` directory in PATH. This selects both matching binaries. Omit `--network`
 with `--setup` to use an existing configuration's network or Mainnet for a new
-profile (the `0.4.1` wizard asks for the network). `--network` is accepted only
+profile. `--network` is accepted only
 with `--setup` and must be `mainnet` or `sepolia`; invalid arguments fail before downloading.
 The default install-only command does not create configuration, initialize or
 fund wallets, start a daemon, register a service, or edit shell startup files.
@@ -88,12 +86,12 @@ started before returning. It does not register a background service.
 To select another writable absolute prefix:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash -s -- --prefix "$HOME/oa-tools"
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash -s -- --prefix "$HOME/oa-tools"
 ```
 
 An exact-tag URL works for either a stable release or a GitHub prerelease and
 keeps the installation version pinned. Prerelease status is GitHub release
-metadata; the tag and installer version are `daemon-v0.4.1` and `0.4.1`.
+metadata; the tag and installer version are `daemon-v0.4.2` and `0.4.2`.
 GitHub's `latest/download` URL excludes prereleases and is repository-wide.
 For a future stable daemon release explicitly marked as latest, this optional
 command follows that stable release:
@@ -106,7 +104,8 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/latest/download/ins
 `--help` lists the options. The source file `daemon/install.sh` requires an
 explicit `--version` because its release placeholder is filled only by
 `assemble-release.py`. The two-command interface requires version `0.4.0` or newer;
-Sepolia password support requires `0.4.1` or newer.
+Sepolia password support requires `0.4.1` or newer. The Mainnet/direct defaults,
+$20-default deposit prompt, and terminal payment QR require `0.4.2` or newer.
 
 Stop a running daemon before upgrading, rerun the installation command with
 the same prefix, and restart afterward (`--setup` checks configuration before you run `serve`).
@@ -114,7 +113,7 @@ The installer does not terminate an existing daemon. An upgrade retains the
 previous release directory and activates a fully checked new directory by
 switching the managed `current` link. Existing configuration, tickets, and
 wallet state remain in the separate private configuration directory.
-Reinitializing is unnecessary. `oa-chat --version` should print `oa-chat 0.4.1`
+Reinitializing is unnecessary. `oa-chat --version` should print `oa-chat 0.4.2`
 after this upgrade. A setup failure leaves the validated installation in place
 and returns the CLI's failure status so you can rerun `config` after addressing
 it. The installer does not migrate legacy ERC-20 notes to native ETH; retain
@@ -231,10 +230,10 @@ module, and Linux Home Manager user-service module. The standalone
 `oa-chat-nix.tar.gz` flake and combined packaging archive contain the complete
 Nix sources. Nixpkgs and Home Manager inputs are pinned in `flake.lock`.
 
-For the `0.4.1` release, select its exact version:
+For the `0.4.2` release, select its exact version:
 
 ```sh
-release_version=0.4.1
+release_version=0.4.2
 oa_flake="https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v${release_version}/oa-chat-nix.tar.gz"
 nix profile install "$oa_flake"
 oa-chat config
@@ -429,6 +428,23 @@ References: [Open WebUI quick start](https://docs.openwebui.com/getting-started/
 [Open WebUI environment settings](https://docs.openwebui.com/reference/env-configuration/),
 [Homebrew service configuration](https://docs.brew.sh/Formula-Cookbook#service-files),
 and [nFPM configuration](https://nfpm.goreleaser.com/docs/configuration/).
+
+## Published 0.4.2 configuration and QR validation (2026-09-30)
+
+[0.4.2](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.2)
+is a prerelease from `df49050cad09185b4c8e0a508f2cb35da53629e2`. All four
+native builds, assembly, and four package checks passed. All 21 assembled
+checksums and all 12 public downloads match the verified CI artifacts; each
+native bundle records the clean tagged source and includes the QR library's license.
+
+The macOS ARM64 native bundle and public HTTPS installer passed the
+0.4.1 → 0.4.2 upgrade and 0.4.2 reinstall, preserving private bytes, permissions,
+and previous bundles. Native configuration accepted Enter for $20 and custom
+$12.50 input, displayed live Mainnet quotes, and produced QR codes that an
+independent decoder matched to the exact payment URIs. Both deposit consents
+were declined; no transaction or inference was sent, and owned services stopped.
+The default user installation and configuration were not changed. See the
+[release evidence](../packaging/validation/daemon-0.4.2-release-20260930.json).
 
 ## Published 0.4.1 Sepolia password validation (2026-09-29)
 

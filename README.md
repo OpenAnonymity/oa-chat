@@ -7,10 +7,10 @@ The web app runs entirely in the browser. Each session uses a fresh ephemeral ac
 For Open WebUI and other OpenAI-compatible clients, the [Go command-line daemon](daemon/README.md) provides a local streaming API with ticket and zkAPI access, funding by Ethereum address, and Homebrew/systemd service packages. See its validation notes for current staging verifier, relay, and zkAPI settlement prerequisites.
 
 The CLI has two commands: **`config`** for setup and changes, and **`serve`**
-for inference. Install or update the `0.4.1` prerelease:
+for inference. Install or update the `0.4.2` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 ```
 
 Then configure and run:
@@ -20,7 +20,7 @@ PATH="$HOME/.local/bin:$PATH" oa-chat config
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
 
-In current source, `config` shows status and checks setup immediately. Missing
+`config` shows status and checks setup immediately. Missing
 profiles default to **zkAPI on Mainnet with direct HTTPS**. If funding is needed,
 it asks how much to deposit in USD, with **$20 selected by pressing Enter**,
 then displays the ETH payment address, amount, and a terminal QR code.
@@ -29,9 +29,7 @@ resume their fixed ETH amount. `config --network sepolia` selects test ETH;
 `config --backend ticket` selects tickets. Use `config --edit` for settings or
 `config --menu` for wallet management. Sepolia asks for its shared access
 password with input hidden before funding; Mainnet and ticket mode are
-unaffected. Existing settings and wallet state are preserved. These streamlined
-defaults and QR are newer than the published `0.4.1` installer above, which
-still asks initial setup questions.
+unaffected. Existing settings and wallet state are preserved.
 
 If funding is needed, approve the displayed principal and maximum fee, then
 send ETH on the selected network to the displayed address. Configuration waits

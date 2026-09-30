@@ -1,3 +1,26 @@
+## 2026-09-30: CLI 0.4.2 prerelease published
+
+- [0.4.2 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.2)
+  from main commit `df49050cad09185b4c8e0a508f2cb35da53629e2`. The one-command
+  install/update instructions now target it. It includes Mainnet/direct defaults,
+  the USD deposit prompt with $20 on Enter, local terminal payment QR codes,
+  and `config --edit` / `config --menu`. Sepolia password support remains included.
+- All four native builds, assembly, and four package jobs passed in
+  [the release workflow](https://github.com/OpenAnonymity/oa-chat/actions/runs/36667288953).
+  All 21 assembled checksums and all 12 public downloads were verified. Every
+  native archive has the clean tagged source, matching companion/protocol pins
+  and patches, and the new QR dependency's license. The installer matches its
+  version-pinned source; publication is a prerelease, without the latest flag.
+- The native macOS ARM64 bundle passed install, upgrade from 0.4.1, and reinstall.
+  The public HTTPS installer repeated that upgrade/reinstall while preserving
+  private configuration bytes, permissions, and previous bundles. The default
+  user installation was not changed.
+- The release binary passed live Mainnet quote checks for Enter selecting $20
+  and a custom $12.50. Independent QR decoding recovered each exact live payment
+  URI. Both consent prompts were declined; no funds were spent or inference
+  sent. All owned services stopped, and isolated private profiles were retained.
+  See the [sanitized release evidence](../daemon/packaging/validation/daemon-0.4.2-release-20260930.json).
+
 ## 2026-09-29: Ask for the CLI deposit amount with a $20 default
 
 - Plain `oa-chat config` now asks how much to deposit in USD before preparing a
@@ -14,7 +37,8 @@
   Enter accepting $20, custom amounts, invalid and below-cap input retries,
   ended input before quoting, and payment display after amount selection.
   Existing consent and recovery tests passed; fresh adversarial review approved.
-- No release was published for this adjustment. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
+- No release was published at the time of this adjustment; it is included in
+  the 0.4.2 release above. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
   and [funding walkthrough](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
 
 ## 2026-09-29: CLI defaults go directly to a $20 ETH payment
@@ -64,9 +88,9 @@
   Consent was again canceled and owned services stopped. Password-menu tests
   cover the production dispatch path; the password refusal test uses an
   ephemeral test port so another local daemon cannot mask its assertion.
-- These changes postdate published 0.4.1. Installer URLs remain pinned to that
-  release; no newer binary publication is implied by the source changes. Its
-  Sepolia password support is preserved. The 0.4.0 and 0.4.1 release evidence
+- These changes originally postdated published 0.4.1 and are included in the
+  0.4.2 release above. Sepolia password support is preserved.
+  The 0.4.0 and 0.4.1 release evidence
   below remains historical evidence for those bundles. See the [current CLI guide](../daemon/README.md#configure-or-edit-a-profile)
   and [funding details](../daemon/docs/CLI_ZKAPI.md#guided-first-time-setup).
 
@@ -175,8 +199,8 @@
   explicit consent; signed recovery retains the saved transaction. Public payment
   prompts do not expose legacy command syntax.
 - Installer `--setup` now runs config and exits after readiness. Normal installation
-  remains separate, followed by config and then serve. Current source instructions
-  target 0.4.1, including Sepolia password support. Package tests check the public
+  remains separate, followed by config and then serve. At this stage the
+  instructions targeted 0.4.1, including Sepolia password support. Package tests check the public
   empty-wallet refusal and service stop behavior without funding fixtures or
   requiring production network access.
 - [0.4.0 is published](https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.0)

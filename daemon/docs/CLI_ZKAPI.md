@@ -11,10 +11,10 @@ primitives to Go. See [CLI usage](../README.md) and [packaging](CLI_PACKAGING.md
 ## Guided first-time setup
 
 The public CLI has two commands: `config` and `serve`. Install or update the
-`0.4.1` prerelease with any existing daemon stopped:
+`0.4.2` prerelease with any existing daemon stopped:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 ```
 
 Then configure it:
@@ -23,8 +23,8 @@ Then configure it:
 PATH="$HOME/.local/bin:$PATH" oa-chat config
 ```
 
-The configuration command shows the saved status first. With no profile, the
-current source creates the normal private directory using **zkAPI on Mainnet
+The configuration command shows the saved status first. With no profile, it
+creates the normal private directory using **zkAPI on Mainnet
 with direct HTTPS** and walks through what is missing. For a new deposit, it asks
 for the USD amount, with **$20 as the default when you press Enter**, then
 displays the ETH payment address, amount, and terminal QR before requesting
@@ -33,10 +33,6 @@ deposit approval. Use `config --backend ticket` for tickets or
 directory is `~/Library/Application Support/oa-chat` on macOS or
 `~/.config/oa-chat` on Linux, respecting `XDG_CONFIG_HOME`. Global
 `--config-dir` or `OA_CHAT_CONFIG_DIR` selects another directory.
-
-These streamlined defaults and the terminal QR are newer than the published `0.4.1`
-bundle. The installation command above still installs that release, which asks
-the initial mode, network, and deposit-amount questions.
 
 For an existing profile, plain `config` checks readiness immediately using the
 saved settings. Use `config --edit` to edit settings or `config --menu` to

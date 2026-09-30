@@ -12,10 +12,10 @@ file-storage, and image-generation endpoints are not implemented.
 ## Install, configure, and serve
 
 The public commands are **`oa-chat config`** and **`oa-chat serve`**. Install or
-update the `0.4.1` prerelease:
+update the `0.4.2` prerelease:
 
 ```sh
-curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.1/install.sh | bash
+curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.4.2/install.sh | bash
 PATH="$HOME/.local/bin:$PATH" oa-chat config
 PATH="$HOME/.local/bin:$PATH" oa-chat serve
 ```
@@ -45,7 +45,7 @@ for version pinning, custom prefixes, and optional `--setup`.
 oa-chat config
 ```
 
-With no configuration, the current source creates the private directory using
+With no configuration, `config` creates the private directory using
 **zkAPI on Mainnet with direct HTTPS**. If funding is needed, it prepares a
 new deposit by asking for the USD amount; **press Enter to use $20**. It then
 displays the ETH address, payment amount, and a QR code in the terminal. No
@@ -54,10 +54,6 @@ separately; review the quote and confirm before the CLI can deposit. It waits fo
 deposits within the approved amount and fee bounds, and waits for finality.
 Temporary services it starts are stopped when configuration finishes. You then
 run `oa-chat serve` separately.
-
-This streamlined default and terminal QR are newer than the published `0.4.1`
-bundle; that release still asks initial setup questions. The installation link
-above remains pinned to `0.4.1`.
 
 With an existing profile, `config` displays a redacted status and immediately
 checks readiness using the saved settings. It guides any missing ticket setup

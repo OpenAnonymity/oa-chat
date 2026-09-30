@@ -1,0 +1,351 @@
+{
+  "date_utc": "2026-09-30",
+  "source_commit": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+  "change_scope": "Mainnet/direct configuration defaults, editable setup and wallet menus, USD deposit prompt with $20 on Enter, and locally generated terminal ETH payment QR codes. Saved deposit recovery and explicit transaction consent are preserved.",
+  "workflow": {
+    "id": 36667288953,
+    "url": "https://github.com/OpenAnonymity/oa-chat/actions/runs/36667288953",
+    "event": "push",
+    "head_sha": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "name": "native (ubuntu-24.04, linux-amd64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (ubuntu-24.04-arm, linux-arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (macos-15, darwin-arm64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "native (macos-15-intel, darwin-amd64)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "assemble",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15-intel)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (ubuntu-24.04-arm)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "packages (macos-15)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "draft",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ],
+    "actions_artifacts": [
+      {
+        "id": 11077196610,
+        "name": "darwin-arm64",
+        "size_in_bytes": 22918225,
+        "digest": "sha256:b74c3d2bad88b559f3c3ebc567657c396548d43e1d07b687153ddb26d73715d8"
+      },
+      {
+        "id": 11077021607,
+        "name": "linux-amd64",
+        "size_in_bytes": 72054028,
+        "digest": "sha256:8eb2a4c7c430dab16d6b7af5e82d347734a6bd1b1122d4c7b217641bdac75009"
+      },
+      {
+        "id": 11076538318,
+        "name": "assembled-release",
+        "size_in_bytes": 190240125,
+        "digest": "sha256:309c1e81aa420d59e9e78cf8bcea5f1f17540322f69ce02f1682d97a689e3f8d"
+      },
+      {
+        "id": 11076449646,
+        "name": "darwin-amd64",
+        "size_in_bytes": 23552494,
+        "digest": "sha256:c14bba288f844e29e7a396a6f540cdb38cfa933aa3e26c42f9ca9a5869185512"
+      },
+      {
+        "id": 11076413863,
+        "name": "linux-arm64",
+        "size_in_bytes": 71687617,
+        "digest": "sha256:4a833bfd115ac5088eb31092d8d3f135a51ff29e4e1ea890d0a9b3698ab66a49"
+      }
+    ]
+  },
+  "release": {
+    "tag": "daemon-v0.4.2",
+    "tag_commit": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+    "latest_flag_requested": false,
+    "release_id": 399717486,
+    "published_at": "2026-09-30T04:25:51Z",
+    "url": "https://github.com/OpenAnonymity/oa-chat/releases/tag/daemon-v0.4.2",
+    "draft": false,
+    "prerelease": true,
+    "assets": [
+      {
+        "name": "install.sh",
+        "size": 14695,
+        "digest": "sha256:5d416a9108cdbf055628dd51f61b74d283f503433eeec61bf37521aed8b669b3"
+      },
+      {
+        "name": "oa-chat-nix.tar.gz",
+        "size": 5131,
+        "digest": "sha256:7bbfc98a9ba48e9a9b7b225464fbb2352fe431a0dabd4e8e136eb2c75356e19f"
+      },
+      {
+        "name": "oa-chat-packaging.tar.gz",
+        "size": 6475,
+        "digest": "sha256:a0d47326515c5e9f048e5965af4da3758d9057853ff7d735af51dd2921c07828"
+      },
+      {
+        "name": "oa-chat_0.4.2_darwin_amd64.tar.gz",
+        "size": 23583153,
+        "digest": "sha256:66da2b1a2bf81c5543f16380c7c26832db0e656201c0814b8fb7fc664be48a0d"
+      },
+      {
+        "name": "oa-chat_0.4.2_darwin_arm64.tar.gz",
+        "size": 22948920,
+        "digest": "sha256:0d59e15569c9672a3e881667cd4ab61f2e97286370116e5bf04427c23e0e9f10"
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_amd64.deb",
+        "size": 24154574,
+        "digest": "sha256:ff46012142a3a3279e9e743b0e7ed95b2a3a68437c636994c1c1b24ff77b813f"
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_amd64.rpm",
+        "size": 24176387,
+        "digest": "sha256:b569acf2759445bc6ab07092cc756487d76603353b4053c438fb195bb43320e3"
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_amd64.tar.gz",
+        "size": 23872086,
+        "digest": "sha256:557710071d061c54789923f46f42f7fe206520e0af0c3d69142dc893ede9166a"
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_arm64.deb",
+        "size": 24097754,
+        "digest": "sha256:85ca3852a5f6e613938cbe3255cd97f70a52fec0ae28f420fbf1377ebe0f03eb"
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_arm64.rpm",
+        "size": 24084002,
+        "digest": "sha256:6fad3c3aaca0e18c3b490bb69825d734ee8bcc5ee1d84589c34b60fa9cdd9dbf"
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_arm64.tar.gz",
+        "size": 23679205,
+        "digest": "sha256:01056a4a086ac114a7c65b55123f9ce80c502e9ab88ae30fa3362c5176c4ab79"
+      },
+      {
+        "name": "SHA256SUMS",
+        "size": 1871,
+        "digest": "sha256:8bf0dbc60fe9ac021165b495f6bfffea935b5293c98f0ba084e030481c621def"
+      }
+    ]
+  },
+  "artifact_verification": {
+    "all_assembled_checksums_verified": true,
+    "checksum_entries_verified": 21,
+    "all_12_public_downloads_byte_identical_to_validated_ci": true,
+    "all_4_native_archives_have_clean_exact_source": true,
+    "upstream_pins_and_patches_verified": true,
+    "installer_matches_version_pinned_source": true,
+    "new_qr_dependency_license_in_all_archives": true,
+    "native_archives": [
+      {
+        "name": "oa-chat_0.4.2_darwin_amd64.tar.gz",
+        "sha256": "66da2b1a2bf81c5543f16380c7c26832db0e656201c0814b8fb7fc664be48a0d",
+        "build_info": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "9aecb9123949fc8b4b6f2a975f2c66eeb88518ec3f9f657cc5c08a0c7a792039",
+          "go_toolchain": "go version go1.25.0 darwin/amd64",
+          "oa_chat_commit": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790741023"
+        },
+        "qr_license_included": true,
+        "binary_sha256": {
+          "oa-chat": "70a94212d1e6b2f0794ba4d0ad108184c421302815795461c73d0552da0fbe0b",
+          "oa-zkapi": "d249127e4566fbca5a5dddc11dc19cc094190f7b41d2d985bc09f3cf58f18c1a"
+        }
+      },
+      {
+        "name": "oa-chat_0.4.2_darwin_arm64.tar.gz",
+        "sha256": "0d59e15569c9672a3e881667cd4ab61f2e97286370116e5bf04427c23e0e9f10",
+        "build_info": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "9aecb9123949fc8b4b6f2a975f2c66eeb88518ec3f9f657cc5c08a0c7a792039",
+          "go_toolchain": "go version go1.25.0 darwin/arm64",
+          "oa_chat_commit": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-apple-darwin\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790741023"
+        },
+        "qr_license_included": true,
+        "binary_sha256": {
+          "oa-chat": "7e8ce4547987bf54c1e5ca96a119b0e08a888d96c20a34ab32d843a2d732b37a",
+          "oa-zkapi": "a7e5b3f52625a15f8e700d6b3e1b3c55bad7db6a5d9905f213de6af1473aa5ac"
+        }
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_amd64.tar.gz",
+        "sha256": "557710071d061c54789923f46f42f7fe206520e0af0c3d69142dc893ede9166a",
+        "build_info": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "9aecb9123949fc8b4b6f2a975f2c66eeb88518ec3f9f657cc5c08a0c7a792039",
+          "go_toolchain": "go version go1.25.0 linux/amd64",
+          "oa_chat_commit": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790741023"
+        },
+        "qr_license_included": true,
+        "binary_sha256": {
+          "oa-chat": "3c21c8cad2b0052348d4f8f0429b56e311a2bb507153d7f79a8ee10df9ee769d",
+          "oa-zkapi": "34e6b050e6c52b906cee5a278bbaba0e1dfbe51ee89866e5befe4a10e874602c"
+        }
+      },
+      {
+        "name": "oa-chat_0.4.2_linux_arm64.tar.gz",
+        "sha256": "01056a4a086ac114a7c65b55123f9ce80c502e9ab88ae30fa3362c5176c4ab79",
+        "build_info": {
+          "cargo_version": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "companion_commit": "20aa542ae98e767c0507133fd34b12a56f5ccd3d",
+          "companion_patch_sha256": "9aecb9123949fc8b4b6f2a975f2c66eeb88518ec3f9f657cc5c08a0c7a792039",
+          "go_toolchain": "go version go1.25.0 linux/arm64",
+          "oa_chat_commit": "df49050cad09185b4c8e0a508f2cb35da53629e2",
+          "oa_chat_source": "https://github.com/OpenAnonymity/oa-chat",
+          "oa_chat_source_dirty": false,
+          "protocol_commit": "8b2d4e3da921f956e1eb6b93afbf722a877c060c",
+          "protocol_patch_sha256": "068ff3c23fce7a7c571cc9184c308290823e62b29dd38ab1462b9359ff742bc7",
+          "rust_toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: aarch64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+          "source_date_epoch": "1790741023"
+        },
+        "qr_license_included": true,
+        "binary_sha256": {
+          "oa-chat": "e4ea95bec5f5aa0086e2935e21c1e9e80fc89c2339d765c5ac5fc8ebe2fae720",
+          "oa-zkapi": "fcd970f66cafbe1b42df9eaa35063d996ae8d78a0703bb139445506e988c6dbe"
+        }
+      }
+    ]
+  },
+  "native_installer": {
+    "platform": "darwin-arm64",
+    "versions": [
+      "0.4.1",
+      "0.4.2",
+      "0.4.2"
+    ],
+    "native_piped_install_upgrade_reinstall_passed": true,
+    "configuration_bytes_and_modes_preserved": true,
+    "previous_bundles_retained": true,
+    "services_started": false,
+    "paid_operations": false
+  },
+  "public_https_installer": {
+    "versions": [
+      "0.4.1",
+      "0.4.2",
+      "0.4.2"
+    ],
+    "platform": "darwin-arm64",
+    "public_https_install_upgrade_reinstall_passed": true,
+    "paired_binaries_match_ci": true,
+    "private_bytes_and_modes_preserved": true,
+    "previous_bundles_retained": true,
+    "default_user_installation_changed": false,
+    "services_started": false,
+    "paid_operations": false
+  },
+  "native_configuration": {
+    "version": "0.4.2",
+    "platform": "darwin-arm64",
+    "passed": true,
+    "cases": [
+      {
+        "case": "enter-default-20",
+        "new_profile_defaults_checked": true,
+        "network": "mainnet",
+        "proxy": false,
+        "input_micro_usd": 20000000,
+        "qr_structural_check_passed": true,
+        "qr_module_width": 45,
+        "amount_prompt_before_payment": true,
+        "transaction_consent_declined": true,
+        "exit_code": 1,
+        "signed_or_broadcast_transaction": false,
+        "owned_processes_and_listeners_stopped": true,
+        "private_settings_preserved": true,
+        "no_private_values_in_terminal_output": true,
+        "passed": true
+      },
+      {
+        "case": "custom-12-50",
+        "new_profile_defaults_checked": true,
+        "network": "mainnet",
+        "proxy": false,
+        "input_micro_usd": 12500000,
+        "qr_structural_check_passed": true,
+        "qr_module_width": 45,
+        "amount_prompt_before_payment": true,
+        "transaction_consent_declined": true,
+        "exit_code": 1,
+        "signed_or_broadcast_transaction": false,
+        "owned_processes_and_listeners_stopped": true,
+        "private_settings_preserved": true,
+        "no_private_values_in_terminal_output": true,
+        "passed": true
+      }
+    ],
+    "independent_qr_decode": [
+      {
+        "case": "enter-default-20",
+        "decoded_exact_live_payment_uri": true,
+        "decoder": "github.com/makiuchi-d/gozxing v0.1.1",
+        "input": "PNG reconstructed from actual native terminal half blocks"
+      },
+      {
+        "case": "custom-12-50",
+        "decoded_exact_live_payment_uri": true,
+        "decoder": "github.com/makiuchi-d/gozxing v0.1.1",
+        "input": "PNG reconstructed from actual native terminal half blocks"
+      }
+    ]
+  },
+  "financial_test_scope": "Live Mainnet read-only quotes tested the default $20 and custom $12.50 deposit prompts. Both transaction-consent prompts were declined. No transaction was signed or broadcast, no lease or provider credential was issued, and no inference was sent. Isolated private profiles were retained and all owned services stopped. The default user installation and configuration were not changed."
+}
