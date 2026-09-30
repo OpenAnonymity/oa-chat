@@ -1,4 +1,5 @@
 const MAX_WEI = (1n << 256n) - 1n;
+export const BUFFER_INFO = 'Extra ETH in case network fees rise before your deposit goes through. You can deposit without it. Whatever isn’t spent stays at this address, and you can return it.';
 const PERCENT_SCALE = 1_000_000n;
 
 function unsignedWei(value) {
@@ -58,12 +59,14 @@ export function renderFundingProgress({ availableWei, depositWei, requiredFeeWei
             <span class="zkapi-funding-progress-required" aria-hidden="true"></span>
         </div>` : '';
     const row = (label, value, note = '') => `<div><dt>${label}${note ? `<small>${note}</small>` : ''}</dt><dd>${value}</dd></div>`;
+    // The same info button and shared tooltip as the Settings menu.
+    const info = (name, text) => `<button type="button" class="settings-info-button zkapi-cost-info" aria-label="About the ${name}" aria-expanded="false" data-info-toggle data-info-tooltip="${text}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.6" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11v6" stroke-width="1.8" stroke-linecap="round"/></svg></button>`;
     return `<section class="zkapi-funding-progress" data-funding-progress data-required-covered="${requiredCovered}" aria-label="Address funding">
         ${chart}
         <dl class="zkapi-funding-costs">
             ${row('Deposit', renderAmount(deposit.toString()))}
             ${row('Network fee', renderAmount(fee.toString()), expected != null ? `about ${renderAmount(expected.toString())} expected` : '')}
-            ${buffer > 0n ? row('Optional buffer', renderAmount(buffer.toString())) : ''}
+            ${buffer > 0n ? row(`Optional buffer${info('optional buffer', BUFFER_INFO)}`, renderAmount(buffer.toString())) : ''}
             ${available > 0n ? row('Already at this address', `−${renderAmount(available.toString())}`) : ''}
         </dl>
     </section>`;

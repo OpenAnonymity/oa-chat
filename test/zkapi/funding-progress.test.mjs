@@ -10,7 +10,7 @@ test('empty address shows the parts of the total under one unfilled balance bar'
     const html = render();
     assert.match(html, /Deposit<\/dt><dd><b>100 wei<\/b>/);
     assert.match(html, /Network fee<\/dt><dd><b>50 wei<\/b>/);
-    assert.match(html, /Optional buffer<\/dt><dd><b>50 wei<\/b>/);
+    assert.match(html, /Optional buffer<button [^>]*class="settings-info-button zkapi-cost-info"[^>]*><svg[\s\S]*?<\/button><\/dt><dd><b>50 wei<\/b>/);
     assert.doesNotMatch(html, /Already at this address/, 'nothing to subtract yet');
     assert.match(html, /data-required-covered="false"/);
     assert.match(html, /--funding-required-position:75%/);
@@ -135,4 +135,14 @@ test('an unknown balance keeps the costs but draws no bar and no credit', () => 
     assert.match(html, /Network fee/);
     assert.doesNotMatch(html, /role="progressbar"|Already at this address/);
     assert.match(html, /data-required-covered="false"/);
+});
+
+test('the optional buffer explains itself with the Settings info button and tooltip', () => {
+    const html = render();
+    const button = html.match(/<button [^>]*zkapi-cost-info[^>]*>/)[0];
+    assert.match(button, /aria-label="About the optional buffer"/);
+    assert.match(button, /data-info-toggle/);
+    assert.match(button, /aria-expanded="false"/);
+    assert.match(button, /data-info-tooltip="Extra ETH in case network fees rise before your deposit goes through\. You can deposit without it\. Whatever isn’t spent stays at this address, and you can return it\."/);
+    assert.doesNotMatch(render({ feeBufferWei: '0' }), /zkapi-cost-info/, 'no buffer, no button');
 });

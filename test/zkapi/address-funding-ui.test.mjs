@@ -285,10 +285,19 @@ test('ordinary native funding keeps the fee breakdown available and enables Depo
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(helpRow(ready, 'quote').body, /zkapi-note/, 'the breakdown is only numbers');
     const leftover = helpRow(ready, 'return');
-    assert.match(leftover.body, /This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit\. This browser holds it, so clearing the site’s data would lose it\. You can return it to your wallet below\./);
+    const explanation = /This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit\. This browser holds it, so clearing the site’s data would lose it\. You can return it to your wallet below\./;
+    const header = ready.slice(ready.indexOf('data-funding-help="return"'), ready.indexOf('data-funding-help-panel', ready.indexOf('data-funding-help="return"')));
+    assert.match(header, /<p id="[^"]+-return-help-description" class="zkapi-funding-help-description">/, 'with ETH there, the cue shows under the header, open or closed');
+    assert.match(header, explanation);
+    assert.match(header, /data-funding-help-toggle[^>]*aria-describedby="[^"]+-return-help-description"/);
+    assert.doesNotMatch(leftover.body, explanation, 'said once');
+    assert.equal(leftover.open, false);
     assert.match(leftover.body, /<span>Your wallet address<\/span>[\s\S]*<span>Amount \(ETH\)<\/span>[^]*placeholder="All"/);
     assert.match(leftover.body, /data-funding-return-eth[^>]*>Return ETH<\/button>/, 'not "Send ETH", which names the funding method above');
     assert.match(ready, /Return ETH to your wallet<span class="zkapi-guide-note">0\.0055 ETH at this address<\/span>/);
+    const empty = helpRow(waiting, 'return');
+    assert.doesNotMatch(waiting, /zkapi-funding-help-description/, 'nothing at the address, nothing added to the page');
+    assert.match(empty.body, explanation, 'the row itself still explains');
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
@@ -1369,4 +1378,17 @@ test('the signer control names its active choice for the sliding pill', () => {
     assert.match(f.controls.renderWalletMethod(f.owner), /class="zkapi-segmented"[^>]*data-active="address"/);
     const metamask = fixture({ method: 'metamask' });
     assert.match(metamask.controls.renderWalletMethod(metamask.owner), /data-active="metamask"/);
+});
+
+test('an open breakdown survives a reload whose first render shows the address receipt instead', () => {
+    const f = fixture();
+    const { doc } = motionDocument();
+    const receipt = { dataset: { fundingHelp: 'receipt', open: 'false' }, contains: () => false,
+        querySelector: selector => selector === '[data-funding-help-toggle]' ? { addEventListener() {}, setAttribute() {} } : selector === '[data-funding-help-panel]' ? { inert: true } : null };
+    Object.assign(f.owner, { fundingHelpOpen: 'quote', fundingReturnOpen: true, overlay: { ownerDocument: doc, contains: () => false, querySelector: () => null,
+        querySelectorAll: selector => selector === '[data-funding-help]' ? [receipt] : [] } });
+    f.controls.attachWalletMethodControls(f.owner);
+    assert.equal(f.owner.fundingHelpOpen, 'quote', 'restored state waits for its own row');
+    assert.equal(f.owner.fundingReturnOpen, true);
+    assert.equal(receipt.dataset.open, 'false', 'and never opens another row');
 });

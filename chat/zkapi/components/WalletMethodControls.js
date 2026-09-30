@@ -269,6 +269,10 @@ function fundingHelpId(owner, kind) {
     return `zkapi-${scope}-funding-${kind}-help`;
 }
 
+// What the ETH at the funding address is, and that it can go back. With ETH
+// there it shows under the row's header; otherwise inside the row.
+const RETURN_EXPLANATION = 'This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit. This browser holds it, so clearing the site’s data would lose it. You can return it to your wallet below.';
+
 // A disclosure row in the dialog's own idiom (label, chevron, hairline), for
 // detail that is there when wanted: the fee breakdown, the funding address,
 // a leftover return. It opens with the app's Transitions.dev accordion
@@ -278,11 +282,14 @@ function fundingHelpIsOpen(owner, kind) {
     return kind === 'return' ? owner.fundingReturnOpen === true : owner.fundingHelpOpen === kind;
 }
 
-function fundingHelp(owner, kind, label, content, note = '') {
+// A description, when given, stays visible under the header whether the row
+// is open or not; the panel below holds only what acts on it.
+function fundingHelp(owner, kind, label, content, note = '', description = '') {
     const id = fundingHelpId(owner, kind);
     const open = fundingHelpIsOpen(owner, kind);
     return `<div class="zkapi-funding-help t-acc" data-funding-help="${kind}" data-open="${open}">
-        <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle t-acc-head" aria-expanded="${open}" aria-controls="${id}"><span class="zkapi-funding-help-label">${label}${note ? `<span class="zkapi-guide-note">${note}</span>` : ''}</span><span class="t-acc-chevron"><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button>
+        <button id="${id}-toggle" data-funding-help-toggle type="button" class="zkapi-funding-help-toggle t-acc-head" aria-expanded="${open}" aria-controls="${id}"${description ? ` aria-describedby="${id}-description"` : ''}><span class="zkapi-funding-help-label">${label}${note ? `<span class="zkapi-guide-note">${note}</span>` : ''}</span><span class="t-acc-chevron"><svg class="zkapi-funding-help-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6.5L8 10.5L12 6.5"/></svg></span></button>
+        ${description ? `<p id="${id}-description" class="zkapi-funding-help-description">${description}</p>` : ''}
         <div id="${id}" data-funding-help-panel class="zkapi-funding-help-panel t-acc-panel" role="region" aria-label="${label}" ${open ? '' : 'inert'}><div class="t-acc-panel-inner"><div class="zkapi-funding-help-body">${content}</div></div></div>
     </div>`;
 }
@@ -304,11 +311,12 @@ function attachFundingHelp(owner) {
         help, kind: help.dataset.fundingHelp,
         button: help.querySelector('[data-funding-help-toggle]'), panel: help.querySelector('[data-funding-help-panel]')
     })).filter(row => row.button && row.panel);
-    // Address hydration can render several times before these rows exist.
-    // Closing or changing methods already clears their presentation state.
+    // Address hydration can render several times before these rows exist,
+    // and after a reload the first render can show another row (the address
+    // receipt) before the quote arrives. An open row is therefore remembered
+    // by kind and only opens that row; closing the dialog or changing methods
+    // clears it (stopFundingFlow).
     if (!rows.length) return;
-    const details = rows.find(row => row.kind !== 'return');
-    if (details && owner.fundingHelpOpen !== details.kind) owner.fundingHelpOpen = null;
     const view = root.ownerDocument?.defaultView;
     let motionTimer;
     const setOpen = (row, open) => {
@@ -529,7 +537,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
             ${fundingHelp(owner, 'return', 'Return ETH to your wallet', `${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
                     ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
                     : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
-                <p class="zkapi-note">This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit. This browser holds it, so clearing the site’s data would lose it. You can return it to your wallet below.</p>
+                ${leftover ? '' : `<p class="zkapi-note">${RETURN_EXPLANATION}</p>`}
                 <div class="zkapi-funding-return-fields">
                     <label class="zkapi-funding-field"><span>Your wallet address</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
                     ${!native ? `<label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
@@ -537,7 +545,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
                 </div>
                 ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
                 <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ETH</button></div>`,
-                leftover ? `${leftover} at this address` : '')}
+                leftover ? `${leftover} at this address` : '', leftover ? RETURN_EXPLANATION : '')}
         </div>` : ''}
 
     </section>`;

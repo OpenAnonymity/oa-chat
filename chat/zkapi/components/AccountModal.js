@@ -138,6 +138,25 @@ export default class AccountModal {
             && document.activeElement?.type !== 'password';
     }
 
+    // Transitions.dev "Card resize": a render that changes the dialog's height
+    // (MetaMask ↔ Send ETH, a quote arriving, another view) glides from the
+    // old height to the new one, and the dialog stays centred while it does,
+    // instead of jumping. The scroll area holds still until it lands.
+    glideDialogHeight(from) {
+        const panel = this.overlay?.querySelector?.('.zkapi-dialog');
+        if (!from || typeof panel?.animate !== 'function' || typeof panel.getBoundingClientRect !== 'function') return;
+        if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+        const to = panel.getBoundingClientRect().height;
+        if (!to || Math.abs(to - from) < 2) return;
+        const scroll = panel.querySelector('[data-funding-scroll]');
+        if (scroll?.style) scroll.style.overflowY = 'hidden';
+        const glide = panel.animate([{ height: `${from}px` }, { height: `${to}px` }],
+            { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+        const settle = () => { if (scroll?.style) scroll.style.overflowY = ''; };
+        glide.onfinish = settle;
+        glide.oncancel = settle;
+    }
+
     handleDisclosureMotion(animating) {
         this.disclosureAnimating = animating;
         if (!animating && this.disclosureRefreshPending && this.canRefreshContent()) {
@@ -166,7 +185,7 @@ export default class AccountModal {
                     view: this.view, mode: this.withdrawMode, method: getWalletMethod(),
                     amount: typeof amount === 'string' && amount.length <= 50 && /^[\d.]*$/.test(amount) ? amount : null,
                     currency: this.fundingInputCurrency === 'eth' ? 'eth' : 'usd',
-                    help: this.fundingHelpOpen || null, history: Boolean(this.historyOpen),
+                    help: this.fundingHelpOpen || null, returnOpen: this.fundingReturnOpen === true, history: Boolean(this.historyOpen),
                     setup: this.overlay?.querySelector?.('[data-funding-setup-details]')?.dataset.open === 'true',
                     scroll: Number.isFinite(scroll) ? scroll : 0
                 }));
@@ -229,6 +248,7 @@ export default class AccountModal {
                 this.preferDepositInput = true;
             }
             this.fundingHelpOpen = ['quote', 'receipt'].includes(saved.help) ? saved.help : null;
+            this.fundingReturnOpen = saved.returnOpen === true;
             this.historyOpen = saved.history === true;
             this.restoredModalView = { setup: saved.setup === true, view: saved.view, method: getWalletMethod(),
                 scroll: Number.isFinite(saved.scroll) ? Math.max(0, saved.scroll) : 0 };
@@ -1462,6 +1482,9 @@ export default class AccountModal {
             return;
         }
         this.disposeFundingDisclosures?.();
+        // Read before the swap: the glide below starts from this height, even
+        // when a render lands in the middle of the previous glide.
+        const previousHeight = this.isOpen ? this.overlay.querySelector?.('.zkapi-dialog')?.getBoundingClientRect?.().height || 0 : 0;
         const walletView = restored ? { scroll: restored.scroll } : captureWalletView(this);
         const disclosureView = captureFundingDisclosureView(this.overlay);
         const helpFocus = capturePrivateBalanceHelpFocus(this.overlay);
@@ -1488,6 +1511,7 @@ export default class AccountModal {
         restoreFundingDisclosureView(this.overlay, disclosureView);
         restoreWalletView(this, walletView);
         finishWalletModalRestore(this, { hydrating: isFundingViewHydrating(this), method: getWalletMethod() });
+        this.glideDialogHeight(previousHeight);
         this.rememberRunningModal();
         this.overlay.querySelector('#zkapi-payment-close')?.addEventListener('click', () => this.close());
         const depositInput = this.overlay.querySelector('#zkapi-deposit-amount');

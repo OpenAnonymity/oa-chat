@@ -1,3 +1,27 @@
+## 2026-09-30: Dialog height glides; buffer info; return cue in the header; reload keeps open rows
+
+- **Card resize.** `AccountModal.render()` reads the dialog's height before
+  the innerHTML swap and `glideDialogHeight` animates the new dialog from it
+  (WAAPI height, 320 ms, the Transitions.dev ease; the scroll area is held at
+  `overflow-y: hidden` until it lands). MetaMask ↔ Send ETH, a quote arriving
+  or a view change no longer jumps and re-centres the dialog under the pill's
+  slide. A render mid-glide starts from the current height. Skipped for the
+  first render, equal heights and reduced motion.
+- **Optional buffer** has the Settings info button (`settings-info-button`,
+  `data-info-toggle`, `data-info-tooltip`) served by the shared
+  `setupInfoTooltips` (ChatInput installs it app-wide; the harness/demo call it
+  themselves). Escape closes the tooltip before the row and the dialog.
+- **Return cue.** `fundingHelp` takes a `description` that stays visible under
+  the row header (`aria-describedby` on the toggle). The return row uses it for
+  the "This ETH isn't in your private balance…" text only when ETH is at the
+  address; with none, the text stays inside the row.
+- **Reload.** `returnOpen` joins `help` in the running-modal markers
+  (AccountModal and WelcomePanel). `attachFundingHelp` no longer clears a saved
+  open row when another kind renders first: after a reload the first render
+  shows the address receipt before the quote, which used to drop an open
+  breakdown. Open state is by kind, so it can only open its own row;
+  `stopFundingFlow` still clears it on close or method change.
+
 ## 2026-09-30: Send ETH motion — sliding signer pill, accordion rows, swap icon
 
 - **MetaMask / Send ETH slides.** `.zkapi-segmented` uses the toolbar's

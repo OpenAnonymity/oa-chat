@@ -1981,6 +1981,12 @@ html.dark .zkapi-segmented::before { background: hsl(var(--color-foreground) / 0
 .zkapi-funding-help > .t-acc-panel { margin-inline: -4px; }
 .zkapi-funding-help.t-acc[data-open="true"] .t-acc-panel-inner { filter: none; }
 .zkapi-funding-help-body { display: flex; flex-direction: column; gap: 0.75rem; padding: 0 4px 1.25rem; }
+/* Visible under the header, open or closed: what this row is about. */
+.zkapi-funding-help-description { margin: -0.5rem 0 1rem; max-width: 34rem; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; line-height: 1.5; text-wrap: pretty; }
+.zkapi-funding-help[data-open="true"] > .zkapi-funding-help-description { margin-bottom: 0.875rem; }
+/* The Settings info button, sized to sit on a cost row's text. */
+.zkapi-funding-costs .zkapi-cost-info { width: 1.25rem; height: 1.25rem; margin: -0.125rem 0 -0.125rem -0.3125rem; }
+.zkapi-funding-costs .zkapi-cost-info svg { width: 0.8125rem; height: 0.8125rem; }
 html[data-keyboard-nav] .zkapi-funding-help-toggle:focus-visible,
 html[data-keyboard-nav] .zkapi-segmented button:focus-visible,
 html[data-keyboard-nav] .zkapi-funding-currency:focus-visible { outline: 2px solid hsl(var(--color-focus-ring)); outline-offset: 2px; }
@@ -2210,6 +2216,7 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-funding-costs { display: grid; gap: 0.375rem; margin: 0; font-size: 0.8125rem; line-height: 1.45; font-variant-numeric: tabular-nums; }
 .zkapi-funding-costs > div { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
 .zkapi-funding-costs dt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0.5rem; min-width: 0; color: hsl(var(--color-muted-foreground)); }
+.zkapi-funding-costs dt:has(.zkapi-cost-info) { align-items: center; }
 .zkapi-funding-costs dt small { color: hsl(var(--color-muted-foreground) / 0.8); font-size: 0.75rem; }
 .zkapi-funding-costs dd { margin: 0; color: hsl(var(--color-foreground)); text-align: right; white-space: nowrap; }
 .zkapi-funding-help-panel .zkapi-funding-breakdown { font-size: 0.8125rem; }

@@ -82,6 +82,7 @@ export default class WelcomePanel {
         }
         if (saved) {
             this.fundingHelpOpen = ['quote', 'receipt'].includes(saved.help) ? saved.help : null;
+            this.fundingReturnOpen = saved.returnOpen === true;
             this.restoredModalView = { setup: saved.setup === true, method: getWalletMethod(),
                 scroll: Number.isFinite(saved.scroll) ? Math.max(0, saved.scroll) : 0 };
         }
@@ -130,7 +131,7 @@ export default class WelcomePanel {
         const scroll = this.restoredModalView?.scroll ?? this.overlay?.querySelector?.('[data-funding-scroll]')?.scrollTop ?? 0;
         writeWelcomeModalIntent({ open: true, method: getWalletMethod(),
             amount: typeof amount === 'string' && amount.length <= 50 && /^[\d.]*$/.test(amount) ? amount : null,
-            currency: this.fundingInputCurrency === 'eth' ? 'eth' : 'usd', help: this.fundingHelpOpen || null,
+            currency: this.fundingInputCurrency === 'eth' ? 'eth' : 'usd', help: this.fundingHelpOpen || null, returnOpen: this.fundingReturnOpen === true,
             setup: this.overlay?.querySelector?.('[data-funding-setup-details]')?.dataset.open === 'true',
             scroll: Number.isFinite(scroll) ? scroll : 0 });
     }
