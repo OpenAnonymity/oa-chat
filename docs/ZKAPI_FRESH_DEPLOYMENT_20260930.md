@@ -144,7 +144,8 @@ for the build-only wallet namespaces used for the approved clean reset.
   `https://oa-wallet-eth-sepolia-6jyjo26qp-oas-projects-cbf58581.vercel.app`.
   Its canonical build records core `856a714`, profile `fresh-20260930`, and
   `zkapi-browser-wallet-fresh-20260930-sepolia-v1`. Browser rendering and the
-  expected password gate were checked without submitting a funded transaction.
+  expected password gate were checked at rollout. The subsequent funded Sepolia
+  browser test is recorded below.
 - **Mainnet staging:** `https://staging.openanonymity.ai`. Normal Git production
   deployment of `4952ee6` produced `dpl_8mn2hKGSGoU7fP77buMg3g32a2No` and
   passed nine route checks, eight served asset hashes and twenty backend proxy
@@ -195,6 +196,61 @@ Completed validation:
 
 Protected evidence is in `public-verification/`, `contract-tools/<network>/`,
 `operational-snapshot-{before,after}.json`, and the Vercel verification records
-under the private deployment root. Old VMs are retained. No funded inference,
-deposit, withdrawal or live escape challenge was performed for this rollout;
-read-only acceptance does not establish those lifecycle outcomes.
+under the private deployment root. Old VMs are retained. Initial rollout acceptance
+was read-only; the subsequent Sepolia lifecycle test extends that coverage below.
+
+## Funded Sepolia browser acceptance
+
+At the user's request, the canonical Sepolia site completed a real browser
+lifecycle using their existing Chrome MetaMask Sepolia account. No deployment
+owner, treasury, challenger or Mainnet funds were used. The deployed core remains
+`856a714`, profile `fresh-20260930`, SDK `3342c958`; no application change or
+redeployment was needed for the test.
+
+- Deposited a small amount of test ETH into the fresh vault, then obtained a
+  private inference lease.
+- The station verifier returned `verified`. One synthetic GPT-4o-mini prompt
+  streamed the exact requested response; automatic conversation titling also
+  completed. The provider requests used direct HTTPS with the network proxy off.
+- Lease settlement returned `finalized`, reporting the usage and exact native
+  charge. This service status is distinct from Ethereum finality.
+  A pending-settlement response recovered automatically on the same lease.
+- Mutual close returned the remaining test ETH to the same MetaMask account.
+  Successful deposit and withdrawal receipts, exact fresh-vault
+  calls/events, Closed note state and the consumed withdrawal nullifier were
+  verified. Both transactions are finalized, and the Closed note and consumed
+  nullifier are verified at the captured finalized Ethereum checkpoint.
+- Reload preserved the exact chat response and payment history, showing one
+  returned withdrawal, zero private balance and no active ephemeral key.
+- A post-test read-only AWS snapshot found all eleven containers running, all
+  eight configured healthchecks healthy and both challengers advancing without
+  pending work. The Sepolia challenger had scanned beyond the withdrawal.
+- Actual receipt gas fees and deposit-minus-refund accounting are recorded in
+  the protected evidence. These are vault-flow and full outer-transaction gas
+  figures, not a historical account balance reconciliation or an audit of
+  MetaMask delegation caveat side effects.
+
+MetaMask wrapped both calls through its v1.3 DelegationManager. The outer target
+therefore differs from the vault and carries zero native value. Decoding the
+single self-delegation proves that the inner calls target the fresh vault with
+the exact deposit amount and mutual-close payout. Do not identify the vault from
+the outer transaction target alone. SDK confirmation succeeds from the pinned
+vault's event, note, commitment and amount; its optional direct-call fee metadata
+can be absent for a wrapped deposit without invalidating confirmation.
+
+MetaMask displayed a **Malicious site** warning for both transactions. The user
+personally reviewed and approved each. No protection was disabled and the warning
+is not established to be a false positive or resolved by the successful test.
+
+Protected evidence is under `e2e-sepolia/` in the private deployment root:
+browser screenshots and narrow verifier/settlement response projections, the
+post-reload result, and immutable receipt-checkpoint records. The read-only
+receipt checker passed eight offline tests and independent adversarial review.
+It checks exact calldata, receipts, deployment bindings and captured latest/finalized
+state without loading a signer or broadcasting. Account, transaction, private-note
+identifiers and exact test amounts remain in that protected evidence rather than
+this doc; publishing precise amounts could also identify the test wallet on-chain.
+
+This acceptance covers Sepolia deposit, verified inference, settlement, mutual
+withdrawal and browser persistence. Mainnet funded activity, live escape/challenge
+handling and the encrypted network relay were not exercised.

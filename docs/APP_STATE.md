@@ -12,7 +12,21 @@
 - Direct checks pass on both services; canonical proxy checks pass 24 Sepolia
   and 20 Mainnet cases. Eight healthchecks pass, and both funded challengers
   advance with no pending work. Existing Sepolia password gating is preserved;
-  Mainnet remains ungated. No funded lifecycle transaction was run.
+  Mainnet remains ungated. Subsequent funded browser acceptance on Sepolia passed
+  deposit, verified GPT-4o-mini inference, settlement, mutual withdrawal and
+  reload persistence using the user's existing MetaMask test ETH. The remaining
+  balance returned to that account; the browser shows zero private balance and no
+  active key. Both transactions and the Closed note/nullifier state are verified
+  at a finalized Ethereum checkpoint.
+  See the [acceptance record](ZKAPI_FRESH_DEPLOYMENT_20260930.md#funded-sepolia-browser-acceptance)
+  for protected evidence and test scope. Mainnet funded activity, escape
+  challenges and the encrypted relay were not exercised.
+- MetaMask can wrap a vault call through its DelegationManager: inspect the exact
+  inner execution and pinned-vault events before treating the outer target as a
+  vault mismatch. The SDK confirmed this wrapped deposit successfully; optional
+  direct-call fee metadata can be absent. Both wallet confirmations displayed a
+  malicious-site warning that the user handled personally; its cause remains
+  unresolved, and successful transactions do not establish a false positive.
 - Startup/update commands must use `sudo zkapi-compose mainnet|sepolia ...` on
   the host so the separate project and read-only nginx privacy override are
   always selected. Caddy request objects and nginx request-bearing error logs
