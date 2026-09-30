@@ -3,8 +3,9 @@
 The standalone Go module lives in `daemon/`. Its `internal/ticket` package
 implements the same public Blind RSA ticket protocol as the browser, without an
 account session, browser cookies, or billing credentials. The daemon's local
-OpenAI API obtains a fresh provider credential for every request under the
-verification policy below.
+OpenAI API reuses a provider credential for a fixed 60-second window by default,
+under the verification policy below. Each request still checks live model policy;
+reuse requires the same ticket-price tier and an unexpired credential.
 
 ## Import and invitation redemption
 
@@ -44,6 +45,30 @@ its global issuer-key fingerprint. Browser blinding and billing/account fields
 are not imported. Importing cash-style tickets into another client does not
 revoke copies held elsewhere; redeeming the same ticket twice fails upstream.
 
+## Reuse for nearby requests
+
+The window starts at credential acquisition, does not extend with use, and is
+bounded by the credential's earlier expiry. Requests in the same ticket-price
+tier can share the key concurrently. Different tiers obtain new access; every
+new key redemption consumes its required tickets. No tickets are spent merely
+to serve another eligible request with the cached key.
+
+Stop the daemon, set the top-level `key_reuse_window_seconds` in the existing
+private `config.json`, and restart `oa-chat serve`. The value is an integer from
+0 to 300, with 60 used when the field is missing. Set **0** to obtain fresh access
+for every request. This also controls zkAPI reuse; see
+[key reuse configuration](../README.md#ephemeral-key-reuse).
+
+The provider can link all calls sharing a key, including unrelated chats and
+local clients; the daemon has no trusted conversation ID to separate them.
+They share the original aggregate key cap rather than receiving a fresh budget
+for each call. Reused credentials and their verification result live only in
+process memory and disappear on restart. HTTP errors, transport/read errors,
+cancellation, or an interrupted response discard the key for later calls.
+The failed inference is not automatically retried. Successful HTTP-200 bodies
+and event streams are passed through without interpreting application-level
+error events.
+
 ## Protocol and privacy boundaries
 
 1. Fetch `/api/ticket/issue/public-key` anonymously and check that `key_id`, when
@@ -59,7 +84,8 @@ revoke copies held elsewhere; redeeming the same ticket twice fails upstream.
    `/chat/pinned-models` availability. Unknown, disabled, malformed, or unpriced
    models fail before selecting tickets. The daemon exposes the remaining
    explicitly priced model IDs in the standard OpenAI model-list envelope.
-5. Reserve the required tickets durably, then send only finalized tokens in
+5. When fresh access is needed, reserve the required tickets durably, then send
+   only finalized tokens in
    `InferenceTicket token=...` or `InferenceTicket tokens=...` to
    `/api/request_key`.
 6. Submit the provisional key and station/org signatures to `/submit_key`.
@@ -72,9 +98,9 @@ revoke copies held elsewhere; redeeming the same ticket twice fails upstream.
    discard the credential. The narrow [web-compatible outage policy](CLI_ZKAPI.md#privacy-boundaries)
    also applies: eligible unavailable verification is labelled unverified in
    response headers and a fixed foreground warning. This is not blanket
-   staging trust. The daemon checks each single-use key once and retains no
-   browser-style retry queue. A hard verification failure does not restore
-   already spent tickets.
+   staging trust. The daemon checks each acquired key once and retains its result
+   during the reuse window, without a browser-style verification retry queue. A
+   hard verification failure does not restore already spent tickets.
 
 The key identifier is a consistency check on the authenticated HTTPS
 `/submit_key` response for that same raw key and signatures, not a standalone

@@ -25,10 +25,11 @@ import (
 )
 
 type Config struct {
-	OrgURL      string
-	VerifierURL string
-	WalletPath  string
-	Client      *http.Client
+	OrgURL         string
+	VerifierURL    string
+	WalletPath     string
+	Client         *http.Client
+	KeyReuseWindow time.Duration
 }
 
 type Backend struct {
@@ -36,6 +37,19 @@ type Backend struct {
 	client *http.Client
 	// A station explicitly banned during this process cannot regain outage access.
 	banned sync.Map
+	// Acquisition is serialized when reuse is enabled so a burst redeems once.
+	// Inference and cache invalidation never wait for this gate.
+	acquireGate chan struct{}
+	cacheMu     sync.Mutex
+	cached      cachedCredential
+	now         func() time.Time
+}
+
+type cachedCredential struct {
+	credential Credential
+	cost       int
+	stationID  string
+	reuseUntil time.Time
 }
 
 type Credential struct {
@@ -46,6 +60,9 @@ type Credential struct {
 }
 
 func New(cfg Config) (*Backend, error) {
+	if cfg.KeyReuseWindow < 0 || cfg.KeyReuseWindow > 5*time.Minute {
+		return nil, errors.New("ticket key reuse window must be between zero and five minutes")
+	}
 	for _, endpoint := range []string{cfg.OrgURL, cfg.VerifierURL} {
 		u, err := url.Parse(endpoint)
 		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
@@ -66,7 +83,7 @@ func New(cfg Config) (*Backend, error) {
 	// never attach account identity or leak a ticket/key to another destination.
 	client.Jar = nil
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Backend{cfg: cfg, client: &client}, nil
+	return &Backend{cfg: cfg, client: &client, acquireGate: make(chan struct{}, 1), now: time.Now}, nil
 }
 
 type remoteError struct {
@@ -204,6 +221,14 @@ func (b *Backend) Models(ctx context.Context) (json.RawMessage, error) {
 }
 
 func (b *Backend) Acquire(ctx context.Context, model string) (Credential, error) {
+	if b.cfg.KeyReuseWindow > 0 {
+		select {
+		case b.acquireGate <- struct{}{}:
+			defer func() { <-b.acquireGate }()
+		case <-ctx.Done():
+			return Credential{}, ctx.Err()
+		}
+	}
 	prices, err := b.prices(ctx)
 	if err != nil {
 		return Credential{}, err
@@ -223,6 +248,22 @@ func (b *Backend) Acquire(ctx context.Context, model string) (Credential, error)
 		if id == baseModel {
 			return Credential{}, errors.New("requested model is disabled by OA")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return Credential{}, err
+	}
+	if b.cfg.KeyReuseWindow > 0 {
+		b.cacheMu.Lock()
+		cached := b.cached
+		_, banned := b.banned.Load(cached.stationID)
+		if cached.credential.Key != "" && cached.cost == cost && b.now().Before(cached.reuseUntil) && !banned {
+			b.cacheMu.Unlock()
+			return cached.credential, nil
+		}
+		// A tier change replaces the one current key; it never revives an older
+		// tier's key later. Expired and invalidated keys also remain unusable.
+		b.cached = cachedCredential{}
+		b.cacheMu.Unlock()
 	}
 	var key struct {
 		Key              string `json:"key"`
@@ -292,7 +333,7 @@ func (b *Backend) Acquire(ctx context.Context, model string) (Credential, error)
 	if err != nil {
 		return Credential{}, err
 	}
-	if key.Key == "" || strings.ContainsAny(key.Key, "\r\n") || key.StationID == "" || key.StationSignature == "" || key.OrgSignature == "" || key.ExpiresAt <= time.Now().Unix() {
+	if key.Key == "" || strings.ContainsAny(key.Key, "\r\n") || key.StationID == "" || key.StationSignature == "" || key.OrgSignature == "" || key.ExpiresAt <= b.now().Unix() {
 		return Credential{}, errors.New("OA returned an invalid or expired provisional key; tickets remain spent")
 	}
 	if _, banned := b.banned.Load(key.StationID); banned {
@@ -306,18 +347,43 @@ func (b *Backend) Acquire(ctx context.Context, model string) (Credential, error)
 	if err := ctx.Err(); err != nil {
 		return Credential{}, err
 	}
-	if key.ExpiresAt <= time.Now().Unix() {
+	acquiredAt := b.now()
+	if key.ExpiresAt <= acquiredAt.Unix() {
 		return Credential{}, errors.New("ephemeral key expired during verification")
 	}
 	if _, banned := b.banned.Load(key.StationID); banned {
 		return Credential{}, errors.New("station is banned; tickets remain spent")
 	}
-	return Credential{Key: key.Key, ExpiresAt: time.Unix(key.ExpiresAt, 0), VerificationStatus: status, VerificationDetail: detail}, nil
+	credential := Credential{Key: key.Key, ExpiresAt: time.Unix(key.ExpiresAt, 0), VerificationStatus: status, VerificationDetail: detail}
+	if b.cfg.KeyReuseWindow > 0 {
+		reuseUntil := acquiredAt.Add(b.cfg.KeyReuseWindow)
+		if beforeExpiry := credential.ExpiresAt.Add(-time.Second); beforeExpiry.Before(reuseUntil) {
+			reuseUntil = beforeExpiry
+		}
+		if !acquiredAt.Before(reuseUntil) {
+			return Credential{}, errors.New("ephemeral key is too close to expiry")
+		}
+		b.cacheMu.Lock()
+		b.cached = cachedCredential{credential: credential, cost: cost, stationID: key.StationID, reuseUntil: reuseUntil}
+		b.cacheMu.Unlock()
+	}
+	return credential, nil
 }
 
-// verifyKey follows the browser's narrowly scoped availability policy. Each
-// credential serves one inference request, so the daemon does not retain a
-// background queue of keys after that request. A fresh key gets a fresh check.
+// InvalidateCredential prevents subsequent requests from reusing a key after a
+// provider failure. It does not affect a replacement key acquired meanwhile.
+// Already forwarded requests are never replayed.
+func (b *Backend) InvalidateCredential(key string) {
+	b.cacheMu.Lock()
+	defer b.cacheMu.Unlock()
+	if b.cached.credential.Key == key {
+		b.cached = cachedCredential{}
+	}
+}
+
+// verifyKey follows the browser's narrowly scoped availability policy. Every
+// newly acquired key gets a fresh check; reuse retains its original status and
+// never upgrades an outage credential or creates a background retry queue.
 func (b *Backend) verifyKey(ctx context.Context, body []byte, stationID, key string, recentlyAttested bool) (string, string, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

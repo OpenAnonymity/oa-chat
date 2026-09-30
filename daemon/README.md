@@ -28,8 +28,10 @@ directory on your shell PATH lets you use the shorter commands below.
 
 Current source starts watching for funding immediately and asks you to press
 Enter once funds arrive. It also makes setup independent of models, serves local
-inference without an API key by default, and queues zkAPI requests while earlier
-requests settle. Runtime instructions use `oa-chat` and hide local file paths.
+inference without an API key by default, and reuses ephemeral keys for a short
+window to handle related bursts of requests. zkAPI requests still queue while
+earlier inference or settlement is pending. Runtime instructions use `oa-chat`
+and hide local file paths.
 These changes postdate the published `0.4.2` bundle; the installer above still
 provides that release.
 
@@ -163,6 +165,46 @@ and filesystem paths; suggested commands use `oa-chat`. Custom profiles continue
 to use the selected configuration directory. Keep private recovery files out of
 public logs and bug reports.
 
+### Ephemeral key reuse
+
+By default, requests use the same anonymous OpenRouter key for **60 seconds**
+after that credential is acquired. The window is fixed: another request does
+not extend it, and credential expiry ends it earlier. This applies to ticket and
+zkAPI modes. Every request still checks current model policy; reuse requires the
+same ticket-price tier in ticket mode or the same reviewed USD bucket in zkAPI
+mode. Eligibility is checked when the request gets its turn, so time spent
+queueing counts against the window. It is intended to let a chat response and
+nearby Open WebUI title, tag, or follow-up requests use one access grant.
+
+Stop the daemon, edit the top-level value in the existing private `config.json`,
+and restart `oa-chat serve` to change the window:
+
+```json
+"key_reuse_window_seconds": 60
+```
+
+Keep the other configuration fields. The value must be an integer from **0 to
+300**. An omitted field defaults to 60, including existing profiles; **0 disables
+reuse** and obtains fresh access for every request. `oa-chat config --status`
+shows the saved window. You can also save it with
+`oa-chat config --key-reuse-window-seconds 60`; no additional setup question is
+required.
+
+All requests sharing a key are linkable by the inference provider. The window
+applies across local clients and unrelated chats because the API carries no
+trusted conversation boundary. Set the value to 0 when each call needs a
+separate key. Direct HTTPS also exposes the source IP regardless of this setting.
+The key remains only in daemon memory and is not restored after a restart.
+
+Requests in a window share the key's existing aggregate spending cap; they do
+not receive a fresh cap per call. A provider HTTP error, transport/read error,
+canceled request, or interrupted response discards the key for subsequent requests; inference is never
+automatically retried. HTTP-200 response bodies and event streams are passed
+through without interpreting application-level error events. Ticket requests
+may share a key concurrently; zkAPI requests remain serial through the full
+response. Once reuse ends, ticket mode redeems new tickets. zkAPI must wait for its previous
+lease to settle before obtaining a new key, which can still take minutes.
+
 ### Run inference
 
 ```sh
@@ -226,12 +268,15 @@ around this. The integration test ran both processes in the same container
 namespace on a separate Docker host, with only the UI forwarded locally.
 
 Open WebUI may send extra requests for titles, tags, and other background tasks.
-The daemon handles zkAPI requests one at a time, waiting for the previous lease
-to settle before obtaining a fresh key for the next request. Each task consumes
-separate anonymous access. Queued requests can wait minutes per preceding lease;
-queueing does not shorten the deployed protocol's settlement interval. Stopping
-a queued request cancels its wait. Optionally disable background tasks or route
-them to a separate local task model to reduce both delay and paid requests. See
+The daemon handles zkAPI requests one at a time. Requests using the same reviewed
+USD bucket can reuse one key during the default 60-second window, so nearby tasks can
+run after the previous response without waiting for settlement. The provider can
+link those calls and they share one aggregate cap. A bucket change, window expiry,
+or discarded key requires fresh access and can still wait minutes for the
+previous lease to settle. Stopping a queued request cancels its wait. See
+[key reuse configuration](#ephemeral-key-reuse) to adjust the window or disable
+reuse. Optionally disable background tasks or route them to a separate local task
+model to reduce paid requests. See
 [Open WebUI's background-task explanation](https://docs.openwebui.com/faq/#q-why-am-i-seeing-multiple-api-requests-when-i-only-send-one-message-why-is-my-token-usage-higher-than-expected).
 
 Open WebUI's current `AIOHTTP_CLIENT_TIMEOUT` defaults to no timeout, and
@@ -320,11 +365,11 @@ authentication, and verification policy.
 
 The deployed zkAPI protocol may keep one private-wallet lease outstanding
 until expiry and settlement (currently up to five minutes on Sepolia). A lease
-is handed to the API only once, including across restarts. The daemon queues
-subsequent requests and waits through known pending settlement before acquiring
-a fresh key. This avoids cross-chat key reuse without rejecting normal overlap.
-Other failures, such as insufficient funds or refused verification, still return
-an error; a canceled request stops waiting. See [zkAPI integration and server prerequisites](docs/CLI_ZKAPI.md)
+is handed from the companion to Go only once, including across restarts. Go may
+reuse that credential in memory within the configured window and matching bucket,
+without another companion handoff. It serializes requests and waits through known
+pending settlement when fresh access is needed. Insufficient funds or refused
+verification still return an error; a canceled request stops waiting. See [zkAPI integration and server prerequisites](docs/CLI_ZKAPI.md)
 for the settlement limitation and the undeployed server proposal, which requires
 a different billing policy and is unsuitable for the tested metered deployment.
 
@@ -364,8 +409,9 @@ by this implementation. See the [publication handoff](docs/CLI_PACKAGING.md#buil
 
 ## Privacy and stream handling
 
-- Tickets are blinded locally with CIRCL's RFC-compatible Blind RSA. Every
-  request obtains a fresh provider key. Matching verifier approval binds its
+- Tickets are blinded locally with CIRCL's RFC-compatible Blind RSA. Requests
+  can share a provider key within the [configured window](#ephemeral-key-reuse),
+  including across chats and local clients. Matching verifier approval binds its
   station and SHA-256 key identifier. Like the web client, a narrowly eligible
   verifier outage can continue with explicitly unverified access; see the
   [outage policy](docs/CLI_ZKAPI.md#privacy-boundaries). Response headers and a

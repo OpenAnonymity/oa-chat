@@ -1,6 +1,6 @@
 # `oa-chat`
 
-A ChatGPT-like AI chat app that implements [unlinkable inference](https://openanonymity.ai/blog/unlinkable-inference/) — AI inference where every request is verifiably decoupled from each other, and from your identity. Built by [The Open Anonymity Project](https://openanonymity.ai).
+A ChatGPT-like AI chat app that implements [unlinkable inference](https://openanonymity.ai/blog/unlinkable-inference/) — AI inference using anonymously issued access credentials. Built by [The Open Anonymity Project](https://openanonymity.ai).
 
 The web app runs entirely in the browser. Each session uses a fresh ephemeral access key obtained via blind signatures, so no party — including the OA system and the inference provider — can link your identity to your inference activity or link sessions to each other.
 
@@ -38,12 +38,18 @@ fee and **press Enter to continue** with the deposit. Configuration deposits,
 waits for finality, and exits. `serve`
 then runs the loopback-only inference API without an API key by default; missing
 prerequisites point back to `config`. Use `oa-chat config --require-api-key` to
-require local client authentication. zkAPI requests queue while earlier requests
-settle, with a fresh anonymous key for each request.
+require local client authentication. Both access modes reuse an ephemeral key for
+nearby requests in the same ticket tier or zkAPI budget bucket for 60 seconds
+by default. The provider
+can link calls sharing a key, including different chats or local clients, and they
+share its aggregate cap. Set `key_reuse_window_seconds` in `config.json` to 0 to
+require a fresh key per call, or an integer up to 300 to change the fixed window.
+See [key reuse configuration](daemon/README.md#ephemeral-key-reuse). zkAPI queues
+requests and still waits for lease settlement when fresh access is needed.
 
 Automatic funding waits, model-independent setup, key-free local inference,
-shorter command output, and queued zkAPI requests are newer than the published
-`0.4.2` bundle; the installer above still provides that release.
+shorter command output, queued zkAPI requests, and bounded key reuse are newer
+than the published `0.4.2` bundle; the installer above still provides that release.
 
 Stop the daemon before upgrading or editing configuration. Installation updates
 both binaries and preserves private state. See the

@@ -440,3 +440,30 @@ func TestConfigureOutputHidesProfilePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigureKeyReuseWindowPersistsAndWiresBothBackends(t *testing.T) {
+	dir, original := startTestConfig(t)
+	for _, value := range []string{"15", "0", "300"} {
+		ui := &fundingWizardUI{}
+		var selected config.Config
+		err := configure(context.Background(), dir, []string{"--key-reuse-window-seconds", value}, ui, io.Discard, func(_ context.Context, _ string, c config.Config, _ string, _ setupPrompter, _ io.Writer) error {
+			selected = c
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := config.Load(dir)
+		if err != nil || loaded != selected || loaded.APIKey != original.APIKey {
+			t.Fatal("window setting did not persist without changing credentials", err)
+		}
+		if zkConfig(loaded, nil).KeyReuseWindow.Seconds() != float64(loaded.KeyReuseWindowSeconds) {
+			t.Fatal("zkAPI did not receive reuse setting")
+		}
+	}
+	for _, value := range []string{"-1", "301", "invalid"} {
+		if _, err := parseConfigureOptions([]string{"--key-reuse-window-seconds", value}, io.Discard); err == nil {
+			t.Fatal("invalid window accepted", value)
+		}
+	}
+}

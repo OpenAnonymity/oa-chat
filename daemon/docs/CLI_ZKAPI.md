@@ -18,8 +18,8 @@ curl -fsSL https://github.com/OpenAnonymity/oa-chat/releases/download/daemon-v0.
 ```
 
 Automatic funding waits, model-independent setup, key-free local inference,
-shorter command output, and queued zkAPI requests described below are in current
-source after `0.4.2`. The installer still provides the original release behavior.
+shorter command output, queued zkAPI requests, and bounded key reuse described
+below are in current source after `0.4.2`. The installer still provides the original release behavior.
 
 Then configure it:
 
@@ -192,10 +192,12 @@ an `Authorization: Bearer` header containing the output of
 Choose an available model from `GET /v1/models`; each entry includes its
 `oa_request_limit_micro_usd` (1,000,000 means a $1 cap). Success streams `data:`
 events followed by `data: [DONE]`. The cap is selected automatically and actual
-usage is settled afterward. Concurrent requests wait their turn and then wait
-for the previous lease to settle before getting a fresh key. This can take minutes
-per earlier request; keep the daemon and client connection running. Canceling a
-queued request stops its wait. `402 funding_required`
+usage is settled afterward. Requests sharing a key also share that cap; it is
+not replenished for each call. Concurrent requests wait their turn, and requests
+in the same reviewed USD bucket can reuse the key within the default 60-second
+window. Fresh access after expiry, a changed bucket, or an invalidated key waits
+for the previous lease to settle. This can still take minutes; keep the daemon
+and client connection running. Canceling a queued request stops its wait. `402 funding_required`
 means the private balance cannot cover the requested model's cap. An eligible
 trusted-station verifier outage may continue as `verifier-unavailable`;
 explicit verification refusals still block access.
@@ -250,7 +252,7 @@ codes. An address that already holds enough ETH needs no additional payment.
 The selected model automatically determines its inference budget, matching
 the web wallet's reviewed ticket-tier map:
 
-| Model ticket tier | Maximum request budget |
+| Model ticket tier | Access key spending cap |
 | --- | --- |
 | 1 or 2 | $1 |
 | 3 or 8 | $2 |
@@ -276,8 +278,8 @@ proving. A balance at least equal to this bound can obtain access, subject to
 pending settlement. Lease and settlement must retain that quote. A recovered
 prepared request keeps its original bound and rejects a different requested
 tier while pending. The cap is spending authority, not an immediate full-cap
-charge. Only the coarse USD bucket reaches the companion; model selection and
-prompts remain in the Go inference path. Bridge version 4 is required so an
+charge. Reused requests share the same cap; it does not reset for each call. Only
+the coarse USD bucket reaches the companion; model selection and prompts remain in the Go inference path. Bridge version 4 is required so an
 older companion cannot silently ignore the per-request limit.
 
 Funding is command-line only. Reading an address or requesting a quote never
@@ -452,8 +454,9 @@ Both ticket and zkAPI responses expose `X-OA-Verification-Status: verified` or
 `verifier-unavailable`; the latter has a fixed allowlisted
 `X-OA-Verification-Detail` reason and emits a fixed warning in foreground logs.
 Provider-supplied and caller-supplied verification headers cannot override this
-local decision. The CLI does one bounded check per single-use key and has no
-browser-style retained session/background retry queue. Outage continuation
+local decision. The CLI does one bounded verification check per acquired key,
+retains that result during its allowed reuse window, and has no browser-style
+background verification retry queue. Outage continuation
 accepts the browser's documented risk of temporarily proceeding without a
 current per-key station ownership/privacy check; it never claims verification.
 
@@ -478,30 +481,53 @@ authority. Requiring that recipient to equal the vault incorrectly rejected
 a successful live Sepolia deposit. Recover such a deposit using its existing
 transaction hash and private recovery record.
 
-## Current lease limitation and operator prerequisite
+## Key reuse and settlement
 
-**The current deployed lease protocol does not provide immediate independent
-requests from one funded wallet.** A generic OpenAI request carries no trusted
-conversation boundary, so the Go daemon must not reuse a provider key across
-API calls. Each eligible lease is durably marked as handed out once before its
-key is returned. The daemon handles requests one at a time and waits through
-known pending settlement before obtaining a fresh key for the next call. The
-companion's single-use guard still applies, including after a crash or lost
-local HTTP reply. Queueing does not reuse a key, alter the previous cap, replay
-an inference request, or bypass a refused verification result. Canceling while
-queued ends that request's wait.
+The daemon reuses an acquired OpenRouter credential for **60 seconds** by default
+for requests with the same reviewed coarse USD bucket. It checks live model policy
+for every call, including reused calls. The fixed window starts when access is
+acquired, never slides with use, and ends earlier if the credential expires.
+Eligibility is checked when a queued request reaches its turn, not when it arrived.
+The daemon serves zkAPI responses one at a time, so a long first response can use
+up the window before background tasks begin.
 
-The successful September 10 request had approximately 4.5 minutes of usable
-lease lifetime, followed by a five-second settlement grace period. The next
-independent request waits for that signed private-state transition, even if
-inference finishes much earlier. Open WebUI background title/tag/follow-up
-requests also consume separate access and now wait in the same queue. Several
-queued tasks can therefore take several settlement intervals. Open WebUI's
-current client timeout defaults to no total limit and its streaming idle limit
-is unset; any configured limits, including a reverse proxy's, must accommodate
-the wait before the first chunk. See the [Open WebUI connection guide](../README.md#connect-open-webui).
-Immediate independent issuance remains a server/protocol requirement; the queue
-changes how clients wait, not how quickly the deployed lease can settle.
+Stop the daemon and edit the top-level `key_reuse_window_seconds` in the existing
+private `config.json`, then restart `oa-chat serve`. It accepts an integer from
+0 to 300; omitted means 60, and **0 requires fresh access for every call**. The same
+setting applies to ticket mode. See [key reuse configuration](../README.md#ephemeral-key-reuse).
+
+The provider can link every call using the same key, including unrelated chats
+and different local clients. A generic OpenAI request carries no trusted
+conversation boundary. These calls share the key's existing aggregate spending
+cap; the budget is not renewed for each request. Prompt privacy from OA services,
+verification requirements, signed lease accounting, and actual-usage settlement
+remain intact.
+
+Each lease is durably marked as handed out once before the companion returns its
+key to Go. Go retains the key only in process memory; it never asks the companion
+to hand it out again. Restarting loses the cache and requires settlement before
+fresh access. A refused verification result is never cached. Provider HTTP errors,
+transport/read errors, cancellation, and interrupted responses discard the cached
+key for subsequent calls; failed inference is never automatically replayed. HTTP-200
+bodies and event streams are passed through without interpreting application-level
+error events.
+
+**The deployed lease protocol still cannot immediately issue independent access
+from one funded wallet.** When the window closes, a different bucket is requested,
+or the cached key is discarded, the daemon waits for the prior lease's signed
+settlement before acquiring a fresh key. The successful September 10 request had
+approximately 4.5 minutes of usable lease lifetime followed by a five-second
+settlement grace period. This can still delay requests by minutes. Queueing and
+reuse do not shorten that lifetime, alter its cap, or bypass settlement.
+Canceling a queued request ends its wait.
+
+Open WebUI title/tag/follow-up calls can share access with the main chat when
+they use the same bucket and reach execution within the window. They can still
+wait for settlement outside those bounds. Open WebUI's current client timeout
+defaults to no total limit and its streaming idle limit is unset; configured
+limits, including a reverse proxy's, must accommodate the wait before the first
+chunk. See the [Open WebUI connection guide](../README.md#connect-open-webui).
+Immediate independent issuance remains a server/protocol requirement.
 
 **Historical ERC-20 validation (September 10), not native-release evidence.** The successful streamed request settled
 with `usage_usd: 0.000723` and `charge_applied: 723`, reducing the private balance

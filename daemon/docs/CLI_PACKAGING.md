@@ -60,8 +60,8 @@ services it started and exits; `serve` runs the inference API. See the
 [guided walkthrough](CLI_ZKAPI.md#guided-first-time-setup).
 
 Automatic funding waits, model-independent setup, key-free local inference,
-shorter command output, and queued zkAPI requests described here are newer than
-published `0.4.2`. That installer still provides the original release behavior.
+shorter command output, queued zkAPI requests, and bounded key reuse described
+here are newer than published `0.4.2`. That installer still provides the original release behavior.
 
 Sepolia requires the matched password-capable client and companion in `0.4.1`
 or newer. The `0.4.0` companion predates the password requirement and cannot
@@ -439,12 +439,19 @@ Keep Open WebUI's own authentication enabled for shared deployments. The daemon
 forwards each upstream streaming chunk when it arrives.
 
 Concurrent zkAPI calls queue, including title and other background requests.
-Each gets a fresh anonymous key after earlier inference and lease settlement.
-Settlement can take minutes, so multiple background requests can add substantial
-waiting. Current Open WebUI defaults to no total client timeout and no streaming
-idle cap; configured timeouts must cover queueing and inference. See the
+Calls in the same reviewed USD bucket can reuse one key within the default
+60-second fixed window after acquisition, bounded by earlier credential expiry.
+Outside that window, after a bucket change, or after the key is discarded, fresh
+access waits for prior lease settlement, which can take minutes. Canceling the
+client request stops its wait. Current Open WebUI defaults to no total client
+timeout and no streaming idle cap; configured timeouts must cover queueing and inference. See the
 [connection guide](../README.md#connect-open-webui) for task-model and timeout
-settings. Queueing does not change billing or reuse provider keys.
+settings. Key reuse applies to ticket mode too and shares the original aggregate
+cap, making all calls with that key linkable by the provider, including different
+chats or local clients. Set the top-level `key_reuse_window_seconds` in the
+existing `config.json` to an integer from 0 to 300, then restart the daemon.
+Omitting it means 60; 0 requires fresh access per request. Reuse stays in memory
+and does not survive restart. See [key reuse configuration](../README.md#ephemeral-key-reuse).
 
 For Docker, `127.0.0.1` inside a container addresses that container, so a
 normal bridged container cannot reach a loopback-only host daemon. On Linux,

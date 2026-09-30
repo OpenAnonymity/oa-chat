@@ -18,6 +18,7 @@ type configureAction func(context.Context, string, config.Config, string, setupP
 type configureOptions struct {
 	backend, network, listen, relay, binary, proofs string
 	usd                                             string
+	keyReuseWindowSeconds                           int
 	status, apiKey, edit, menu, requireAPIKey       bool
 	fields                                          map[string]bool
 }
@@ -35,6 +36,7 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	f.StringVar(&o.usd, "usd", "", "skip the new-deposit USD amount prompt (prompt default: 20; network fees are extra)")
 	f.BoolVar(&o.status, "status", false, "show saved configuration status without setup")
 	f.BoolVar(&o.apiKey, "api-key", false, "print the local inference API key explicitly")
+	f.IntVar(&o.keyReuseWindowSeconds, "key-reuse-window-seconds", config.DefaultKeyReuseWindowSeconds, "reuse compatible ephemeral keys for this many seconds (0 disables, maximum 300)")
 	f.BoolVar(&o.requireAPIKey, "require-api-key", false, "require a local API key for inference (default: no key required)")
 	f.BoolVar(&o.edit, "edit", false, "edit mode, network, listener, and transport interactively")
 	f.BoolVar(&o.menu, "menu", false, "open configuration and wallet management actions")
@@ -69,6 +71,9 @@ func parseConfigureOptions(args []string, out io.Writer) (configureOptions, erro
 	}
 	if o.fields["network"] && o.network != "mainnet" && o.network != "sepolia" {
 		return o, errors.New("network must be mainnet or sepolia")
+	}
+	if o.fields["key-reuse-window-seconds"] && (o.keyReuseWindowSeconds < 0 || o.keyReuseWindowSeconds > config.MaxKeyReuseWindowSeconds) {
+		return o, errors.New("key-reuse-window-seconds must be between 0 and 300")
 	}
 	if o.usd != "" {
 		if _, err := parseFundingAmountForAsset(o.usd, 6, "USD"); err != nil {
@@ -226,6 +231,9 @@ func applyConfigureOptions(c config.Config, o configureOptions) config.Config {
 	if o.fields["network"] {
 		c.ZKAPI.Network = o.network
 	}
+	if o.fields["key-reuse-window-seconds"] {
+		c.KeyReuseWindowSeconds = o.keyReuseWindowSeconds
+	}
 	if o.fields["require-api-key"] {
 		c.RequireAPIKey = o.requireAPIKey
 	}
@@ -251,6 +259,11 @@ func showConfigureSummary(c config.Config, ui setupPrompter) {
 	}
 	ui.Printf("Configuration: saved.\nSaved mode: %s\nzkAPI network: %s\nTransport: %s\n", c.Backend, c.ZKAPI.Network, transport)
 	showClientConnection(c, ui)
+	if c.KeyReuseWindowSeconds == 0 {
+		ui.Printf("Ephemeral key reuse: disabled.\n")
+	} else {
+		ui.Printf("Ephemeral key reuse: up to %d seconds; requests share a key and its spending cap.\n", c.KeyReuseWindowSeconds)
+	}
 	ui.Printf("Change settings: oa-chat config --edit\nWallet actions: oa-chat config --menu\nUse the same --config-dir for these commands if set.\n")
 }
 

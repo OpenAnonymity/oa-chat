@@ -16,6 +16,9 @@ import (
 	"github.com/OpenAnonymity/oa-chat/daemon/internal/relay"
 )
 
+const DefaultKeyReuseWindowSeconds = 60
+const MaxKeyReuseWindowSeconds = 300
+
 type ZKAPI struct {
 	ClientURL         string `json:"client_url"`
 	BridgeToken       string `json:"bridge_token"`
@@ -31,16 +34,17 @@ type ZKAPI struct {
 type Config struct {
 	// ManagementToken is a separate owner-only credential. It must never be
 	// published with config.json or shared with inference API clients.
-	ManagementToken string `json:"-"`
-	Listen          string `json:"listen"`
-	APIKey          string `json:"api_key"`
-	RequireAPIKey   bool   `json:"require_api_key"` // opt in to bearer authentication for loopback inference
-	Backend         string `json:"backend"`         // default for serve; both wallets are always configured
-	OrgURL          string `json:"org_url"`
-	VerifierURL     string `json:"verifier_url"`
-	RelayURL        string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp
-	Concurrency     int    `json:"concurrency"`
-	ZKAPI           ZKAPI  `json:"zkapi"`
+	ManagementToken       string `json:"-"`
+	Listen                string `json:"listen"`
+	APIKey                string `json:"api_key"`
+	KeyReuseWindowSeconds int    `json:"key_reuse_window_seconds"`
+	RequireAPIKey         bool   `json:"require_api_key"` // opt in to bearer authentication for loopback inference
+	Backend               string `json:"backend"`         // default for serve; both wallets are always configured
+	OrgURL                string `json:"org_url"`
+	VerifierURL           string `json:"verifier_url"`
+	RelayURL              string `json:"relay_url"` // empty uses direct HTTPS; nonempty opts into Wisp
+	Concurrency           int    `json:"concurrency"`
+	ZKAPI                 ZKAPI  `json:"zkapi"`
 }
 
 func DefaultDir() (string, error) {
@@ -68,10 +72,13 @@ func Default() (Config, error) {
 		return Config{}, err
 	}
 	bridge, err := Secret()
-	return Config{Listen: "127.0.0.1:8787", APIKey: key, Backend: "ticket", OrgURL: "https://org.openanonymity.ai", VerifierURL: "https://verifier2.openanonymity.ai", Concurrency: 4, ZKAPI: ZKAPI{ClientURL: "http://127.0.0.1:8790", BridgeToken: bridge, Network: "mainnet"}}, err
+	return Config{KeyReuseWindowSeconds: DefaultKeyReuseWindowSeconds, Listen: "127.0.0.1:8787", APIKey: key, Backend: "ticket", OrgURL: "https://org.openanonymity.ai", VerifierURL: "https://verifier2.openanonymity.ai", Concurrency: 4, ZKAPI: ZKAPI{ClientURL: "http://127.0.0.1:8790", BridgeToken: bridge, Network: "mainnet"}}, err
 }
 
 func Validate(c Config) error {
+	if c.KeyReuseWindowSeconds < 0 || c.KeyReuseWindowSeconds > MaxKeyReuseWindowSeconds {
+		return errors.New("key_reuse_window_seconds must be between 0 and 300 (0 disables reuse)")
+	}
 	host, port, err := net.SplitHostPort(c.Listen)
 	if err != nil || port == "" {
 		return errors.New("listen must be a loopback IP and port")
@@ -177,11 +184,24 @@ func Load(dir string) (Config, error) {
 		return Config{}, err
 	}
 	defer f.Close()
-	var c Config
+	// Missing fields in older profiles adopt the default; explicit zero keeps
+	// strict per-request keys. Decoding must not conflate zero with omission.
+	c := Config{KeyReuseWindowSeconds: DefaultKeyReuseWindowSeconds}
+	decoded := struct {
+		*Config
+		ReuseWindow json.RawMessage `json:"key_reuse_window_seconds"`
+	}{Config: &c}
 	d := json.NewDecoder(io.LimitReader(f, 1<<20))
 	d.DisallowUnknownFields()
-	if err := d.Decode(&c); err != nil {
+	if err := d.Decode(&decoded); err != nil {
 		return Config{}, errors.New("invalid config.json; check the configuration field names and values")
+	}
+	if len(decoded.ReuseWindow) > 0 {
+		var seconds *int
+		if json.Unmarshal(decoded.ReuseWindow, &seconds) != nil || seconds == nil {
+			return Config{}, errors.New("key_reuse_window_seconds must be an integer between 0 and 300")
+		}
+		c.KeyReuseWindowSeconds = *seconds
 	}
 	var trailing any
 	if d.Decode(&trailing) != io.EOF {

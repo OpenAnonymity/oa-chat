@@ -21,6 +21,13 @@ import (
 // Exercise the complete loopback gateway with Open WebUI's overlapping streamed
 // chat and background-title request pattern, without any real wallet or funds.
 func TestOpenWebUIConcurrentRequestsWaitForStreamAndSettlement(t *testing.T) {
+	for _, window := range []time.Duration{0, time.Minute} {
+		t.Run(window.String(), func(t *testing.T) { testOpenWebUIBurst(t, window) })
+	}
+}
+
+func testOpenWebUIBurst(t *testing.T, reuseWindow time.Duration) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	var leaseCalls, providerCalls atomic.Int32
@@ -67,7 +74,7 @@ func TestOpenWebUIConcurrentRequestsWaitForStreamAndSettlement(t *testing.T) {
 		case "/api/v1/chat/completions":
 			n := providerCalls.Add(1)
 			wantKey := "Bearer fresh-key-1"
-			if n == 2 {
+			if n == 2 && reuseWindow == 0 {
 				wantKey = "Bearer fresh-key-3"
 			}
 			if r.Header.Get("Authorization") != wantKey || r.Header.Get("Cookie") != "" {
@@ -93,7 +100,7 @@ func TestOpenWebUIConcurrentRequestsWaitForStreamAndSettlement(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})}
-	wallet, err := zkapi.New(zkapi.Config{ClientURL: bridge.URL, BridgeToken: strings.Repeat("b", 32), HTTPClient: remote})
+	wallet, err := zkapi.New(zkapi.Config{ClientURL: bridge.URL, BridgeToken: strings.Repeat("b", 32), HTTPClient: remote, KeyReuseWindow: reuseWindow})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,10 +161,12 @@ func TestOpenWebUIConcurrentRequestsWaitForStreamAndSettlement(t *testing.T) {
 	if _, err := io.ReadAll(first.Body); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-pending:
-	case <-ctx.Done():
-		t.Fatal("background request did not reach settlement wait")
+	if reuseWindow == 0 {
+		select {
+		case <-pending:
+		case <-ctx.Done():
+			t.Fatal("background request did not reach settlement wait")
+		}
 	}
 	select {
 	case err := <-secondDone:
@@ -167,7 +176,11 @@ func TestOpenWebUIConcurrentRequestsWaitForStreamAndSettlement(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("background request did not finish after settlement")
 	}
-	if leaseCalls.Load() != 3 || providerCalls.Load() != 2 {
-		t.Fatal("wrong number of fresh leases or provider requests")
+	wantLeases := int32(1)
+	if reuseWindow == 0 {
+		wantLeases = 3
+	}
+	if leaseCalls.Load() != wantLeases || providerCalls.Load() != 2 {
+		t.Fatal("wrong number of leases or provider requests")
 	}
 }

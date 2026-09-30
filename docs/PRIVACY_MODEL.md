@@ -32,6 +32,16 @@ for username accounts it knows the chosen stable pseudonym. Users requiring
 strict identity-unlinkability at the metadata layer must use the anonymous or
 random account-number flow.
 
+The command-line daemon also deliberately groups nearby requests onto one
+OpenRouter credential: its default fixed reuse window is 60 seconds. Calls using
+the same key are linkable by the provider, including calls from unrelated chats
+or different local clients. The CLI therefore does not claim cross-request or
+cross-chat unlinkability within that window. The configurable
+`key_reuse_window_seconds` value can be set to 0 for a fresh key per call. This
+tradeoff does not add an identity to credential issuance or send prompts to OA
+services; network and content correlation caveats still apply. See
+[Local API clients](#local-api-clients).
+
 The two formal properties (defined in blog post
 [Section 3.1](https://openanonymity.ai/blog/unlinkable-inference/#31-threat-model)):
 
@@ -73,15 +83,32 @@ UI-to-daemon hop and never reaches OA services or the provider. Browser Origins
 are rejected regardless of the inference-key setting. Key-free inference also
 checks the actual loopback peer and rejects unexpected Host headers.
 Incoming cookies, identity headers, and top-level
-account/storage metadata are stripped. Ticket requests get distinct
-provider keys under the verification/outage policy below; zkAPI leases are
-single-use across API requests and process restarts. Concurrent zkAPI requests
-wait one at a time, including through known pending settlement, before receiving
-separate fresh keys. A canceled queued request stops waiting. The queue lives
-only in the local daemon and does not add a server-side prompt queue, persistent
-request history, or key reuse. The existing lease lifetime and signed settlement
-can still delay each queued request by minutes. The daemon stores no chat history
-and creates no request-log files.
+account/storage metadata are stripped. Both ticket and zkAPI modes retain an
+acquired key in daemon memory for a fixed 60-second window by default, bounded by
+earlier credential expiry. Reuse never extends that deadline. Every request
+checks live model policy and may reuse only the same ticket-price tier in ticket
+mode or the same reviewed USD bucket in zkAPI mode. Eligibility is evaluated when
+a request reaches execution, so queue time counts against the window.
+
+The top-level `key_reuse_window_seconds` config value accepts integers from 0 to
+300; omitted means 60, including existing profiles, and 0 requires fresh access
+for every call. The provider can link all calls using the same key. There is no
+trusted conversation identifier, so this intentionally includes unrelated chats
+and local clients. The original aggregate key cap is shared, not reset per call.
+Ticket requests may share a key concurrently. zkAPI responses remain serialized;
+when fresh access is required, they wait through known pending settlement. The
+companion's durable one-handoff guard still prevents handing a lease to Go twice,
+including after a crash or lost local reply. Go's cache never survives restart.
+Provider HTTP errors, transport/read errors, cancellation, and interrupted
+responses discard the cached key for future calls; inference is never retried
+automatically. HTTP-200 bodies and event streams remain opaque passthrough and
+application-level error events are not interpreted for cache invalidation.
+
+A canceled queued request stops waiting. The queue lives only in the local daemon
+and adds no server-side prompt queue or persistent request history. The existing
+lease lifetime and signed settlement can still delay requests needing fresh
+access by minutes. The daemon stores no chat history and creates no request-log
+files.
 Its foreground `serve` command emits operational metadata to stdout: local
 readiness, ticket counts, allowlisted route/method labels, HTTP status, timing,
 and lifecycle events. Shell redirection and service managers may retain that
@@ -100,9 +127,10 @@ relay can observe connection metadata. A configured relay failure never falls
 back to direct HTTPS. Destination certificate validation, station/key binding,
 and the same verification policy apply in either mode. The daemon matches the
 web outage eligibility described below and exposes `verifier-unavailable`
-response metadata plus a fixed operational warning. It checks each single-use
-key once; unlike retained browser sessions, it has no background retry queue. See the CLI documentation
-for deployed-service prerequisites and the zkAPI settlement constraint.
+response metadata plus a fixed operational warning. It checks each acquired
+key once and retains the verification result through its reuse window; unlike
+retained browser sessions, it has no background verification retry queue. See
+the CLI documentation for deployed-service prerequisites and the zkAPI settlement constraint.
 
 The CLI's Ethereum address-funding route generates an Ethereum signing key
 locally and retains it in an owner-only file alongside its private recovery
@@ -147,9 +175,10 @@ checks readiness without prompting and points missing prerequisites back to
 `config`. Configuration and service startup check wallet state and a positive
 private balance without selecting a model or fetching model pricing. New
 deposits accept a positive USD amount without a model-specific minimum. Each
-inference request checks the selected model's coarse spending cap before
-acquiring access. The wizard does not send a test inference or acquire access
-merely to check setup. The signing key and private-note secret never enter account
+inference request checks the selected model's policy before acquiring or reusing
+access. Fresh access checks its coarse spending cap; calls reusing a key share
+that key's remaining aggregate cap. The wizard does not send a test inference or
+acquire access merely to check setup. The signing key and private-note secret never enter account
 synchronization or inference requests. Backups of the private configuration
 directory control both public funds and private notes.
 
@@ -480,7 +509,9 @@ trust any OA-operated component (org, stations, verifier operators) for
 ticket-wallet sync preserve the cryptographic and content protections below but
 add the metadata caveat documented in section 5. Username accounts avoid an
 external identity mapping, but their user-chosen stable pseudonym has the reuse
-caveat described above.
+caveat described above. The CLI's configured key reuse also groups calls across
+chats and clients: the cross-unlinkability claim below applies between distinct
+keys, not between calls sharing a cached key.
 
 1. **Identity-unlinkability** -- blind signatures ensure no party can link
    ticket issuance to ticket redemption. The org/station that signed blinded
@@ -520,7 +551,9 @@ Through OA's unlinkable inference layer, even if the inference provider is
 malicious, your prompts are still unlinkable to your identity and unlinkable
 across your sessions. Each session uses an ephemeral API key issued via blind
 signatures with no identity binding -- the provider has no way to know who is
-behind any given key.
+behind any given key. The CLI reuse window is an explicit exception to
+cross-chat unlinkability: all calls sharing its cached key are linkable, even if
+the UI treats them as different sessions.
 
 OA adds enforceable accountability on top of the provider relationship:
 
@@ -555,6 +588,7 @@ network layer, the following metadata vectors exist and should be mitigated:
 | Vector             | Status                                                                                                                                                                                                               |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | IP address         | The command-line daemon uses direct HTTPS and local DNS by default, exposing the source IP to destination services; users can opt in to Wisp with a nonempty `relay_url`. The browser's built-in proxy covers accountless invitation issuance, ticket redemption, and access requests when enabled, hiding the browser IP from the org/station. Account-authenticated billing issuance intentionally uses the narrow SuperTokens transport directly to the configured org (or a first-party same-origin deployment proxy), so a direct production org can observe the subscriber's source IP and request timing. It still sees only blinded requests and cannot link them to later finalized-ticket redemption. Users who need network-layer separation for this identity-bound issuance can use a trusted VPN/Tor; deployments may provide a first-party reverse proxy. |
+| CLI key reuse | The default 60-second fixed window shares one credential across eligible calls, including unrelated chats and local clients. The provider can link those calls, and they share the original aggregate cap. Set `key_reuse_window_seconds` to 0 for a fresh key per call; this does not hide IP addresses or prompt content. |
 | Browser User-Agent | Standard browser fingerprinting concern; use a common browser or randomize UA.                                                                                                                                       |
 | Account sync metadata | For Google and username accounts, the org can observe when an authenticated sync occurs, ciphertext sizes, and stable opaque blob IDs. It cannot decrypt wallet contents, but may attempt to correlate changes with redemption. A username also exposes the chosen stable pseudonym during authentication. Redemption does not trigger immediate sync; consumed state propagates during a later initial/periodic sync. |
 
@@ -575,18 +609,18 @@ inference requests?** For the formal threat model and collusion analysis, see bl
 | Trap                                                                         | Correct interpretation                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | "Component sees data, therefore unlinkability is broken."                    | False. The station sees finalized tickets and API keys; the verifier sees API keys in `/submit_key`. Neither breaks unlinkability because neither data item carries user identity. Blind signatures ensure the station cannot correlate issuance to redemption. The verifier uses the raw key transiently for signature verification, immediately hashes it (SHA-256), and never stores, logs, or reports it. Only a truncated hash prefix (16 hex chars) appears in structured logs. |
-| "OpenRouter is a trust anchor that violates zero-trust."                     | False. OpenRouter is the frontier model provider used by OA. Even a malicious provider cannot link prompts to a user's identity or to each other. Each session uses an ephemeral key issued via blind signatures with no identity binding. OA additionally enforces accountability via toggle verification and shadow-account prevention.                                                                                                                                             |
+| "OpenRouter is a trust anchor that violates zero-trust."                     | False. OpenRouter is the frontier model provider used by OA. An anonymously issued key carries no user identity binding. Distinct keys separate protocol sessions, subject to metadata/content correlation; the CLI deliberately permits linking all calls sharing a key during its configured reuse window. OA additionally enforces accountability via toggle verification and shadow-account prevention.                                                                                                                                             |
 | "Centralized infrastructure contradicts zero-trust."                         | For the identity-free flow, centralization is primarily an availability concern because no OA component possesses an identity-to-inference linkage. Optional Google or username sync deliberately gives the org an identity mapping or stable pseudonym plus opaque sync metadata, with the documented correlation caveat; it still does not expose prompt/response contents. |
 | "OA systems could see or log user prompts."                                  | False. No OA system (org, station, verifier) is in the inference data path. Prompts go directly from the user's browser to the inference provider over HTTPS. The verifier's attested code proves this architectural exclusion. Station operator cookies are governance material for toggle/ownership checks, not prompt-transport credentials.                                                                                                                                        |
 | "The org handles both issuance and redemption, so it can correlate them."    | False. At issuance the org sees blinded requests; at redemption it sees finalized (unblinded) tickets for the first time. These are cryptographically unlinkable -- that is the core guarantee of blind signatures. The org knows "credential X -> N blinded requests" but cannot determine which finalized tickets those became.                                                                                                                                                     |
 | "The org knows the invitation code/email, so it knows who redeemed tickets." | False. The org knows identity -> credential -> N blinded requests. But it cannot link blinded requests to finalized tickets (blind signatures). The finalized tickets at redemption are unlinkable to any prior issuance step.                                                                                                                                                                                                                                                        |
-| "The provider sees prompts, so zero-trust is violated."                      | False. OA's claim is unlinkable inference, not invisible inference. Prompts reach the provider (they must for inference to work), but they are unlinkable to the user's identity and to each other. The provider sees anonymous requests from ephemeral keys.                                                                                                                                                                                                                         |
+| "The provider sees prompts, so zero-trust is violated."                      | False. OA's claim is unlinkable inference, not invisible inference. Prompts reach the provider (they must for inference to work), but anonymously issued credentials do not carry a user identity. The provider can link calls sharing a key, including cross-chat CLI calls within its configured reuse window; IP, timing and content correlation remain separate concerns.                                                                                                                                                                                                                         |
 | "Google login has exactly the same unlinkability as an identity-free account." | False. OAuth authorizes a dedicated identity account and its encrypted ticket-wallet sync exposes timing, size, and stable opaque-ID metadata. The org cannot decrypt a finalized ticket or prompt, and the identity credential is absent from redemption and inference requests, but metadata correlation is a documented Google-account tradeoff. |
 | "Station operator cookies stored in verifier memory affect user privacy."    | False. Station operator credentials are governance data for compliance checks on the operator's provider account. They are not end-user data. The verifier never receives or stores any end-user identity material.                                                                                                                                                                                                                                                                   |
 | "Side-channel attacks (timing, IP, batch size) break unlinkability."         | They do not break the blind-signature proof or expose prompt contents, but they can weaken metadata-level unlinkability. IP is mitigated when the built-in proxy is enabled; the command-line daemon defaults to direct HTTPS, which exposes its source IP. Ticket consumption by Google and username accounts deliberately does not trigger immediate sync, but later authenticated sync timing and size remain correlatable metadata. |
 | "The org is closed-source, so it's an unauditable trust anchor."             | Blinding/unblinding and sync encryption run client-side in open-source JS, so the org cannot decrypt ticket blobs or prompt contents. The identity-free flow does not rely on it for unlinkability. Google and username flows accept the explicitly documented sync-metadata correlation surface. See [UNLINKABILITY_PROOF.md](UNLINKABILITY_PROOF.md) for the blind-signature proof. |
 | "The org could serve per-user public keys to break unlinkability."           | Detectable. The public key endpoint is publicly accessible and unauthenticated. Any user or third party can call it at any time to record and compare keys. Since verification calls are independent and unpredictable, the org cannot serve per-user keys without detection. A single inconsistency reported by any observer exposes the attack. Future: automated transparency log. |
-| "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. There is no persistent pseudonym across sessions for the provider to build a longitudinal profile against. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
+| "OpenRouter could perform traffic analysis on ephemeral keys to deanonymize users." | False. Each session uses a different ephemeral key with no user identity binding. Distinct keys do not provide a persistent pseudonym across sessions. CLI calls sharing a cached key are explicitly linkable during the configured window. Content-based correlation has only plausible deniability -- the provider cannot distinguish Alice sending prompt X from Bob sending the same prompt. This is the cross-unlinkability guarantee (see blog post [Section 3.1.1](https://openanonymity.ai/blog/unlinkable-inference/#311-adversarial-inference-provider)). |
 | "Toggle/ownership verification means trusting OpenRouter, violating zero trust to the OA system components." | False. Toggle and ownership checks enforce accountability on the *station's* provider account -- they are not about trusting the OA system. If OpenRouter lies about its own API state, it undermines itself, not OA. Regardless, user prompts remain unlinkable because blind signatures and ephemeral keys carry no user identity. |
 
 

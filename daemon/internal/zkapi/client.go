@@ -30,11 +30,12 @@ const (
 // Config is the Go-side bridge configuration. A companion must be built with
 // companion.patch; unpatched or unauthenticated daemons are rejected.
 type Config struct {
-	ClientURL        string       `json:"client_url"`
-	BridgeToken      string       `json:"bridge_token"`
-	Network          string       `json:"network"` // empty means mainnet; Sepolia is explicit
-	InferenceBaseURL string       `json:"inference_base_url"`
-	HTTPClient       *http.Client `json:"-"` // remote HTTPS, direct or over Wisp as configured
+	ClientURL        string        `json:"client_url"`
+	BridgeToken      string        `json:"bridge_token"`
+	Network          string        `json:"network"` // empty means mainnet; Sepolia is explicit
+	InferenceBaseURL string        `json:"inference_base_url"`
+	HTTPClient       *http.Client  `json:"-"` // remote HTTPS, direct or over Wisp as configured
+	KeyReuseWindow   time.Duration `json:"-"` // fixed, in-memory window; zero disables reuse
 }
 
 type Client struct {
@@ -42,6 +43,8 @@ type Client struct {
 	usedLeases     map[[32]byte]uint64
 	requestSlot    chan struct{}
 	settlementPoll time.Duration
+	now            func() time.Time
+	cachedLease    *reusableLease // accessed only while owning requestSlot
 	config         Config
 	local          *http.Client
 	inference      *http.Client
@@ -71,6 +74,9 @@ func (e *Error) Error() string {
 }
 
 func New(config Config) (*Client, error) {
+	if config.KeyReuseWindow < 0 || config.KeyReuseWindow > 5*time.Minute {
+		return nil, errors.New("zkAPI key reuse window must be between zero and five minutes")
+	}
 	if config.ClientURL == "" {
 		config.ClientURL = DefaultClientURL
 	}
@@ -102,7 +108,7 @@ func New(config Config) (*Client, error) {
 	inference.CheckRedirect = noRedirect
 	inference.Jar = nil
 	local := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext}, CheckRedirect: noRedirect, Timeout: 4 * time.Minute}
-	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64), requestSlot: make(chan struct{}, 1), settlementPoll: 5 * time.Second}, nil
+	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64), requestSlot: make(chan struct{}, 1), settlementPoll: 5 * time.Second, now: time.Now}, nil
 }
 
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -253,41 +259,17 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	leaseJSON, err := c.waitForLease(ctx, body)
+	lease, err := c.waitForLease(ctx, body)
 	if err != nil {
 		return nil, err
 	}
-	var lease struct {
-		APIKey             string `json:"api_key"`
-		BaseURL            string `json:"base_url"`
-		ExpiresAt          uint64 `json:"expires_at"`
-		Verified           bool   `json:"verified"`
-		VerificationStatus string `json:"verification_status"`
-		VerificationDetail string `json:"verification_detail"`
-	}
-	if json.Unmarshal(leaseJSON, &lease) != nil || !usableVerification(lease.Verified, lease.VerificationStatus, lease.VerificationDetail) || lease.APIKey == "" || strings.ContainsAny(lease.APIKey, "\r\n") || lease.ExpiresAt <= uint64(time.Now().Unix()+1) || strings.TrimRight(lease.BaseURL, "/") != c.config.InferenceBaseURL {
-		return nil, &Error{http.StatusBadGateway, "invalid_verified_lease"}
-	}
-	// The companion enforces this durably; the Go layer also rejects a
-	// buggy bridge returning one provider key to unrelated API requests.
-	hash := sha256.Sum256([]byte(lease.APIKey))
-	c.leaseMu.Lock()
-	for oldHash, expiry := range c.usedLeases {
-		if expiry <= uint64(time.Now().Unix()) {
-			delete(c.usedLeases, oldHash)
-		}
-	}
-	if _, used := c.usedLeases[hash]; used {
-		c.leaseMu.Unlock()
-		return nil, &Error{http.StatusConflict, "lease_already_used"}
-	}
-	c.usedLeases[hash] = lease.ExpiresAt
-	c.leaseMu.Unlock()
 	if err := ctx.Err(); err != nil {
+		c.cachedLease = nil
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config.InferenceBaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
+		c.cachedLease = nil
 		return nil, fmt.Errorf("create inference request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+lease.APIKey)
@@ -303,62 +285,132 @@ func (c *Client) Complete(ctx context.Context, body json.RawMessage) (*http.Resp
 		}
 	}
 	if err != nil {
+		c.cachedLease = nil
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		return nil, &Error{http.StatusBadGateway, "inference_transport_failed"}
 	}
-	// EOF, explicit close, or cancellation all end ownership. The HTTP
-	// gateway still owns draining/copying the response, so streams stay live.
-	response.Body = holdResponseSlot(ctx, response.Body, release)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		c.cachedLease = nil
+	}
+	// Only a successfully drained response retains its bounded key. An early
+	// close, body error, or cancellation can leave provider usage ambiguous.
+	// Never retry inference automatically, even with a replacement key.
+	response.Body = holdResponseSlotResult(ctx, response.Body, func(complete bool) {
+		if !complete {
+			c.cachedLease = nil
+		}
+		release()
+	})
 	transferred = true
 	return response, nil
 }
 
-func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
+type providerLease struct {
+	APIKey             string `json:"api_key"`
+	BaseURL            string `json:"base_url"`
+	ExpiresAt          uint64 `json:"expires_at"`
+	Verified           bool   `json:"verified"`
+	VerificationStatus string `json:"verification_status"`
+	VerificationDetail string `json:"verification_detail"`
+}
+
+type reusableLease struct {
+	providerLease
+	budget uint64
+	until  time.Time
+}
+
+func (c *Client) waitForLease(ctx context.Context, body json.RawMessage) (providerLease, error) {
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return providerLease{}, err
 		}
 		if err := c.Check(ctx); err != nil {
-			return nil, err
+			return providerLease{}, err
 		}
 		// Read policy after queueing and again after each settlement wait, so
 		// a disabled model or changed spending tier cannot use stale pricing.
 		limit, err := c.requestBudget(ctx, body)
 		if err != nil {
-			return nil, err
+			return providerLease{}, err
 		}
+		// Refresh public model policy even for cached access. A window never
+		// slides, and a different coarse cap cannot expand an existing key.
+		if cached := c.cachedLease; cached != nil && c.config.KeyReuseWindow > 0 &&
+			cached.budget == limit && c.now().Before(cached.until) {
+			return cached.providerLease, nil
+		}
+		c.cachedLease = nil
 		leaseBody, _ := json.Marshal(map[string]uint64{"request_limit_micro_usd": limit})
 		lease, err := c.request(ctx, http.MethodPost, "/oa/v1/lease", leaseBody)
 		var pending *Error
 		if !errors.As(err, &pending) || pending.Status != http.StatusConflict || (pending.Code != "lease_pending" && pending.Code != "pending_settlement") {
-			return lease, err
+			if err != nil {
+				return providerLease{}, err
+			}
+			return c.acceptLease(lease, limit)
 		}
 		// These codes explicitly withhold a new key. Never retry a lost or
 		// malformed reply, another conflict, or provider inference: issuance
-		// may already have committed and provider keys remain single-use.
+		// may already have committed. Reuse applies only to a validated in-memory key.
 		timer := time.NewTimer(c.settlementPoll)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return providerLease{}, ctx.Err()
 		case <-timer.C:
 		}
 	}
 }
 
+// A newly handed-out lease is distinct from intentional in-memory reuse. Keep
+// rejecting a companion that returns a previous key, including after eviction.
+func (c *Client) acceptLease(raw json.RawMessage, budget uint64) (providerLease, error) {
+	var lease providerLease
+	now := c.now()
+	if json.Unmarshal(raw, &lease) != nil || !usableVerification(lease.Verified, lease.VerificationStatus, lease.VerificationDetail) || lease.APIKey == "" || strings.ContainsAny(lease.APIKey, "\r\n") || lease.ExpiresAt <= uint64(now.Unix()+1) || lease.ExpiresAt > 1<<63-1 || strings.TrimRight(lease.BaseURL, "/") != c.config.InferenceBaseURL {
+		return providerLease{}, &Error{http.StatusBadGateway, "invalid_verified_lease"}
+	}
+	hash := sha256.Sum256([]byte(lease.APIKey))
+	c.leaseMu.Lock()
+	defer c.leaseMu.Unlock()
+	for oldHash, expiry := range c.usedLeases {
+		if expiry <= uint64(now.Unix()) {
+			delete(c.usedLeases, oldHash)
+		}
+	}
+	if _, used := c.usedLeases[hash]; used {
+		return providerLease{}, &Error{http.StatusConflict, "lease_already_used"}
+	}
+	c.usedLeases[hash] = lease.ExpiresAt
+	if c.config.KeyReuseWindow > 0 {
+		until := now.Add(c.config.KeyReuseWindow)
+		if expiry := time.Unix(int64(lease.ExpiresAt)-1, 0); expiry.Before(until) {
+			until = expiry
+		}
+		c.cachedLease = &reusableLease{providerLease: lease, budget: budget, until: until}
+	}
+	return lease, nil
+}
+
 type serializedResponseBody struct {
 	io.ReadCloser
-	once    sync.Once
-	release func()
-	stopMu  sync.Mutex
-	stop    func() bool
-	closed  bool
+	once   sync.Once
+	finish func(bool)
+	ctx    context.Context
+	stopMu sync.Mutex
+	stop   func() bool
+	closed bool
 }
 
 func holdResponseSlot(ctx context.Context, body io.ReadCloser, release func()) io.ReadCloser {
-	wrapped := &serializedResponseBody{ReadCloser: body, release: release}
+	return holdResponseSlotResult(ctx, body, func(bool) { release() })
+}
+
+func holdResponseSlotResult(ctx context.Context, body io.ReadCloser, finish func(bool)) io.ReadCloser {
+	wrapped := &serializedResponseBody{ReadCloser: body, finish: finish, ctx: ctx}
 	stop := context.AfterFunc(ctx, func() { _ = wrapped.Close() })
 	wrapped.stopMu.Lock()
 	if wrapped.closed {
@@ -373,12 +425,14 @@ func holdResponseSlot(ctx context.Context, body io.ReadCloser, release func()) i
 func (b *serializedResponseBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if err != nil {
-		_ = b.Close()
+		_ = b.close(err == io.EOF)
 	}
 	return n, err
 }
 
-func (b *serializedResponseBody) Close() error {
+func (b *serializedResponseBody) Close() error { return b.close(false) }
+
+func (b *serializedResponseBody) close(complete bool) error {
 	var err error
 	b.once.Do(func() {
 		b.stopMu.Lock()
@@ -388,7 +442,7 @@ func (b *serializedResponseBody) Close() error {
 		}
 		b.stopMu.Unlock()
 		err = b.ReadCloser.Close()
-		b.release()
+		b.finish(complete && err == nil && b.ctx.Err() == nil)
 	})
 	return err
 }

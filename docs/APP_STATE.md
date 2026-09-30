@@ -1,3 +1,49 @@
+## 2026-09-30: Bounded CLI key reuse for nearby inference requests
+
+- User-approved source behavior now reuses an acquired anonymous OpenRouter key
+  for a fixed 60-second window in both ticket and zkAPI modes. The top-level
+  `config.json` field `key_reuse_window_seconds` accepts integers from 0 to 300;
+  omission defaults to 60 for existing profiles too, and 0 restores fresh access
+  for every call. Stop and restart the service after changing it.
+  `config --key-reuse-window-seconds N` also saves it, and `config --status` shows
+  the active saved setting without another setup question. The window starts on credential acquisition, never
+  slides, and ends at earlier credential expiry. Eligibility is checked at use,
+  so queued time counts against the deadline.
+- Each request still loads current model policy. Reuse requires the same exact
+  ticket-price tier for tickets, or the same reviewed coarse USD bucket for
+  zkAPI. One key's original aggregate cap is shared across all reused calls; it
+  is not a new per-call allowance. Tickets can use a key concurrently, while
+  zkAPI keeps the full-response serial queue. Expiry, changed tier/bucket, or a
+  discarded key requires fresh access; zkAPI still waits for prior settlement,
+  potentially minutes. Reuse does not change deployed protocol accounting.
+- The provider can link all requests using a key, including unrelated chats and
+  local clients because the OpenAI API has no trusted conversation boundary.
+  This explicitly supersedes the older per-call fresh-key guarantee in the
+  earlier queueing entry below. Set the value to 0 for separate keys per call;
+  direct HTTPS still exposes source IP. Prompts remain outside OA infrastructure.
+- Cache and verification result stay in Go memory only. The companion still
+  durably hands each lease to Go once, and restarting cannot recover/rehand a
+  cached key. Provider HTTP errors, transport/read errors, cancellation, and
+  prematurely closed responses invalidate the key for future requests without
+  automatically replaying inference. Successful HTTP-200 bodies/SSE are opaque
+  passthrough; embedded application-error events are not parsed for invalidation.
+  Refused verification never becomes reusable access.
+- These source changes postdate published `0.4.2` and the earlier local
+  `0.4.3-dev.c7a51a2` build. They require an updated binary; no published release
+  is implied. Historical release/live-run evidence below remains unchanged.
+  See [key reuse configuration](../daemon/README.md#ephemeral-key-reuse) and
+  [privacy boundaries](PRIVACY_MODEL.md#local-api-clients).
+- Validation: the full daemon `go test -race ./...` suite, `go vet ./...`,
+  and Linux amd64 cross-build pass. Focused race checks also pass after the
+  final config-null rejection and response-close cleanup changes. A real
+  loopback HTTP fixture verifies overlapping streamed chat/title requests
+  share one key when enabled, and still queue through fresh-key settlement
+  when disabled. Other regressions cover fixed expiry, live policy/tier
+  changes, concurrent ticket acquisition, cancellation, failed responses,
+  restart isolation, and missing/zero/invalid configuration values. Fresh
+  adversarial review approved the final diff. No live inference or wallet
+  transaction was performed for this change.
+
 ## 2026-09-30: Simplify local CLI access and queue zkAPI requests
 
 - Current source uses `oa-chat` in runtime instructions and hides actual binary,

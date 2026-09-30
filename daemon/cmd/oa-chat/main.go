@@ -186,10 +186,10 @@ func serveConfig(c config.Config, args []string) (config.Config, error) {
 }
 
 func ticketBackend(dir string, c config.Config, client *http.Client) (*ticket.Backend, error) {
-	return ticket.New(ticket.Config{OrgURL: c.OrgURL, VerifierURL: c.VerifierURL, WalletPath: filepath.Join(dir, "tickets.json"), Client: client})
+	return ticket.New(ticket.Config{OrgURL: c.OrgURL, VerifierURL: c.VerifierURL, WalletPath: filepath.Join(dir, "tickets.json"), Client: client, KeyReuseWindow: time.Duration(c.KeyReuseWindowSeconds) * time.Second})
 }
 func zkConfig(c config.Config, client *http.Client) zkapi.Config {
-	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, HTTPClient: client}
+	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, HTTPClient: client, KeyReuseWindow: time.Duration(c.KeyReuseWindowSeconds) * time.Second}
 }
 
 type ticketInference struct {
@@ -240,6 +240,10 @@ func (t *ticketInference) Complete(ctx context.Context, body json.RawMessage) (*
 	if err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		t.wallet.InvalidateCredential(key.Key)
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://openrouter.ai/api/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -256,6 +260,11 @@ func (t *ticketInference) Complete(ctx context.Context, body json.RawMessage) (*
 		if key.VerificationStatus == "verifier-unavailable" {
 			response.Header.Set("X-OA-Verification-Detail", key.VerificationDetail)
 		}
+	}
+	if err != nil || response == nil || response.Body == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
+		t.wallet.InvalidateCredential(key.Key)
+	} else {
+		response.Body = watchTicketResponse(ctx, response.Body, func() { t.wallet.InvalidateCredential(key.Key) })
 	}
 	return response, err
 }
@@ -395,6 +404,9 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 		logger.Print("Use oa-chat config --api-key to configure your client; Ctrl+C stops the service")
 	} else {
 		logger.Print("Localhost inference needs no API key; Ctrl+C stops the service")
+	}
+	if c.KeyReuseWindowSeconds > 0 {
+		logger.Printf("Ephemeral keys may be reused for up to %d seconds; requests in that window share a key and spending cap", c.KeyReuseWindowSeconds)
 	}
 	statusDone := make(chan struct{})
 	go func() {
