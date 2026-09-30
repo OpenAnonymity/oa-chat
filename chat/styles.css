@@ -9236,8 +9236,12 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 }
 .chat-mode-html-tooltip { gap: 0.25rem; }
 
-.settings-heading-with-info { display: flex; align-items: center; gap: 2px; margin-bottom: 4px; }
-.settings-heading-with-info .settings-section-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; color: hsl(var(--color-foreground)); }
+/* Privacy and Memory keep the shared small-caps section title; the heading only adds the info button. */
+.settings-heading-with-info { display: flex; align-items: center; gap: 0; margin-bottom: 0.25rem; }
+.settings-heading-with-info .settings-section-title { margin: 0; }
+/* The 24px target overlaps the title's line, so these headings stay as tall as the other section titles. */
+.settings-heading-with-info .settings-info-button { margin-block: -6px; }
+.settings-heading-with-info .settings-info-button svg { width: 12px; height: 12px; }
 .settings-info-button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: none; color: hsl(var(--color-muted-foreground) / 0.7); }
 .settings-info-button svg { width: 14px; height: 14px; }
 .settings-info-button:hover { background: hsl(var(--color-muted)); }
