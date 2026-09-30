@@ -1,3 +1,35 @@
+## Withdrawal fee preflight and OA isolation (2026-09-30)
+
+Send ETH withdrawals check public fee data and the pending ETH balance before
+settling chat access, reserving server clearance, or preparing a withdrawal.
+The review shows a conservative fee reserve, available ETH, and a rounded-up
+six-decimal top-up. The fee-paying address appears only with that explanation
+when more ETH is needed. Deposit receipts and public-return controls stay off
+the withdrawal screen. Mutual close describes one server-approved transaction;
+escape describes the wait and two separately paid transactions.
+
+Exact calldata/gas is unavailable before server clearance and proof generation.
+The reserve therefore covers the SDK's supported per-transaction gas ceiling at
+current Low fee rates, twice for escape. It is explicitly not an exact fee or a
+charge; actual unused ETH remains browser-held. Escape finalization fees may
+change during the safety window. This intentionally overestimates rather than
+starting an underfunded close. MetaMask continues to quote and pay its own fees.
+
+Read-only checks refresh every 15 seconds; failed, stale, wrong-scope or pending
+checks cannot enable the action. A click checks again, and an increased reserve
+requires another review/click even with ample funds. The action checks again
+before any SDK work and caps its signed fee liability to the approved allowance.
+A market move or another tab spending ETH can still interrupt an in-flight
+withdrawal; preserve recovery, show neutral funding guidance, and never retry
+without an explicit action. Non-review recovery paths retain actionable top-up
+amount/address errors. No fee read creates a withdrawal or signs/broadcasts.
+
+In mixed OA/zkAPI mode, both restoration and explicit/asynchronous open requests
+require zkAPI mode after initial conversation restoration. Saved tab intent never
+overrides OA mode. Navigating to OA hides an open private dialog, even while an
+already-authorized operation finishes; it neither cancels nor forgets SDK work.
+Returning to zkAPI can recover the saved view. SDK records remain untouched.
+
 ## Recovery review (2026-09-29)
 
 The [browser payment recovery review](ZKAPI_RECOVERY_REVIEW.md) records the
@@ -79,7 +111,7 @@ the user’s own wallet address separately.
 
 ## 2026-09-22: Repeated reloads during deposit confirmation
 
-- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. Explicit same-tab intent can restore after navigation to an OA chat; unrelated SDK records still respect the zkAPI-mode gate. Restoration never submits or retries transactions.
+- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. All restoration, including explicit same-tab intent, respects the zkAPI-mode gate. Restoration never submits or retries transactions.
 
 ## 2026-09-21: Withdrawal reload and disclosure continuity
 

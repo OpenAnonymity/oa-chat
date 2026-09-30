@@ -2244,3 +2244,8 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-funding-return-fields > .zkapi-funding-field:not(.zkapi-funding-field--amount):only-child { grid-column: 1 / -1; }
 @media (max-width: 420px) { .zkapi-funding-return-fields { grid-template-columns: minmax(0, 1fr); } }
 [data-funding-help="return"] .zkapi-funding-help-body > .zkapi-actions { margin-top: 0.125rem; }
+
+/* Keep withdrawal fee guidance together, separate from deposit history. */
+.zkapi-withdrawal-fees { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--zkapi-line); border-radius: 16px; }
+.zkapi-withdrawal-fees .zkapi-funding-breakdown { margin: 0; }
+.zkapi-withdrawal-fees .zkapi-funding-address { min-width: 0; }

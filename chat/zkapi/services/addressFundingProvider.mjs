@@ -563,7 +563,7 @@ export class AddressFundingProvider {
         } else if (code === 'address_fee_data') {
             message = 'Unable to check Ethereum fees. Check your connection and try again. Nothing was sent.';
         } else if (code === 'address_fee_quote_changed') {
-            message = 'Fees changed. Review the new estimate, then click Deposit. Nothing was sent.';
+            message = 'Network fees changed. Review the fee allowance and try again. Nothing was sent.';
         } else throw fail('Unsupported payment failure.');
         const error = fail(message, code);
         if (requirement) error.fundingRequirement = copy(requirement);
@@ -572,6 +572,31 @@ export class AddressFundingProvider {
         // Retain object identity so an unrelated later error is never replaced.
         if (this.action) this.action.failure = { error, message };
         return error;
+    }
+
+    // Before server clearance/proof preparation, exact calldata does not exist.
+    // Budget the supported transaction ceiling, explicitly as a reserve rather
+    // than an exact fee. This reads public chain data only and never closes a note.
+    async getWithdrawalFeeBudget(mode = 'mutual') {
+        if (!['mutual', 'escape'].includes(mode)) throw fail('Invalid withdrawal method.');
+        const ctx = await this.context();
+        await this.reload();
+        const own = this.address;
+        if (!own || !this.unlocked) throw fail('Your payment address is not available in this browser.');
+        if (this.hasPendingTransaction) throw fail('Check your saved transaction before withdrawing.');
+        await this.assertChain(ctx);
+        const { fees } = await this.transactionFeeQuote(ctx, MAX_GAS);
+        const balance = uint(await this.rpc(ctx, 'eth_getBalance', [own, 'pending']), 'ETH balance');
+        await this.assertChain(ctx);
+        const transactionFeeWei = MAX_GAS * fees.maxFeePerGas;
+        // An escape needs a second, explicit transaction after the safety window.
+        const reserve = transactionFeeWei * (mode === 'escape' ? 2n : 1n);
+        uint(reserve, 'withdrawal reserve');
+        return { address: own, chainId: Number(ctx.chainId), mode,
+            balanceWei: balance.toString(), feeReserveWei: reserve.toString(),
+            transactionFeeWei: transactionFeeWei.toString(),
+            shortfallWei: (reserve > balance ? reserve - balance : 0n).toString(),
+            expiresAt: Date.now() + FEE_QUOTE_LIFETIME_MS };
     }
 
     async getDepositFeeQuote(intent, { isCurrent = () => true } = {}) {
@@ -775,7 +800,7 @@ export class AddressFundingProvider {
             if (estimate < 21_000n) throw fail('Invalid transaction gas estimate.');
             const gasLimit = maxEthReturn ? 21_000n : input.gas == null ? (estimate * 120n + 99n) / 100n : uint(input.gas, 'gas limit', MAX_GAS);
             if (gasLimit < estimate || gasLimit > MAX_GAS) throw fail('The gas limit is outside the allowed range.', 'transaction_gas_limit_exceeded');
-            const approvedFeeLimit = authorization.kind === 'deposit' && ctx.native ? authorization.feeLimitWei : null;
+            const approvedFeeLimit = (authorization.kind === 'deposit' && ctx.native) || authorization.kind === 'withdrawal' ? authorization.feeLimitWei : null;
             const { fees, minimumFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit, approvedFeeLimit);
             let reserve = fees.maxFeePerGas * gasLimit;
             if (authorization.kind === 'deposit' && ctx.native && authorization.feeLimitWei != null

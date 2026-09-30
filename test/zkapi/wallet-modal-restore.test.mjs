@@ -5,7 +5,7 @@ import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 
-function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, savedModal, savedWelcome = false, blockedStorage = false, withdrawals = [], earlySnapshot = false } = {}) {
+function setup(t, { config = {}, note = null, withdrawal = null, failInit = false, canRestore, canOpen, savedModal, savedWelcome = false, blockedStorage = false, withdrawals = [], earlySnapshot = false } = {}) {
     const original = { config: zkapiClient.config, wallet: zkapiClient.wallet, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals };
     const oldDocument = globalThis.document;
     const oldWindow = globalThis.window;
@@ -55,7 +55,7 @@ function setup(t, { config = {}, note = null, withdrawal = null, failInit = fals
         globalThis.document = oldDocument;
         globalThis.window = oldWindow;
     });
-    const modal = new AccountModal({}, canRestore ? { canRestore } : {});
+    const modal = new AccountModal({}, { ...(canRestore ? { canRestore } : {}), ...(canOpen ? { canOpen } : {}) });
     return { modal, classes, refresh, mutations, storage, notify: () => subscriber({}, { reason: 'refresh' }),
         load: async () => { loaded(); await new Promise(resolve => setImmediate(resolve)); } };
 }
@@ -458,3 +458,29 @@ test('a Continue click during startup is kept and runs once the wallet is ready'
     assert.equal(calls, 1, 'one click, one action — a second click during startup is not a second action');
     assert.equal(f.modal.startingAfterInit, false);
 });
+
+for (const phase of ['reserving', 'prepared', 'submitted', 'ambiguous']) {
+    test(`OA blocks saved ${phase} withdrawal intent and delayed open requests`, async t => {
+        let privateMode = false;
+        const f = setup(t, { savedModal: { view: 'withdraw', mode: 'mutual' },
+            config: { prepared_withdrawal: { phase, mode: 'mutual' } }, note: { note_id: 7 },
+            canRestore: () => privateMode, canOpen: () => privateMode });
+        await f.load();
+        f.modal.open('withdraw');
+        f.notify();
+        assert.equal(f.modal.isOpen, false);
+        privateMode = true;
+        f.modal.restorePendingOperation();
+        assert.equal(f.modal.isOpen, true);
+        assert.equal(f.modal.view, 'withdraw');
+        privateMode = false;
+        f.modal.busy = true;
+        f.modal.close({ forModeChange: true });
+        assert.equal(f.modal.isOpen, false, 'mode navigation hides even an in-flight dialog');
+        assert.equal(f.modal.busy, true, 'hiding does not cancel the wallet operation');
+        f.modal.busy = false;
+        f.notify();
+        assert.equal(f.modal.isOpen, false);
+        f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
+    });
+}

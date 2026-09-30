@@ -5724,3 +5724,22 @@ Billing history supports verified presentment currency without changing the
 USD entitlement ledger. The backend creation flag stays off pending a separate
 checkout deployment and real sandbox-session checks. Independent review approved
 the disabled local implementation after configured-startup and Stripe CSP fixes.
+
+
+## 2026-09-30: Withdrawal fee review and strict payment-mode isolation
+
+- Send ETH withdrawal review now has one fee panel: conservative reserve,
+  available ETH and the additional amount/address only when needed. Deposit
+  receipts and public ETH return controls no longer clutter Withdraw. The
+  two close methods explain server approval versus a delayed two-transaction escape.
+- `WithdrawalFees.js` owns scoped, read-only budget polling and rejects late
+  responses after close, signer/mode changes or note replacement. Checks happen
+  before private access settlement and server clearance; increased fees require
+  another explicit click. The provider bounds signed withdrawal fee liability.
+- The reserve uses the SDK transaction gas ceiling because exact proof calldata
+  does not exist before withdrawal preparation. It is conservative, not an exact
+  fee; this limitation and the later escape fee are disclosed. MetaMask's fee
+  confirmation remains wallet-owned. See [payments](ZKAPI_PAYMENTS.md).
+- `createPaymentModeUi` gates saved and late dialog opens on the active zkAPI
+  mode. Moving to OA hides the dialog without canceling any authorized transaction
+  or clearing the SDK journal. An old same-tab marker cannot reopen over OA.

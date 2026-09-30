@@ -320,6 +320,8 @@ test('settlement controls forward runtime actions, prevent duplicate retry, and 
 });
 
 test('mixed payment shell renders recovery above the private composer and clears it for Tickets', async t => {
+    let privateModal;
+    t.mock.method(AccountModal.prototype, 'restorePendingOperation', function () { privateModal = this; });
     const originalDocument = globalThis.document;
     t.after(() => { globalThis.document = originalDocument; });
     const nodes = new Map();
@@ -362,8 +364,17 @@ test('mixed payment shell renders recovery above the private composer and clears
     ui.presentation.renderComposer();
     assert.match(status.innerHTML, /data-zkapi-settlement-action="retry"/);
     assert.equal(status.getAttribute('aria-busy'), 'false');
+    assert.equal(privateModal.canRestore({ hasSavedModal: true }), true);
     mode = 'tickets';
     ui.presentation.renderComposer();
+    assert.equal(privateModal.canRestore({ hasSavedModal: true }), false, 'saved intent cannot bypass OA mode');
+    assert.equal(privateModal.canOpen(), false, 'late payment-required events cannot open over OA');
+    mode = 'zkapi';
+    app.restoringInitialConversation = true;
+    assert.equal(privateModal.canRestore({ hasSavedModal: true }), false);
+    assert.equal(privateModal.canOpen(), false);
+    app.restoringInitialConversation = false;
+    mode = 'tickets';
     assert.equal(status.className, 'hidden');
     assert.equal(status.innerHTML, '');
     // Let wallet-method restoration finish while this test's DOM is mounted.
