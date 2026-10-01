@@ -2271,7 +2271,7 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-fee-address-label { margin-bottom: .5rem; color: hsl(var(--color-muted-foreground)); font-size: .8125rem; }
 .zkapi-fee-address { align-items: center; gap: .5rem; padding: .5rem; border: 1px solid var(--zkapi-control-border); border-radius: .625rem; background: var(--zkapi-hover); }
 .zkapi-fee-address .zkapi-funding-address-value { padding: 0 .25rem; border: 0; background: transparent; word-break: normal; }
-.zkapi-fee-address:focus-within { outline: 2px solid hsl(var(--color-focus-ring)); outline-offset: 2px; }
+.zkapi-fee-address :focus-visible { outline: 2px solid hsl(var(--color-focus-ring)); outline-offset: 2px; }
 .zkapi-fee-address .zkapi-copy-button { border-color: transparent; background: transparent; }
 .zkapi-fee-copy-feedback { min-height: 1.125rem; margin-top: .25rem; color: hsl(var(--color-muted-foreground)); font-size: .75rem; line-height: 1.5; }
 .zkapi-fee-transfer-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; min-height: 2.25rem; padding-top: .75rem; border-top: 1px solid var(--zkapi-line); }
@@ -2373,3 +2373,6 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
   .t-panel-slide { transition: none !important; }
 }
 .zkapi-fee-topup { --panel-translate-y: 8px; }
+
+#zkapi-history-back { flex: none; margin-right: .25rem; }
+.zkapi-dialog-head:has(#zkapi-history-back) .zkapi-dialog-title { flex: 1; }

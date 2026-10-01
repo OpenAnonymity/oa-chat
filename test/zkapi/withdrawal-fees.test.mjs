@@ -88,6 +88,25 @@ test('a higher fee on click requires another review even when fully funded', asy
     assert.equal(run.mock.callCount(), 1, 'a second explicit click approves the now visible reserve');
 });
 
+test('a failed or underfunded refresh returns confirmation to actionable fee review', async t => {
+    const { owner, quote } = fixture(t);
+    for (const failure of ['shortfall', 'unavailable']) {
+        t.mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', async () => ({ ...quote }));
+        await refreshWithdrawalFees(owner, { force: true });
+        owner.withdrawalConfirmation = owner.withdrawalReviewScope();
+        assert.match(owner.renderWithdrawal(), /Closing this window afterward/);
+        t.mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', async () => {
+            if (failure === 'unavailable') throw new Error('offline');
+            return { ...quote, balanceWei: '0', shortfallWei: quote.feeReserveWei };
+        });
+        await refreshWithdrawalFees(owner, { force: true });
+        assert.equal(owner.withdrawalConfirmation, null);
+        const html = owner.renderWithdrawal();
+        assert.match(html, failure === 'shortfall' ? /data-withdrawal-fee-topup/ : /data-withdrawal-fee-refresh/);
+        assert.match(html, /id="zkapi-withdraw-btn"[^>]*disabled/);
+    }
+});
+
 
 test('fresh fee reads clear a fee-read warning without replaying the withdrawal', async t => {
     const { owner } = fixture(t);
@@ -163,7 +182,7 @@ test('review cannot reserve a balance before explicit confirmation', async t => 
     assert.ok(owner.withdrawalConfirmation);
     assert.equal(submit.mock.callCount(), 0);
     assert.match(owner.renderWithdrawal(), /Once the server approves/);
-    assert.match(owner.renderWithdrawal(), /Go back/);
+    assert.match(owner.renderWithdrawal(), /Cancel/);
     await owner.confirmWithdrawal();
     assert.equal(submit.mock.callCount(), 1);
     await owner.confirmWithdrawal();
@@ -200,12 +219,14 @@ test('changed destination, note or fee readiness invalidates confirmation', asyn
 });
 
 test('MetaMask gets the same irreversible confirmation before first withdrawal', async t => {
-    const { owner } = fixture(t);
+    const { owner, quote } = fixture(t);
     setWalletMethod('metamask');
+    t.mock.method(zkapiClient, 'getWithdrawalFeeBudget', async () => quote);
+    await refreshWithdrawalFees(owner);
     const submit = t.mock.method(owner, 'submitWithdrawal', async () => {});
     assert.doesNotMatch(owner.renderWithdrawal(), /Once the server approves/);
     owner.requestWithdrawal();
-    assert.match(owner.renderWithdrawal(), /Closing or rejecting the MetaMask prompt afterward does not undo/);
+    assert.match(owner.renderWithdrawal(), /Closing this window afterward does not cancel the withdrawal/);
     assert.equal(submit.mock.callCount(), 0);
     owner.withdrawalConfirmation = null;
     await owner.confirmWithdrawal();
@@ -239,7 +260,7 @@ test('receipt uses the screenshot amounts and removes the paid-separately paragr
     assert.match(html, />Add 0\.00106 ETH<\/button>/);
     assert.doesNotMatch(html, /Paid separately|fee allowance|unused ETH/);
     owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
-    assert.match(renderWithdrawalFees(owner), /zkapi-fee-send-amount">0\.00106 ETH/);
+    assert.match(renderWithdrawalFees(owner), /zkapi-fee-send-amount">Send 0\.00106 ETH/);
 });
 
 test('rounded receipt subtraction always equals its safe top-up recommendation', () => {
@@ -262,14 +283,14 @@ test('expanded inline top-up stays open after enough ETH arrives and reports fai
     await refreshWithdrawalFees(owner);
     owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
     let html = renderWithdrawalFees(owner);
-    assert.match(html, /Send for network fees/);
+    assert.match(html, /Send 0\.001 ETH/);
     assert.match(html, /Waiting for your transfer/);
     assert.match(html, /aria-label="Copy funding address"/);
     assert.doesNotMatch(html, /then check again:|Hide address/);
     quote.balanceWei = quote.feeReserveWei; quote.shortfallWei = '0';
     await refreshWithdrawalFees(owner, { force: true });
     html = renderWithdrawalFees(owner);
-    assert.match(html, /Available for network fees/);
+    assert.match(html, /Available 0\.001 ETH/);
     assert.match(html, /Fee-paying address/);
     assert.match(html, /You have enough ETH for fees/);
     assert.doesNotMatch(html, /Send for network fees|Waiting for your transfer/);

@@ -102,7 +102,7 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         zkapiClient.config = { prepared_withdrawal: { phase: 'prepared', mode: 'mutual' } };
         const ready = modalWith().renderWithdrawal();
         assert.match(ready, /data-step="proof" data-state="complete"/);
-        assert.match(ready, /id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" >Continue in MetaMask/);
+        assert.match(ready, /id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" disabled>Continue in MetaMask/);
         assert.doesNotMatch(ready, /id="zkapi-park-withdrawal-btn"/, "withdrawal recovery does not offer set aside");
     } finally { Object.assign(zkapiClient, original); }
 });

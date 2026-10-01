@@ -5,7 +5,7 @@ export default {
         {
             file: 'sdk/services/browserWalletRuntime.js',
             beforeSha256: '57e1c18365d4853f4926cc49fbe80f24bda730359c0bbe7b55d4f61e0378942c',
-            afterSha256: '38474ffff126e48265132124de732e4153657121dac1d4a8d177802639617418',
+            afterSha256: 'cf51ddfdf381e810c4c3322968e3ecbd94976e22e27a9df0847e3827ea69e565',
             replacements: [
                 {
                     before: `const LATE_DEPOSIT_TERMINAL_STATUSES = new Set(['confirmed', 'reverted', 'superseded']);`,
@@ -185,12 +185,47 @@ function hasUnresolvedDepositSubmission(pending) {
             const plan = { ...recoveryJournal, ...generated };
             plan.destination = destination;`
                 },
+                {
+                    before: `    async prepareWithdrawal(mode, destination, { expectedActiveRoot = null, expectedNoteId = null, expectedWithdrawalOperationId = null } = {}) {
+        await this.init();
+        await this.settleActiveLease();`,
+                    after: `    async assertEscapeReady() {
+        await this.init();
+        return withBrowserWalletLock(this.manifest.deployment_id, async () => {
+            await this.reload();
+            if (this.runtime?.journal || this.runtime?.lease || this.activeLease) {
+                throw new BrowserWalletHttpError(
+                    'Finish updating your previous chat balance before starting escape. This needs the temporary-key service; if it is unavailable, keep this browser data and retry when it returns.',
+                    409, 'escape_settlement_required');
+            }
+        });
+    }
+
+    async prepareWithdrawal(mode, destination, { expectedActiveRoot = null, expectedNoteId = null, expectedWithdrawalOperationId = null } = {}) {
+        await this.init();
+        if (mode === 'escape') await this.assertEscapeReady();
+        else await this.settleActiveLease();`
+                },
+                {
+                    before: `            await this.recoverPendingLocked({ retireLostKey: true });
+            await this.reload();
+            if (!this.runtime.state) throw new Error('There is no active private note to withdraw.');`,
+                    after: `            // A new key could appear while the initial guard released the lock.
+            // Escape never silently depends on server settlement or clears its journal.
+            if (mode === 'escape') {
+                if (this.runtime.journal || this.runtime.lease || this.activeLease) {
+                    throw new BrowserWalletHttpError('Finish updating your previous chat balance before starting escape.', 409, 'escape_settlement_required');
+                }
+            } else await this.recoverPendingLocked({ retireLostKey: true });
+            await this.reload();
+            if (!this.runtime.state) throw new Error('There is no active private note to withdraw.');`
+                }
             ]
         },
         {
             file: 'sdk/services/zkapiClient.js',
             beforeSha256: 'ccdf8393743f1f8ab28fdea1ff378a6ed92b258a026ec32cc9fc19cb8c6eaa4e',
-            afterSha256: 'b1a86533e1cf0859db3759d7e6978d1bf74123d5e6ed46ff898729af987ad84e',
+            afterSha256: 'd775f83308a29cc0f2b7216c4de6782b23f9c6dab61ad4007d29d58b6cdb9a9d',
             replacements: [
                 {
                     before: `        await browserWalletRuntime.markPendingDepositUnknown();
@@ -284,7 +319,109 @@ function hasUnresolvedDepositSubmission(pending) {
                     });
                     submission = claim;`
                 },
+                {
+                    before: `import { bufferedGasLimit } from './zkapiGas.mjs';`,
+                    after: `import { bufferedGasLimit, MAX_TRANSACTION_GAS_LIMIT } from './zkapiGas.mjs';`
+                },
+                {
+                    before: `    async withdraw(mode, onStatus = () => {}, { destination, expectedWithdrawalOperationId = null } = {}) {`,
+                    after: `    async getWithdrawalFeeBudget(mode = 'mutual') {
+        if (!['mutual', 'escape'].includes(mode)) throw new Error('Choose a withdrawal method.');
+        if (!this.config?.funding || !this.ethereum?.request) throw new Error('Connect MetaMask to check the network fee.');
+        const quantity = value => {
+            if (typeof value !== 'string' || !/^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i.test(value)) throw new Error('Invalid wallet fee data.');
+            return BigInt(value);
+        };
+        const accounts = await this.ethereum.request({ method: 'eth_accounts' });
+        const address = accounts?.[0]?.toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(address || '') || /^0x0{40}$/.test(address)) {
+            throw Object.assign(new Error('Connect MetaMask to check the network fee.'), { code: 'withdrawal_wallet_disconnected' });
+        }
+        await this.assertFundingChain();
+        const gasPrice = quantity(await this.ethereum.request({ method: 'eth_gasPrice' }));
+        if (gasPrice <= 0n) throw new Error('Invalid wallet fee data.');
+        // Before clearance the calldata does not exist. Reserve the supported
+        // gas ceiling with price headroom; MetaMask still reviews the actual fee.
+        const transactionFee = BigInt(MAX_TRANSACTION_GAS_LIMIT) * gasPrice * 2n;
+        const reserve = transactionFee * (mode === 'escape' ? 2n : 1n);
+        if (reserve >= 1n << 256n) throw new Error('Invalid wallet fee data.');
+        const balance = quantity(await this.ethereum.request({ method: 'eth_getBalance', params: [address, 'pending'] }));
+        await this.assertFundingChain();
+        const current = await this.ethereum.request({ method: 'eth_accounts' });
+        if (current?.[0]?.toLowerCase() !== address) throw new Error('MetaMask account changed. Check the fee again.');
+        return { address, chainId: Number(this.config.funding.chain_id), mode,
+            balanceWei: balance.toString(), feeReserveWei: reserve.toString(), transactionFeeWei: transactionFee.toString(),
+            shortfallWei: (reserve > balance ? reserve - balance : 0n).toString(), expiresAt: Date.now() + 30_000 };
+    }
+
+    async assertWithdrawalFunding(from, mode, reviewed = null) {
+        // Browser custody enforces its own reviewed allowance at the signing boundary.
+        if (typeof this.ethereum?.withAuthorizedAction === 'function') return;
+        const quote = await this.getWithdrawalFeeBudget(mode);
+        if (quote.address !== from.toLowerCase() || (reviewed && (quote.address !== reviewed.address
+            || quote.chainId !== reviewed.chainId || quote.mode !== reviewed.mode
+            || BigInt(quote.feeReserveWei) > BigInt(reviewed.feeReserveWei)))) {
+            throw Object.assign(new Error('MetaMask account or network fees changed. Review the withdrawal again.'), { code: 'withdrawal_fee_changed' });
+        }
+        if (quote.shortfallWei !== '0') {
+            throw Object.assign(new Error('Add ETH to your MetaMask account for the network fee before withdrawing.'), { code: 'withdrawal_insufficient_eth' });
+        }
+    }
+
+    async withdraw(mode, onStatus = () => {}, { destination, expectedWithdrawalOperationId = null, reviewedFunding = null } = {}) {`
+                },
+                {
+                    before: `        const operation = this.performWithdrawal(mode, onStatus, { destination, expectedWithdrawalOperationId });`,
+                    after: `        const operation = this.performWithdrawal(mode, onStatus, { destination, expectedWithdrawalOperationId, reviewedFunding });`
+                },
+                {
+                    before: `    async performWithdrawal(mode, onStatus = () => {}, { destination: requested, expectedWithdrawalOperationId = null } = {}) {`,
+                    after: `    async performWithdrawal(mode, onStatus = () => {}, { destination: requested, expectedWithdrawalOperationId = null, reviewedFunding = null } = {}) {`
+                },
+                {
+                    before: `        await this.settleActiveLease(onStatus);
+
+        onStatus('Connecting to MetaMask…');`,
+                    after: `        if (mode === 'escape' && this.browserMode) await browserWalletRuntime.assertEscapeReady();
+
+        onStatus('Connecting to MetaMask…');`
+                },
+                {
+                    before: `        if (prepared?.transaction_hash) mode = prepared.mode;`,
+                    after: `        if (prepared?.transaction_hash) mode = prepared.mode;
+        else {
+            await this.assertWithdrawalFunding(from, mode, reviewedFunding);
+            if (mode === 'mutual') await this.settleActiveLease(onStatus);
+        }`
+                },
+                {
+                    before: `        onStatus('Connecting to MetaMask for the set-aside balance…');
+        const from = await this.connectWallet();`,
+                    after: `        onStatus('Connecting to MetaMask for the set-aside balance…');
+        const from = await this.connectWallet();
+        await this.assertWithdrawalFunding(from, 'mutual');`
+                }
             ]
         },
+        {
+            file: 'sdk/services/browserWalletStore.js',
+            beforeSha256: '1a6ff5b9e23c56ee1eed87c35a2e8391d1fb30f9a0ee6d7fa2dffbedc598f48d',
+            afterSha256: '8c3642ed85c77783d334f20f76c4ac378bd2cdd39571b886ae8f07463bf26215',
+            replacements: [
+                {
+                    before: `    const previous = fallbackLock;
+    let release;
+    fallbackLock = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+    }`,
+                    after: `    // A tab-local promise cannot protect the shared IndexedDB wallet.
+    throw Object.assign(new Error('Private payments require a browser with Web Locks support. Update your browser before continuing.'), { code: 'wallet_lock_unavailable' });`
+                }
+            ]
+        }
     ]
 };

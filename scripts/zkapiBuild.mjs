@@ -15,7 +15,8 @@ const DEPLOYMENTS = {
     'fresh-20260928': { mainnet: freshMainnet, sepolia: freshSepolia },
     'fresh-20260930': { mainnet: resetMainnet, sepolia: resetSepolia }
 };
-const WALLET_STORE_SHA256 = '1a6ff5b9e23c56ee1eed87c35a2e8391d1fb30f9a0ee6d7fa2dffbedc598f48d';
+// Reviewed store after the fail-closed Web Locks compatibility patch.
+const WALLET_STORE_SHA256 = '8c3642ed85c77783d334f20f76c4ac378bd2cdd39571b886ae8f07463bf26215';
 
 function walletStorage(network, deployment) {
     if (deployment !== 'fresh-20260930') return null;

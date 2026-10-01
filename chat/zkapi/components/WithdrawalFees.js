@@ -1,16 +1,16 @@
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
-import { getWalletMethod } from '../services/walletMethod.mjs';
+import { withWalletProviderRead } from '../services/walletProviderAccess.mjs';
+import { getWalletMethod, prepareWalletMethod } from '../services/walletMethod.mjs';
 import { renderFundingWei } from './WalletMethodControls.js';
 
 export function withdrawalFeeScope(owner) {
-    return JSON.stringify([getWalletMethod(), addressFundingWallet.address,
+    return JSON.stringify([getWalletMethod(), getWalletMethod() === 'address' ? addressFundingWallet.address : zkapiClient.walletAddress,
         zkapiClient.config?.funding?.chain_id, zkapiClient.config?.funding?.contract_address,
         zkapiClient.note?.note_id, owner.withdrawMode]);
 }
 
 export function withdrawalFeeReady(owner) {
-    if (getWalletMethod() !== 'address') return true;
     const state = owner.withdrawalFees;
     return state?.scope === withdrawalFeeScope(owner) && !state.loading && !state.error
         && state.quote?.expiresAt > Date.now() && state.quote.shortfallWei === '0';
@@ -27,7 +27,7 @@ export function stopWithdrawalFees(owner) {
 
 export function needsWithdrawalFees(owner) {
     const prepared = zkapiClient.config?.prepared_withdrawal;
-    return owner.isOpen && ['balance', 'withdraw'].includes(owner.view) && getWalletMethod() === 'address'
+    return owner.isOpen && ['balance', 'withdraw'].includes(owner.view)
         && zkapiClient.note && !zkapiClient.activeLateWithdrawal
         && zkapiClient.withdrawal?.phase !== 'pending'
         && !prepared?.transaction_hash
@@ -45,17 +45,25 @@ export async function refreshWithdrawalFees(owner, { force = false } = {}) {
     owner.withdrawalFees = state;
     queueMicrotask(() => { if (owner.withdrawalFees === state && needsWithdrawalFees(owner)) owner.render(); });
     try {
-        const quote = await addressFundingWallet.getWithdrawalFeeBudget(owner.withdrawMode);
+        const quote = getWalletMethod() === 'address'
+            ? await addressFundingWallet.getWithdrawalFeeBudget(owner.withdrawMode)
+            : await withWalletProviderRead(zkapiClient, null, () => zkapiClient.getWithdrawalFeeBudget(owner.withdrawMode), {
+                isCurrent: () => owner.withdrawalFees === state && scope === withdrawalFeeScope(owner) && needsWithdrawalFees(owner)
+            });
         if (owner.withdrawalFees !== state || scope !== withdrawalFeeScope(owner) || !needsWithdrawalFees(owner)) return false;
         state.quote = quote;
         // A successful read resolves only a fee-read warning, never another
         // transaction error or an increased-fee approval requirement.
         if (owner.outcome?.withdrawalFeeIssue === 'address_fee_data') owner.clearTransientOutcome();
-    } catch {
-        state.error = 'Couldn’t check fees. Try again.';
+    } catch (error) {
+        state.disconnected = error.code === 'withdrawal_wallet_disconnected' || (getWalletMethod() === 'metamask' && !globalThis.ethereum);
+        state.error = state.disconnected ? 'Connect MetaMask to check the network fee.' : 'Couldn’t check fees. Try again.';
     } finally {
         state.loading = false;
         if (owner.withdrawalFees === state && scope === withdrawalFeeScope(owner) && needsWithdrawalFees(owner)) {
+            // A review must never become a silent dead end after background polling.
+            // Return to the form where the retry or top-up action is visible.
+            if (!withdrawalFeeReady(owner)) owner.withdrawalConfirmation = null;
             owner.render();
             owner.withdrawalFeeTimer = setTimeout(() => { void refreshWithdrawalFees(owner, { force: true }); }, 15_000);
             owner.withdrawalFeeTimer?.unref?.();
@@ -83,7 +91,6 @@ export function withdrawalFeeReceiptAmounts(quote) {
 }
 
 export function renderWithdrawalFees(owner) {
-    if (getWalletMethod() !== 'address') return '';
     const state = owner.withdrawalFees?.scope === withdrawalFeeScope(owner) ? owner.withdrawalFees : null;
     const quote = state?.quote;
     const receipt = quote ? withdrawalFeeReceiptAmounts(quote) : null;
@@ -106,14 +113,12 @@ export function renderWithdrawalFees(owner) {
             <div class="zkapi-fee-total"><dt>${short ? 'You need to add' : 'Still needed'}</dt><dd>${receipt ? amount(receipt.shortfall) : placeholder}</dd></div>
         </dl>
         <div class="zkapi-fee-result" ${expanded ? 'hidden' : ''}><p role="status" ${ready ? 'class="zkapi-fee-covered"' : ''}>${status}</p>
-            <div class="zkapi-fee-action" ${expanded ? 'hidden' : ''}>${expanded ? '' : state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button w-full" type="button">Try again</button>'
+            <div class="zkapi-fee-action" ${expanded ? 'hidden' : ''}>${expanded ? '' : state?.disconnected ? '<button data-withdrawal-wallet-connect class="zkapi-secondary-button w-full" type="button">Connect MetaMask</button>' : state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button w-full" type="button">Try again</button>'
                 : short ? `<button data-withdrawal-fee-topup class="zkapi-primary-button w-full" type="button" aria-expanded="${expanded}" ${checking ? 'disabled' : ''}>Add ${topUpAmount}</button>`
                 : '<button class="zkapi-secondary-button w-full" type="button" disabled style="visibility:hidden" aria-hidden="true" tabindex="-1">Add ETH</button>'}</div>
         </div>
         ${expanded ? `<div class="zkapi-fee-topup t-panel-slide" data-open="true">
-            <div class="zkapi-fee-send"><p class="zkapi-balance-caption">${short ? 'Send for network fees' : 'Available for network fees'}</p>
-                <p class="zkapi-fee-send-amount">${amount(short ? receipt.shortfall : receipt.available)}</p>
-                <p class="zkapi-helper">${escape(zkapiClient.networkName())}</p></div>
+            <div class="zkapi-fee-send"><p class="zkapi-fee-send-amount">${short ? 'Send' : 'Available'} ${amount(short ? receipt.shortfall : receipt.available)}</p></div>
             <div><p class="zkapi-fee-address-label">${short ? 'To this address' : 'Funding address'}</p>
                 <div class="zkapi-funding-address zkapi-fee-address">
                     <div class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" aria-label="Fee-paying address">${escape(quote.address.slice(0, 22))}<wbr>${escape(quote.address.slice(22))}</div>
@@ -131,6 +136,22 @@ export function renderWithdrawalFees(owner) {
 }
 
 export function attachWithdrawalFees(owner) {
+    owner.overlay.querySelector('[data-withdrawal-wallet-connect]')?.addEventListener('click', async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        let release;
+        try {
+            if (getWalletMethod() !== 'metamask') return;
+            release = await prepareWalletMethod();
+            await zkapiClient.connectWallet();
+            stopWithdrawalFees(owner);
+        } catch {
+            if (owner.withdrawalFees) owner.withdrawalFees.error = 'MetaMask was not connected. Try again when you’re ready.';
+        } finally {
+            release?.();
+            if (owner.isOpen) { void refreshWithdrawalFees(owner, { force: true }); owner.render(); }
+        }
+    });
     owner.overlay.querySelector('[data-withdrawal-fee-topup]')?.addEventListener('click', () => {
         const scope = withdrawalFeeScope(owner);
         owner.withdrawalFeeTopUp = scope;

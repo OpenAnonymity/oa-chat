@@ -5793,6 +5793,23 @@ checkout deployment and real sandbox-session checks. Independent review approved
 the disabled local implementation after configured-startup and Stripe CSP fixes.
 
 
+## 2026-09-30: Adversarial withdrawal safeguards and confirmation
+
+- MetaMask now shares the mandatory fee-readiness gate with Send ETH, including
+  SDK checks before settlement/server clearance and revalidation of the reviewed
+  account, chain and reserve. Existing submitted transactions retain recovery.
+- Browser wallet mutations fail closed without Web Locks. Node tests explicitly
+  preload a test-only lock implementation; this must never ship as a fallback.
+- Escape rejects unfinished leases/journals before wallet interaction and checks
+  again inside the preparation lock. The form explains the restriction and has
+  Update chat balance. A settled escape avoids server settlement. **Offline escape
+  with an unfinished key remains a protocol limitation**, not a repaired path.
+- Continue opens the requested warning with Continue/Cancel. If fee polling fails
+  or funds become insufficient there, review returns to the actionable fee form.
+- Payment history has a top back arrow; top-up uses one Send amount line; copied
+  addresses no longer acquire a container ring (keyboard focus stays visible).
+- See [payments](ZKAPI_PAYMENTS.md) for scope and remaining recovery limitation.
+
 ## 2026-09-30: Withdrawal fee review and strict payment-mode isolation
 
 - Send ETH withdrawal review now has one fee panel: conservative reserve,

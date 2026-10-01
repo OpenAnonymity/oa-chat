@@ -39,7 +39,7 @@ async function pristineFixture(t, { hoisted = false } = {}) {
 for (const hoisted of [false, true]) {
     test(`pristine ${hoisted ? 'hoisted consumer' : 'local'} SDK applies exactly the reviewed patch and repeated checks do not rewrite it`, async t => {
         const fixture = await pristineFixture(t, { hoisted });
-        assert.equal(await patchZkapiSdk(fixture.root), 2);
+        assert.equal(await patchZkapiSdk(fixture.root), patch.files.length);
         const mtimes = [];
         for (const file of patch.files) {
             const target = path.join(fixture.sdk, file.file);
@@ -86,7 +86,7 @@ test('recovery binding preserves Sepolia mutual authentication and password-free
     } };
     const client = new ZkapiClient();
     client.browserMode = true;
-    const options = { destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'saved-withdrawal' };
+    const options = { destination: `0x${'12'.repeat(20)}`, expectedWithdrawalOperationId: 'saved-withdrawal', reviewedFunding: null };
     const withdrawals = [];
     t.mock.method(client, 'performWithdrawal', async (mode, _status, received) => {
         withdrawals.push({ mode, ...received });

@@ -126,7 +126,11 @@ for (const mode of ['mutual', 'escape']) for (const timing of ['before preparati
         runtime.runtime = structuredClone(durable);
         runtime.init = async () => {};
         runtime.settleActiveLease = async () => {};
-        runtime.reload = async () => { runtime.runtime = structuredClone(durable); };
+        let reloads = 0;
+        runtime.reload = async () => {
+            if (mode === 'escape' && timing === 'during pending-lease recovery' && ++reloads === 2) durable.state.note_id = 8;
+            runtime.runtime = structuredClone(durable);
+        };
         runtime.recoverPendingLocked = async () => {
             if (timing === 'during pending-lease recovery') durable.state.note_id = 8;
         };
@@ -151,6 +155,8 @@ test('SDK withdrawal keeps the original note identity across a delayed wallet co
         zkapiClient.wallet = { note: { note_id: 8 } };
         return destination;
     });
+    t.mock.method(walletRuntime, 'assertEscapeReady', async () => {});
+    t.mock.method(zkapiClient, 'assertWithdrawalFunding', async () => {});
     t.mock.method(walletRuntime, 'currentPreparedWithdrawal', async () => null);
     t.mock.method(zkapiClient, 'readContractUint', async () => 1n);
     t.mock.method(walletRuntime, 'prepareWithdrawal', async (_mode, _destination, options) => {
@@ -188,7 +194,9 @@ for (const change of ['unknown retry', 'operation', 'destination', 'late attempt
             phase: 'prepared', submissionOutcome: 'retry_authorized',
             ambiguousSubmissions: [{ submissionId: 'another-tab-unknown-request' }]
         });
-        runtime.recoverPendingLocked = async () => { if (change === 'during recovery') makeUnknownRetry(); };
+        let guarded = false;
+        runtime.assertEscapeReady = async () => { if (change === 'during recovery') makeUnknownRetry(); guarded = true; };
+        runtime.recoverPendingLocked = async () => assert.fail('escape must not invoke server recovery');
         context.runtime = runtime;
         const choice = availableWithdrawalEscape(context);
         assert.ok(choice);

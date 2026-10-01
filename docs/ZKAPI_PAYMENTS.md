@@ -1,6 +1,6 @@
 ## Withdrawal fee preflight and OA isolation (2026-09-30)
 
-Send ETH withdrawals check public fee data and the pending ETH balance before
+Send ETH and MetaMask withdrawals check public fee data and the pending ETH balance before
 settling chat access, reserving server clearance, or preparing a withdrawal.
 The review shows a conservative fee reserve, available ETH, and a rounded-up
 six-decimal top-up. The fee-paying address appears only with that explanation
@@ -13,7 +13,29 @@ The reserve therefore covers the SDK's supported per-transaction gas ceiling at
 current Low fee rates, twice for escape. The reserve is not an exact fee or a
 charge; actual unused ETH remains browser-held. Escape finalization fees may
 change during the safety window. This intentionally overestimates rather than
-starting an underfunded close. MetaMask continues to quote and pay its own fees.
+starting an underfunded close. MetaMask uses twice the current gas price as
+headroom against the same SDK gas ceiling, checks the connected account and chain
+again, and still presents its own final transaction fee. Its reviewed reserve is
+rechecked in the SDK before settlement/clearance; a changed account, higher reserve,
+or insufficient pending ETH balance stops that attempt.
+
+Wallet mutations require Web Locks. Unsupported browsers fail closed instead of
+using a tab-local lock that could overwrite another tab's recovery journal.
+Tests explicitly install a Node-only lock harness; production has no fallback.
+
+Escape with an outstanding chat lease/receipt is **not server independent** in the
+pinned protocol. The SDK now checks this under its wallet lock before connecting
+the funding wallet or attempting recovery, preserves the lease/journal, and raises
+`escape_settlement_required`. The UI offers a separate Update chat balance action.
+A settled escape does not call server settlement/recovery. True offline escape
+with an unfinished lease still requires a protocol-level recovery design; never
+work around it by deleting a saved request or skipping its receipt.
+
+Fresh withdrawals show the irreversible-close warning only after Continue, with
+Continue and Cancel. A failed/underfunded background quote returns that review to
+the fee form with retry/top-up controls. History has a top back arrow; copying a
+fee address highlights only keyboard focus, not its container. Top-up instructions
+use a single Send amount line.
 
 Read-only checks refresh every 15 seconds; failed, stale, wrong-scope or pending
 checks cannot enable the action. A click checks again, and an increased reserve

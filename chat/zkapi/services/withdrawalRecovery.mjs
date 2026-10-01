@@ -54,3 +54,13 @@ export async function assertWithdrawalEscapeAvailable(expected, {
         }
     });
 }
+
+// An unfinished request cannot be erased to manufacture an offline escape.
+// Keep this visible before review, and recheck it inside the SDK's wallet lock.
+export function escapeNeedsSettlement() {
+    return zkapiClient.browserMode && Boolean(walletRuntime.runtime?.journal
+        || walletRuntime.runtime?.lease || walletRuntime.activeLease || zkapiClient.activeLease);
+}
+export async function assertEscapeReady() {
+    if (zkapiClient.browserMode) await walletRuntime.assertEscapeReady();
+}

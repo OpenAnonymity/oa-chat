@@ -5,6 +5,7 @@ import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import { availableWithdrawalEscape } from '../../chat/zkapi/services/withdrawalRecovery.mjs';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
+import { withdrawalFeeScope } from '../../chat/zkapi/components/WithdrawalFees.js';
 import { walletJourney } from '../../chat/zkapi/domain/walletJourney.js';
 
 const destination = `0x${'a'.repeat(40)}`;
@@ -25,6 +26,10 @@ function fixture(t, { prepared = null, balance = note.current_balance, native = 
         withdrawMode: 'mutual', journeyKind: null, journeyLast: null,
         overlay: { querySelector: () => null, querySelectorAll: () => [] },
         escapeHtml: value => String(value ?? '') });
+    Object.assign(modal, { isOpen: true, walletMethodReady: true, render() {} });
+    const quote = { address: destination, chainId: 1, mode: 'mutual', balanceWei: '100', feeReserveWei: '10', shortfallWei: '0', expiresAt: Date.now() + 30000 };
+    modal.withdrawalFees = { scope: withdrawalFeeScope(modal), quote };
+    t.mock.method(zkapiClient, 'getWithdrawalFeeBudget', async mode => ({ ...quote, mode }));
     return modal;
 }
 
@@ -177,6 +182,7 @@ function submissionFixture(t) {
 test('a refresh while waiting for the wallet cannot silently switch the chosen withdrawal mode', async t => {
     const modal = submissionFixture(t);
     modal.withdrawMode = 'escape';
+    modal.withdrawalFees.scope = withdrawalFeeScope(modal);
     modal.run = async (action, details) => {
         assert.equal(details.kind, 'escape');
         modal.withdrawMode = 'mutual';
@@ -199,7 +205,7 @@ test('a new private balance arriving during settlement cannot inherit the old wi
     assert.equal(withdraw.mock.callCount(), 0);
 });
 
-test('escape Continue carries the captured operation and destination through settlement into the SDK', async t => {
+test('escape Continue carries the captured operation and destination without server settlement into the SDK', async t => {
     const modal = interruptedMutual(t);
     const previousManifest = walletRuntime.manifest;
     walletRuntime.manifest = { deployment_id: 'host-escape-options' };
@@ -214,10 +220,13 @@ test('escape Continue carries the captured operation and destination through set
     });
     modal.withdrawalEscapeIntent = availableWithdrawalEscape();
     modal.withdrawMode = 'escape';
+    modal.withdrawalFees.scope = withdrawalFeeScope(modal);
     modal.run = async action => action(() => {});
     const withdraw = t.mock.method(zkapiClient, 'withdraw', async (mode, _report, options) => {
         assert.equal(mode, 'escape');
-        assert.deepEqual(options, { destination, expectedWithdrawalOperationId: 'withdraw-7' });
+        assert.equal(options.destination, destination);
+        assert.equal(options.expectedWithdrawalOperationId, 'withdraw-7');
+        assert.ok(options.reviewedFunding);
         return { status: 'submitted' };
     });
     await modal.submitWithdrawal();

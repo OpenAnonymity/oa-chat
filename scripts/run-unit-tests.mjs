@@ -90,6 +90,7 @@ child.on('exit', async (code, signal) => {
     // package resolution. Run them in isolated processes so their browser
     // shims cannot replace the legacy suite's shared globals.
     const payments = spawn(process.execPath, [
+        '--import', path.join(paymentTestsRoot, 'support/web-locks.mjs'),
         '--test', '--test-force-exit', '--test-concurrency=1', ...paymentTestFiles
     ], { stdio: 'inherit', cwd: repoRoot });
     payments.on('error', error => { console.error(error); process.exit(1); });
