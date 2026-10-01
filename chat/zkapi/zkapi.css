@@ -2382,3 +2382,47 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 
 #zkapi-history-back { flex: none; margin-right: .25rem; }
 .zkapi-dialog-head:has(#zkapi-history-back) .zkapi-dialog-title { flex: 1; }
+
+/* Ethereum wallet: the transfer as details (2026-10-01). Rows share one
+   label column and one icon column, so values line up; hairlines group them. */
+.zkapi-transfer { display: flex; flex-direction: column; border-top: 1px solid hsl(var(--color-foreground) / 0.08); }
+.zkapi-transfer > .zkapi-transfer-row,
+.zkapi-transfer > .zkapi-transfer-disclosure { border-bottom: 1px solid hsl(var(--color-foreground) / 0.08); }
+.zkapi-transfer-row { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) 2rem; align-items: center; gap: 0.5rem; min-height: 3rem; }
+.zkapi-transfer-label { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; }
+.zkapi-transfer-value { min-width: 0; padding-block: 0.625rem; font-size: 0.875rem; line-height: 1.35; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.zkapi-transfer-value small { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; white-space: nowrap; }
+.zkapi-transfer-muted { color: hsl(var(--color-muted-foreground)); }
+.zkapi-transfer-control { display: grid; justify-items: end; }
+.zkapi-transfer-address { display: block; min-width: 0; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.8125rem; line-height: 1.45; color: hsl(var(--color-muted-foreground)); word-break: break-all; border-radius: 0.25rem; outline: none; }
+.zkapi-transfer-address b { color: hsl(var(--color-foreground)); font-weight: 500; }
+html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 0 2px hsl(var(--color-focus-ring)); }
+.zkapi-icon-button { display: inline-grid; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 0; border-radius: 0.5rem; background: transparent; color: hsl(var(--color-muted-foreground)); cursor: pointer; transition: background-color 120ms var(--zkapi-ease), color 120ms var(--zkapi-ease), transform 120ms var(--zkapi-ease); }
+.zkapi-icon-button:hover:not(:disabled), .zkapi-icon-button[aria-expanded="true"] { background: hsl(var(--color-foreground) / 0.06); color: hsl(var(--color-foreground)); }
+.zkapi-icon-button:active:not(:disabled) { transform: scale(0.94); }
+.zkapi-icon-button[data-funding-copy-amount][data-copied="true"] .zkapi-copy-face[data-face="copied"],
+.zkapi-icon-button[data-funding-copy][data-copied="true"] .zkapi-copy-face[data-face="copied"] { color: hsl(var(--color-success, 142 60% 40%)); }
+.zkapi-transfer-icon { width: 0.9375rem; height: 0.9375rem; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.zkapi-transfer-note { margin: 0 0 0.75rem; padding-left: 7rem; color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; line-height: 1.45; text-wrap: pretty; }
+.zkapi-transfer-qr { display: flex; align-items: center; gap: 1rem; padding: 0.25rem 0 0.875rem; }
+.zkapi-transfer-qr .zkapi-funding-qr svg { width: 7rem; }
+.zkapi-transfer-qr p { margin: 0; color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; line-height: 1.45; text-wrap: pretty; }
+.zkapi-transfer-qr p b { display: block; margin-bottom: 0.125rem; color: hsl(var(--color-foreground)); font-weight: 500; }
+.zkapi-funding-wait { display: flex; align-items: center; justify-content: center; gap: 0.625rem; min-height: 2.75rem; margin: 0; color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; font-variant-numeric: tabular-nums; text-align: center; text-wrap: balance; }
+.zkapi-funding-next-pending { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; }
+.zkapi-fee-hint { margin: 0.5rem 0 0; color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; line-height: 1.45; text-wrap: pretty; }
+.zkapi-fee-hint b { color: hsl(var(--color-foreground)); font-weight: 500; font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) {
+    .zkapi-transfer-row { grid-template-columns: 5.75rem minmax(0, 1fr) 2rem; }
+    .zkapi-transfer-note { padding-left: 0; }
+    .zkapi-transfer-qr .zkapi-funding-qr svg { width: 6rem; }
+}
+
+/* Right after a deposit: one confirmation, then Start chatting. */
+.zkapi-deposit-done { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; padding: 0.75rem 0 0.25rem; text-align: center; }
+.zkapi-done-check { display: grid; place-items: center; width: 2.75rem; height: 2.75rem; margin-bottom: 0.5rem; border-radius: 9999px; color: hsl(var(--color-success, 142 60% 38%)); background: hsl(var(--color-success, 142 60% 38%) / 0.14); }
+.zkapi-done-check svg { width: 1.375rem; height: 1.375rem; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.zkapi-done-title { margin: 0; font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; font-variant-numeric: tabular-nums; }
+.zkapi-done-sub { margin: 0; color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; text-wrap: balance; font-variant-numeric: tabular-nums; }
+.zkapi-done-actions { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+.zkapi-done-actions .zkapi-primary-button { height: 2.5rem; }

@@ -791,6 +791,17 @@ export default class AccountModal {
     }
 
     recordDepositConfirmation(result) {
+        // The success screen names the fee left at the funding address, so
+        // read it once (the funding poll has stopped with the deposit).
+        this.depositLeftoverWei = null;
+        this.depositDoneShown = false;
+        if (getWalletMethod() === 'address') {
+            Promise.resolve().then(() => addressFundingWallet.getStatus()).then(status => {
+                if (!/^\d+$/.test(String(status?.ethBalance))) return;
+                this.depositLeftoverWei = String(status.ethBalance);
+                if (this.isOpen && !this.busy) this.render();
+            }).catch(() => { /* No leftover line is better than a wrong one. */ });
+        }
         this.depositBalanceRefreshPending = result?.balanceRefreshPending === true;
         this.confirmedDepositNoteId = this.depositBalanceRefreshPending ? Number(result.noteId) : null;
         this.syncConfirmedDepositBalance();
@@ -1250,6 +1261,30 @@ export default class AccountModal {
             : withdrawalPhase === 'awaiting_wallet' ? 'MetaMask may still be open. Open the withdrawal to check it.'
             : withdrawalPhase === 'ambiguous' ? 'MetaMask did not return a transaction. Open the withdrawal to check it.'
             : 'Withdrawal paused. This balance is reserved and cannot be used for chat. Open the withdrawal to review the network fee and next step.';
+        // Right after a deposit: one confirmation and Start chatting. It is
+        // shown once (closing the dialog clears the outcome); View balance or
+        // reopening shows the balance as usual.
+        if (this.outcome?.tone === 'success' && this.outcome.message === DEPOSIT_READY_LINE && !this.busy && !claimed && !withdrawing) {
+            const leftoverWei = this.depositLeftoverWei;
+            let leftover = '';
+            if (/^\d+$/.test(String(leftoverWei))) {
+                try {
+                    const usd = zkapiClient.formatMoney((BigInt(leftoverWei) / 1_000_000_000n).toString());
+                    if (usd && usd !== '—' && Number(String(usd).replace(/[^0-9.]/g, '')) >= 0.005) leftover = usd;
+                } catch { /* Leave the line out rather than guess. */ }
+            }
+            return `<div class="zkapi-stack">
+                <section class="zkapi-deposit-done" role="status" aria-live="polite">
+                    <span class="zkapi-done-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path pathLength="1" d="M6.5 12.5l3.6 3.6 7.4-8.2"/></svg></span>
+                    <p class="zkapi-done-title">${this.escapeHtml(zkapiClient.formatMoney(note.deposit_amount))} added to your private balance</p>
+                    ${leftover ? `<p class="zkapi-done-sub">${this.escapeHtml(leftover)} network fee left over · saved for your next deposit</p>` : ''}
+                </section>
+                <div class="zkapi-done-actions">
+                    <button id="zkapi-done-start-btn" class="zkapi-primary-button w-full" type="button">Start chatting</button>
+                    <button id="zkapi-done-balance-btn" class="zkapi-quiet-button" type="button">View balance</button>
+                </div>
+            </div>`;
+        }
         return `
             <div class="zkapi-stack">
                 <div class="zkapi-balance-card">
@@ -1792,6 +1827,21 @@ export default class AccountModal {
         this.overlay.querySelector('#zkapi-mint-token-btn')?.addEventListener('click', () => this.run(async (report) => {
             await zkapiClient.mintDemoTokens('10', report);
         }, { kind: 'token', title: 'Getting test ZKAPI', phase: 'wallet' }));
+        this.overlay.querySelector('#zkapi-done-start-btn')?.addEventListener('click', () => { if (!this.busy) this.close(); });
+        this.overlay.querySelector('#zkapi-done-balance-btn')?.addEventListener('click', () => {
+            if (this.busy) return;
+            this.clearTransientOutcome();
+            this.render();
+        });
+        // The check draws once, not on every background re-render.
+        const doneCheck = this.overlay.querySelector('.zkapi-done-check');
+        if (doneCheck && !this.depositDoneShown) {
+            this.depositDoneShown = true;
+            if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+                doneCheck.animate?.([{ transform: 'scale(0.8)', opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+                doneCheck.querySelector('path')?.animate?.([{ strokeDashoffset: 1 }, { strokeDashoffset: 0 }], { duration: 360, delay: 140, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'backwards' });
+            }
+        }
         this.overlay.querySelector('#zkapi-refresh-btn')?.addEventListener('click', () => this.run(async (report) => {
             report('Updating balance…', 'syncing');
             await zkapiClient.refresh();

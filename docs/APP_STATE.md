@@ -6285,3 +6285,31 @@ colors. Loading spinners and normal OA access-key controls are unchanged.
   a full-width 32px bar; hover changes the label colour only (the hover fill made
   both halves look selected). The address option is labelled "Ethereum wallet".
   The sliding pill and `data-from` mechanics are unchanged.
+
+## 2026-10-01: Ethereum wallet funding as transfer details; quiet waiting line; deposit success
+
+- **Rows instead of a QR-and-heading block.** `renderFundingAccount` (quoted and
+  loading states) draws `.zkapi-transfer`: Deposit · Network fee "up to $X" (its
+  ⓘ opens the fee note) · Send / Still to send / Received (copy ETH amount) ·
+  Your address (whole address, ends bold, copy) · Network (its icon opens the
+  QR). The fee note and QR use the same accordion/state path as the other rows
+  (`fundingFeeOpen`, `fundingQrOpen`, cleared by `stopFundingFlow`). The
+  Transaction breakdown row is no longer shown in the funding view.
+- **One slot at the bottom.** While waiting it is a quiet line (`.zkapi-funding-wait`):
+  "Waiting for your ETH · usually under a minute", "Received A ETH · send B more",
+  "Network fee went up · amount updated", "Checking your deposit address…". When
+  enough has arrived it is the Deposit button (`data-funding-next`); funded but
+  with a stale quote it is a disabled "Updating network fee…" button with no
+  `data-funding-next`. No dead, unexplained Deposit button.
+- **The shown total holds still.** `owner.fundingShownTotal` keeps the total (and
+  the QR amount) while it still covers deposit + today's required fee; it changes
+  only when it would fall short (`fundingFeeUpAt` drives the notice for 6 s).
+  Deposit authorization is unchanged: it still needs `flow.ready` and a fresh quote.
+- **Fee hint.** Under the amount, Ethereum wallet only, before any ETH arrives,
+  when the fee reserve is over 25% of the deposit.
+- **Success.** After a deposit confirms, the balance view first shows one
+  confirmation ("$X added to your private balance", the leftover fee at the
+  funding address when it would not read $0.00, Start chatting / View balance).
+  The leftover is read once with `addressFundingWallet.getStatus()` in
+  `recordDepositConfirmation`, since the funding poll stops with the deposit.
+  Closing the dialog clears the outcome, so it shows once.

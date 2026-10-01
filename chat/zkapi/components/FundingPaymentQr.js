@@ -45,11 +45,11 @@ function qrSvg(uri) {
     return svg;
 }
 
-export function renderFundingPaymentQr({ address, chainId, amountWei }) {
+export function renderFundingPaymentQr({ address, chainId, amountWei, caption = true }) {
     const uri = fundingPaymentUri({ address, chainId, amountWei });
     if (!uri) return '';
     return `<figure class="zkapi-funding-qr" data-funding-payment-qr>
         ${qrSvg(uri)}
-        <figcaption>Scan with your phone’s wallet</figcaption>
+        ${caption ? '<figcaption>Scan with your phone’s wallet</figcaption>' : ''}
     </figure>`;
 }
