@@ -861,6 +861,10 @@ export function captureWalletView(owner) {
         // Fee/balance callbacks may render again after the password action's
         // own completion render. Preserve only a currently focused trigger;
         // never retain this intent after focus moves to another control.
+        withdrawalFeeControl: owner.isOpen && root.contains?.(active)
+            ? active?.matches?.('[data-withdrawal-fee-copy]') ? 'copy'
+                : active?.matches?.('[data-withdrawal-fee-refresh]') ? 'refresh' : null
+            : null,
         passwordTriggerFocused: owner.isOpen && root.contains?.(active)
             && active?.matches?.('[data-funding-testnet-password]') === true,
         // Keep the actual editable node through balance refreshes. Replacing a
@@ -892,6 +896,9 @@ export function restoreWalletView(owner, saved) {
     }
     if (saved.passwordTriggerFocused && owner.isOpen) {
         owner.overlay.querySelector('[data-funding-testnet-password]')?.focus?.({ preventScroll: true });
+    }
+    if (owner.isOpen && ['copy', 'refresh'].includes(saved.withdrawalFeeControl)) {
+        owner.overlay.querySelector(`[data-withdrawal-fee-${saved.withdrawalFeeControl}]`)?.focus?.({ preventScroll: true });
     }
     const scroller = owner.overlay.querySelector('[data-funding-scroll]');
     if (scroller && saved.scroll != null) scroller.scrollTop = saved.scroll;

@@ -21,6 +21,8 @@ export function stopWithdrawalFees(owner) {
     owner.withdrawalFeeTimer = null;
     owner.withdrawalFees = null;
     owner.withdrawalFeeTopUp = null;
+    owner.withdrawalTopUpReveal = null;
+    owner.cancelTopUpMotion?.();
 }
 
 export function needsWithdrawalFees(owner) {
@@ -108,7 +110,7 @@ export function renderWithdrawalFees(owner) {
                 : short ? `<button data-withdrawal-fee-topup class="zkapi-primary-button w-full" type="button" aria-expanded="${expanded}" ${checking ? 'disabled' : ''}>Add ${topUpAmount}</button>`
                 : '<button class="zkapi-secondary-button w-full" type="button" disabled style="visibility:hidden" aria-hidden="true" tabindex="-1">Add ETH</button>'}</div>
         </div>
-        ${expanded ? `<div class="zkapi-fee-topup">
+        ${expanded ? `<div class="zkapi-fee-topup t-panel-slide" data-open="true">
             <div class="zkapi-fee-send"><p class="zkapi-balance-caption">${short ? 'Send for network fees' : 'Available for network fees'}</p>
                 <p class="zkapi-fee-send-amount">${amount(short ? receipt.shortfall : receipt.available)}</p>
                 <p class="zkapi-helper">${escape(zkapiClient.networkName())}</p></div>
@@ -132,6 +134,7 @@ export function attachWithdrawalFees(owner) {
     owner.overlay.querySelector('[data-withdrawal-fee-topup]')?.addEventListener('click', () => {
         const scope = withdrawalFeeScope(owner);
         owner.withdrawalFeeTopUp = scope;
+        owner.withdrawalTopUpReveal = { scope };
         owner.render();
     });
     owner.overlay.querySelector('[data-withdrawal-fee-refresh]')?.addEventListener('click', () => {

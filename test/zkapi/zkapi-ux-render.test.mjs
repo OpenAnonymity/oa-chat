@@ -1859,7 +1859,7 @@ test('capsule uses static hold and error endpoints without implying accepted suc
 
 test('message recovery controls have a visible busy state and reduced motion keeps pending copy readable', () => {
     const css = fs.readFileSync(new URL('../../chat/zkapi/zkapi.css', import.meta.url), 'utf8');
-    const reducedMotion = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
+    const reducedMotion = (css.match(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/g) || []).join('\n');
 
     assert.doesNotMatch(css, /\.user-delivery-(?:row|details|glyph|label|popover|actions)/);
     assert.doesNotMatch(css, /zkapiReceiptOrbit/);

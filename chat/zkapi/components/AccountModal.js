@@ -1,7 +1,8 @@
+import { revealWithdrawalTopUp } from './WalletModalMotion.js';
 import { statusIcon } from './StatusIcon.js';
 import { attachWithdrawalFees, needsWithdrawalFees, refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady } from './WithdrawalFees.js';
 import { fundingDisclosure, attachFundingDisclosures, captureFundingDisclosureView, restoreFundingDisclosureView } from './FundingDisclosures.js';
-import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
+import { showSurface, hideSurface, revealText, motionDuration } from '../../ui/uiMotion.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { settlePrivateAccess } from '../services/privateAccessSettlement.js';
 import { availableWithdrawalEscape, sameWithdrawalEscape, assertWithdrawalEscapeAvailable, canCancelPreparedWithdrawal } from '../services/withdrawalRecovery.mjs';
@@ -146,6 +147,8 @@ export default class AccountModal {
     // old height to the new one, and the dialog stays centred while it does,
     // instead of jumping. The scroll area holds still until it lands.
     glideDialogHeight(from) {
+        this.dialogHeightAnimation?.cancel?.();
+        this.dialogHeightAnimation = null;
         const panel = this.overlay?.querySelector?.('.zkapi-dialog');
         if (!from || typeof panel?.animate !== 'function' || typeof panel.getBoundingClientRect !== 'function') return;
         if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
@@ -154,10 +157,15 @@ export default class AccountModal {
         const scroll = panel.querySelector('[data-funding-scroll]');
         if (scroll?.style) scroll.style.overflowY = 'hidden';
         const glide = panel.animate([{ height: `${from}px` }, { height: `${to}px` }],
-            { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
-        const settle = () => { if (scroll?.style) scroll.style.overflowY = ''; };
+            { duration: motionDuration(panel, '--resize-dur', 300), easing: panel.ownerDocument?.defaultView?.getComputedStyle?.(panel).getPropertyValue('--resize-ease').trim() || 'cubic-bezier(0.22, 1, 0.36, 1)' });
+        this.dialogHeightAnimation = glide;
+        const settle = () => {
+            if (scroll?.style) scroll.style.overflowY = '';
+            if (this.dialogHeightAnimation === glide) this.dialogHeightAnimation = null;
+        };
         glide.onfinish = settle;
         glide.oncancel = settle;
+        return glide;
     }
 
     /** Which page the dialog shows. A deposit keeps one page from its first
@@ -166,6 +174,12 @@ export default class AccountModal {
         const pending = zkapiClient.config?.pending_deposit;
         if (!zkapiClient.note && (this.depositInMotion()
             || ['submitted', 'dropped_or_pending', 'awaiting_wallet', 'ambiguous'].includes(pending?.phase))) return 'deposit-progress';
+        if (this.view === 'withdraw') {
+            const stage = this.withdrawalConfirmation ? 'confirmation'
+                : zkapiClient.withdrawal?.phase === 'pending' ? 'escape-wait'
+                : zkapiClient.config?.prepared_withdrawal || this.busy && ['withdraw', 'escape'].includes(this.journeyKind) ? 'progress' : 'form';
+            return `withdraw:${stage}`;
+        }
         return `${this.view}:${zkapiClient.note ? 'balance' : 'funding'}:${this.depositBalanceRefreshPending ? 'refreshing' : ''}`;
     }
 
@@ -175,7 +189,7 @@ export default class AccountModal {
         if (typeof content?.animate !== 'function') return;
         if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
         content.animate([{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
-            { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
+            { duration: motionDuration(content, '--modal-open-dur', 250), easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
     }
 
     handleDisclosureMotion(animating) {
@@ -351,6 +365,7 @@ export default class AccountModal {
         this.withdrawalSubmitGeneration = (this.withdrawalSubmitGeneration || 0) + 1;
         this.withdrawalConfirmation = null;
         stopWithdrawalFees(this);
+        this.dialogHeightAnimation?.cancel?.();
         this.isOpen = false;
         this.renderedMarkup = null;
         this.renderedPage = null;
@@ -1702,8 +1717,9 @@ export default class AccountModal {
         restoreFundingDisclosureView(this.overlay, disclosureView);
         restoreWalletView(this, walletView);
         finishWalletModalRestore(this, { hydrating: isFundingViewHydrating(this), method: getWalletMethod() });
-        this.glideDialogHeight(previousHeight);
+        const layoutAnimation = this.glideDialogHeight(previousHeight);
         if (pageChanged) this.fadeInPage();
+        revealWithdrawalTopUp(this, layoutAnimation);
         this.rememberRunningModal();
         attachWithdrawalFees(this);
         this.overlay.querySelector('#zkapi-payment-close')?.addEventListener('click', () => this.close());

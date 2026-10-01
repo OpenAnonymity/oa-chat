@@ -1,3 +1,17 @@
+## 2026-09-30: Withdrawal reveal and modal motion
+
+- Add ETH softly reveals its stacked details, then scrolls only the dialog and
+  only enough to show them after the height transition finishes. Taller sections
+  align at the amount. Copy receives keyboard focus without jumping the scroll.
+- The reveal is an explicit, scoped, one-shot intent. Background renders can
+  carry it forward; later fee polls never replay it. Wheel, touch, key or pointer
+  interaction interrupts the pending scroll, and close/scope changes cancel it.
+- Modal resize uses the shared motion duration, cancels interrupted animations,
+  and restores overflow on finish/cancel. Withdrawal form, confirmation, progress
+  and escape waiting are separate page transitions; fee refreshes are not.
+- Reduced motion skips the reveal/resize/page movement and uses instant minimal
+  scrolling. Existing shared modal entry/exit and inert close behavior remain.
+
 ## 2026-09-30: Compact withdrawal review
 
 - Withdrawal review uses smaller type and spacing, a compact receipt, and ETH

@@ -1036,3 +1036,9 @@ Withdrawal review has compact type, spacing and receipt rows. The desktop frame
 keeps its width when Add ETH expands below the receipt. The original stacked
 Inline arrangement is used on all screens, with scroll retained when needed. Escape wording uses the configured
 duration in “It takes … to finish.” Fee and destination gates are unchanged.
+
+Add ETH reveals its stacked panel and, after the modal settles, scrolls its own
+content only when the controls would be clipped. User navigation, close and fee
+scope changes cancel pending scrolling. Polling never replays this click intent.
+Reduced motion uses immediate visibility; withdrawal page changes share the
+modal transition timing without affecting validation, signing or recovery.
