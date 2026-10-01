@@ -1,3 +1,15 @@
+## 2026-10-01: Mainnet endpoint hostname
+
+The `fresh-20260930` Mainnet profile now uses
+`https://zkapi-mainnet.openanonymity.ai` for its manifest, protocol and indexer.
+The former `mainnet.100.21.48.23.sslip.io` hostname fails TLS and causes the
+Commercial `/zkapi-deployment/config.json` rewrite to return 502, blocking
+previous-key settlement during SDK initialization. Both emitted browser pins
+and generated Vercel rewrites must be rebuilt together. This is a hostname
+change only: deployment ID, contract, signing keys, proof hashes and the
+`zkapi-browser-wallet-fresh-20260930-mainnet-v1` database stay unchanged.
+Do not reset browser recovery records or switch deployments to repair it.
+
 ## 2026-10-01: Choose Google unlock before opening native passkey prompts
 
 Returning Google keyrings now show **Use saved passkey** explicitly, plus

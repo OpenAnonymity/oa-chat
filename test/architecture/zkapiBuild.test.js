@@ -141,6 +141,11 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
                 network === 'mainnet' ? 'https://54.67.93.98.sslip.io' : 'https://52.52.207.206.sslip.io');
         }
         assert.equal(result.deployment, deployment);
+        if (deployment === 'fresh-20260930' && network === 'mainnet') {
+            assert.equal(config.deployment_manifest_url, 'https://zkapi-mainnet.openanonymity.ai/config.json');
+            assert.equal(config.trusted_deployment.contract_address, '0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe');
+            assert.equal(config.trusted_deployment.protocol_server_url, 'https://zkapi-mainnet.openanonymity.ai');
+        }
         assert.deepEqual(result.manifest, manifest);
         assert.equal(manifest.deployment, deployment);
         for (const [relative, hash] of Object.entries(manifest.files)) {

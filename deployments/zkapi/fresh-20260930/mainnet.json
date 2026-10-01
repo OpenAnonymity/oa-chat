@@ -1,15 +1,15 @@
 {
-  "deployment_manifest_url": "https://mainnet.100.21.48.23.sslip.io/config.json",
+  "deployment_manifest_url": "https://zkapi-mainnet.openanonymity.ai/config.json",
   "allowed_deployment_manifest_urls": [
-    "https://mainnet.100.21.48.23.sslip.io/config.json"
+    "https://zkapi-mainnet.openanonymity.ai/config.json"
   ],
   "trusted_deployment": {
     "deployment_id": "zkapi-native-eth-mainnet-note-bound-v1-fresh-20260930",
     "chain_id": 1,
     "contract_address": "0x4386FDbdA35D995beB3BF8625118Ec5982ec81fe",
     "billing_token_address": null,
-    "protocol_server_url": "https://mainnet.100.21.48.23.sslip.io",
-    "indexer_url": "https://mainnet.100.21.48.23.sslip.io",
+    "protocol_server_url": "https://zkapi-mainnet.openanonymity.ai",
+    "indexer_url": "https://zkapi-mainnet.openanonymity.ai",
     "request_charge_cap": 50000,
     "state_signing_key": {
       "x": "0x2094c5f9e183a8aef5be682556a17aa4dbafdb03fd6e6a97d75a03efed2fe5a4",
