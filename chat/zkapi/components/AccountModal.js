@@ -562,7 +562,7 @@ export default class AccountModal {
                 <section class="zkapi-figure-block" aria-label="Deposit in progress">
                     <p class="zkapi-balance-caption">Deposit</p>
                     ${amount ? `<p class="zkapi-balance-amount">${this.escapeHtml(amount)}</p>` : ''}
-                    <p class="zkapi-meta">Saved in this browser. Closing or reloading loses nothing.</p>
+                    <p class="zkapi-meta">Saved in this browser.</p>
                 </section>
                 ${this.renderJourney(journey)}
                 <div class="zkapi-actions"><button class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label>${this.busyLabel(journey)}</span></button><button id="zkapi-deposit-dismiss-btn" class="zkapi-quiet-button" type="button" disabled>Close</button></div>
@@ -1143,7 +1143,7 @@ export default class AccountModal {
                         <section class="zkapi-figure-block" aria-label="Deposit in progress">
                             <p class="zkapi-balance-caption">Deposit</p>
                             <p class="zkapi-balance-amount">${zkapiClient.formatMoney(pendingDeposit.amount)}</p>
-                            <p class="zkapi-meta">Saved in this browser. Closing or reloading loses nothing.</p>
+                            <p class="zkapi-meta">Saved in this browser.</p>
                         </section>
                         ${this.renderJourney(pendingJourney, { detail: this.busy ? '' : pendingDetail })}
                         ${this.renderOutcome()}
