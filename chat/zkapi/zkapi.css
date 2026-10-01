@@ -2447,3 +2447,21 @@ html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 
 .zkapi-swap-text > span { grid-area: 1 / 1; transition: opacity 180ms var(--zkapi-ease), filter 180ms var(--zkapi-ease), transform 200ms var(--zkapi-ease); }
 .zkapi-swap-text > span[data-off] { opacity: 0; filter: blur(2px); transform: translateY(-3px); pointer-events: none; transition-duration: 120ms; }
 @media (prefers-reduced-motion: reduce) { .zkapi-swap-text > span { transform: none !important; transition-duration: 60ms; } }
+
+/* Loading without the jolt: placeholders hold each value's place, the
+   figures fade in where they were, and the fee hint opens rather than
+   pushing everything down at once. */
+.zkapi-skel { display: inline-block; height: 0.75rem; max-width: 100%; vertical-align: -0.0625rem; border-radius: 0.25rem; background: linear-gradient(90deg, hsl(var(--color-foreground) / 0.06) 0%, hsl(var(--color-foreground) / 0.11) 50%, hsl(var(--color-foreground) / 0.06) 100%); background-size: 200% 100%; animation: zkapiSkel 1.4s ease-in-out infinite; }
+@keyframes zkapiSkel { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.zkapi-transfer.is-revealing .zkapi-transfer-value,
+.zkapi-funding-wait.is-revealing > span:last-child { animation: zkapiValueIn 420ms var(--zkapi-ease) both; animation-delay: var(--zkapi-reveal-delay, 0ms); }
+@keyframes zkapiValueIn { from { opacity: 0; filter: blur(3px); transform: translateY(2px); } to { opacity: 1; filter: none; transform: none; } }
+.zkapi-fee-hint-wrap { display: grid; grid-template-rows: 1fr; }
+.zkapi-fee-hint-wrap > .zkapi-fee-hint { min-height: 0; overflow: hidden; margin: 0; padding-top: 0.5rem; }
+.zkapi-fee-hint-wrap.is-entering { animation: zkapiHintOpen 520ms var(--zkapi-ease) both; animation-delay: var(--zkapi-reveal-delay, 0ms); }
+@keyframes zkapiHintOpen { from { grid-template-rows: 0fr; opacity: 0; } 40% { opacity: 0; } to { grid-template-rows: 1fr; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .zkapi-skel { animation: none; }
+    .zkapi-transfer.is-revealing .zkapi-transfer-value, .zkapi-funding-wait.is-revealing > span:last-child { animation-duration: 1ms; }
+    .zkapi-fee-hint-wrap.is-entering { animation: none; }
+}

@@ -55,6 +55,10 @@ export function stopFundingFlow(owner, { preserveAmount = false } = {}) {
     owner.fundingQrOpen = false;
     owner.fundingFeeOpen = false;
     owner.fundingReturnPartial = false;
+    owner.fundingRevealPending = false;
+    owner.fundingRevealAt = null;
+    owner.fundingFeeHintAt = null;
+    owner.fundingLastHintUsd = null;
     owner.fundingShownTotal = null;
     owner.fundingFeeUpAt = 0;
     owner.disposeFundingHelp?.();
@@ -334,6 +338,21 @@ const QR_FACES = '<svg class="zkapi-copy-face" data-face="copy" viewBox="0 0 16 
 const FEE_NOTE = 'Moving ETH into your private balance is subject to a network fee. Any leftover fee stays at your deposit address and goes toward your next deposit.';
 
 // One line of the transfer details: label, value, an optional icon control.
+// While the estimate loads, rows hold quiet placeholders the size of the
+// value, so nothing moves when the figures arrive.
+const REVEAL_MS = 600;
+function skeleton(width, label) {
+    return `<span class="zkapi-skel" style="width:${width}" aria-hidden="true"></span><span class="zkapi-visually-hidden">${label}</span>`;
+}
+
+// The dialog re-renders with innerHTML, so an entrance animation restarts on
+// every render. A negative delay set from when it began lets a re-render
+// pick it up where it was instead of replaying it.
+function revealAttrs(at, className) {
+    const age = at ? Date.now() - at : Infinity;
+    return age < REVEAL_MS ? { cls: ` ${className}`, style: ` style="--zkapi-reveal-delay:-${Math.max(0, age)}ms"` } : { cls: '', style: '' };
+}
+
 function transferRow(label, value, control = '', className = '') {
     return `<div class="zkapi-transfer-row${className ? ` ${className}` : ''}"><span class="zkapi-transfer-label">${label}</span><span class="zkapi-transfer-value">${value}</span><span class="zkapi-transfer-control">${control}</span></div>`;
 }
@@ -475,8 +494,20 @@ export function renderDepositAmount(owner) {
     // it is a large share. Say so under the amount, before they send.
     const hintArrived = /^\d+$/.test(String(flow?.status?.ethBalance)) && BigInt(flow.status.ethBalance) > 0n;
     const hintFee = local && !saved && !flow?.dirty && !hintArrived ? (flow?.fee || flow?.displayQuote) : null;
-    const hintUsd = hintFee && flow?.intent && BigInt(hintFee.feeReserveWei) * 4n > BigInt(flow.intent.depositWei) ? fundingUsdValue(hintFee.feeReserveWei) : null;
-    const feeHint = hintUsd ? `<p class="zkapi-fee-hint" data-funding-fee-hint>Network fee is up to <b>${owner.escapeHtml(hintUsd)}</b>. It’s about the same whatever amount you send.</p>` : '';
+    let hintUsd = hintFee && flow?.intent && BigInt(hintFee.feeReserveWei) * 4n > BigInt(flow.intent.depositWei) ? fundingUsdValue(hintFee.feeReserveWei) : null;
+    // While the amount is being edited the estimate is stale; keep the last
+    // hint rather than collapsing it on every keystroke. A new hint opens.
+    if (hintUsd) {
+        if (!owner.fundingFeeHintAt) owner.fundingFeeHintAt = Date.now();
+        owner.fundingLastHintUsd = hintUsd;
+    } else if (local && !saved && flow?.dirty && owner.fundingLastHintUsd) {
+        hintUsd = owner.fundingLastHintUsd;
+    } else {
+        owner.fundingFeeHintAt = null;
+        owner.fundingLastHintUsd = null;
+    }
+    const hintReveal = revealAttrs(owner.fundingFeeHintAt, 'is-entering');
+    const feeHint = hintUsd ? `<div class="zkapi-fee-hint-wrap${hintReveal.cls}"${hintReveal.style}><p class="zkapi-fee-hint" data-funding-fee-hint>Network fee is up to <b>${owner.escapeHtml(hintUsd)}</b>. It’s about the same whatever amount you send.</p></div>` : '';
     // The amount is the figure, as in the funded view: "$ 5.00  USD ⇄".
     const width = Math.max(3, String(amount ?? '').length + 0.5);
     return `<section class="zkapi-deposit-amount" aria-label="${saved ? 'Saved deposit amount' : 'Deposit amount'}">
@@ -606,13 +637,17 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const addressValue = `<span id="zkapi-funding-address" data-funding-address class="zkapi-transfer-address" role="textbox" aria-readonly="true" tabindex="0" spellcheck="false" aria-label="This browser’s receiving address">${escape(addressText)}</span>`;
     const addressCopy = `<button data-funding-copy class="zkapi-icon-button zkapi-copy-button" type="button" aria-label="Copy address" title="Copy address" data-copied="${owner.addressCopied ? 'true' : 'false'}">${COPY_FACES}</button>`;
     const depositUsd = intent ? fundingUsdValue(intent.depositWei) : null;
-    const depositRow = transferRow('Deposit', intent ? escape(depositUsd || `${formatFundingAmount(intent.depositWei, 18)} ETH`) : '—');
+    // Loading → quoted: the figures fade in where the placeholders were.
+    if (funding && !quoted && !failed) owner.fundingRevealPending = true;
+    else if (quoted && owner.fundingRevealPending) { owner.fundingRevealPending = false; owner.fundingRevealAt = Date.now(); }
+    const reveal = revealAttrs(quoted ? owner.fundingRevealAt : null, 'is-revealing');
+    const depositRow = transferRow('Deposit', intent ? escape(depositUsd || `${formatFundingAmount(intent.depositWei, 18)} ETH`) : skeleton('3.5rem', 'Loading'));
     const feeUsd = displayFee ? fundingUsdValue(displayFee.feeReserveWei) : null;
     const feeRow = displayFee
         ? transferDisclosure(owner, 'fee', 'Network fee', `up to ${escape(feeUsd || `${formatFundingAmount(displayFee.feeReserveWei, 18)} ETH`)}`, 'About the network fee', INFO_ICON, `<p class="zkapi-transfer-note">${FEE_NOTE}</p>`)
-        : transferRow('Network fee', `<span class="zkapi-transfer-muted">${failed ? 'Estimate unavailable' : 'Estimating…'}</span>`);
+        : transferRow('Network fee', failed ? '<span class="zkapi-transfer-muted">Estimate unavailable</span>' : skeleton('5rem', 'Estimating…'));
     const received = availableKnown && BigInt(available) > 0n;
-    const sendRow = !quoted ? transferRow('Send', '<span class="zkapi-transfer-muted">—</span>')
+    const sendRow = !quoted ? transferRow('Send', failed ? '<span class="zkapi-transfer-muted">—</span>' : skeleton('8.5rem', 'Loading'))
         : displayedRequiredCovered ? transferRow('Received', `${escape(receivedEthText(available))} ETH`)
             : remaining == null ? transferRow('Send', '<span class="zkapi-transfer-muted">—</span>')
             : transferRow(received ? 'Still needed' : 'Send',
@@ -623,12 +658,12 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         ? transferDisclosure(owner, 'qr', 'Network', escape(network), owner.fundingQrOpen ? 'Hide QR code' : 'Show QR code', QR_FACES,
             `<div class="zkapi-transfer-qr">${qr}<p><b>Scan to pay from your phone</b>Open your wallet app and scan. It fills in your deposit address and the exact amount.</p></div>`)
         : transferRow('Network', escape(network));
-    const transfer = `<div class="zkapi-transfer" data-funding-transfer>${depositRow}${feeRow}${sendRow}${addressRow}${networkRow}</div>
+    const transfer = `<div class="zkapi-transfer${reveal.cls}"${reveal.style} data-funding-transfer>${depositRow}${feeRow}${sendRow}${addressRow}${networkRow}</div>
         <span class="zkapi-visually-hidden" role="status" data-funding-copy-status></span>
         <p data-funding-notice class="zkapi-helper zkapi-funding-notice" role="status">${owner.fundingNoticeScope === 'return' || (owner.fundingNoticeScope === 'pending' && wallet.hasPendingTransaction) ? '' : escape(owner.fundingNotice || '')}</p>`;
     // One place at the bottom: a quiet line while waiting, which becomes the
     // Deposit button once enough ETH has arrived. Never a dead, unexplained button.
-    const waitLine = text => `<p class="zkapi-funding-wait" role="status">${SPINNER}<span>${text}</span></p>`;
+    const waitLine = text => `<p class="zkapi-funding-wait${reveal.cls}"${reveal.style} role="status">${SPINNER}<span>${text}</span></p>`;
     const footer = wallet.hasPendingTransaction || failed ? ''
         : !quoted ? waitLine(escape(fundingLoading))
             : ready ? `<button data-funding-next class="zkapi-primary-button w-full" type="button" ${disabled ? 'disabled' : ''}>Deposit</button>`

@@ -1386,13 +1386,18 @@ test('while the amount to send is being worked out, the rows hold their places a
     assert.match(loading, /Estimating the deposit network fee/);
     assert.match(loading, /data-funding-transfer/);
     assert.match(transferValue(loading, 'Network fee'), /Estimating…/);
-    assert.match(transferValue(loading, 'Send'), /—/);
+    assert.match(transferValue(loading, 'Send'), /class="zkapi-skel"/, 'a placeholder holds the value’s place');
+    assert.doesNotMatch(loading, /zkapi-transfer is-revealing/, 'nothing to reveal yet');
     assert.doesNotMatch(loading, /data-funding-next\b|data-funding-payment-qr/, 'nothing can authorize a deposit yet');
 
     Object.assign(owner, { fundingFlow: quotedFlow() });
     const quoted = controls.renderFundingAccount(owner);
     assert.match(quoted, /data-funding-payment-qr/);
     assert.match(quoted, /data-funding-help="qr" data-open="false"/, 'the QR waits under the Network row');
+    assert.match(quoted, /class="zkapi-transfer is-revealing" style="--zkapi-reveal-delay:-\d+ms"/, 'the figures fade in where the placeholders were');
+    assert.match(controls.renderFundingAccount(owner), /zkapi-transfer is-revealing/, 'a re-render mid-way continues the fade');
+    owner.fundingRevealAt -= 1000;
+    assert.doesNotMatch(controls.renderFundingAccount(owner), /is-revealing/, 'and later renders are still');
 
     Object.assign(owner, { fundingFlow: quotedFlow({ ready: true, remainingWei: '0', status: { ethBalance: '5500000000000000' } }) });
     const funded = controls.renderFundingAccount(owner);
@@ -1425,6 +1430,9 @@ test('the fee hint sits under the amount only when the fee is over a quarter of 
     small.intent = { ...small.intent, depositWei: '1000000000000000' };
     owner.fundingFlow = small;
     assert.match(controls.renderFundingAccount(owner), /<p class="zkapi-fee-hint" data-funding-fee-hint>Network fee is up to <b>\$2\.59<\/b>\. It’s about the same whatever amount you send\.<\/p>/);
+    assert.match(controls.renderFundingAccount(owner), /zkapi-fee-hint-wrap is-entering/, 'the hint opens instead of appearing at full height');
+    owner.fundingFeeHintAt -= 1000;
+    assert.doesNotMatch(controls.renderFundingAccount(owner), /is-entering/);
 });
 
 test('the QR fades in once when it replaces its placeholder, not on later renders', () => {
