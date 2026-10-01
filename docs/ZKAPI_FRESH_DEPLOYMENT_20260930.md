@@ -18,8 +18,11 @@ old browser data is retained, without a recovery UI or automatic migration.
 - Elastic IP `100.21.48.23`; Ubuntu 24.04 ARM64, `t4g.large`, encrypted 80 GiB
   gp3 disk, IMDSv2, 8 GiB swap. SSH is limited to the workstation's `/32`; only
   TCP 443 is public. SSH fingerprint matched AWS console output before access.
-- Origins: `https://mainnet.100.21.48.23.sslip.io` and
-  `https://sepolia.100.21.48.23.sslip.io`. Both TLS certificates are issued.
+- Canonical origins: `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai`, both pointing to the same Elastic IP.
+  The original `mainnet.100.21.48.23.sslip.io` and
+  `sepolia.100.21.48.23.sslip.io` hosts remain compatibility aliases with their
+  original manifest URLs for already-pinned clients.
 - Both stacks and shared TLS are running: eleven containers in total. Networks
   use separate Compose projects, Docker networks, `/etc/zkapi/<network>` and
   `/var/lib/zkapi/<network>`. Gateways bind loopback ports 8081/8082; daemon and
@@ -58,6 +61,27 @@ old browser data is retained, without a recovery UI or automatic migration.
 The us-west-1 launch was refused by its vCPU quota; no VM was started there.
 Unused security-group and EC2 key-pair objects from that attempt were removed.
 Quota-increase requests alone do not represent deployment.
+
+## Canonical hostname migration
+
+The September 30 profile now pins the new `zkapi-mainnet.openanonymity.ai` and
+`zkapi-sepolia.openanonymity.ai` service names. DNS points both to `100.21.48.23`.
+Only manifest, protocol and indexer URLs change; deployment IDs, vaults, signing
+keys, proving hashes and chain configuration remain identical. Build output and
+Vercel rewrites derive from the same reviewed profile. The twelve focused
+profile/build/storage tests pass after the URL change.
+
+Keep the existing frontend origins and wallet database names: changing backend
+hostnames does not require resetting browser storage. Funding signer scope is
+chain/vault/asset, and private note/history scope uses the existing deployment ID.
+The old service names retain their matching manifests for compatibility; they
+must not redirect signed requests or silently substitute a different deployment.
+
+TLS activation and the website rollout are tracked separately from this source
+change. Preserve each site's current frontend revision when changing only its
+backend URLs; a shared core pin can otherwise revert concurrent UI updates.
+The original acceptance results below describe their recorded builds and are
+not a claim of another funded test after changing hostnames.
 
 ## Keys and funding
 

@@ -149,6 +149,14 @@ Mainnet profile; see [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md)
 
 ### September 30 clean-reset profile
 
+The canonical service origins are `https://zkapi-mainnet.openanonymity.ai` and
+`https://zkapi-sepolia.openanonymity.ai`. The hostname migration changes only the
+reviewed manifest/protocol/indexer URLs. It retains the September 30 deployment
+IDs, vaults, signing/proof pins, browser database names and funding-address scopes.
+The websites retain their existing origins, so their browser-local wallets and
+transaction journals remain available. Historical profiles retain their original
+servers; do not substitute a hostname whose manifest describes a different vault.
+
 `OA_ZKAPI_DEPLOYMENT=fresh-20260930` selects the live September 30 Mainnet or
 Sepolia pins. Both finalized vaults and isolated services on the new AWS VM passed
 independent acceptance; the existing Sepolia and Mainnet staging sites now use

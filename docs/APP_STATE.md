@@ -1,3 +1,18 @@
+## 2026-09-30: Canonical zkAPI domain configuration
+
+- The `fresh-20260930` profiles now select
+  `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai` for manifest, protocol and indexer
+  requests. Generated Vercel rewrites use the same selected profile.
+- This is an origin change within the existing September 30 deployments:
+  contract addresses, deployment IDs, signing/proof pins and wallet databases
+  are unchanged. The funding signer scope remains chain/vault/asset, while
+  private-note history remains scoped by deployment ID. Keep the frontend
+  hostnames unchanged to retain their IndexedDB state.
+- Server TLS and frontend promotion are separate operational steps. The
+  [deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md) records rollout status;
+  the original funded acceptance below remains tied to its tested build.
+
 ## 2026-09-30: Repeatable complete local v2 lifecycle acceptance passed
 
 - Run `npm run test:e2e:v2` in `/Users/mingyech/repo/zkapi`. The
