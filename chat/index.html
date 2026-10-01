@@ -86,6 +86,40 @@
         })();
     </script>
     <script>
+        // Tooltip warm-up (see "When tooltips open" in styles.css). After a
+        // tooltip has been visible, html[data-tooltip-warm] stays set for a
+        // short window so the next tooltip opens without its delay.
+        (function () {
+            const root = document.documentElement;
+            const OPEN_DELAY = 500;
+            const WARM_WINDOW = 300;
+            const HOSTS = '[data-tooltip], [data-tooltip-host], .sidebar-toggle-btn, .sidebar-filter-btn';
+            let enteredAt = 0;
+            let coolTimer = 0;
+            const hostOf = node => (node && node.closest ? node.closest(HOSTS) : null);
+            document.addEventListener('pointerover', event => {
+                if (event.pointerType === 'touch') return;
+                const host = hostOf(event.target);
+                if (!host || host.contains(event.relatedTarget)) return;
+                enteredAt = performance.now();
+                clearTimeout(coolTimer);
+            }, true);
+            document.addEventListener('pointerout', event => {
+                if (event.pointerType === 'touch') return;
+                const host = hostOf(event.target);
+                if (!host || host.contains(event.relatedTarget)) return;
+                if (!root.hasAttribute('data-tooltip-warm') && performance.now() - enteredAt < OPEN_DELAY) return;
+                root.setAttribute('data-tooltip-warm', '');
+                clearTimeout(coolTimer);
+                coolTimer = setTimeout(() => root.removeAttribute('data-tooltip-warm'), WARM_WINDOW);
+            }, true);
+            document.addEventListener('pointerdown', () => {
+                clearTimeout(coolTimer);
+                root.removeAttribute('data-tooltip-warm');
+            }, true);
+        })();
+    </script>
+    <script>
         // Apply left sidebar state immediately to prevent flash
         (function () {
             try {

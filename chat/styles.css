@@ -4346,11 +4346,6 @@ html[data-left-sidebar-closing="true"] #sidebar [data-tooltip]:hover::before {
     height: 36px;
 }
 .sidebar-header-actions { padding-left: 36px; }
-/* Bring the trash glyph toward the toggle without overlapping their hit areas. */
-.sidebar-header-actions #delete-history-btn {
-    justify-content: flex-start;
-    padding-left: 2px;
-}
 .sidebar-header-actions #new-chat-btn { min-width: 0; }
 .sidebar-header-actions #new-chat-btn > span { white-space: nowrap; }
 .left-sidebar-toggle-space {
@@ -9203,6 +9198,27 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 [data-tooltip]:hover::before,
 .chat-mode-html-tooltip::before,
 .sidebar-toggle-tooltip::before { display: none !important; }
+/* When tooltips open. Passing over a control shows nothing: the first
+   tooltip waits --tooltip-open-delay. Once one has been seen, the next one
+   within a moment opens at once and without motion (html[data-tooltip-warm],
+   set by the inline script in index.html), so scanning a toolbar stays quick.
+   Keyboard focus is not delayed. */
+:root { --tooltip-open-delay: 500ms; }
+@media (hover: hover) and (pointer: fine) {
+    [data-tooltip]:hover::after,
+    .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
+    #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
+        animation-delay: var(--tooltip-open-delay);
+        animation-fill-mode: backwards;
+    }
+    html[data-tooltip-warm] [data-tooltip]:hover::after,
+    html[data-tooltip-warm] .sidebar-toggle-btn:hover .sidebar-toggle-tooltip,
+    html[data-tooltip-warm] #show-sidebar-btn:hover .sidebar-toggle-tooltip,
+    html[data-tooltip-warm] .sidebar-filter-btn:hover:not([aria-expanded="true"]) .sidebar-toggle-tooltip {
+        animation: none;
+    }
+}
 /* Position: to the left of the element, centred on it. For controls at
    the edge of a clipping container (the toolbar's payment method marks):
    a tooltip below would be cut off, one beside never leaves the row. */
