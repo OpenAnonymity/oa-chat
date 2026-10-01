@@ -244,6 +244,12 @@ async function applyPreferences(preferences) {
             applied.push('searchEnabled');
         }
 
+        if ('openZooLeCoreContextRecallEnabled' in preferences) {
+            await chatDB.saveSetting('openZooLeCoreContextRecallEnabled',
+                preferences.openZooLeCoreContextRecallEnabled === true);
+            applied.push('openZooLeCoreContextRecallEnabled');
+        }
+
         const importedMemoryState = resolveImportedMemoryPreferences({
             preferences,
             currentMemoryFeatureEnabled: await chatDB.getSetting('memoryFeatureEnabled'),

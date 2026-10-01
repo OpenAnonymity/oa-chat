@@ -94,6 +94,11 @@ async function collectPreferencesFromIndexedDB() {
             preferences.searchEnabled = searchEnabled;
         }
 
+        const openZooLeCoreContextRecallEnabled = await chatDB.getSetting('openZooLeCoreContextRecallEnabled');
+        if (openZooLeCoreContextRecallEnabled !== undefined) {
+            preferences.openZooLeCoreContextRecallEnabled = openZooLeCoreContextRecallEnabled === true;
+        }
+
         const memoryMode = await chatDB.getSetting('memoryMode');
         if (memoryMode !== undefined) {
             preferences.memoryMode = memoryMode;

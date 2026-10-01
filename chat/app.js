@@ -2872,6 +2872,7 @@ class ChatApp {
         const settingsPromise = Promise.all([
             chatDB.getSetting('selectedModel'),
             chatDB.getSetting('searchEnabled'),
+            chatDB.getSetting('openZooLeCoreContextRecallEnabled'),
             chatDB.getSetting('memoryFeatureEnabled'),
             chatDB.getSetting('memoryMode'),
             chatDB.getSetting('memoryAutoInclude'),
@@ -2897,6 +2898,7 @@ class ChatApp {
         const [
             storedModelPreference,
             savedSearchEnabled,
+            savedOpenZooLeCoreContextRecallEnabled,
             savedMemoryFeatureEnabled,
             savedMemoryMode,
             savedMemoryAutoInclude,
@@ -2922,6 +2924,7 @@ class ChatApp {
 
         // Restore search state
         this.searchEnabled = savedSearchEnabled !== undefined ? savedSearchEnabled : true;
+        this.inferenceService.setLeCoreEnabled?.(savedOpenZooLeCoreContextRecallEnabled === true);
         const resolvedMemoryFeatureState = resolveMemoryFeatureStateValue({
             savedMemoryFeatureEnabled,
             savedMemoryMode
@@ -2968,6 +2971,7 @@ class ChatApp {
         this.renderMessages();
         this.renderCurrentModel();
         this.chatInput.updateSearchToggleUI();
+        this.chatInput.refreshLeCoreSettingsUI();
         this.chatInput.updateMemoryToggleUI();
         this.chatInput.refreshMemorySettingsUI();
         this.chatInput.updateReasoningToggleUI();

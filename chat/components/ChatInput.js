@@ -113,6 +113,7 @@ export default class ChatInput {
         this.updateMemoryToggleUI();
         this.refreshMultiModelSettingsUI();
         this.refreshMemorySettingsUI();
+        this.refreshLeCoreSettingsUI();
         this.app.memoryEditor?.handleFeatureAvailabilityChanged?.();
     }
 
@@ -390,6 +391,20 @@ export default class ChatInput {
             searchSettingToggle.addEventListener('click', async (event) => {
                 event.stopPropagation();
                 await toggleSearch();
+            });
+        }
+
+        const leCoreToggle = document.getElementById('openzoo-lecore-toggle');
+        if (leCoreToggle) {
+            leCoreToggle.addEventListener('click', async (event) => {
+                event.stopPropagation();
+                const inference = this.app.services?.inference;
+                if (typeof inference?.setLeCoreEnabled !== 'function'
+                    || typeof inference?.isLeCoreEnabled !== 'function') return;
+                const enabled = inference.isLeCoreEnabled() !== true;
+                inference.setLeCoreEnabled(enabled);
+                this.refreshLeCoreSettingsUI();
+                await this.app.data.saveSetting('openZooLeCoreContextRecallEnabled', enabled);
             });
         }
 
@@ -787,6 +802,7 @@ export default class ChatInput {
         this.setupMemoryFeatureToggle();
         this.setupMemoryAutoIncludeToggle();
         this.refreshMemorySettingsUI();
+        this.refreshLeCoreSettingsUI();
 
         // Initialize scrubber hint visibility
         this.updateScrubberHintVisibility();
@@ -1994,6 +2010,19 @@ export default class ChatInput {
         if (!available) toggle.dataset.tooltip = reason;
     }
 
+    refreshLeCoreSettingsUI() {
+        const toggle = document.getElementById('openzoo-lecore-toggle');
+        if (!toggle) return;
+        const inference = this.app.services?.inference;
+        const available = typeof inference?.setLeCoreEnabled === 'function'
+            && typeof inference?.isLeCoreEnabled === 'function';
+        this.updateSwitchToggleUI(toggle, available && inference.isLeCoreEnabled() === true,
+            'OpenZoo leCore context recall is on', 'OpenZoo leCore context recall is off');
+        toggle.disabled = !available;
+        toggle.setAttribute('aria-disabled', String(!available));
+        this.markSwitchAvailability(toggle, available, 'Local context recall is unavailable in this chat mode.');
+    }
+
     refreshMemorySettingsUI() {
         const memorySupported = this.supportsFeature('memory');
         const memoryFeatureEnabled = this.isMemoryAvailable();
@@ -3140,6 +3169,12 @@ export default class ChatInput {
     async applyImportedRuntimePreferences(appliedPreferences = []) {
         if (!Array.isArray(appliedPreferences) || appliedPreferences.length === 0) return;
         const applied = new Set(appliedPreferences);
+
+        if (applied.has('openZooLeCoreContextRecallEnabled')) {
+            const enabled = await this.app.data.getSetting('openZooLeCoreContextRecallEnabled');
+            this.app.services?.inference?.setLeCoreEnabled?.(enabled === true);
+            this.refreshLeCoreSettingsUI();
+        }
 
         if (applied.has('memoryFeatureEnabled') || applied.has('memoryMode')) {
             const storedMemoryFeatureEnabled = await this.app.data.getSetting('memoryFeatureEnabled');

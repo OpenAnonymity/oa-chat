@@ -65,6 +65,71 @@ test('inference registries are isolated and preserve backend defaults', async ()
     assert.throws(() => createInferenceService({ backends: [backend, backend] }), /unique/);
 });
 
+test('leCore recall covers ticket and zkAPI streams and strict completions when enabled', async () => {
+    const calls = [];
+    const input = [{ role: 'user', content: 'original' }];
+    const recalled = [{ role: 'user', content: 'recalled' }];
+    const backends = ['openrouter', 'zkapi'].map(id => ({
+        id,
+        getAccessToken: () => `${id}-access`,
+        streamCompletion: (messages, modelId, token) => {
+            calls.push({ id, kind: 'stream', messages, modelId, token });
+            return Promise.resolve();
+        },
+        sendCompletionStrict: (messages, modelId, token) => {
+            calls.push({ id, kind: 'strict', messages, modelId, token });
+            return Promise.resolve({ content: 'answer' });
+        }
+    }));
+    let transforms = 0;
+    const service = createInferenceService({ backends, leCoreTransform: messages => {
+        transforms += 1;
+        assert.equal(messages, input);
+        return { messages: recalled };
+    } });
+    for (const id of ['openrouter', 'zkapi']) {
+        const session = { inferenceBackend: id };
+        await service.streamCompletion(input, 'test/model', session, () => {});
+        await service.sendCompletionStrict(input, 'test/model', session);
+    }
+    assert.equal(transforms, 0);
+    assert.ok(calls.every(call => call.messages === input));
+
+    service.setLeCoreEnabled(true);
+    assert.equal(service.isLeCoreEnabled(), true);
+    calls.length = 0;
+    for (const id of ['openrouter', 'zkapi']) {
+        const session = { inferenceBackend: id };
+        await service.streamCompletion(input, 'test/model', session, () => {});
+        await service.sendCompletionStrict(input, 'test/model', session);
+    }
+    assert.equal(transforms, 4);
+    assert.ok(calls.every(call => call.messages === recalled));
+    assert.deepEqual(calls.map(call => call.token), [
+        'openrouter-access', 'openrouter-access', 'zkapi-access', 'zkapi-access'
+    ]);
+
+    await service.streamCompletion(input, 'test/model', { inferenceBackend: 'openrouter' },
+        () => {}, null, [{ name: 'attachment.txt' }]);
+    assert.equal(calls.at(-1).messages, input, 'attachments keep the original context');
+    assert.equal(transforms, 4);
+});
+
+test('leCore retrieval errors fall back to original inference context', async () => {
+    let received;
+    const service = createInferenceService({
+        backends: [{
+            id: 'backend', getAccessToken: () => 'access',
+            sendCompletionStrict: messages => { received = messages; return Promise.resolve({}); }
+        }],
+        leCoreEnabled: true,
+        leCoreTransform: () => { throw new Error('retrieval failed'); }
+    });
+    const input = [{ role: 'user', content: 'keep me' }];
+    await service.sendCompletionStrict(input, 'model', {});
+    assert.equal(received, input);
+});
+
 test('ordinary OpenRouter requests retain direct provider URL and bearer key', async () => {
     const transport = transportWithResponse();
     const api = new OpenRouterAPI({ networkTransport: transport });

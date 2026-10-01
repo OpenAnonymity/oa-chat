@@ -1,3 +1,21 @@
+## 2026-10-01: OpenZoo leCore context recall setting
+
+- The Tools settings panel offers **OpenZoo leCore context recall**, off by
+  default. Its preference is stored in the browser's `settings` IndexedDB store
+  as `openZooLeCoreContextRecallEnabled` and restored on startup before the
+  inference service handles a user turn.
+- The switch calls `inferenceService.setLeCoreEnabled()` immediately. It is
+  disabled in product runtimes without that capability. This selects relevant
+  earlier chat context locally for long conversations and adds no separate
+  network request; it does not enable OA's independent saved-memory feature.
+- Full data export includes the preference, and importing it applies the switch
+  to the live inference service without a page reload.
+- The visible description links to `https://openzoo.fun/`. The switch remains
+  keyboard accessible and exposes its state through `aria-checked`.
+- Retrieval abstains on weak one-term matches. Temporal history questions and
+  queries longer than 4,096 characters retain the full chat request, since
+  selecting an earlier exchange from a partial query can omit the answer.
+
 ## 2026-10-01: Stable zkAPI deployment configuration paths
 
 - Public network pins now live directly at `deployments/zkapi/mainnet.json` and

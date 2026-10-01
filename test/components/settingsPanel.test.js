@@ -46,7 +46,7 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
         'Share feedback',
         'Scrubber model',
         'Save memories', 'Always attach retrieval', 'Memory model',
-        'Web search', 'Council review', 'Council model', 'Effort'
+        'Web search', 'OpenZoo leCore context recall', 'Council review', 'Council model', 'Effort'
     ]);
     // Memory export/import work whether Memory is on or off: the memories
     // are the person's data either way.
@@ -60,6 +60,8 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
         assert.doesNotMatch(body, /memoryFeatureEnabled === false/, `${fn} does not gate on the toggle`);
     }
     assert.match(panel, /<input type="file" id="tickets-import-input"/);
+    assert.match(panel, /id="openzoo-lecore-toggle"[^>]*role="switch"[^>]*aria-describedby="openzoo-lecore-description"/);
+    assert.match(panel, /href="https:\/\/openzoo\.fun\/"[^>]*rel="noopener noreferrer"/);
     // Export / Import are text actions; the pickers' file inputs sit beside them, once.
     for (const action of ['export-all-data', 'import-data', 'export-chats', 'import-history', 'export-memory', 'import-memory']) {
         assert.match(panel, new RegExp(`<button type="button" data-action="${action}"[^>]*class="settings-text-action"`), action);
