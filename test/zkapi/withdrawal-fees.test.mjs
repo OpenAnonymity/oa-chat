@@ -4,7 +4,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { getWalletMethod, setWalletMethod } from '../../chat/zkapi/services/walletMethod.mjs';
-import { refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady, withdrawalFeeReceiptAmounts } from '../../chat/zkapi/components/WithdrawalFees.js';
+import { refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady, withdrawalFeeReceiptAmounts, attachWithdrawalFees } from '../../chat/zkapi/components/WithdrawalFees.js';
 
 const address = `0x${'1'.repeat(40)}`;
 function fixture(t) {
@@ -130,7 +130,7 @@ test('shortfall shows Add ETH and reveals transfer instructions on request', asy
     assert.doesNotMatch(renderWithdrawalFees(owner), /Fee-paying address/);
     owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
     assert.match(renderWithdrawalFees(owner), /Fee-paying address/);
-    assert.match(renderWithdrawalFees(owner), /Check for ETH/);
+    assert.match(renderWithdrawalFees(owner), /Check now/);
     assert.match(renderWithdrawalFees(owner), /class="zkapi-fee-action" hidden/);
     assert.doesNotMatch(renderWithdrawalFees(owner), /Hide address|data-withdrawal-fee-topup/);
     owner.withdrawalFees.error = 'Couldn’t check fees. Try again.';
@@ -239,7 +239,7 @@ test('receipt uses the screenshot amounts and removes the paid-separately paragr
     assert.match(html, />Add 0\.00106 ETH<\/button>/);
     assert.doesNotMatch(html, /Paid separately|fee allowance|unused ETH/);
     owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
-    assert.match(renderWithdrawalFees(owner), /Send 0\.00106 ETH/);
+    assert.match(renderWithdrawalFees(owner), /zkapi-fee-send-amount">0\.00106 ETH/);
 });
 
 test('rounded receipt subtraction always equals its safe top-up recommendation', () => {
@@ -254,3 +254,47 @@ test('rounded receipt subtraction always equals its safe top-up recommendation',
         }
     }
 });
+
+
+test('expanded inline top-up stays open after enough ETH arrives and reports failed reads honestly', async t => {
+    const { owner, quote } = fixture(t);
+    quote.balanceWei = '0'; quote.shortfallWei = quote.feeReserveWei;
+    await refreshWithdrawalFees(owner);
+    owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
+    let html = renderWithdrawalFees(owner);
+    assert.match(html, /Send for network fees/);
+    assert.match(html, /Waiting for your transfer/);
+    assert.match(html, /aria-label="Copy funding address"/);
+    assert.doesNotMatch(html, /then check again:|Hide address/);
+    quote.balanceWei = quote.feeReserveWei; quote.shortfallWei = '0';
+    await refreshWithdrawalFees(owner, { force: true });
+    html = renderWithdrawalFees(owner);
+    assert.match(html, /Available for network fees/);
+    assert.match(html, /Fee-paying address/);
+    assert.match(html, /You have enough ETH for fees/);
+    assert.doesNotMatch(html, /Send for network fees|Waiting for your transfer/);
+    owner.withdrawalFees.error = 'Couldn’t check fees. Try again.';
+    html = renderWithdrawalFees(owner);
+    assert.match(html, /Couldn’t check fees/);
+    assert.doesNotMatch(html, /You have enough ETH for fees/);
+    assert.equal((html.match(/data-withdrawal-fee-refresh/g)||[]).length, 1);
+});
+
+for (const failure of [false, true]) {
+    test(`inline copy ${failure ? 'failure gives selectable fallback' : 'copies the exact funding address'}`, async t => {
+        const { owner } = fixture(t);
+        await refreshWithdrawalFees(owner);
+        const feedback = { textContent: '' };
+        const button = { dataset: {}, setAttribute(name,value) { this[name] = value; }, addEventListener(type,handler) { this[type] = handler; } };
+        owner.overlay.querySelector = selector => selector === '[data-withdrawal-fee-copy]' ? button : selector === '[data-withdrawal-fee-copy-status]' ? feedback : null;
+        let copied;
+        const original = Object.getOwnPropertyDescriptor(globalThis,'navigator');
+        Object.defineProperty(globalThis,'navigator',{ configurable:true, value:{ clipboard:{ async writeText(text) { if(failure) throw Error('Clipboard unavailable'); copied=text; } } } });
+        t.after(()=>{if(original)Object.defineProperty(globalThis,'navigator',original);else delete globalThis.navigator;});
+        attachWithdrawalFees(owner);
+        await button.click({ currentTarget:button });
+        assert.equal(copied, failure ? undefined : address);
+        assert.match(feedback.textContent, failure ? /Select the address/ : /Address copied/);
+        assert.equal(button.dataset.copied, failure ? undefined : 'true');
+    });
+}

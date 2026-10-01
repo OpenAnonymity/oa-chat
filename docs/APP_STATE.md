@@ -1,3 +1,15 @@
+## 2026-09-30: Inline withdrawal top-up matches the app theme
+
+- The selected Inline details show the amount, network, full address with the
+  existing copy/check icon treatment, and a status row with Check now. All
+  colors, fonts and controls use existing OA/zkAPI theme styles.
+- The transfer details stay open when funds arrive: the figure changes to
+  Available for network fees and the status confirms sufficient ETH only when
+  the fresh scoped quote passes readiness. Failed or pending reads retain their
+  actual status. The top-up never sends or starts a withdrawal automatically.
+- Copy uses the exact address captured at click and reports clipboard failure
+  beside the selectable address rather than stretching the icon button.
+
 ## 2026-09-30: Withdrawal fees use the selected Receipt layout
 
 - Send ETH withdrawal fees show Needed to start (both steps for escape), minus

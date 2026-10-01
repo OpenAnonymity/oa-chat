@@ -1026,3 +1026,8 @@ address and balance-check controls. Its conservative display rounding preserves
 the visible subtraction; fully funded boundary cases gain precision rather than
 a false shortfall. The original exact quote still gates withdrawal, and this
 presentation change does not authorize signing or automatic withdrawal.
+
+The selected Inline top-up details use the existing app theme and display the
+network and full fee-paying address with a copy icon and Check now. Once opened,
+they remain visible when funded; the status comes from the real scoped fee
+quote. Clipboard failure leaves the address selectable with an inline message.
