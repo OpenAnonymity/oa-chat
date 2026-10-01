@@ -1,8 +1,9 @@
 # Sepolia password rollout, 2026-09-29
 
-The existing Sepolia ZKAPI service now requires a shared password. The protected
-API is `https://52.52.207.206.sslip.io`; the web client is
-`https://oa-wallet-eth-sepolia.vercel.app`. Mainnet remains unchanged.
+This historical rollout added a shared password to the previous Sepolia service.
+Its API origin is retired. The web client remains
+`https://oa-wallet-eth-sepolia.vercel.app`; current service details are in the
+[September 30 deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
 
 ## Deployed web client
 

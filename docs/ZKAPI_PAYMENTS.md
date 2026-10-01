@@ -129,14 +129,14 @@ OA_DEPLOYMENT_ORG_ORIGIN=https://org-staging.openanonymity.ai \
 ```
 
 Select `mainnet` in both commands to build the SDK-pinned Mainnet configuration.
-The fresh September 28 servers are selected explicitly in both the asset build
-and route generator with `OA_ZKAPI_DEPLOYMENT=fresh-20260928`. For example:
+Select the current deployment explicitly in both the asset build and route
+generator with `OA_ZKAPI_DEPLOYMENT=fresh-20260930`. For example:
 
 ```sh
 OA_ORG_SAME_ORIGIN=true OA_ZKAPI_NETWORK=mainnet \
-  OA_ZKAPI_DEPLOYMENT=fresh-20260928 npm run build
+  OA_ZKAPI_DEPLOYMENT=fresh-20260930 npm run build
 OA_DEPLOYMENT_ORG_ORIGIN=https://org-staging.openanonymity.ai \
-  OA_ZKAPI_NETWORK=mainnet OA_ZKAPI_DEPLOYMENT=fresh-20260928 \
+  OA_ZKAPI_NETWORK=mainnet OA_ZKAPI_DEPLOYMENT=fresh-20260930 \
   node scripts/generate-zkapi-vercel-config.mjs vercel.generated.json
 ```
 
@@ -154,16 +154,17 @@ The canonical service origins are `https://zkapi-mainnet.openanonymity.ai` and
 reviewed manifest/protocol/indexer URLs. It retains the September 30 deployment
 IDs, vaults, signing/proof pins, browser database names and funding-address scopes.
 The websites retain their existing origins, so their browser-local wallets and
-transaction journals remain available. Historical profiles retain their original
-servers; do not substitute a hostname whose manifest describes a different vault.
+transaction journals remain available. Retired profiles are no longer selectable. Do not substitute a hostname whose
+manifest describes a different vault; retained wallet state is not migrated.
 
 `OA_ZKAPI_DEPLOYMENT=fresh-20260930` selects the live September 30 Mainnet or
 Sepolia pins. Both finalized vaults and isolated services on the new AWS VM passed
 independent acceptance; the existing Sepolia and Mainnet staging sites now use
 this profile. Set it in both build and route-generation commands above, together
 with the selected network. See [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md)
-for exact receipts and canonical verification. The `fresh-20260928` profile
-remains available with its original pins.
+for exact receipts and canonical verification. The retired `fresh-20260928`
+selector fails before build output is changed. Its former pins remain in Git
+history, and existing browser data stays untouched.
 
 The user approved starting with fresh browser balances and no old-balance
 recovery UI. For this profile only, the app bundle uses the SDK database
