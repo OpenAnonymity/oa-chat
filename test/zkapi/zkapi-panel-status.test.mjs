@@ -88,8 +88,8 @@ test('System Panel keeps closure actionable while waiting and after failure', ()
             assert.match(html, /Private balance:/);
             assert.match(html, /Estimated this chat/);
             assert.match(html, /id="zkapi-panel-fund"/);
-            if (phase === 'error') assert.match(html, />attention</);
-            else assert.match(html, />ready</);
+            if (phase === 'error') assert.match(html, /data-status-icon="attention"/);
+            assert.doesNotMatch(html, />ready<|badge-status-success|>attention</);
         }
     }
 });

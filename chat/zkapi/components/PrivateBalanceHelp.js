@@ -24,12 +24,6 @@ export function privateBalanceExpired(note, now = Date.now()) {
 export function updatePrivateBalanceExpiryState(root, note, now = Date.now()) {
     if (!root?.querySelector || !note) return;
     const expired = privateBalanceExpired(note, now);
-    const badge = root.querySelector('[data-private-balance-readiness]');
-    if (badge) {
-        badge.textContent = expired ? 'expired' : 'ready';
-        badge.classList.toggle('badge-status-success', !expired);
-        badge.classList.toggle('zkapi-pill--neutral', expired);
-    }
     const notice = root.querySelector('[data-private-balance-expired-notice]');
     if (notice && notice.hidden !== !expired) notice.hidden = !expired;
 }

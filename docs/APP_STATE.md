@@ -5804,3 +5804,12 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
 - Leaving the withdrawal form invalidates any pending submission intent. A late
   fee response may refresh the cache but cannot start a cancelled withdrawal,
   even if the user has already reopened the form.
+
+## 2026-09-30: Balance status without pills
+
+The private-balance side panel and dialog omit ready/expired/claimed pills.
+Expiry and claim information remain in their existing text; clock updates still
+reveal the expired-balance notice. Problems retain readable labels: a triangle
+marks attention, while an octagon with a cross marks failures in balance errors,
+transaction steps and error outcomes. These SVGs are decorative and use theme
+colors. Loading spinners and normal OA access-key controls are unchanged.

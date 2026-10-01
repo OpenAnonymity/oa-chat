@@ -992,3 +992,8 @@ shows **Add ETH**, which deliberately expands the copyable network/address
 instructions. Fee details never auto-submit. **Pause update** replaces Stop
 waiting in settlement feedback and explains that sending requires retrying the
 balance update; stopping does not discard recovery. Refresh says Balance updated.
+
+Balance readiness no longer adds a pill in the System Panel or balance dialog.
+Error/attention states use different outlined icons alongside text, while expiry
+and claim status remain in the existing explanatory lines. Expiry clock ticks
+still update the expired-balance notice without reintroducing a readiness badge.

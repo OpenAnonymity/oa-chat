@@ -1556,7 +1556,7 @@ test('expiry alone keeps funds withdrawable; a confirmed treasury claim shows ze
         const claimedPanel = panel.billingSectionHTML();
         const claimedModal = modal.renderBalance();
         assert.match(claimedPanel, /Private balance:.*?\$0\.00/);
-        assert.match(claimedPanel, />claimed<\/span>/);
+        assert.match(claimedPanel, /Claimed after expiry/);
         assert.match(claimedModal, /Available<\/p>\s*<p[^>]*>\$0\.00/);
         for (const html of [claimedPanel, claimedModal]) {
             assert.match(html, /Claimed after expiry/);
@@ -1835,7 +1835,7 @@ test('capsule uses static hold and error endpoints without implying accepted suc
         }
     });
     renderZkapiComposerStatus(element, null, error);
-    assert.match(element.innerHTML, /zkapi-state-glyph--error/);
+    assert.match(element.innerHTML, /data-status-icon="attention"/);
     assert.match(element.innerHTML, /zkapi-capsule-origin--neutral/);
     assert.match(element.innerHTML, /zkapi-capsule-end--error/);
     assert.doesNotMatch(element.innerHTML, /✓|→/);

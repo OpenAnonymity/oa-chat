@@ -105,24 +105,16 @@ test('expired balances never render the misleading phrase expires in expired', (
     assert.equal(privateBalanceExpiryLabel(client, 'expired'), 'expired');
 });
 
-test('crossing the expiry deadline patches only readiness and the unclaimed-balance notice', () => {
-    const classes = new Set(['badge-status-success']);
-    const badge = { textContent: 'ready', classList: { toggle(name, on) {
-        if (on) classes.add(name); else classes.delete(name);
-    } } };
+test('crossing the expiry deadline reveals the unclaimed-balance notice without a badge', () => {
     const notice = { hidden: true };
     const root = { querySelector(selector) {
-        if (selector === '[data-private-balance-readiness]') return badge;
         assert.equal(selector, '[data-private-balance-expired-notice]');
         return notice;
     } };
     const note = { expiry_ts: 100 };
     assert.equal(privateBalanceExpired(note, 99_999), false);
     updatePrivateBalanceExpiryState(root, note, 100_000);
-    assert.equal(badge.textContent, 'expired');
     assert.equal(notice.hidden, false);
-    assert.equal(classes.has('badge-status-success'), false);
-    assert.equal(classes.has('zkapi-pill--neutral'), true, 'expired is a neutral state, never yellow');
 });
 
 

@@ -1,3 +1,4 @@
+import { statusIcon } from './StatusIcon.js';
 import { attachWithdrawalFees, needsWithdrawalFees, refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady } from './WithdrawalFees.js';
 import { fundingDisclosure, attachFundingDisclosures, captureFundingDisclosureView, restoreFundingDisclosureView } from './FundingDisclosures.js';
 import { showSurface, hideSurface, revealText } from '../../ui/uiMotion.js';
@@ -486,7 +487,7 @@ export default class AccountModal {
      *  view change replaces it. */
     renderOutcome() {
         if (this.busy || !this.outcome?.message) return '';
-        return `<p class="zkapi-outcome" data-tone="${this.escapeHtml(this.outcome.tone)}" ${this.outcome.field === 'deposit' ? 'id="zkapi-deposit-error" role="alert"' : 'role="status"'}>${this.escapeHtml(this.outcome.message)}</p>`;
+        return `<p class="zkapi-outcome" data-tone="${this.escapeHtml(this.outcome.tone)}" ${this.outcome.field === 'deposit' ? 'id="zkapi-deposit-error" role="alert"' : 'role="status"'}>${this.outcome.tone === 'error' ? statusIcon() : ''}${this.escapeHtml(this.outcome.message)}</p>`;
     }
 
     /** The journey for a kind of wallet work, from the latest status line
@@ -520,7 +521,7 @@ export default class AccountModal {
                 ${journey.steps.map(step => {
                     const line = step === current ? (detail || step.detail || '') : '';
                     return `<li class="zkapi-step" data-step="${this.escapeHtml(step.id)}" data-state="${step.state}" ${step === current ? 'aria-current="step"' : ''}>
-                        <span class="zkapi-step-mark" aria-hidden="true">${step.state === 'complete' ? '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>' : step.state === 'error' ? '!' : ''}</span>
+                        <span class="zkapi-step-mark" aria-hidden="true">${step.state === 'complete' ? '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>' : step.state === 'error' ? statusIcon() : ''}</span>
                         <span class="zkapi-step-text"><span class="zkapi-step-label">${this.escapeHtml(step.label)}</span>${line ? `<small class="zkapi-step-detail">${this.escapeHtml(line)}</small>` : ''}</span>
                     </li>`;
                 }).join('')}
@@ -1233,7 +1234,7 @@ export default class AccountModal {
                             <p class="zkapi-balance-amount">${zkapiClient.formatMoney(available)}</p>
                             ${zkapiClient.isNativeEthFunding ? `<p class="zkapi-balance-eth">${this.escapeHtml(zkapiClient.formatBillingAmount(available))} ETH</p>` : ''}
                         </div>
-                        ${withdrawing ? '' : `<span ${!claimed ? 'data-private-balance-readiness' : ''} class="zkapi-pill ${claimed || expired ? 'zkapi-pill--neutral' : 'badge-status-success'}">${claimed ? 'claimed' : expired ? 'expired' : 'ready'}</span>`}
+
                     </div>
                     <div class="zkapi-bar"><div class="zkapi-bar-fill" style="width:${percent}%"></div></div>
                     <div class="zkapi-balance-foot"><span>${claimed ? 'Claimed after expiry' : `${zkapiClient.formatMoney(spent)} used of ${zkapiClient.formatMoney(note.deposit_amount)}`}</span><span class="inline-flex items-center gap-1"><span data-zkapi-balance-expiry>${privateBalanceExpiryLabel(zkapiClient, note.expiry_ts)}</span>${privateBalanceHelpButton('modal', 'expiry', this.privateBalanceHelpOpen?.expiry)}</span></div>

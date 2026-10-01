@@ -2262,3 +2262,11 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-settlement-action { margin-top: .5rem; border: 1px solid hsl(var(--color-border)); border-radius: .5rem; padding: .375rem .625rem; background: transparent; color: hsl(var(--color-foreground)); font: inherit; font-size: .75rem; cursor: pointer; }
 .zkapi-settlement-action:hover { background: hsl(var(--color-accent)); }
 .zkapi-settlement-action:disabled { opacity: .5; cursor: default; }
+
+/* Balance states use text and distinct line icons, without pill backgrounds. */
+.zkapi-status-icon { display: inline-block; width: 1rem; height: 1rem; flex: none; vertical-align: -.15em; }
+.zkapi-balance-error { display: flex; align-items: flex-start; gap: .5rem; margin-top: .5rem; color: hsl(var(--color-destructive-text)); font-size: .6875rem; line-height: 1.5; }
+.zkapi-balance-error .zkapi-status-icon { margin-top: .0625rem; }
+.zkapi-outcome[data-tone="error"] > .zkapi-status-icon { margin-right: .5rem; }
+.zkapi-step[data-state="error"] .zkapi-step-mark { border: 0; background: transparent; border-radius: 0; }
+.zkapi-step[data-state="error"] .zkapi-step-mark svg { width: 1.125rem; height: 1.125rem; }
