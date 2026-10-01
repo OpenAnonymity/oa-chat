@@ -349,6 +349,31 @@ function transferDisclosure(owner, kind, label, value, iconLabel, faces, panel) 
     </div>`;
 }
 
+// Opening a row near the bottom of the dialog brings its panel into view:
+// once it has expanded, the dialog scrolls just enough to show it. Any wheel,
+// touch, pointer or key input first cancels the scroll.
+function revealOpenedRow(owner, help, delay) {
+    const scroller = owner.overlay?.querySelector?.('[data-funding-scroll]');
+    const view = help?.ownerDocument?.defaultView;
+    if (!scroller?.getBoundingClientRect || !help.getBoundingClientRect || !view?.setTimeout) return;
+    const reduced = view.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let canceled = false;
+    const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
+    const stop = () => { canceled = true; };
+    events.forEach(type => scroller.addEventListener?.(type, stop, { passive: true }));
+    view.setTimeout(() => {
+        events.forEach(type => scroller.removeEventListener?.(type, stop));
+        if (canceled || help.dataset?.open !== 'true' || !help.isConnected) return;
+        const box = help.getBoundingClientRect();
+        const port = scroller.getBoundingClientRect();
+        const overflow = box.bottom - port.bottom + 16;
+        if (overflow <= 0) return;
+        // Never scroll the row's own header out of view.
+        const top = Math.min(overflow, Math.max(0, box.top - port.top - 8));
+        scroller.scrollBy?.({ top, behavior: reduced ? 'auto' : 'smooth' });
+    }, reduced ? 0 : delay);
+}
+
 function attachFundingHelp(owner) {
     owner.disposeFundingHelp?.();
     owner.disposeFundingHelp = null;
@@ -382,6 +407,7 @@ function attachFundingHelp(owner) {
         }
         row.help.dataset.open = String(open);
         row.panel.inert = !open;
+        if (open) revealOpenedRow(owner, row.help, duration);
         row.button.setAttribute('aria-expanded', String(open));
         if (row.kind === 'qr' && row.button.dataset) row.button.dataset.copied = String(open);
         owner.rememberRunningModal?.();
