@@ -2394,8 +2394,7 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-transfer-value small { color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; white-space: nowrap; }
 .zkapi-transfer-muted { color: hsl(var(--color-muted-foreground)); }
 .zkapi-transfer-control { display: grid; justify-items: end; }
-.zkapi-transfer-address { display: block; min-width: 0; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.8125rem; line-height: 1.45; color: hsl(var(--color-muted-foreground)); word-break: break-all; border-radius: 0.25rem; outline: none; }
-.zkapi-transfer-address b { color: hsl(var(--color-foreground)); font-weight: 500; }
+.zkapi-transfer-address { display: block; min-width: 0; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.8125rem; line-height: 1.45; color: hsl(var(--color-foreground)); word-break: break-all; border-radius: 0.25rem; outline: none; }
 html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 0 2px hsl(var(--color-focus-ring)); }
 .zkapi-icon-button { display: inline-grid; place-items: center; width: 2rem; height: 2rem; padding: 0; border: 0; border-radius: 0.5rem; background: transparent; color: hsl(var(--color-muted-foreground)); cursor: pointer; transition: background-color 120ms var(--zkapi-ease), color 120ms var(--zkapi-ease), transform 120ms var(--zkapi-ease); }
 .zkapi-icon-button:hover:not(:disabled), .zkapi-icon-button[aria-expanded="true"] { background: hsl(var(--color-foreground) / 0.06); color: hsl(var(--color-foreground)); }

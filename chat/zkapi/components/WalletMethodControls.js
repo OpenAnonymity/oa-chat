@@ -600,9 +600,9 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     // may charge, what to send (the sum), where, and on which network. The QR
     // and the fee note open under their rows on request.
     const addressText = String(wallet.address);
-    // The whole address, never cut off (wallet history spoofing copies the
-    // ends of an address); the ends are bold so it is easy to compare.
-    const addressValue = `<span id="zkapi-funding-address" data-funding-address class="zkapi-transfer-address" role="textbox" aria-readonly="true" tabindex="0" spellcheck="false" aria-label="This browser’s receiving address"><b>${escape(addressText.slice(0, 6))}</b>${escape(addressText.slice(6, -4))}<b>${escape(addressText.slice(-4))}</b></span>`;
+    // The whole address in one monospace style, never cut off (wallet
+    // history spoofing copies the ends of an address).
+    const addressValue = `<span id="zkapi-funding-address" data-funding-address class="zkapi-transfer-address" role="textbox" aria-readonly="true" tabindex="0" spellcheck="false" aria-label="This browser’s receiving address">${escape(addressText)}</span>`;
     const addressCopy = `<button data-funding-copy class="zkapi-icon-button zkapi-copy-button" type="button" aria-label="Copy address" title="Copy address" data-copied="${owner.addressCopied ? 'true' : 'false'}">${COPY_FACES}</button>`;
     const depositUsd = intent ? fundingUsdValue(intent.depositWei) : null;
     const depositRow = transferRow('Deposit', intent ? escape(depositUsd || `${formatFundingAmount(intent.depositWei, 18)} ETH`) : '—');
