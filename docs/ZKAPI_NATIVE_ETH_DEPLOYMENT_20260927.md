@@ -365,7 +365,7 @@ Its contract also rejected a valid archived request root when unrelated tree
 updates occurred before an escape withdrawal. The new `zkapi-v2-note-bound-v1`
 setup and historical-root contract repair address these issues. A challenge
 service must also operate throughout every escape window, including usage
-receipt outages. The new setup remains a single-party development setup;
+receipt outages. The new setup is single-party, with no multi-party ceremony;
 Mainnet publication requires a separately reviewed deployment decision.
 
 ## Corrected Sepolia vault
@@ -695,7 +695,7 @@ follow-up challenge acceptance is tracked in the current release section above.
 Mainnet remains guarded and unpublished. Both deployment and dedicated
 challenger accounts hold zero Mainnet ETH. Publication needs an explicit
 bounded experimental deployment/funding decision: the new proof setup is
-single-party development material and the integration is not production-audited.
+single-party, with no multi-party ceremony, and the integration is not production-audited.
 
 
 ## Prepared Mainnet test decision (not authorization)
