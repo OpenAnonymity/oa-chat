@@ -1,3 +1,11 @@
+## 2026-10-01: Production rehearsal follow-up fixes
+
+- Closed transfer windows still replay an account-owned durable attempt and redeem saved credit; they never select fresh wallet batches. A closed replay refusal retains the journal and remains retryable.
+- Signup keeps one abort controller through credential creation and its optional PRF assertion, so dismissing either prompt frees the browser for retry.
+- Production builds can set OA_PROXY_URL to an exact root WSS origin without verifier bypass. Demo relay restrictions remain unchanged; staging builds strip the production override.
+- Commercial trial redemption clears account-specific code state immediately during handoff and gates later results by owner and generation. Late failures/successes cannot write into the next account's row or notifications.
+- New-org account-binding and mandatory global transfer-cap validation were deployed with production overlays retained. The final-domain login configuration remains staged while the Vercel-origin rehearsal runs; its RP ID cannot serve the unrelated Vercel origin.
+
 ## 2026-09-30: Fix stale cleanup, partial recovery and account-owned progress
 
 The three findings below are now fixed locally (not deployed). Old-account

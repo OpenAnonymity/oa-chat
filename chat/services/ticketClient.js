@@ -847,6 +847,7 @@ class TicketClient {
             if (state.done || state.timer || this.legacyTransferRun) return;
             this.runLegacyTransfer().then(result => {
                 if (result?.redeemError) throw result.redeemError;
+                if (result?.recoveryPending) throw new Error('Saved ticket restoration is still pending.');
                 if (result?.status !== 'signed-out') state.done = true;
             }).catch(error => {
                 state.tries += 1;

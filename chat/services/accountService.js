@@ -1711,69 +1711,73 @@ class AccountService {
         const ceremony = typeof AbortController === 'function' ? new AbortController() : null;
         this.passkeyCeremony = ceremony;
         try {
-            credential = await navigator.credentials.create(ceremony ? { publicKey, signal: ceremony.signal } : { publicKey });
-        } catch (error) {
-            if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
-            // User cancelled or other WebAuthn error - don't clear pending account
-            // so they can retry with the same account number
-            if (error.name === 'NotAllowedError') {
-                this.state.error = 'Passkey creation was cancelled';
-                this.notify();
-                return false;
-            }
-            this.state.error = toFriendlyError(error) || 'Passkey creation failed';
-            this.notify();
-            return false;
-        }
-
-        if (this.passkeyCeremony === ceremony) this.passkeyCeremony = null;
-        if (this.pendingAccount !== pending) return false;
-        if (!credential) {
-            this.state.error = 'Passkey creation failed';
-            this.notify();
-            return false;
-        }
-
-        // Extract PRF output. Some authenticators (security keys, some
-        // password managers) only report that PRF is enabled when the passkey
-        // is created and give the value on the first use: ask once, locally.
-        let prfBytes = getPrfOutput(credential);
-        if (!prfBytes && credential.getClientExtensionResults?.()?.prf?.enabled === true) {
             try {
-                const assertion = await navigator.credentials.get({
-                    publicKey: {
-                        challenge: crypto.getRandomValues(new Uint8Array(32)),
-                        rpId: publicKey.rp?.id || undefined,
-                        allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
-                        userVerification: 'required',
-                        timeout: 60000,
-                        extensions: { prf: { eval: { first: prfInput } } }
-                    }
-                });
-                prfBytes = getPrfOutput(assertion);
+                credential = await navigator.credentials.create(ceremony ? { publicKey, signal: ceremony.signal } : { publicKey });
             } catch (error) {
-                if (this.pendingAccount !== pending) return false;
-                this.state.error = error?.name === 'NotAllowedError'
-                    ? 'Passkey creation was cancelled'
-                    : toFriendlyError(error);
+                if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+                // User cancelled or other WebAuthn error - don't clear pending account
+                // so they can retry with the same account number
+                if (error.name === 'NotAllowedError') {
+                    this.state.error = 'Passkey creation was cancelled';
+                    this.notify();
+                    return false;
+                }
+                this.state.error = toFriendlyError(error) || 'Passkey creation failed';
                 this.notify();
                 return false;
             }
-            if (this.pendingAccount !== pending) return false;
-        }
-        if (!prfBytes) {
-            this.state.prfSupported = false;
-            this.state.error = 'This passkey can\u2019t encrypt your account. Try a passkey saved in your browser, phone or password manager.';
-            this.notify();
-            return false;
-        }
-        this.state.prfSupported = true;
 
-        // Store credential for later registration
-        pending.credential = credential;
-        pending.prfBytes = prfBytes;
+            if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+            if (!credential) {
+                this.state.error = 'Passkey creation failed';
+                this.notify();
+                return false;
+            }
 
-        return true;
+            // Extract PRF output. Some authenticators (security keys, some
+            // password managers) only report that PRF is enabled when the passkey
+            // is created and give the value on the first use: ask once, locally.
+            let prfBytes = getPrfOutput(credential);
+            if (!prfBytes && credential.getClientExtensionResults?.()?.prf?.enabled === true) {
+                try {
+                    const assertion = await navigator.credentials.get({
+                        ...(ceremony ? { signal: ceremony.signal } : {}),
+                        publicKey: {
+                            challenge: crypto.getRandomValues(new Uint8Array(32)),
+                            rpId: publicKey.rp?.id || undefined,
+                            allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
+                            userVerification: 'required',
+                            timeout: 60000,
+                            extensions: { prf: { eval: { first: prfInput } } }
+                        }
+                    });
+                    prfBytes = getPrfOutput(assertion);
+                } catch (error) {
+                    if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+                    this.state.error = error?.name === 'NotAllowedError'
+                        ? 'Passkey creation was cancelled'
+                        : toFriendlyError(error);
+                    this.notify();
+                    return false;
+                }
+                if (this.pendingAccount !== pending || ceremony?.signal.aborted) return false;
+            }
+            if (!prfBytes) {
+                this.state.prfSupported = false;
+                this.state.error = 'This passkey can\u2019t encrypt your account. Try a passkey saved in your browser, phone or password manager.';
+                this.notify();
+                return false;
+            }
+            this.state.prfSupported = true;
+
+            // Store credential for later registration
+            pending.credential = credential;
+            pending.prfBytes = prfBytes;
+
+            return true;
+        } finally {
+            if (this.passkeyCeremony === ceremony) this.passkeyCeremony = null;
+        }
     }
 
     /** Generate the retained recovery code for a legacy account-number account. */

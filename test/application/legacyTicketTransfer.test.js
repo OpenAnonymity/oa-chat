@@ -481,3 +481,62 @@ test('a new run under B cannot take the remaining batches of A’s interrupted m
     assert.equal(h.submits.length, 1);
     assert.equal(h.attempt.accountId, 'account-a');
 });
+
+test('a reply lost before closure is replayed after reload without transferring fresh tickets', async () => {
+    const h = harness({ legacy: 3, current: 0, info: { max_batch: 1 } });
+    const result = h.respond([h.wallet[0].finalized_ticket]);
+    h.options.submit = async tickets => { h.submits.push(tickets); throw new Error('Lost reply'); };
+    await assert.rejects(h.transfer().run(), /Lost reply/);
+    const saved = clone(h.attempt);
+    h.info.enabled = false;
+    h.info.key_id = null; // Completed replies remain replayable after configuration is removed.
+    h.options.submit = async tickets => { h.submits.push(tickets); assert.deepEqual(tickets, saved.tickets); return result; };
+    const restored = await h.transfer().run();
+    assert.equal(restored.redeemed, true);
+    assert.equal(h.wallet.length, 2, 'new batches stay untouched after closure');
+    assert.equal(h.submits.length, 2);
+    assert.equal(h.attempt, null);
+    assert.equal((await h.transfer().run()).status, 'closed');
+    assert.equal(h.submits.length, 2);
+});
+
+test('saved credit still redeems after the window closes, even with issuer config removed', async () => {
+    const h = harness({ info: { enabled: false, key_id: null } });
+    h.pending.set('saved', { scope: 'account:account-a', code: code(2) });
+    h.failRedeem = true;
+    assert.ok((await h.transfer().run()).redeemError);
+    assert.equal(h.pending.size, 1);
+    h.failRedeem = false;
+    assert.equal((await h.transfer().run()).redeemed, true);
+    assert.equal(h.pending.size, 0);
+    assert.equal(h.submits.length, 0);
+});
+
+test('closed replay refusal retains its journal and never starts fresh transfers', async () => {
+    const h = harness({ info: { enabled: false } });
+    h.attempt = { accountId: h.accountId, tickets: [h.wallet[0].finalized_ticket] };
+    h.failSubmit = Object.assign(new Error('closed'), { code: 'LEGACY_TRANSFER_CLOSED' });
+    const result = await h.transfer().run();
+    assert.equal(result.recoveryPending, true);
+    assert.ok(h.attempt);
+    assert.equal(h.submits.length, 1);
+    assert.equal(h.submits[0].length, 1);
+    h.accountId = 'account-b';
+    await assert.rejects(h.transfer().run(), /another account/);
+    assert.equal(h.submits.length, 1);
+    assert.ok(h.attempt);
+});
+
+
+test('a retained journal does not block saved-code recovery when issuer config is removed', async () => {
+    const h = harness({ info: { enabled: false, key_id: null } });
+    h.attempt = { accountId: h.accountId, tickets: [h.wallet[0].finalized_ticket] };
+    h.pending.set('saved', { scope: 'account:account-a', code: code(4) });
+    h.failSubmit = Object.assign(new Error('closed'), { code: 'LEGACY_TRANSFER_CLOSED' });
+    const result = await h.transfer().run();
+    assert.equal(result.redeemed, true);
+    assert.equal(h.pending.size, 0);
+    assert.equal(result.recoveryPending, true);
+    assert.ok(h.attempt);
+    assert.equal(h.submits.length, 1);
+});

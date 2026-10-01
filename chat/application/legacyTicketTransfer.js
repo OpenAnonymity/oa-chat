@@ -57,21 +57,16 @@ export class LegacyTicketTransfer {
     async run({ expectedAccountId } = {}) {
         const info = await this.fetchInfo();
         const keyId = normalizeTicketKeyId(info?.key_id);
-        if (!keyId || info?.enabled !== true) {
-            // Closed or never configured: nothing is held back from spending.
-            this.holdKeyIds([]);
-            return { status: 'closed', moved: 0 };
-        }
-        // Old tickets can no longer be spent here; keep them out of selection
-        // so no send picks one while they wait to be moved.
-        this.holdKeyIds([keyId]);
+        const recoveryOnly = !keyId || info?.enabled !== true;
+        // Closing new transfers must not strand credit already committed.
+        this.holdKeyIds(recoveryOnly ? [] : [keyId]);
         if (!this.lockManager?.request) {
             throw new Error('This browser cannot safely coordinate the ticket move across tabs.');
         }
-        return this.lockManager.request(TRANSFER_LOCK, () => this.transferHeld(keyId, info, expectedAccountId));
+        return this.lockManager.request(TRANSFER_LOCK, () => this.transferHeld(keyId, info, expectedAccountId, recoveryOnly));
     }
 
-    async transferHeld(keyId, info, expectedAccountId) {
+    async transferHeld(keyId, info, expectedAccountId, recoveryOnly = false) {
         const accountId = await this.getAccountScope();
         if (!accountId) return { status: 'signed-out', moved: 0 };
         if (expectedAccountId !== undefined && accountId !== expectedAccountId) {
@@ -83,19 +78,23 @@ export class LegacyTicketTransfer {
         // A stable order makes a retry after a lost reply the identical
         // request, which the org answers with the same code.
         const byTicket = (a, b) => (a.finalized_ticket < b.finalized_ticket ? -1 : a.finalized_ticket > b.finalized_ticket ? 1 : 0);
-        let live = this.listTickets().filter(isLegacy).sort(byTicket);
+        let live = recoveryOnly ? [] : this.listTickets().filter(isLegacy).sort(byTicket);
         const inLive = new Set(live.map(ticket => ticket.finalized_ticket));
         // A failed read is not an empty wallet. Reject so the watcher retries
         // before issuing any credit or declaring this account finished.
-        let parked = (await this.listParkedTickets() || [])
+        let parked = (recoveryOnly ? [] : (await this.listParkedTickets() || []))
             .filter(ticket => isLegacy(ticket) && !inLive.has(ticket.finalized_ticket))
             .sort(byTicket);
         const attempt = await this.attemptStore.get();
         if (attempt && (attempt.accountId !== accountId || !Array.isArray(attempt.tickets) || !attempt.tickets.length)) {
             throw new Error('An unfinished ticket move belongs to another account. Return to that account to restore its tickets.');
         }
+        if (recoveryOnly && !attempt && !(await this.pendingStore.list(scope)).length) {
+            await this.assertAccount(accountId);
+            return { status: 'closed', moved: 0 };
+        }
         const replay = attempt ? attempt.tickets.map(finalized_ticket => ({ finalized_ticket })) : [];
-        if (replay.some(ticket => !isLegacy(ticket))) {
+        if (!recoveryOnly && replay.some(ticket => !isLegacy(ticket))) {
             throw new Error('The saved ticket move cannot be resumed with this issuer. Your tickets are retained.');
         }
         await this.assertAccount(accountId);
@@ -166,6 +165,7 @@ export class LegacyTicketTransfer {
             moved: state.moved,
             redeemed,
             redeemError,
+            ...(state.stopped === 'closed' ? { recoveryPending: true } : {}),
             stranded: state.stopped === 'closed' ? [] : state.stranded
         };
     }
