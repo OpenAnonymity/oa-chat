@@ -1248,7 +1248,7 @@ export default class AccountModal {
                                 ? this.renderProgress(this.status || 'Waiting for MetaMask…')
                                 : this.startingAfterInit
                                     ? '<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span>Getting ready…</button>'
-                                    : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${resumingDeposit ? 'Resume with MetaMask' : 'Continue with MetaMask'}</button>`}
+                                    : `<button id="zkapi-deposit-btn" class="zkapi-primary-button w-full" type="button">${resumingDeposit ? 'Resume with MetaMask' : 'Continue with Ethereum wallet'}</button>`}
                         </div>`}
                     </section>
                     <div class="zkapi-guides">

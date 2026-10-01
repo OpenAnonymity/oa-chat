@@ -243,7 +243,7 @@ test('the running modal uses the durable deposit phase during status checks', t 
     assert.equal(modal.currentJourney('deposit', { message: 'Checking the private-vault deposit…' }).position.step, 'chain');
 });
 
-test('MetaMask deposits show the same transfer rows as the Ethereum wallet side, then one button', async () => {
+test('Ethereum wallet deposits show the transfer rows, then one button', async () => {
     const { getWalletMethod, setWalletMethod } = await import('../../chat/zkapi/services/walletMethod.mjs');
     const method = getWalletMethod();
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
@@ -255,8 +255,8 @@ test('MetaMask deposits show the same transfer rows as the Ethereum wallet side,
         assert.equal(zkapiClient.isNativeEthFunding, true, "fixture is a native ETH deployment");
         assert.match(html, /data-metamask-transfer/);
         for (const label of ['Deposit', 'Network fee', 'From', 'Network']) assert.match(html, new RegExp(`zkapi-transfer-label">${label}<`));
-        assert.match(html, /Shown in MetaMask/);
-        assert.match(html, /Your MetaMask account/);
-        assert.match(html, /id="zkapi-deposit-btn" class="zkapi-primary-button w-full"[^>]*>Continue with MetaMask</);
+        assert.match(html, /Shown in Ethereum wallet/);
+        assert.match(html, /Your Ethereum wallet account/);
+        assert.match(html, /id="zkapi-deposit-btn" class="zkapi-primary-button w-full"[^>]*>Continue with Ethereum wallet</);
     } finally { Object.assign(zkapiClient, original); setWalletMethod(method); }
 });

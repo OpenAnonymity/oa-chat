@@ -72,8 +72,8 @@ an upstream revision contains equivalent fixes.
 
 ## Payment-flow feedback (2026-09-28)
 
-The two choices read **MetaMask** and **Send Ethereum**. MetaMask actions name
-MetaMask. The September 29 compact funding layout keeps the **Send** total,
+The two choices read **Ethereum wallet** and **Send to address**. The initial
+deposit fee, source-account row and Continue action use Ethereum wallet. The September 29 compact funding layout keeps the **Send** total,
 address, QR and **Deposit** action visible, with a short numeric summary such as
 `Deposit ≈ $5 · Fee allowance ≈ $X`. The fee allowance is the quoted maximum
 reserve including the optional buffer, not an actual fee charged. Exact ETH
@@ -389,7 +389,7 @@ frontend deployment; live verifier acceptance remains a separate check.
 
 ## Wallet methods: MetaMask and Send to an address
 
-The web app offers exactly two choices: **MetaMask** first, then **Send Ethereum**. Native-ETH deployments hold ETH and display its current USD value;
+The web app offers exactly two choices: **Ethereum wallet** first, then **Send to address**. Native-ETH deployments hold ETH and display its current USD value;
 this is not fixed dollar credit. MetaMask keeps the existing deposit/withdrawal
 flow, with a payable ETH deposit instead of token minting and approval.
 
@@ -405,7 +405,7 @@ are never overwritten; a one-time password conversion retains their exact key,
 address, nonce and signed journal. New account setup never offers a password.
 
 The balance and welcome dialogs share one deposit amount field above the
-MetaMask / Send Ethereum choice. Both methods use the same USD/ETH currency
+Ethereum wallet / Send to address choice. Both methods use the same USD/ETH currency
 button and keep the exact ETH principal when switching methods or display
 units. MetaMask's amount control does not create a browser funding account;
 only selecting Send Ethereum starts that method's address and fee checks.

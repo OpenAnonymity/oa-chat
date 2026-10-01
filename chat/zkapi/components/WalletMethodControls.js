@@ -215,8 +215,8 @@ export function renderWalletMethod(owner, { choose = true } = {}) {
     if (!choose && !password && !error) return '';
     return `<section class="zkapi-wallet-method" aria-label="Wallet method">
         ${choose ? `<div class="zkapi-segmented" role="group" aria-label="How to pay" data-active="${local ? 'address' : 'metamask'}">
-            <button type="button" data-wallet-method="metamask" aria-pressed="${!local}" ${locked ? 'disabled' : ''}>MetaMask</button>
-            <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Ethereum wallet</button>
+            <button type="button" data-wallet-method="metamask" aria-pressed="${!local}" ${locked ? 'disabled' : ''}>Ethereum wallet</button>
+            <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Send to address</button>
         </div>` : ''}
         ${password}
         ${error}
@@ -543,11 +543,11 @@ export function renderMetaMaskTransfer(owner) {
         ? escape(depositUsd || `${formatFundingAmount(intent.depositWei, 18)} ETH`)
         : '<span class="zkapi-skel" style="width:3.5rem" aria-hidden="true"></span><span class="zkapi-visually-hidden">Loading</span>';
     const account = zkapiClient.walletAddress
-        ? `Your MetaMask account <span class="zkapi-transfer-address zkapi-transfer-address--inline">${escape(zkapiClient.compact(zkapiClient.walletAddress, 6))}</span>`
-        : 'Your MetaMask account';
+        ? `Your Ethereum wallet account <span class="zkapi-transfer-address zkapi-transfer-address--inline">${escape(zkapiClient.compact(zkapiClient.walletAddress, 6))}</span>`
+        : 'Your Ethereum wallet account';
     return `<div class="zkapi-transfer zkapi-transfer--metamask" data-metamask-transfer>
         ${transferRow('Deposit', deposit)}
-        ${transferRow('Network fee', '<span class="zkapi-transfer-muted">Shown in MetaMask</span>')}
+        ${transferRow('Network fee', '<span class="zkapi-transfer-muted">Shown in Ethereum wallet</span>')}
         ${transferRow('From', account)}
         ${transferRow('Network', escape(zkapiClient.networkName()))}
     </div>`;

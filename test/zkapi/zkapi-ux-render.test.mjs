@@ -983,7 +983,7 @@ test('balance views keep funding and payment history while omitting redundant wa
             const html = modal.renderBalance();
             assert.match(html, /Payment history/);
             assert.doesNotMatch(html, /zkapi-watch-token-btn|Add USDC to MetaMask|<dt>Network|<dt>Request mode|<dt>Vault/);
-            assert.match(html, note ? /Withdraw/ : /Continue with MetaMask/);
+            assert.match(html, note ? /Withdraw/ : /Continue with Ethereum wallet/);
         }
         assert.match(modal.renderWithdrawalRecords(), /Your deposits and withdrawals will appear here/);
         assert.match(modal.renderWithdrawalRecords(), /Back to balance/);

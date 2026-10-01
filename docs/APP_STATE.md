@@ -1,3 +1,10 @@
+## 2026-10-01: Deposit wallet labels
+
+The funding selector reads **Ethereum wallet** / **Send to address**. The
+initial wallet deposit view uses Ethereum wallet in its network-fee row,
+source-account row and Continue button. The transfer rows are literal HTML
+and need their own copy changes; `walletMethodText` does not rewrite them.
+
 ## 2026-10-01: Mainnet endpoint hostname
 
 The `fresh-20260930` Mainnet profile now uses
