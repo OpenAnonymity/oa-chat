@@ -266,6 +266,8 @@ function transferValue(html, label) {
 const plain = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
 const addressText = html => plain(html.match(/data-funding-address[^>]*>([\s\S]*?)<\/(?:span|div)>/)[1]).replace(/\s+/g, '');
 
+const empty0 = html => helpRow(html, 'return').body;
+
 test('ordinary native funding shows the transfer as details and offers Deposit only when funded', () => {
     const { controls, owner } = fixture({ client: { isNativeEthFunding: true, formatMoney: () => '$10.00' } });
     Object.assign(owner, { view: 'fund', isOpen: true, fundingFlow: quotedFlow() });
@@ -299,7 +301,9 @@ test('ordinary native funding shows the transfer as details and offers Deposit o
     assert.equal(leftover.open, false);
     assert.match(leftover.body, /<span>Your wallet address<\/span>[\s\S]*<span>Amount \(ETH\)<\/span>[^]*placeholder="All"/);
     assert.match(leftover.body, /data-funding-return-eth[^>]*>Return ETH<\/button>/, 'not "Send ETH", which names the funding method above');
-    assert.match(ready, /Return ETH to your wallet<span class="zkapi-guide-note">0\.0055 ETH at this address<\/span>/);
+    assert.match(ready, /<span class="zkapi-funding-help-label">Return ETH to your wallet<\/span>/, 'the row header is the label alone');
+    assert.match(leftover.body, /<p class="zkapi-funding-return-balance">0\.0055 ETH is at your deposit address\.<\/p>/, 'the amount opens with the row');
+    assert.doesNotMatch(empty0(waiting), /is at your deposit address/, 'no amount line when nothing is there');
     const empty = helpRow(waiting, 'return');
     assert.match(empty.body, explanation, 'the row explains itself whether or not ETH is there');
 });
@@ -310,7 +314,7 @@ test('existing ETH reduces the requested transfer instead of asking users to fun
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    assert.match(transferValue(html, 'Still to send'), /0\.0015<\/span> ETH/);
+    assert.match(transferValue(html, 'Still needed'), /0\.0015<\/span> ETH/);
     assert.match(plain(html), /Received 0\.004 ETH · send 0\.0015 more/);
     assert.match(html, /data-funding-copy-amount data-amount="0\.0015"/);
     assert.doesNotMatch(html, /data-funding-next/);
@@ -325,7 +329,7 @@ test('covering required fees enables Deposit without asking for the remaining op
     assert.match(transferValue(html, 'Received'), /0\.00545 ETH/);
     assert.match(html, /data-funding-next[^>]*>Deposit</);
     assert.doesNotMatch(html, /data-funding-next[^>]*disabled/);
-    assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number|data-funding-copy-amount|Still to send/);
+    assert.doesNotMatch(html, /data-funding-payment-qr|zkapi-funding-send-number|data-funding-copy-amount|Still needed/);
 });
 
 test('a fee outage retains the independently checked funding-address balance', () => {
@@ -348,7 +352,7 @@ test('the visible send amount shows USD for the remaining transfer including fee
         remainingWei: '1500000000000000', status: { ethBalance: '4000000000000000' }
     }) });
     const html = controls.renderFundingAccount(owner);
-    const send = transferValue(html, 'Still to send');
+    const send = transferValue(html, 'Still needed');
     assert.match(send, /0\.0015<\/span> ETH <small>≈ \$3\.00<\/small>/);
     assert.doesNotMatch(send, /\$10\.00|\$11\.00/);
     assert.match(transferValue(html, 'Deposit'), /\$10\.00/);
@@ -1255,7 +1259,7 @@ test('manual deposit shows a concise exact shortfall and the network beside the 
     assert.match(transferValue(html, 'Network'), /Sepolia/);
     assert.match(html, /This browser’s receiving address/);
     assert.match(plain(html), /Received 0\.005 ETH · send 0\.0005 more/);
-    assert.match(transferValue(html, 'Still to send'), /0\.0005<\/span> ETH/);
+    assert.match(transferValue(html, 'Still needed'), /0\.0005<\/span> ETH/);
     assert.doesNotMatch(html, /data-funding-next|Waiting for funds|>Next</);
 });
 

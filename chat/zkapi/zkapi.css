@@ -2426,3 +2426,4 @@ html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 
 .zkapi-done-sub { margin: 0; color: hsl(var(--color-muted-foreground)); font-size: 0.8125rem; text-wrap: balance; font-variant-numeric: tabular-nums; }
 .zkapi-done-actions { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
 .zkapi-done-actions .zkapi-primary-button { height: 2.5rem; }
+.zkapi-funding-return-balance { margin: 0 0 0.375rem; color: hsl(var(--color-foreground)); font-size: 0.875rem; font-weight: 500; font-variant-numeric: tabular-nums; }

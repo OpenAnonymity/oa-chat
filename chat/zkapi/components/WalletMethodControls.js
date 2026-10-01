@@ -588,7 +588,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const sendRow = !quoted ? transferRow('Send', '<span class="zkapi-transfer-muted">—</span>')
         : displayedRequiredCovered ? transferRow('Received', `${escape(receivedEthText(available))} ETH`)
             : remaining == null ? transferRow('Send', '<span class="zkapi-transfer-muted">—</span>')
-            : transferRow(received ? 'Still to send' : 'Send',
+            : transferRow(received ? 'Still needed' : 'Send',
                 `<span class="zkapi-funding-send-number">${escape(sendEthText(remaining))}</span> ETH${sendUsd ? ` <small>≈ ${escape(sendUsd)}</small>` : ''}`,
                 recommendedRemaining != null && recommendedRemaining > 0n ? `<button data-funding-copy-amount data-amount="${escape(sendEthText(remaining))}" class="zkapi-icon-button zkapi-copy-button" type="button" aria-label="Copy ETH amount" title="Copy ETH amount" data-copied="${owner.amountCopied ? 'true' : 'false'}">${COPY_FACES}</button>` : '');
     const addressRow = transferRow('Your address', addressValue, addressCopy);
@@ -636,6 +636,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
             ${fundingHelp(owner, 'return', 'Return ETH to your wallet', `${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
                     ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
                     : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
+                ${leftover ? `<p class="zkapi-funding-return-balance">${leftover} is at your deposit address.</p>` : ''}
                 <p class="zkapi-note">${RETURN_EXPLANATION}</p>
                 <div class="zkapi-funding-return-fields">
                     <label class="zkapi-funding-field"><span>Your wallet address</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
@@ -644,7 +645,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
                 </div>
                 ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
                 <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ETH</button></div>`,
-                leftover ? `${leftover} at this address` : '')}
+                '')}
         </div>` : ''}
 
     </section>`;
