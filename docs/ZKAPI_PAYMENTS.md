@@ -10,7 +10,7 @@ escape describes the wait and two separately paid transactions.
 
 Exact calldata/gas is unavailable before server clearance and proof generation.
 The reserve therefore covers the SDK's supported per-transaction gas ceiling at
-current Low fee rates, twice for escape. It is explicitly not an exact fee or a
+current Low fee rates, twice for escape. The reserve is not an exact fee or a
 charge; actual unused ETH remains browser-held. Escape finalization fees may
 change during the safety window. This intentionally overestimates rather than
 starting an underfunded close. MetaMask continues to quote and pay its own fees.
@@ -1017,3 +1017,12 @@ Unsubmitted address fee failures retain an explicit “Deposit not sent” outco
 and next action. Recovery records, authorized fee limits and explicit retry
 requirements are unchanged. A confirmed deposit awaiting its balance projection
 continues to suppress a second deposit.
+
+## Receipt fee presentation (2026-09-30)
+
+The selected fee summary shows required ETH minus already available ETH, followed
+by the amount still needed. Add ETH names that amount and opens the existing
+address and balance-check controls. Its conservative display rounding preserves
+the visible subtraction; fully funded boundary cases gain precision rather than
+a false shortfall. The original exact quote still gates withdrawal, and this
+presentation change does not authorize signing or automatic withdrawal.

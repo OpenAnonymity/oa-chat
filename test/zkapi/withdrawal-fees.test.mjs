@@ -4,7 +4,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import AccountModal from '../../chat/zkapi/components/AccountModal.js';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
 import { getWalletMethod, setWalletMethod } from '../../chat/zkapi/services/walletMethod.mjs';
-import { refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady } from '../../chat/zkapi/components/WithdrawalFees.js';
+import { refreshWithdrawalFees, renderWithdrawalFees, stopWithdrawalFees, withdrawalFeeReady, withdrawalFeeReceiptAmounts } from '../../chat/zkapi/components/WithdrawalFees.js';
 
 const address = `0x${'1'.repeat(40)}`;
 function fixture(t) {
@@ -36,7 +36,7 @@ test('insufficient ETH prevents the first withdrawal action and renders one neut
     assert.equal(run.mock.callCount(), 0);
     const html = owner.renderWithdrawal();
     assert.match(html, /Needed to start/);
-    assert.match(html, /Available for fees/);
+    assert.match(html, /Already available/);
     assert.match(html, /You need .*0\.0006/);
     assert.match(html, /id="zkapi-withdraw-btn"[^>]*disabled/);
     assert.doesNotMatch(html, /Actual deposit network fee|Return ETH to your wallet|data-tone="error"/);
@@ -114,7 +114,7 @@ test('balance view preloads a quote and loading uses the same fee slots', async 
     const ready = renderWithdrawalFees(owner);
     stopWithdrawalFees(owner);
     const loading = renderWithdrawalFees(owner);
-    for (const label of ['Needed to start', 'Available for fees', 'zkapi-fee-result', 'zkapi-fee-action']) {
+    for (const label of ['Needed to start', 'Already available', 'zkapi-fee-result', 'zkapi-fee-action']) {
         assert.ok(loading.includes(label));
         assert.ok(ready.includes(label));
     }
@@ -126,7 +126,7 @@ test('shortfall shows Add ETH and reveals transfer instructions on request', asy
     const { owner, quote } = fixture(t);
     quote.balanceWei = '0'; quote.shortfallWei = quote.feeReserveWei;
     await refreshWithdrawalFees(owner);
-    assert.match(renderWithdrawalFees(owner), /data-withdrawal-fee-topup[^>]*>Add ETH/);
+    assert.match(renderWithdrawalFees(owner), /data-withdrawal-fee-topup[^>]*>Add 0\.001 ETH/);
     assert.doesNotMatch(renderWithdrawalFees(owner), /Fee-paying address/);
     owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
     assert.match(renderWithdrawalFees(owner), /Fee-paying address/);
@@ -221,4 +221,32 @@ test('editing the destination during final fee preflight cannot redirect an appr
     await pending;
     assert.equal(run.mock.callCount(), 0);
     assert.match(owner.outcome.message, /Withdrawal details changed/);
+});
+
+
+test('receipt uses the screenshot amounts and removes the paid-separately paragraph', async t => {
+    const { owner, quote } = fixture(t);
+    Object.assign(quote, { feeReserveWei: '1773000000000000', balanceWei: '713000000000000', shortfallWei: '1060000000000000' });
+    await refreshWithdrawalFees(owner);
+    const html = renderWithdrawalFees(owner);
+    assert.match(html, /Needed to start<\/dt><dd>0\.001773 ETH/);
+    assert.match(html, /aria-label="minus">−<\/span> 0\.000713 ETH/);
+    assert.match(html, /You need to add<\/dt><dd>0\.00106 ETH/);
+    assert.match(html, />Add 0\.00106 ETH<\/button>/);
+    assert.doesNotMatch(html, /Paid separately|fee allowance|unused ETH/);
+    owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
+    assert.match(renderWithdrawalFees(owner), /Send 0\.00106 ETH/);
+});
+
+test('rounded receipt subtraction always equals its safe top-up recommendation', () => {
+    for (const [reserve,balance] of [[1773000000000001n,713000000000001n], [1n,0n], [1000000000000001n,1000000000000001n], [1000000000000001n,1000000000000002n]]) {
+        const receipt = withdrawalFeeReceiptAmounts({ feeReserveWei:String(reserve), balanceWei:String(balance) });
+        const difference = BigInt(receipt.needed)-BigInt(receipt.available);
+        assert.equal(BigInt(receipt.shortfall), difference>0n?difference:0n);
+        if(balance>=reserve) assert.equal(receipt.shortfall,'0');
+        else {
+            assert.ok(BigInt(receipt.shortfall)>=reserve-balance);
+            assert.ok(BigInt(receipt.shortfall)-(reserve-balance)<2000000000000n);
+        }
+    }
 });

@@ -1,3 +1,16 @@
+## 2026-09-30: Withdrawal fees use the selected Receipt layout
+
+- Send ETH withdrawal fees show Needed to start (both steps for escape), minus
+  Already available, then a prominent You need to add amount and full-width
+  Add [amount] ETH action. The paid-separately/allowance paragraph is removed.
+- Loading, funded and error states retain three rows and an action slot. Add ETH
+  expands the existing real address/copy/check controls; it never starts a withdrawal.
+- Receipt formatting rounds reserve up and balance down to six decimals, then
+  derives the displayed top-up from those displayed operands (less than two
+  extra micro-ETH). At a fully funded rounding boundary it increases precision
+  to avoid showing a false shortfall. Raw quote readiness and authorization are
+  unchanged; the transfer instructions use the same amount as the button.
+
 ## 2026-09-30: Deposit checks do not imply submission
 
 - The SDK checks the private-vault note even for an unsubmitted quote. That
