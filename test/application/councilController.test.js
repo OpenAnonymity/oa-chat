@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { recordedTrustedAccess, recordedTrustedResult } from '../helpers/trustedStation.js';
 
 const { default: CouncilController } = await import('../../chat/application/councilController.js');
 
@@ -2058,15 +2059,16 @@ test('regenerating a routed lane clears old attribution and requests Auto Router
 
 test('Council uses outage access but still respects later cached bans', async () => {
     let banned = false;
+    const access = recordedTrustedAccess('outage-child');
     const saved = [];
     const controller = createController({
         ticketCount: 1,
         chatDB: { saveSession: async session => saved.push(JSON.parse(JSON.stringify(session))) },
         inferenceService: {
             getAccessLabel: () => 'OpenRouter key',
-            requestAccess: async () => ({ key: 'outage-child', stationId: 'station-a', expiresAt: new Date(Date.now() + 60000).toISOString() }),
-            getVerificationAdapter: () => ({ supports: true, getAccessId: () => 'station-a', isAccessBanned: () => banned }),
-            verifyAccess: async () => ({ status: 'verifier-unavailable' }),
+            requestAccess: async () => access,
+            getVerificationAdapter: () => ({ supports: true, getAccessId: () => access.stationId, isAccessBanned: () => banned }),
+            verifyAccess: async () => recordedTrustedResult(access),
             setCurrentAccess: () => {}
         }
     });
@@ -2084,12 +2086,13 @@ test('a newly issued outage lane registers recovery before any later use check',
     const order = [];
     let saved;
     let recover;
+    const access = recordedTrustedAccess('new-outage-lane');
     const controller = createController({
         ticketCount: 1,
         chatDB: { saveSession: async session => { saved = structuredClone(session); order.push('saved'); } },
         inferenceService: {
             getAccessLabel: () => 'OpenRouter key',
-            requestAccess: async () => ({ key: 'new-outage-lane', stationId: 'station-a', expiresAt: new Date(Date.now() + 60000).toISOString() }),
+            requestAccess: async () => access,
             getVerificationAdapter: () => ({
                 supports: true,
                 trackPendingAccess(info, session) {
@@ -2100,7 +2103,7 @@ test('a newly issued outage lane registers recovery before any later use check',
                     };
                 }
             }),
-            verifyAccess: async () => ({ status: 'verifier-unavailable' })
+            verifyAccess: async () => recordedTrustedResult(access)
         }
     });
     const session = { id: 'new-outage-lane-session' };

@@ -1,3 +1,43 @@
+## 2026-10-01: Trusted-station fallback and stale proving-key cache repair
+
+- The user's staging response exposes `Invalid org signature`. OA's former
+  advisory policy admitted non-banned stations without an explicit trust pin;
+  the requested restriction now requires pinned `oa-station` identity and a
+  valid local Ed25519 signature over the exact provider key and expiry for
+  every unverified continuation. Ordinary matching verifier approvals remain
+  available for other stations. See [privacy boundaries](PRIVACY_MODEL.md).
+- zkAPI now calls the shared host verifier through a hash-checked SDK callback
+  patch after its original lease/cap/origin checks. Its System Panel receives
+  the actual approval status; cached credential checkout rechecks bans and
+  the current trust policy. No fallback is labeled verified. SDK keys remain
+  in memory and are not queued in OA's ticket retry service. Legacy saved
+  advisory proofs without the current trust binding are discarded on use.
+- Staging's actual browser cache contained a 5,654,800-byte old request proving
+  file with SHA `faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e`.
+  A cookie-free reload returned the expected 5,935,783-byte file with SHA
+  `c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584`.
+  Sepolia's checked cached copy already matched. Both sites serve correct
+  request/withdrawal files. The SDK now versions proof URLs by their expected
+  hash and retries a mismatched cached response once with `cache: reload`;
+  the same digest is still mandatory before decoding. Wallet state is untouched.
+- SDK compatibility patches compose in order with per-file intermediate/final
+  hashes; installation validates the full plan before writing and build
+  provenance records all three patches. Never update the pinned SDK or bypass
+  a hash check without reviewing the complete patch chain.
+
+## 2026-10-01: Sepolia generic 401 comes from lease verification
+
+- Live build `UAG7TFYT` failed in SDK `remoteJson → verifyLease`, before
+  provider inference. The separate Sepolia password failure uses different
+  copy. The SDK ignores the verifier's `detail` field, masking several possible
+  rejections as `HTTP 401`; the subsequent staging screenshot supplies
+  `Invalid org signature`. Error parsing now retains `detail`.
+- Fresh read-only diagnostics found running verifier containers but do not
+  distinguish the signature/ownership rejection paths. See the
+  [investigation record](SEPOLIA_VERIFIER_401_20261001.md). Preserve the wallet
+  journal and fail-closed verification while diagnosing; public station health
+  does not establish verification of a particular key.
+
 ## 2026-09-30: Canonical zkAPI service origins
 
 - The September 30 Mainnet and Sepolia profiles use

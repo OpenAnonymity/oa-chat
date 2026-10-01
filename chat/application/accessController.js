@@ -117,6 +117,9 @@ export function buildVerifierSubmitKeyProof(verifyResult, accessInfo = null, opt
         stationId,
         keyHashFromOrg,
         keyHashFromVerifier,
+        ...(verifyResult?.trustedStationFallback ? {
+            trustedStationFallback: redactProofValue(verifyResult.trustedStationFallback, accessInfo)
+        } : {}),
         verifierResponse,
         retryable: typeof verifierResponse?.retryable === 'boolean' ? verifierResponse.retryable : null,
         error: redactProofValue(verifyResult?.error?.message || null, accessInfo),

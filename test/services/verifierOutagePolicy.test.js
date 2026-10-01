@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { signStationKey, trustedStationPins } from '../helpers/trustedStation.js';
 
 const previousWindow = globalThis.window;
 globalThis.window = {
@@ -17,18 +18,19 @@ test.after(() => {
     else globalThis.window = previousWindow;
 });
 
-const UNATTESTED = {
+const UNATTESTED = signStationKey({
     recentlyAttested: false,
     stationId: 'station-unattested',
     key: 'child-secret',
     expiresAtUnix: Math.floor(Date.now() / 1000) + 3600,
     stationSignature: 'station-signature',
     orgSignature: 'org-signature'
-};
-const ATTESTED = { ...UNATTESTED, recentlyAttested: true, stationId: 'station-attested' };
+});
+const ATTESTED = signStationKey({ ...UNATTESTED, recentlyAttested: true, stationId: 'station-attested' });
+const TRUSTED_STATIONS = trustedStationPins(UNATTESTED.stationId, ATTESTED.stationId);
 
 function withVerifier(policy, replyOrError) {
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     verifier.setOutagePolicy(policy);
     const originalFetch = networkProxy.fetchWithRetryJson;
     networkProxy.fetchWithRetryJson = async () => {
@@ -51,11 +53,11 @@ const malformedReply = { response: { ok: true, status: 200 }, data: { hello: 'wo
 
 test('unbuilt sources default to the strict policy', () => {
     assert.equal(VERIFIER_OUTAGE_POLICY, 'strict');
-    assert.equal(new StationVerifier().outagePolicy, 'strict');
+    assert.equal(new StationVerifier({ trustedStations: TRUSTED_STATIONS }).outagePolicy, 'strict');
 });
 
 test('setOutagePolicy ignores unknown values', () => {
-    const verifier = new StationVerifier();
+    const verifier = new StationVerifier({ trustedStations: TRUSTED_STATIONS });
     verifier.setOutagePolicy('anything-goes');
     assert.equal(verifier.outagePolicy, 'strict');
 });
@@ -185,12 +187,14 @@ test('advisory: an explicit unverified verdict continues without a retry queue',
     } finally { restore(); }
 });
 
-test('advisory: a 4xx refusal without a ban continues', async () => {
-    const { verifier, restore } = withVerifier('advisory', { response: { ok: false, status: 401 }, data: { detail: 'signature mismatch' } });
+test('advisory: an invalid org signature continues only after the trusted station signature passes', async () => {
+    const { verifier, restore } = withVerifier('advisory', { response: { ok: false, status: 401 }, data: { detail: 'Invalid org signature' } });
     try {
         const result = await verifier.submitKey(UNATTESTED);
         assert.equal(result.status, 'verifier-unavailable');
         assert.equal(result.detail, 'unverified_advisory');
+        assert.equal(result.trustedStationFallback.stationId, UNATTESTED.stationId);
+        assert.equal(result.trustedStationFallback.stationSignature, UNATTESTED.stationSignature);
     } finally { restore(); }
 });
 
@@ -234,7 +238,34 @@ test('background retry upgrades an outage-admitted unattested key once the verif
 
 
 for (const policy of ['strict', 'tolerant', 'advisory']) {
+    for (const reply of [transportError(), timeoutError(), pendingReply, malformedReply,
+        { response: { ok: false, status: 429 }, data: {} },
+        { response: { ok: false, status: 503 }, data: { status: 'unverified', detail: 'ownership_check_error' } },
+        { response: { ok: false, status: 401 }, data: { detail: 'Invalid org signature' } },
+        unverifiedReply]) {
+        test(`${policy}: no fallback without a valid explicitly trusted station (${reply.status || reply.response?.status || reply.name})`, async () => {
+            const { verifier, restore } = withVerifier(policy, reply);
+            try {
+                for (const changes of [{ stationId: 'unknown-station' }, { stationSignature: '00'.repeat(64) },
+                    { key: 'swapped-child' }, { expiresAtUnix: ATTESTED.expiresAtUnix + 1 }]) {
+                    const result = await verifier.submitKey({ ...ATTESTED, ...changes });
+                    assert.notEqual(result.status, 'verifier-unavailable');
+                    assert.notEqual(result.status, 'verified');
+                    assert.equal(verifier.pendingSubmissions.size, 0);
+                }
+            } finally { restore(); }
+        });
+    }
+    test(`${policy}: a station outside the fallback trust list can still get matching verifier approval`, async () => {
+        const { verifier, restore } = withVerifier(policy, null);
+        const unknown = { ...UNATTESTED, stationId: 'unknown-station' };
+        networkProxy.fetchWithRetryJson = async () => ({ response: { ok: true, status: 200 },
+            data: { status: 'verified', station_id: unknown.stationId, key_hash: await verifier._hashKey(unknown.key) } });
+        try { assert.equal((await verifier.submitKey(unknown)).status, 'verified'); }
+        finally { restore(); }
+    });
     for (const data of [
+        { detail: 'Station is banned' },
         { status: 'banned' },
         { status: 'pending', banned_station: { station_id: UNATTESTED.stationId, reason: 'logging detected' } },
         { status: 'verified', banned_station: { station_id: UNATTESTED.stationId, reason: 'logging detected' } }
