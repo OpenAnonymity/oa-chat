@@ -1,15 +1,15 @@
 {
-  "deployment_manifest_url": "https://sepolia.100.21.48.23.sslip.io/config.json",
+  "deployment_manifest_url": "https://zkapi-sepolia.openanonymity.ai/config.json",
   "allowed_deployment_manifest_urls": [
-    "https://sepolia.100.21.48.23.sslip.io/config.json"
+    "https://zkapi-sepolia.openanonymity.ai/config.json"
   ],
   "trusted_deployment": {
     "deployment_id": "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930",
     "chain_id": 11155111,
     "contract_address": "0x49fA19f9bdECe7A48Ebc7749fD69aD40F577590F",
     "billing_token_address": null,
-    "protocol_server_url": "https://sepolia.100.21.48.23.sslip.io",
-    "indexer_url": "https://sepolia.100.21.48.23.sslip.io",
+    "protocol_server_url": "https://zkapi-sepolia.openanonymity.ai",
+    "indexer_url": "https://zkapi-sepolia.openanonymity.ai",
     "request_charge_cap": 50000,
     "state_signing_key": {
       "x": "0x25a4453190e930f9716eebcab165170706d31d1b3969d106a50d7ae374a23d61",

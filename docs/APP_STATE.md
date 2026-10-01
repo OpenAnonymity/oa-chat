@@ -1,3 +1,15 @@
+## 2026-09-30: Canonical zkAPI service origins
+
+- The September 30 Mainnet and Sepolia profiles use
+  `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai` for manifest/protocol/indexer URLs.
+  Only these profile URLs change; vaults, deployment IDs, signing/proof pins,
+  wallet databases and funding-address scopes remain unchanged.
+- This Sepolia rollout preserves the existing `c93d9d2` frontend and SDK patch.
+  Backend routing is generated from the same profile as browser configuration.
+  The frontend origin stays the same so browser wallets and history persist.
+  Previous funded acceptance remains tied to its recorded build.
+
 ## 2026-09-30: Compact withdrawal review
 
 - Withdrawal review uses smaller type and spacing, a compact receipt, and ETH
