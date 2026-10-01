@@ -1031,3 +1031,8 @@ The selected Inline top-up details use the existing app theme and display the
 network and full fee-paying address with a copy icon and Check now. Once opened,
 they remain visible when funded; the status comes from the real scoped fee
 quote. Clipboard failure leaves the address selectable with an inline message.
+
+Withdrawal review has compact type, spacing and receipt rows. The desktop frame
+keeps its width when Add ETH expands beside the receipt; phones stack the
+sections and retain scroll for accessibility. Escape wording uses the configured
+duration in “It takes … to finish.” Fee and destination gates are unchanged.

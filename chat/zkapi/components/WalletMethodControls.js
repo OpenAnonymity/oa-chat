@@ -539,7 +539,7 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
         `${renderFundingReceipt(owner)}${address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
         /^\d+$/.test(String(addressBalance)) ? `${escape(sendEthText(addressBalance))} ETH` : '');
     const withdrawalDestination = owner.view === 'withdraw' && destination ? `<label class="zkapi-funding-field"><span>Your wallet address on ${escape(network)}</span><input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label>
-        <p class="zkapi-helper">${savedDestination ? 'This withdrawal keeps its saved destination.' : 'This address receives your private balance.'}</p>` : '';
+        ${savedDestination ? '<p class="zkapi-helper">This withdrawal keeps its saved destination.</p>' : ''}` : '';
     return `<section class="zkapi-funding-account${funding ? ' is-funding' : ''}" aria-label="This browser’s receiving address">
         ${fundingView}
         ${withdrawalDestination}
