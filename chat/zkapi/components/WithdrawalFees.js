@@ -2,7 +2,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { withWalletProviderRead } from '../services/walletProviderAccess.mjs';
 import { getWalletMethod, prepareWalletMethod } from '../services/walletMethod.mjs';
-import { renderFundingWei } from './WalletMethodControls.js';
+import { renderFundingWei, fundingUsdText } from './WalletMethodControls.js';
 
 export function withdrawalFeeScope(owner) {
     return JSON.stringify([getWalletMethod(), getWalletMethod() === 'address' ? addressFundingWallet.address : zkapiClient.walletAddress,
@@ -90,6 +90,26 @@ export function withdrawalFeeReceiptAmounts(quote) {
         shortfall: String(needed > available ? needed - available : 0n) };
 }
 
+function topUpPanel(owner, { quote, receipt, short, status, checking, compact = false }) {
+    const escape = value => owner.escapeHtml(value);
+    const amount = value => renderFundingWei(owner, value);
+    return `<div class="zkapi-fee-topup t-panel-slide" data-open="true">
+            ${compact ? '' : `<div class="zkapi-fee-send"><p class="zkapi-fee-send-amount">${short ? 'Send' : 'Available'} ${amount(short ? receipt.shortfall : receipt.available)}</p></div>`}
+            <div><p class="zkapi-fee-address-label">${short ? 'To this address' : 'Funding address'}</p>
+                <div class="zkapi-funding-address zkapi-fee-address">
+                    <div class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" aria-label="Fee-paying address">${escape(quote.address.slice(0, 22))}<wbr>${escape(quote.address.slice(22))}</div>
+                    <button data-withdrawal-fee-copy class="zkapi-secondary-button zkapi-copy-button" type="button" aria-label="Copy funding address" data-copied="false">
+                        <svg class="zkapi-copy-face" data-face="copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.75"/><path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5c0 .97.78 1.75 1.75 1.75h.25"/></svg>
+                        <svg class="zkapi-copy-face" data-face="copied" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-6"/></svg>
+                    </button>
+                </div>
+                <p class="zkapi-fee-copy-feedback" data-withdrawal-fee-copy-status role="status"></p>
+            </div>
+            <div class="zkapi-fee-transfer-status"><p role="status">${status || 'Waiting for your transfer'}</p>
+                <button data-withdrawal-fee-refresh class="zkapi-quiet-button" type="button" ${checking || owner.busy ? 'disabled' : ''}>${checking ? 'Checking…' : 'Check now'}</button>
+            </div></div>`;
+}
+
 export function renderWithdrawalFees(owner) {
     const state = owner.withdrawalFees?.scope === withdrawalFeeScope(owner) ? owner.withdrawalFees : null;
     const quote = state?.quote;
@@ -117,21 +137,7 @@ export function renderWithdrawalFees(owner) {
                 : short ? `<button data-withdrawal-fee-topup class="zkapi-primary-button w-full" type="button" aria-expanded="${expanded}" ${checking ? 'disabled' : ''}>Add ${topUpAmount}</button>`
                 : '<button class="zkapi-secondary-button w-full" type="button" disabled style="visibility:hidden" aria-hidden="true" tabindex="-1">Add ETH</button>'}</div>
         </div>
-        ${expanded ? `<div class="zkapi-fee-topup t-panel-slide" data-open="true">
-            <div class="zkapi-fee-send"><p class="zkapi-fee-send-amount">${short ? 'Send' : 'Available'} ${amount(short ? receipt.shortfall : receipt.available)}</p></div>
-            <div><p class="zkapi-fee-address-label">${short ? 'To this address' : 'Funding address'}</p>
-                <div class="zkapi-funding-address zkapi-fee-address">
-                    <div class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" aria-label="Fee-paying address">${escape(quote.address.slice(0, 22))}<wbr>${escape(quote.address.slice(22))}</div>
-                    <button data-withdrawal-fee-copy class="zkapi-secondary-button zkapi-copy-button" type="button" aria-label="Copy funding address" data-copied="false">
-                        <svg class="zkapi-copy-face" data-face="copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.75"/><path d="M10.5 3.5v-.25A1.75 1.75 0 0 0 8.75 1.5h-5.5A1.75 1.75 0 0 0 1.5 3.25v5.5c0 .97.78 1.75 1.75 1.75h.25"/></svg>
-                        <svg class="zkapi-copy-face" data-face="copied" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-6"/></svg>
-                    </button>
-                </div>
-                <p class="zkapi-fee-copy-feedback" data-withdrawal-fee-copy-status role="status"></p>
-            </div>
-            <div class="zkapi-fee-transfer-status"><p role="status">${status || 'Waiting for your transfer'}</p>
-                <button data-withdrawal-fee-refresh class="zkapi-quiet-button" type="button" ${checking || owner.busy ? 'disabled' : ''}>${checking ? 'Checking…' : 'Check now'}</button>
-            </div></div>` : ''}
+        ${expanded ? topUpPanel(owner, { quote, receipt, short, status, checking }) : ''}
     </section>`;
 }
 
@@ -176,4 +182,42 @@ export function attachWithdrawalFees(owner) {
             if (feedback) feedback.textContent = 'Select the address above to copy it.';
         }
     });
+}
+
+const CHECK_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-6"/></svg>';
+
+/** The withdraw form's fee, shaped like a wallet's send screen: one row with
+ *  the fee, one line saying who pays it, and only when ETH is short, how
+ *  much to add with the address one tap away. Same controls (and data
+ *  attributes) as the full receipt, which stays for a saved withdrawal. */
+export function renderWithdrawalFeeLine(owner) {
+    const state = owner.withdrawalFees?.scope === withdrawalFeeScope(owner) ? owner.withdrawalFees : null;
+    const quote = state?.quote;
+    const receipt = quote ? withdrawalFeeReceiptAmounts(quote) : null;
+    const escape = value => owner.escapeHtml(value);
+    const short = quote && BigInt(quote.shortfallWei) > 0n;
+    const checking = Boolean(state?.loading || (!quote && !state?.error));
+    const ready = withdrawalFeeReady(owner);
+    const metamask = getWalletMethod() === 'metamask';
+    const escapeMode = owner.withdrawMode === 'escape';
+    const usd = receipt ? fundingUsdText(receipt.needed) : null;
+    const value = receipt ? `up to ${escape(usd || renderFundingWei(owner, receipt.needed))}`
+        : '<span class="zkapi-skel" style="width:4.5rem" aria-hidden="true"></span><span class="zkapi-visually-hidden">Checking…</span>';
+    const where = metamask ? 'your MetaMask account' : 'your deposit address';
+    const shortEth = receipt ? renderFundingWei(owner, receipt.shortfall).split(' <span>')[0] : '';
+    const status = state?.error ? `<p class="zkapi-withdraw-fee-status is-warn" role="status">${escape(state.error)} ${state.disconnected
+            ? '<button data-withdrawal-wallet-connect class="zkapi-text-link" type="button">Connect MetaMask</button>'
+            : '<button data-withdrawal-fee-refresh class="zkapi-text-link" type="button">Try again</button>'}</p>`
+        : short ? `<p class="zkapi-withdraw-fee-status is-warn" role="status">Add <b>${shortEth}</b> to ${where} to pay the fee.</p>`
+        : ready ? `<p class="zkapi-withdraw-fee-status is-ok" role="status">${CHECK_ICON}<span>${metamask ? 'Paid from your MetaMask account when you confirm.' : 'Paid from the ETH at your deposit address.'}</span></p>`
+        : `<p class="zkapi-withdraw-fee-status" role="status">${checking && !quote ? 'Checking the network fee…' : 'Updating the fee estimate…'}</p>`;
+    const expanded = short && !metamask && owner.withdrawalFeeTopUp === state.scope;
+    const reveal = short && !metamask && !expanded
+        ? `<button data-withdrawal-fee-topup class="zkapi-text-link zkapi-withdraw-fee-reveal" type="button" aria-expanded="false" ${checking ? 'disabled' : ''}>Show deposit address</button>` : '';
+    return `<section class="zkapi-withdraw-fee" aria-label="Withdrawal network fee" aria-busy="${checking}">
+        <div class="zkapi-transfer-row"><span class="zkapi-transfer-label">${escapeMode ? 'Network fees' : 'Network fee'}</span><span class="zkapi-transfer-value">${value}</span><span class="zkapi-transfer-control"></span></div>
+        ${status}
+        ${reveal}
+        ${expanded ? topUpPanel(owner, { quote, receipt, short, status: checking ? 'Checking available ETH…' : '', checking, compact: true }) : ''}
+    </section>`;
 }

@@ -37,7 +37,10 @@ test('withdrawal amount does not claim funds were already returned before submis
     const modal = fixture(t);
     const html = modal.renderWithdrawal();
     assert.match(html, /You withdraw/);
-    assert.match(html, /To your MetaMask account\. MetaMask pays the network fee\./);
+    assert.match(html, /<span class="zkapi-balance-caption">To<\/span><p class="zkapi-withdraw-account">Your MetaMask account/);
+    assert.match(html, /Paid from your MetaMask account when you confirm\./, 'who pays the fee, said once under the fee');
+    assert.match(html, /id="zkapi-withdraw-mode-toggle"[^>]*>Server not responding\? Use the escape hatch</, 'the escape hatch is a quiet link, not a radio');
+    assert.doesNotMatch(html, /name="zkapi-withdraw-mode"|Withdrawal method/);
     assert.doesNotMatch(html, /Returned to MetaMask/);
 });
 

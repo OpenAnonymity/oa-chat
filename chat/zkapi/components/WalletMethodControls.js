@@ -236,6 +236,11 @@ function fundingUsdValue(value) {
     return usd;
 }
 
+/** "$0.40" for a wei amount, or null when the price is unknown. */
+export function fundingUsdText(value) {
+    return fundingUsdValue(value);
+}
+
 export function renderFundingWei(owner, value) {
     const usd = fundingUsdValue(value);
     return `${owner.escapeHtml(formatFundingAmount(value, 18))} ETH${usd ? ` <span>(≈ ${owner.escapeHtml(usd)})</span>` : ''}`;
@@ -687,8 +692,10 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
     const receipt = funding ? '' : fundingHelp(owner, 'receipt', 'ETH for network fees',
         `${renderFundingReceipt(owner)}${address}${owner.fundingStatusError ? `<p class="zkapi-helper" role="status">${escape(owner.fundingStatusError)}</p>` : ''}`,
         /^\d+$/.test(String(addressBalance)) ? `${escape(sendEthText(addressBalance))} ETH` : '');
-    const withdrawalDestination = owner.view === 'withdraw' && destination ? `<label class="zkapi-funding-field"><span>Your wallet address on ${escape(network)}</span><input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} /></label>
-        ${savedDestination ? '<p class="zkapi-helper">This withdrawal keeps its saved destination.</p>' : ''}` : '';
+    // The withdraw form's "To": one field, like a wallet's send screen.
+    const withdrawalDestination = owner.view === 'withdraw' && destination ? `<div class="zkapi-withdraw-to"><span class="zkapi-balance-caption">To</span>
+        <div class="zkapi-return-field"><input id="funding-withdrawal-destination" data-funding-withdrawal-destination autocomplete="off" spellcheck="false" placeholder="Your wallet address (0x…)" aria-label="Your wallet address on ${escape(network)}" value="${escape(savedDestination || owner.fundingDestination || '')}" ${savedDestination ? 'readonly' : disabled} />${savedDestination ? '' : `<button data-funding-withdrawal-paste class="zkapi-paste-button" type="button" ${disabled}>Paste</button>`}</div>
+        ${savedDestination ? '<p class="zkapi-helper">This withdrawal keeps its saved destination.</p>' : `<p class="zkapi-withdraw-to-hint">An address on ${escape(network)}. Withdrawals can’t be reversed.</p>`}</div>` : '';
     return `<section class="zkapi-funding-account${funding ? ' is-funding' : ''}" aria-label="This browser’s receiving address">
         ${fundingView}
         ${withdrawalDestination}
@@ -1017,6 +1024,18 @@ export function attachWalletMethodControls(owner) {
             } finally { release?.(); }
         });
     };
+    on('withdrawal-paste', async () => {
+        const field = input('withdrawal-destination');
+        try {
+            const text = String(await navigator.clipboard.readText() || '').trim();
+            if (field && text) {
+                field.value = text;
+                owner.fundingDestination = text;
+                field.dispatchEvent?.(new Event('input', { bubbles: true }));
+            }
+        } catch { /* Clipboard reading blocked: the field takes a normal paste. */ }
+        field?.focus?.();
+    });
     on('return-paste', async () => {
         const field = input('return-destination');
         try {

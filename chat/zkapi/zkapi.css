@@ -2465,3 +2465,32 @@ html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 
     .zkapi-transfer.is-revealing .zkapi-transfer-value, .zkapi-funding-wait.is-revealing > span:last-child { animation-duration: 1ms; }
     .zkapi-fee-hint-wrap.is-entering { animation: none; }
 }
+
+/* Withdraw as a wallet's send screen: amount, To, one fee line, Continue,
+   and the escape hatch as a quiet link. The review repeats it as rows. */
+.zkapi-withdraw-form { gap: 0.875rem; }
+.zkapi-withdraw-to { display: flex; flex-direction: column; gap: 0.375rem; min-width: 0; }
+.zkapi-withdraw-to .zkapi-balance-caption { margin: 0; }
+.zkapi-withdraw-to .zkapi-helper { margin: 0; }
+.zkapi-withdraw-to-hint { margin: 0; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; line-height: 1.4; }
+.zkapi-withdraw-account { display: flex; align-items: center; gap: 0.5rem; min-height: 2.625rem; margin: 0; padding: 0 0.75rem; border: 1px solid hsl(var(--color-foreground) / 0.08); border-radius: 0.625rem; background: hsl(var(--color-foreground) / 0.025); color: hsl(var(--color-foreground)); font-size: 0.875rem; }
+.zkapi-withdraw-account .zkapi-transfer-address { display: inline; margin-left: auto; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; }
+.zkapi-withdraw-fee { display: flex; flex-direction: column; gap: 0.25rem; }
+.zkapi-withdraw-fee > .zkapi-transfer-row { min-height: 2.5rem; border-block: 1px solid hsl(var(--color-foreground) / 0.08); }
+.zkapi-withdraw-fee-status { display: flex; align-items: flex-start; gap: 0.375rem; margin: 0.25rem 0 0; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; line-height: 1.45; text-wrap: pretty; }
+.zkapi-withdraw-fee-status svg { flex: 0 0 auto; width: 0.875rem; height: 0.875rem; margin-top: 0.0625rem; fill: none; stroke: hsl(var(--color-accent-primary)); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.zkapi-withdraw-fee-status.is-warn { color: hsl(var(--color-foreground)); display: block; }
+.zkapi-withdraw-fee-status b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.zkapi-withdraw-fee-reveal { align-self: flex-start; font-size: 0.75rem; }
+.zkapi-withdraw-fee .zkapi-fee-topup { padding-top: 0.5rem; }
+.zkapi-withdraw-escape-note { margin: 0; }
+.zkapi-withdraw-actions { flex-direction: column; align-items: stretch; gap: 0.25rem; }
+.zkapi-withdraw-actions .zkapi-primary-button { height: 2.5rem; }
+.zkapi-withdraw-escape { margin: 0; text-align: center; font-size: 0.75rem; }
+.zkapi-withdraw-escape .zkapi-text-link { color: hsl(var(--color-muted-foreground)); }
+.zkapi-withdraw-escape .zkapi-text-link:hover:not(:disabled) { color: hsl(var(--color-foreground)); }
+.zkapi-withdraw-review { gap: 0.875rem; }
+.zkapi-withdraw-review .zkapi-transfer-row { min-height: 2.75rem; }
+.zkapi-withdraw-review .zkapi-transfer-value b { font-weight: 600; }
+.zkapi-withdraw-review .zkapi-transfer-address { display: inline; }
+.zkapi-withdraw-review .zkapi-note { margin: 0; font-size: 0.75rem; line-height: 1.45; }
