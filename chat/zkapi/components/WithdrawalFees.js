@@ -104,8 +104,8 @@ export function renderWithdrawalFees(owner) {
             <div class="zkapi-fee-total"><dt>${short ? 'You need to add' : 'Still needed'}</dt><dd>${receipt ? amount(receipt.shortfall) : placeholder}</dd></div>
         </dl>
         <div class="zkapi-fee-result"><p role="status" ${ready ? 'class="zkapi-fee-covered"' : ''}>${status}</p>
-            <div class="zkapi-fee-action">${state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button w-full" type="button">Try again</button>'
-                : short ? `<button data-withdrawal-fee-topup class="${expanded ? 'zkapi-secondary-button' : 'zkapi-primary-button'} w-full" type="button" aria-expanded="${expanded}" ${checking ? 'disabled' : ''}>${expanded ? 'Hide address' : `Add ${topUpAmount}`}</button>`
+            <div class="zkapi-fee-action" ${expanded ? 'hidden' : ''}>${expanded ? '' : state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button w-full" type="button">Try again</button>'
+                : short ? `<button data-withdrawal-fee-topup class="zkapi-primary-button w-full" type="button" aria-expanded="${expanded}" ${checking ? 'disabled' : ''}>Add ${topUpAmount}</button>`
                 : '<button class="zkapi-secondary-button w-full" type="button" disabled style="visibility:hidden" aria-hidden="true" tabindex="-1">Add ETH</button>'}</div>
         </div>
         ${expanded ? `<div class="zkapi-fee-topup"><p class="zkapi-note">Send ${amount(receipt.shortfall)} on ${escape(zkapiClient.networkName())} to this address, then check again:</p>
@@ -118,7 +118,7 @@ export function renderWithdrawalFees(owner) {
 export function attachWithdrawalFees(owner) {
     owner.overlay.querySelector('[data-withdrawal-fee-topup]')?.addEventListener('click', () => {
         const scope = withdrawalFeeScope(owner);
-        owner.withdrawalFeeTopUp = owner.withdrawalFeeTopUp === scope ? null : scope;
+        owner.withdrawalFeeTopUp = scope;
         owner.render();
     });
     owner.overlay.querySelector('[data-withdrawal-fee-refresh]')?.addEventListener('click', () => {

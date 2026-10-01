@@ -131,6 +131,10 @@ test('shortfall shows Add ETH and reveals transfer instructions on request', asy
     owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
     assert.match(renderWithdrawalFees(owner), /Fee-paying address/);
     assert.match(renderWithdrawalFees(owner), /Check for ETH/);
+    assert.match(renderWithdrawalFees(owner), /class="zkapi-fee-action" hidden/);
+    assert.doesNotMatch(renderWithdrawalFees(owner), /Hide address|data-withdrawal-fee-topup/);
+    owner.withdrawalFees.error = 'Couldn’t check fees. Try again.';
+    assert.equal((renderWithdrawalFees(owner).match(/data-withdrawal-fee-refresh/g) || []).length, 1, 'the visible balance check remains the only refresh control');
 });
 
 

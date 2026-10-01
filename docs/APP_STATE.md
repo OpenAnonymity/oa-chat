@@ -5,6 +5,7 @@
   Add [amount] ETH action. The paid-separately/allowance paragraph is removed.
 - Loading, funded and error states retain three rows and an action slot. Add ETH
   expands the existing real address/copy/check controls; it never starts a withdrawal.
+  Once opened, the address stays visible without a Hide address button.
 - Receipt formatting rounds reserve up and balance down to six decimals, then
   derives the displayed top-up from those displayed operands (less than two
   extra micro-ETH). At a fully funded rounding boundary it increases precision
