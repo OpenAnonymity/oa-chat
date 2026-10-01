@@ -106,6 +106,15 @@ to zkAPI; the SDK has no OA Chat submodule or UI dependency.
 
 ## Build
 
+The reviewed public deployment configuration lives in
+[`deployments/zkapi/mainnet.json`](../deployments/zkapi/mainnet.json) and
+[`deployments/zkapi/sepolia.json`](../deployments/zkapi/sepolia.json). These files
+pin each network's vault, public signing keys, proof hashes and service URLs.
+Both the asset build and Vercel route generator consume them; they contain no
+private keys or runtime server state. The stable file paths are independent of
+the deployment selector and wallet database names described below. Renaming a
+source directory must not rename those identifiers or reset existing wallets.
+
 The default `npm run build` retains Tickets only. To enable both methods:
 
 ```sh

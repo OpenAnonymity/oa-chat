@@ -82,12 +82,12 @@ test('Vercel source uploads include only reviewed public deployment pin files', 
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     await fs.copyFile('.vercelignore', path.join(directory, '.vercelignore'));
     execFileSync('git', ['init', '-q', directory]);
-    const included = [...deployments.flatMap(deployment => ['mainnet', 'sepolia'].map(network =>
-        `deployments/zkapi/${deployment}/${network}.json`)),
+    const included = [...['mainnet', 'sepolia'].map(network =>
+        `deployments/zkapi/${network}.json`),
         'patches/zkapi-browser-sdk-wallet-recovery.mjs'];
     const excluded = ['deployments/private/key.json', 'deployments/zkapi/other/mainnet.json',
-        ...deployments.flatMap(deployment => ['secret.json', 'nested/secret.json', '.env', '.git/config']
-            .map(file => `deployments/zkapi/${deployment}/${file}`)), 'patches/private-test.json'];
+        ...['secret.json', 'nested/secret.json', '.env', '.git/config']
+            .map(file => `deployments/zkapi/${file}`), 'patches/private-test.json'];
     const ignored = execFileSync('git', ['-c', 'core.excludesFile=.vercelignore', 'check-ignore', '--no-index', '--stdin'], {
         cwd: directory, input: [...included, ...excluded].join('\n') + '\n', encoding: 'utf8'
     }).trim().split('\n');

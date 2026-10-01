@@ -1,3 +1,15 @@
+## 2026-10-01: Stable zkAPI deployment configuration paths
+
+- Public network pins now live directly at `deployments/zkapi/mainnet.json` and
+  `deployments/zkapi/sepolia.json`, without a dated rollout subdirectory. Build
+  imports and the Vercel upload allowlist use these paths. See
+  [payment build configuration](ZKAPI_PAYMENTS.md#build) for their purpose.
+- The JSON contents, `OA_ZKAPI_DEPLOYMENT=fresh-20260930` selector, deployment
+  IDs and wallet database names are unchanged. The selector also determines
+  wallet storage, so a cosmetic path cleanup must not rename it and hide
+  existing notes or transaction journals. Emitted browser configuration and
+  service routes retain their existing locations.
+
 ## 2026-10-01: Retire legacy zkAPI origins
 
 - Only the canonical September 30 profiles remain selectable. The retired
