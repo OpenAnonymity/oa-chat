@@ -1,3 +1,15 @@
+## 2026-10-01: Move preview Google passkeys onto the final domain
+
+The explicit recovery button now says **Move passkey to this site**. It unlocks
+the preview credential once, then **Save passkey for this site** starts the
+current-origin prompt directly from a fresh click, wrapping the same master key.
+The org appends it with an account-binding check; old wrappers
+and tickets remain intact. An account-owned encrypted-wrapper journal makes lost
+replies and reloads retryable without creating another passkey. Closing the
+dialog or changing accounts aborts native prompts and rejects late results.
+See [Encryption Passkeys](ENCRYPTION_PASSKEYS.md). Deploy the backend capability
+before the client. Username credentials are not migrated by this Google flow.
+
 ## 2026-10-01: Google account switch from remembered sign-in
 
 Browser Google sign-in now supports an account different from the remembered

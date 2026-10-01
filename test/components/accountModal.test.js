@@ -7,6 +7,19 @@ import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
 import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
 import { routeAuthenticationIntent } from '../../chat/application/authIntent.js';
 
+test('passkey domain upgrade shows a fresh enabled confirmation without a waiting overlay', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.escapeHtml = value => String(value || '');
+    modal.accountState = { oauthKeyringRequired: true, busy: true, action: 'google_key_migration_ready' };
+    modal.accountService = { canUsePrelaunchPasskey: () => true };
+    const html = modal.renderOAuthUnlockUI();
+    assert.match(html, /Your existing passkey worked/);
+    assert.match(html, /Save passkey for this site/);
+    assert.match(html, /id="oauth-passkey-upgrade-btn"[^>]*aria-busy="false"/);
+    assert.doesNotMatch(html, /data-waiting="true"/);
+    assert.doesNotMatch(html, /id="oauth-passkey-upgrade-btn"[^>]*disabled/);
+});
+
 test('pre-launch recovery is an explicit retry option, hidden during prompts and new signup', () => {
     const modal = Object.create(AccountModal.prototype);
     modal.escapeHtml = value => String(value || '');

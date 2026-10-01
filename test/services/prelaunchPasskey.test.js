@@ -35,7 +35,11 @@ async function fixture() {
     service.syncInitializationGeneration = 1;
     service.keyringWrappers = [wrapper];
     service.setState = patch => Object.assign(service.state, patch);
-    service.fetchOAuthKeyring = async () => ({ accountId: A, wrappers: [wrapper] });
+    service.fetchOAuthKeyring = async () => ({ accountId: A, accountBinding: true, wrappers: [wrapper] });
+    service.addCurrentDomainPasskey = async (_keyring, key) => {
+        assert.deepEqual(key, master);
+        return id;
+    };
     return { service, wrapper };
 }
 

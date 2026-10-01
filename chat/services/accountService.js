@@ -2753,15 +2753,113 @@ class AccountService {
             this.keyringWrappers.length);
     }
 
+    // Invoke the native prompt directly from a fresh click, after any storage
+    // awaits. The recovered key stays only in the waiting call's closure.
+    confirmPasskeyUpgrade(prompt, { signal, isCurrent }) {
+        return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                signal.removeEventListener('abort', abort);
+                if (this.passkeyUpgradeContinuation === proceed) this.passkeyUpgradeContinuation = null;
+            };
+            const abort = () => {
+                cleanup();
+                reject(new DOMException('Passkey update cancelled', 'AbortError'));
+            };
+            const proceed = () => {
+                cleanup();
+                if (signal.aborted || !isCurrent()) return abort();
+                this.setState({ action: 'google_key_migration', error: null });
+                try { resolve(prompt()); } catch (error) { reject(error); }
+            };
+            if (signal.aborted || !isCurrent()) return abort();
+            signal.addEventListener('abort', abort, { once: true });
+            this.passkeyUpgradeContinuation = proceed;
+            this.setState({ action: 'google_key_migration_ready', error: null });
+        });
+    }
+
+    continuePasskeyUpgrade() {
+        this.passkeyUpgradeContinuation?.();
+    }
+
+    /** Add, never replace, a current-domain wrapper for the recovered master key.
+     * The encrypted pending wrapper survives reload/lost replies; no raw key does. */
+    async addCurrentDomainPasskey(keyring, masterKey, { expectedAccountId, isCurrent, signal }) {
+        if (!getPrelaunchPasskeyRpId() || keyring.accountBinding !== true) {
+            throw new Error('Passkey migration is not available here.');
+        }
+        const journalKey = `account-passkey-upgrade:${expectedAccountId}`;
+        const assertCurrent = () => {
+            if (!isCurrent()) throw new Error('Account changed while saving the passkey. Please sign in again.');
+        };
+        const locked = handler => withAccountDataLock(async () => {
+            assertCurrent();
+            await syncService.assertAccountBinding(expectedAccountId);
+            assertCurrent();
+            return handler();
+        });
+        const pending = await locked(() => chatDB.getSetting(journalKey));
+        assertCurrent();
+        let wrapper;
+        if (pending) {
+            if (pending.accountId !== expectedAccountId || pending.wrapper?.type !== 'PASSKEY' ||
+                pending.wrapper?.version !== 1 || typeof pending.wrapper?.credentialId !== 'string' ||
+                typeof pending.wrapper?.wrappedKey !== 'string') {
+                throw new Error('The saved passkey update could not be read. Your earlier passkey still works.');
+            }
+            wrapper = pending.wrapper;
+            // Confirm the durable retry wraps this exact account key before
+            // it is uploaded, even after switching accounts or reloading.
+            const retry = await this.confirmPasskeyUpgrade(
+                () => unlockEncryptionKeyring([wrapper], { signal }), { signal, isCurrent });
+            try {
+                if (retry.masterKey.length !== masterKey.length ||
+                    !retry.masterKey.every((value, index) => value === masterKey[index])) {
+                    throw new Error('The saved passkey update belongs to different encrypted data.');
+                }
+            } finally { retry.masterKey.fill(0); }
+        } else {
+            wrapper = await this.confirmPasskeyUpgrade(
+                () => createEncryptionKeyWrapper(masterKey, this.state.oauthEmail,
+                    keyring.wrappers.map(item => item.credentialId), { signal }), { signal, isCurrent });
+            assertCurrent();
+            const saved = await locked(() => chatDB.compareAndSetSetting(journalKey, null,
+                { accountId: expectedAccountId, wrapper }));
+            if (!saved) {
+                throw new Error('Another window is updating this account’s passkey. Finish there, then try again here.');
+            }
+        }
+        assertCurrent();
+        return locked(async () => {
+            await fetchJson('/auth/keyring', { ...wrapper, operation: 'ADD', expectedAccountId });
+            assertCurrent();
+            const confirmed = await this.fetchOAuthKeyring();
+            assertCurrent();
+            if (!confirmed.wrappers?.some(item => item.credentialId === wrapper.credentialId &&
+                item.wrappedKey === wrapper.wrappedKey)) {
+                throw new Error('The new passkey could not be confirmed. Please try again.');
+            }
+            await chatDB.deleteSettingsIfUnchanged([
+                { key: journalKey, value: { accountId: expectedAccountId, wrapper } }
+            ], [journalKey]);
+            return wrapper.credentialId;
+        });
+    }
+
     async unlockOAuthKeyring(keyring = null, { usePrelaunchPasskey = false } = {}) {
         if (this.state.busy || !this.state.accountId || !this.state.sessionVerified) return false;
         if (usePrelaunchPasskey && !this.canUsePrelaunchPasskey()) return false;
+        const operation = {};
+        this.oauthUnlockOperation = operation;
+        const ceremony = new AbortController();
+        this.passkeyCeremony = ceremony;
+        let masterKey;
         const expectedAccountId = this.state.accountId;
         const unlockGeneration = this.syncInitializationGeneration;
         const loginGeneration = this.loginGeneration;
         const isCurrent = () => this.state.accountId === expectedAccountId &&
             this.syncInitializationGeneration === unlockGeneration &&
-            this.loginGeneration === loginGeneration && this.state.sessionVerified;
+            this.loginGeneration === loginGeneration && this.state.sessionVerified && !ceremony.signal.aborted;
         this.setState({
             busy: true,
             action: `${this.state.oauthProvider || 'oauth'}_key_unlock`,
@@ -2775,12 +2873,24 @@ class AccountService {
             if (normalizeAccountId(keyring.accountId) !== expectedAccountId) {
                 throw new Error('The encrypted keyring belongs to a different account');
             }
-            const { credentialId, masterKey } = await unlockEncryptionKeyring(
-                (keyring.wrappers || []).map(wrapper => ({ ...wrapper })), { usePrelaunchPasskey }
+            if (usePrelaunchPasskey && keyring.accountBinding !== true) {
+                throw new Error('Passkey migration is still being enabled. Please try again shortly.');
+            }
+            const unlocked = await unlockEncryptionKeyring(
+                (keyring.wrappers || []).map(wrapper => ({ ...wrapper })),
+                { usePrelaunchPasskey, signal: ceremony.signal }
             );
+            masterKey = unlocked.masterKey;
+            let credentialId = unlocked.credentialId;
             if (!isCurrent()) {
                 masterKey.fill(0);
                 return false;
+            }
+            if (usePrelaunchPasskey) {
+                credentialId = await this.addCurrentDomainPasskey(keyring, masterKey, {
+                    expectedAccountId, isCurrent, signal: ceremony.signal
+                });
+                if (!isCurrent()) return false;
             }
             this.setState({
                 action: `${this.state.oauthProvider || 'oauth'}_key_restoring`,
@@ -2799,6 +2909,16 @@ class AccountService {
                 error: toFriendlyError(error)
             });
             return false;
+        } finally {
+            masterKey?.fill(0);
+            if (this.passkeyCeremony === ceremony) this.passkeyCeremony = null;
+            if (this.oauthUnlockOperation === operation) {
+                this.oauthUnlockOperation = null;
+                if ((ceremony.signal.aborted || !isCurrent()) &&
+                    /_key_(?:unlock|migration(?:_ready)?|restoring)$/.test(this.state.action || '')) {
+                    this.setState({ busy: false, action: null });
+                }
+            }
         }
     }
 
@@ -3361,6 +3481,7 @@ class AccountService {
      * User can re-unlock with passkey without needing to re-login to server.
      */
     lock({ accountChanged = false } = {}) {
+        this.abortPasskeyCeremony();
         this.loginGeneration = (this.loginGeneration || 0) + 1;
         this.syncInitializationGeneration += 1;
         if (this.masterKey) {

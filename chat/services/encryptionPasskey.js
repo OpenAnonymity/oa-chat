@@ -64,7 +64,7 @@ function prfWasEnabled(credential) {
     return extensionResults?.prf?.enabled === true || !!getPrfResult(credential);
 }
 
-async function requestPrf(credentialIds, { usePrelaunchPasskey = false } = {}) {
+async function requestPrf(credentialIds, { usePrelaunchPasskey = false, signal } = {}) {
     const rpId = usePrelaunchPasskey ? getPrelaunchPasskeyRpId() : null;
     if (usePrelaunchPasskey && !rpId) {
         throw new Error('Pre-launch passkey recovery is only available on chat.openanonymity.ai.');
@@ -89,7 +89,7 @@ async function requestPrf(credentialIds, { usePrelaunchPasskey = false } = {}) {
     };
     let credential;
     try {
-        credential = await navigator.credentials.get({ publicKey });
+        credential = await navigator.credentials.get({ publicKey, ...(signal ? { signal } : {}) });
     } catch (error) {
         if (usePrelaunchPasskey && error?.name === 'SecurityError') {
             throw new Error('This browser could not use the pre-launch passkey here. Try an up-to-date Chrome or Safari.');
@@ -273,7 +273,8 @@ export function isEncryptionPasskeySupported() {
 export async function createEncryptionKeyWrapper(
     masterKey,
     userEmail,
-    existingCredentialIds = []
+    existingCredentialIds = [],
+    { signal } = {}
 ) {
     if (!isEncryptionPasskeySupported()) {
         throw new Error('Passkeys are not supported in this browser');
@@ -289,6 +290,7 @@ export async function createEncryptionKeyWrapper(
     }
 
     const credential = await navigator.credentials.create({
+        ...(signal ? { signal } : {}),
         publicKey: {
             challenge: randomBytes(32),
             rp: {
@@ -334,7 +336,7 @@ export async function createEncryptionKeyWrapper(
 
     let prfBytes = getPrfResult(credential);
     if (!prfBytes) {
-        ({ prfBytes } = await requestPrf([credential.id]));
+        ({ prfBytes } = await requestPrf([credential.id], { signal }));
     }
 
     return createEncryptionKeyWrapperFromPrf(

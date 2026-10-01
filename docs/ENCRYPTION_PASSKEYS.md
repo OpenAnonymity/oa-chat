@@ -108,7 +108,7 @@ protocol and compatibility contract.
 ## Returning-device flow
 
 On `https://chat.openanonymity.ai` only, a failed returning Google-keyring
-unlock can offer **Use pre-launch passkey**. This explicit action requests the
+unlock can offer **Move passkey to this site**. This explicit action requests the
 same credential allowlist and PRF input with the fixed RP ID
 `oa-production-20260917.vercel.app`. That hostname must keep serving
 `/.well-known/webauthn` with `application/json` and an origins list containing
@@ -116,14 +116,25 @@ only the final production origin. The browser validates the Related Origin
 Request; no arbitrary RP from server responses, local storage or query strings
 is accepted. Unsupported browsers or missing association metadata fail closed.
 
-This recovers the existing encryption key; it does not create a new credential,
-reset an account, replace a wrapper, or move tickets. New accounts still create
-credentials on their current origin. Keep ownership of the preview hostname and
-its association endpoint until affected accounts have deliberately enrolled a
-new credential. The recovery option is not proof that a particular credential
-was created on the preview hostname. Passkey results and keyring fetches are
-fenced to the account and login generation that started them; stale results
-cannot install keys into a replacement account.
+After recovering the existing encryption key, **Save passkey for this site**
+creates a new current-origin passkey and appends a wrapper for that exact key. Its
+native prompt starts synchronously from a fresh click, after the storage reads,
+so it does not rely on activation surviving the old passkey prompt. No account,
+ticket, or old wrapper is replaced. Subsequent sign-ins can use the new passkey
+on the final hostname. Keep ownership of the preview hostname and its association
+endpoint while other affected accounts still need recovery. The recovery option
+is not proof that a particular credential was created on the preview hostname.
+
+The server must advertise `accountBinding: true` before recovery starts. The
+append includes `expectedAccountId`; a changed session is rejected before writing.
+An account-owned local journal saves only the encrypted wrapper before upload.
+After reload or a lost reply, retry unlocks that wrapper on the current origin,
+compares its recovered key with the original, and reuses the idempotent append.
+Confirmation must find the same wrapper in the same account's keyring before the
+journal is cleared. Both native prompts share an abort signal; closing the dialog,
+locking, or switching accounts cancels them. Account and login-generation checks
+also reject late results. Cancellation leaves the original passkey and tickets
+intact. New accounts still create credentials on their current origin directly.
 
 After OAuth authentication, the browser reads `GET /auth/keyring`, supplies the
 returned credential IDs as `allowCredentials`, evaluates the PRF locally, and

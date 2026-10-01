@@ -2146,6 +2146,7 @@ class AccountModal {
 
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
+        const upgradeReady = state.action === 'google_key_migration_ready';
         const showLogout = Boolean(state.oauthRecoveryRequired || state.oauthSetupRequired);
         // Paint the caption from the first setup frame, without flashing the
         // Create button before maybeAutoPromptPasskey schedules the ceremony.
@@ -2156,7 +2157,10 @@ class AccountModal {
             isLegacyMigration: state.oauthRecoveryRequired,
             isSetup: state.oauthSetupRequired,
             isLegacyPasskey: state.oauthLegacyPasskeyRequired,
-            busy: Boolean(state.busy || this.oauthIntroPending || automaticSetup),
+            busy: !upgradeReady && Boolean(state.busy || this.oauthIntroPending || automaticSetup),
+            upgradeReady,
+            actionId: upgradeReady ? 'oauth-passkey-upgrade-btn' : 'oauth-keyring-submit-btn',
+            primaryLabel: upgradeReady ? 'Save passkey for this site' : '',
             error: state.error ? String(state.error) : '',
             showPrelaunchRecovery: Boolean(state.error && !state.busy &&
                 this.accountService?.canUsePrelaunchPasskey?.()),
@@ -2245,7 +2249,7 @@ class AccountModal {
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
         finishing = false, busy = false, error = '', closeDisabled = false,
         actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = '',
-        showPrelaunchRecovery = false
+        showPrelaunchRecovery = false, upgradeReady = false
     } = {}) {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
@@ -2270,10 +2274,14 @@ class AccountModal {
         // second line under the button. Titled cards keep their explanation
         // and add the line below.
         const bodyIsAlert = !busy && !title && Boolean(alertText);
-        const body = bodyIsAlert
+        const body = upgradeReady
+            ? 'Your existing passkey worked. Save a passkey for chat.openanonymity.ai to use here from now on. Your tickets stay with your account.'
+            : bodyIsAlert
             ? alertText
             : busy
-            ? isLegacyMigration
+            ? state.action === 'google_key_migration'
+                ? 'Save a passkey for chat.openanonymity.ai to finish.'
+                : isLegacyMigration
                 ? 'Confirm with your passkey to finish the upgrade.'
                 : isSetup
                     ? 'Confirm with your passkey to finish.'
@@ -2335,8 +2343,8 @@ class AccountModal {
                         </button>
                     `}
                     ${alertText && !busy && !bodyIsAlert ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
-                    ${showPrelaunchRecovery && !busy ? `<p class="account-unlock-body">Created this account on the preview site?</p>
-                        <button id="oauth-prelaunch-passkey-btn" class="account-unlock-signout" type="button">Use pre-launch passkey</button>` : ''}
+                    ${showPrelaunchRecovery && !busy ? `<p class="account-unlock-body">Created this account on the preview site? Use its passkey once, then save a new one for chat.openanonymity.ai. Your tickets stay with your account.</p>
+                        <button id="oauth-prelaunch-passkey-btn" class="account-unlock-signout" type="button">Move passkey to this site</button>` : ''}
                     ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
@@ -2565,6 +2573,10 @@ class AccountModal {
         const prelaunchPasskeyBtn = document.getElementById('oauth-prelaunch-passkey-btn');
         if (prelaunchPasskeyBtn) {
             prelaunchPasskeyBtn.onclick = () => this.handleOAuthKeyringUnlock({ usePrelaunchPasskey: true });
+        }
+        const passkeyUpgradeBtn = document.getElementById('oauth-passkey-upgrade-btn');
+        if (passkeyUpgradeBtn) {
+            passkeyUpgradeBtn.onclick = () => this.accountService.continuePasskeyUpgrade();
         }
 
         const copyIdBtn = document.getElementById('account-copy-id-btn');
