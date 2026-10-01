@@ -484,3 +484,15 @@ for (const phase of ['reserving', 'prepared', 'submitted', 'ambiguous']) {
         f.mutations.forEach(mock => assert.equal(mock.mock.callCount(), 0));
     });
 }
+
+test('closing and reopening during startup cannot revive an earlier queued action', async t => {
+    const f = setup(t, { config: {}, note: { note_id: 7 }, earlySnapshot: true });
+    f.modal.open('withdraw');
+    let calls = 0;
+    const running = f.modal.run(async () => { calls++; });
+    f.modal.close();
+    f.modal.open('withdraw');
+    await f.load();
+    await running;
+    assert.equal(calls, 0);
+});

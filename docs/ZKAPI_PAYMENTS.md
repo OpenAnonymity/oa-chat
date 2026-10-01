@@ -10,7 +10,7 @@ escape describes the wait and two separately paid transactions.
 
 Exact calldata/gas is unavailable before server clearance and proof generation.
 The reserve therefore covers the SDK's supported per-transaction gas ceiling at
-current Low fee rates, twice for escape. It is explicitly not an exact fee or a
+current Low fee rates, twice for escape. The reserve is not an exact fee or a
 charge; actual unused ETH remains browser-held. Escape finalization fees may
 change during the safety window. This intentionally overestimates rather than
 starting an underfunded close. MetaMask continues to quote and pay its own fees.
@@ -986,7 +986,10 @@ expiry help and billing guide, dismisses outside clicks, and removes document
 listeners on rerender/close. Escape closes help first before closing the dialog.
 
 The withdrawal amount includes ETH as well as available USD pricing. The mutual
-close warning sits directly beneath it. Fee checks preload from an open balance
+close warning appears at final confirmation, before settlement or reservation,
+and explicitly says that rejecting MetaMask afterward cannot undo approval.
+Review is read-only; confirmation is single-use and tied to the current note,
+amount, method and destination. Fee checks preload from an open balance
 view; direct withdrawal entry keeps amount/status/action slots in place while
 loading. All submission gates still require a fresh funded quote. A shortfall
 shows **Add ETH**, which deliberately expands the copyable network/address
@@ -998,3 +1001,34 @@ Balance readiness no longer adds a pill in the System Panel or balance dialog.
 Error/attention states use different outlined icons alongside text, while expiry
 and claim status remain in the existing explanatory lines. Expiry clock ticks
 still update the expired-balance notice without reintroducing a readiness badge.
+
+On reload, the saved withdrawal appears while the SDK reconciles Ethereum state.
+The page says Checking saved withdrawal, disables transaction actions and hides
+the header X while retaining a clearly labelled Close action. Close preserves
+recovery. Finishing initialization does not automatically continue a withdrawal;
+the user clicks Continue after the check finishes. Startup reconciliation itself
+is unchanged and may still take time, particularly through MetaMask RPC.
+
+## Deposit progress and interrupted fee checks (2026-09-30)
+
+A saved deposit quote is not evidence of submission. During a live deposit, the
+SDK’s private-vault check retains preparation progress. Actual submission status
+or the SDK’s submitted/uncertain recovery phase selects the Ethereum step.
+Unsubmitted address fee failures retain an explicit “Deposit not sent” outcome
+and next action. Recovery records, authorized fee limits and explicit retry
+requirements are unchanged. A confirmed deposit awaiting its balance projection
+continues to suppress a second deposit.
+
+## Receipt fee presentation (2026-09-30)
+
+The selected fee summary shows required ETH minus already available ETH, followed
+by the amount still needed. Add ETH names that amount and opens the existing
+address and balance-check controls. Its conservative display rounding preserves
+the visible subtraction; fully funded boundary cases gain precision rather than
+a false shortfall. The original exact quote still gates withdrawal, and this
+presentation change does not authorize signing or automatic withdrawal.
+
+The selected Inline top-up details use the existing app theme and display the
+network and full fee-paying address with a copy icon and Check now. Once opened,
+they remain visible when funded; the status comes from the real scoped fee
+quote. Clipboard failure leaves the address selectable with an inline message.

@@ -51,7 +51,7 @@ export function classifyWalletStatus(kind, message = '') {
     const text = String(message || '');
     if (!text) return null;
     if (/Withdrawal confirmed\.|returned to MetaMask|Escape started|is available in MetaMask|now visible in MetaMask/i.test(text)) return { step: 'done', state: 'complete' };
-    if (/submitted|waiting for confirmation|Checking submitted|checking confirmation|Checking (the private-vault deposit|payment status)/i.test(text)) return { step: 'chain', state: 'active' };
+    if (/^(?:(?:Deposit|Withdrawal|Replacement|Background replacement|Finalization)(?: replacement)? submitted\b|Checking submitted\b)|waiting for confirmation|checking confirmation/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
         if (/allowance|Approving/i.test(text)) return { step: 'approve', state: 'waiting' };
@@ -97,9 +97,16 @@ export function positionForPersistedPhase(kind, phase = '') {
  */
 export function walletJourney({ kind, message = '', persistedPhase = '', last = null, failed = false, ...options } = {}) {
     const steps = stepsFor(kind, options);
+    // A quote also has a saved deposit plan. Checking that plan does not mean
+    // a transaction has been sent. Only submission status or durable recovery
+    // state can move a deposit to the Ethereum step.
+    const persisted = positionForPersistedPhase(kind, persistedPhase);
+    const classified = classifyWalletStatus(kind, message);
+    const position = kind === 'deposit' && persisted?.step === 'chain'
+        ? persisted : classified || last || (message ? null : persisted) || { step: steps[0].id, state: 'active' };
     if (kind === 'deposit') {
         const chain = steps.find(step => step.id === 'chain');
-        if (/Checking (the private-vault deposit|payment status)/i.test(message)) {
+        if (position.step === 'chain' && /Checking (the private-vault deposit|payment status)/i.test(message)) {
             chain.label = 'Checking your deposit';
             chain.detail = 'Looking for your saved deposit on Ethereum.';
         } else if (['ambiguous', 'dropped_or_pending'].includes(persistedPhase)) {
@@ -107,7 +114,6 @@ export function walletJourney({ kind, message = '', persistedPhase = '', last = 
             chain.detail = 'Check its status before trying again.';
         }
     }
-    const position = classifyWalletStatus(kind, message) || last || positionForPersistedPhase(kind, persistedPhase) || { step: steps[0].id, state: 'active' };
     const index = position.step === 'done' ? steps.length : Math.max(0, steps.findIndex(step => step.id === position.step));
     const named = STATES.includes(position.state) ? position.state : 'active';
     const state = options.addressFunding && named === 'waiting' ? 'active' : named;

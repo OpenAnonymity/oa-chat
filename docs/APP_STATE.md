@@ -113,6 +113,47 @@ Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
 - **Toasts** above the composer move above a full-width bottom sheet
   (`[aria-modal]` spanning ≥ 90% of the width and reaching the bottom). The
   loading toast has `role="status"`.
+## 2026-09-30: Inline withdrawal top-up matches the app theme
+
+- The selected Inline details show the amount, network, full address with the
+  existing copy/check icon treatment, and a status row with Check now. All
+  colors, fonts and controls use existing OA/zkAPI theme styles.
+- The transfer details stay open when funds arrive: the figure changes to
+  Available for network fees and the status confirms sufficient ETH only when
+  the fresh scoped quote passes readiness. Failed or pending reads retain their
+  actual status. The top-up never sends or starts a withdrawal automatically.
+- Copy uses the exact address captured at click and reports clipboard failure
+  beside the selectable address rather than stretching the icon button.
+
+## 2026-09-30: Withdrawal fees use the selected Receipt layout
+
+- Send ETH withdrawal fees show Needed to start (both steps for escape), minus
+  Already available, then a prominent You need to add amount and full-width
+  Add [amount] ETH action. The paid-separately/allowance paragraph is removed.
+- Loading, funded and error states retain three rows and an action slot. Add ETH
+  expands the existing real address/copy/check controls; it never starts a withdrawal.
+  Once opened, the address stays visible without a Hide address button.
+- Receipt formatting rounds reserve up and balance down to six decimals, then
+  derives the displayed top-up from those displayed operands (less than two
+  extra micro-ETH). At a fully funded rounding boundary it increases precision
+  to avoid showing a false shortfall. Raw quote readiness and authorization are
+  unchanged; the transfer instructions use the same amount as the button.
+
+## 2026-09-30: Deposit checks do not imply submission
+
+- The SDK checks the private-vault note even for an unsubmitted quote. That
+  status keeps the current preparation step; it must not complete Send the
+  deposit. The live modal supplies `pending_deposit.phase` so submitted or
+  uncertain recovery stays on the chain step, including during wallet reconnects.
+- Submission matching excludes incidental words such as “account that submitted”
+  and “No ... was submitted”. A live preflight does not inherit the paused
+  deposit step from its prepared quote. Saved, idle recovery still does.
+- Address fee failures say “Deposit not sent”, explain the next action, and
+  retain the explanation and SDK plan. Their activity is Review deposit funding,
+  not Review withdrawal funding. No signing, fee-cap, or retry behavior changes.
+- The reported first attempt returning to Deposit has no captured error or
+  transaction evidence. The premature chain step is reproduced; the specific
+  interruption that required another click remains unconfirmed.
 
 ## 2026-09-30: A deposit keeps one page; Send ETH holds its layout while the quote loads
 
@@ -6009,6 +6050,21 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
   the SDK park guard does not atomically cover all ambiguous-history cases or
   validate the identity shown by a stale tab. Close still preserves recovery.
   Existing parked records stay accessible. Shared progress markers are unchanged.
+
+## 2026-09-30: Withdrawal confirmation and reload status
+
+- Fresh MetaMask and Send ETH withdrawals now open a final confirmation before
+  settlement or server approval. The warning explains irreversibility even when
+  a later MetaMask prompt is rejected. Going back has no wallet side effects.
+- Confirmation is tied to note, balance, method and destination, and is consumed
+  once. Send ETH requires a valid destination before review or submission; fee
+  readiness is rechecked at confirmation and by the existing provider preflight.
+- Restored withdrawals say Checking saved withdrawal while SDK initialization
+  reconciles chain state. Actions stay disabled; the header X is hidden, while
+  Close preserves the saved work. Completion requires a new explicit click.
+- A close/reopen invalidates any action previously queued behind startup, even
+  when the new dialog is open by the time initialization resolves. No SDK recovery
+  or reconciliation gates were bypassed to shorten the wait.
 
 ## 2026-09-30: Exclusive help and stable withdrawal fee review
 
