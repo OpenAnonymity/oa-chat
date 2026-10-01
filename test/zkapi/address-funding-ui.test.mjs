@@ -302,7 +302,8 @@ test('ordinary native funding shows the transfer as details and offers Deposit o
     assert.match(leftover.body, /data-funding-return-paste[^>]*>Paste<\/button>/);
     assert.match(leftover.body, /data-funding-return-part data-open="false"><div class="t-acc-panel" inert>/, 'the amount field starts tucked away');
     assert.match(plain(leftover.body), /Return all/);
-    assert.match(plain(leftover.body), /You get it back minus a small network fee · Return part of it/);
+    assert.match(plain(leftover.body), /Sending it costs a small network fee, which comes out of the amount you return\./);
+    assert.match(leftover.body, /data-funding-return-toggle[^>]*><span class="zkapi-swap-text"><span >Return a specific amount<\/span>/);
     assert.doesNotMatch(leftover.body, /Send ETH/, 'not "Send ETH", which names the funding method above');
     const empty = helpRow(waiting, 'return');
     assert.match(plain(empty.body), /Nothing is waiting at your deposit address right now\./);
