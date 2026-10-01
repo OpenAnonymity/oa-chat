@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { DepositAmount } from '../../chat/zkapi/services/depositAmount.mjs';
+import { DepositAmount, formatSuggestedDeposit } from '../../chat/zkapi/services/depositAmount.mjs';
 import { renderFundingPaymentQr } from '../../chat/zkapi/components/FundingPaymentQr.js';
 import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
 import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../../chat/zkapi/services/addressFunding.js';
@@ -19,7 +19,7 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
         config: { funding: { demo_billing_token_address: '0x4444444444444444444444444444444444444444' } }, ...client };
     const microtasks = [];
     const timers = new Map();
-    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, DepositAmount, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, DepositAmount, formatSuggestedDeposit, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
         walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
         formatFundingAmount, confirm, motionDuration: () => 250,
@@ -798,7 +798,7 @@ test('hydration and received-funds renders never submit; only an explicit Next c
     let submits = 0;
     f.context.AddressDepositFlow = class {
         constructor() { this.ready = true; }
-        start(value) { starts++; assert.equal(value, '10.00'); }
+        start(value) { starts++; assert.equal(value, '10'); }
     };
     f.owner.submitAddressDeposit = async () => { submits++; };
     const button = f.field('next');

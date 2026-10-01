@@ -6,6 +6,14 @@ function formatDecimal(units, decimals) {
     return `${units / scale}${fraction ? `.${fraction}` : ''}`;
 }
 
+/** The suggested deposit, written the way a quoted intent writes it
+ *  (formatDecimal: no trailing zeros). "5.00" before the quote and "5"
+ *  after it made the field visibly flash on open. */
+export function formatSuggestedDeposit(value) {
+    const text = Number(value).toFixed(value < 0.01 ? 6 : 2);
+    return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+}
+
 export function ethUnits(value) {
     const text = typeof value === 'string' ? value.trim() : '';
     if (text.length > 128 || !/^(?:\d+(?:\.\d{0,9})?|\.\d{1,9})$/.test(text)) {

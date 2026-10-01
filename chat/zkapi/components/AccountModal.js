@@ -6,7 +6,7 @@ import { showSurface, hideSurface, revealText, motionDuration } from '../../ui/u
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { settlePrivateAccess } from '../services/privateAccessSettlement.js';
 import { availableWithdrawalEscape, sameWithdrawalEscape, assertWithdrawalEscapeAvailable, canCancelPreparedWithdrawal, escapeNeedsSettlement, assertEscapeReady } from '../services/withdrawalRecovery.mjs';
-import { ethUnits } from '../services/depositAmount.mjs';
+import { ethUnits, formatSuggestedDeposit } from '../services/depositAmount.mjs';
 import { depositOperationId, isWalletCancellation, resetCanceledDeposit } from '../services/canceledDeposit.mjs';
 import { readWelcomeModalIntent, writeWelcomeModalIntent } from '../services/welcomeModalIntent.mjs';
 import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from './WalletModalView.js';
@@ -1201,7 +1201,7 @@ export default class AccountModal {
             const depositAmount = resumingDeposit
                 ? (zkapiClient.isNativeEthFunding ? zkapiClient.formatMoney(pendingDeposit.amount).replace(/^\$/, '') : zkapiClient.formatBillingAmount(pendingDeposit.amount))
                 : this.depositAmount
-                    ?? zkapiClient.suggestedDeposit.toFixed(zkapiClient.suggestedDeposit < 0.01 ? 6 : 2);
+                    ?? formatSuggestedDeposit(zkapiClient.suggestedDeposit);
             const mainnet = zkapiClient.isMainnetFunding;
             const demoMintEnabled = zkapiClient.config?.funding?.demo_mint_enabled;
             const helper = zkapiClient.isNativeEthFunding ? '' : mainnet

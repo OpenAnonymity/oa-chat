@@ -3,6 +3,7 @@ import { showSurface, hideSurface } from '../../ui/uiMotion.js';
 import { hasConversationParam } from '../../services/conversationLink.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { depositOperationId, isWalletCancellation, resetCanceledDeposit } from '../services/canceledDeposit.mjs';
+import { formatSuggestedDeposit } from '../services/depositAmount.mjs';
 import { readWelcomeModalIntent, writeWelcomeModalIntent } from '../services/welcomeModalIntent.mjs';
 import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from './WalletModalView.js';
 import { captureFundingSetupView, fundingSetupGuide, restoreFundingSetupView } from './FundingSetupGuide.js';
@@ -285,7 +286,7 @@ export default class WelcomePanel {
                     <span class="text-xs font-medium text-foreground">Starting balance</span>
                     <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
                         <span class="text-sm text-muted-foreground">$</span>
-                        <input id="welcome-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(this.depositAmount ?? suggested.toFixed(suggested < 0.01 ? 6 : 2))}" />
+                        <input id="welcome-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(this.depositAmount ?? formatSuggestedDeposit(suggested))}" />
                     </div>
                 </label>`}
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}

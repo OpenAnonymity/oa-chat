@@ -6202,3 +6202,24 @@ reveal the expired-balance notice. Problems retain readable labels: a triangle
 marks attention, while an octagon with a cross marks failures in balance errors,
 transaction steps and error outcomes. These SVGs are decorative and use theme
 colors. Loading spinners and normal OA access-key controls are unchanged.
+
+## 2026-10-01: Private balance polish — no amount flash, ETH-marked QR, compact signer switch
+
+- **The amount no longer flashes "5.00" → "5" on open.** The suggested deposit
+  was written with `toFixed(2)` while a quoted intent writes `usdAmount` with
+  `formatDecimal` (no trailing zeros), so the field repainted when the quote
+  arrived. `formatSuggestedDeposit()` in `services/depositAmount.mjs` writes the
+  suggestion the quote's way; WalletMethodControls, AccountModal and
+  WelcomePanel all use it. vm-context tests that inject WalletMethodControls'
+  globals must pass `formatSuggestedDeposit` too.
+- **The payment QR carries the ETH mark.** `FundingPaymentQr` now encodes at
+  error correction H (was M) and draws a white plate (`data-qr-logo`, ~22% of
+  the width, ~5% of the area) with the ETH glyph in the centre. The test
+  rasteriser clears the plate and paints the glyph's box solid dark, so a
+  passing decode proves the code survives the occlusion. Caption: "Scan with
+  your phone's wallet".
+- **Signer switch matches Settings.** `.zkapi-segmented` is an inline two-column
+  grid sized to its labels (2px track, 8px/6px radii, 26px segments) instead of
+  a full-width 32px bar; hover changes the label colour only (the hover fill made
+  both halves look selected). The address option is labelled "Ethereum wallet".
+  The sliding pill and `data-from` mechanics are unchanged.

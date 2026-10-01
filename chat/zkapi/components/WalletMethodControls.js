@@ -2,7 +2,7 @@ import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { chatDB } from '../../db.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { AddressDepositFlow } from '../services/addressDepositFlow.mjs';
-import { DepositAmount } from '../services/depositAmount.mjs';
+import { DepositAmount, formatSuggestedDeposit } from '../services/depositAmount.mjs';
 import { renderFundingPaymentQr } from './FundingPaymentQr.js';
 import { renderFundingProgress } from './FundingProgress.js';
 import { motionDuration } from '../../ui/uiMotion.js';
@@ -114,7 +114,7 @@ function canSelectAmount(owner) {
 function suggestedAmount(owner) {
     const suggested = zkapiClient.suggestedDeposit ?? 10;
     return owner.fundingInputAmount ?? owner.depositAmount ?? owner.fundingUsdAmount
-        ?? suggested.toFixed(suggested < 0.01 ? 6 : 2);
+        ?? formatSuggestedDeposit(suggested);
 }
 
 function ensureDepositAmount(owner) {
@@ -207,7 +207,7 @@ export function renderWalletMethod(owner, { choose = true } = {}) {
     return `<section class="zkapi-wallet-method" aria-label="Wallet method">
         ${choose ? `<div class="zkapi-segmented" role="group" aria-label="How to pay" data-active="${local ? 'address' : 'metamask'}">
             <button type="button" data-wallet-method="metamask" aria-pressed="${!local}" ${locked ? 'disabled' : ''}>MetaMask</button>
-            <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Send ETH</button>
+            <button type="button" data-wallet-method="address" aria-pressed="${local}" ${locked ? 'disabled' : ''}>Ethereum wallet</button>
         </div>` : ''}
         ${password}
         ${error}

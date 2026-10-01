@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { DepositAmount, ethUnits } from '../../chat/zkapi/services/depositAmount.mjs';
+import { DepositAmount, ethUnits, formatSuggestedDeposit } from '../../chat/zkapi/services/depositAmount.mjs';
 import { AddressDepositFlow } from '../../chat/zkapi/services/addressDepositFlow.mjs';
 import { formatFundingAmount } from '../../chat/zkapi/services/addressFunding.js';
 import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
@@ -47,7 +47,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
     const element = () => ({ events: {}, addEventListener(type, handler) { this.events[type] = handler; } });
     for (const name of ['amount', 'currency']) fields.set(`[data-funding-${name}]`, element());
     const methods = ['metamask', 'address'].map(value => Object.assign(element(), { dataset: { walletMethod: value } }));
-    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, formatFundingAmount, renderFundingProgress, DepositAmount, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
+    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, formatFundingAmount, renderFundingProgress, DepositAmount, formatSuggestedDeposit, AddressDepositFlow, ethUnits, parseTokenAmount, zkapiClient: client,
         depositOperationId: () => null, isWalletCancellation: () => false,
         readWelcomeModalIntent: () => null, writeWelcomeModalIntent() {},
         addressFundingWallet: wallet, getWalletMethod: () => method, walletMethodActionBusy: () => false, setWalletMethod: value => { method = value; },
