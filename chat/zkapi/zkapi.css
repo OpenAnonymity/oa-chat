@@ -2426,3 +2426,24 @@ html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 
 .zkapi-done-actions { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
 .zkapi-done-actions .zkapi-primary-button { height: 2.5rem; }
 .zkapi-funding-return-balance { margin: 0 0 0.375rem; color: hsl(var(--color-foreground)); font-size: 0.875rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Return ETH, lighter: one sentence, the address, one button, one quiet line. */
+.zkapi-return-lead { margin: 0 0 0.75rem; color: hsl(var(--color-muted-foreground)); font-size: 0.875rem; line-height: 1.5; text-wrap: pretty; }
+.zkapi-return-lead b { color: hsl(var(--color-foreground)); font-weight: 600; font-variant-numeric: tabular-nums; }
+.zkapi-return-field { display: flex; align-items: center; gap: 0.375rem; height: 2.625rem; padding: 0 0.375rem 0 0.75rem; border: 1px solid hsl(var(--color-foreground) / 0.12); border-radius: 0.625rem; transition: border-color 160ms var(--zkapi-ease); }
+.zkapi-return-field:focus-within { border-color: hsl(var(--color-focus-ring)); }
+.zkapi-return-field input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; color: hsl(var(--color-foreground)); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.8125rem; }
+.zkapi-return-field input::placeholder { color: hsl(var(--color-muted-foreground) / 0.8); font-family: inherit; }
+.zkapi-return-field input:not([data-funding-return-destination]) { font-family: inherit; font-variant-numeric: tabular-nums; }
+.zkapi-paste-button { height: 1.875rem; padding: 0 0.625rem; border: 0; border-radius: 0.4375rem; background: hsl(var(--color-foreground) / 0.06); color: hsl(var(--color-foreground)); font-size: 0.75rem; font-weight: 500; cursor: pointer; transition: background-color 120ms var(--zkapi-ease), transform 120ms var(--zkapi-ease); }
+.zkapi-paste-button:hover:not(:disabled) { background: hsl(var(--color-foreground) / 0.1); }
+.zkapi-paste-button:active:not(:disabled) { transform: scale(0.96); }
+.zkapi-return-part .zkapi-return-field { margin-top: 0.5rem; }
+.zkapi-return-button { height: 2.5rem; margin-top: 0.75rem; }
+.zkapi-return-hint { margin: 0.625rem 0 0.25rem; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; text-align: center; text-wrap: balance; }
+.zkapi-text-link { padding: 0; border: 0; background: none; color: hsl(var(--color-accent-primary)); font: inherit; cursor: pointer; }
+.zkapi-text-link:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 2px; }
+.zkapi-swap-text { display: inline-grid; }
+.zkapi-swap-text > span { grid-area: 1 / 1; transition: opacity 180ms var(--zkapi-ease), filter 180ms var(--zkapi-ease), transform 200ms var(--zkapi-ease); }
+.zkapi-swap-text > span[data-off] { opacity: 0; filter: blur(2px); transform: translateY(-3px); pointer-events: none; transition-duration: 120ms; }
+@media (prefers-reduced-motion: reduce) { .zkapi-swap-text > span { transform: none !important; transition-duration: 60ms; } }

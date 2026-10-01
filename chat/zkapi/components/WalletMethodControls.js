@@ -54,6 +54,7 @@ export function stopFundingFlow(owner, { preserveAmount = false } = {}) {
     owner.fundingReturnOpen = false;
     owner.fundingQrOpen = false;
     owner.fundingFeeOpen = false;
+    owner.fundingReturnPartial = false;
     owner.fundingShownTotal = null;
     owner.fundingFeeUpAt = 0;
     owner.disposeFundingHelp?.();
@@ -662,15 +663,20 @@ export function renderFundingAccount(owner, { destination = true, rows = true, p
             ${fundingHelp(owner, 'return', 'Return ETH to your wallet', `${latestReturn ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${latestReturn.status === 'confirmed'
                     ? `Last return confirmed: ${escape(formatFundingAmount(latestReturn.amount, latestReturn.asset === 'eth' ? 18 : Number(zkapiClient.config?.funding?.billing_token_decimals ?? 6)))} ${latestReturn.asset === 'eth' ? 'ETH' : escape(token)} sent to ${escape(latestReturn.destination)}.`
                     : 'Last return reverted. No funds were transferred; the network fee may still have been charged. You can review the balance and try again.'}</p>` : ''}
-                ${leftover ? `<p class="zkapi-funding-return-balance">${leftover} is at your deposit address.</p>` : ''}
+                ${native ? `<p class="zkapi-return-lead">${leftover ? `<b>${leftover}</b> is waiting at your deposit address. It’s yours to send back to your wallet. Only this browser can move it, so return it before clearing this site’s data.` : 'Nothing is waiting at your deposit address right now.'}</p>
+                <div class="zkapi-return-field"><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="Your wallet address (0x…)" aria-label="Your wallet address" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /><button data-funding-return-paste class="zkapi-paste-button" type="button" ${disabled}>Paste</button></div>
+                <div class="zkapi-return-part t-acc" data-funding-return-part data-open="${owner.fundingReturnPartial ? 'true' : 'false'}"><div class="t-acc-panel" ${owner.fundingReturnPartial ? '' : 'inert'}><div class="t-acc-panel-inner"><div class="zkapi-return-field"><input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" autocomplete="off" placeholder="Amount in ETH" aria-label="Amount in ETH" value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></div></div></div></div>
+                ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
+                <button data-funding-return-eth class="zkapi-primary-button w-full zkapi-return-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}><span class="zkapi-swap-text"><span ${owner.fundingReturnPartial ? 'data-off' : ''}>Return all</span><span ${owner.fundingReturnPartial ? '' : 'data-off'}>Return ETH</span></span></button>
+                <p class="zkapi-return-hint">The network fee comes out of this ETH · <button data-funding-return-toggle class="zkapi-text-link" type="button" aria-expanded="${owner.fundingReturnPartial ? 'true' : 'false'}" ${disabled}><span class="zkapi-swap-text"><span ${owner.fundingReturnPartial ? 'data-off' : ''}>Return part of it</span><span ${owner.fundingReturnPartial ? '' : 'data-off'}>Return all instead</span></span></button></p>` : `${leftover ? `<p class="zkapi-funding-return-balance">${leftover} is at your deposit address.</p>` : ''}
                 <p class="zkapi-note">${RETURN_EXPLANATION}</p>
                 <div class="zkapi-funding-return-fields">
                     <label class="zkapi-funding-field"><span>Your wallet address</span><input data-funding-return-destination id="funding-return-destination" autocomplete="off" spellcheck="false" placeholder="0x…" value="${escape(owner.fundingReturnDestination || '')}" ${disabled} /></label>
-                    ${!native ? `<label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>` : ''}
+                    <label class="zkapi-funding-field"><span>${escape(token)} amount</span><input data-funding-return-amount id="funding-return-amount" inputmode="decimal" value="${escape(owner.fundingReturnAmount || '')}" ${disabled} /></label>
                     <label class="zkapi-funding-field zkapi-funding-field--amount"><span>Amount (ETH)</span><input data-funding-return-eth-amount id="funding-return-eth-amount" inputmode="decimal" placeholder="All" title="Leave blank to send all remaining ETH (a small fee reserve may remain). Enter an exact amount for a smart-contract recipient." value="${escape(owner.fundingReturnEthAmount || '')}" ${disabled} /></label>
                 </div>
                 ${owner.fundingNoticeScope === 'return' && owner.fundingNotice ? `<p class="zkapi-helper zkapi-funding-return-outcome" role="status">${escape(owner.fundingNotice)}</p>` : ''}
-                <div class="zkapi-actions">${!native ? `<button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ${escape(token)}</button>` : ''}<button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ETH</button></div>`,
+                <div class="zkapi-actions"><button data-funding-return-token class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ${escape(token)}</button><button data-funding-return-eth class="zkapi-secondary-button" type="button" ${disabled || wallet.hasPendingTransaction ? 'disabled' : ''}>Return ETH</button></div>`}`,
                 '')}
         </div>` : ''}
 
@@ -976,6 +982,36 @@ export function attachWalletMethodControls(owner) {
             } finally { release?.(); }
         });
     };
+    on('return-paste', async () => {
+        const field = input('return-destination');
+        try {
+            const text = String(await navigator.clipboard.readText() || '').trim();
+            if (field && text) { field.value = text; owner.fundingReturnDestination = text; }
+        } catch { /* Clipboard reading blocked: the field takes a normal paste. */ }
+        field?.focus?.();
+    });
+    // Return part of it ⇄ Return all: the amount field opens in place and the
+    // button and link labels cross-fade, without a re-render.
+    on('return-toggle', () => {
+        const partial = !owner.fundingReturnPartial;
+        owner.fundingReturnPartial = partial;
+        const part = input('return-part');
+        if (part?.dataset) part.dataset.open = String(partial);
+        const panel = part?.querySelector?.('.t-acc-panel');
+        if (panel) panel.inert = !partial;
+        if (!partial) {
+            owner.fundingReturnEthAmount = '';
+            const amountField = input('return-eth-amount');
+            if (amountField) amountField.value = '';
+        }
+        for (const node of [input('return-eth'), input('return-toggle')]) {
+            const [first, second] = node?.querySelectorAll?.('.zkapi-swap-text > span') || [];
+            first?.toggleAttribute?.('data-off', partial);
+            second?.toggleAttribute?.('data-off', !partial);
+        }
+        input('return-toggle')?.setAttribute?.('aria-expanded', String(partial));
+        if (partial) setTimeout(() => input('return-eth-amount')?.focus?.({ preventScroll: true }), 120);
+    });
     on('return-token', () => transfer('token'));
     on('return-eth', () => transfer('eth'));
     // Defer hydration until the current render has attached every control.

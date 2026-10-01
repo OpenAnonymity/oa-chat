@@ -294,18 +294,19 @@ test('ordinary native funding shows the transfer as details and offers Deposit o
     assert.doesNotMatch(ready, /data-funding-next[^>]*disabled/);
     assert.doesNotMatch(ready, /Waiting for your ETH|data-funding-copy-amount/);
     const leftover = helpRow(ready, 'return');
-    const explanation = /This ETH isn’t in your private balance: it’s what you sent but haven’t deposited, or fee left over after a deposit\. This browser holds it, so clearing the site’s data would lose it\. You can return it to your wallet below\./;
-    const header = ready.slice(ready.indexOf('data-funding-help="return"'), ready.indexOf('data-funding-help-panel', ready.indexOf('data-funding-help="return"')));
-    assert.doesNotMatch(header, explanation, 'the header is one line; the text opens with the row');
-    assert.match(leftover.body, explanation);
     assert.equal(leftover.open, false);
-    assert.match(leftover.body, /<span>Your wallet address<\/span>[\s\S]*<span>Amount \(ETH\)<\/span>[^]*placeholder="All"/);
-    assert.match(leftover.body, /data-funding-return-eth[^>]*>Return ETH<\/button>/, 'not "Send ETH", which names the funding method above');
     assert.match(ready, /<span class="zkapi-funding-help-label">Return ETH to your wallet<\/span>/, 'the row header is the label alone');
-    assert.match(leftover.body, /<p class="zkapi-funding-return-balance">0\.0055 ETH is at your deposit address\.<\/p>/, 'the amount opens with the row');
-    assert.doesNotMatch(empty0(waiting), /is at your deposit address/, 'no amount line when nothing is there');
+    assert.match(plain(leftover.body), /0\.0055 ETH is waiting at your deposit address\. It’s yours to send back to your wallet\. Only this browser can move it, so return it before clearing this site’s data\./);
+    assert.doesNotMatch(leftover.body, /part of your private balance|isn’t in your private balance/, 'no confusing balance wording');
+    assert.match(leftover.body, /placeholder="Your wallet address \(0x…\)"/);
+    assert.match(leftover.body, /data-funding-return-paste[^>]*>Paste<\/button>/);
+    assert.match(leftover.body, /data-funding-return-part data-open="false"><div class="t-acc-panel" inert>/, 'the amount field starts tucked away');
+    assert.match(plain(leftover.body), /Return all/);
+    assert.match(plain(leftover.body), /The network fee comes out of this ETH · Return part of it/);
+    assert.doesNotMatch(leftover.body, /Send ETH/, 'not "Send ETH", which names the funding method above');
     const empty = helpRow(waiting, 'return');
-    assert.match(empty.body, explanation, 'the row explains itself whether or not ETH is there');
+    assert.match(plain(empty.body), /Nothing is waiting at your deposit address right now\./);
+    assert.doesNotMatch(empty0(waiting), /is waiting at your deposit address\./, 'no amount line when nothing is there');
 });
 
 test('existing ETH reduces the requested transfer instead of asking users to fund it twice', () => {
