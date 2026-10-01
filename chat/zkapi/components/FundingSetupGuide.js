@@ -17,7 +17,7 @@ export function fundingSetupGuide({ mainnet, demoMintEnabled, nativeEth = false,
         ${installStep}
         <li><strong class="zkapi-guide-step-title">Get free Sepolia ETH</strong>Choose a faucet from <a data-funding-setup-focus="faucets" class="${LINK_CLASSES}" href="https://ethereum.org/en/developers/docs/networks/#sepolia" target="_blank" rel="noopener noreferrer">Ethereum’s Sepolia faucet list</a>. Copy your public MetaMask account address into the faucet and request test ETH.</li>
         <li><strong class="zkapi-guide-step-title">Return here to fund</strong>Choose <strong>Continue with MetaMask</strong>, select Sepolia if prompted, and confirm the test-token and deposit steps. The app creates demo billing tokens if your wallet needs them.</li>` : installStep;
-    const intro = nativeEth ? '<p class="zkapi-guide-lead">Your wallet holds ETH. The displayed USD value changes with its price.</p>' : mainnet ? '' : demoMintEnabled
+    const intro = nativeEth ? '' : mainnet ? '' : demoMintEnabled
         ? '<p class="zkapi-guide-lead">Use Sepolia ETH for testnet fees. Demo billing tokens are provided automatically when needed. No real ETH or USDC purchase is needed.</p>'
         : '<p class="zkapi-guide-lead">The payment network and token requirements will appear when the payment service connects.</p>';
     return fundingDisclosure({ key: 'setup', id: `zkapi-${scope}-setup`, open,
