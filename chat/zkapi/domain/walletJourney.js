@@ -15,7 +15,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
         return [
             { id: 'connect', label: 'Prepare funding address', detail: 'Checks the ETH at this address and the current network fee.' },
             { id: 'deposit', label: 'Send the deposit', detail: 'This browser signs it and sends it from your funding address.' },
-            { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
+            { id: 'chain', label: 'Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
     }
     if (kind === 'deposit') {
@@ -24,7 +24,7 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             ...(!nativeEth ? [{ id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' }] : []),
             { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Moves the funds from your wallet into your private balance.' },
-            { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
+            { id: 'chain', label: 'Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
     }
     const escape = kind === 'escape';
@@ -39,8 +39,8 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
                 ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
                 : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Approve the transaction in MetaMask.' },
         escape
-            ? { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
-            : { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
+            ? { id: 'chain', label: 'Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
+            : { id: 'chain', label: 'Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
     ];
 }
 
