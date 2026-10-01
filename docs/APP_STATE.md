@@ -325,6 +325,100 @@ Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
 - While the org advertises the transfer (`GET /api/billing/legacy-transfer`), those tickets are held: they stay in the wallet and count, but `consumeTickets`/`peekTickets` never select them. Send preflight waits (bounded) for a running move and never treats held tickets as a shortage, so no automatic reload can be triggered by them. The org answers a legacy ticket on any spend path with 409 `TICKET_KEY_LEGACY` (never `TICKET_KEY_INVALIDATED`, which would delete them); the client then holds the key and starts the move.
 - The POST uses the account-session transport, which only allows `/auth` and `/api/billing`, hence the `/api/billing/...` path. While a move runs, the extension ticket snapshot reports `busy`, so commercial empty-wallet logic does not read the wallet as empty.
 
+## 2026-09-30: Repeatable complete local v2 lifecycle acceptance passed
+
+- Run `npm run test:e2e:v2` in `/Users/mingyech/repo/zkapi`. The
+  [process guide](https://github.com/OpenAnonymity/zkapi/blob/e8fd95f47a0fc13e86076fb00e6a0ae13bd03ca2/docs/v2-acceptance.md) records the
+  successful wrapper run at 18:47 MDT and its 15.355-second runtime scenario.
+  It builds actual service binaries/contracts and exercises real server HTTP
+  routes, SQLite evidence, indexer, challenger and browser-wallet cryptography.
+- The user explicitly requested a mocked provider. The local provider meters
+  actual HTTP calls using issued keys; its usage feeds real signed settlement.
+  The oracle is also mocked. No live server, existing credentials, public RPC,
+  testnet funding or one-day wait is required. Direct local transports bypass
+  inherited environment proxies, with a regression covering that boundary.
+- The primary note is a real genesis deposit. Two verified settlements create
+  the intermediate signed state used for a stale escape; the real daemon
+  challenges it, then the latest state receives clearance and closes. Exact
+  payout is 999,200 gwei to the user plus 800 gwei to the treasury from a
+  1,000,000-gwei deposit. The challenge succeeds before the unchanged 24h deadline.
+- Active-lease replay cannot mint another key; corrupted settlement signatures
+  fail without losing the pending journal. Recorded receipts, SQLite data and
+  hashes support the result. The separately deposited 10,000-gwei tree-change
+  fixture remains only on the disposable chain. Test processes are cleaned up.
+- This replaces the synthetic prior-state/HTTP-routing limits for this new full
+  local run, while the earlier standalone challenger test still covers its
+  separate active-unsettled-lease/restart scenarios. Actual provider, deployed
+  signer, browser/CLI host persistence and live Sepolia coverage remain separate.
+  The reviewer handoff retained locally in Downloads includes the new result.
+
+## 2026-09-30: Clarify Groth16 setup terminology
+
+- The local reviewer handoff and related setup/payment docs describe the repaired
+  Groth16 setup as single-party, with no multi-party ceremony. Setup provenance,
+  trust assumptions and independent review status are separate from deployment
+  use; the wording no longer classifies the setup as restricted to development.
+- The reviewer handoff is retained only in Downloads, outside Git, and contains
+  only the three crypto sections. This documentation correction changes no keys,
+  circuit, deployment, audit status or recorded test result.
+
+## 2026-09-30: Local challenger daemon end-to-end test passed
+
+- [The challenger verification record](ZKAPI_CHALLENGER_CHECK_20260930.md) now
+  includes a passing entirely local Anvil run of unmodified `zkapi-challenged`
+  and `zkapi-indexerd` from `95b022f`, with real contracts and fresh Groth16 proofs.
+  The production processor creates durable SQLite evidence for finalized and
+  active-unsettled leases. Both daemon-submitted challenges passed after 2/4
+  chain seconds without shortening or waiting out the 24-hour challenge period.
+- The active case injects an RPC error before broadcast, restarts the process,
+  and checks nonce/calldata preservation. Both cases verify restoration, no
+  payout, confirmation-aware checkpoint cleanup and no duplicate attempt after
+  completed restart. Provider/oracle responses are local mocks, the earlier
+  signed balance is synthetic, and the AWS signer/server HTTP routes are outside
+  scope. This does not close live Sepolia challenge acceptance.
+- Tests and evidence live under
+  `/Users/mingyech/.codex/local-tests/zkapi-challenger-20260930/`; the guide and
+  passing result locations are recorded in the verification record. The compiler issue
+  below was resolved with the standalone CLT/macOS 15.4 SDK. A cloned dependency
+  cache and reduced debug output overcame the host's low disk space. Production
+  code and live deployment files remain unchanged.
+- The reviewer handoff retained locally in Downloads includes this local
+  evidence while preserving the independent crypto/setup and live-test limits.
+
+## 2026-09-30: Challenger timing verified locally and live acceptance still open
+
+- [The challenger check](ZKAPI_CHALLENGER_CHECK_20260930.md) records live Sepolia
+  read-only checks and two passing three-test real-Groth16 contract runs. The
+  isolated variant challenges immediately with the normal 24-hour deadline;
+  only unchallenged finalization needs that wait. This is not a live daemon or
+  Sepolia-fork acceptance result.
+- Live test preparation stopped when automatic safety review rejected the
+  funding-helper subagent. No wallet was created, lease issued, funds transferred
+  or transaction submitted. Focused Rust daemon tests did not compile because
+  the configured Xcode license remains unaccepted.
+- Preflight temporarily returned `native_quote_expired`: the finalized oracle
+  round exceeded the 4,500-second age limit while a newer head round awaited
+  finality. The quote endpoint recovered to HTTP 200 at 22:58:40 UTC without
+  changing settings. The full preflight was not rerun; live challenge coverage
+  remains open.
+
+## 2026-09-30: Reviewer update against Rasul's September 22 findings
+
+- The reviewer handoff retained locally in Downloads covers only the three
+  main protocol/integration findings, as requested: note binding, historical-root
+  challenges and v2 challenge planning/submission. It retains source links,
+  recorded regression evidence and design/setup/live-challenge limits. Application
+  observations and optional execution modes are omitted. It does not claim a new
+  test-suite or funded acceptance run.
+- Read-only live checks found Sepolia still on core `856a714` / `IMQNU4JR`, while
+  Mainnet staging had advanced to Commercial `497df9b` / core `3e311d5` /
+  `PWTAHQVJ`. Both select `fresh-20260930`, SDK `3342c958` and the same note-bound
+  circuit. Keep the recorded funded Sepolia acceptance tied to its tested build.
+- Current server source removes ordinary inference proxy mode; the September 27
+  matrix's proxy repair is historical. Fresh operational/signing keys are not a
+  new Groth16 setup. Independent design/setup review, fresh-vault live challenge
+  acceptance, Google OAuth retesting and the MetaMask warning remain open.
+
 ## 2026-09-30: Fresh zkAPI deployment live with clean browser wallets
 
 - Both canonical sites now use the new Oregon VM with separate fresh Mainnet
@@ -2010,8 +2104,8 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   which remains empty. The reviewed integration now uses `zkapi-v2-note-bound-v1`,
   matching WASM/proving keys/verifier, historical-root repair and a durable
   challenge service. Its replacement vault is deployed and finalized;
-  none of this upgrades existing immutable contracts. The newer setup is a single-party development
-  setup and must not be described as production-audited.
+  none of this upgrades existing immutable contracts. The newer setup is single-party, with no multi-party
+  ceremony, and must not be described as production-audited.
 - See [native deployment progress](ZKAPI_NATIVE_ETH_DEPLOYMENT_20260927.md) for
   the unused first test vault, isolated infrastructure, test boundaries and
   remaining deployment gates.
