@@ -6313,3 +6313,29 @@ colors. Loading spinners and normal OA access-key controls are unchanged.
   The leftover is read once with `addressFundingWallet.getStatus()` in
   `recordDepositConfirmation`, since the funding poll stops with the deposit.
   Closing the dialog clears the outcome, so it shows once.
+
+## 2026-10-01: Private balance round 3 — calm loading, lighter Return ETH, withdraw as a send form
+
+- **Loading without the jolt.** While the fee is estimated, the transfer rows
+  hold `.zkapi-skel` placeholders (with visually hidden "Estimating…"/"Loading"
+  text). When the first quote lands, `owner.fundingRevealAt` marks the moment and
+  the rows fade in. Because the dialog re-renders with innerHTML, the animation
+  carries `--zkapi-reveal-delay:-<age>ms` so a re-render continues it instead of
+  replaying it (`revealAttrs`, 600 ms window). The network-fee hint is wrapped in
+  `.zkapi-fee-hint-wrap` and opens (grid rows 0fr→1fr) via `owner.fundingFeeHintAt`;
+  while the amount is being edited the last hint stays (`fundingLastHintUsd`).
+- **Return ETH (Send ETH route) is one sentence, the address field with Paste,
+  a "Return all" button and a quiet "Return part of it" link** that opens the
+  amount field in place (`owner.fundingReturnPartial`, `t-acc`, labels
+  cross-fade with `.zkapi-swap-text`). Copy no longer says the ETH "isn't part
+  of your private balance"; it keeps the warning that only this browser can
+  move it. Blank amount still means "all". The token route keeps its fields.
+- **Withdraw is a wallet-style send form.** Amount; To (one field with Paste,
+  `data-funding-withdrawal-paste`, or "Your MetaMask account"); one network-fee
+  row from `renderWithdrawalFeeLine()` that says who pays it, or "Add X ETH to
+  your deposit address" with "Show deposit address" (same
+  `data-withdrawal-fee-*` controls and `.zkapi-fee-topup` motion); Continue /
+  Cancel; and the escape hatch as a quiet link (`#zkapi-withdraw-mode-toggle`)
+  instead of radios. The review is rows (You withdraw / To / Network fee / You
+  receive) with "Withdraw $X" and Back. A saved (prepared) withdrawal keeps the
+  full `renderWithdrawalFees()` receipt.
