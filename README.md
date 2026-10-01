@@ -18,6 +18,7 @@ quick start. Ticket support remains in this web app; the new daemon is zkAPI-onl
 - **Model picker**: Fuzzy search, pinned models, and per-session selection.
 - **Multimodal**: Images, PDFs, Word documents (`.docx`), and audio attachments.
 - **Right panel**: Ticket registration, access issuance/expiry, and an activity timeline (logs are memory-only per tab).
+- **OpenZoo leCore context recall**: An optional browser-local reducer for long text conversations, applied to chat and Parallel/Council lane requests across ticket and zkAPI inference. [How it works](docs/OPENZOO_LECORE_CONTEXT.md).
 
 ### Quick start
 1. Clone the repo.
@@ -54,6 +55,7 @@ loopback development). If it is omitted, the build uses production oa-org.
 - `index.html` bootstraps Tailwind, Marked, KaTeX, then loads ES modules.
 - `app.js` coordinates state, components, streaming, and CRUD through `chatDB`.
 - `services/inference/` selects the inference backend; `api.js` handles OpenRouter calls (fetch models, stream completions).
+- `services/inference/lecoreContextOptimizer.js` selects relevant older context locally when OpenZoo leCore recall is enabled; it never changes credential issuance or the provider endpoint.
 - `db.js` provides an IndexedDB wrapper for sessions/messages/settings (exported as `chatDB`).
 - `components/` contain UI pieces (sidebar, chat area, input, model picker, right panel, templates, message navigation).
 - `services/` provide logging, key storage, file utilities, ticket/key flows, provider icons, and theme management.

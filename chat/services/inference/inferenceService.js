@@ -2,6 +2,7 @@ import openRouterBackend from './backends/openRouterBackend.js';
 import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
+import { transform as transformLeCoreContext } from './lecoreContextOptimizer.js';
 import { getDefaultModelConfig } from '../modelConfig.js';
 
 const builtinBackends = [
@@ -14,6 +15,8 @@ export function createInferenceService(options = {}) {
     const configuredBackends = options.backends || builtinBackends;
     const backends = new Map(configuredBackends.map(backend => [backend.id, backend]));
     let defaultBackendId = options.defaultBackendId || configuredBackends[0]?.id;
+    let leCoreEnabled = options.leCoreEnabled === true;
+    const leCoreTransform = options.leCoreTransform || transformLeCoreContext;
     const legacyBackendId = options.legacyBackendId || defaultBackendId;
     if (!defaultBackendId || !backends.has(defaultBackendId)) {
         throw new Error('A registered default inference backend is required.');
@@ -68,6 +71,18 @@ export function createInferenceService(options = {}) {
         backends.forEach(backend => registerBackendTransportHints(backend));
     }
 
+    function prepareMessages(messages, { files } = {}) {
+        if (!leCoreEnabled || (Array.isArray(files) && files.length > 0)) return messages;
+        try {
+            const result = leCoreTransform(messages);
+            return Array.isArray(result?.messages) ? result.messages : messages;
+        } catch (error) {
+            // Retrieval is optional. A failure must never prevent inference or
+            // expose conversation content through error logging.
+            return messages;
+        }
+    }
+
     function getWelcomeContent(backend = getBackend()) {
         const providerName = backend.label;
         const accessLabel = backend.accessLabel;
@@ -96,6 +111,11 @@ const inferenceService = {
     getBackend,
     getBackendForSession,
     getBackends: () => [...backends.values()],
+    isLeCoreEnabled: () => leCoreEnabled,
+    setLeCoreEnabled(enabled) {
+        leCoreEnabled = enabled === true;
+        return leCoreEnabled;
+    },
     ensureSessionBackend,
     getLegacyBackendId,
     hasBackend: backendId => backends.has(backendId),
@@ -210,7 +230,7 @@ const inferenceService = {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
         return backend.streamCompletion(
-            messages,
+            prepareMessages(messages, { files }),
             modelId,
             token,
             onChunk,
@@ -237,7 +257,7 @@ const inferenceService = {
             throw new Error(`Backend does not support strict completions: ${backend.id}`);
         }
         const token = backend.getAccessToken(session);
-        return backend.sendCompletionStrict(messages, modelId, token, options);
+        return backend.sendCompletionStrict(prepareMessages(messages), modelId, token, options);
     },
     buildSharedAccessPayload(session) {
         const backend = getBackendForSession(session);

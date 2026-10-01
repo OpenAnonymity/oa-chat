@@ -157,6 +157,14 @@ station, and verifier do not receive any of these prompts or responses. Browser
 activity logs retain only operational metadata and redact
 prompt/response content at the logging sink.
 
+Optional OpenZoo leCore context recall runs inside the browser before either
+ticket or zkAPI inference sends a request. It selects older messages from the
+current conversation for long text-only requests. No prompt, key, or retrieval
+index is sent to OpenZoo or an OA service, and the setting does not add a network
+request or persistent copy of chat text. The inference provider receives the
+selected context and the current prompt under the same ephemeral credential.
+The setting itself is stored locally; see [the feature guide](OPENZOO_LECORE_CONTEXT.md).
+
 Response rendering also remains inside this boundary. Citation and inline-link
 domains are derived locally; the client does not automatically send response URLs
 to preview proxies, favicon services, or cited origins. A source origin sees the
