@@ -10,12 +10,19 @@ test('closing signup aborts the PRF fallback assertion and permits a fresh attem
     let entered;
     const waiting = new Promise(resolve => { entered = resolve; });
     let signal;
+    let fallbackOptions;
     let retry = false;
+    let expectedHints = ['client-device'];
     const credential = results => ({ rawId: new Uint8Array([1]).buffer,
         getClientExtensionResults: () => ({ prf: results ? { results: { first: new Uint8Array(32).fill(7).buffer } } : { enabled: true } }) });
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { credentials: {
-        create: async () => credential(retry),
-        get: options => { signal = options.signal; entered(); return new Promise((resolve, reject) => {
+        create: async ({ publicKey }) => {
+            assert.deepEqual(publicKey.hints, expectedHints);
+            assert.equal(publicKey.authenticatorSelection.userVerification, 'required');
+            assert.equal(publicKey.authenticatorSelection.authenticatorAttachment, undefined);
+            return credential(retry);
+        },
+        get: options => { signal = options.signal; fallbackOptions = options.publicKey; entered(); return new Promise((resolve, reject) => {
             options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
         }); }
     } } });
@@ -26,11 +33,15 @@ test('closing signup aborts the PRF fallback assertion and permits a fresh attem
         const run = accountService.registerPasskeyForPreparedAccount();
         await waiting;
         assert.ok(signal);
+        assert.deepEqual(fallbackOptions.hints, ['client-device']);
+        assert.equal(fallbackOptions.userVerification, 'required');
         accountService.abortPasskeyCeremony();
         assert.equal(signal.aborted, true);
         assert.equal(await run, false);
         assert.equal(accountService.passkeyCeremony, null);
         retry = true;
+        expectedHints = ['hybrid'];
+        accountService.pendingAccount.initData.publicKey = { hints: expectedHints };
         assert.equal(await accountService.registerPasskeyForPreparedAccount(), true);
         assert.equal(accountService.passkeyCeremony, null);
     } finally {

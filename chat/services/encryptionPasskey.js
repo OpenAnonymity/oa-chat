@@ -64,6 +64,7 @@ async function requestPrf(credentialIds) {
             type: 'public-key'
         })),
         userVerification: 'required',
+        hints: ['client-device'],
         timeout: 60000,
         extensions: {
             prf: {
@@ -291,6 +292,8 @@ export async function createEncryptionKeyWrapper(
                 requireResidentKey: true,
                 userVerification: 'required'
             },
+            // A preference, not a platform-only restriction: other devices remain usable.
+            hints: ['client-device'],
             excludeCredentials: existingCredentialIds.map(id => ({
                 id: base64UrlToBytes(id),
                 type: 'public-key'

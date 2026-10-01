@@ -230,7 +230,10 @@ test('username login returns the exact opaque challenge transaction ID', async (
         configurable: true,
         value: {
             credentials: {
-                async get() {
+                async get({ publicKey }) {
+                    assert.deepEqual(publicKey.hints, ['client-device']);
+                    assert.equal(publicKey.userVerification, 'required');
+                    assert.equal(publicKey.rpId, 'localhost');
                     return {
                         id: 'credential-id',
                         rawId: new Uint8Array([1]).buffer,

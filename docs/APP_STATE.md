@@ -13,6 +13,18 @@
   scrolling. Existing shared modal entry/exit and inert close behavior remain.
 
 
+## 2026-10-01: Prefer the current device in passkey prompts
+
+Username signup/login, the signup PRF follow-up, and Google encrypted-data
+setup/unlock request the WebAuthn `client-device` UI hint. This asks supporting
+browsers to prefer a local passkey provider (for example Touch ID on a Mac)
+without restricting authenticator attachment or excluding phone/security-key
+fallbacks. Existing server-provided username hints are preserved. Required user
+verification, PRF encryption, credential allowlists, and RP validation are
+unchanged. The browser/OS still selects available providers and may display a QR
+code when a local credential/provider is unavailable; this cannot make a passkey
+created for the temporary Vercel origin valid for the public domain.
+
 ## 2026-10-01: Adversarial signup and ticket recovery hardening
 
 - Before registering a username, persist and read back the exact public credential and encrypted key wrapper in tab storage. Block registration if this fails. An uncertain response is retried with the same request, or signs into the account already created; it never creates a replacement passkey for that reservation. Regression tests decrypt the original wrapper after offline retry.

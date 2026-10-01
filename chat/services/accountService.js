@@ -355,6 +355,8 @@ function buildCreationOptions(data, accountId, prfInput, username = null) {
         userVerification: 'required',
         ...publicKey.authenticatorSelection
     };
+    // Prefer the device in use without excluding phones or security keys.
+    publicKey.hints ??= ['client-device'];
     publicKey.attestation = publicKey.attestation || 'none';
     publicKey.timeout = publicKey.timeout || 60000;
 
@@ -391,6 +393,7 @@ function buildRequestOptions(data, prfInput) {
     }
 
     publicKey.userVerification = publicKey.userVerification || 'required';
+    publicKey.hints ??= ['client-device'];
     publicKey.timeout = publicKey.timeout || 60000;
 
     publicKey.extensions = {
@@ -1779,6 +1782,7 @@ class AccountService {
                             rpId: publicKey.rp?.id || undefined,
                             allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
                             userVerification: 'required',
+                            hints: publicKey.hints,
                             timeout: 60000,
                             extensions: { prf: { eval: { first: prfInput } } }
                         }
