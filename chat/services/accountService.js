@@ -37,7 +37,8 @@ import {
     createEncryptionKeyWrapper,
     createEncryptionKeyWrapperFromPrf,
     unlockEncryptionKeyring,
-    unlockEncryptionKeyringFromPrf
+    unlockEncryptionKeyringFromPrf,
+    getPrelaunchPasskeyRpId
 } from './encryptionPasskey.js';
 import { withAccountDataLock, ACCOUNT_LOGIN_PENDING_KEY } from './accountDataLock.js';
 
@@ -1444,9 +1445,15 @@ class AccountService {
         if (!this.state.sessionVerified) {
             throw new Error('Sign in before unlocking encrypted data');
         }
+        const expectedAccountId = this.state.accountId;
+        const generation = this.loginGeneration;
         const keyring = await fetchJson('/auth/keyring', null, {
             method: 'GET'
         });
+        if (!this.state.sessionVerified || this.state.accountId !== expectedAccountId ||
+            this.loginGeneration !== generation) {
+            throw new Error('The account changed while loading its encrypted keys.');
+        }
         if (
             this.state.accountId &&
             normalizeAccountId(keyring.accountId) !== this.state.accountId
@@ -2488,15 +2495,18 @@ class AccountService {
         return this.authenticateWithOAuth('google', options);
     }
 
-    async finishOAuthKeyUnlock(masterKey, credentialId, { newAccount = false } = {}) {
-        const expectedAccountId = this.state.accountId;
-        const unlockGeneration = this.syncInitializationGeneration;
+    async finishOAuthKeyUnlock(masterKey, credentialId, {
+        newAccount = false,
+        expectedAccountId = this.state.accountId,
+        unlockGeneration = this.syncInitializationGeneration
+    } = {}) {
         const unlockIsCurrent = () => (
             this.syncInitializationGeneration === unlockGeneration &&
             this.state.accountId === expectedAccountId &&
             this.state.sessionVerified === true
         );
         try {
+            if (!unlockIsCurrent()) return false;
             try {
                 const persisted = await this.persistMasterKey(
                     masterKey,
@@ -2571,6 +2581,11 @@ class AccountService {
                 });
             }, 1000);
         }
+        if (
+            this.syncInitializationGeneration !== expectedInitializationGeneration ||
+            this.state.accountId !== expectedAccountId ||
+            this.state.sessionVerified !== true
+        ) return false;
         this.broadcastAccountReady(expectedAccountId);
         return true;
     }
@@ -2631,8 +2646,23 @@ class AccountService {
         return this.setupOAuthKeyring();
     }
 
-    async unlockOAuthKeyring(keyring = null) {
-        if (this.state.busy) return false;
+    canUsePrelaunchPasskey() {
+        return Boolean(getPrelaunchPasskeyRpId() && this.state.sessionVerified &&
+            this.state.oauthKeyringRequired && this.state.oauthProvider === 'google' &&
+            this.state.encryptionMode === 'PRF' && !this.state.oauthSetupRequired &&
+            !this.state.oauthRecoveryRequired && !this.state.oauthLegacyPasskeyRequired &&
+            this.keyringWrappers.length);
+    }
+
+    async unlockOAuthKeyring(keyring = null, { usePrelaunchPasskey = false } = {}) {
+        if (this.state.busy || !this.state.accountId || !this.state.sessionVerified) return false;
+        if (usePrelaunchPasskey && !this.canUsePrelaunchPasskey()) return false;
+        const expectedAccountId = this.state.accountId;
+        const unlockGeneration = this.syncInitializationGeneration;
+        const loginGeneration = this.loginGeneration;
+        const isCurrent = () => this.state.accountId === expectedAccountId &&
+            this.syncInitializationGeneration === unlockGeneration &&
+            this.loginGeneration === loginGeneration && this.state.sessionVerified;
         this.setState({
             busy: true,
             action: `${this.state.oauthProvider || 'oauth'}_key_unlock`,
@@ -2641,19 +2671,28 @@ class AccountService {
         try {
             if (!keyring) {
                 keyring = await this.fetchOAuthKeyring();
-            } else if (Array.isArray(keyring.wrappers)) {
-                this.keyringWrappers = keyring.wrappers;
+            }
+            if (!isCurrent()) return false;
+            if (normalizeAccountId(keyring.accountId) !== expectedAccountId) {
+                throw new Error('The encrypted keyring belongs to a different account');
             }
             const { credentialId, masterKey } = await unlockEncryptionKeyring(
-                this.keyringWrappers
+                (keyring.wrappers || []).map(wrapper => ({ ...wrapper })), { usePrelaunchPasskey }
             );
+            if (!isCurrent()) {
+                masterKey.fill(0);
+                return false;
+            }
             this.setState({
                 action: `${this.state.oauthProvider || 'oauth'}_key_restoring`,
                 error: null
             });
-            if (!await this.finishOAuthKeyUnlock(masterKey, credentialId)) return false;
+            if (!await this.finishOAuthKeyUnlock(masterKey, credentialId, {
+                expectedAccountId, unlockGeneration
+            })) return false;
             return true;
         } catch (error) {
+            if (!isCurrent()) return false;
             this.setState({
                 busy: false,
                 action: null,

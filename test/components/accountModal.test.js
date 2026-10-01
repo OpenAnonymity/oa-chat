@@ -7,6 +7,21 @@ import { SLOT_NAMES } from '../../chat/extensions/extensionHost.js';
 import { toFriendlyOAuthError } from '../../chat/services/accountService.js';
 import { routeAuthenticationIntent } from '../../chat/application/authIntent.js';
 
+test('pre-launch recovery is an explicit retry option, hidden during prompts and new signup', () => {
+    const modal = Object.create(AccountModal.prototype);
+    modal.escapeHtml = value => String(value || '');
+    modal.accountState = { oauthKeyringRequired: true, error: 'Passkey was not confirmed.' };
+    modal.accountService = { canUsePrelaunchPasskey: () => true };
+    assert.match(modal.renderOAuthUnlockUI(), /id="oauth-prelaunch-passkey-btn"/);
+    modal.accountState.busy = true;
+    assert.doesNotMatch(modal.renderOAuthUnlockUI(), /id="oauth-prelaunch-passkey-btn"/);
+    modal.accountState = { oauthSetupRequired: true };
+    assert.doesNotMatch(modal.renderOAuthUnlockUI(), /id="oauth-prelaunch-passkey-btn"/);
+    modal.accountState = { oauthKeyringRequired: true, error: 'Cancelled' };
+    modal.accountService.canUsePrelaunchPasskey = () => false;
+    assert.doesNotMatch(modal.renderOAuthUnlockUI(), /id="oauth-prelaunch-passkey-btn"/);
+});
+
 test('account restoration renders an operable neutral progress dialog', () => {
     const originalDocument = globalThis.document;
     globalThis.document = {

@@ -40,6 +40,8 @@ test('a later storage NotFoundError is never reported as a missing passkey', asy
         state: { ...accountService.state }
     };
     accountService.persistMasterKey = async () => { throw laterFailure; };
+    accountService.state.accountId = '7777777777777777';
+    accountService.state.sessionVerified = true;
     const masterKey = new Uint8Array(32).fill(9);
     try {
         await assert.rejects(

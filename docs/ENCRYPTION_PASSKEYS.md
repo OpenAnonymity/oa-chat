@@ -87,6 +87,24 @@ protocol and compatibility contract.
 
 ## Returning-device flow
 
+On `https://chat.openanonymity.ai` only, a failed returning Google-keyring
+unlock can offer **Use pre-launch passkey**. This explicit action requests the
+same credential allowlist and PRF input with the fixed RP ID
+`oa-production-20260917.vercel.app`. That hostname must keep serving
+`/.well-known/webauthn` with `application/json` and an origins list containing
+only the final production origin. The browser validates the Related Origin
+Request; no arbitrary RP from server responses, local storage or query strings
+is accepted. Unsupported browsers or missing association metadata fail closed.
+
+This recovers the existing encryption key; it does not create a new credential,
+reset an account, replace a wrapper, or move tickets. New accounts still create
+credentials on their current origin. Keep ownership of the preview hostname and
+its association endpoint until affected accounts have deliberately enrolled a
+new credential. The recovery option is not proof that a particular credential
+was created on the preview hostname. Passkey results and keyring fetches are
+fenced to the account and login generation that started them; stale results
+cannot install keys into a replacement account.
+
 After OAuth authentication, the browser reads `GET /auth/keyring`, supplies the
 returned credential IDs as `allowCredentials`, evaluates the PRF locally, and
 decrypts the matching master-key wrapper. A synced passkey can therefore unlock

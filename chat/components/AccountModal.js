@@ -1399,8 +1399,9 @@ class AccountModal {
         }
     }
 
-    async handleOAuthKeyringUnlock({ restoreRetryFocus = false } = {}) {
+    async handleOAuthKeyringUnlock({ restoreRetryFocus = false, usePrelaunchPasskey = false } = {}) {
         const state = this.accountService.getState();
+        if (usePrelaunchPasskey && !this.accountService.canUsePrelaunchPasskey?.()) return;
         const isFirstAccountSetup = state.oauthSetupRequired === true;
         const viewVersion = this.loginViewVersion;
         const wasOpen = this.isOpen;
@@ -1414,7 +1415,8 @@ class AccountModal {
                 )
                 : state.oauthSetupRequired
                     ? await this.accountService.setupOAuthKeyring()
-                    : await this.accountService.unlockOAuthKeyring();
+                    : await this.accountService.unlockOAuthKeyring(null, { usePrelaunchPasskey });
+            if (viewVersion !== this.loginViewVersion || (wasOpen && !this.isOpen)) return;
             if (success) {
                 if (isFirstAccountSetup) this.completeFirstAccountRouting();
                 else this.close({ afterAuthentication: true });
@@ -2156,6 +2158,8 @@ class AccountModal {
             isLegacyPasskey: state.oauthLegacyPasskeyRequired,
             busy: Boolean(state.busy || this.oauthIntroPending || automaticSetup),
             error: state.error ? String(state.error) : '',
+            showPrelaunchRecovery: Boolean(state.error && !state.busy &&
+                this.accountService?.canUsePrelaunchPasskey?.()),
             secondaryId: showLogout ? 'account-clear-btn' : '',
             secondaryLabel: showLogout ? 'Log out' : ''
         });
@@ -2240,7 +2244,8 @@ class AccountModal {
     renderPasskeyUnlockCard({
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
         finishing = false, busy = false, error = '', closeDisabled = false,
-        actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = ''
+        actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = '',
+        showPrelaunchRecovery = false
     } = {}) {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
@@ -2330,6 +2335,8 @@ class AccountModal {
                         </button>
                     `}
                     ${alertText && !busy && !bodyIsAlert ? `<p role="alert" class="account-unlock-alert">${this.escapeHtml(alertText)}</p>` : ''}
+                    ${showPrelaunchRecovery && !busy ? `<p class="account-unlock-body">Created this account on the preview site?</p>
+                        <button id="oauth-prelaunch-passkey-btn" class="account-unlock-signout" type="button">Use pre-launch passkey</button>` : ''}
                     ${secondaryId && secondaryLabel ? `<button id="${secondaryId}" class="account-unlock-signout" type="button" ${busy ? 'disabled' : ''}>${secondaryLabel}</button>` : ''}
                 </div>
             </div>
@@ -2554,6 +2561,10 @@ class AccountModal {
         const oauthKeyringSubmitBtn = document.getElementById('oauth-keyring-submit-btn');
         if (oauthKeyringSubmitBtn) {
             oauthKeyringSubmitBtn.onclick = () => this.handleOAuthKeyringUnlock();
+        }
+        const prelaunchPasskeyBtn = document.getElementById('oauth-prelaunch-passkey-btn');
+        if (prelaunchPasskeyBtn) {
+            prelaunchPasskeyBtn.onclick = () => this.handleOAuthKeyringUnlock({ usePrelaunchPasskey: true });
         }
 
         const copyIdBtn = document.getElementById('account-copy-id-btn');

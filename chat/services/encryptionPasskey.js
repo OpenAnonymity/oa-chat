@@ -17,6 +17,14 @@ const WRAPPER_AAD = new TextEncoder().encode(
 const WRAPPER_VERSION = 1;
 const MASTER_KEY_LENGTH = 32;
 
+// One-way recovery for the production hostname cutover. Never accept an RP
+// from a URL, storage, or server response: only this owned preview is eligible.
+export function getPrelaunchPasskeyRpId() {
+    return globalThis.window?.location?.origin === 'https://chat.openanonymity.ai'
+        ? 'oa-production-20260917.vercel.app'
+        : null;
+}
+
 function bytesToBase64(bytes) {
     let binary = '';
     for (let i = 0; i < bytes.length; i++) {
@@ -56,8 +64,13 @@ function prfWasEnabled(credential) {
     return extensionResults?.prf?.enabled === true || !!getPrfResult(credential);
 }
 
-async function requestPrf(credentialIds) {
+async function requestPrf(credentialIds, { usePrelaunchPasskey = false } = {}) {
+    const rpId = usePrelaunchPasskey ? getPrelaunchPasskeyRpId() : null;
+    if (usePrelaunchPasskey && !rpId) {
+        throw new Error('Pre-launch passkey recovery is only available on chat.openanonymity.ai.');
+    }
     const publicKey = {
+        ...(rpId ? { rpId } : {}),
         challenge: randomBytes(32),
         allowCredentials: credentialIds.map(id => ({
             id: base64UrlToBytes(id),
@@ -78,6 +91,9 @@ async function requestPrf(credentialIds) {
     try {
         credential = await navigator.credentials.get({ publicKey });
     } catch (error) {
+        if (usePrelaunchPasskey && error?.name === 'SecurityError') {
+            throw new Error('This browser could not use the pre-launch passkey here. Try an up-to-date Chrome or Safari.');
+        }
         if (error?.name !== 'NotFoundError') throw error;
         const unavailable = new Error(
             'This passkey is not available in this browser profile or private window.'
@@ -331,14 +347,14 @@ export async function createEncryptionKeyWrapper(
 /**
  * Prompt for one of the keyring credentials and unwrap the account master key.
  */
-export async function unlockEncryptionKeyring(wrappers) {
+export async function unlockEncryptionKeyring(wrappers, options = {}) {
     const passkeyWrappers = normalizePasskeyWrappers(wrappers);
     if (passkeyWrappers.length === 0) {
         throw new Error('No encryption passkey is registered for this account');
     }
 
     const { credential, prfBytes } = await requestPrf(
-        passkeyWrappers.map(wrapper => wrapper.credentialId)
+        passkeyWrappers.map(wrapper => wrapper.credentialId), options
     );
     return unlockEncryptionKeyringFromPrf(
         passkeyWrappers,

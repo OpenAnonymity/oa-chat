@@ -1,3 +1,14 @@
+## 2026-10-01: Explicit recovery for pre-launch Google passkeys
+
+The final production hostname can offer a pre-launch passkey retry after a
+Google encryption unlock fails. It uses only the fixed preview RP through
+browser-validated Related Origin Requests and preserves the original keyring,
+master key and wallet. New passkey creation and normal unlock are unchanged.
+The matching production build serves the exact final-origin allowlist at
+`/.well-known/webauthn`; keep the preview hostname under OA control. Account and
+login-generation checks prevent late keyring reads/passkey results from
+restoring an old key into a replacement account. See ENCRYPTION_PASSKEYS.md.
+
 ## 2026-09-30: Withdrawal reveal and modal motion
 
 - Add ETH softly reveals its stacked details, then scrolls only the dialog and
