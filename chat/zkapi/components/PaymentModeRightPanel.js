@@ -22,10 +22,18 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
     generateFundingSectionHTML() {
         return this.isTicketMode()
             ? `${TicketRightPanel.prototype.generateFundingSectionHTML.call(this)}
-                <div id="zkapi-ticket-closing-notice" class="px-3 pb-3" role="status" aria-live="polite" aria-atomic="true" ${this.isClosingPreviousChat() ? '' : 'hidden'}>
+                <div id="zkapi-ticket-closing-notice" class="zkapi-closing-notice px-3 pb-3" role="status" aria-live="polite" aria-atomic="true" ${this.closingNoticeShown() ? '' : 'hidden'}>
                     ${this.backgroundClosingNoticeHTML()}
                 </div>`
-            : super.generateFundingSectionHTML();
+            : this.zkapiFundingSectionHTML();
+    }
+
+    zkapiFundingSectionHTML() {
+        // Back in zkAPI: any earlier close's waiting window is over.
+        clearTimeout(this.closingNoticeTimer);
+        this.closingNoticeTimer = null;
+        this.closingSince = null;
+        return super.generateFundingSectionHTML();
     }
 
     fundingSectionIncludesAccessKey() {
@@ -36,6 +44,34 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
 
     isClosingPreviousChat() {
         return ['settling', 'waiting', 'error'].includes(this.app.integration.getTransition?.()?.phase);
+    }
+
+    /** Switching to Tickets closes the zkAPI chat key in the background,
+     *  usually in well under a second. Saying so for that long reads as a
+     *  bubble that flashes and vanishes, so the notice waits a moment and
+     *  shows only if closing takes longer (a failure shows at once). */
+    closingNoticeShown() {
+        const phase = this.app.integration.getTransition?.()?.phase;
+        if (!this.isClosingPreviousChat()) {
+            clearTimeout(this.closingNoticeTimer);
+            this.closingNoticeTimer = null;
+            this.closingSince = null;
+            return false;
+        }
+        if (phase === 'error') return true;
+        const delay = this.closingNoticeDelayMs ?? 700;
+        const now = Date.now();
+        this.closingSince ??= now;
+        const waited = now - this.closingSince;
+        if (waited >= delay) return true;
+        if (!this.closingNoticeTimer) {
+            this.closingNoticeTimer = setTimeout(() => {
+                this.closingNoticeTimer = null;
+                this.updateBackgroundClosingNotice();
+            }, delay - waited);
+            this.closingNoticeTimer?.unref?.();
+        }
+        return false;
     }
 
     backgroundClosingNoticeHTML() {
@@ -57,7 +93,7 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
         // controls. Only this keyed notice changes as the private key closes.
         const notice = document.getElementById('zkapi-ticket-closing-notice');
         if (!notice) return;
-        const hidden = !this.isClosingPreviousChat();
+        const hidden = !this.closingNoticeShown();
         if (notice.hidden !== hidden) notice.hidden = hidden;
         const html = this.backgroundClosingNoticeHTML();
         if (notice.innerHTML !== html) {

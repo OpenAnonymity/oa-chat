@@ -251,3 +251,33 @@ test('an outcome that lands mid-turn waits for the arrow to finish its turn', t 
         assert.equal(f.swap.dataset.state, 'b');
     } finally { f.cleanup(); }
 });
+
+test('relayed requests starting and ending do not remount the panel; a status change redraws only the icon', () => {
+    const f = fixture();
+    try {
+        let renders = 0;
+        f.panel.renderTopSectionOnly = () => { renders += 1; };
+        f.panel.proxySettings = { enabled: true };
+        f.panel.proxyStatus = { ready: true };
+        const icon = { outerHTML: '' };
+        document.querySelector = selector => selector === '.oa-proxy-status-icon' ? icon : null;
+        f.panel.updateProxyFeedback = () => {};
+        for (let i = 0; i < 4; i++) f.panel.handleProxyChange({ settings: { enabled: true }, status: { ready: true } });
+        assert.equal(renders, 0, 'request-count churn changes nothing visible');
+        f.panel.handleProxyChange({ settings: { enabled: true }, status: { ready: true, connectionVerified: true, usingProxy: true } });
+        assert.equal(renders, 0, 'connected redraws in place');
+        assert.match(icon.outerHTML, /data-proxy-state="connected"/);
+        f.panel.handleProxyChange({ settings: { enabled: false }, status: {} });
+        assert.equal(renders, 1, 'switching the relay off changes the layout');
+    } finally { f.cleanup(); }
+});
+
+test('a relay that was not up at startup reads as connecting on the next request, not Unavailable', () => {
+    const f = fixture();
+    try {
+        const meta = f.panel.getProxyStatusMeta({ enabled: true }, { connectOnNextRequest: true });
+        assert.equal(meta.state, 'ready');
+        assert.match(meta.label, /next request/);
+        assert.equal(f.panel.getProxyStatusMeta({ enabled: true }, { connectOnNextRequest: true, lastError: new Error('x') }).state, 'unavailable', 'a failed request still says so');
+    } finally { f.cleanup(); }
+});

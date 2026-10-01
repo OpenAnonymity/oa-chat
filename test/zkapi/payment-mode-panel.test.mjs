@@ -54,6 +54,7 @@ function panelFixture() {
     const panel = Object.create(PaymentModeRightPanel.prototype);
     panel.currentSession = session;
     panel.paymentMode = 'tickets';
+    panel.closingNoticeDelayMs = 0;
     panel.app = {
         getCurrentSession: () => session,
         integration: { getMode: () => 'tickets', getTransition: () => transition }
@@ -267,7 +268,9 @@ test('mode changes preserve single private access and commercial Parallel lane c
             assert.match(html, /parallel-fixture-station/);
             assert.match(html, /Requested on message send/);
             assert.match(html, /You can keep using Tickets\./);
-            assert.doesNotMatch(html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/);
+            assert.match(html.match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/, 'a quick close never flashes a notice');
+            panel.closingSince -= 1000;
+            assert.doesNotMatch(panel.generateTopSectionHTML().match(/<div id="zkapi-ticket-closing-notice"[^>]*>/)?.[0] || '', /hidden/, 'a slow close says so');
             assert.equal((html.match(/id="verifier-attestation-btn"/g) || []).length, 1);
         } else {
             assert.match(html, />Ephemeral Access Key<\/span>/);
@@ -277,4 +280,22 @@ test('mode changes preserve single private access and commercial Parallel lane c
         assert.doesNotMatch(html, /sk-parallel-fixture-secret-0123456789/);
     }
     assert.equal(session.councilConfig.enabled, true, 'payment selection does not discard the saved Parallel preference');
+});
+
+test('switching to Tickets mid-close shows no notice when the close finishes quickly', t => {
+    const { panel, setTransition } = panelFixture();
+    panel.closingNoticeDelayMs = 700;
+    let hidden = true;
+    const notice = { get hidden() { return hidden; }, set hidden(v) { hidden = v; }, innerHTML: '' };
+    t.mock.method(document, 'getElementById', () => notice);
+    setTransition({ phase: 'settling' });
+    panel.updateBackgroundClosingNotice();
+    assert.equal(hidden, true, 'not yet');
+    setTransition({ phase: 'ready' });
+    panel.updateBackgroundClosingNotice();
+    assert.equal(hidden, true);
+    assert.equal(panel.closingNoticeTimer, null, 'the pending reveal is cancelled');
+    setTransition({ phase: 'error' });
+    panel.updateBackgroundClosingNotice();
+    assert.equal(hidden, false, 'a failure shows at once');
 });

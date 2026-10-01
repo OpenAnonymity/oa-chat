@@ -85,3 +85,23 @@ test('direct fallback is per-request and does not persist a disabled relay', asy
         else globalThis.window = previousWindow;
     }
 });
+
+test('a relay not ready at startup is not reported as a failure', async () => {
+    const { default: networkProxy } = await import('../../chat/services/networkProxy.js?startup-not-ready-test');
+    const original = { ensure: networkProxy.ensureProxyApplied, emit: networkProxy.emitChange, settings: networkProxy.state.settings, initialized: networkProxy.state.initialized };
+    networkProxy.emitChange = () => {};
+    networkProxy.ensureProxyApplied = async () => { throw new Error('libcurl still loading'); };
+    networkProxy.state.settings = { ...networkProxy.state.settings, enabled: true };
+    networkProxy.state.initialized = false;
+    try {
+        await networkProxy.initialize();
+        const status = networkProxy.getStatus();
+        assert.equal(status.lastError, null);
+        assert.equal(status.connectOnNextRequest, true);
+    } finally {
+        Object.assign(networkProxy, { ensureProxyApplied: original.ensure, emitChange: original.emit });
+        networkProxy.state.settings = original.settings;
+        networkProxy.state.initialized = original.initialized;
+        networkProxy.state.connectOnNextRequest = false;
+    }
+});

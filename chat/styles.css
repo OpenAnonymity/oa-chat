@@ -5256,6 +5256,12 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     cursor: pointer;
 }
 
+.switch-toggle[data-busy] {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
 .switch-toggle:disabled {
     opacity: 0.7;
     cursor: pointer; /* Keep pointer cursor during animation, not wait cursor */

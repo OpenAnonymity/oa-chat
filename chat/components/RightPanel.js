@@ -89,22 +89,7 @@ class RightPanel {
         this.proxyActionPending = false;
         this.proxyAnimating = false; // Flag to skip re-render during toggle animation
         this.lastProxyToggleTime = 0; // Rate limit for rapid toggles
-        this.proxyUnsubscribe = this.app.services.networkProxy.onChange(({ settings, status }) => {
-            const hadError = this.proxyStatus?.lastError;
-            this.proxySettings = settings;
-            this.proxyStatus = status;
-
-            // Auto-disable proxy when it fails (new error detected while enabled)
-            if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
-                this.app.services.networkProxy.updateSettings({ enabled: false });
-                return; // Will trigger another onChange with disabled state
-            }
-
-            // Skip re-render if animation is in progress (will re-render after animation)
-            if (!this.proxyAnimating) {
-                this.renderTopSectionOnly();
-            }
-        });
+        this.proxyUnsubscribe = this.app.services.networkProxy.onChange(change => this.handleProxyChange(change));
         this.accountUnsubscribe = this.app.services.account?.subscribe?.(() => {
             if (this.hasMounted) this.renderTopSectionOnly();
         }) || null;
@@ -2551,6 +2536,9 @@ class RightPanel {
         if (status?.connectionVerified && status?.usingProxy) {
             return { state: 'connected', label: 'Connected through proxy', textClass: 'text-status-success' };
         }
+        if (status?.connectOnNextRequest) {
+            return { state: 'ready', label: 'Proxy connects on your next request', textClass: 'text-blue-600 dark:text-blue-400' };
+        }
         if (status?.ready) {
             return { state: 'ready', label: 'Proxy ready; connection verified on the next request', textClass: 'text-blue-600 dark:text-blue-400' };
         }
@@ -2731,13 +2719,60 @@ class RightPanel {
         }
     }
 
+    /** What the proxy section shows. Request counts change on every relayed
+     *  request (and again when its stream ends); none of that is visible. */
+    proxyPresentationKey(settings = this.proxySettings, status = this.proxyStatus) {
+        return JSON.stringify([!!settings?.enabled, this.getProxyStatusMeta(settings, status).state]);
+    }
+
+    handleProxyChange({ settings, status }) {
+        const hadError = this.proxyStatus?.lastError;
+        const before = this.proxyPresentationKey();
+        const enabledBefore = !!this.proxySettings?.enabled;
+        this.proxySettings = settings;
+        this.proxyStatus = status;
+
+        // Auto-disable proxy when it fails (new error detected while enabled)
+        if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
+            this.app.services.networkProxy.updateSettings({ enabled: false });
+            return; // Will trigger another onChange with disabled state
+        }
+
+        this.updateProxyToggleBusy();
+        // Skip re-render if animation is in progress (will re-render after animation)
+        if (this.proxyAnimating || this.proxyPresentationKey() === before) return;
+        // Only switching the relay on or off changes the section's layout.
+        // A status change redraws the icon and the feedback row in place, so
+        // the panel doesn't remount (and flicker) while the proxy connects.
+        const icon = document.querySelector('.oa-proxy-status-icon');
+        if (enabledBefore === !!settings?.enabled && icon) {
+            const focused = icon === document.activeElement;
+            icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
+            if (focused) document.querySelector('.oa-proxy-status-icon')?.focus?.();
+            this.updateProxyFeedback();
+            return;
+        }
+        this.renderTopSectionOnly();
+    }
+
+    /** The relay can't be switched off mid-stream, so the switch says so
+     *  before it is pressed instead of answering with an error toast. */
+    updateProxyToggleBusy() {
+        const toggle = document.getElementById('proxy-toggle-btn');
+        if (!toggle) return;
+        const busy = !!this.proxySettings?.enabled && !!this.app.services.networkProxy.hasActiveRequests?.();
+        toggle.toggleAttribute('data-busy', busy);
+        toggle.setAttribute('aria-disabled', String(busy));
+        toggle.title = busy ? 'You can turn the relay off when the reply finishes' : (this.proxySettings?.enabled ? 'Disable relay' : 'Enable relay');
+    }
+
     async handleProxyToggle({ retry = false } = {}) {
         if (this.destroyed || this.proxyActionPending) return;
 
         // Block toggle when there are active proxy requests (e.g., streaming response)
         if (this.app.services.networkProxy.hasActiveRequests()) {
             console.warn('[RightPanel] Cannot toggle proxy - requests in progress');
-            this.app?.showToast?.('Cannot turn proxy off while data is transmitting', 'error');
+            this.app?.showToast?.('You can turn the relay off when the reply finishes.', 'info');
             return;
         }
 
@@ -2778,7 +2813,7 @@ class RightPanel {
         } catch (error) {
             // Show toast for active request errors (race condition protection)
             if (error.message?.includes('requests are in progress')) {
-                this.app?.showToast?.('Cannot change proxy while data is streaming', 'error');
+                this.app?.showToast?.('You can turn the relay off when the reply finishes.', 'info');
             }
             this.proxyActionError = error.message;
             this.proxyFailureDismissed = false;

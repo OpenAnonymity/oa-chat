@@ -125,6 +125,7 @@ class NetworkProxy {
             connectionVerified: this.state.connectionVerified,
             fallbackActive: this.state.fallbackActive,
             lastError: this.state.lastError,
+            connectOnNextRequest: !!this.state.connectOnNextRequest,
             lastFailureAt: this.state.lastFailureAt,
             lastSuccessAt: this.state.lastSuccessAt,
             transport: this.state.transport,
@@ -381,8 +382,14 @@ class NetworkProxy {
         this.state.initialized = true;
 
         if (this.state.settings.enabled) {
+            // A relay that isn't up yet at startup (the WASM still loading,
+            // a slow first handshake) is not a failure: the first request
+            // connects it. Only a request that fails reports "Unavailable",
+            // instead of a fresh chat greeting the user with an error that
+            // the next message disproves.
             await this.ensureProxyApplied().catch((error) => {
-                this.state.lastError = error;
+                console.warn('[networkProxy] Relay not ready at startup; it connects on the next request:', error?.message || error);
+                this.state.connectOnNextRequest = true;
             });
         }
 
@@ -530,6 +537,7 @@ class NetworkProxy {
             this.state.ready = true;
             this.state.fallbackActive = false;
             this.state.lastError = null;
+            this.state.connectOnNextRequest = false;
 
             // Skip eager verification - rely on lazy verification during first real request
             // This avoids WASM crashes from libcurl's internal setInterval loops when rapidly toggling
@@ -754,6 +762,7 @@ class NetworkProxy {
             }
 
             console.error('[networkProxy.fetch] HTTPSession.fetch failed:', error);
+            this.state.connectOnNextRequest = false;
             this.state.usingProxy = false;
             this.state.connectionVerified = false;
             this.state.lastFailureAt = Date.now();
