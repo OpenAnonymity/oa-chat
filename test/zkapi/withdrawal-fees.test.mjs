@@ -150,3 +150,75 @@ test('cancelling a pending fee check prevents withdrawal even after returning to
     assert.equal(run.mock.callCount(), 0);
     assert.equal(owner.withdrawalPreflightBusy, false);
 });
+
+test('review cannot reserve a balance before explicit confirmation', async t => {
+    const { owner } = fixture(t);
+    await refreshWithdrawalFees(owner);
+    const submit = t.mock.method(owner, 'submitWithdrawal', async () => {});
+    owner.requestWithdrawal();
+    assert.ok(owner.withdrawalConfirmation);
+    assert.equal(submit.mock.callCount(), 0);
+    assert.match(owner.renderWithdrawal(), /Once the server approves/);
+    assert.match(owner.renderWithdrawal(), /Go back/);
+    await owner.confirmWithdrawal();
+    assert.equal(submit.mock.callCount(), 1);
+    await owner.confirmWithdrawal();
+    assert.equal(submit.mock.callCount(), 1, 'confirmation is single-use');
+});
+
+test('missing destination blocks both review and submission even with funded fees', async t => {
+    const { owner } = fixture(t);
+    await refreshWithdrawalFees(owner);
+    const run = t.mock.method(owner, 'run', () => assert.fail('invalid destination must not settle or reserve'));
+    for (const destination of ['', '0x123', `0x${'0'.repeat(40)}`]) {
+        owner.fundingDestination = destination;
+        owner.requestWithdrawal();
+        await owner.submitWithdrawal();
+        assert.ok(!owner.withdrawalConfirmation);
+        assert.equal(owner.withdrawalInputReady(), false);
+    }
+    assert.equal(run.mock.callCount(), 0);
+});
+
+test('changed destination, note or fee readiness invalidates confirmation', async t => {
+    for (const change of [owner => { owner.fundingDestination = `0x${'4'.repeat(40)}`; },
+        () => { zkapiClient.wallet.note.note_id++; }, owner => { owner.withdrawalFees.quote.expiresAt = 0; }]) {
+        const { owner } = fixture(t);
+        await refreshWithdrawalFees(owner);
+        owner.requestWithdrawal();
+        assert.ok(owner.withdrawalConfirmation);
+        change(owner);
+        const submit = t.mock.method(owner, 'submitWithdrawal', async () => assert.fail('stale confirmation'));
+        await owner.confirmWithdrawal();
+        assert.equal(submit.mock.callCount(), 0);
+        assert.equal(owner.withdrawalConfirmation, null);
+    }
+});
+
+test('MetaMask gets the same irreversible confirmation before first withdrawal', async t => {
+    const { owner } = fixture(t);
+    setWalletMethod('metamask');
+    const submit = t.mock.method(owner, 'submitWithdrawal', async () => {});
+    assert.doesNotMatch(owner.renderWithdrawal(), /Once the server approves/);
+    owner.requestWithdrawal();
+    assert.match(owner.renderWithdrawal(), /Closing or rejecting the MetaMask prompt afterward does not undo/);
+    assert.equal(submit.mock.callCount(), 0);
+    owner.withdrawalConfirmation = null;
+    await owner.confirmWithdrawal();
+    assert.equal(submit.mock.callCount(), 0, 'back does not approve the action');
+});
+
+test('editing the destination during final fee preflight cannot redirect an approved withdrawal', async t => {
+    const { owner, quote } = fixture(t);
+    await refreshWithdrawalFees(owner);
+    owner.requestWithdrawal();
+    let finish;
+    t.mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', () => new Promise(resolve => { finish = resolve; }));
+    const run = t.mock.method(owner, 'run', () => assert.fail('changed destination must be reviewed again'));
+    const pending = owner.confirmWithdrawal();
+    owner.fundingDestination = `0x${'4'.repeat(40)}`;
+    finish(quote);
+    await pending;
+    assert.equal(run.mock.callCount(), 0);
+    assert.match(owner.outcome.message, /Withdrawal details changed/);
+});

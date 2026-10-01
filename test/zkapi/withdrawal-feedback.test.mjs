@@ -36,6 +36,26 @@ test('withdrawal amount does not claim funds were already returned before submis
     assert.doesNotMatch(html, /Returned to MetaMask/);
 });
 
+test('reload checking explains the delay, hides X and cannot queue a withdrawal', async t => {
+    const modal = fixture(t, { prepared: { phase: 'reserving', mode: 'mutual', destination } });
+    modal.walletMethodReady = false;
+    modal.isOpen = true;
+    const run = t.mock.method(modal, 'run', () => assert.fail('startup must not queue withdrawal'));
+    const html = modal.dialogMarkup();
+    assert.match(html, /Checking saved withdrawal/);
+    assert.match(html, /Nothing new will be sent until you choose Continue/);
+    assert.doesNotMatch(html, /Getting ready|Paused before MetaMask/);
+    assert.match(html, /id="zkapi-payment-close"[^>]*hidden/);
+    assert.match(html, /id="zkapi-withdraw-btn"[^>]*disabled/);
+    assert.match(html, /id="zkapi-withdraw-dismiss-btn"/);
+    await modal.requestWithdrawal();
+    await modal.submitWithdrawal();
+    assert.equal(run.mock.callCount(), 0);
+    modal.walletMethodReady = true;
+    assert.match(modal.renderWithdrawal(), />Continue in MetaMask/);
+    assert.equal(run.mock.callCount(), 0, 'finishing startup still needs a fresh click');
+});
+
 test('an absent balance does not produce a dash under a withdrawal success caption', t => {
     const modal = fixture(t, { balance: null });
     const html = modal.renderWithdrawal();
@@ -164,8 +184,8 @@ test('a refresh while waiting for the wallet cannot silently switch the chosen w
     };
     let submittedMode;
     t.mock.method(zkapiClient, 'withdraw', async mode => { submittedMode = mode; return { status: 'submitted' }; });
-    await modal.submitWithdrawal();
-    assert.equal(submittedMode, 'escape');
+    await assert.rejects(modal.submitWithdrawal(), /Withdrawal details changed/);
+    assert.equal(submittedMode, undefined, 'a changed review requires a fresh confirmation');
 });
 
 test('a new private balance arriving during settlement cannot inherit the old withdrawal click', async t => {

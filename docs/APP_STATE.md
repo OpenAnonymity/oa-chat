@@ -5791,6 +5791,21 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
   validate the identity shown by a stale tab. Close still preserves recovery.
   Existing parked records stay accessible. Shared progress markers are unchanged.
 
+## 2026-09-30: Withdrawal confirmation and reload status
+
+- Fresh MetaMask and Send ETH withdrawals now open a final confirmation before
+  settlement or server approval. The warning explains irreversibility even when
+  a later MetaMask prompt is rejected. Going back has no wallet side effects.
+- Confirmation is tied to note, balance, method and destination, and is consumed
+  once. Send ETH requires a valid destination before review or submission; fee
+  readiness is rechecked at confirmation and by the existing provider preflight.
+- Restored withdrawals say Checking saved withdrawal while SDK initialization
+  reconciles chain state. Actions stay disabled; the header X is hidden, while
+  Close preserves the saved work. Completion requires a new explicit click.
+- A close/reopen invalidates any action previously queued behind startup, even
+  when the new dialog is open by the time initialization resolves. No SDK recovery
+  or reconciliation gates were bypassed to shorten the wait.
+
 ## 2026-09-30: Exclusive help and stable withdrawal fee review
 
 - zkAPI billing/expiry help now shares OA's exclusive System Panel controller.

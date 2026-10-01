@@ -985,7 +985,10 @@ expiry help and billing guide, dismisses outside clicks, and removes document
 listeners on rerender/close. Escape closes help first before closing the dialog.
 
 The withdrawal amount includes ETH as well as available USD pricing. The mutual
-close warning sits directly beneath it. Fee checks preload from an open balance
+close warning appears at final confirmation, before settlement or reservation,
+and explicitly says that rejecting MetaMask afterward cannot undo approval.
+Review is read-only; confirmation is single-use and tied to the current note,
+amount, method and destination. Fee checks preload from an open balance
 view; direct withdrawal entry keeps amount/status/action slots in place while
 loading. All submission gates still require a fresh funded quote. A shortfall
 shows **Add ETH**, which deliberately expands the copyable network/address
@@ -997,3 +1000,10 @@ Balance readiness no longer adds a pill in the System Panel or balance dialog.
 Error/attention states use different outlined icons alongside text, while expiry
 and claim status remain in the existing explanatory lines. Expiry clock ticks
 still update the expired-balance notice without reintroducing a readiness badge.
+
+On reload, the saved withdrawal appears while the SDK reconciles Ethereum state.
+The page says Checking saved withdrawal, disables transaction actions and hides
+the header X while retaining a clearly labelled Close action. Close preserves
+recovery. Finishing initialization does not automatically continue a withdrawal;
+the user clicks Continue after the check finishes. Startup reconciliation itself
+is unchanged and may still take time, particularly through MetaMask RPC.
