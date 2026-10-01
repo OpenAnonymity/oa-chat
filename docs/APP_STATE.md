@@ -1,3 +1,19 @@
+## 2026-10-01: Mainnet production verifier pin
+
+The Mainnet `fresh-20260930` browser profile now pins
+`https://verifier-production-20260917.openanonymity.ai`, matching the server's
+switch to that verifier and `https://org-live.openanonymity.ai`. An older
+frontend rejects the updated manifest with “The deployment manifest changed
+its pinned OA verifier.” Rebuild the frontend with the reviewed pin; keep SDK
+manifest and key verification enabled. Sepolia still pins `verifier2`.
+
+This update retains the deployment ID, vault, signing/proof pins and wallet
+database, so existing notes and pending journals stay available. It does not
+settle the reported pre-switch staging lease: that requires separate recovery
+against its original issuance evidence. Do not reset storage or bypass verifier
+checks to clear that pending lease. See the
+[deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md#mainnet-production-verifier-switch-2026-10-01).
+
 ## 2026-10-01: Deposit wallet labels
 
 The funding selector reads **Ethereum wallet** / **Send to address**. The

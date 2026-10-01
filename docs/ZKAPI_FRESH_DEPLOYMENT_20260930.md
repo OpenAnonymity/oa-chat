@@ -12,6 +12,29 @@ and updates to the existing Sepolia and Mainnet staging sites. The user explicit
 approved a clean reset: old balances are not needed. Old servers remain running;
 old browser data is retained, without a recovery UI or automatic migration.
 
+## Mainnet production verifier switch (2026-10-01)
+
+The operator reports Mainnet switched to org
+`https://org-live.openanonymity.ai` and verifier
+`https://verifier-production-20260917.openanonymity.ai`, with healthy server and
+gateway, verified authentication and production signatures. Sepolia is unchanged.
+
+The frontend's Mainnet `fresh-20260930` profile must pin the same production
+verifier. Its previous `verifier2` pin causes the SDK to reject the updated
+manifest before loading the wallet with “The deployment manifest changed its
+pinned OA verifier.” The frontend change updates only that Mainnet verifier URL;
+the deployment ID, vault, state/clearance keys, proof hashes, canonical protocol
+origin and `zkapi-browser-wallet-fresh-20260930-mainnet-v1` database remain fixed.
+Manifest trust checks and verified OA key requirements stay enabled.
+
+One pre-switch staging lease still needs settlement recovery, as reported by
+the operator. Updating the current verifier pin does not establish settlement
+of that lease or validate its historical issuance under the production verifier.
+Preserve its original journal and recover using its matching evidence; do not
+delete wallet state, replace the pending request, or weaken verification.
+Frontend publication and live acceptance must be recorded separately from this
+configuration correction.
+
 ## Infrastructure and source
 
 - AWS account `427880590996`, **us-west-2**, instance `i-017d8f0098bb4b1ec`.
