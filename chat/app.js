@@ -2807,6 +2807,9 @@ class ChatApp {
                     this.showToast(stranded > 0 ? `${line}. ${strandedLine(stranded)}` : line, 'success', stranded > 0 ? 7000 : undefined);
                 }
             });
+            window.addEventListener('legacy-tickets-attention', event => {
+                if (event?.detail?.message) this.showToast(event.detail.message, 'info', 7000);
+            });
             window.addEventListener('legacy-tickets-stranded', event => {
                 const stranded = Number(event?.detail?.stranded) || 0;
                 if (stranded > 0 && strandedIsNew(stranded)) this.showToast(strandedLine(stranded), 'info', 7000);

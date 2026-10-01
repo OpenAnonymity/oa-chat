@@ -718,7 +718,8 @@ function savedAccountMismatchError(state = {}) {
 // holds it in memory for a retry with the same name; this copy carries it
 // across a reload or a trip Back to the landing page, so that retry is not
 // refused as "unavailable". It holds only what /auth/init returned (account
-// number, name, challenge), never key material.
+// number, name, challenge), plus the public credential and encrypted wrapper
+// after credential creation. Never stores plaintext keys or PRF output.
 const HELD_REGISTRATION_STORAGE_KEY = 'oa-held-username-registration-v1';
 export const HELD_REGISTRATION_MS = 55000;
 
@@ -1233,7 +1234,14 @@ class AccountService {
                 if (!chatDB.db && typeof chatDB.init === 'function') await chatDB.init();
                 const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
                 if (!settings?.accountId || !(await this.shouldReleasePreviousVersionAccount(settings))) return false;
-                if (!await this.releasePreviousVersionAccount(settings)) return false;
+                const released = await this.releasePreviousVersionAccount(settings);
+                if (!released) {
+                    // A sibling tab may have completed the same atomic release.
+                    // Recheck durable ownership before resetting this tab's scope.
+                    const current = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+                    if (current?.accountId || await chatDB.getSetting(SYNC_ACCOUNT_SCOPE_SETTING) ||
+                        await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY)) return false;
+                }
                 // Something may have read the saved account for its data scope
                 // before the host configured this (a preference read at
                 // startup). Drop that scope, and let stores that opened under
@@ -1597,10 +1605,34 @@ class AccountService {
         if (savedAccount && this.state.username === username) return { kind: 'login' };
         try {
             const data = await fetchJson('/auth/challenge', { username });
+            if (readHeldRegistration()?.username === username) writeHeldRegistration(null);
             return { kind: 'login', challenge: { username, data } };
         } catch (error) {
             // This is the pre-ceremony lookup only, never a failed assertion.
             if (error.status !== 401 || error.code !== 'AUTHENTICATION_FAILED') throw error;
+        }
+        const held = readHeldRegistration();
+        if (!savedAccount && held?.username === username && held.registerRequest) {
+            // Retry the exact credential/wrapper after an ambiguous finish.
+            // Never create a second credential for this user handle.
+            try {
+                await fetchJson('/auth/register', held.registerRequest);
+            } catch (error) {
+                if (isAmbiguousAccountFailure(error)) throw error;
+                // A concurrent/lost successful finish can reject its replay.
+                // Check for the active account before abandoning the hold.
+                try {
+                    const data = await fetchJson('/auth/challenge', { username });
+                    writeHeldRegistration(null);
+                    return { kind: 'login', challenge: { username, data } };
+                } catch (lookupError) {
+                    if (lookupError.status !== 401 || lookupError.code !== 'AUTHENTICATION_FAILED') throw lookupError;
+                }
+                writeHeldRegistration(null);
+                throw new Error('Your account setup expired. Please try again to create your passkey.');
+            }
+            writeHeldRegistration(null);
+            return { kind: 'login' };
         }
         if (savedAccount) {
             // A new name on a browser that remembers another account: say so,
@@ -1848,20 +1880,27 @@ class AccountService {
 
         // Register with server
         assertCurrent();
-        try {
-            await fetchJson('/auth/register', {
-                accountId,
-                username: username || undefined,
-                credential: credentialToJSON(credential),
-                wrappedKeyPasskey: wrappedPasskey,
-                wrappedKeyRecovery: wrappedRecovery || undefined,
-                recoveryCodeHash: recoveryCodeHash || undefined
-            });
-        } finally {
-            // /auth/register spends the challenge whatever it answers: the
-            // reservation cannot be picked up again after this.
-            if (username) writeHeldRegistration(null);
+        const registerRequest = {
+            accountId,
+            username: username || undefined,
+            credential: credentialToJSON(credential),
+            wrappedKeyPasskey: wrappedPasskey,
+            wrappedKeyRecovery: wrappedRecovery || undefined,
+            recoveryCodeHash: recoveryCodeHash || undefined
+        };
+        if (username) {
+            // Only the encrypted wrapper and public WebAuthn response persist;
+            // never the master key or PRF bytes. Persist before the request.
+            const held = { username, accountId, initData: pending.initData,
+                at: pending.reservedAt, registerRequest };
+            writeHeldRegistration(held);
+            const persisted = readHeldRegistration();
+            if (persisted?.accountId !== accountId || JSON.stringify(persisted.registerRequest) !== JSON.stringify(registerRequest)) {
+                throw new Error('Allow this site to save account setup, then try again.');
+            }
         }
+        await fetchJson('/auth/register', registerRequest);
+        if (username) writeHeldRegistration(null);
         assertCurrent();
         const sessionVerified = await sessionService.doesSessionExist();
         assertCurrent();
@@ -2046,7 +2085,7 @@ class AccountService {
      */
     resumeHeldRegistration(usernameInput) {
         const saved = readHeldRegistration();
-        if (!saved) return null;
+        if (!saved || saved.registerRequest) return null;
         let username;
         try {
             username = validateUsername(usernameInput);

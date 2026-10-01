@@ -113,7 +113,7 @@ test('saved code record is a plain pending redemption for the signed-in wallet',
     assert.deepEqual([...h.pending.values()], [{
         scope: 'account:account-a',
         code: code(1),
-        needsNewIssuer: true,
+        source: 'legacy-transfer', needsNewIssuer: true,
         createdAt: '2026-10-02T00:00:00.000Z'
     }]);
 });
@@ -289,7 +289,7 @@ test('the allowance running out on live tickets strands the set-aside ones too',
 
 test('a code already saved is not saved again (its redemption progress stays)', async () => {
     const h = harness({ legacy: 2 });
-    h.pending.set('account:account-a:first', { scope: 'account:account-a', code: code(1), needsNewIssuer: true, progress: 'signed' });
+    h.pending.set('account:account-a:first', { scope: 'account:account-a', source: 'legacy-transfer', code: code(1), source: 'legacy-transfer', needsNewIssuer: true, progress: 'signed' });
     h.options.redeemPending = async () => { h.redeemCalls += 1; };
     await h.transfer().run();
     assert.deepEqual(h.pending.get('account:account-a:first').progress, 'signed');
@@ -312,7 +312,7 @@ test('the org closing mid-run releases the hold; a limit keeps the tickets held'
 
 test('a code saved by an interrupted run is redeemed even with no old tickets left', async () => {
     const h = harness({ legacy: 0 });
-    h.pending.set('account:account-a:x', { scope: 'account:account-a', code: code(3), needsNewIssuer: true });
+    h.pending.set('account:account-a:x', { scope: 'account:account-a', source: 'legacy-transfer', code: code(3), needsNewIssuer: true });
     const result = await h.transfer().run();
     assert.equal(result.status, 'none');
     assert.equal(h.redeemCalls, 1);
@@ -431,7 +431,7 @@ test('lost committed reply stays owned by A across switching to B and back', asy
     assert.equal(h.pending.size, 0);
     assert.equal(h.attempt.accountId, 'account-a');
     h.accountId = 'account-b';
-    await assert.rejects(h.transfer().run(), /another account/);
+    assert.equal((await h.transfer().run()).moved, 0);
     assert.equal(h.submits.length, 1);
     h.accountId = 'account-a';
     // Replay must survive a changed batch setting and even loss/replacement
@@ -477,7 +477,7 @@ test('a new run under B cannot take the remaining batches of A’s interrupted m
     h.options.removeParkedTickets = async (...args) => { await remove(...args); h.accountId = 'account-b'; };
     await assert.rejects(h.transfer().run(), /account changed/i);
     assert.equal(h.submits.length, 1);
-    await assert.rejects(h.transfer().run(), /another account/);
+    assert.equal((await h.transfer().run()).moved, 0);
     assert.equal(h.submits.length, 1);
     assert.equal(h.attempt.accountId, 'account-a');
 });
@@ -502,7 +502,7 @@ test('a reply lost before closure is replayed after reload without transferring 
 
 test('saved credit still redeems after the window closes, even with issuer config removed', async () => {
     const h = harness({ info: { enabled: false, key_id: null } });
-    h.pending.set('saved', { scope: 'account:account-a', code: code(2) });
+    h.pending.set('saved', { scope: 'account:account-a', source: 'legacy-transfer', code: code(2) });
     h.failRedeem = true;
     assert.ok((await h.transfer().run()).redeemError);
     assert.equal(h.pending.size, 1);
@@ -522,7 +522,7 @@ test('closed replay refusal retains its journal and never starts fresh transfers
     assert.equal(h.submits.length, 1);
     assert.equal(h.submits[0].length, 1);
     h.accountId = 'account-b';
-    await assert.rejects(h.transfer().run(), /another account/);
+    assert.equal((await h.transfer().run()).moved, 0);
     assert.equal(h.submits.length, 1);
     assert.ok(h.attempt);
 });
@@ -531,7 +531,7 @@ test('closed replay refusal retains its journal and never starts fresh transfers
 test('a retained journal does not block saved-code recovery when issuer config is removed', async () => {
     const h = harness({ info: { enabled: false, key_id: null } });
     h.attempt = { accountId: h.accountId, tickets: [h.wallet[0].finalized_ticket] };
-    h.pending.set('saved', { scope: 'account:account-a', code: code(4) });
+    h.pending.set('saved', { scope: 'account:account-a', source: 'legacy-transfer', code: code(4) });
     h.failSubmit = Object.assign(new Error('closed'), { code: 'LEGACY_TRANSFER_CLOSED' });
     const result = await h.transfer().run();
     assert.equal(result.redeemed, true);
@@ -539,4 +539,90 @@ test('a retained journal does not block saved-code recovery when issuer config i
     assert.equal(result.recoveryPending, true);
     assert.ok(h.attempt);
     assert.equal(h.submits.length, 1);
+});
+
+
+test('unrelated pending trial cannot hold a completed restoration open', async () => {
+    const h = harness({ legacy: 1 });
+    const trial = { scope: 'account:account-a', code: code(9), source: 'trial' };
+    h.pending.set('trial', trial);
+    h.options.redeemPending = async options => {
+        assert.equal(options.source, 'legacy-transfer');
+        for (const [key, record] of h.pending) if (record.source === 'legacy-transfer') h.pending.delete(key);
+        return { success: true, pendingCount: 1 };
+    };
+    const result = await h.transfer().run();
+    assert.equal(result.redeemed, true);
+    assert.equal(result.redeemError, null);
+    assert.equal(h.pending.size, 1);
+});
+
+test('refused live and parked tickets remain parked across reload until policy changes', async () => {
+    const h = parkedHarness({ live: 2, parked: 2 });
+    let saved;
+    h.options.rejectedStore = { get: async () => clone(saved), put: async (_, value) => { saved = clone(value); } };
+    h.options.submit = async () => { h.submits.push('post'); throw Object.assign(new Error('limit'), { code: 'LEGACY_TRANSFER_LIMIT', remaining: 0 }); };
+    const first = await h.transfer().run();
+    assert.equal(first.stranded.length, 4);
+    const posts = h.submits.length;
+    const starts = h.started.length;
+    const second = await h.transfer().run();
+    assert.equal(second.stranded.length, 4);
+    assert.equal(h.submits.length, posts);
+    assert.equal(h.started.length, starts, 'no misleading moving notice on reload');
+    h.info.policy_revision = 'raised';
+    await h.transfer().run();
+    assert.equal(h.submits.length, posts + 1);
+});
+
+test('B can restore unrelated tickets while preserving A journal for replay', async () => {
+    const h = harness({ legacy: 2 });
+    const aTicket = tokenForKeyId(LEGACY_KEY, 91);
+    const journals = new Map([['account-a', { accountId: 'account-a', tickets: [aTicket], reservedTickets: [aTicket] }]]);
+    h.options.attemptStore = {
+        list: async () => [...journals.values()].map(clone),
+        put: async value => journals.set(value.accountId, clone(value)),
+        clear: async accountId => journals.delete(accountId)
+    };
+    h.accountId = 'account-b';
+    h.wallet.push({ finalized_ticket: aTicket });
+    const result = await h.transfer().run();
+    assert.equal(result.moved, 2);
+    assert.deepEqual(result.reserved, [aTicket]);
+    assert.equal(journals.has('account-a'), true);
+    assert.equal(journals.has('account-b'), false);
+    assert.ok(h.wallet.some(ticket => ticket.finalized_ticket === aTicket));
+});
+
+
+test('journal retains and restores the owned remainder even when the wallet snapshot disappears', async () => {
+    const h = harness({ legacy: 2, current: 0 });
+    const saved = h.wallet.map(ticket => ticket.finalized_ticket);
+    h.attempt = { accountId: h.accountId, tickets: [saved[0]], reservedTickets: saved };
+    h.wallet = [];
+    const result = await h.transfer().run();
+    assert.equal(result.moved, 2);
+    assert.deepEqual(h.submits.flat(), saved);
+    assert.equal(h.attempt, null);
+});
+
+test('failed refusal persistence keeps the recovery journal', async () => {
+    const h = harness({ legacy: 1 });
+    h.options.rejectedStore = { get: async () => null, put: async () => { throw new Error('Disk full'); } };
+    h.options.submit = async () => { throw Object.assign(new Error('limit'), { code: 'LEGACY_TRANSFER_LIMIT', remaining: 0 }); };
+    await assert.rejects(h.transfer().run(), /Disk full/);
+    assert.equal(h.attempt.accountId, h.accountId);
+    assert.equal(h.wallet.length, 2);
+});
+
+test('untagged older recovery is retried without letting a paused unrelated code block migration', async () => {
+    const h = harness({ legacy: 0 });
+    h.pending.set('old', { scope: 'account:account-a', code: code(3) });
+    h.failRedeem = true;
+    let notice;
+    h.options.onAttention = message => { notice = message; };
+    const result = await h.transfer().run();
+    assert.equal(result.redeemError, null);
+    assert.equal(h.pending.size, 1);
+    assert.match(notice, /saved ticket codes/);
 });

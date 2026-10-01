@@ -36,6 +36,7 @@ import { chatDB } from '../db.js';
 import syncService from './encryptedSyncService.js';
 import accountService from './accountService.js';
 import { TicketCodeRedeemer } from '../application/ticketCodeRedeemer.js';
+import { legacyTransferStateStore } from './legacyTransferStateStore.js';
 import { LegacyTicketTransfer } from '../application/legacyTicketTransfer.js';
 import sessionService from './sessionService.js';
 import { ORG_API_BASE } from './orgEndpoints.js';
@@ -87,7 +88,7 @@ class TicketClient {
     getVisibleTicketCount() {
         const count = this.getTicketCount();
         return this.legacyMove?.accountId === this.getLegacyDisplayAccountId()
-            ? Math.max(count, this.legacyMove.baseline) : count;
+            ? (this.legacyMove.awaitingRedeem ? count + this.legacyMove.pendingTickets : Math.max(count, this.legacyMove.baseline)) : count;
     }
 
     /** Previous-version tickets kept in the wallet that could not be moved. */
@@ -688,6 +689,11 @@ class TicketClient {
             this.legacyTransfer = new LegacyTicketTransfer({
                 fetchInfo: () => this.fetchLegacyTransferInfo(),
                 onStart: ({ tickets, accountId }) => this.handleLegacyMoveStart(tickets, accountId),
+                onAttention: (message, accountId) => {
+                    if (accountId === this.getLegacyDisplayAccountId() && typeof window !== 'undefined') {
+                        window.dispatchEvent(new CustomEvent('legacy-tickets-attention', { detail: { message } }));
+                    }
+                },
                 // Signed-in request: it needs the account session, so it goes
                 // through the session transport, not the relay.
                 submit: async (tickets, { expectedAccountId }) => {
@@ -719,12 +725,10 @@ class TicketClient {
                 removeParkedTickets: (tickets, options) => syncService.removeUnclaimedTickets(tickets, options),
                 holdKeyIds: keyIds => this.ticketStore.setHeldKeyIds(keyIds),
                 pendingStore: ticketCodeRecoveryStore,
-                // Serialized by the origin-wide legacy-transfer lock. Do not
-                // scope this key: the next account must see unfinished work.
-                attemptStore: {
-                    get: () => chatDB.getSetting('legacy-transfer-pending-attempt'),
-                    put: value => chatDB.updateSettings([{ key: 'legacy-transfer-pending-attempt', value }]),
-                    clear: () => chatDB.updateSettings([], ['legacy-transfer-pending-attempt'])
+                attemptStore: legacyTransferStateStore(chatDB),
+                rejectedStore: {
+                    get: accountId => chatDB.getSetting(`legacy-transfer-rejected:${accountId}`),
+                    put: (accountId, value) => chatDB.updateSettings([{ key: `legacy-transfer-rejected:${accountId}`, value }])
                 },
                 getAccountScope: () => this.getReadyWalletScope(),
                 redeemPending: options => this.getCodeRedeemer().run(null, undefined, options)
@@ -740,6 +744,7 @@ class TicketClient {
     runLegacyTransfer() {
         if (!this.legacyTransferRun) {
             const accountId = this.getLegacyDisplayAccountId();
+            if (!accountId) return Promise.resolve({ status: 'signed-out', moved: 0 });
             this.unannouncedLegacyMoves ||= new Map();
             this.legacyTransferRun = (async () => {
                 let result = null;
@@ -750,7 +755,8 @@ class TicketClient {
                     // A run that only redeems a move's saved code (the move
                     // itself settled earlier) has nothing to settle again.
                     const ownsDisplay = accountId && this.getLegacyDisplayAccountId() === accountId;
-                    const move = this.legacyMove?.accountId === accountId ? this.legacyMove : null;
+                    const move = this.legacyMove?.accountId === accountId ? this.legacyMove
+                        : result?.pendingTickets > 0 ? { accountId, tickets: result.pendingTickets, baseline: this.getTicketCount() + result.pendingTickets, awaitingRedeem: true } : null;
                     const wasMoving = Boolean(move) && !move.awaitingRedeem;
                     // The old tickets have left the wallet and their code is
                     // saved, but the new ones are not issued yet (the redeem
@@ -760,7 +766,9 @@ class TicketClient {
                     const awaitingRedeem = Boolean(result?.redeemError) &&
                         (Number(result?.moved) > 0 || Boolean(move?.awaitingRedeem));
                     if (move) this.legacyMove = awaitingRedeem
-                        ? { ...move, awaitingRedeem: true } : null;
+                        ? { ...move, tickets: result?.pendingTickets ?? Math.max(0, Number(result?.moved) || move.tickets),
+                            pendingTickets: result?.pendingTickets ?? move.pendingTickets ?? (Number(result?.moved) || 0),
+                            baseline: Math.max(0, move.baseline - (result?.stranded?.length || 0)), awaitingRedeem: true } : null;
                     this.legacyTransferRun = null;
                     this.ticketStore.emitUpdate?.();
                     // A move counts as done once its new tickets are in the
@@ -769,20 +777,29 @@ class TicketClient {
                     // Tickets that cannot move stay held, apart from the
                     // count; a closed window releases everything instead.
                     if (ownsDisplay && result && result.status !== 'signed-out') {
-                        this.ticketStore.setStrandedTickets?.(result.stranded || []);
+                        this.ticketStore.setStrandedTickets?.([...(result.stranded || []), ...(result.reserved || [])]);
                     }
-                    const stranded = this.ticketStore.getStrandedCount?.() || 0;
+                    const stranded = result?.stranded?.length || 0;
                     let moved = 0;
-                    if (result?.redeemError) {
+                    if (Number.isFinite(result?.restoredTickets)) {
+                        // Report only tickets issued by this run, even when other
+                        // codes still need retrying. No cumulative promise across reloads.
+                        moved = result.restoredTickets;
+                        this.unannouncedLegacyMoves.delete(accountId);
+                    } else if (result?.redeemError) {
                         this.unannouncedLegacyMoves.set(accountId, (this.unannouncedLegacyMoves.get(accountId) || 0) + (Number(result.moved) || 0));
                     } else if (result) {
-                        moved = Number(result.moved) || 0;
+                        moved = result.restoredTickets ?? (Number(result.moved) || 0);
+                        if (Number.isFinite(result.restoredTickets)) this.unannouncedLegacyMoves.delete(accountId);
                         if (result.redeemed && this.unannouncedLegacyMoves.has(accountId)) {
                             moved += this.unannouncedLegacyMoves.get(accountId);
                             this.unannouncedLegacyMoves.delete(accountId);
                         }
                     }
                     if (typeof window !== 'undefined') {
+                        if (ownsDisplay && result?.reserved?.length) {
+                            window.dispatchEvent(new CustomEvent('legacy-tickets-attention', { detail: { message: 'Some saved tickets belong to an unfinished restoration in another account. Sign in to that account to restore them.' } }));
+                        }
                         if (wasMoving) {
                             window.dispatchEvent(new CustomEvent('legacy-tickets-move-settled', { detail: { moved: ownsDisplay ? moved : 0 } }));
                         }
@@ -845,6 +862,7 @@ class TicketClient {
             const state = attempts.get(account.accountId) || { done: false, tries: 0, timer: null };
             attempts.set(account.accountId, state);
             if (state.done || state.timer || this.legacyTransferRun) return;
+            const startedFor = account.accountId;
             this.runLegacyTransfer().then(result => {
                 if (result?.redeemError) throw result.redeemError;
                 if (result?.recoveryPending) throw new Error('Saved ticket restoration is still pending.');
@@ -858,6 +876,9 @@ class TicketClient {
                         check();
                     }, Math.min(10 * 60 * 1000, 30000 * 2 ** (state.tries - 1)));
                 }
+            }).finally(() => {
+                // Account events arriving during the prior run must not be lost.
+                if (accountService.getState()?.accountId !== startedFor) check();
             });
         };
         this.legacyTransferWatcher = accountService.subscribe(check);

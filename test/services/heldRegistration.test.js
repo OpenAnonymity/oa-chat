@@ -42,6 +42,30 @@ const initData = {
     publicKey: { challenge: 'Y2hhbGxlbmdl', rp: { id: 'chat.example', name: 'OA' }, user: { id: 'dXNlcg', name: 'winter-owl', displayName: 'winter-owl' } }
 };
 
+for (const failure of ['write blocked', 'read blocked', 'silently discarded', 'changed value']) {
+    test(`registration never reaches the server when recovery storage is ${failure}`, () => withService(async storage => {
+        sessionService.fetch = async () => new Response(JSON.stringify(initData), { status: 200 });
+        await accountService.prepareAccount('winter-owl');
+        Object.assign(accountService.pendingAccount, {
+            credential: { id: 'Y3JlZA', rawId: new Uint8Array([1]).buffer, type: 'public-key',
+                response: { clientDataJSON: new Uint8Array([2]).buffer, attestationObject: new Uint8Array([3]).buffer } },
+            prfBytes: new Uint8Array(32).fill(7)
+        });
+        let registerCalls = 0;
+        sessionService.fetch = async () => { registerCalls++; return new Response('{}'); };
+        if (failure === 'write blocked') storage.setItem = () => { throw new Error('quota'); };
+        if (failure === 'read blocked') storage.getItem = () => { throw new Error('blocked'); };
+        if (failure === 'silently discarded') storage.setItem = () => {};
+        if (failure === 'changed value') storage.setItem = (key, value) => {
+            const saved = JSON.parse(value);
+            saved.registerRequest.credential.id = 'another-credential';
+            storage.values.set(key, JSON.stringify(saved));
+        };
+        await assert.rejects(accountService.completeAccountRegistration(), /save account setup/);
+        assert.equal(registerCalls, 0, 'no account can be committed without a recoverable exact request');
+    }));
+}
+
 test('a reservation survives a reload for the same name, and only for that name', () => withService(async storage => {
     sessionService.fetch = async () => new Response(JSON.stringify(initData), { status: 200 });
     await accountService.prepareAccount('winter-owl');

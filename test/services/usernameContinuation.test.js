@@ -267,7 +267,11 @@ test('cancelled credential operations cannot write into a replacement pending ac
     }
 });
 
-test('cancelled registration finalization cannot install a zeroed key or replace account state', async () => {
+test('cancelled registration finalization cannot install a zeroed key or replace account state', async t => {
+    const storageBefore = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    const storage = new Map();
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) } });
+    t.after(() => storageBefore ? Object.defineProperty(globalThis, 'sessionStorage', storageBefore) : delete globalThis.sessionStorage);
     const originalFetch = sessionService.fetch;
     const originalState = { ...accountService.state };
     const originalMasterKey = accountService.masterKey;

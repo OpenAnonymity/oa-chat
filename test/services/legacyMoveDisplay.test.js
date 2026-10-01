@@ -67,6 +67,31 @@ function fakeTransfer(result, { tickets = 0, during = () => {} } = {}) {
     };
 }
 
+test('partial restoration announces each issued batch and reload counts only remaining credit', () => withStore(fakeStore(0), async () => {
+    ticketClient.legacyTransfer = fakeTransfer({ status: 'moved', moved: 2, restoredTickets: 1,
+        redeemed: false, redeemError: new Error('retry'), pendingTickets: 1 }, {
+        tickets: 2, during: () => { ticketClient.ticketStore.count = 1; }
+    });
+    await ticketClient.runLegacyTransfer();
+    assert.equal(ticketClient.getVisibleTicketCount(), 2);
+    assert.deepEqual(events.filter(([type]) => type === 'legacy-tickets-moved'), [['legacy-tickets-moved', { moved: 1 }]]);
+    ticketClient.ticketStore.count = 0; // The newly restored ticket was spent.
+    assert.equal(ticketClient.getVisibleTicketCount(), 1);
+    ticketClient.legacyMove = null; // Reload; only durable pending credit remains.
+    ticketClient.unannouncedLegacyMoves = new Map();
+    events.length = 0;
+    ticketClient.legacyTransfer = fakeTransfer({ status: 'none', moved: 0, restoredTickets: 0,
+        redeemed: false, redeemError: new Error('retry'), pendingTickets: 1 });
+    await ticketClient.runLegacyTransfer();
+    assert.equal(ticketClient.getVisibleTicketCount(), 1);
+    ticketClient.legacyTransfer = fakeTransfer({ status: 'none', moved: 0, restoredTickets: 1, redeemed: true }, {
+        during: () => { ticketClient.ticketStore.count = 1; }
+    });
+    await ticketClient.runLegacyTransfer();
+    assert.equal(ticketClient.getVisibleTicketCount(), 1);
+    assert.deepEqual(events.filter(([type]) => type === 'legacy-tickets-moved'), [['legacy-tickets-moved', { moved: 1 }]]);
+}));
+
 test('the shown count holds steady while old tickets leave before new ones arrive', () => withStore(fakeStore(541, 541), async () => {
     assert.equal(ticketClient.getVisibleTicketCount(), 541);
     ticketClient.handleLegacyMoveStart(541);

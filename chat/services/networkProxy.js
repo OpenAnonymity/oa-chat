@@ -410,7 +410,7 @@ class NetworkProxy {
 
     async updateSettings(partial, options = {}) {
         // Serialize concurrent calls to prevent rapid toggle race conditions
-        if (this.updateSettingsLock) {
+        while (this.updateSettingsLock) {
             await this.updateSettingsLock;
         }
 
@@ -419,7 +419,11 @@ class NetworkProxy {
 
         try {
             const wasEnabled = this.state.settings.enabled;
-            this.state.settings = this.normalizeSettings({ ...this.state.settings, ...partial });
+            const next = this.normalizeSettings({ ...this.state.settings, ...partial });
+            if (!next.enabled && this.activeRequestCount > 0) {
+                throw new Error('Cannot disable proxy while requests are in progress');
+            }
+            this.state.settings = next;
 
             if (!options.skipPersist) {
                 await this.saveSettings(this.state.settings);

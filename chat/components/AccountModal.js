@@ -1096,6 +1096,7 @@ class AccountModal {
             // reservation and challenge are still good, so continue with
             // them rather than asking the server for a name it holds for us.
             this.accountService.clearErrors();
+            this.registrationUnconfirmed = true;
             this.generatedUsername = held.username;
             this.generatedAccountId = held.accountId;
             this.creationStep = 'username_ready';

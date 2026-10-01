@@ -1,3 +1,12 @@
+## 2026-10-01: Adversarial signup and ticket recovery hardening
+
+- Before registering a username, persist and read back the exact public credential and encrypted key wrapper in tab storage. Block registration if this fails. An uncertain response is retried with the same request, or signs into the account already created; it never creates a replacement passkey for that reservation. Regression tests decrypt the original wrapper after offline retry.
+- Restoration journals are browser-local, account-owned, and survive reloads and wallet snapshot changes. Each retains the uncertain batch and its owned remainder. Another account can restore unrelated tickets; only overlapping tickets wait for the original account. Read/write failures retain recovery state.
+- Persist refused ticket IDs before clearing a journal. Refused tickets stay outside the usable/loading count and are retried only when the server's transfer policy changes. Fresh saved codes carry legacy-transfer provenance; unrelated trial codes cannot block completion. Older untagged codes are retried separately without assuming provenance.
+- Partial recovery displays actual wallet tickets plus remaining saved credit, including after spending/reload. Success notices describe each newly issued batch, not a cumulative total across reloads. A stale tab that loses old-account cleanup refreshes its local account scope.
+- Proxy settings reject disabling during active requests before changing or persisting the setting. This does not resolve the separate RPC TLS handshake failure observed in production rehearsal.
+- Operational gates: keep transfer batch size at 500 throughout migration; cached replies do not extend redeem-code expiry. Public migration remains off pending cap approval and cutover checks. Old production accounts are not imported.
+
 ## 2026-10-01: Production rehearsal follow-up fixes
 
 - Closed transfer windows still replay an account-owned durable attempt and redeem saved credit; they never select fresh wallet batches. A closed replay refusal retains the journal and remains retryable.
