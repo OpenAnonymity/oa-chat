@@ -2161,12 +2161,63 @@ class AccountService {
     // Google OAuth Authentication
     // =========================================================================
 
-    /**
-     * `completionToken`: the landing page already ran the provider popup
-     * (it had the click, so popup blockers allowed it) and handed the
-     * one-time completion token over in the URL fragment; finish the
-     * session from it here without opening a second popup.
-     */
+    /** Serialize the cookie exchange with account data writers. Until the new
+     * identity is saved atomically, a durable marker blocks the previous keys. */
+    async completeBrowserOAuthSession(provider, token, { isCurrent, onStarted }) {
+        return withAccountDataLock(async () => {
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            await chatDB.saveSetting(ACCOUNT_LOGIN_PENDING_KEY, { provider });
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            onStarted();
+            ++this.syncInitializationGeneration;
+            syncService.clearCredentials();
+            this.setState({ sessionVerified: false, accountScopeReady: false, ticketSyncReady: false });
+            storageEvents.init();
+            storageEvents.broadcast(ACCOUNT_LOGIN_EVENT, { provider });
+            const session = await bootstrapOAuthSession(provider, token);
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            const accountId = normalizeAccountId(session.accountId);
+            if (!accountId || oauthSessionNeedsEmailRefresh(session)) {
+                throw new Error('Google sign-in could not be confirmed. Please try again.');
+            }
+            const saved = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            const sameAccount = saved?.accountId === accountId;
+            const settings = {
+                ...(sameAccount ? saved : {}), accountId, username: null,
+                credentialId: sameAccount ? saved.credentialId || null : null,
+                encryptionCredentialId: sameAccount ? saved.encryptionCredentialId || null : null,
+                encryptionMode: session.encryptionMode || (sameAccount ? inferPersistedEncryptionMode(saved) : null),
+                recoveryConfirmed: sameAccount && Boolean(saved.recoveryConfirmed),
+                googleLinked: true, lastOAuthProvider: provider, oauthEmail: session.email || null,
+                updatedAt: Date.now()
+            };
+            await chatDB.updateSettings([{ key: ACCOUNT_SETTINGS_KEY, value: settings }], [
+                ACCOUNT_LOGIN_PENDING_KEY,
+                ...(!sameAccount ? [ACCOUNT_KEY_BUNDLE, ACCOUNT_MASTER_CRYPTO_KEY,
+                    ACCOUNT_MASTER_KEY_BYTES, ACCOUNT_SYNC_DERIVATION_KEY, ACCOUNT_SYNC_ID_KEY] : [])
+            ]);
+            if (!isCurrent()) throw new Error('Account changed while signing in. Please try again.');
+            if (this.state.accountId !== accountId) {
+                this.masterKey?.fill(0);
+                this.masterKey = this.cryptoKey = this.syncDerivationKey = this.syncIdKey = null;
+                this.keyringWrappers = [];
+                this.recoveryPayload = null;
+            }
+            this.localAccountContinuity = sameAccount;
+            this.state.recoveryConfirmed = settings.recoveryConfirmed;
+            this.state.recoveryCode = null;
+            this.state.recoveryRequired = false;
+            this.state.encryptionMode = settings.encryptionMode;
+            this.state.username = null;
+            this.state.credentialId = settings.credentialId;
+            this.state.encryptionCredentialId = settings.encryptionCredentialId;
+            return session;
+        });
+    }
+
+    /** Complete a landing-page token without a second popup, or start a new
+     * popup from the click. Ordinary Google login may switch accounts. */
     async authenticateWithOAuth(provider, { link = false, completionToken = null } = {}) {
         const providerConfig = getOAuthProvider(provider);
         const isDesktopOAuth = window.electronAPI?.isElectron === true;
@@ -2215,6 +2266,14 @@ class AccountService {
             }
         }
 
+        const oauthOperation = {};
+        this.oauthLoginOperation = oauthOperation;
+        const authGeneration = this.loginGeneration || 0;
+        const isCurrent = () => (this.loginGeneration || 0) === authGeneration;
+        let exchangeStarted = false;
+        const exchange = token => this.completeBrowserOAuthSession(provider, token, {
+            isCurrent, onStarted: () => { exchangeStarted = true; }
+        });
         const previousAccountId = this.state.accountId;
         const previousCredentialId = this.state.credentialId;
         const previousEncryptionCredentialId =
@@ -2241,6 +2300,7 @@ class AccountService {
                 syncService.clearCredentials();
                 await syncService.deactivateAccountScope(previousAccountId);
                 await syncService.clearAll();
+                if (!isCurrent()) return null;
             }
             let session;
             if (isDesktopOAuth) {
@@ -2249,15 +2309,14 @@ class AccountService {
                     previousAccountId
                 );
             } else if (handoffToken) {
-                session = await bootstrapOAuthSession(provider, handoffToken);
+                session = await exchange(handoffToken);
             } else {
                 popup.document.title = `Connecting to ${providerConfig.label}...`;
                 popup.document.body.textContent = `Connecting to ${providerConfig.label}...`;
 
                 const startData = await fetchJson(`/auth/${provider}/start`, {
                     mode: link ? 'link' : 'login',
-                    returnOrigin: window.location.origin,
-                    expectedAccountId: link ? undefined : previousAccountId || undefined
+                    returnOrigin: window.location.origin
                 });
                 if (!startData.authorizationUrl) {
                     throw new Error(
@@ -2268,11 +2327,9 @@ class AccountService {
                 const completionToken = await waitForOAuthPopup(popup, provider, {
                     authorizationUrl: startData.authorizationUrl
                 });
-                session = await bootstrapOAuthSession(
-                    provider,
-                    completionToken
-                );
+                session = await exchange(completionToken);
             }
+            if (!isCurrent()) return null;
             const accountId = normalizeAccountId(session.accountId);
             if (!accountId) {
                 throw new Error(
@@ -2284,7 +2341,7 @@ class AccountService {
                     `Continue with ${providerConfig.label} again so OA can label your encryption passkey`
                 );
             }
-            if (!link && previousAccountId && accountId !== previousAccountId) {
+            if (isDesktopOAuth && !link && previousAccountId && accountId !== previousAccountId) {
                 throw new Error(
                     `This ${providerConfig.label} login belongs to a different OA account. ` +
                     'Log out locally before switching accounts.'
@@ -2302,7 +2359,10 @@ class AccountService {
                 this.state.busy = false;
                 this.state.action = null;
                 this.state.sessionVerified = true;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'linked', accountId };
@@ -2315,18 +2375,18 @@ class AccountService {
             this.state.encryptionMode = session.encryptionMode ||
                 this.state.encryptionMode;
             this.state.sessionVerified = true;
-            this.state.busy = false;
-            this.state.action = null;
             this.state.error = null;
 
-            const localSettings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY).catch(() => null);
-            this.localAccountContinuity =
+            const localSettings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
+            if (!isCurrent()) return null;
+            if (isDesktopOAuth) this.localAccountContinuity =
                 localSettings?.accountId === accountId;
             const hasLocalKey =
                 this.state.encryptionMode !== 'LEGACY_SSO' &&
                 localSettings?.accountId === accountId
                 ? await this.loadMasterKey()
                 : false;
+            if (!isCurrent()) return null;
             if (hasLocalKey) {
                 this.state.credentialId = localSettings?.credentialId || null;
                 this.state.encryptionCredentialId =
@@ -2339,18 +2399,23 @@ class AccountService {
                 this.state.oauthRecoveryRequired = false;
                 this.state.oauthKeyringRequired = false;
                 this.state.oauthLegacyPasskeyRequired = false;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
                 this.updateStatus();
                 this.notify();
                 await this.initializeSync(false);
+                if (!isCurrent()) return null;
+                this.setState({ busy: false, action: null });
                 this.broadcastAccountReady(accountId);
                 return { status: 'unlocked', accountId };
             }
 
-            await this.clearPersistedMasterKey();
+            await this.clearPersistedMasterKey(accountId, { isCurrent });
+            if (!isCurrent()) return null;
             this.state.credentialId = null;
             this.state.encryptionCredentialId = null;
             const keyring = await this.fetchOAuthKeyring();
+            if (!isCurrent()) return null;
             const mode = keyring.encryptionMode;
             const desktopPasskey = isDesktopOAuth
                 ? session.desktopPasskey
@@ -2374,7 +2439,10 @@ class AccountService {
                     }
                 }
                 this.state.oauthKeyringRequired = true;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'keyring_unlock', accountId };
@@ -2382,7 +2450,10 @@ class AccountService {
 
             if (mode === 'LEGACY_PASSKEY') {
                 this.state.oauthLegacyPasskeyRequired = true;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'legacy_passkey', accountId };
@@ -2394,7 +2465,10 @@ class AccountService {
                 this.state.oauthSetupRequired = false;
                 this.state.oauthRecoveryRequired = true;
                 this.state.oauthKeyringRequired = false;
-                await this.persistSettings();
+                await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+                if (!isCurrent()) return null;
+                this.state.busy = false;
+                this.state.action = null;
                 this.updateStatus();
                 this.notify();
                 return { status: 'migration', accountId };
@@ -2431,7 +2505,10 @@ class AccountService {
             }
 
             this.state.oauthSetupRequired = true;
-            await this.persistSettings();
+            await this.persistSettings({ onlyIfCurrent: !isDesktopOAuth });
+            if (!isCurrent()) return null;
+            this.state.busy = false;
+            this.state.action = null;
             this.updateStatus();
             this.notify();
             return { status: 'keyring_setup', accountId };
@@ -2441,6 +2518,17 @@ class AccountService {
             } catch (closeError) {
                 // Ignore popup cleanup failures.
             }
+            if (!isCurrent()) return null;
+            if (exchangeStarted) {
+                // An uncertain exchange must never restore old keys against new
+                // cookies. Its marker remains until a later successful sign-in.
+                this.lock({ accountChanged: true });
+                this.setState({ busy: false, action: null,
+                    oauthSetupRequired: false, oauthRecoveryRequired: false,
+                    oauthKeyringRequired: false, oauthLegacyPasskeyRequired: false,
+                    error: toFriendlyOAuthError(error) });
+                return null;
+            }
             const restorePreviousAccount = !link &&
                 this.state.accountId &&
                 this.state.accountId !== previousAccountId &&
@@ -2449,6 +2537,7 @@ class AccountService {
             if (syncSuspended && this.getSyncKeyMaterial()) {
                 previousSessionRestored = await sessionService.verifySession()
                     .catch(() => false);
+                if (!isCurrent()) return null;
             }
             this.setState({
                 accountId: restorePreviousAccount ? previousAccountId : this.state.accountId,
@@ -2488,6 +2577,16 @@ class AccountService {
                 await this.initializeSync(false);
             }
             return null;
+        } finally {
+            // A cross-tab handoff cancels this operation without running its
+            // normal success/error UI. Relinquish only this operation's busy
+            // state, never a newer sign-in's state.
+            if (this.oauthLoginOperation === oauthOperation) {
+                this.oauthLoginOperation = null;
+                if (!isCurrent() && this.state.action === `${provider}_login`) {
+                    this.setState({ busy: false, action: null });
+                }
+            }
         }
     }
 

@@ -81,9 +81,14 @@ accounts' encrypted data unrecoverable even when Google authentication succeeds.
   storage live behind the context-isolated desktop bridge.
 - `link` mode is rejected. A provider identity cannot be attached to a legacy
   account namespace with different identity and recovery semantics.
-- If the browser remembers a different local OA account, login carries it as an
-  expected account and is resolve-only. The callback cannot create a new Google
-  mapping before the client rejects an account mismatch.
+- Ordinary browser login can switch to a different Google account. Its cookie
+  exchange is serialized with account-data writers and guarded by a durable
+  pending marker; the verified identity and removal of mismatched local keys
+  commit atomically. The old account's tickets remain in its separate scope.
+  Desktop handoff retains its expected-account restriction.
+- An uncertain exchange stays locked on reload until a successful sign-in.
+  Forgetting the local account does not erase that marker or enable anonymous
+  ticket use; sign in again to establish a verified session and finish it.
 - Identity-backed accounts sync encrypted active/archived ticket wallets and
   preferences using the same opaque blob format as legacy accounts. Existing
   device tickets are adopted when the Google account is first created.

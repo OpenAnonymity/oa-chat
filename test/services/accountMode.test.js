@@ -1,3 +1,4 @@
+import storageEvents from '../../chat/services/storageEvents.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -694,6 +695,10 @@ test('a landing-page completion token finishes Google sign-in without a second p
         fetch: sessionService.fetch,
         verifySession: sessionService.verifySession,
         getSetting: chatDB.getSetting,
+        saveSetting: chatDB.saveSetting,
+        updateSettings: chatDB.updateSettings,
+        storageInit: storageEvents.init,
+        storageBroadcast: storageEvents.broadcast,
         persistSettings: accountService.persistSettings,
         clearPersistedMasterKey: accountService.clearPersistedMasterKey,
         fetchOAuthKeyring: accountService.fetchOAuthKeyring,
@@ -715,6 +720,10 @@ test('a landing-page completion token finishes Google sign-in without a second p
     };
     sessionService.verifySession = async () => true;
     chatDB.getSetting = async () => null;
+    chatDB.saveSetting = async () => {};
+    chatDB.updateSettings = async () => {};
+    storageEvents.init = () => {};
+    storageEvents.broadcast = () => {};
     accountService.persistSettings = async () => {};
     accountService.clearPersistedMasterKey = async () => {};
     accountService.fetchOAuthKeyring = async () => ({ encryptionMode: 'PRF', wrappers: [] });
@@ -738,6 +747,10 @@ test('a landing-page completion token finishes Google sign-in without a second p
         sessionService.fetch = originals.fetch;
         sessionService.verifySession = originals.verifySession;
         chatDB.getSetting = originals.getSetting;
+        chatDB.saveSetting = originals.saveSetting;
+        chatDB.updateSettings = originals.updateSettings;
+        storageEvents.init = originals.storageInit;
+        storageEvents.broadcast = originals.storageBroadcast;
         accountService.persistSettings = originals.persistSettings;
         accountService.clearPersistedMasterKey = originals.clearPersistedMasterKey;
         accountService.fetchOAuthKeyring = originals.fetchOAuthKeyring;

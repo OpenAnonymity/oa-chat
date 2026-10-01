@@ -20,6 +20,26 @@ Lock, logout, account-switch, and token-invalidation boundaries cancel both
 pending synchronization and the in-memory commit of an older key-persistence
 operation, so stale async work cannot repopulate a replacement account.
 
+## Switching Google accounts in the browser
+
+Ordinary Google sign-in may replace a remembered username or Google account.
+It is not account linking: the previous account's tickets remain in its local
+account scope. Before exchanging the one-time OAuth completion token, the
+client snapshots the old scope, takes the shared account-data lock and writes
+an `account-login-pending` marker. Other tabs stop using the previous keys.
+The verified new identity is committed atomically with removal of mismatched
+local keys; only a key bundle belonging to the same account may be reused.
+A lost exchange response or failed storage commit keeps the marker so reload
+cannot restore old keys against new session cookies. Signing in again completes
+the handoff. Late responses cannot overwrite a newer account's UI.
+
+Fresh passkeys are created for the current domain. The browser decides whether
+Touch ID, another local authenticator, or a phone is available. A credential
+created for the temporary pre-launch hostname remains scoped to that hostname;
+changing the current site's RP does not migrate that existing credential.
+The explicit Google encryption-passkey recovery described below preserves its
+key material; it does not recreate accounts or move username credentials.
+
 ## New-account flow
 
 After Google sign-in, the app shows the same brief passkey explanation as

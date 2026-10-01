@@ -1,3 +1,17 @@
+## 2026-10-01: Google account switch from remembered sign-in
+
+Browser Google sign-in now supports an account different from the remembered
+username/Google account. The OAuth cookie exchange uses the same shared lock
+and durable pending marker as username login. Old tickets stay in their account
+scope, and mismatched encryption keys are removed atomically with the new saved
+identity. Failed/uncertain exchanges remain locked until another sign-in.
+Generation and account-binding checks reject late writes after a cross-tab
+switch. See [Encryption Passkeys](ENCRYPTION_PASSKEYS.md).
+
+New usernames already use the current-domain passkey flow; do not force a
+platform-only authenticator to compensate for old temporary-domain credentials.
+The earlier explicit Google pre-launch passkey recovery remains available.
+
 ## 2026-10-01: Explicit recovery for pre-launch Google passkeys
 
 The final production hostname can offer a pre-launch passkey retry after a
