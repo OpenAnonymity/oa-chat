@@ -1,3 +1,13 @@
+## 2026-10-01: Choose Google unlock before opening native passkey prompts
+
+Returning Google keyrings now show **Use saved passkey** explicitly, plus
+**Move passkey to this site** immediately when preview recovery is eligible.
+Do not automatically open a current-domain assertion: the keyring does not
+identify the credential's original RP, so that can strand preview users behind
+a phone picker before they see recovery. New Google setup still prompts once;
+username flows and cryptographic ownership checks are unchanged. See
+[Encryption Passkeys](ENCRYPTION_PASSKEYS.md).
+
 ## 2026-10-01: Move preview Google passkeys onto the final domain
 
 The explicit recovery button now says **Move passkey to this site**. It unlocks

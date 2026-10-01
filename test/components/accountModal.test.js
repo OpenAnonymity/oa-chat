@@ -20,11 +20,17 @@ test('passkey domain upgrade shows a fresh enabled confirmation without a waitin
     assert.doesNotMatch(html, /id="oauth-passkey-upgrade-btn"[^>]*disabled/);
 });
 
-test('pre-launch recovery is an explicit retry option, hidden during prompts and new signup', () => {
+test('pre-launch recovery is offered before any prompt and hidden during prompts and new signup', () => {
     const modal = Object.create(AccountModal.prototype);
     modal.escapeHtml = value => String(value || '');
-    modal.accountState = { oauthKeyringRequired: true, error: 'Passkey was not confirmed.' };
+    modal.accountState = { oauthKeyringRequired: true };
     modal.accountService = { canUsePrelaunchPasskey: () => true };
+    let html = modal.renderOAuthUnlockUI();
+    assert.match(html, /Google sign-in succeeded/);
+    assert.match(html, /Use saved passkey/);
+    assert.match(html, /id="oauth-prelaunch-passkey-btn"/);
+    assert.doesNotMatch(html, /data-waiting="true"/);
+    modal.accountState.error = 'Passkey was not confirmed.';
     assert.match(modal.renderOAuthUnlockUI(), /id="oauth-prelaunch-passkey-btn"/);
     modal.accountState.busy = true;
     assert.doesNotMatch(modal.renderOAuthUnlockUI(), /id="oauth-prelaunch-passkey-btn"/);
@@ -1800,19 +1806,21 @@ test('an already-unlocked Google account completes without commercial coupling',
     assert.equal('resumePremiumCheckoutIfPending' in modal, false);
 });
 
-test('OAuth resolving to a returning keyring starts the passkey without reopening Account', async () => {
+test('OAuth resolving to a returning keyring leaves unlock choices without a native prompt', async () => {
     const modal = Object.create(AccountModal.prototype);
     let prompts = 0;
     modal.accountService = {
         authenticateWithOAuth: async () => ({ status: 'keyring_unlock' })
     };
     modal.render = () => {};
-    modal.maybeAutoPromptPasskey = () => { prompts += 1; };
+    modal.isOpen = true;
+    modal.accountState = { oauthKeyringRequired: true, sessionVerified: true };
+    modal.handleOAuthKeyringUnlock = () => { prompts += 1; };
     modal.app = {};
 
     await modal.handleOAuthAuthentication('google');
 
-    assert.equal(prompts, 1);
+    assert.equal(prompts, 0);
     assert.equal(modal.creationStep, 'idle');
 });
 
@@ -2057,7 +2065,7 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
     }
 });
 
-test('opening a Google account automatically prompts once for setup or keyring unlock', async () => {
+test('opening a Google account only prompts automatically for new-account setup', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
         activeElement: null,
@@ -2066,7 +2074,7 @@ test('opening a Google account automatically prompts once for setup or keyring u
         removeEventListener() {}
     };
     const cases = [
-        [{ oauthKeyringRequired: true }, 1],
+        [{ oauthKeyringRequired: true }, 0],
         [{ oauthKeyringRequired: true, error: 'Passkey cancelled' }, 0],
         [{ oauthKeyringRequired: true, busy: true }, 0],
         [{ oauthKeyringRequired: true, passkeySupported: false }, 0],
@@ -2117,7 +2125,7 @@ test('opening a Google account automatically prompts once for setup or keyring u
     globalThis.document = originalDocument;
 });
 
-test('a cancelled automatic Google prompt restores focus to Try again', async () => {
+test('a cancelled explicit Google unlock can restore focus to Try again', async () => {
     const originalDocument = globalThis.document;
     const retry = {
         id: 'oauth-keyring-submit-btn',
@@ -2159,9 +2167,10 @@ test('a cancelled automatic Google prompt restores focus to Try again', async ()
     modal.render = () => {};
     try {
         modal.open();
-        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(modal.passkeyAutoPromptAttempted, false);
+        await modal.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
         assert.equal(globalThis.document.activeElement, retry);
-        assert.equal(modal.passkeyAutoPromptAttempted, true);
+        assert.equal(modal.passkeyAutoPromptAttempted, false);
         assert.equal(modal.isOpen, true);
     } finally {
         modal.destroy();
@@ -2241,7 +2250,7 @@ test('the unlock card never shows logout, including waiting, retry, and legacy-p
             modal.accountState = { accountId: '1234567890123456', oauthKeyringRequired: true, oauthLegacyPasskeyRequired, busy, error };
             const html = modal.renderOAuthUnlockUI();
             // Only the legacy-passkey account keeps a heading; the ordinary
-            // returning account is prompted on arrival and its card is untitled.
+            // returning account chooses its passkey on the compact untitled card.
             if (oauthLegacyPasskeyRequired) assert.match(html, />Welcome back<\/h2>/);
             else assert.doesNotMatch(html, /<h2|Welcome back/);
             assert.match(html, /id="close-account-modal"/);

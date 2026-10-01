@@ -77,7 +77,7 @@ wrap/unwrap operations used by the ordinary browser flow.
 
 ## Username-account flow
 
-Google and username entry share the same passkey explanation and automatic
+New Google and username accounts share the same passkey explanation and automatic
 continuation. New username accounts briefly show the explanation before creation;
 returning accounts proceed to unlock. A refused prompt exposes a manual retry.
 Username Unlock fetches a fresh challenge rather than holding the initial lookup
@@ -107,8 +107,12 @@ protocol and compatibility contract.
 
 ## Returning-device flow
 
-On `https://chat.openanonymity.ai` only, a failed returning Google-keyring
-unlock can offer **Move passkey to this site**. This explicit action requests the
+Returning Google accounts show **Use saved passkey** after OAuth succeeds, rather
+than automatically starting an assertion. The user explicitly chooses before a
+native phone/security-key picker can obscure recovery. New-account setup is unchanged.
+On `https://chat.openanonymity.ai` only, **Move passkey to this site** is also
+available immediately when an existing PRF keyring qualifies; no failed prompt is
+required first. The choice is hidden while a ceremony is active. This action requests the
 same credential allowlist and PRF input with the fixed RP ID
 `oa-production-20260917.vercel.app`. That hostname must keep serving
 `/.well-known/webauthn` with `application/json` and an origins list containing

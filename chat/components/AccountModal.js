@@ -476,20 +476,18 @@ class AccountModal {
         this.maybeAutoPromptPasskey();
     }
 
-    /** One automatic ceremony per open; cancellations leave an explicit retry. */
+    /** New Google accounts get one setup prompt; returning users choose their passkey. */
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
         if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending || this.usernameLoginIntent) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         if (state.oauthRecoveryRequired || state.oauthLegacyPasskeyRequired) return;
         const setup = state.oauthSetupRequired === true;
-        if (setup && !state.sessionVerified) return;
-        if (!setup && !state.oauthKeyringRequired) return;
+        // An existing keyring does not tell us which domain holds its passkey.
+        // Let returning users choose current-site unlock or preview recovery
+        // before a native prompt hides those choices behind a phone QR code.
+        if (!setup || !state.sessionVerified) return;
         this.passkeyAutoPromptAttempted = true;
-        if (!setup) {
-            void this.handleOAuthKeyringUnlock({ restoreRetryFocus: true });
-            return;
-        }
         // Match username setup: hold the shared explanation, then open the
         // OS prompt. Never postpone the account/key operation once it starts.
         const viewVersion = this.loginViewVersion;
@@ -810,8 +808,8 @@ class AccountModal {
         }
         this.render();
         // OAuth completes inside an already-open dialog. If it resolved to a
-        // keyring setup or unlock, continue to its passkey prompt rather than waiting
-        // for a close/reopen that may never happen.
+        // new keyring setup, schedule its creation prompt. Existing keyrings
+        // stay on the explicit unlock/recovery choices.
         this.maybeAutoPromptPasskey();
     }
 
@@ -2147,6 +2145,8 @@ class AccountModal {
     renderOAuthUnlockUI() {
         const state = this.accountState || {};
         const upgradeReady = state.action === 'google_key_migration_ready';
+        const returningGoogle = Boolean(state.oauthKeyringRequired && !state.oauthSetupRequired &&
+            !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired);
         const showLogout = Boolean(state.oauthRecoveryRequired || state.oauthSetupRequired);
         // Paint the caption from the first setup frame, without flashing the
         // Create button before maybeAutoPromptPasskey schedules the ceremony.
@@ -2159,10 +2159,12 @@ class AccountModal {
             isLegacyPasskey: state.oauthLegacyPasskeyRequired,
             busy: !upgradeReady && Boolean(state.busy || this.oauthIntroPending || automaticSetup),
             upgradeReady,
+            returningGoogle,
             actionId: upgradeReady ? 'oauth-passkey-upgrade-btn' : 'oauth-keyring-submit-btn',
-            primaryLabel: upgradeReady ? 'Save passkey for this site' : '',
+            primaryLabel: upgradeReady ? 'Save passkey for this site' :
+                returningGoogle && !state.error ? 'Use saved passkey' : '',
             error: state.error ? String(state.error) : '',
-            showPrelaunchRecovery: Boolean(state.error && !state.busy &&
+            showPrelaunchRecovery: Boolean(returningGoogle && !state.busy && !upgradeReady &&
                 this.accountService?.canUsePrelaunchPasskey?.()),
             secondaryId: showLogout ? 'account-clear-btn' : '',
             secondaryLabel: showLogout ? 'Log out' : ''
@@ -2249,19 +2251,13 @@ class AccountModal {
         isLegacyMigration = false, isSetup = false, isLegacyPasskey = false, username = '',
         finishing = false, busy = false, error = '', closeDisabled = false,
         actionId = 'oauth-keyring-submit-btn', primaryLabel = '', secondaryId = '', secondaryLabel = '',
-        showPrelaunchRecovery = false, upgradeReady = false
+        showPrelaunchRecovery = false, upgradeReady = false, returningGoogle = false
     } = {}) {
         const state = this.accountState || {};
         const recoveryValue = this.escapeHtml(this.recoveryInputValue || '');
 
-        // Returning accounts get no heading: the passkey prompt opens on
-        // arrival and this card only covers waiting and retry. Setup and the
-        // legacy recovery-code migration keep a title because they explain
-        // something new.
-        // No heading for the automatic paths (returning unlock and first-time
-        // setup): the OS sheet opens on arrival and the card only ever shows
-        // the waiting and retry states. Legacy paths keep a heading because
-        // they explain something the user has to act on first.
+        // Keep the compact shared card for setup and explicit returning unlock.
+        // Legacy paths keep their heading to explain the additional step.
         const title = isLegacyMigration
             ? 'Upgrade encrypted data'
             : isLegacyPasskey
@@ -2292,6 +2288,8 @@ class AccountModal {
                     ? 'This account predates encryption-only passkeys. Use its existing passkey to unlock it.'
                     : isSetup
                         ? 'Create a passkey. It encrypts your tickets and preferences so only you can access them.'
+                        : returningGoogle
+                        ? 'Google sign-in succeeded. Use your saved passkey to unlock your encrypted tickets and preferences.'
                         : 'The Open Anonymity Project encrypts your tickets and preferences so only you can access them.';
         const idleCta = isLegacyMigration
             ? 'Upgrade with passkey'
