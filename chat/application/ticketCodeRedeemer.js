@@ -31,14 +31,17 @@ export class TicketCodeRedeemer {
         return Object.freeze({ count: records.length });
     }
 
-    async run(code, onProgress) {
+    async run(code, onProgress, { expectedAccountId, source } = {}) {
         const scope = await this.scope();
+        if (expectedAccountId !== undefined && scope.accountId !== expectedAccountId) {
+            throw new Error('Your wallet changed. Return to the original wallet to finish redeeming this code.');
+        }
         if (!this.lockManager?.request) {
             throw new Error('This browser cannot safely coordinate ticket-code redemption across tabs.');
         }
         return this.lockManager.request('oa-ticket-code-redemption-v1', async () => {
             await this.assertScope(scope);
-            const pending = await this.pendingStore.list(scope.key);
+            const pending = (await this.pendingStore.list(scope.key)).filter(record => source === 'unclassified' ? !record.source : !source || record.source === source);
             if (code !== null) {
                 const normalized = String(code || '').trim().replace(/[\s-]+/g, '');
                 if (normalized.length !== 24 || !/^[0-9a-f]{4}$/i.test(normalized.slice(-4)) || parseInt(normalized.slice(-4), 16) === 0) {
@@ -48,13 +51,14 @@ export class TicketCodeRedeemer {
                 return this.finish(record || await this.prepare(normalized, scope, onProgress), scope, onProgress);
             }
             let result = null;
+            let restoredTickets = 0;
             let firstError = null;
             for (const record of pending) {
-                try { result = await this.finish(record, scope, onProgress); }
+                try { result = await this.finish(record, scope, onProgress); restoredTickets += result.tickets_issued || 0; }
                 catch (error) { firstError ||= error; }
             }
             if (!result && firstError) throw firstError;
-            return result ? { ...result, pendingCount: (await this.pendingStore.list(scope.key)).length } : null;
+            return result ? { ...result, restoredTickets, pendingCount: (await this.pendingStore.list(scope.key)).length } : null;
         });
     }
 
@@ -64,7 +68,7 @@ export class TicketCodeRedeemer {
         }
     }
 
-    async prepare(code, scope, progress) {
+    async prepare(code, scope, progress, source) {
         progress?.('Preparing tickets…', 2);
         if (!await this.privacyPass.checkAvailability()) throw new Error('Privacy Pass is unavailable.');
         const issuer = await this.fetchIssuer();
@@ -81,7 +85,7 @@ export class TicketCodeRedeemer {
             if (index % 8 === 0) await yieldToUI();
         }
         await this.assertScope(scope);
-        const record = { scope: scope.key, code, keyId, requests, createdAt: new Date().toISOString() };
+        const record = { scope: scope.key, code, keyId, requests, ...(source ? { source } : {}), createdAt: new Date().toISOString() };
         // No consuming request is allowed until all unblinding secrets are durable.
         await this.pendingStore.put(record);
         return record;
@@ -89,7 +93,7 @@ export class TicketCodeRedeemer {
 
     async finish(record, scope, progress) {
         await this.assertScope(scope);
-        if (record.needsNewIssuer) record = await this.prepare(record.code, scope, progress);
+        if (record.needsNewIssuer) record = await this.prepare(record.code, scope, progress, record.source);
         const requests = record.requests;
         if (!record.response) {
             progress?.('Redeeming saved code…', 65);
@@ -100,7 +104,7 @@ export class TicketCodeRedeemer {
                 if (error.code === 'TICKET_KEY_CHANGED') {
                     // Preserve the bearer code even if this page closes before
                     // a replacement batch is ready. Old-key signatures are invalid.
-                    await this.pendingStore.put({ scope: record.scope, code: record.code, needsNewIssuer: true });
+                    await this.pendingStore.put({ scope: record.scope, code: record.code, source: record.source, needsNewIssuer: true });
                 } else if (error.code === 'CODE_REDEEM_REQUEST_MISMATCH' ||
                     (error.status === 400 && /not found|expired|already (?:used|redeemed)/i.test(error.message))) {
                     // Definitive unusable codes cannot become recoverable by

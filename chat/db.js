@@ -728,6 +728,29 @@ class ChatDatabase {
         });
     }
 
+    /** Compare ownership markers and delete atomically, including against older tabs
+     * that do not participate in our Web Lock. Resolves only on commit. */
+    async deleteSettingsIfUnchanged(expected, deleteKeys) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(['settings'], 'readwrite');
+            const store = tx.objectStore('settings');
+            let matches = true;
+            let remaining = expected.length;
+            tx.oncomplete = () => resolve(matches);
+            tx.onerror = tx.onabort = () => reject(tx.error || new Error('Account cleanup transaction failed'));
+            if (!remaining) { matches = false; return; }
+            for (const { key, value } of expected) {
+                const request = store.get(key);
+                request.onsuccess = () => {
+                    try {
+                        if (JSON.stringify(request.result?.value ?? null) !== JSON.stringify(value ?? null)) matches = false;
+                    } catch { matches = false; tx.abort(); return; }
+                    if (--remaining === 0 && matches) for (const key of deleteKeys) store.delete(key);
+                };
+            }
+        });
+    }
+
     async getSetting(key) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['settings'], 'readonly');

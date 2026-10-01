@@ -316,7 +316,11 @@ test('username accounts use identity-backed deferred redemption sync', async () 
     }
 });
 
-test('username registration uploads no recovery material', async () => {
+test('username registration uploads no recovery material', async t => {
+    const before = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    const values = new Map();
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) } });
+    t.after(() => before ? Object.defineProperty(globalThis, 'sessionStorage', before) : delete globalThis.sessionStorage);
     const originalState = { ...accountService.state };
     const originalPendingAccount = accountService.pendingAccount;
     const originalMasterKey = accountService.masterKey;

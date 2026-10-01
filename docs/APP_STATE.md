@@ -12,6 +12,122 @@
 - Reduced motion skips the reveal/resize/page movement and uses instant minimal
   scrolling. Existing shared modal entry/exit and inert close behavior remain.
 
+
+## 2026-10-01: Adversarial signup and ticket recovery hardening
+
+- Before registering a username, persist and read back the exact public credential and encrypted key wrapper in tab storage. Block registration if this fails. An uncertain response is retried with the same request, or signs into the account already created; it never creates a replacement passkey for that reservation. Regression tests decrypt the original wrapper after offline retry.
+- Restoration journals are browser-local, account-owned, and survive reloads and wallet snapshot changes. Each retains the uncertain batch and its owned remainder. Another account can restore unrelated tickets; only overlapping tickets wait for the original account. Read/write failures retain recovery state.
+- Persist refused ticket IDs before clearing a journal. Refused tickets stay outside the usable/loading count and are retried only when the server's transfer policy changes. Fresh saved codes carry legacy-transfer provenance; unrelated trial codes cannot block completion. Older untagged codes are retried separately without assuming provenance.
+- Partial recovery displays actual wallet tickets plus remaining saved credit, including after spending/reload. Success notices describe each newly issued batch, not a cumulative total across reloads. A stale tab that loses old-account cleanup refreshes its local account scope.
+- Proxy settings reject disabling during active requests before changing or persisting the setting. This does not resolve the separate RPC TLS handshake failure observed in production rehearsal.
+- Operational gates: keep transfer batch size at 500 throughout migration; cached replies do not extend redeem-code expiry. Public migration remains off pending cap approval and cutover checks. Old production accounts are not imported.
+
+## 2026-10-01: Production rehearsal follow-up fixes
+
+- Closed transfer windows still replay an account-owned durable attempt and redeem saved credit; they never select fresh wallet batches. A closed replay refusal retains the journal and remains retryable.
+- Signup keeps one abort controller through credential creation and its optional PRF assertion, so dismissing either prompt frees the browser for retry.
+- Production builds can set OA_PROXY_URL to an exact root WSS origin without verifier bypass. Demo relay restrictions remain unchanged; staging builds strip the production override.
+- Commercial trial redemption clears account-specific code state immediately during handoff and gates later results by owner and generation. Late failures/successes cannot write into the next account's row or notifications.
+- New-org account-binding and mandatory global transfer-cap validation were deployed with production overlays retained. The final-domain login configuration remains staged while the Vercel-origin rehearsal runs; its RP ID cannot serve the unrelated Vercel origin.
+
+## 2026-09-30: Fix stale cleanup, partial recovery and account-owned progress
+
+The three findings below are now fixed locally (not deployed). Old-account
+cleanup runs under the account-data lock and atomically compares account-settings,
+key bundle, data scope and pending-login marker before deleting only the old
+account/key settings. Tickets/chats are not deletion targets. Transaction aborts
+reject; ownership changes skip cleanup without resetting the newer login.
+LegacyTicketTransfer verifies that durable pending redemptions are empty before
+reporting completion. Partial recovery remains a retryable failure; fresh
+controllers recover the saved remainder after reload without duplicate issuance.
+Display baselines and loading notices carry an account owner; deferred success
+counts use a per-account map. Account handoff hides the old loading toast and
+late completion cannot change the replacement account's stranded state or toast.
+The watcher does not mark a signed-out attempt completed. The caller's account is
+also bound at transfer admission, before an async info fetch can switch owners.
+New tests include real Chromium IndexedDB concurrent-writer/abort tests in the
+commercial test-robustness/migration-storage.test.mjs, plus deterministic account,
+partial-reload and display regressions. Earlier review text below is historical.
+
+## 2026-09-30: Fresh adversarial review — further release work
+
+The prior account-binding/journal fixes pass their tests, but full migration
+readiness is not approved. Additional scratch reproductions show: (1) old-account
+cleanup can erase a newer tab's account-settings after its guarded key cleanup
+correctly declines to delete the newer key bundle; (2) partial saved-code
+redemption returns pendingCount but LegacyTicketTransfer ignores it and marks
+completion; (3) legacyMove/unannouncedLegacyMove have no account owner and can
+show A's restoration count in B. No fixes were applied in this review. Details
+and repro paths are in the commercial docs/RETURNING_USER_RELEASE_GATES_2026-09-30.md.
+
+## 2026-09-30: Bind legacy ticket moves to their original account
+
+Transfer batches send `expected_account_id`; org must advertise and enforce
+`account_binding: true` before this client consumes any old tickets. The backend
+check is required because shared cookies can change after a client scope check.
+Stop on account changes during reads, submits, saves, removals and redemption.
+Late replies save credit under the original scope before stopping; parked removal
+checks the expected account inside `oa-sync`. Redemption startup also accepts an
+expected account so an async scope lookup cannot choose the replacement wallet.
+A transaction-committed browser-local `legacy-transfer-pending-attempt` records
+an exact batch and its owner before sending. Keep the last batch journal until
+the whole run settles: a new run under B must not consume A's remainder after a
+lost response or account switch. Replay this exact request under A before new
+batches, even if login replaced the parked snapshot. This journal is not synced.
+A parked storage read error fails the run for retry instead of silently skipping
+saved tickets. Companion org work is in `oa-org-transfer-account-binding`; deploy
+org before client. Neither is deployed by this local integration work.
+
+## 2026-09-30: Isolated signup/migration gate candidate
+
+- Combined the signup robustness branch, feature/switch-day and reviewed Google startup fix in a separate worktree for testing; no deployment or release pin change.
+- Commercial test-robustness/migration-safety.test.mjs now exposes two release-blocking defects: account switch between parked batches submits under a different account, and a failed parked-wallet read is swallowed. These are intentionally red gates, not accepted failures.
+- The strengthened signup browser harness distinguishes current-issuer restored tickets from untouched old tickets; it validates durable recovery credit and explicit outcomes. Incomplete automatic coverage is marked REVIEW rather than passing.
+- The returning-user toast proposal is an isolated preview only. Old production accounts are not imported; tickets remain local and need a new-system account. Do not describe restoration as running before sign-in/scope setup.
+
+## 2026-09-30: Sign-up robustness (stress-tested against a stateful org fake)
+
+Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
+`docs/SIGNUP_STRESS_2026-09-30.md`.
+
+- **Focus during a passkey wait.** The untitled card is invisible
+  (`data-waiting="true"`), but `focusModal()` used to put focus on its Close,
+  so a second Enter closed the dialog and abandoned the sign-up. Focus now
+  stays on the dialog, and `getModalFocusable()` skips the hidden card's
+  controls.
+- **Saved account, new name.** `prepareUsernameContinuation` used to send
+  every name to login when an account was saved (a signed-out or expired
+  one included): "Authentication failed", forever. The saved name is still a
+  login with no request, and another existing name is still a login. A new
+  name throws `SAVED_ACCOUNT_MISMATCH` ("This browser remembers "x". Forget
+  it to create a new account."), and the form then shows Forget saved account
+  (`savedAccountMismatch`). Forget keeps the typed name.
+- **Reservation across a reload.** `prepareAccount` also writes
+  `oa-held-username-registration-v1` to sessionStorage (name, account number,
+  init options, `at`; no key material). `takeHeldRegistration` falls back to
+  `resumeHeldRegistration()` (fresh master key, same challenge) for 55 s.
+  `/auth/register` clears it, because it spends the challenge whatever it
+  answers. Holds now count from `getPendingReservedAt()`, not from the
+  dismissal.
+- **Unconfirmed finish.** A register failure without an answer
+  (`isAmbiguousAccountFailure`: abort/timeout, fetch TypeError, 5xx), or
+  `SESSION_NOT_ESTABLISHED` (the account was made but no session was kept),
+  sets `registrationUnconfirmed`. Try again then looks the name up and runs
+  the username unlock if it exists.
+- **Errors.** `chat/domain/accountErrors.js` (pure, re-exported by
+  accountService) turns browser, proxy and WebAuthn text into plain lines.
+  The org's own sentences pass through.
+- **Sheets.** A refusal under `SHEET_REFUSED_MS` right after a click on
+  Create passkey (`sheetFromClick`) now says the browser didn't open the
+  prompt. Registration asks once for PRF when the credential reports
+  `prf.enabled` without a value. Closing the dialog calls
+  `abortPasskeyCeremony()`.
+- **Ticket move.** When the move's redeem fails, `legacyMove` is kept with
+  `awaitingRedeem`, so the visible count holds until a retry redeems the saved
+  code. A run that only redeems does not dispatch `move-settled` again.
+- **Toasts** above the composer move above a full-width bottom sheet
+  (`[aria-modal]` spanning ≥ 90% of the width and reaching the bottom). The
+  loading toast has `role="status"`.
 ## 2026-09-30: Compact withdrawal review
 
 - Withdrawal review uses smaller type and spacing, a compact receipt, and ETH
@@ -184,6 +300,13 @@
   (stacked under 420 px). Notices now carry `fundingNoticeScope`
   (`address`, `pending`, `return`) so a return or recovery result appears next
   to the control that caused it, not under the address.
+
+## 2026-09-30: Ticket move after login, and tickets that cannot move
+
+- A person who logs in to an existing account (made on another device first) on a browser that still holds old tickets used to leave them behind: `activateAccountScope` parks this browser's wallet in `sync-unclaimed-data` and the move read only the live wallet. `LegacyTicketTransfer` now also moves old-key tickets from that set-aside wallet (`syncService.readUnclaimedTickets()` / `removeUnclaimedTickets()`), after the live ones, with the same order: code saved first, then the tickets dropped from the set-aside wallet. Nothing else in it changes, and logging out brings back what is left.
+- Over the allowance, the org answers 409 `LEGACY_TRANSFER_LIMIT` with `remaining`; the client resends the part that fits (`error.remaining`, parsed in `ticketClient`) and reports the rest as `stranded`, with the tickets the org calls `invalid`. `ticketStore.setStrandedTickets()` keeps them held (never spent) but out of `getHeldCount()` and out of `ticketClient.getTicketCount()` / the visible count, so the send preflight no longer says "still being moved" forever and a real shortage reaches the reload path again. One line says it once (`legacy-tickets-stranded`, or appended to the "Moved N tickets" toast; remembered in `localStorage` `oa-legacy-stranded-said` by count). The set is rebuilt by each run (in memory), so a raised allowance moves them on a later page load.
+- A code the recovery store already holds is not saved again, so a repeat answer (lost reply, recovered code) never replaces a record that has redemption progress in it.
+
 ## 2026-09-30: Switch-day staging preflight
 
 - The staged release combines the ticket-move/free-trial client with the current deployed Private balance UI and upstream deployment documentation. The legacy move event tests install and restore their window dispatcher per test so the shared bundled test runner cannot silently replace the listener.
@@ -5904,6 +6027,7 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
   addresses no longer acquire a container ring (keyboard focus stays visible).
 - See [payments](ZKAPI_PAYMENTS.md) for scope and remaining recovery limitation.
 
+
 ## 2026-09-30: Withdrawal fee review and strict payment-mode isolation
 
 - Send ETH withdrawal review now has one fee panel: conservative reserve,
@@ -5943,6 +6067,7 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
 - Regression coverage: `accountSignInCompletion.test.js` and
   `accountCompletionBroadcast.test.js`. Real Google and passkey prompts still
   require the staging browser acceptance test after this patch is integrated.
+
 
 ## 2026-09-30: Withdrawal dismissal and quiet recovery
 

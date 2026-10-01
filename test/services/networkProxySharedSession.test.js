@@ -107,3 +107,23 @@ test('an aborted relayed request does not mark the relay as failed', async () =>
         restore();
     }
 });
+
+
+test('refused disable cannot persist a disabled setting during an active relay request', async () => {
+    const { networkProxy, restore } = await loadProxy();
+    const original = { ...networkProxy.state.settings, enabled: true };
+    const save = networkProxy.saveSettings;
+    let persisted = 0;
+    networkProxy.state.settings = original;
+    networkProxy.activeRequestCount = 1;
+    networkProxy.saveSettings = async () => { persisted++; };
+    try {
+        await assert.rejects(networkProxy.updateSettings({ enabled: false }), /requests are in progress/);
+        assert.equal(networkProxy.getSettings().enabled, true);
+        assert.equal(persisted, 0);
+    } finally {
+        networkProxy.activeRequestCount = 0;
+        networkProxy.saveSettings = save;
+        restore();
+    }
+});

@@ -1197,7 +1197,7 @@ test('a free username reserves the account once the explanation has been held; B
         assert.equal(calls.filter(([action]) => action === 'init').length, 1);
         assert.equal(calls.at(-1)[0], 'register');
 
-        // Back, then the same name again: no lookup, no second /auth/init —
+        // Back, then the same name again: recheck existence, no second /auth/init —
         // the held reservation and its challenge carry on after the intro.
         modal.handleUsernamePasskeyBack();
         assert.notEqual(calls.at(-1)[0], 'cancel');
@@ -1206,7 +1206,7 @@ test('a free username reserves the account once the explanation has been held; B
         assert.equal(modal.usernameIntroPending, true);
         assert.equal(modal.generatedAccountId, '1234567890123456');
         await pass();
-        assert.equal(calls.filter(([action]) => action === 'prepare').length, 1);
+        assert.equal(calls.filter(([action]) => action === 'prepare').length, 2);
         assert.equal(calls.filter(([action]) => action === 'init').length, 1);
         assert.equal(calls.at(-1)[0], 'register');
 

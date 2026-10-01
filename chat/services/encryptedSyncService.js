@@ -283,6 +283,42 @@ export class SyncService {
         return Object.keys(snapshot || {}).length > 0;
     }
 
+    /**
+     * Tickets in the wallet a login set aside: this browser's own data when
+     * an existing account's data replaced it. Only the previous-version
+     * ticket move reads them (application/legacyTicketTransfer.js).
+     */
+    async readUnclaimedTickets() {
+        const snapshot = await chatDB.getSetting(SYNC_UNCLAIMED_SCOPE_KEY);
+        const tickets = snapshot && typeof snapshot === 'object' ? snapshot[TICKETS_ACTIVE_KEY] : null;
+        return Array.isArray(tickets) ? tickets.slice() : [];
+    }
+
+    /** Drop moved tickets from that set-aside wallet; nothing else changes. */
+    async removeUnclaimedTickets(tickets = [], { expectedAccountId } = {}) {
+        const drop = new Set(
+            (Array.isArray(tickets) ? tickets : [])
+                .map(ticket => ticket?.finalized_ticket)
+                .filter(Boolean)
+        );
+        if (!drop.size) return 0;
+        return this.withSyncLock(async () => {
+            const accountId = await this.assertAccountDataAccess();
+            if (!expectedAccountId || accountId !== expectedAccountId) {
+                throw new Error('Account changed before saved tickets could be updated.');
+            }
+            const snapshot = await chatDB.getSetting(SYNC_UNCLAIMED_SCOPE_KEY);
+            const active = snapshot && typeof snapshot === 'object' ? snapshot[TICKETS_ACTIVE_KEY] : null;
+            if (!Array.isArray(active)) return 0;
+            const kept = active.filter(ticket => !drop.has(ticket?.finalized_ticket));
+            const removed = active.length - kept.length;
+            if (removed > 0) {
+                await chatDB.saveSetting(SYNC_UNCLAIMED_SCOPE_KEY, { ...snapshot, [TICKETS_ACTIVE_KEY]: kept });
+            }
+            return removed;
+        });
+    }
+
     async withSyncLock(callback) {
         return withAccountDataLock(callback);
     }

@@ -19,7 +19,16 @@ function chunk(items, size) {
  * durable code-recovery store BEFORE the old tickets leave the wallet, and is
  * then redeemed like any other code (fresh, blind-signed tickets under the
  * current key). A crash at any point leaves either the old tickets or a saved
- * code, never neither. Only aggregate counts leave this module.
+ * code, never neither. Only aggregate counts leave this module, apart from
+ * the tickets that cannot move (returned so the host can set them apart).
+ *
+ * Old tickets are taken from two places: the live wallet, and the snapshot a
+ * login parks when an existing account replaces this browser's wallet (the
+ * browser held old tickets, its person logged in instead of signing up).
+ *
+ * Tickets that cannot move are returned as `stranded`: those the org reports
+ * invalid, and those over the transfer allowance. When the org refuses a
+ * batch for the allowance, the part that fits is sent again on its own.
  */
 export class LegacyTicketTransfer {
     constructor({
@@ -29,65 +38,211 @@ export class LegacyTicketTransfer {
         removeTickets,
         holdKeyIds,
         pendingStore,
+        attemptStore,
+        rejectedStore,
         getAccountScope,
         redeemPending,
         onStart = () => {},
+        onAttention = () => {},
+        listParkedTickets = async () => [],
+        removeParkedTickets = async () => 0,
         lockManager = globalThis.navigator?.locks,
         now = () => new Date().toISOString()
     }) {
         Object.assign(this, {
             fetchInfo, submit, listTickets, removeTickets, holdKeyIds,
-            pendingStore, getAccountScope, redeemPending, onStart, lockManager, now
+            pendingStore, attemptStore, rejectedStore, getAccountScope, redeemPending, onStart, onAttention,
+            listParkedTickets, removeParkedTickets, lockManager, now
         });
     }
 
-    async run() {
+    async run({ expectedAccountId } = {}) {
         const info = await this.fetchInfo();
         const keyId = normalizeTicketKeyId(info?.key_id);
-        if (!keyId || info?.enabled !== true) {
-            // Closed or never configured: nothing is held back from spending.
-            this.holdKeyIds([]);
-            return { status: 'closed', moved: 0 };
-        }
-        // Old tickets can no longer be spent here; keep them out of selection
-        // so no send picks one while they wait to be moved.
-        this.holdKeyIds([keyId]);
+        const recoveryOnly = !keyId || info?.enabled !== true;
+        // Closing new transfers must not strand credit already committed.
+        this.holdKeyIds(recoveryOnly ? [] : [keyId]);
         if (!this.lockManager?.request) {
             throw new Error('This browser cannot safely coordinate the ticket move across tabs.');
         }
-        return this.lockManager.request(TRANSFER_LOCK, () => this.transferHeld(keyId, info));
+        return this.lockManager.request(TRANSFER_LOCK, () => this.transferHeld(keyId, info, expectedAccountId, recoveryOnly));
     }
 
-    async transferHeld(keyId, info) {
+    async transferHeld(keyId, info, expectedAccountId, recoveryOnly = false) {
         const accountId = await this.getAccountScope();
         if (!accountId) return { status: 'signed-out', moved: 0 };
+        if (expectedAccountId !== undefined && accountId !== expectedAccountId) {
+            throw new Error('Your account changed before ticket restoration started.');
+        }
         const scope = `account:${accountId}`;
+        // Previous clients did not tag recovery provenance. Retry these as
+        // generic saved redemptions, without counting them as transfer work.
+        if ((await this.pendingStore.list(scope)).some(record => !record.source)) {
+            try { await this.redeemPending({ expectedAccountId: accountId, source: 'unclassified' }); }
+            catch { this.onAttention('Some saved ticket codes could not be restored yet. Open your account to retry them.', accountId); }
+            await this.assertAccount(accountId);
+        }
         const batchSize = Math.max(1, Math.min(Number(info.max_batch) || DEFAULT_BATCH, DEFAULT_BATCH));
+        const isLegacy = ticket => ticket?.finalized_ticket && getTicketKeyId(ticket) === keyId;
         // A stable order makes a retry after a lost reply the identical
         // request, which the org answers with the same code.
-        const legacy = this.listTickets()
-            .filter(ticket => ticket?.finalized_ticket && getTicketKeyId(ticket) === keyId)
-            .sort((a, b) => (a.finalized_ticket < b.finalized_ticket ? -1 : a.finalized_ticket > b.finalized_ticket ? 1 : 0));
+        const byTicket = (a, b) => (a.finalized_ticket < b.finalized_ticket ? -1 : a.finalized_ticket > b.finalized_ticket ? 1 : 0);
+        let live = recoveryOnly ? [] : this.listTickets().filter(isLegacy).sort(byTicket);
+        const inLive = new Set(live.map(ticket => ticket.finalized_ticket));
+        // A failed read is not an empty wallet. Reject so the watcher retries
+        // before issuing any credit or declaring this account finished.
+        let parked = (recoveryOnly ? [] : (await this.listParkedTickets() || []))
+            .filter(ticket => isLegacy(ticket) && !inLive.has(ticket.finalized_ticket))
+            .sort(byTicket);
+        const attempts = this.attemptStore.list ? await this.attemptStore.list() : [await this.attemptStore.get()].filter(Boolean);
+        const attempt = attempts.find(item => item.accountId === accountId);
+        const visibleIds = new Set([...live, ...parked].map(ticket => ticket.finalized_ticket));
+        const reserved = new Set(attempts.filter(item => item.accountId !== accountId)
+            .flatMap(item => item.reservedTickets || item.tickets || []).filter(value => visibleIds.has(value)));
+        const policy = JSON.stringify([keyId, info.policy_revision || null, info.until || null]);
+        const rejected = await this.rejectedStore?.get(accountId);
+        const stranded = new Set(rejected?.policy === policy ? rejected.tickets : []);
+        live = live.filter(ticket => !reserved.has(ticket.finalized_ticket) && !stranded.has(ticket.finalized_ticket));
+        parked = parked.filter(ticket => !reserved.has(ticket.finalized_ticket) && !stranded.has(ticket.finalized_ticket));
+        if (attempt && (!Array.isArray(attempt.tickets) || !attempt.tickets.length)) {
+            throw new Error('The saved ticket move needs recovery. Your saved tickets have been kept.');
+        }
+        if (recoveryOnly && !attempt && !(await this.pendingStore.list(scope)).some(record => record.source === 'legacy-transfer')) {
+            await this.assertAccount(accountId);
+            return { status: 'closed', moved: 0 };
+        }
+        const replay = attempt ? attempt.tickets.map(finalized_ticket => ({ finalized_ticket })) : [];
+        if (!recoveryOnly && attempt?.reservedTickets) {
+            // The journal may be the last copy after a scope/snapshot change.
+            // Replay its uncertain batch first, then restore its owned remainder.
+            const visible = new Set([...live, ...parked].map(ticket => ticket.finalized_ticket));
+            parked.push(...attempt.reservedTickets.filter(value => !visible.has(value))
+                .map(finalized_ticket => ({ finalized_ticket })).filter(isLegacy));
+        }
+        if (!recoveryOnly && replay.some(ticket => !isLegacy(ticket))) {
+            throw new Error('The saved ticket move cannot be resumed with this issuer. Your tickets are retained.');
+        }
+        await this.assertAccount(accountId);
+        if ((live.length || parked.length || replay.length) && info.account_binding !== true) {
+            throw new Error('Ticket restoration is waiting for a server update. Your saved tickets are safe.');
+        }
+        // A journal keeps the exact request even if a later login parks or
+        // replaces the wallet that originally held these tickets.
+        const replayIds = new Set(replay.map(ticket => ticket.finalized_ticket));
+        live = live.filter(ticket => !replayIds.has(ticket.finalized_ticket));
+        parked = parked.filter(ticket => !replayIds.has(ticket.finalized_ticket));
+        const total = live.length + parked.length + replay.length;
+        if (total) this.onStart({ tickets: total, accountId });
 
-        // Only a count leaves here: the host shows that a move is running.
-        if (legacy.length) this.onStart({ tickets: legacy.length });
+        const known = new Set(
+            (await this.pendingStore.list(scope)).map(record => record?.code).filter(Boolean)
+        );
+        const state = { moved: 0, savedCodes: 0, stopped: null, stranded: [...stranded],
+            reservedTickets: [...new Set([...replay, ...live, ...parked].map(ticket => ticket.finalized_ticket))] };
+        const sources = [
+            [replay, async done => {
+                await this.removeTickets(done, { expectedAccountId: accountId });
+                await this.removeParkedTickets(done, { expectedAccountId: accountId });
+            }],
+            [live, done => this.removeTickets(done, { expectedAccountId: accountId })],
+            [parked, done => this.removeParkedTickets(done, { expectedAccountId: accountId })]
+        ];
+        for (let s = 0; s < sources.length; s += 1) {
+            const [tickets, remove] = sources[s];
+            await this.moveTickets(tickets, remove, { scope, accountId, batchSize: s === 0 ? replay.length : batchSize, known, state });
+            if (state.stopped) {
+                if (state.stopped === 'limit') {
+                    // Nothing after the refusal fits either.
+                    for (const [rest] of sources.slice(s + 1)) {
+                        state.stranded.push(...rest.map(ticket => ticket.finalized_ticket));
+                    }
+                }
+                break;
+            }
+        }
 
-        let moved = 0;
-        let savedCodes = 0;
-        let stopped = null;
-        for (const batch of chunk(legacy, batchSize)) {
+        await this.assertAccount(accountId);
+        // Every consuming reply is now durable. Keep uncertain closed-window
+        // work for recovery; a limit is a definitive refusal of the remainder.
+        await this.rejectedStore?.put(accountId, { policy, tickets: [...new Set(state.stranded)] });
+        if (attempt || total) {
+            if (state.stopped !== 'closed') await this.attemptStore.clear(accountId);
+        }
+
+        // Redeem whatever codes are waiting, including ones saved by an
+        // earlier run that stopped before redeeming.
+        let redeemError = null;
+        let redeemed = false;
+        let restoredTickets;
+        if (state.savedCodes > 0 || (await this.pendingStore.list(scope)).some(record => record.source === 'legacy-transfer')) {
+            try {
+                await this.assertAccount(accountId);
+                const recovery = await this.redeemPending({ expectedAccountId: accountId, source: 'legacy-transfer' });
+                restoredTickets = recovery?.restoredTickets;
+                // A redeemer may successfully finish some codes while retaining
+                // others. A partial success must stay retryable, including after
+                // reload when no old tickets remain and only saved codes exist.
+                if ((await this.pendingStore.list(scope)).some(record => record.source === 'legacy-transfer')) {
+                    throw new Error('Some tickets are still being restored. Your saved credit will be retried.');
+                }
+                redeemed = true;
+            } catch (error) {
+                redeemError = error;
+            }
+        }
+        await this.assertAccount(accountId);
+        const pendingTickets = (await this.pendingStore.list(scope))
+            .filter(record => record.source === 'legacy-transfer')
+            .reduce((sum, record) => sum + (record.requests?.length || parseInt(record.code?.slice(-4), 16) || 0), 0);
+        return {
+            ...(redeemError ? { pendingTickets } : {}),
+            ...(Number.isFinite(restoredTickets) ? { restoredTickets } : {}),
+            status: state.stopped || (total ? 'moved' : 'none'),
+            moved: state.moved,
+            redeemed,
+            redeemError,
+            ...(state.stopped === 'closed' ? { recoveryPending: true } : {}),
+            stranded: state.stranded,
+            ...(reserved.size ? { reserved: [...reserved] } : {})
+        };
+    }
+
+    async assertAccount(accountId) {
+        if (await this.getAccountScope() !== accountId) {
+            throw new Error('Your account changed. Return to the original account to finish restoring its tickets.');
+        }
+    }
+
+    async moveTickets(tickets, remove, { scope, accountId, batchSize, known, state }) {
+        let index = 0;
+        let size = batchSize;
+        while (index < tickets.length) {
+            await this.assertAccount(accountId);
+            const batch = tickets.slice(index, index + size);
             let result;
             try {
-                result = await this.submit(batch.map(ticket => ticket.finalized_ticket));
+                // Durable ownership BEFORE the consuming request. A lost reply
+                // must not let another account discard the only recovery path.
+                await this.attemptStore.put({ accountId, tickets: batch.map(ticket => ticket.finalized_ticket), reservedTickets: state.reservedTickets });
+                await this.assertAccount(accountId);
+                result = await this.submit(batch.map(ticket => ticket.finalized_ticket), { expectedAccountId: accountId });
             } catch (error) {
+                await this.assertAccount(accountId);
                 if (error?.code === 'LEGACY_TRANSFER_CLOSED') {
                     this.holdKeyIds([]);
-                    stopped = 'closed';
-                    break;
+                    state.stopped = 'closed';
+                    return;
                 }
                 if (error?.code === 'LEGACY_TRANSFER_LIMIT') {
-                    stopped = 'limit';
-                    break;
+                    // Send the part that fits on its own; the rest can't move.
+                    const remaining = Math.max(0, Math.floor(Number(error.remaining) || 0));
+                    if (remaining > 0 && remaining < batch.length) {
+                        size = remaining;
+                        continue;
+                    }
+                    state.stopped = 'limit';
+                    state.stranded.push(...tickets.slice(index).map(ticket => ticket.finalized_ticket));
+                    return;
                 }
                 throw error;
             }
@@ -95,37 +250,37 @@ export class LegacyTicketTransfer {
                 .filter(code => typeof code === 'string' && code.length === 24);
             for (const code of new Set(codes)) {
                 // Durable before the old tickets go: the code is now the value.
-                await this.pendingStore.put({ scope, code, needsNewIssuer: true, createdAt: this.now() });
-                savedCodes += 1;
+                // A code already saved keeps its record (and any redemption
+                // progress in it).
+                if (!known.has(code)) {
+                    await this.pendingStore.put({ scope, code, source: 'legacy-transfer', needsNewIssuer: true, createdAt: this.now() });
+                    known.add(code);
+                }
+                state.savedCodes += 1;
             }
+            // A reply may arrive after sign-out. Keep its credit under the
+            // original account, but never mutate the replacement wallet.
+            await this.assertAccount(accountId);
             const indexes = [
                 ...(Array.isArray(result?.transferred) ? result.transferred : []),
                 ...(Array.isArray(result?.already_transferred) ? result.already_transferred : [])
             ];
             const done = [...new Set(indexes)]
-                .filter(index => Number.isInteger(index) && index >= 0 && index < batch.length)
-                .map(index => batch[index]);
-            if (done.length) await this.removeTickets(done, { expectedAccountId: accountId });
-            moved += Number(result?.tickets) || 0;
-        }
-
-        // Redeem whatever codes are waiting, including ones saved by an
-        // earlier run that stopped before redeeming.
-        let redeemError = null;
-        let redeemed = false;
-        if (savedCodes > 0 || (await this.pendingStore.list(scope)).length > 0) {
-            try {
-                await this.redeemPending();
-                redeemed = true;
-            } catch (error) {
-                redeemError = error;
+                .filter(position => Number.isInteger(position) && position >= 0 && position < batch.length)
+                .map(position => batch[position]);
+            if (done.length) await remove(done);
+            await this.assertAccount(accountId);
+            // Keep the last completed batch journal until the whole run has
+            // settled, so switching tabs cannot reassign its remaining batches.
+            // Invalid tickets never move; they stay out of the wallet's use.
+            for (const position of Array.isArray(result?.invalid) ? result.invalid : []) {
+                if (Number.isInteger(position) && position >= 0 && position < batch.length) {
+                    state.stranded.push(batch[position].finalized_ticket);
+                }
             }
+            state.moved += Number(result?.tickets) || 0;
+            index += batch.length;
+            size = batchSize;
         }
-        return {
-            status: stopped || (legacy.length ? 'moved' : 'none'),
-            moved,
-            redeemed,
-            redeemError
-        };
     }
 }

@@ -42,6 +42,24 @@ export function positionAppToast(toast, { document: doc, window: view }) {
     const viewportTop = viewport?.offsetTop || 0;
     const viewportHeight = viewport?.height || view.innerHeight;
     const maxTop = viewportTop + viewportHeight - toast.offsetHeight - 16;
-    toast.style.top = `${Math.max(viewportTop + 16, Math.min(top, maxTop))}px`;
+    // A bottom sheet (a dialog across the width of a phone) covers the
+    // composer; a notice placed above the composer would sit on the sheet's
+    // rows. Keep it above the sheet instead.
+    const sheetTop = bottomSheetTop(doc, view);
+    const clearOfSheet = sheetTop === null ? Infinity : sheetTop - 12 - toast.offsetHeight;
+    toast.style.top = `${Math.max(viewportTop + 16, Math.min(top, maxTop, clearOfSheet))}px`;
     toast.style.bottom = 'auto';
+}
+
+function bottomSheetTop(doc, view) {
+    const width = view.innerWidth || 0;
+    if (!width || typeof doc.querySelectorAll !== 'function') return null;
+    let top = null;
+    for (const dialog of doc.querySelectorAll('[aria-modal="true"]')) {
+        const rect = dialog.getBoundingClientRect?.();
+        if (!rect || rect.height <= 0 || rect.width < width * 0.9) continue;
+        if (rect.bottom < (view.innerHeight || 0) - 8) continue;
+        top = top === null ? rect.top : Math.min(top, rect.top);
+    }
+    return top;
 }

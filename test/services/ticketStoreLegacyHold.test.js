@@ -81,3 +81,25 @@ test('removeTickets drops exactly the moved tickets and tombstones them', async 
     assert.equal(persisted[0].options.tombstones.length, 1);
     assert.equal(await store.removeTickets([]), 0);
 });
+
+test('stranded tickets stay held and in the wallet, but leave the held count', () => {
+    const store = new TicketStore();
+    store.initPromise = Promise.resolve();
+    store.tickets = [...legacy, ...current];
+    store.setHeldKeyIds([LEGACY_KEY]);
+    let updates = 0;
+    store.emitUpdate = () => { updates += 1; };
+    store.setStrandedTickets([legacy[1].finalized_ticket, 'not-in-this-wallet']);
+    assert.equal(updates, 1);
+    assert.equal(store.getCount(), 4, 'nothing leaves the wallet');
+    assert.equal(store.getHeldCount(), 1, 'one old ticket is still moving');
+    assert.equal(store.getStrandedCount(), 1);
+    assert.deepEqual(store.peekTickets(4), current, 'stranded tickets are never spent');
+    store.setStrandedTickets([legacy[1].finalized_ticket]);
+    assert.equal(updates, 2);
+    store.setStrandedTickets([legacy[1].finalized_ticket]);
+    assert.equal(updates, 2, 'no change, no update');
+    // Released from the hold (window closed): no longer set apart.
+    store.setHeldKeyIds([]);
+    assert.equal(store.getStrandedCount(), 0);
+});

@@ -47,6 +47,10 @@ test('Google key unlock announces completion after persistence and scope initial
 });
 
 test('a new username account announces completion after its wallet scope is ready', async t => {
+    const storageBefore = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+    const storage = new Map();
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) } });
+    t.after(() => storageBefore ? Object.defineProperty(globalThis, 'sessionStorage', storageBefore) : delete globalThis.sessionStorage);
     const { service, sent } = harness(t);
     const originalFetch = sessionService.fetch, originalSession = sessionService.doesSessionExist;
     t.after(() => { sessionService.fetch = originalFetch; sessionService.doesSessionExist = originalSession; });

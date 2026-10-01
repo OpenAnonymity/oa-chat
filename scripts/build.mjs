@@ -1,3 +1,4 @@
+import { productionProxyUrl } from './proxy-build-setting.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs/promises';
@@ -60,6 +61,7 @@ const verifierOutagePolicySetting = process.env.OA_VERIFIER_OUTAGE_POLICY || 'ad
 if (!['strict', 'tolerant', 'advisory'].includes(verifierOutagePolicySetting)) {
     throw new Error('[build] OA_VERIFIER_OUTAGE_POLICY must be strict, tolerant or advisory');
 }
+const productionProxyUrlSetting = productionProxyUrl(process.env.OA_PROXY_URL);
 const demoProxyUrlSetting = process.env.OA_DEMO_PROXY_URL || '';
 if (demoProxyUrlSetting) {
     let demoProxyUrl;
@@ -249,6 +251,7 @@ const build = async () => {
             ),
             '__OA_DEMO_VERIFIER_BYPASS__': JSON.stringify(demoVerifierBypass),
             '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting),
+            '__OA_PROXY_URL__': JSON.stringify(productionProxyUrlSetting),
             '__OA_VERIFIER_ORIGIN__': JSON.stringify(verifierOriginSetting),
             '__OA_VERIFIER_OUTAGE_POLICY__': JSON.stringify(verifierOutagePolicySetting)
         },
