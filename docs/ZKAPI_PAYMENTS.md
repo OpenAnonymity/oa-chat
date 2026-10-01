@@ -361,6 +361,32 @@ investigation. Service recovery was not confirmed at that time. Public asset
 and deployment checks must be distinguished from live verifier and inference
 readiness checks.
 
+### Proving-key cache integrity failure (2026-10-01)
+
+The staging browser's reported SHA-256 error was a separate, confirmed stale
+HTTP-cache problem. Its worker fetched the stable `/zkapi/proofs/request.pk`
+URL with `cache: 'force-cache'`, which could reuse an older circuit's bytes
+even when the server required revalidation. An asset-only check in the affected
+browser returned 5,654,800 cached bytes with SHA-256
+`faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e`;
+the same URL with `cache: 'reload'` returned the current 5,935,783-byte key with
+SHA-256 `c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584`.
+The reload refreshed only public proof bytes and did not modify the wallet.
+
+Independent public downloads from both staging and Sepolia matched their
+reviewed request pin above and the 7,783,719-byte withdrawal pin
+`8e41398092fdd02b9ff86c6ccbecbd7ce2402e6f22ec162e6124d1d04fe0a668`.
+This was not a mismatched deployed circuit or a verifier response.
+
+The pinned-SDK compatibility patch versions public proof URLs with their
+expected SHA-256, then retries one integrity mismatch using `cache: 'reload'`.
+Both attempts retain the digest check; a second mismatch still blocks proof
+generation. Verified keys still coalesce in worker memory, and failed loads
+remain retryable. Requests omit account cookies. Builds record this patch
+separately from the existing wallet-recovery patch and validate every source
+hash before modifying the installed SDK. This source repair requires a new
+frontend deployment; live verifier acceptance remains a separate check.
+
 ## Wallet methods: MetaMask and Send to an address
 
 The web app offers exactly two choices: **MetaMask** first, then **Send Ethereum**. Native-ETH deployments hold ETH and display its current USD value;

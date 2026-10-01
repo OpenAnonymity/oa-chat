@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { recordedTrustedAccess, recordedTrustedResult } from '../helpers/trustedStation.js';
 import {
     acquireSessionAccess,
     acquireVerifiedAccess,
@@ -90,7 +91,7 @@ function createAccessHarness(overrides = {}) {
     const ticketUsed = [];
     const verificationInputs = [];
     const setAccessCalls = [];
-    const accessResult = { key: 'secret-key', stationId: 'station-a' };
+    const accessResult = overrides.accessResult ?? { key: 'secret-key', stationId: 'station-a' };
     const verification = overrides.verification ?? {
         status: 'verified',
         data: { key_hash: 'verifier-hash', retryable: false }
@@ -710,7 +711,8 @@ test('acquireSessionAccess rejects an aborted signal before network calls', asyn
 });
 
 test('outage access activates once, persists its warning state, and consumes no extra ticket', async () => {
-    const harness = createAccessHarness({ verification: { status: 'verifier-unavailable', detail: 'verification_unavailable_at_issuance' } });
+    const accessResult = recordedTrustedAccess('secret-key');
+    const harness = createAccessHarness({ accessResult, verification: recordedTrustedResult(accessResult) });
     const token = await acquireSessionAccess({
         session: harness.session,
         models: [{ id: 'model-a', name: 'Model A' }],

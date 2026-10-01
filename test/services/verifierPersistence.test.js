@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { signStationKey, trustedStationPins } from '../helpers/trustedStation.js';
 
 const globalNames = ['localStorage', 'sessionStorage', 'window', 'location', 'addEventListener', 'dispatchEvent', 'document'];
 const captureGlobals = () => new Map(globalNames.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
@@ -33,7 +34,7 @@ const { default: backend } = await import('../../chat/services/inference/backend
 const { default: verifier } = await import('../../chat/services/verifier.js');
 restoreGlobals(importGlobals);
 
-const access = key => ({
+const access = key => signStationKey({
     key, stationId: 'station', expiresAtUnix: Math.floor(Date.now() / 1000) + 600,
     recentlyAttested: true, stationSignature: 'station-signature', orgSignature: 'org-signature',
     verifierSubmitKeyProof: { status: 'verifier-unavailable', detail: 'recently_attested_outage' }
@@ -110,6 +111,8 @@ for (const status of ['verified', 'rejected']) {
         events.length = 0;
         verifier.pendingSubmissions.clear();
         const originalSubmit = verifier.submitKey;
+        const originalTrust = verifier.trustedStations;
+        verifier.trustedStations = trustedStationPins('station');
         try {
             backend.verification.trackPendingAccess(live.apiKeyInfo, live);
             // Hashing is asynchronous; wait for the actual adapter observer to register.
@@ -135,6 +138,7 @@ for (const status of ['verified', 'rejected']) {
             assert.deepEqual(events.filter(e => e.type === 'access-verification-updated').map(e => e.detail), [{ sessionId: live.id }]);
         } finally {
             verifier.submitKey = originalSubmit;
+            verifier.trustedStations = originalTrust;
             verifier.pendingSubmissions.clear();
         }
     });

@@ -175,9 +175,25 @@ The client submits the key to the verifier for station compliance verification:
 Even if the verifier retained the key, it could not link it to a user identity
 because the key was issued through blind signatures with no user identity attached.
 
-Clients submit newly issued keys to the verifier before inference. An explicit,
-matching `verified` result records approval. Under the operator-approved policy
-matching existing production, transport failures/timeouts and transient HTTP
+Clients submit newly issued keys to the verifier before inference. Unverified
+continuation additionally requires an explicit client-side station ID/public-key
+pin scoped to the configured verifier origin, and local Ed25519 verification of
+the station signature over the exact station ID, provider key and expiry. The
+current operator trust list contains only `oa-station` at verifier2. Neither an
+org `recentlyAttested` flag nor membership in a live broadcast adds a trusted
+station. The initial `oa-station` pin is the key observed in the HTTPS verifier
+broadcast on October 1, 2026; its operator identity was not independently
+confirmed through another channel. The release accepts that one-time trust
+bootstrap. Future broadcasts cannot add or rotate trusted pins; a reviewed
+client change is required. Unknown stations can still use matching successful verifier approvals;
+they cannot use any outage or advisory exception. For fallback, invalid station
+signatures always block. Known bans, expired keys and mismatched verifier
+approvals always block. A browser
+without the required signature-verification support also blocks fallback.
+
+An explicit,
+matching `verified` result records approval. Under the `strict` outage policy,
+transport failures/timeouts and transient HTTP
 errors (408, 500, 502, 503, 504) may activate an unexpired key as
 `verifier-unavailable` only when issuance reports `recentlyAttested === true`.
 HTTP 429 and the exact 503 `unverified` / `ownership_check_error` response may
@@ -195,6 +211,26 @@ user identity. A matching successful response upgrades the key; rejection clears
 it. A healthy broadcast alone never promotes it. Pending saved keys resume on
 use after reload; exhausted retries remain visibly unverified until expiry or
 replacement. Outage keys cannot enter shared-chat access payloads.
+
+The compiled `OA_VERIFIER_OUTAGE_POLICY` also supports `tolerant` and `advisory`;
+the production build defaults to `advisory`. Tolerant admits temporary outages,
+pending or malformed replies for locally authenticated pinned stations. Advisory
+also admits a verifier refusal, including `Invalid org signature`, for those
+same stations. This is an explicit operator trust exception: a valid pinned
+station signature establishes who issued the key, but does not establish org
+signature validity, provider-account ownership or logging/training settings.
+The interface retains `verifier-unavailable`/unverified status. This weaker
+assurance must not be described as verifier approval or zero-trust station
+compliance. The local trust policy revision is bound into saved fallback proofs;
+older unscoped advisory approvals and approvals under changed pins are invalid.
+
+Browser zkAPI uses this same host policy after its SDK's request identity,
+spending-cap, quote, expiry, origin and evidence checks. It retains the raw key
+only in the active in-memory lease, projects the unverified status into the
+System Panel, and rechecks bans/current policy before each credential checkout.
+It does not put SDK keys in OA's ticket-key background retry queue; each new
+lease performs verification again. The wallet recovery journal, proof-file
+SHA-256 checks and signed settlement checks remain enforced.
 
 Ticket spending commits before the browser verification check. A hard verification
 failure still discards the bounded child key without restoring the ticket.
@@ -255,10 +291,12 @@ for implementation details.
 
 ### 6. Verifier fail-closed policy
 
-The browser and daemon require matching station/key approval or the narrow,
-explicitly unverified outage exception in section 4. Pending, unknown,
-mismatched, malformed and explicit refusal results fail closed; transport
-failures qualify only under that exception. Because ticket spending commits
+The browser requires matching station/key approval or the explicitly unverified
+trusted-station exception for its compiled policy in section 4. Under strict
+policy, pending, unknown, mismatched, malformed and explicit refusal results
+fail closed; transport failures qualify only under that exception. Tolerant
+and advisory browser builds also admit the documented trusted-station cases.
+These browser exceptions do not change the daemon policy. Because ticket spending commits
 before verification, a hard failed check discards the bounded child key but
 does not restore the ticket.
 
@@ -270,7 +308,7 @@ routing. The build rejects OA production hostnames and never queries the
 production verifier. Both exceptions label the result as a bypass rather than
 `verified`, exclude the credential from shared-access payloads, and identify
 the reduced assurance in the security UI. Production and ordinary staging
-builds retain station/key checks and only the explicit outage exception from
+builds retain station/key checks and only the trusted-station exceptions from
 section 4. See
 [Disposable Demo Frontend Routing](DEMO_DEPLOYMENT.md).
 

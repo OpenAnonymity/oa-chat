@@ -159,7 +159,8 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.deepEqual(provenance.sdk.assets, manifest);
         assert.equal(provenance.sdk.patches[0].name, 'wallet-recovery-v1');
         assert.equal(provenance.sdk.patches[0].revision, provenance.sdk.revision);
-        for (const [relative, hash] of Object.entries(provenance.sdk.patches[0].files)) {
+        const patchedFiles = Object.assign({}, ...provenance.sdk.patches.map(patch => patch.files));
+        for (const [relative, hash] of Object.entries(patchedFiles)) {
             assert.equal(digest(await fs.readFile(path.join(root, 'node_modules/@openanonymity/zkapi-browser-sdk', relative))), hash);
         }
         assert.equal(provenance.files['zkapi/sdk-assets.json'], digest(await fs.readFile(path.join(result.directory, 'sdk-assets.json'))));

@@ -115,6 +115,7 @@ export default class RightPanel extends SharedRightPanel {
         this.apiKeyInfo = ownsLease ? {
             ...(accessInfo?.info || {}),
             stationId: lease.station_id || accessInfo?.info?.stationId || null,
+            verifierSubmitKeyProof: lease.verifierSubmitKeyProof || null,
             clientRequestId: lease.client_request_id,
             spendingLimitUsd: lease.spending_limit_usd
         } : null;
