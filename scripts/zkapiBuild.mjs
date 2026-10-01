@@ -4,15 +4,12 @@ import fs from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import freshMainnet from '../deployments/zkapi/fresh-20260928/mainnet.json' with { type: 'json' };
-import freshSepolia from '../deployments/zkapi/fresh-20260928/sepolia.json' with { type: 'json' };
 import resetMainnet from '../deployments/zkapi/fresh-20260930/mainnet.json' with { type: 'json' };
 import resetSepolia from '../deployments/zkapi/fresh-20260930/sepolia.json' with { type: 'json' };
 import { patchZkapiSdk, zkapiSdkPatchProvenance } from './patch-zkapi-sdk.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const DEPLOYMENTS = {
-    'fresh-20260928': { mainnet: freshMainnet, sepolia: freshSepolia },
     'fresh-20260930': { mainnet: resetMainnet, sepolia: resetSepolia }
 };
 // Reviewed store after the fail-closed Web Locks compatibility patch.
@@ -29,7 +26,7 @@ function walletStorage(network, deployment) {
 export function resolveZkapiDeployment(environment = process.env) {
     const value = environment.OA_ZKAPI_DEPLOYMENT || '';
     if (value && !Object.hasOwn(DEPLOYMENTS, value)) {
-        throw new Error('[build] OA_ZKAPI_DEPLOYMENT must be fresh-20260928, fresh-20260930, or unset for SDK defaults.');
+        throw new Error('[build] OA_ZKAPI_DEPLOYMENT must be fresh-20260930, or unset for SDK defaults.');
     }
     if (value && !['sepolia', 'mainnet'].includes(environment.OA_ZKAPI_NETWORK)) {
         throw new Error('[build] OA_ZKAPI_DEPLOYMENT requires an explicit OA_ZKAPI_NETWORK.');
