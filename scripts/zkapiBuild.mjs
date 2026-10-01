@@ -4,15 +4,12 @@ import fs from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import freshMainnet from '../deployments/zkapi/fresh-20260928/mainnet.json' with { type: 'json' };
-import freshSepolia from '../deployments/zkapi/fresh-20260928/sepolia.json' with { type: 'json' };
 import resetMainnet from '../deployments/zkapi/fresh-20260930/mainnet.json' with { type: 'json' };
 import resetSepolia from '../deployments/zkapi/fresh-20260930/sepolia.json' with { type: 'json' };
-import { patchZkapiSdk, zkapiSdkPatchProvenance } from './patch-zkapi-sdk.mjs';
+import { patchZkapiSdk, zkapiSdkPatchesProvenance } from './patch-zkapi-sdk.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const DEPLOYMENTS = {
-    'fresh-20260928': { mainnet: freshMainnet, sepolia: freshSepolia },
     'fresh-20260930': { mainnet: resetMainnet, sepolia: resetSepolia }
 };
 // Reviewed store after the fail-closed Web Locks compatibility patch.
@@ -29,7 +26,7 @@ function walletStorage(network, deployment) {
 export function resolveZkapiDeployment(environment = process.env) {
     const value = environment.OA_ZKAPI_DEPLOYMENT || '';
     if (value && !Object.hasOwn(DEPLOYMENTS, value)) {
-        throw new Error('[build] OA_ZKAPI_DEPLOYMENT must be fresh-20260928, fresh-20260930, or unset for SDK defaults.');
+        throw new Error('[build] OA_ZKAPI_DEPLOYMENT must be fresh-20260930, or unset for SDK defaults.');
     }
     if (value && !['sepolia', 'mainnet'].includes(environment.OA_ZKAPI_NETWORK)) {
         throw new Error('[build] OA_ZKAPI_DEPLOYMENT requires an explicit OA_ZKAPI_NETWORK.');
@@ -213,8 +210,8 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
     if (!dependency) throw new Error('[build] The zkAPI SDK must be pinned in package-lock.json.');
     const revision = dependency.resolved?.match(/#([0-9a-f]{40})$/)?.[1];
     if (!revision) throw new Error('[build] The zkAPI SDK dependency must resolve to an immutable Git commit.');
-    const recoveryPatch = zkapiSdkPatchProvenance();
-    if (revision !== recoveryPatch.revision) throw new Error('[build] Review the recovery patch for this SDK revision.');
+    const patches = zkapiSdkPatchesProvenance();
+    if (patches.some(patch => revision !== patch.revision)) throw new Error('[build] Review the compatibility patches for this SDK revision.');
     let oaRevision = process.env.VERCEL_GIT_COMMIT_SHA || null;
     if (!oaRevision) {
         try { oaRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
@@ -225,7 +222,7 @@ export async function zkapiBuildProvenance({ network, repoRoot, outDir, sdkAsset
         ...(sdkAssets?.deployment ? { deployment: sdkAssets.deployment } : {}),
         ...(walletStorage(network, sdkAssets?.deployment) ? { walletStorage: walletStorage(network, sdkAssets.deployment) } : {}),
         oaChatRevision: oaRevision,
-        sdk: { version: dependency.version, revision, patches: [recoveryPatch], assets: sdkAssets?.manifest || null },
+        sdk: { version: dependency.version, revision, patches, assets: sdkAssets?.manifest || null },
         files: await artifactFiles(outDir)
     };
 }

@@ -34,9 +34,20 @@ export const VERIFIER_URL = disposableDemoVerifierBypass
     ? ORG_API_BASE
     : configuredVerifierOrigin || 'https://verifier2.openanonymity.ai';
 
+// Explicit operator trust for unverified continuation, independent of the org's
+// recently-attested flag and verifier broadcasts. Changing a pin invalidates
+// previously saved fallback approvals. This is not verifier approval.
+export const TRUSTED_VERIFIER_STATIONS = Object.freeze([Object.freeze({
+    stationId: 'oa-station',
+    publicKey: '20019ebb3cfa61a34ac75879bca8ccf9168ce435c6007d5279b84ebeb83fd097',
+    verifierOrigin: 'https://verifier2.openanonymity.ai'
+})]);
+
 // Verifier outage policy -- what the client does when the verifier cannot give
 // an explicit approval for a freshly issued key. Set at build time with
 // OA_VERIFIER_OUTAGE_POLICY; tests and unbuilt sources default to strict.
+// Every continuation below additionally requires a pinned trusted station and a
+// valid local Ed25519 signature binding that station to this key and expiry.
 //   strict:   continue only when the org marked the station recently attested
 //             (or on a temporary 429 / ownership-check error); anything else blocks.
 //   tolerant: continue on any outage -- unreachable, timeout, 5xx, 429, pending

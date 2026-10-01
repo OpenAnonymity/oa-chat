@@ -1,4 +1,5 @@
 import { logAccessDiscard } from './accessDiscardLog.js';
+import { isCurrentTrustedStationFallback } from '../trustedStations.js';
 
 export const VERIFIER_UNAVAILABLE_STATUS = 'verifier-unavailable';
 
@@ -7,7 +8,8 @@ export function isVerifierUnavailable(proof) {
 }
 
 export function isVerifierResultUsable(result) {
-    return isVerifierProofApproved(result) || isVerifierUnavailable(result);
+    return isVerifierProofApproved(result) ||
+        (isVerifierUnavailable(result) && isCurrentTrustedStationFallback(result));
 }
 
 export const LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS = 'local-loopback-bypass';
@@ -38,10 +40,14 @@ export function isVerifierProofUsable(proof, options = {}) {
 }
 
 export function hasUsableVerifierApproval(session, options = {}) {
-    return isVerifierProofUsable(session?.apiKeyInfo?.verifierSubmitKeyProof, options);
+    if (session?.apiKey && session.apiKeyInfo?.key && session.apiKey !== session.apiKeyInfo.key) return false;
+    return hasUsableVerifierApprovalForAccessInfo(session?.apiKeyInfo, options);
 }
 
 export function hasUsableVerifierApprovalForAccessInfo(accessInfo, options = {}) {
+    if (isVerifierUnavailable(accessInfo?.verifierSubmitKeyProof)) {
+        return isCurrentTrustedStationFallback(accessInfo.verifierSubmitKeyProof, accessInfo);
+    }
     return isVerifierProofUsable(accessInfo?.verifierSubmitKeyProof, options);
 }
 

@@ -1,5 +1,8 @@
 # Fresh native ETH deployments, 2026-09-28
 
+Historical record: these API origins and the `fresh-20260928` build selector
+are retired. Use the [current deployment](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
+
 Status: both networks' contracts are finalized and their public HTTPS endpoints
 passed read-only acceptance. Sepolia's funded normal-flow test using the real SDK
 passed deposit, key issuance, OA verification, inference, settlement and finalized
@@ -82,8 +85,7 @@ in transaction
 `0x69b29517a99781903f1ab6cbd18ebe767fd1bbc1af36405fff03545953564b29`.
 All six services, including TLS, are running and the four defined Docker
 healthchecks pass. TLS is checked externally; challenger progress is checked
-through its checkpoint. Those two services have no Docker healthcheck. The public API is
-`https://52.52.207.206.sslip.io`. Read-only acceptance on 2026-09-28 verified
+through its checkpoint. Those two services have no Docker healthcheck. The deployment used a now-retired public API origin. Read-only acceptance on 2026-09-28 verified
 finalized contract bytecode/getters, SDK trust pins, served configuration,
 signing keys, current tree root, native ETH quote against the finalized oracle,
 and all proving-artifact hashes. Private routes return 404 and private ports
@@ -122,8 +124,7 @@ Its runtime and all constructor getters match. Actual deployment fees totaled
 All five private services are running; the four defined healthchecks pass.
 Their signing keys match the vault and the indexer root matches the chain.
 The challenger has no Compose healthcheck; its checkpoint is advancing with
-no pending obligations. Its balance is zero, deliberately. The public API is
-live at `https://54.67.93.98.sslip.io`; TLS adds the sixth running service.
+no pending obligations. Its balance is zero, deliberately. The deployment used a now-retired public API origin; TLS added the sixth service.
 Public acceptance verified finalized runtime/getters, SDK trust, served
 manifest, signing keys, root, finalized native quote and proof artifacts;
 private routes return 404 and private ports are unreachable. No funded Mainnet

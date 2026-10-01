@@ -78,7 +78,7 @@ Its balance remained 0.005 ETH, above the sampled 10,000,000-gas liability of
 root, native quote and proof hashes matched the finalized deployment.
 
 CloudFront `E301WJL60HXXBI` is deployed with the reviewed Mainnet-only origin
-change: HTTPS443 at `52.53.106.195.sslip.io`, `/mainnet` prefix, distinct origin
+change: HTTPS443 at the then-current shared TLS origin, `/mainnet` prefix, distinct origin
 credential, disabled caching, forwarded queries and required protocol methods.
 The additive TLS change intentionally recreated the shared TLS container while
 preserving its certificates and the existing Sepolia route. Six negative-auth
@@ -386,7 +386,7 @@ finalized runtime hash also matches. Backend/challenger startup checks passed.
   are preserved. New gateways bind loopback only. The first obsolete native build was stopped before deployment.
 - Additional security group `sg-0e776a37a09cb29a8` exposes only TCP 443.
   Earlier plaintext gateway ingress has been removed. Caddy terminates verified
-  TLS at `52.53.106.195.sslip.io`, requires a secret CloudFront origin header,
+  TLS at the then-current shared origin, requires a secret CloudFront origin header,
   strips it before proxying, and deletes request objects from error logs.
   Wrong/missing credentials and unknown prefixes return 403; upstream-outage
   logs contain no origin credential. Certificates persist and renew through

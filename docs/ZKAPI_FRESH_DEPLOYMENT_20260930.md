@@ -18,8 +18,12 @@ old browser data is retained, without a recovery UI or automatic migration.
 - Elastic IP `100.21.48.23`; Ubuntu 24.04 ARM64, `t4g.large`, encrypted 80 GiB
   gp3 disk, IMDSv2, 8 GiB swap. SSH is limited to the workstation's `/32`; only
   TCP 443 is public. SSH fingerprint matched AWS console output before access.
-- Origins: `https://mainnet.100.21.48.23.sslip.io` and
-  `https://sepolia.100.21.48.23.sslip.io`. Both TLS certificates are issued.
+- Canonical origins: `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai`. Both TLS certificates are valid.
+  Compatibility aliases on this VM were removed on October 1. Both retired
+  hostnames fail TLS when addressed directly; canonical HTTPS and all 42 direct
+  acceptance checks pass. All ten backend container IDs, twelve runtime
+  environment-file hashes, and privacy configuration remain unchanged.
 - Both stacks and shared TLS are running: eleven containers in total. Networks
   use separate Compose projects, Docker networks, `/etc/zkapi/<network>` and
   `/var/lib/zkapi/<network>`. Gateways bind loopback ports 8081/8082; daemon and

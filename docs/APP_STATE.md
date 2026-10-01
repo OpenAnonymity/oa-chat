@@ -57,6 +57,69 @@ The matching production build serves the exact final-origin allowlist at
 login-generation checks prevent late keyring reads/passkey results from
 restoring an old key into a replacement account. See ENCRYPTION_PASSKEYS.md.
 
+## 2026-10-01: Trusted-station fallback and stale proving-key cache repair
+
+- The user's staging response exposes `Invalid org signature`. OA's former
+  advisory policy admitted non-banned stations without an explicit trust pin;
+  the requested restriction now requires pinned `oa-station` identity and a
+  valid local Ed25519 signature over the exact provider key and expiry for
+  every unverified continuation. Ordinary matching verifier approvals remain
+  available for other stations. See [privacy boundaries](PRIVACY_MODEL.md).
+- zkAPI now calls the shared host verifier through a hash-checked SDK callback
+  patch after its original lease/cap/origin checks. Its System Panel receives
+  the actual approval status; cached credential checkout rechecks bans and
+  the current trust policy. No fallback is labeled verified. SDK keys remain
+  in memory and are not queued in OA's ticket retry service. Legacy saved
+  advisory proofs without the current trust binding are discarded on use.
+- Staging's actual browser cache contained a 5,654,800-byte old request proving
+  file with SHA `faa0e68954ade5e9709fa74baca3380cf0ff0d325ff06742385f33036123928e`.
+  A cookie-free reload returned the expected 5,935,783-byte file with SHA
+  `c894b261a13f571d0df36be29734aabf2a8cd7162baddc5e08a50341aa076584`.
+  Sepolia's checked cached copy already matched. Both sites serve correct
+  request/withdrawal files. The SDK now versions proof URLs by their expected
+  hash and retries a mismatched cached response once with `cache: reload`;
+  the same digest is still mandatory before decoding. Wallet state is untouched.
+- SDK compatibility patches compose in order with per-file intermediate/final
+  hashes; installation validates the full plan before writing and build
+  provenance records all three patches. Never update the pinned SDK or bypass
+  a hash check without reviewing the complete patch chain.
+
+## 2026-10-01: Sepolia generic 401 comes from lease verification
+
+- Live build `UAG7TFYT` failed in SDK `remoteJson → verifyLease`, before
+  provider inference. The separate Sepolia password failure uses different
+  copy. The SDK ignores the verifier's `detail` field, masking several possible
+  rejections as `HTTP 401`; the subsequent staging screenshot supplies
+  `Invalid org signature`. Error parsing now retains `detail`.
+- Fresh read-only diagnostics found running verifier containers but do not
+  distinguish the signature/ownership rejection paths. See the
+  [investigation record](SEPOLIA_VERIFIER_401_20261001.md). Preserve the wallet
+  journal and fail-closed verification while diagnosing; public station health
+  does not establish verification of a particular key.
+
+## 2026-10-01: Retire legacy zkAPI origins
+
+- Only the canonical September 30 profiles remain selectable. The retired
+  September 28 selector fails before generated assets or routes can change;
+  its old pins are retained in Git history, never rebound to a different vault.
+- Current public docs and build profiles omit retired API addresses and personal
+  package-test hostnames. Build examples use the canonical deployment.
+- This build configuration cleanup changes no application bundle, wallet
+  namespace, key, contract, or SDK revision. Existing browser storage is retained.
+- Server alias removal and verification are recorded in the
+  [deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
+
+## 2026-09-30: Canonical zkAPI service origins
+
+- The September 30 profiles now select
+  `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai` for manifest/protocol/indexer URLs.
+  Vaults, deployment IDs, signing/proof pins, wallet databases and funding signer
+  scopes are unchanged. Generated proxy routes select the same profile.
+- This Commercial rollout preserves the existing `8074795` frontend and SDK
+  patch. The frontend origin stays the same so browser wallets and history
+  persist. Earlier funded acceptance remains tied to its recorded build.
+
 ## 2026-09-30: Withdrawal reveal and modal motion
 
 - Add ETH softly reveals its stacked details, then scrolls only the dialog and
@@ -1730,7 +1793,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 
 ## 2026-09-28: Current Linux package runtime trials
 
-- Docker on `rockypika` built current daemon source `d22c80d` into a fresh
+- A remote Docker host built daemon source `d22c80d` into a fresh
   Linux AMD64 `0.0.0` validation bundle. Fresh source preparation reproduced
   Git 2.43 replacing the index during `git apply --intent-to-add`; applying
   both patches with `--index` fixes it while retaining exact full-source
@@ -1748,8 +1811,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   macOS/ARM64 builds. Nix generated-unit checks do not certify a complete NixOS
   boot. No funded inference, transactions, or package publication occurred.
   Trial containers/images were removed and unrelated Docker workloads retained.
-  See [Docker trial details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#rockypika-docker-package-trials-2026-09-28)
-  and [sanitized evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/rockypika-packages-20260928.json).
+
 
 ## 2026-09-28: Daemon distribution preparation
 

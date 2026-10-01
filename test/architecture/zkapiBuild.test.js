@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 import { buildZkapiAssets, resolveZkapiDeployment, resolveZkapiNetwork, validateZkapiDeploymentPins, zkapiBuildProvenance } from '../../scripts/zkapiBuild.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const deployments = ['fresh-20260928', 'fresh-20260930'];
+const deployments = ['fresh-20260930'];
 
 // The suite bundles architecture tests. Load file-emission helpers from their
 // source location so package/config paths retain the production resolution.
@@ -40,10 +40,10 @@ test('fresh deployment selection is explicit, named and requires a network', () 
         assert.equal(resolveZkapiDeployment(environment), deployment);
         assert.equal(resolveZkapiNetwork(environment), network);
     }
-    for (const value of ['mainnet', 'fresh', '../fresh-20260928', ' fresh-20260928', 'https://untrusted.test']) {
+    for (const value of ['mainnet', 'fresh', 'fresh-20260928', '../fresh-20260930', ' fresh-20260930', 'https://untrusted.test']) {
         assert.throws(() => resolveZkapiNetwork({ OA_ZKAPI_NETWORK: 'mainnet', OA_ZKAPI_DEPLOYMENT: value }), /OA_ZKAPI_DEPLOYMENT/);
     }
-    assert.throws(() => resolveZkapiNetwork({ OA_ZKAPI_DEPLOYMENT: 'fresh-20260928' }), /requires an explicit/);
+    assert.throws(() => resolveZkapiNetwork({ OA_ZKAPI_DEPLOYMENT: 'fresh-20260930' }), /requires an explicit/);
 });
 
 test('Vercel bundled fresh config resolves outside the repository without an installed SDK', async t => {
@@ -96,7 +96,7 @@ test('Vercel source uploads include only reviewed public deployment pin files', 
 
 test('reviewed deployment pins reject mismatched networks, circuits, assets and routes', async () => {
     const { readZkapiBuildConfig } = await sourceBuildHelpers();
-    const original = readZkapiBuildConfig({ network: 'mainnet', deployment: 'fresh-20260928' });
+    const original = readZkapiBuildConfig({ network: 'mainnet', deployment: 'fresh-20260930' });
     const artifacts = { network: 'mainnet', circuitId: 'zkapi-v2-note-bound-v1', files: {
         'proofs/request.pk': original.trusted_deployment.request_proving_key_sha256,
         'proofs/withdrawal.pk': original.trusted_deployment.withdrawal_proving_key_sha256
@@ -136,10 +136,8 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.deepEqual(result.config, config);
         assert.deepEqual(config, readZkapiBuildConfig({ network, deployment }));
         assert.equal(config.trusted_deployment.deployment_id, `zkapi-native-eth-${network}-note-bound-v1-${deployment}`);
-        if (deployment === 'fresh-20260928') {
-            assert.equal(config.trusted_deployment.protocol_server_url,
-                network === 'mainnet' ? 'https://54.67.93.98.sslip.io' : 'https://52.52.207.206.sslip.io');
-        }
+        assert.equal(config.trusted_deployment.protocol_server_url,
+            `https://zkapi-${network}.openanonymity.ai`);
         assert.equal(result.deployment, deployment);
         if (deployment === 'fresh-20260930' && network === 'mainnet') {
             assert.equal(config.deployment_manifest_url, 'https://zkapi-mainnet.openanonymity.ai/config.json');
@@ -166,7 +164,8 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.deepEqual(provenance.sdk.assets, manifest);
         assert.equal(provenance.sdk.patches[0].name, 'wallet-recovery-v1');
         assert.equal(provenance.sdk.patches[0].revision, provenance.sdk.revision);
-        for (const [relative, hash] of Object.entries(provenance.sdk.patches[0].files)) {
+        const patchedFiles = Object.assign({}, ...provenance.sdk.patches.map(patch => patch.files));
+        for (const [relative, hash] of Object.entries(patchedFiles)) {
             assert.equal(digest(await fs.readFile(path.join(root, 'node_modules/@openanonymity/zkapi-browser-sdk', relative))), hash);
         }
         assert.equal(provenance.files['zkapi/sdk-assets.json'], digest(await fs.readFile(path.join(result.directory, 'sdk-assets.json'))));
@@ -234,7 +233,7 @@ test('clean-reset bundles isolate wallet writes and preserve existing origin sto
         }
     } });
     const modules = [];
-    for (const [network, deployment] of [['mainnet', 'fresh-20260928'],
+    for (const [network, deployment] of [['mainnet', ''],
         ['mainnet', 'fresh-20260930'], ['sepolia', 'fresh-20260930']]) {
         const result = await build({ entryPoints: [storePath], bundle: true, write: false,
             platform: 'node', format: 'esm', logLevel: 'silent', plugins: zkapiBuildPlugins(network, deployment) });
@@ -269,7 +268,8 @@ test('unset selector preserves SDK defaults and invalid selectors fail before ou
     assert.equal(routing.build.env.OA_ZKAPI_DEPLOYMENT, undefined);
     assert.doesNotMatch(routing.buildCommand, /OA_ZKAPI_DEPLOYMENT/);
     const prior = await fs.readFile(path.join(result.directory, 'browser-config.json'));
-    for (const settings of [{ network: 'mainnet', deployment: 'unknown' }, { network: '', deployment: 'fresh-20260928' }]) {
+    for (const settings of [{ network: 'mainnet', deployment: 'unknown' },
+        { network: 'mainnet', deployment: 'fresh-20260928' }, { network: '', deployment: 'fresh-20260930' }]) {
         await assert.rejects(emit({ ...settings, repoRoot: root, outDir, build }), /OA_ZKAPI_DEPLOYMENT/);
         assert.throws(() => buildZkapiVercelConfig({ ...settings, orgOrigin: 'https://org-staging.openanonymity.ai' }), /OA_ZKAPI_DEPLOYMENT/);
         assert.deepEqual(await fs.readFile(path.join(result.directory, 'browser-config.json')), prior);
@@ -280,7 +280,7 @@ test('fresh selection checks emitted proving bytes before writing replacement co
     const { root, build, buildZkapiAssets: emit } = await sourceBuildHelpers();
     const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-corrupt-emitted-proof-'));
     t.after(() => fs.rm(outDir, { recursive: true, force: true }));
-    await assert.rejects(emit({ network: 'mainnet', deployment: 'fresh-20260928', repoRoot: root, outDir,
+    await assert.rejects(emit({ network: 'mainnet', deployment: 'fresh-20260930', repoRoot: root, outDir,
         build: async options => {
             await build(options);
             await fs.writeFile(path.join(outDir, 'zkapi/proofs/request.pk'), 'changed after SDK copy');
