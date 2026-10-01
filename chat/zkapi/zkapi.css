@@ -2522,3 +2522,9 @@ html.zkapi-mode .zkapi-dialog {
     --zkapi-primary-border-hover: hsl(var(--color-primary) / 0.55);
     --zkapi-primary-fg: color-mix(in srgb, hsl(var(--color-primary)) 78%, hsl(var(--color-foreground)));
 }
+
+/* MetaMask uses the Ethereum wallet side's transfer rows and quiet line. */
+.zkapi-transfer--metamask { margin-top: 0.25rem; }
+.zkapi-transfer--metamask + .zkapi-outcome, .zkapi-transfer--metamask ~ .zkapi-actions { margin-top: 1rem; }
+.zkapi-transfer-address--inline { display: inline; margin-left: 0.375rem; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; }
+.zkapi-deposit-wait { margin-top: 0.25rem; }

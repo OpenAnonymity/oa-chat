@@ -190,7 +190,8 @@ test('a deposit keeps one page from its first step to its confirmation', () => {
         assert.match(running, /<p class="zkapi-balance-caption">Deposit<\/p>/);
         assert.match(running, /data-zkapi-journey data-kind="deposit"/);
         assert.match(running, /data-step="deposit" data-state="waiting"/);
-        assert.match(running, /data-zkapi-busy-label>Waiting for MetaMask…/);
+        assert.match(running, /class="zkapi-funding-wait zkapi-deposit-wait" role="status">[^]*data-zkapi-deposit-wait>Confirm the deposit in MetaMask</, 'a quiet line names the current step');
+        assert.doesNotMatch(running, /zkapi-deposit-dismiss-btn|<button class="zkapi-primary-button" type="button" disabled>|Saved in this browser/, 'no dead button or Close while it runs');
         assert.doesNotMatch(running, /data-wallet-method|data-funding-amount|id="zkapi-deposit-btn"|zkapi-progress/, 'no amount field, method switch or loose status line while it runs');
         assert.equal(modal.pageKey(), 'deposit-progress');
 
@@ -199,6 +200,7 @@ test('a deposit keeps one page from its first step to its confirmation', () => {
         const submitted = modal.dialogMarkup();
         assert.match(submitted, /aria-label="Deposit in progress"/);
         assert.match(submitted, /data-step="chain" data-state="active"/);
+        assert.match(submitted, /data-zkapi-deposit-wait>Waiting for Ethereum · usually under a minute</);
         assert.equal(modal.pageKey(), 'deposit-progress', 'the SDK saving it does not change the page');
 
         modal.busy = false;
@@ -239,4 +241,22 @@ test('the running modal uses the durable deposit phase during status checks', t 
     assert.equal(modal.currentJourney('deposit', { message: 'Checking the private-vault deposit…' }).position.step, 'connect');
     zkapiClient.config.pending_deposit.phase = 'submitted';
     assert.equal(modal.currentJourney('deposit', { message: 'Checking the private-vault deposit…' }).position.step, 'chain');
+});
+
+test('MetaMask deposits show the same transfer rows as the Ethereum wallet side, then one button', async () => {
+    const { getWalletMethod, setWalletMethod } = await import('../../chat/zkapi/services/walletMethod.mjs');
+    const method = getWalletMethod();
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
+    Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: { billing_asset: 'native_eth', chain_id: 1 } }, withdrawal: null, withdrawals: [], lastError: null });
+    setWalletMethod('metamask');
+    try {
+        const modal = modalWith({}, { view: 'fund', isOpen: true });
+        const html = modal.renderBalance();
+        assert.equal(zkapiClient.isNativeEthFunding, true, "fixture is a native ETH deployment");
+        assert.match(html, /data-metamask-transfer/);
+        for (const label of ['Deposit', 'Network fee', 'From', 'Network']) assert.match(html, new RegExp(`zkapi-transfer-label">${label}<`));
+        assert.match(html, /Shown in MetaMask/);
+        assert.match(html, /Your MetaMask account/);
+        assert.match(html, /id="zkapi-deposit-btn" class="zkapi-primary-button w-full"[^>]*>Continue with MetaMask</);
+    } finally { Object.assign(zkapiClient, original); setWalletMethod(method); }
 });

@@ -19,7 +19,7 @@ import { walletJourney } from '../domain/walletJourney.js';
 import { addressFundingWallet } from '../services/addressFundingProvider.mjs';
 import { canQuotePendingAddressDeposit, formatFundingAmount, runAddressAction, withdrawalDestination } from '../services/addressFunding.js';
 import { getWalletMethod, initWalletClient, initWalletMethod, prepareWalletMethod, setWalletMethod, subscribeWalletMethod, walletMethodText } from '../services/walletMethod.mjs';
-import { attachWalletMethodControls, captureWalletView, fundingInstructionsVisible, refreshWalletView, renderDepositAmount, prepareDepositAmount, renderFundingAccount, renderFundingWei, fundingUsdText, renderWalletMethod, restoreWalletView, stopFundingFlow, isFundingViewHydrating, syncWalletFlows } from './WalletMethodControls.js';
+import { attachWalletMethodControls, captureWalletView, fundingInstructionsVisible, refreshWalletView, renderDepositAmount, prepareDepositAmount, renderFundingAccount, renderFundingWei, fundingUsdText, renderMetaMaskTransfer, renderWalletMethod, restoreWalletView, stopFundingFlow, isFundingViewHydrating, syncWalletFlows } from './WalletMethodControls.js';
 import {
     attachPrivateBalanceHelp, capturePrivateBalanceHelpFocus, privateBalanceExpiryLabel,
     privateBalanceExpired, privateBalanceGuide, privateBalanceHelpButton, privateBalanceHelpContent,
@@ -486,7 +486,7 @@ export default class AccountModal {
             const mounted = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-journey]') : null;
             if (mounted) { mounted.outerHTML = this.renderJourney(journey);
                 const busyLabel = this.overlay.querySelector('[data-zkapi-busy-label]');
-                if (busyLabel) busyLabel.textContent = walletMethodText(this.busyLabel(journey));
+                if (busyLabel) busyLabel.textContent = walletMethodText(busyLabel.hasAttribute?.('data-zkapi-deposit-wait') ? this.depositWaitLabel(journey) : this.busyLabel(journey));
                 revealText(this.overlay.querySelector('[data-zkapi-journey] .zkapi-step[aria-current] .zkapi-step-text')); return; }
         }
         const progress = this.isOpen ? this.overlay?.querySelector?.('[data-zkapi-progress-text]') : null;
@@ -572,18 +572,27 @@ export default class AccountModal {
     renderDepositInMotion(address) {
         const journey = this.currentJourney('deposit', { message: this.status });
         const amount = this.depositInMotionAmount();
+        // Both methods end the same way: the steps, then one quiet line that
+        // says what is happening. No disabled button, no dead Close.
         return `
             <div class="zkapi-stack">
                 <section class="zkapi-figure-block" aria-label="Deposit in progress">
                     <p class="zkapi-balance-caption">Deposit</p>
                     ${amount ? `<p class="zkapi-balance-amount">${this.escapeHtml(amount)}</p>` : ''}
-                    <p class="zkapi-meta">Saved in this browser.</p>
                 </section>
                 ${this.renderJourney(journey)}
-                <div class="zkapi-actions"><button class="zkapi-primary-button" type="button" disabled><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label>${this.busyLabel(journey)}</span></button><button id="zkapi-deposit-dismiss-btn" class="zkapi-quiet-button" type="button" disabled>Close</button></div>
+                <p class="zkapi-funding-wait zkapi-deposit-wait" role="status"><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label data-zkapi-deposit-wait>${walletMethodText(this.depositWaitLabel(journey))}</span></p>
                 ${address ? this.literal(renderFundingAccount(this, { receipt: true })) : ''}
                 <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
             </div>`;
+    }
+
+    /** The deposit's quiet line: the current step, or the wait for the chain. */
+    depositWaitLabel(journey) {
+        const current = journey?.steps?.find(step => ['active', 'waiting', 'paused'].includes(step.state));
+        if (!current) return 'Depositing…';
+        if (current.id === 'chain') return 'Waiting for Ethereum · usually under a minute';
+        return current.label;
     }
 
     /** New words fade in over the old ones; the row itself never moves. */
@@ -1175,11 +1184,12 @@ export default class AccountModal {
                         <section class="zkapi-figure-block" aria-label="Deposit in progress">
                             <p class="zkapi-balance-caption">Deposit</p>
                             <p class="zkapi-balance-amount">${zkapiClient.formatMoney(pendingDeposit.amount)}</p>
-                            <p class="zkapi-meta">Saved in this browser.</p>
                         </section>
                         ${this.renderJourney(pendingJourney, { detail: this.busy ? '' : pendingDetail })}
                         ${this.renderOutcome()}
-                        <div class="zkapi-actions">${primary}${secondary}<button id="zkapi-deposit-dismiss-btn" class="zkapi-quiet-button" type="button" ${this.busy ? 'disabled' : ''}>Close</button></div>
+                        ${this.busy
+                            ? `<p class="zkapi-funding-wait zkapi-deposit-wait" role="status"><span class="zkapi-pill-spinner" aria-hidden="true"></span><span data-zkapi-busy-label data-zkapi-deposit-wait>${walletMethodText(this.depositWaitLabel(pendingJourney))}</span></p>`
+                            : `<div class="zkapi-actions">${primary}${secondary}<button id="zkapi-deposit-dismiss-btn" class="zkapi-quiet-button" type="button">Close</button></div>`}
                         ${address ? this.literal(renderFundingAccount(this)) : ''}
                         <div class="zkapi-guides">${this.renderWithdrawalStatusLink()}</div>
                     </div>`;
@@ -1229,6 +1239,7 @@ export default class AccountModal {
                         </div>`}
                         ${helper ? `<p class="zkapi-helper">${helper}</p>` : ''}
                         ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Before resuming, check MetaMask for a pending transaction.</p>' : ''}
+                        ${!resumingDeposit && !this.busy ? this.literal(renderMetaMaskTransfer(this)) : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
                             ? this.renderJourney(this.currentJourney('deposit', { message: this.status }))

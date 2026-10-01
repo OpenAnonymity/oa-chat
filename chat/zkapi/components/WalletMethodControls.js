@@ -531,6 +531,28 @@ export function fundingInstructionsVisible(owner) {
 
 const SPINNER = '<span class="zkapi-pill-spinner" aria-hidden="true"></span>';
 
+/** MetaMask's deposit as the same transfer rows the Ethereum wallet side
+ *  uses: what is deposited, the fee (MetaMask shows its exact figure when
+ *  you confirm), where it comes from, and the network. */
+export function renderMetaMaskTransfer(owner) {
+    if (getWalletMethod() !== 'metamask' || !zkapiClient.isNativeEthFunding) return '';
+    const escape = value => owner.escapeHtml(value);
+    const intent = amountFlow(owner)?.intent;
+    const depositUsd = intent ? fundingUsdValue(intent.depositWei) : null;
+    const deposit = intent
+        ? escape(depositUsd || `${formatFundingAmount(intent.depositWei, 18)} ETH`)
+        : '<span class="zkapi-skel" style="width:3.5rem" aria-hidden="true"></span><span class="zkapi-visually-hidden">Loading</span>';
+    const account = zkapiClient.walletAddress
+        ? `Your MetaMask account <span class="zkapi-transfer-address zkapi-transfer-address--inline">${escape(zkapiClient.compact(zkapiClient.walletAddress, 6))}</span>`
+        : 'Your MetaMask account';
+    return `<div class="zkapi-transfer zkapi-transfer--metamask" data-metamask-transfer>
+        ${transferRow('Deposit', deposit)}
+        ${transferRow('Network fee', '<span class="zkapi-transfer-muted">Shown in MetaMask</span>')}
+        ${transferRow('From', account)}
+        ${transferRow('Network', escape(zkapiClient.networkName()))}
+    </div>`;
+}
+
 export function renderFundingAccount(owner, { destination = true, rows = true, pending = true, receipt: receiptOnly = false } = {}) {
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
