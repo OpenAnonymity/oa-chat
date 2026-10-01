@@ -77,11 +77,48 @@ chain/vault/asset, and private note/history scope uses the existing deployment I
 The old service names retain their matching manifests for compatibility; they
 must not redirect signed requests or silently substitute a different deployment.
 
-TLS activation and the website rollout are tracked separately from this source
-change. Preserve each site's current frontend revision when changing only its
-backend URLs; a shared core pin can otherwise revert concurrent UI updates.
-The original acceptance results below describe their recorded builds and are
-not a claim of another funded test after changing hostnames.
+The TLS and website rollout is complete. The new domains and both legacy aliases
+passed direct acceptance (19 Mainnet / 23 Sepolia checks each), including exact
+finalized contract/signing/proof bindings, authentication, CORS and private-route
+rejection. Only the shared TLS container restarted: all ten network containers,
+all twelve environment-file hashes and the nginx privacy mount remained unchanged.
+No database migration occurred. All eleven containers run and all eight healthchecks pass.
+New Caddy routes serve read-only canonical manifests while the old hostnames keep
+their original manifest URLs for pinned clients. Both certificates are valid.
+
+Each website received the same profile-only patch on top of its current UI:
+
+- Sepolia core `9452a7543be737d8d25b0d54c022ee6ca43966c0` preserves `c93d9d2`;
+  deployment `dpl_F576xsZknHfB3K8ro57ErAQBPgDb` serves the canonical Sepolia site.
+  App hash `UAG7TFYT` and the SDK patch are unchanged. Only browser-config and
+  SDK asset-manifest bytes changed. All 24 canonical proxy checks pass.
+- Mainnet core `04bc8ca01f30eeec23d051ed7da8be7de98f301e` preserves `8074795`.
+  Commercial `0023cd207668eb24f67aeb6602291ac690bc1457` serves staging in deployment
+  `dpl_HG2ubVXGmyMQfzuZcc8AU9Vmvkrz`. App hash `I7ON3YQQ`, SDK patch and backend
+  provenance are unchanged; browser-config, SDK asset manifest and source
+  provenance are the only changed audited files. All eight sampled served asset
+  hashes and 20 canonical proxy checks pass. Exact-tree release checks and the
+  normal release/deployment workflows pass.
+
+The existing Sepolia browser reloaded with its private balance and prepared
+withdrawal retained. No transaction was signed or submitted. Public core changes
+merged in [oa-chat PR #35](https://github.com/OpenAnonymity/oa-chat/pull/35), and
+Commercial integration in [PR #14](https://github.com/OpenAnonymity-FPL/oa-commercial/pull/14).
+The CLI and SDK source changes merged at `66874f1` in
+[zkapi PR #4](https://github.com/OpenAnonymity/zkapi/pull/4). Their default Mainnet
+pins now also select this fresh vault; profiles for old vaults remain rejected
+and preserved. The only saved-manifest migration accepts the exact previous
+September 30 Sepolia manifest with only the three reviewed origin URLs changed.
+Installed binaries retain their compiled pins until upgraded.
+
+Protected rollout evidence and rollback instructions are under
+`origin-domains-20260930/`, `domain-sepolia-*.json`,
+`domain-staging-assets-check.json`, and the canonical-domain records in
+`public-verification/`. Original evidence and compatibility configurations are
+retained. Preserve each site's current frontend revision when changing backend
+URLs: a shared core pin can otherwise revert concurrent UI updates. The original
+funded acceptance below remains tied to its recorded builds; this migration
+performed read-only checks and browser restoration only.
 
 ## Keys and funding
 

@@ -1,5 +1,24 @@
 ## 2026-09-30: Canonical zkAPI domain configuration
 
+- Completed rollout: Sepolia serves core `9452a75` in deployment
+  `dpl_F576xsZknHfB3K8ro57ErAQBPgDb`; Mainnet staging serves Commercial
+  `0023cd2` / core `04bc8ca` in `dpl_HG2ubVXGmyMQfzuZcc8AU9Vmvkrz`.
+  Each preserves its existing UI revision. Both exact application bundle hashes
+  and SDK patches are unchanged; only backend configuration and source metadata
+  differ. Canonical website acceptance passes 24 Sepolia and 20 Mainnet checks.
+- Both new TLS hosts and both legacy hosts pass direct acceptance. Only the
+  shared TLS container restarted; all ten network containers and their runtime
+  environment hashes remain unchanged. No keys, contracts or database changed.
+- Reloading the existing Sepolia browser restored its private balance and
+  prepared withdrawal. No signing, withdrawal submission or new inference was
+  performed during this hostname migration.
+- zkAPI source PR #4, merged at `66874f1`, updates the CLI and default SDK
+  profiles too. Saved September 30 Sepolia CLI manifests migrate only from an
+  exact prior manifest with the three approved URLs changed; different trust
+  pins remain rejected. New Mainnet CLI/SDK defaults also select the fresh
+  September 30 vault. Old-deployment wallets remain preserved and rejected,
+  requiring their matching historical client/configuration for recovery.
+
 - The `fresh-20260930` profiles now select
   `https://zkapi-mainnet.openanonymity.ai` and
   `https://zkapi-sepolia.openanonymity.ai` for manifest, protocol and indexer
