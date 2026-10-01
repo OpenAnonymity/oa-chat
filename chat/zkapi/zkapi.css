@@ -2496,3 +2496,26 @@ html[data-keyboard-nav] .zkapi-transfer-address:focus-visible { box-shadow: 0 0 
 .zkapi-withdraw-review .zkapi-transfer-value b { font-weight: 600; }
 .zkapi-withdraw-review .zkapi-transfer-address { display: inline; }
 .zkapi-withdraw-review .zkapi-note { margin: 0; font-size: 0.75rem; line-height: 1.45; }
+
+/* The dialog's one wallet action (Continue with MetaMask, Deposit, Return
+   all, Withdraw): one size, set like the rest of the type. A touch larger and
+   tighter, ink-deep accent text, a quieter hairline, so it reads as the
+   action without shouting. */
+.zkapi-dialog .zkapi-primary-button.w-full,
+#zkapi-deposit-btn, #welcome-fund-btn, .zkapi-funding-account [data-funding-next] {
+    min-height: 2.625rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+    line-height: 1.3;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+}
+html.zkapi-mode .zkapi-dialog {
+    --zkapi-primary-fill: hsl(var(--color-primary) / 0.045);
+    --zkapi-primary-fill-hover: hsl(var(--color-primary) / 0.09);
+    --zkapi-primary-border: hsl(var(--color-primary) / 0.32);
+    --zkapi-primary-border-hover: hsl(var(--color-primary) / 0.55);
+    --zkapi-primary-fg: color-mix(in srgb, hsl(var(--color-primary)) 78%, hsl(var(--color-foreground)));
+}
