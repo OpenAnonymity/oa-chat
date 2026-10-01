@@ -1033,6 +1033,6 @@ they remain visible when funded; the status comes from the real scoped fee
 quote. Clipboard failure leaves the address selectable with an inline message.
 
 Withdrawal review has compact type, spacing and receipt rows. The desktop frame
-keeps its width when Add ETH expands beside the receipt; phones stack the
-sections and retain scroll for accessibility. Escape wording uses the configured
+keeps its width when Add ETH expands below the receipt. The original stacked
+Inline arrangement is used on all screens, with scroll retained when needed. Escape wording uses the configured
 duration in “It takes … to finish.” Fee and destination gates are unchanged.

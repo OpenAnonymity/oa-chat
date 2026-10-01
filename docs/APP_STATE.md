@@ -2,8 +2,9 @@
 
 - Withdrawal review uses smaller type and spacing, a compact receipt, and ETH
   beside the fiat withdrawal amount. On desktop the form keeps a stable 36rem
-  width; opened Inline top-up details sit beside the receipt instead of pushing
-  the actions down. Narrow screens retain a single column and accessible scroll.
+  width. Inline top-up details open below the receipt at full width, as in the
+  original selected Inline design. The compact form stays unchanged until Add ETH
+  is opened; expanded details and small screens retain accessible scrolling.
 - Escape-hatch copy reads: “If the server isn’t responding, you can withdraw
   yourself. It takes 1 day to finish.” The duration still comes from the network
   configuration. Address validation, fee readiness and confirmation are unchanged.

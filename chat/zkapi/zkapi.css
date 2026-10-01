@@ -2316,15 +2316,9 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-withdraw-dialog .zkapi-fee-send-amount > span { display: inline; font-size: .75rem; }
 .zkapi-withdraw-dialog .zkapi-fee-transfer-status { padding-top: .375rem; }
 
-/* The desktop frame stays the same width when Add ETH opens beside the receipt. */
+/* Keep the compact desktop frame; top-up details expand below the receipt. */
 @media (min-width: 720px) {
     .zkapi-withdraw-dialog:has(.zkapi-withdraw-form) { width: min(36rem, 100%); }
-    .zkapi-withdraw-form .zkapi-withdrawal-fees:has(.zkapi-fee-topup) { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); column-gap: 1rem; align-items: start; }
-    .zkapi-withdraw-form .zkapi-withdrawal-fees:has(.zkapi-fee-topup) > .zkapi-fee-heading { grid-column: 1; grid-row: 1; }
-    .zkapi-withdraw-form .zkapi-withdrawal-fees:has(.zkapi-fee-topup) > .zkapi-funding-breakdown { grid-column: 1; grid-row: 2; }
-    .zkapi-withdraw-form .zkapi-withdrawal-fees:has(.zkapi-fee-topup) .zkapi-funding-breakdown > div { grid-template-columns: minmax(0, 1fr); gap: .125rem; }
-    .zkapi-withdraw-form .zkapi-withdrawal-fees:has(.zkapi-fee-topup) .zkapi-funding-breakdown dd { text-align: left; }
-    .zkapi-withdraw-form .zkapi-fee-topup { grid-column: 2; grid-row: 1 / 4; border-top: 0; border-left: 1px solid var(--zkapi-line); padding: 0 0 0 1rem; }
 }
 
 @container zkapi-fee (max-width: 260px) {
