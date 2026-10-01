@@ -77,6 +77,31 @@ test('short, multimodal, broad and unrelated queries pass through unchanged', ()
     assert.strictEqual(transform(unrelated).messages, unrelated);
 });
 
+test('one-term retrieval evidence cannot discard the rest of a long conversation', () => {
+    const history = longHistory();
+    history[4].content = `Zephyr deployment note. ${'zephyr '.repeat(90)}`;
+    history.at(-2).content = 'Tell me about zephyr?';
+    const result = transform(history);
+    assert.equal(result.metadata.reason, 'no_relevant_older_context');
+    assert.strictEqual(result.messages, history);
+});
+
+test('long queries and temporal history questions retain the complete request', () => {
+    const history = longHistory();
+    history.at(-2).content = `How did thermal aperture calibration evolve over time?`;
+    assert.equal(transform(history).metadata.reason, 'broad_query');
+    assert.strictEqual(transform(history).messages, history);
+
+    history.at(-2).content = 'Give me the timeline of thermal aperture calibration.';
+    assert.equal(transform(history).metadata.reason, 'broad_query');
+
+    history.at(-2).content = `Recall thermal aperture calibration? ${'Unrelated filler '.repeat(260)}`;
+    const longResult = transform(history);
+    assert.ok(history.at(-2).content.length > 4_096);
+    assert.equal(longResult.metadata.reason, 'long_query');
+    assert.strictEqual(longResult.messages, history);
+});
+
 test('historical text attachments survive later long-chat questions', () => {
     const history = longHistory();
     history[4].files = [{

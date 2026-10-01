@@ -27,6 +27,11 @@ sent if retrieval fails. This is a local
 port of the deterministic text retrieval path, not leCore's full persistent
 memory, embedding index, or MCP tool suite.
 
+The reducer keeps the full history for temporal questions about how a topic
+changed, queries longer than 4,096 characters, and weak one-term matches. These
+guards avoid dropping context when text retrieval cannot confidently identify
+the relevant earlier exchange.
+
 The provider receives the selected context through OA's usual direct browser
 transport and ephemeral key. There is no additional OpenZoo, OA, or third-party
 request and no new storage for prompts or retrieval results. Disabling the

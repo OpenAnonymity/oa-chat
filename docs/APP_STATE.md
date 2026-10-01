@@ -12,6 +12,9 @@
   to the live inference service without a page reload.
 - The visible description links to `https://openzoo.fun/`. The switch remains
   keyboard accessible and exposes its state through `aria-checked`.
+- Retrieval abstains on weak one-term matches. Temporal history questions and
+  queries longer than 4,096 characters retain the full chat request, since
+  selecting an earlier exchange from a partial query can omit the answer.
 
 ## 2026-10-01: Stable zkAPI deployment configuration paths
 

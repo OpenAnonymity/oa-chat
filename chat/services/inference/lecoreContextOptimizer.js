@@ -22,7 +22,7 @@
  * SOFTWARE.
  */
 
-const STOP = new Set('a an the of to in on at for and or is are be by with from as it this that these those into over under out up down off no not do does did can could would should will your my our their its his her you we they i he she them us me'.split(' '));
+const STOP = new Set('a an the of to in on at for and or is are be by with from as it this that these those into over under out up down off no not do does did can could would should will your my our their its his her you we they i he she them us me what which when where why how who about earlier previous discussed said please tell mention recall'.split(' '));
 const SUFFIXES = ['ing', 'ed', 'es', 's'];
 
 function tokenize(text) {
@@ -135,8 +135,17 @@ function positiveInteger(value, fallback, max) {
 function asksForWholeHistory(query) {
     return /\b(everything|entire|whole|all|every|each|full history|recap|summari[sz]e|so far|throughout)\b/i.test(query)
         || /\b(decisions|agreements|takeaways|topics|themes|highlights|action items|next steps|to-dos|todos|commitments)\b/i.test(query)
+        || /\b(timeline|chronolog\w*|evolv\w*|progress\w*|over time|start to finish|from (?:the )?(?:start|beginning)|before and after|initially|eventually)\b/i.test(query)
+        || /\bhow\b[\s\S]*\b(?:chang\w*|develop\w*)\b/i.test(query)
         || /\bacross\s+(?:this|the|our)?\s*(?:chat|conversation|thread|discussion|history)\b/i.test(query)
         || /\b(?:what|which)\b[\s\S]*\b(?:discuss|decide|agree|cover)(?:d|s|ed)?\b[\s\S]*\b(?:chat|conversation|thread|discussion)\b/i.test(query);
+}
+
+function sharedTermCount(queryTerms, doc) {
+    const present = new Set(tokenize(doc));
+    let hits = 0;
+    for (const term of queryTerms) if (present.has(term)) hits++;
+    return hits;
 }
 
 /**
@@ -177,17 +186,24 @@ export function transform(messages, options = {}) {
     const query = latestQuery.length >= 12 ? latestQuery :
         `${users.at(-2).message.content} ${latestQuery}`.trim();
     if (query.length < 12) return passthrough(messages, 'short_query');
+    // A truncated query could hide its actual subject while a tail-only decoy
+    // wins retrieval. Keep the full request when it exceeds the retrieval cap.
+    if (query.length > 4_096) return passthrough(messages, 'long_query');
 
     const docs = older.map(({ message }) => message.content);
-    const result = dispatchRetrieval(query.slice(-4_096), docs,
+    const result = dispatchRetrieval(query, docs,
         { k: Math.min(maxOlderMessages * 2, 24), shortlist: 32 });
     if (result.stage === 'abstain') return passthrough(messages, 'no_relevant_older_context');
 
-    const relevance = tokenOverlapScores(query.slice(-4_096), docs);
+    const queryTerms = new Set(tokenize(query));
+    const relevance = tokenOverlapScores(query, docs);
     const selected = new Set();
     let selectedChars = 0;
     for (const [rankedIndex] of result.ranked) {
-        if (relevance[rankedIndex] <= 0) continue;
+        // A unique one-word overlap can win the margin gate while omitting the
+        // actual answer. Require corroborating terms before dropping context.
+        if (sharedTermCount(queryTerms, docs[rankedIndex]) < 2
+            || relevance[rankedIndex] < 0.35) continue;
         const source = older[rankedIndex];
         // Keep a relevant exchange together: a user prompt with its following answer,
         // or an answer with its preceding prompt, if both precede the recent window.
