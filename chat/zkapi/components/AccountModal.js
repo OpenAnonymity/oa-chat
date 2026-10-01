@@ -1569,7 +1569,7 @@ export default class AccountModal {
 
         const address = getWalletMethod() === 'address';
         return `
-            <div class="zkapi-stack">
+            <div class="zkapi-stack zkapi-withdraw-form">
                 ${this.literal(renderWalletMethod(this))}
                 ${figure('You withdraw', address ? '' : 'To your MetaMask account. MetaMask pays the network fee.')}
                 ${address ? this.literal(renderFundingAccount(this, { rows: false })) : ''}
@@ -1581,7 +1581,7 @@ export default class AccountModal {
                     </label>
                     <label class="zkapi-choice ${this.withdrawMode === 'escape' ? 'selected' : ''}">
                         <input type="radio" name="zkapi-withdraw-mode" value="escape" ${this.withdrawMode === 'escape' ? 'checked' : ''} />
-                        <span><strong>Escape hatch</strong><small>If the server isn’t responding, you can withdraw yourself. Come back after ${zkapiClient.escapePeriodPhrase()} to finish. You pay a network fee for each step.</small></span>
+                        <span><strong>Escape hatch</strong><small>If the server isn’t responding, you can withdraw yourself. It takes ${zkapiClient.escapePeriodPhrase()} to finish.</small></span>
                     </label>
                 </fieldset>
                 ${this.literal(renderWithdrawalFees(this))}
@@ -1634,7 +1634,7 @@ export default class AccountModal {
                 : `${this.literal(renderDepositAmount(this))}${this.literal(renderWalletMethod(this, { choose: choosing }))}${fundingInstructionsVisible(this) ? this.literal(renderFundingAccount(this)) : ''}${this.renderBalance(fundingSetup)}`;
         }
         return `
-            <div role="dialog" aria-modal="true" aria-labelledby="zkapi-payment-title" class="${MODAL_CLASSES}">
+            <div role="dialog" aria-modal="true" aria-labelledby="zkapi-payment-title" class="${MODAL_CLASSES}${this.view === 'withdraw' ? ' zkapi-withdraw-dialog' : ''}">
                 <div class="zkapi-dialog-head">
                     <h2 id="zkapi-payment-title" class="zkapi-dialog-title">${title}</h2>
                     <button id="zkapi-payment-close" class="zkapi-dialog-close" type="button" aria-label="Close" ${this.busy || this.startingAfterInit || (this.view === 'withdraw' && this.walletMethodReady === false) ? 'hidden' : ''}>

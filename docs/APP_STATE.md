@@ -113,6 +113,16 @@ Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
 - **Toasts** above the composer move above a full-width bottom sheet
   (`[aria-modal]` spanning ≥ 90% of the width and reaching the bottom). The
   loading toast has `role="status"`.
+## 2026-09-30: Compact withdrawal review
+
+- Withdrawal review uses smaller type and spacing, a compact receipt, and ETH
+  beside the fiat withdrawal amount. On desktop the form keeps a stable 36rem
+  width; opened Inline top-up details sit beside the receipt instead of pushing
+  the actions down. Narrow screens retain a single column and accessible scroll.
+- Escape-hatch copy reads: “If the server isn’t responding, you can withdraw
+  yourself. It takes 1 day to finish.” The duration still comes from the network
+  configuration. Address validation, fee readiness and confirmation are unchanged.
+
 ## 2026-09-30: Inline withdrawal top-up matches the app theme
 
 - The selected Inline details show the amount, network, full address with the
