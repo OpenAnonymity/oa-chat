@@ -1716,10 +1716,10 @@ html.dark .zkapi-note--attention { color: hsl(40 90% 72%); }
     max-height: calc(100dvh - clamp(1rem, 10vh, 5rem) - 2rem);
 }
 .zkapi-dialog, .zkapi-welcome-dialog {
-    --acc-expand: 420ms;
-    --acc-collapse: 420ms;
-    --acc-chevron: 320ms;
-    --acc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --acc-expand: 360ms;
+    --acc-collapse: 260ms;
+    --acc-chevron: 280ms;
+    --acc-ease: cubic-bezier(0.22, 1, 0.36, 1);
     --funding-scroll-duration: 320ms;
     --modal-scale: 0.96;
     --modal-scale-close: 0.96;
@@ -2528,3 +2528,21 @@ html.zkapi-mode .zkapi-dialog {
 .zkapi-transfer--metamask + .zkapi-outcome, .zkapi-transfer--metamask ~ .zkapi-actions { margin-top: 1rem; }
 .zkapi-transfer-address--inline { display: inline; margin-left: 0.375rem; color: hsl(var(--color-muted-foreground)); font-size: 0.75rem; }
 .zkapi-deposit-wait { margin-top: 0.25rem; }
+
+/* Smoother disclosures: no blur filter on a tall block of text (it repaints
+   the whole panel every frame); the content fades and settles 4px instead. */
+.zkapi-dialog .t-acc-panel-inner, .zkapi-welcome-dialog .t-acc-panel-inner {
+    filter: none;
+    transform: translateY(-0.25rem);
+    transition: opacity var(--acc-collapse) var(--acc-ease), transform var(--acc-collapse) var(--acc-ease);
+    will-change: opacity, transform;
+}
+.zkapi-dialog .t-acc[data-open="true"] .t-acc-panel-inner, .zkapi-welcome-dialog .t-acc[data-open="true"] .t-acc-panel-inner {
+    filter: none;
+    transform: none;
+    transition: opacity var(--acc-expand) var(--acc-ease), transform var(--acc-expand) var(--acc-ease);
+}
+.zkapi-dialog .t-acc-panel, .zkapi-welcome-dialog .t-acc-panel { contain: layout paint; }
+@media (prefers-reduced-motion: reduce) {
+    .zkapi-dialog .t-acc-panel-inner, .zkapi-welcome-dialog .t-acc-panel-inner { transform: none; transition: none; }
+}

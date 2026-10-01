@@ -24,32 +24,39 @@ function fixture({ reduced = false } = {}) {
     };
 }
 
-test('expansion settles before scrolling to a fixed target', () => {
+test('the scroll runs alongside the expansion and lands on the final position', () => {
     const f = fixture(); revealFundingDisclosure(f.item, f.scroller);
-    assert.equal([...f.timers.values()][0].delay, 420);
+    assert.equal(f.timers.size, 0, 'no wait for the accordion to finish first');
+    f.frame(0);
     assert.equal(f.scroller.scrollTop, 0);
-    f.runTimer(); f.frame(420); f.frame(580);
-    assert.equal(f.scroller.scrollTop, 94);
-    f.frame(740);
+    f.frame(210);
+    assert.ok(f.scroller.scrollTop > 150 && f.scroller.scrollTop < 188, 'eases out with the accordion');
+    f.frame(420);
     assert.equal(f.scroller.scrollTop, 188);
     assert.equal(f.frames.size + f.timers.size + f.listeners.size, 0);
 });
 
+test('a panel closing above is accounted for, so the target does not move mid-scroll', () => {
+    const f = fixture(); revealFundingDisclosure(f.item, f.scroller, { shiftAbove: 100 });
+    f.frame(0); f.frame(420);
+    assert.equal(f.scroller.scrollTop, 88);
+});
+
 test('short content already in view does not scroll', () => {
     const f = fixture(); f.item.getBoundingClientRect = () => ({ top: 200, height: 80 });
-    revealFundingDisclosure(f.item, f.scroller); f.runTimer(); f.frame(420);
+    revealFundingDisclosure(f.item, f.scroller); f.frame(0); f.frame(420);
     assert.equal(f.scroller.scrollTop, 0);
     assert.equal(f.frames.size + f.listeners.size, 0);
 });
 
-test('manual interaction, close, rerender and disposal cancel deferred scrolling', () => {
+test('manual interaction, close, rerender and disposal cancel the scroll', () => {
     for (const cause of ['wheel', 'touchstart', 'pointerdown', 'keydown', 'close', 'removed', 'dispose']) {
         const f = fixture(); const dispose = revealFundingDisclosure(f.item, f.scroller);
         if (cause === 'close') f.item.dataset.open = 'false';
         else if (cause === 'removed') f.item.isConnected = false;
         else if (cause === 'dispose') dispose();
         else f.listeners.get(cause)();
-        f.runTimer(); f.frame(420); f.frame(740);
+        f.frame(0); f.frame(420);
         assert.equal(f.scroller.scrollTop, 0, cause);
         assert.equal(f.frames.size + f.timers.size + f.listeners.size, 0, cause);
     }
@@ -57,8 +64,7 @@ test('manual interaction, close, rerender and disposal cancel deferred scrolling
 
 test('reduced motion reveals immediately without animated scrolling', () => {
     const f = fixture({ reduced: true }); revealFundingDisclosure(f.item, f.scroller);
-    assert.equal([...f.timers.values()][0].delay, 0);
-    f.runTimer(); f.frame(0); f.frame(0);
+    f.frame(0);
     assert.equal(f.scroller.scrollTop, 188);
     assert.equal(f.frames.size + f.listeners.size, 0);
 });
@@ -110,12 +116,12 @@ function motionFixture(options) {
     return f;
 }
 
-test('history motion guards background renders through expansion and follow-up scroll', () => {
+test('history motion guards background renders through the expansion and its scroll', () => {
     const f = motionFixture(), motion = [];
     const dispose = attachFundingDisclosures(f.root, () => {}, active => motion.push(active));
     f.click();
     assert.deepEqual(motion, [true]);
-    assert.ok([...f.timers.values()].some(timer => timer.delay > 420 + 320));
+    assert.ok([...f.timers.values()].some(timer => timer.delay >= 420), 'one hold covers the expansion and its scroll');
     // A second click cancels the opening hold and replaces it with the close hold.
     f.click();
     assert.equal(f.timers.size, 1);
