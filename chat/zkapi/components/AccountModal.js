@@ -498,7 +498,7 @@ export default class AccountModal {
         return walletJourney({
             kind,
             message,
-            persistedPhase,
+            persistedPhase: persistedPhase || (kind === 'deposit' ? zkapiClient.config?.pending_deposit?.phase : ''),
             last: this.journeyKind === kind ? this.journeyLast : null,
             failed,
             hasLease: Boolean(zkapiClient.activeLease),
@@ -713,17 +713,23 @@ export default class AccountModal {
             explainZkapiError(error);
             const canceledMessage = activityDetails?.kind === 'deposit' ? 'Deposit canceled.'
                 : activityDetails?.kind === 'withdraw' ? 'Withdrawal canceled.' : CANCELED_LINE;
+            const depositFeeIssue = feeChanged && activityDetails?.kind === 'deposit';
+            const depositFeeMessage = (error?.addressCode || error?.code) === 'address_insufficient_eth'
+                ? 'Deposit not sent. Add the ETH shown below to cover the deposit and network fee, then try again.'
+                : (error?.addressCode || error?.code) === 'address_fee_data'
+                    ? 'Deposit not sent. The network fee could not be checked. Wait for the fee estimate below, then try again.'
+                    : 'Deposit not sent. The fee estimate changed or expired. Review the updated amount below, then try again.';
             const hasFeePanel = feeChanged && this.view === 'withdraw' && needsWithdrawalFees(this);
             const feeMessage = (error?.addressCode || error?.code) === 'address_insufficient_eth'
                 ? 'Add ETH for the network fee, then check again. Nothing was sent.'
                 : (error?.addressCode || error?.code) === 'address_fee_data'
                     ? 'Fee check interrupted. Checking again… Nothing was sent.'
                     : 'Network fees changed. Review the updated reserve before continuing.';
-            this.setStatus(hasFeePanel ? feeMessage : fundingWaitStopped ? error.message : fundingSaved ? 'Your funding transaction is saved. Use Check saved transaction to resume it safely.' : rejected ? canceledMessage : depositPending || walletErrorMessage(error),
+            this.setStatus(depositFeeIssue ? depositFeeMessage : hasFeePanel ? feeMessage : fundingWaitStopped ? error.message : fundingSaved ? 'Your funding transaction is saved. Use Check saved transaction to resume it safely.' : rejected ? canceledMessage : depositPending || walletErrorMessage(error),
                 !rejected && !confirmationPending && !recoverable);
             if (activityId) {
                 if (recoverable) zkapiClient.updateActivity(activityId, {
-                    title: feeChanged ? 'Review withdrawal funding' : fundingWaitStopped ? 'Stopped waiting for funds' : indexerLag ? 'Waiting for balance update'
+                    title: feeChanged ? (depositFeeIssue ? 'Review deposit funding' : 'Review withdrawal funding') : fundingWaitStopped ? 'Stopped waiting for funds' : indexerLag ? 'Waiting for balance update'
                         : depositPending ? 'Deposit status pending' : 'Funding transaction saved',
                     status: 'pending', phase: 'waiting', message: this.status,
                     finishedAt: Date.now(), blocksSend: false, error: null

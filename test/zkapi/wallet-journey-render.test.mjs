@@ -208,3 +208,35 @@ test('a deposit keeps one page from its first step to its confirmation', () => {
         assert.equal(modal.depositInMotion(), false);
     } finally { Object.assign(zkapiClient, original); }
 });
+
+for (const code of ['address_insufficient_eth', 'address_fee_data', 'address_fee_quote_changed']) {
+    test(`a deposit stopped by ${code} keeps its explanation and saved plan`, async t => {
+        const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
+        const plan = { phase: 'prepared', operation_id: 'saved-operation', amount: 4_000_000 };
+        Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {}, pending_deposit: plan } });
+        t.after(() => Object.assign(zkapiClient, original));
+        const changes = [];
+        t.mock.method(zkapiClient, 'beginActivity', () => 'deposit-activity');
+        t.mock.method(zkapiClient, 'updateActivity', (id, value) => changes.push(value));
+        t.mock.method(zkapiClient, 'completeActivity', () => assert.fail('A deposit that was not sent cannot succeed'));
+        const modal = modalWith({}, { view: 'balance', render() {} });
+        await modal.run(async () => { throw Object.assign(new Error('Provider error'), { addressCode: code }); }, { kind: 'deposit' });
+        assert.match(modal.outcome.message, /^Deposit not sent\./);
+        assert.match(modal.outcome.message, /then try again/);
+        assert.equal(modal.outcome.tone, 'info');
+        assert.equal(modal.outcomeTimer, null, 'the explanation does not disappear on a timer');
+        assert.match(modal.renderOutcome(), /Deposit not sent/);
+        assert.equal(changes.at(-1).title, 'Review deposit funding');
+        assert.equal(zkapiClient.config.pending_deposit, plan);
+    });
+}
+
+test('the running modal uses the durable deposit phase during status checks', t => {
+    const original = zkapiClient.config;
+    t.after(() => { zkapiClient.config = original; });
+    const modal = modalWith({}, { journeyKind: 'deposit' });
+    zkapiClient.config = { pending_deposit: { phase: 'prepared' } };
+    assert.equal(modal.currentJourney('deposit', { message: 'Checking the private-vault deposit…' }).position.step, 'connect');
+    zkapiClient.config.pending_deposit.phase = 'submitted';
+    assert.equal(modal.currentJourney('deposit', { message: 'Checking the private-vault deposit…' }).position.step, 'chain');
+});

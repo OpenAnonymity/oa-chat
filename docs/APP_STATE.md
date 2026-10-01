@@ -1,3 +1,19 @@
+## 2026-09-30: Deposit checks do not imply submission
+
+- The SDK checks the private-vault note even for an unsubmitted quote. That
+  status keeps the current preparation step; it must not complete Send the
+  deposit. The live modal supplies `pending_deposit.phase` so submitted or
+  uncertain recovery stays on the chain step, including during wallet reconnects.
+- Submission matching excludes incidental words such as “account that submitted”
+  and “No ... was submitted”. A live preflight does not inherit the paused
+  deposit step from its prepared quote. Saved, idle recovery still does.
+- Address fee failures say “Deposit not sent”, explain the next action, and
+  retain the explanation and SDK plan. Their activity is Review deposit funding,
+  not Review withdrawal funding. No signing, fee-cap, or retry behavior changes.
+- The reported first attempt returning to Deposit has no captured error or
+  transaction evidence. The premature chain step is reproduced; the specific
+  interruption that required another click remains unconfirmed.
+
 ## 2026-09-30: A deposit keeps one page; Send ETH holds its layout while the quote loads
 
 - **One page for a deposit in motion.** `depositInMotion()` (busy, journey

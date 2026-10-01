@@ -66,7 +66,7 @@ test('deposit journey distinguishes unknown, checking, and submitted outcomes', 
     const chain = options => walletJourney({ kind: 'deposit', ...options }).steps.find(s => s.id === 'chain');
     assert.equal(chain({ persistedPhase: 'ambiguous' }).label, 'Deposit status unknown');
     assert.equal(chain({ persistedPhase: 'submitted' }).label, 'Waiting for Ethereum confirmation');
-    const checking = chain({ message: 'Checking the private-vault deposit…', last: { step: 'deposit', state: 'waiting' } });
+    const checking = chain({ message: 'Checking the private-vault deposit…', persistedPhase: 'submitted', last: { step: 'deposit', state: 'waiting' } });
     assert.equal(checking.label, 'Checking your deposit');
     assert.equal(checking.state, 'active');
 });
@@ -86,4 +86,26 @@ test('with Send ETH the browser signs, so the steps say what it does and none wa
     assert.equal(withdraw.steps[1].state, 'active');
     assert.deepEqual(walletJourney({ kind: 'deposit', nativeEth: true }).steps.map(step => step.id), ['connect', 'deposit', 'chain'], 'MetaMask keeps its own steps');
     assert.equal(walletJourney({ kind: 'deposit', nativeEth: true }).steps[1].label, 'Confirm the deposit in MetaMask');
+});
+
+test('checking an unsubmitted Send ETH draft never jumps ahead of sending', () => {
+    let last = null;
+    const at = (message, persistedPhase = 'prepared') => {
+        const journey = walletJourney({ kind: 'deposit', nativeEth: true, addressFunding: true, message, persistedPhase, last });
+        last = journey.position;
+        return states(journey);
+    };
+    assert.deepEqual(at('Checking funds…'), ['connect:active', 'deposit:upcoming', 'chain:upcoming']);
+    assert.deepEqual(at('Connecting to MetaMask…'), ['connect:active', 'deposit:upcoming', 'chain:upcoming']);
+    assert.deepEqual(at('Checking the private-vault deposit…'), ['connect:active', 'deposit:upcoming', 'chain:upcoming']);
+    assert.deepEqual(at('Generating the private note commitment locally…'), ['connect:active', 'deposit:upcoming', 'chain:upcoming']);
+    assert.deepEqual(at('Depositing into the private-note vault… confirm in MetaMask.', 'awaiting_wallet'), ['connect:complete', 'deposit:active', 'chain:upcoming']);
+    assert.deepEqual(at('Deposit submitted 0xabc… · waiting for confirmation…', 'submitted'), ['connect:complete', 'deposit:complete', 'chain:active']);
+    assert.deepEqual(at('Connecting to the MetaMask account that submitted this deposit…', 'submitted'), ['connect:complete', 'deposit:complete', 'chain:active']);
+    assert.deepEqual(at('Checking the private-vault deposit…', 'submitted'), ['connect:complete', 'deposit:complete', 'chain:active']);
+});
+
+test('mentions of earlier or absent submissions do not claim a new transaction was sent', () => {
+    assert.deepEqual(classifyWalletStatus('deposit', 'Connecting to the MetaMask account that submitted this deposit…'), { step: 'connect', state: 'active' });
+    assert.equal(classifyWalletStatus('escape', 'No escape transaction was submitted. Your private balance is ready to use.'), null);
 });

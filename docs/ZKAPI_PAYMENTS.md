@@ -1007,3 +1007,13 @@ the header X while retaining a clearly labelled Close action. Close preserves
 recovery. Finishing initialization does not automatically continue a withdrawal;
 the user clicks Continue after the check finishes. Startup reconciliation itself
 is unchanged and may still take time, particularly through MetaMask RPC.
+
+## Deposit progress and interrupted fee checks (2026-09-30)
+
+A saved deposit quote is not evidence of submission. During a live deposit, the
+SDK’s private-vault check retains preparation progress. Actual submission status
+or the SDK’s submitted/uncertain recovery phase selects the Ethereum step.
+Unsubmitted address fee failures retain an explicit “Deposit not sent” outcome
+and next action. Recovery records, authorized fee limits and explicit retry
+requirements are unchanged. A confirmed deposit awaiting its balance projection
+continues to suppress a second deposit.
