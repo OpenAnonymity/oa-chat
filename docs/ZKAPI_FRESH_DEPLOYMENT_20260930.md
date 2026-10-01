@@ -20,9 +20,8 @@ old browser data is retained, without a recovery UI or automatic migration.
   TCP 443 is public. SSH fingerprint matched AWS console output before access.
 - Canonical origins: `https://zkapi-mainnet.openanonymity.ai` and
   `https://zkapi-sepolia.openanonymity.ai`, both pointing to the same Elastic IP.
-  The original `mainnet.100.21.48.23.sslip.io` and
-  `sepolia.100.21.48.23.sslip.io` hosts remain compatibility aliases with their
-  original manifest URLs for already-pinned clients.
+  These are the only supported API hostnames. Compatibility aliases on this
+  VM were removed on October 1; clients must use the canonical origins.
 - Both stacks and shared TLS are running: eleven containers in total. Networks
   use separate Compose projects, Docker networks, `/etc/zkapi/<network>` and
   `/var/lib/zkapi/<network>`. Gateways bind loopback ports 8081/8082; daemon and
@@ -74,17 +73,22 @@ profile/build/storage tests pass after the URL change.
 Keep the existing frontend origins and wallet database names: changing backend
 hostnames does not require resetting browser storage. Funding signer scope is
 chain/vault/asset, and private note/history scope uses the existing deployment ID.
-The old service names retain their matching manifests for compatibility; they
-must not redirect signed requests or silently substitute a different deployment.
+During the initial migration, old service names retained their matching manifests
+without redirecting signed requests or substituting a different deployment.
+Those aliases were removed on October 1. Clients must use the canonical origins.
 
-The TLS and website rollout is complete. The new domains and both legacy aliases
-passed direct acceptance (19 Mainnet / 23 Sepolia checks each), including exact
+The initial TLS and website rollout completed with both new and legacy hosts
+passing direct acceptance (19 Mainnet / 23 Sepolia checks each), including exact
 finalized contract/signing/proof bindings, authentication, CORS and private-route
 rejection. Only the shared TLS container restarted: all ten network containers,
 all twelve environment-file hashes and the nginx privacy mount remained unchanged.
 No database migration occurred. All eleven containers run and all eight healthchecks pass.
-New Caddy routes serve read-only canonical manifests while the old hostnames keep
-their original manifest URLs for pinned clients. Both certificates are valid.
+Caddy serves read-only canonical manifests. The October 1 cleanup removed the
+legacy host blocks and changed the gateway manifests to those same canonical
+URLs. Both retired hostnames fail TLS when addressed directly to this VM;
+canonical HTTPS, manifests, and all 42 direct acceptance checks still pass.
+All ten backend container IDs, twelve environment-file hashes, and privacy
+configuration remain unchanged. Only the shared TLS container was recreated.
 
 Each website received the same profile-only patch on top of its current UI:
 

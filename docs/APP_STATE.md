@@ -1,3 +1,15 @@
+## 2026-10-01: Retire legacy zkAPI origins
+
+- Only the canonical September 30 profiles remain selectable. The retired
+  September 28 selector fails before generated assets or routes can change;
+  its old pins are retained in Git history, never rebound to a different vault.
+- Current public docs and build profiles omit retired API addresses and personal
+  package-test hostnames. Build examples use the canonical deployment.
+- This build configuration cleanup changes no application bundle, wallet
+  namespace, key, contract, or SDK revision. Existing browser storage is retained.
+- Server alias removal and verification are recorded in the
+  [deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
+
 ## 2026-09-30: Canonical zkAPI domain configuration
 
 - Completed rollout: Sepolia serves core `9452a75` in deployment
@@ -1299,7 +1311,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
 
 ## 2026-09-28: Current Linux package runtime trials
 
-- Docker on `rockypika` built current daemon source `d22c80d` into a fresh
+- A remote Docker host built daemon source `d22c80d` into a fresh
   Linux AMD64 `0.0.0` validation bundle. Fresh source preparation reproduced
   Git 2.43 replacing the index during `git apply --intent-to-add`; applying
   both patches with `--index` fixes it while retaining exact full-source
@@ -1317,8 +1329,7 @@ Fixes for `oa-commercial/docs/audits/RELEASE_BROWSER_AUDIT_2026-09-29.md` (stagi
   macOS/ARM64 builds. Nix generated-unit checks do not certify a complete NixOS
   boot. No funded inference, transactions, or package publication occurred.
   Trial containers/images were removed and unrelated Docker workloads retained.
-  See [Docker trial details](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/docs/CLI_PACKAGING.md#rockypika-docker-package-trials-2026-09-28)
-  and [sanitized evidence](https://github.com/OpenAnonymity/oa-chat/blob/de53408c20b101d1c1597730a3f065980b3e9c37/daemon/packaging/validation/rockypika-packages-20260928.json).
+
 
 ## 2026-09-28: Daemon distribution preparation
 
