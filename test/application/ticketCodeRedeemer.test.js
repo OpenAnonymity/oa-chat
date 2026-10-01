@@ -219,3 +219,12 @@ test('key rotation retains the code across reload and interruption during replac
     assert.equal(h.wallet.size, 2);
     assert.equal(h.records.size, 0);
 });
+
+
+test('a transfer cannot start recovery in a replacement account', async () => {
+    const h = harness();
+    h.scope = 'bob';
+    await assert.rejects(new TicketCodeRedeemer(h.options).run(null, undefined, { expectedAccountId: 'alice' }), /wallet changed/);
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.issuerCalls, 0);
+});

@@ -222,3 +222,48 @@ test('sync refuses to read live values from another account scope', async () => 
         syncService.syncInProgress = false;
     }
 });
+
+test('the wallet a login set aside can be read and pruned for the ticket move, and nothing else changes', async () => {
+    const originals = {
+        getSetting: chatDB.getSetting,
+        saveSetting: chatDB.saveSetting,
+        updateSettings: chatDB.updateSettings
+    };
+    const oldA = { finalized_ticket: 'old-a' };
+    const oldB = { finalized_ticket: 'old-b' };
+    const settings = new Map([
+        ['tickets-active', [{ finalized_ticket: 'browser-ticket' }, oldA, oldB]],
+        ['pref-theme', 'dark'],
+        ['sync-account-data:returning', { 'tickets-active': [{ finalized_ticket: 'account-ticket' }] }]
+    ]);
+    chatDB.getSetting = async key => settings.get(key);
+    chatDB.saveSetting = async (key, value) => { settings.set(key, value); };
+    chatDB.updateSettings = async (entries, deleteKeys) => {
+        for (const { key, value } of entries) settings.set(key, value);
+        for (const key of deleteKeys) settings.delete(key);
+    };
+    try {
+        assert.deepEqual(await syncService.readUnclaimedTickets(), []);
+        // Log in to an account that already has data: this browser's wallet
+        // is set aside instead of adopted.
+        await syncService.activateAccountScope('returning');
+        assert.deepEqual(settings.get('tickets-active'), [{ finalized_ticket: 'account-ticket' }]);
+        assert.deepEqual((await syncService.readUnclaimedTickets()).map(ticket => ticket.finalized_ticket),
+            ['browser-ticket', 'old-a', 'old-b']);
+
+        assert.equal(await syncService.removeUnclaimedTickets([oldA, { finalized_ticket: 'unknown' }], { expectedAccountId: 'returning' }), 1);
+        await assert.rejects(syncService.removeUnclaimedTickets([oldB], { expectedAccountId: 'other' }), /Account changed/);
+        const unclaimed = settings.get('sync-unclaimed-data');
+        assert.deepEqual(unclaimed['tickets-active'].map(ticket => ticket.finalized_ticket), ['browser-ticket', 'old-b']);
+        assert.equal(unclaimed['pref-theme'], 'dark', 'the rest of the set-aside data is untouched');
+        assert.deepEqual(settings.get('tickets-active'), [{ finalized_ticket: 'account-ticket' }], 'the live wallet is untouched');
+        assert.equal(await syncService.removeUnclaimedTickets([]), 0);
+
+        // Logging out brings back what is left, without the moved ticket.
+        await syncService.deactivateAccountScope('returning');
+        assert.deepEqual(settings.get('tickets-active').map(ticket => ticket.finalized_ticket), ['browser-ticket', 'old-b']);
+    } finally {
+        Object.assign(chatDB, originals);
+        syncService.setLocalAccountScope(null);
+    }
+});

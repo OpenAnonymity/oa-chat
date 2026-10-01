@@ -31,8 +31,11 @@ export class TicketCodeRedeemer {
         return Object.freeze({ count: records.length });
     }
 
-    async run(code, onProgress) {
+    async run(code, onProgress, { expectedAccountId } = {}) {
         const scope = await this.scope();
+        if (expectedAccountId !== undefined && scope.accountId !== expectedAccountId) {
+            throw new Error('Your wallet changed. Return to the original wallet to finish redeeming this code.');
+        }
         if (!this.lockManager?.request) {
             throw new Error('This browser cannot safely coordinate ticket-code redemption across tabs.');
         }

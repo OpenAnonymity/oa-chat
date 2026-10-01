@@ -44,6 +44,9 @@ export class TicketStore {
         // Key IDs whose tickets stay in the wallet but must not be spent
         // (tickets from the previous production org waiting to be moved).
         this.heldKeyIds = new Set();
+        // Held tickets that cannot move (over the transfer allowance, or not
+        // valid): kept, but neither counted as usable nor as moving.
+        this.strandedTickets = new Set();
     }
 
     async init() {
@@ -696,7 +699,28 @@ export class TicketStore {
     getHeldCount() {
         this.ensureInit();
         return this.heldKeyIds.size > 0
-            ? this.tickets.filter(ticket => this.isHeld(ticket)).length
+            ? this.tickets.filter(ticket => this.isHeld(ticket) && !this.isStranded(ticket)).length
+            : 0;
+    }
+
+    /** Mark held tickets that cannot move; they stay held, apart from the count. */
+    setStrandedTickets(values = []) {
+        const next = new Set((Array.isArray(values) ? values : []).filter(value => typeof value === 'string' && value));
+        const changed = next.size !== this.strandedTickets.size ||
+            [...next].some(value => !this.strandedTickets.has(value));
+        this.strandedTickets = next;
+        if (changed) this.emitUpdate();
+    }
+
+    isStranded(ticket) {
+        return this.strandedTickets.size > 0 && this.isHeld(ticket) &&
+            this.strandedTickets.has(ticket?.finalized_ticket);
+    }
+
+    getStrandedCount() {
+        this.ensureInit();
+        return this.strandedTickets.size > 0
+            ? this.tickets.filter(ticket => this.isStranded(ticket)).length
             : 0;
     }
 

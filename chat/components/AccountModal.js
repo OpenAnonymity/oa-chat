@@ -124,6 +124,22 @@ class AccountModal {
                 this.close({ afterAuthentication: true });
                 return;
             }
+            // Restoration can finish outside this dialog (for example in a
+            // different tab). Close the sign-in surface instead of turning it
+            // into Account settings. In-dialog flows own their completion and
+            // first-account routing; do not interrupt their async handlers.
+            const wasAuthenticated = previous.sessionVerified === true &&
+                previous.status === 'unlocked' && previous.accountScopeReady === true &&
+                !previous.busy && !previous.accountHandoffPending;
+            if (this.isOpen && !wasAuthenticated && !state.busy &&
+                !state.accountHandoffPending && state.sessionVerified === true &&
+                state.status === 'unlocked' && state.accountScopeReady === true &&
+                !this.oauthHandoffPending && !this.usernameContinuePending &&
+                !this.authenticationExitPending && !this.loggingOut &&
+                this.creationStep === 'idle') {
+                this.close({ afterAuthentication: true });
+                return;
+            }
             // The session ended under this tab (Log out or deletion in
             // another tab, an expired session). On the Tickets side that is
             // a signed-out page: show Log in rather than leave a dead chat.
@@ -774,6 +790,9 @@ class AccountModal {
         if (!result) {
             this.creationStep = 'idle';
             this.oauthProvider = null;
+            if (!this.accountService.getState?.()?.error) {
+                this.accountService.setError?.('Could not finish signing in. Please try again.');
+            }
             this.render();
             return;
         }

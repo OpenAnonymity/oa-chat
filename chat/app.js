@@ -2787,11 +2787,29 @@ class ChatApp {
                 stopMoveToast?.();
                 stopMoveToast = null;
             });
+            // Tickets that cannot move (over the allowance, or not valid) are
+            // said once in one line, not on every page load.
+            const STRANDED_SAID_KEY = 'oa-legacy-stranded-said';
+            const strandedLine = count => `${count} ${count === 1 ? 'ticket' : 'tickets'} from the previous version couldn't be moved.`;
+            const strandedIsNew = count => {
+                try {
+                    if (localStorage.getItem(STRANDED_SAID_KEY) === String(count)) return false;
+                    localStorage.setItem(STRANDED_SAID_KEY, String(count));
+                } catch { /* storage blocked: say it */ }
+                return true;
+            };
             window.addEventListener('legacy-tickets-moved', event => {
                 const moved = Number(event?.detail?.moved) || 0;
+                const stranded = Number(event?.detail?.stranded) || 0;
                 if (moved > 0) {
-                    this.showToast(`Moved ${moved} ${moved === 1 ? 'ticket' : 'tickets'} from your previous wallet`, 'success');
+                    const line = `Moved ${moved} ${moved === 1 ? 'ticket' : 'tickets'} from your previous wallet`;
+                    if (stranded > 0) strandedIsNew(stranded);
+                    this.showToast(stranded > 0 ? `${line}. ${strandedLine(stranded)}` : line, 'success', stranded > 0 ? 7000 : undefined);
                 }
+            });
+            window.addEventListener('legacy-tickets-stranded', event => {
+                const stranded = Number(event?.detail?.stranded) || 0;
+                if (stranded > 0 && strandedIsNew(stranded)) this.showToast(strandedLine(stranded), 'info', 7000);
             });
             ticketClient.startLegacyTransferWatcher?.();
         }
@@ -2884,14 +2902,6 @@ class ChatApp {
             if (this.features.scrubber) this.scrubberService.init().catch((error) => {
                 console.warn('Scrubber init failed:', error);
             });
-
-            if (!this.features.accounts) {
-                // Accountless compositions never bootstrap authentication/sync.
-            } else if (typeof requestIdleCallback === 'function') {
-                requestIdleCallback(() => accountService.maybeAutoUnlock());
-            } else {
-                setTimeout(() => accountService.maybeAutoUnlock(), 800);
-            }
 
             await networkProxy.syncWithPreferences().catch(err => console.warn('Proxy pref sync failed:', err));
             networkProxy.initialize().catch(err => console.warn('Proxy init failed:', err));

@@ -41,6 +41,7 @@ function installBrowser(initial) {
         saveSetting: chatDB.saveSetting,
         deleteSetting: chatDB.deleteSetting,
         updateSettings: chatDB.updateSettings,
+        deleteSettingsIfUnchanged: chatDB.deleteSettingsIfUnchanged,
         sessionInit: sessionService.init,
         verifySession: sessionService.verifySession,
         deactivateAccountScope: syncService.deactivateAccountScope,
@@ -55,6 +56,11 @@ function installBrowser(initial) {
         for (const { key, value } of entries) { writes.push(['save', key]); settings.set(key, value); }
         for (const key of deleteKeys) { writes.push(['delete', key]); settings.delete(key); }
     };
+    chatDB.deleteSettingsIfUnchanged = async (expected, deletes) => {
+        if (expected.some(({key,value}) => JSON.stringify(settings.get(key) ?? null) !== JSON.stringify(value ?? null))) return false;
+        await chatDB.updateSettings([], deletes);
+        return true;
+    };
     sessionService.init = async () => {};
     sessionService.verifySession = async () => false;
     const scopes = [];
@@ -67,6 +73,7 @@ function installBrowser(initial) {
             getSetting: originals.getSetting,
             saveSetting: originals.saveSetting,
             deleteSetting: originals.deleteSetting,
+            deleteSettingsIfUnchanged: originals.deleteSettingsIfUnchanged,
             updateSettings: originals.updateSettings
         });
         sessionService.init = originals.sessionInit;
@@ -262,4 +269,36 @@ test('an unreadable marker keeps the saved account', async () => {
     } finally {
         browser.restore();
     }
+});
+
+
+test('old cleanup cannot delete a newer login that completed before its lock', async () => {
+    const browser = await oldBrowser();
+    try {
+        accountService.configure({ releasePreviousVersionAccounts: true });
+        browser.settings.set('account-settings', CURRENT_RECORD);
+        browser.settings.set('account-key-bundle-v1', { accountId: CURRENT_RECORD.accountId });
+        assert.equal(await accountService.releasePreviousVersionAccount(OLD_RECORD), false);
+        assert.deepEqual(browser.settings.get('account-settings'), CURRENT_RECORD);
+        assert.deepEqual(browser.settings.get('tickets-active'), WALLET);
+        assert.equal(browser.writes.length, 0);
+    } finally { browser.restore(); }
+});
+
+test('a new login during cleanup reads is rejected by the atomic deletion', async () => {
+    const browser = await oldBrowser();
+    try {
+        accountService.configure({ releasePreviousVersionAccounts: true });
+        const compare = chatDB.deleteSettingsIfUnchanged;
+        chatDB.deleteSettingsIfUnchanged = async (...args) => {
+            browser.settings.set('account-settings', CURRENT_RECORD);
+            browser.settings.set('account-key-bundle-v1', { accountId: CURRENT_RECORD.accountId });
+            return compare(...args);
+        };
+        assert.equal(await accountService.releasePreviousVersionAccount(OLD_RECORD), false);
+        assert.deepEqual(browser.settings.get('account-settings'), CURRENT_RECORD);
+        assert.equal(browser.settings.get('account-key-bundle-v1').accountId, CURRENT_RECORD.accountId);
+        assert.deepEqual(browser.settings.get('tickets-active'), WALLET);
+        assert.equal(accountService.releasedPreviousVersionAccount, false);
+    } finally { browser.restore(); }
 });
