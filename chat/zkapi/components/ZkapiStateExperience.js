@@ -1,3 +1,4 @@
+import { statusIcon } from './StatusIcon.js';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
 import { zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
@@ -41,7 +42,7 @@ function stateGlyph(primary) {
         return '<span class="zkapi-state-glyph zkapi-state-glyph--waiting" aria-hidden="true"><svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.75v3.5l2.25 1.35" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"/></svg></span>';
     }
     if (primary.tone === 'error') {
-        return '<span class="zkapi-state-glyph zkapi-state-glyph--error" aria-hidden="true">!</span>';
+        return statusIcon('attention');
     }
     if (primary.tone === 'success') {
         return '<span class="zkapi-state-glyph zkapi-state-glyph--success" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m3.25 8.25 3 3 6.5-6.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg></span>';
@@ -86,7 +87,7 @@ function renderActivityRows(state, escapeHtml = escapeFallback, limit = 4) {
 function renderSettlementAction(state) {
     const action = state.settlementAction;
     if (!['stop', 'retry'].includes(action)) return '';
-    return `<button type="button" class="btn-ghost-hover rounded-md border border-border px-2 py-1 text-xs" data-zkapi-settlement-action="${action}" aria-label="${action === 'stop' ? 'Stop waiting for previous chat' : 'Retry finishing previous chat'}">${action === 'stop' ? 'Stop waiting' : 'Retry'}</button>`;
+    return `<button type="button" class="zkapi-settlement-action" data-zkapi-settlement-action="${action}" aria-label="${action === 'stop' ? 'Pause the balance update; messages will not send until you retry' : 'Retry finishing previous chat'}">${action === 'stop' ? 'Pause update' : 'Retry'}</button>`;
 }
 
 export function attachZkapiSettlementActions(element, app) {

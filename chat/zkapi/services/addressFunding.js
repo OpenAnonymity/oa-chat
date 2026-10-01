@@ -72,7 +72,13 @@ export async function runAddressAction(owner, details, report, action) {
         }
     } else if (kind === 'withdraw' || kind === 'escape') {
         const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : null;
-        authorization = { kind: 'withdrawal', destination: withdrawalDestination(owner, details.withdrawalRecordId),
+        const budget = await addressFundingWallet.getWithdrawalFeeBudget(record?.mode || (kind === 'escape' ? 'escape' : zkapiClient.config?.prepared_withdrawal?.mode || owner.withdrawMode));
+        if (budget.shortfallWei !== '0') throw addressFundingWallet.paymentFailure('address_insufficient_eth', budget);
+        const reviewed = !record && owner.withdrawalFees?.quote;
+        if (reviewed && BigInt(budget.feeReserveWei) > BigInt(reviewed.feeReserveWei)) {
+            throw addressFundingWallet.paymentFailure('address_fee_quote_changed');
+        }
+        authorization = { kind: 'withdrawal', feeLimitWei: budget.transactionFeeWei, destination: withdrawalDestination(owner, details.withdrawalRecordId),
             // An explicit escape choice can replace an unsubmitted mutual
             // plan. The SDK rechecks that transition under its wallet lock.
             mode: record?.mode || (kind === 'escape' ? 'escape' : zkapiClient.config?.prepared_withdrawal?.mode || owner.withdrawMode),

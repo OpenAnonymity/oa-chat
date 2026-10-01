@@ -7,10 +7,20 @@
 
 const STATES = ['complete', 'active', 'waiting', 'paused', 'upcoming', 'error'];
 
-function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, nativeEth = false, escapePeriod = '' } = {}) {
+// With Send ETH (addressFunding) nobody confirms anything: this browser holds
+// the funding address's key and signs the transaction itself. Its steps say
+// what the browser does, and none of them waits on the person.
+function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, nativeEth = false, escapePeriod = '', addressFunding = false } = {}) {
+    if (kind === 'deposit' && addressFunding) {
+        return [
+            { id: 'connect', label: 'Prepare funding address', detail: 'Checks the ETH at this address and the current network fee.' },
+            { id: 'deposit', label: 'Send the deposit', detail: 'This browser signs it and sends it from your funding address.' },
+            { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
+        ];
+    }
     if (kind === 'deposit') {
         return [
-            { id: 'connect', label: 'Connect MetaMask' },
+            { id: 'connect', label: 'Connect MetaMask', detail: 'Opens MetaMask to use your account.' },
             ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
             ...(!nativeEth ? [{ id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' }] : []),
             { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Moves the funds from your wallet into your private balance.' },
@@ -23,9 +33,11 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
         escape
             ? { id: 'proof', label: 'Generate the recovery proof', detail: 'Made on this device.' }
             : { id: 'proof', label: 'Prepare your withdrawal', detail: 'The zkAPI server authorizes it and this device makes the proof.' },
-        escape
-            ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
-            : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Approve the transaction in MetaMask.' },
+        addressFunding
+            ? { id: 'wallet', label: escape ? 'Send the escape start' : 'Send your withdrawal', detail: 'This browser signs it and pays the network fee from your funding address.' }
+            : escape
+                ? { id: 'wallet', label: 'Confirm the escape start in MetaMask', detail: 'One transaction. Nothing moves before you confirm.' }
+                : { id: 'wallet', label: 'Confirm your withdrawal in MetaMask', detail: 'Approve the transaction in MetaMask.' },
         escape
             ? { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: `Then a safety window${escapePeriod ? ` of ${escapePeriod}` : ''} before you finalize.` }
             : { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your withdrawal has been submitted and is waiting to be confirmed on Ethereum.' }
@@ -97,7 +109,8 @@ export function walletJourney({ kind, message = '', persistedPhase = '', last = 
     }
     const position = classifyWalletStatus(kind, message) || last || positionForPersistedPhase(kind, persistedPhase) || { step: steps[0].id, state: 'active' };
     const index = position.step === 'done' ? steps.length : Math.max(0, steps.findIndex(step => step.id === position.step));
-    const state = STATES.includes(position.state) ? position.state : 'active';
+    const named = STATES.includes(position.state) ? position.state : 'active';
+    const state = options.addressFunding && named === 'waiting' ? 'active' : named;
     return {
         kind,
         position,

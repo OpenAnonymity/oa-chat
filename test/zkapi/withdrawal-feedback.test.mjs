@@ -31,7 +31,7 @@ function fixture(t, { prepared = null, balance = note.current_balance, native = 
 test('withdrawal amount does not claim funds were already returned before submission', t => {
     const modal = fixture(t);
     const html = modal.renderWithdrawal();
-    assert.match(html, /Amount to withdraw/);
+    assert.match(html, /You withdraw/);
     assert.match(html, /To your MetaMask account\. MetaMask pays the network fee\./);
     assert.doesNotMatch(html, /Returned to MetaMask/);
 });
@@ -223,4 +223,24 @@ test('payment history shows the brief outcome once, outside embedded history dis
     modal.outcome = { message: 'Withdrawal confirmed.', tone: 'success' };
     assert.match(modal.renderWithdrawalRecords(), /zkapi-outcome[^>]*>Withdrawal confirmed\./);
     assert.doesNotMatch(modal.renderWithdrawalRecords({ inline: true }), /zkapi-outcome/);
+});
+
+
+test('reserved mutual withdrawal never calls dismissal Cancel', t => {
+    const modal = interruptedMutual(t);
+    const html = modal.renderWithdrawal();
+    assert.match(html, /id="zkapi-withdraw-dismiss-btn"[^>]*>Close<\/button>/);
+    assert.doesNotMatch(html, /id="zkapi-cancel-withdrawal-btn"/);
+    assert.match(html, /can’t be cancelled/);
+});
+
+
+test('withdrawal recovery cannot set aside a balance even with a prepared journal', t => {
+    const modal = interruptedMutual(t);
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
+    zkapiClient.config.prepared_withdrawal.phase = 'prepared';
+    walletRuntime.runtime.preparedWithdrawal.phase = 'prepared';
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
+    walletRuntime.runtime.preparedWithdrawal.ambiguousSubmissions = [{ submissionId: 'unknown' }];
+    assert.doesNotMatch(modal.renderWithdrawal(), /id="zkapi-park-withdrawal-btn"/);
 });

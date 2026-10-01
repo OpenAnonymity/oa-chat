@@ -1,3 +1,35 @@
+## Withdrawal fee preflight and OA isolation (2026-09-30)
+
+Send ETH withdrawals check public fee data and the pending ETH balance before
+settling chat access, reserving server clearance, or preparing a withdrawal.
+The review shows a conservative fee reserve, available ETH, and a rounded-up
+six-decimal top-up. The fee-paying address appears only with that explanation
+when more ETH is needed. Deposit receipts and public-return controls stay off
+the withdrawal screen. Mutual close describes one server-approved transaction;
+escape describes the wait and two separately paid transactions.
+
+Exact calldata/gas is unavailable before server clearance and proof generation.
+The reserve therefore covers the SDK's supported per-transaction gas ceiling at
+current Low fee rates, twice for escape. It is explicitly not an exact fee or a
+charge; actual unused ETH remains browser-held. Escape finalization fees may
+change during the safety window. This intentionally overestimates rather than
+starting an underfunded close. MetaMask continues to quote and pay its own fees.
+
+Read-only checks refresh every 15 seconds; failed, stale, wrong-scope or pending
+checks cannot enable the action. A click checks again, and an increased reserve
+requires another review/click even with ample funds. The action checks again
+before any SDK work and caps its signed fee liability to the approved allowance.
+A market move or another tab spending ETH can still interrupt an in-flight
+withdrawal; preserve recovery, show neutral funding guidance, and never retry
+without an explicit action. Non-review recovery paths retain actionable top-up
+amount/address errors. No fee read creates a withdrawal or signs/broadcasts.
+
+In mixed OA/zkAPI mode, both restoration and explicit/asynchronous open requests
+require zkAPI mode after initial conversation restoration. Saved tab intent never
+overrides OA mode. Navigating to OA hides an open private dialog, even while an
+already-authorized operation finishes; it neither cancels nor forgets SDK work.
+Returning to zkAPI can recover the saved view. SDK records remain untouched.
+
 ## Recovery review (2026-09-29)
 
 The [browser payment recovery review](ZKAPI_RECOVERY_REVIEW.md) records the
@@ -79,7 +111,7 @@ the user’s own wallet address separately.
 
 ## 2026-09-22: Repeated reloads during deposit confirmation
 
-- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. Explicit same-tab intent can restore after navigation to an OA chat; unrelated SDK records still respect the zkAPI-mode gate. Restoration never submits or retries transactions.
+- An open deposit dialog now retains its tab-scoped view marker while a deposit or approval is awaiting a wallet/chain outcome, even after the action returned. Reopening keeps that marker until settlement or dismissal. All restoration, including explicit same-tab intent, respects the zkAPI-mode gate. Restoration never submits or retries transactions.
 
 ## 2026-09-21: Withdrawal reload and disclosure continuity
 
@@ -908,3 +940,60 @@ show confirmed deposit / refreshing balance, without claiming ready-to-chat or
 formatting a missing projection as zero. Their transient UI guard suppresses
 new funding/quote controls and clears only when the exact confirmed note ID
 arrives from the SDK. Wallet persistence and eligibility remain SDK-owned.
+
+### Withdrawal recovery clarity (2026-09-30)
+
+Send attempts with a withdrawal-reserved balance stay in chat and explain that
+Balance details holds recovery; they never reopen the dialog automatically.
+Funds remain blocked until the SDK resolves the withdrawal. A mutual-close server
+reservation cannot be cancelled, even without a transaction hash. Its dismissal
+is **Close** and explains that the withdrawal stays saved; **Cancel** is reserved
+for an unsubmitted escape with no reservation or unresolved submission history.
+The fresh mutual form discloses this before approval. Send ETH still checks its
+network-fee reserve before settling access or requesting server clearance.
+
+The balance card labels reserved funds directly, without a Withdrawing pill.
+The fee-address disclosure explains the browser-held ETH separately from private
+chat funds and omits a previous deposit's fee. Expiry help uses OA's shared
+`oa-panel-help` typography in both locations, with concise private-balance expiry
+copy (the service may claim the original deposit after expiry). Normal empty-key
+status inherits OA's wording after settlement; active settlement errors stay visible.
+
+### Compact fees and retryable fee reads (2026-09-30)
+
+The fee card keeps the reserve, available ETH and a short explanation visible;
+there is no reserve disclosure. Funded quotes refresh automatically. Check again
+appears on failure, and shortfalls retain the copyable address and Check for ETH.
+Ethereum block/history reads retry one complete anchored pair before failing.
+Validation is unchanged; no signing or broadcast is automatically retried. An
+`address_fee_data` failure is a neutral pause. A successful scoped fee read clears
+only that warning, without submitting or hiding an unrelated error.
+
+Set aside is no longer offered in the withdrawal dialog. The SDK can park
+prepared withdrawals, but its atomic guard does not cover all ambiguous-history
+states or bind the clicked UI identity across tabs. Removing this action avoids
+moving an unresolved or different balance from a stale dialog. Close preserves
+the withdrawal for later. Existing parked records remain accessible in history.
+Both methods share three progress markers; Send ETH uses browser-send wording.
+
+### Help behavior and withdrawal review layout (2026-09-30)
+
+Private billing and expiry explanations omit internal headings. System Panel help
+participates in OA's single-open controller alongside access-key and proxy help,
+including outside-click and Escape dismissal. The balance dialog coordinates its
+expiry help and billing guide, dismisses outside clicks, and removes document
+listeners on rerender/close. Escape closes help first before closing the dialog.
+
+The withdrawal amount includes ETH as well as available USD pricing. The mutual
+close warning sits directly beneath it. Fee checks preload from an open balance
+view; direct withdrawal entry keeps amount/status/action slots in place while
+loading. All submission gates still require a fresh funded quote. A shortfall
+shows **Add ETH**, which deliberately expands the copyable network/address
+instructions. Fee details never auto-submit. **Pause update** replaces Stop
+waiting in settlement feedback and explains that sending requires retrying the
+balance update; stopping does not discard recovery. Refresh says Balance updated.
+
+Balance readiness no longer adds a pill in the System Panel or balance dialog.
+Error/attention states use different outlined icons alongside text, while expiry
+and claim status remain in the existing explanatory lines. Expiry clock ticks
+still update the expired-balance notice without reintroducing a readiness badge.

@@ -282,7 +282,7 @@ test('composer and panel show Stop waiting then Retry for every settlement propo
             const action = phase === 'error' ? 'retry' : 'stop';
             for (const html of [element.innerHTML, panel]) {
                 assert.match(html, new RegExp(`data-zkapi-settlement-action="${action}"`));
-                assert.match(html, phase === 'error' ? />Retry<\/button>/ : />Stop waiting<\/button>/);
+                assert.match(html, phase === 'error' ? />Retry<\/button>/ : />Pause update<\/button>/);
                 if (phase === 'error') assert.doesNotMatch(html, /zkapi-state-spinner/);
             }
             if (phase === 'error') assert.equal(element.getAttribute('aria-busy'), 'false');
@@ -320,6 +320,8 @@ test('settlement controls forward runtime actions, prevent duplicate retry, and 
 });
 
 test('mixed payment shell renders recovery above the private composer and clears it for Tickets', async t => {
+    let privateModal;
+    t.mock.method(AccountModal.prototype, 'restorePendingOperation', function () { privateModal = this; });
     const originalDocument = globalThis.document;
     t.after(() => { globalThis.document = originalDocument; });
     const nodes = new Map();
@@ -362,8 +364,17 @@ test('mixed payment shell renders recovery above the private composer and clears
     ui.presentation.renderComposer();
     assert.match(status.innerHTML, /data-zkapi-settlement-action="retry"/);
     assert.equal(status.getAttribute('aria-busy'), 'false');
+    assert.equal(privateModal.canRestore({ hasSavedModal: true }), true);
     mode = 'tickets';
     ui.presentation.renderComposer();
+    assert.equal(privateModal.canRestore({ hasSavedModal: true }), false, 'saved intent cannot bypass OA mode');
+    assert.equal(privateModal.canOpen(), false, 'late payment-required events cannot open over OA');
+    mode = 'zkapi';
+    app.restoringInitialConversation = true;
+    assert.equal(privateModal.canRestore({ hasSavedModal: true }), false);
+    assert.equal(privateModal.canOpen(), false);
+    app.restoringInitialConversation = false;
+    mode = 'tickets';
     assert.equal(status.className, 'hidden');
     assert.equal(status.innerHTML, '');
     // Let wallet-method restoration finish while this test's DOM is mounted.
@@ -625,7 +636,7 @@ test('live UI facades render New Chat settlement state in sidebar and right pane
         message: 'Finished.'
     };
     assert.match(sidebar.buildSessionHTML(oldChat), /Private key settled/);
-    assert.equal(panel.getMissingApiKeyStatus().badge, 'Ready');
+    assert.deepEqual(panel.getMissingApiKeyStatus(), { label: 'Requested on message send', badge: 'Pending', badgeClass: 'bg-muted/30 text-muted-foreground' });
 });
 
 test('time-only ticks use a separate channel from semantic client changes', () => {
@@ -1545,7 +1556,7 @@ test('expiry alone keeps funds withdrawable; a confirmed treasury claim shows ze
         const claimedPanel = panel.billingSectionHTML();
         const claimedModal = modal.renderBalance();
         assert.match(claimedPanel, /Private balance:.*?\$0\.00/);
-        assert.match(claimedPanel, />claimed<\/span>/);
+        assert.match(claimedPanel, /Claimed after expiry/);
         assert.match(claimedModal, /Available<\/p>\s*<p[^>]*>\$0\.00/);
         for (const html of [claimedPanel, claimedModal]) {
             assert.match(html, /Claimed after expiry/);
@@ -1824,7 +1835,7 @@ test('capsule uses static hold and error endpoints without implying accepted suc
         }
     });
     renderZkapiComposerStatus(element, null, error);
-    assert.match(element.innerHTML, /zkapi-state-glyph--error/);
+    assert.match(element.innerHTML, /data-status-icon="attention"/);
     assert.match(element.innerHTML, /zkapi-capsule-origin--neutral/);
     assert.match(element.innerHTML, /zkapi-capsule-end--error/);
     assert.doesNotMatch(element.innerHTML, /✓|→/);

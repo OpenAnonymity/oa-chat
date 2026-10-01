@@ -220,11 +220,11 @@ test('Stop waiting aborts recovery and releases queued sends while preserving an
     const sending = h.runtime.prepareTurn({ sessionId: 'next' });
     await new Promise(resolve => setImmediate(resolve));
     h.runtime.stopSettlementWaiting();
-    await assert.rejects(sending, /Stopped waiting/);
+    await assert.rejects(sending, /Balance update paused/);
     assert.equal(recoverySignal.aborted, true);
     assert.equal(h.runtime.getTransition().phase, 'error');
     assert.equal(h.client.activeLease.session_id, 'previous');
-    await assert.rejects(h.runtime.retrySettlement(), /Stopped waiting/);
+    await assert.rejects(h.runtime.retrySettlement(), /Balance update paused/);
     assert.equal(calls, 1);
     held.resolve();
     await new Promise(resolve => setImmediate(resolve));
@@ -266,7 +266,7 @@ test('deletion owner discovery has a deadline and Stop waiting before any visibl
         await new Promise(resolve => setImmediate(resolve));
         assert.equal(h.runtime.getTransition().phase, 'settling');
         if (stop) h.runtime.stopSettlementWaiting();
-        await assert.rejects(deletion, stop ? /Stopped waiting/ : /could not finish in time/);
+        await assert.rejects(deletion, stop ? /Balance update paused/ : /could not finish in time/);
         assert.equal(h.runtime.getTransition().phase, 'error');
         assert.equal(h.calls.settlement, 0);
         held.resolve(null);
@@ -446,16 +446,19 @@ test('failed pre-response request discards its prompt preview without touching s
     assert.equal(h.saved.length, 1);
 });
 
-test('funding gate respects cancellation, unavailable funds and withdrawal recovery', async () => {
+test('withdrawal recovery blocks sends without repeatedly opening the dialog', async () => {
     const h = harness();
     assert.equal(await h.runtime.checkCanSend(), true);
     h.client.withdrawalBlocksChat = true;
     assert.equal(await h.runtime.checkCanSend(), false);
-    assert.equal(h.calls.funding, 1);
+    assert.equal(await h.runtime.checkCanSend(), false);
+    assert.equal(h.calls.funding, 0);
     const controller = new AbortController();
     controller.abort();
     await assert.rejects(h.runtime.checkCanSend({ signal: controller.signal }), /canceled/);
-    assert.equal(h.calls.funding, 1);
+    assert.equal(h.calls.funding, 0);
+    h.client.withdrawalBlocksChat = false;
+    assert.equal(await h.runtime.checkCanSend(), true, 'a safely cancelled withdrawal releases chat');
 });
 
 test('expired and treasury-claimed balances open recovery without granting private access', async () => {

@@ -1,3 +1,5 @@
+import { statusIcon } from './StatusIcon.js';
+import { setDisclosure } from '../../ui/uiMotion.js';
 import SharedRightPanel from '../../components/RightPanel.js';
 import { isIndexerLag, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
@@ -38,6 +40,22 @@ export default class RightPanel extends SharedRightPanel {
             return;
         }
         this.loadSessionData();
+    }
+
+    get zkapiBillingHelp() { return Boolean(this.privateBalanceHelpOpen?.billing); }
+    set zkapiBillingHelp(value) { (this.privateBalanceHelpOpen ||= {}).billing = value; }
+    get zkapiExpiryHelp() { return Boolean(this.privateBalanceHelpOpen?.expiry); }
+    set zkapiExpiryHelp(value) { (this.privateBalanceHelpOpen ||= {}).expiry = value; }
+
+    getHelpDisclosures() {
+        return [...super.getHelpDisclosures(),
+            ['zkapiBillingHelp', 'zkapi-panel-billing-help', 'zkapi-panel-billing-help-toggle'],
+            ['zkapiExpiryHelp', 'zkapi-panel-expiry-help', 'zkapi-panel-expiry-help-toggle']];
+    }
+
+    updateHelpDisclosure(panel, button, open) {
+        super.updateHelpDisclosure(panel, button, open);
+        if (panel?.dataset.zkapiHelpContent) setDisclosure(panel, open);
     }
 
     handleZkapiClock() {
@@ -235,7 +253,7 @@ export default class RightPanel extends SharedRightPanel {
                 : expired ? 'expired' : note
                     ? 'ready'
                     : 'not funded';
-        // Normal progress is a quiet line; warning pills are reserved for attention states.
+        // Balance readiness needs no badge. Progress and problems use plain text.
         const badgeBusy = !claimed && !hasError && experience.primary.busy && experience.primary.tone !== 'error';
         const walletWaiting = !claimed && !hasError && experience.primary.tone !== 'error'
             && statusBadge === walletMethodText('Waiting for MetaMask');
@@ -255,8 +273,9 @@ export default class RightPanel extends SharedRightPanel {
                         <span class="text-xs font-medium">Private balance: <span class="font-semibold">${balance}</span></span>
                         ${privateBalanceHelpButton('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                     </div>
-                    ${quietProgress ? '' : `<span ${note && !claimed && !hasError && !experience.primary.busy && !actionableState && experience.primary.tone !== 'error' ? 'data-private-balance-readiness' : ''} class="whitespace-nowrap rounded-full px-2 py-0.5 text-[9px] font-medium ${claimed ? 'bg-muted text-muted-foreground' : hasError || experience.primary.tone === 'error' ? 'bg-destructive/10 text-destructive' : actionableState || expired ? 'bg-muted text-muted-foreground' : note ? 'badge-status-success' : 'bg-muted text-muted-foreground'}">${claimed ? 'claimed' : hasError ? 'unavailable' : this.escapeHtml(statusBadge)}</span>`}
+
                 </div>
+                ${!hasError && experience.primary.tone === 'error' ? `<div class="zkapi-wallet-status" role="status">${statusIcon('attention')}<span>Needs attention</span></div>` : ''}
                 ${quietProgress ? `<div class="zkapi-wallet-status" role="status"><span class="${statusSpinning ? 'zkapi-pill-spinner' : 'zkapi-wallet-status-dot'}" aria-hidden="true"></span><span>${this.escapeHtml(statusBadge)}</span></div>` : ''}
                 ${privateBalanceHelpContent('panel', 'billing', this.privateBalanceHelpOpen?.billing)}
                 <div class="mt-3 h-1 overflow-hidden rounded-full bg-muted"><div class="zkapi-panel-bar-fill h-full rounded-full transition-all" style="width:${percent}%"></div></div>
@@ -272,7 +291,7 @@ export default class RightPanel extends SharedRightPanel {
                     <button id="zkapi-panel-fund" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">${note ? 'Balance details' : pendingDeposit ? 'Deposit status' : 'Add funds'}</button>
                     ${note && !claimed ? '<button id="zkapi-panel-withdraw" class="btn-ghost-hover inline-flex h-8 items-center justify-center rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-all">Withdraw</button>' : ''}
                 </div>
-                ${hasError ? `<p class="mt-2 text-[10px] leading-snug text-destructive">${this.escapeHtml(zkapiClient.lastError.message)}</p>` : ''}
+                ${hasError ? `<p class="zkapi-balance-error" role="status">${statusIcon()}<span>${this.escapeHtml(zkapiClient.lastError.message)}</span></p>` : ''}
             </div>
         `;
     }
@@ -294,13 +313,6 @@ export default class RightPanel extends SharedRightPanel {
                 badgeClass: 'bg-muted text-muted-foreground'
             };
         }
-        if (transition?.phase === 'ready') {
-            return {
-                label: 'Previous key closed · fresh key requested on send',
-                badge: 'Ready',
-                badgeClass: 'badge-status-success'
-            };
-        }
         if (transition?.phase === 'error') {
             return {
                 label: 'Previous key could not be closed',
@@ -308,7 +320,7 @@ export default class RightPanel extends SharedRightPanel {
                 badgeClass: 'bg-destructive/10 text-destructive'
             };
         }
-        return { label: 'Key created when you send', badge: 'Ready', badgeClass: 'badge-status-success' };
+        return super.getMissingApiKeyStatus();
     }
 
     attachTopSectionEventListeners() {

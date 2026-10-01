@@ -97,6 +97,33 @@ Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
   (`[aria-modal]` spanning ≥ 90% of the width and reaching the bottom). The
   loading toast has `role="status"`.
 
+## 2026-09-30: A deposit keeps one page; Send ETH holds its layout while the quote loads
+
+- **One page for a deposit in motion.** `depositInMotion()` (busy, journey
+  `deposit`, no note) makes `buildDialogMarkup` render only
+  `renderDepositInMotion()`: "Deposit $X", the steps, one action row, and
+  the address as a receipt (`renderFundingAccount(owner, { receipt: true })`).
+  It is the same page as a saved submitted/awaiting deposit, so when the SDK
+  persists `pending_deposit` nothing rearranges; `pageKey()` treats both as
+  `deposit-progress`. Before, the Send ETH run showed its status as a loose
+  line under the funding rows (the address branch rendered `renderProgress`
+  below everything), then jumped to the pending page. A real page change
+  fades in (`fadeInPage`) under the height glide.
+- **Send ETH steps say what the browser does.** `walletJourney` takes
+  `addressFunding`: deposit steps "Prepare funding address" → "Send the
+  deposit" → "Waiting for Ethereum confirmation", withdraw "Send your
+  withdrawal"; with Send ETH nothing is `waiting` on the person (the browser
+  signs), so "confirm in your funding account" is gone. First steps now have
+  a detail line too, so the list keeps its height as the current step moves.
+  The busy label for a deposit is "Depositing…" unless MetaMask is waiting.
+- **Nothing moves while the quote loads.** While a transfer is expected, the
+  QR keeps its footprint (`QR_PLACEHOLDER`), Deposit its place
+  (`DEPOSIT_PLACEHOLDER`, never `data-funding-next`) and the breakdown its
+  row (`BREAKDOWN_PLACEHOLDER`, not a `[data-funding-help]` row). The text
+  beside the QR has `min-height: 9.5rem` (8.5rem stacked on phones). The QR
+  fades in once when it replaces the placeholder (`revealFundingQr`).
+- The return explanation is back inside the row: the header is one line.
+
 ## 2026-09-30: Dialog height glides; buffer info; return cue in the header; reload keeps open rows
 
 - **Card resize.** `AccountModal.render()` reads the dialog's height before
@@ -5803,6 +5830,27 @@ Billing history supports verified presentment currency without changing the
 USD entitlement ledger. The backend creation flag stays off pending a separate
 checkout deployment and real sandbox-session checks. Independent review approved
 the disabled local implementation after configured-startup and Stripe CSP fixes.
+
+
+
+## 2026-09-30: Withdrawal fee review and strict payment-mode isolation
+
+- Send ETH withdrawal review now has one fee panel: conservative reserve,
+  available ETH and the additional amount/address only when needed. Deposit
+  receipts and public ETH return controls no longer clutter Withdraw. The
+  two close methods explain server approval versus a delayed two-transaction escape.
+- `WithdrawalFees.js` owns scoped, read-only budget polling and rejects late
+  responses after close, signer/mode changes or note replacement. Checks happen
+  before private access settlement and server clearance; increased fees require
+  another explicit click. The provider bounds signed withdrawal fee liability.
+- The reserve uses the SDK transaction gas ceiling because exact proof calldata
+  does not exist before withdrawal preparation. It is conservative, not an exact
+  fee; this limitation and the later escape fee are disclosed. MetaMask's fee
+  confirmation remains wallet-owned. See [payments](ZKAPI_PAYMENTS.md).
+- `createPaymentModeUi` gates saved and late dialog opens on the active zkAPI
+  mode. Moving to OA hides the dialog without canceling any authorized transaction
+  or clearing the SDK journal. An old same-tab marker cannot reopen over OA.
+
 ## 2026-09-30: Google handoff and external sign-in completion
 
 - Removed `maybeAutoUnlock` and its idle/timer startup scheduling. A remembered
@@ -5824,3 +5872,52 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
 - Regression coverage: `accountSignInCompletion.test.js` and
   `accountCompletionBroadcast.test.js`. Real Google and passkey prompts still
   require the staging browser acceptance test after this patch is integrated.
+
+
+## 2026-09-30: Withdrawal dismissal and quiet recovery
+
+- A blocked send no longer opens withdrawal recovery repeatedly. It stays blocked
+  with an explanatory message pointing to Balance details. Explicit balance-panel
+  actions still open recovery, and OA/zkAPI mode isolation remains enforced.
+- A reserved mutual close cannot restore spendability by clearing browser state.
+  The UI now discloses this before approval and labels dismissal Close. Only an
+  SDK-confirmed cancellable escape offers Cancel. Existing stranded balances need
+  their fee funded to finish (or the existing recovery options).
+- Removed the misleading withdrawing readiness pill, old-key success history, and
+  old deposit fee from the current fee-address explanation. Private expiry help
+  uses the same OA help class in panel and dialog.
+
+## 2026-09-30: Compact withdrawal fee review
+
+- Removed the reserve disclosure and funded-state refresh button; fee polling and
+  pre-submit validation remain. Shortfalls and failed reads keep explicit retry.
+- Fee data failures retry one validated block/history pair, then pause neutrally.
+  Successful refresh clears only the marked fee-read outcome, fixing the stale
+  red warning alongside a subsequently funded quote. No automatic transaction retry.
+- Removed Set aside from the withdrawal dialog, including its click handler:
+  the SDK park guard does not atomically cover all ambiguous-history cases or
+  validate the identity shown by a stale tab. Close still preserves recovery.
+  Existing parked records stay accessible. Shared progress markers are unchanged.
+
+## 2026-09-30: Exclusive help and stable withdrawal fee review
+
+- zkAPI billing/expiry help now shares OA's exclusive System Panel controller.
+  Modal help has scoped outside-click/Escape listeners with cleanup on rerender
+  and close. Explanations omit duplicate headings; main dialog titles remain.
+- Withdrawal amount and irreversible-close warning appear together. Fee data
+  preloads from Balance details, with stable rows on direct entry. Add ETH opens
+  transfer instructions only on request; fresh fee readiness still gates submit.
+- Settlement action says Pause update and uses theme colors; it still aborts only
+  waiting, preserving SDK recovery. Refresh feedback is Balance updated.
+- Leaving the withdrawal form invalidates any pending submission intent. A late
+  fee response may refresh the cache but cannot start a cancelled withdrawal,
+  even if the user has already reopened the form.
+
+## 2026-09-30: Balance status without pills
+
+The private-balance side panel and dialog omit ready/expired/claimed pills.
+Expiry and claim information remain in their existing text; clock updates still
+reveal the expired-balance notice. Problems retain readable labels: a triangle
+marks attention, while an octagon with a cross marks failures in balance errors,
+transaction steps and error outcomes. These SVGs are decorative and use theme
+colors. Loading spinners and normal OA access-key controls are unchanged.

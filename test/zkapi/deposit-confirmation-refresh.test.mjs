@@ -15,7 +15,8 @@ function fixture() {
         return '$12.00';
     }, isNativeEthFunding: true, quoteDepositUsd: async () => ({ ethAmount: '0.005' }) };
     const noop = () => {};
-    const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false,
+    const context = { refreshWithdrawalFees: noop, attachWithdrawalFees: noop,
+        attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false,
         parseTokenAmount, zkapiClient: client, getWalletMethod: () => 'metamask', walletMethodText: value => value,
         renderDepositAmount: () => '', prepareDepositAmount: async () => '0.005', renderWalletMethod: () => '', renderFundingAccount: () => '', fundingInstructionsVisible: () => false, syncWalletFlows: noop, attachWalletMethodControls: noop,
         captureWalletView: noop, restoreWalletView: noop, captureFundingDisclosureView: noop,

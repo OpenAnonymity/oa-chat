@@ -54,7 +54,7 @@ function settlementState(transition) {
             phase: 'closing',
             tone: 'working',
             title: 'Finishing previous chat',
-            detail: 'You can keep typing. Sending will wait until its balance update is complete.',
+            detail: 'Updating what you spent in the previous chat. New messages can send when this finishes.',
             compact: 'Finishing previous chat',
             busy: true,
             blocksSend: false
@@ -468,8 +468,8 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
     const closingPrimary = settlementNeedsAttention ? transitionState : closingState ? {
         ...closingState,
         phase: 'closing',
-        title: 'Closing previous chat',
-        compact: 'Closing previous chat'
+        title: 'Updating your balance',
+        compact: 'Updating your balance'
     } : null;
 
     const showComposer = Boolean(

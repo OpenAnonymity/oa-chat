@@ -70,3 +70,20 @@ test('deposit journey distinguishes unknown, checking, and submitted outcomes', 
     assert.equal(checking.label, 'Checking your deposit');
     assert.equal(checking.state, 'active');
 });
+
+test('with Send ETH the browser signs, so the steps say what it does and none waits on the person', () => {
+    let last = null;
+    const at = message => { const j = walletJourney({ kind: 'deposit', message, last, nativeEth: true, addressFunding: true }); last = j.position; return j; };
+    const preparing = at('Connecting to MetaMask…');
+    assert.deepEqual(preparing.steps.map(step => step.label), ['Prepare funding address', 'Send the deposit', 'Waiting for Ethereum confirmation']);
+    assert.doesNotMatch(JSON.stringify(preparing.steps), /MetaMask|confirm in your funding account/i);
+    const sending = at('Depositing into the private-note vault… confirm in MetaMask.');
+    assert.deepEqual(states(sending), ['connect:complete', 'deposit:active', 'chain:upcoming'], 'working, not waiting on anyone');
+    assert.match(sending.steps[1].detail, /This browser signs it/);
+    assert.deepEqual(states(at('Deposit submitted 0xabc… waiting for confirmation…')), ['connect:complete', 'deposit:complete', 'chain:active']);
+    const withdraw = walletJourney({ kind: 'withdraw', message: 'Confirm the mutual close in MetaMask…', addressFunding: true });
+    assert.equal(withdraw.steps[1].label, 'Send your withdrawal');
+    assert.equal(withdraw.steps[1].state, 'active');
+    assert.deepEqual(walletJourney({ kind: 'deposit', nativeEth: true }).steps.map(step => step.id), ['connect', 'deposit', 'chain'], 'MetaMask keeps its own steps');
+    assert.equal(walletJourney({ kind: 'deposit', nativeEth: true }).steps[1].label, 'Confirm the deposit in MetaMask');
+});

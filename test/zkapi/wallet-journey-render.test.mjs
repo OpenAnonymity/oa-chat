@@ -103,7 +103,7 @@ test('after a reload a prepared withdrawal draws the same steps from its persist
         const ready = modalWith().renderWithdrawal();
         assert.match(ready, /data-step="proof" data-state="complete"/);
         assert.match(ready, /id="zkapi-withdraw-btn" class="zkapi-primary-button" type="button" >Continue in MetaMask/);
-        assert.match(ready, /id="zkapi-park-withdrawal-btn"/, "a mutual close already holds a clearance: set aside, not cancel");
+        assert.doesNotMatch(ready, /id="zkapi-park-withdrawal-btn"/, "withdrawal recovery does not offer set aside");
     } finally { Object.assign(zkapiClient, original); }
 });
 
@@ -176,5 +176,35 @@ test('a canceled deposit retains any recovery plan that could not safely be clea
         assert.doesNotMatch(modal.rendered, /Saved in this browser/);
         assert.doesNotMatch(modal.rendered, /Try again with Ethereum wallet/);
         assert.match(modal.rendered, /Resume with MetaMask/);
+    } finally { Object.assign(zkapiClient, original); }
+});
+
+test('a deposit keeps one page from its first step to its confirmation', () => {
+    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
+    Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {}, pending_deposit: { phase: 'prepared', amount: 4_000_000 } }, withdrawal: null, withdrawals: [], lastError: null });
+    try {
+        const modal = modalWith({}, { view: 'fund', busy: true, journeyKind: 'deposit', status: 'Depositing into the private-note vault… confirm in MetaMask.', isOpen: true });
+        assert.equal(modal.depositInMotion(), true);
+        const running = modal.dialogMarkup();
+        assert.match(running, /aria-label="Deposit in progress"/);
+        assert.match(running, /<p class="zkapi-balance-caption">Deposit<\/p>/);
+        assert.match(running, /data-zkapi-journey data-kind="deposit"/);
+        assert.match(running, /data-step="deposit" data-state="waiting"/);
+        assert.match(running, /data-zkapi-busy-label>Waiting for MetaMask…/);
+        assert.doesNotMatch(running, /data-wallet-method|data-funding-amount|id="zkapi-deposit-btn"|zkapi-progress/, 'no amount field, method switch or loose status line while it runs');
+        assert.equal(modal.pageKey(), 'deposit-progress');
+
+        zkapiClient.config = { funding: {}, pending_deposit: { phase: 'submitted', amount: 4_000_000 } };
+        modal.status = 'Deposit submitted 0xabc… waiting for confirmation…';
+        const submitted = modal.dialogMarkup();
+        assert.match(submitted, /aria-label="Deposit in progress"/);
+        assert.match(submitted, /data-step="chain" data-state="active"/);
+        assert.equal(modal.pageKey(), 'deposit-progress', 'the SDK saving it does not change the page');
+
+        modal.busy = false;
+        modal.journeyKind = null;
+        zkapiClient.config = { funding: {} };
+        assert.notEqual(modal.pageKey(), 'deposit-progress');
+        assert.equal(modal.depositInMotion(), false);
     } finally { Object.assign(zkapiClient, original); }
 });

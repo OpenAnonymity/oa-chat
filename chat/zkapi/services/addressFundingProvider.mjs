@@ -520,17 +520,23 @@ export class AddressFundingProvider {
         if (gasLimit < 21_000n) throw fail('Invalid transaction gas limit.');
         let baseFee;
         let maxPriorityFeePerGas;
-        try {
-            const block = await this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]);
-            const blockNumber = feeQuantity(block?.number, MAX_NONCE);
-            const timestamp = feeQuantity(block?.timestamp, MAX_NONCE);
-            baseFee = feeQuantity(block?.baseFeePerGas);
-            const history = await this.rpc(ctx, 'eth_feeHistory', [hex(BigInt(LOW_FEE_HISTORY_BLOCKS)), hex(blockNumber), [LOW_FEE_REWARD_PERCENTILE]]);
-            maxPriorityFeePerGas = lowPriorityFee(history, blockNumber, baseFee);
-            const now = BigInt(Math.floor(Date.now() / 1000));
-            if (timestamp + MAX_FEE_BLOCK_AGE_SECONDS < now || timestamp > now + MAX_FEE_BLOCK_FUTURE_SECONDS) throw fail('Stale network fee history.');
-        } catch {
-            throw this.paymentFailure('address_fee_data');
+        // Retry the read pair once: an RPC replica can briefly lag the latest
+        // block. Each attempt still validates the full, anchored fee history.
+        // This never retries signing or broadcasting a transaction.
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const block = await this.rpc(ctx, 'eth_getBlockByNumber', ['latest', false]);
+                const blockNumber = feeQuantity(block?.number, MAX_NONCE);
+                const timestamp = feeQuantity(block?.timestamp, MAX_NONCE);
+                baseFee = feeQuantity(block?.baseFeePerGas);
+                const history = await this.rpc(ctx, 'eth_feeHistory', [hex(BigInt(LOW_FEE_HISTORY_BLOCKS)), hex(blockNumber), [LOW_FEE_REWARD_PERCENTILE]]);
+                maxPriorityFeePerGas = lowPriorityFee(history, blockNumber, baseFee);
+                const now = BigInt(Math.floor(Date.now() / 1000));
+                if (timestamp + MAX_FEE_BLOCK_AGE_SECONDS < now || timestamp > now + MAX_FEE_BLOCK_FUTURE_SECONDS) throw fail('Stale network fee history.');
+                break;
+            } catch {
+                if (attempt === 1) throw this.paymentFailure('address_fee_data');
+            }
         }
         // EIP-1559 bounds a full block's base-fee increase to 12.5%, with
         // a one-wei minimum. Low pricing uses recent low bids and only 25%
@@ -563,7 +569,7 @@ export class AddressFundingProvider {
         } else if (code === 'address_fee_data') {
             message = 'Unable to check Ethereum fees. Check your connection and try again. Nothing was sent.';
         } else if (code === 'address_fee_quote_changed') {
-            message = 'Fees changed. Review the new estimate, then click Deposit. Nothing was sent.';
+            message = 'Network fees changed. Review the fee allowance and try again. Nothing was sent.';
         } else throw fail('Unsupported payment failure.');
         const error = fail(message, code);
         if (requirement) error.fundingRequirement = copy(requirement);
@@ -572,6 +578,31 @@ export class AddressFundingProvider {
         // Retain object identity so an unrelated later error is never replaced.
         if (this.action) this.action.failure = { error, message };
         return error;
+    }
+
+    // Before server clearance/proof preparation, exact calldata does not exist.
+    // Budget the supported transaction ceiling, explicitly as a reserve rather
+    // than an exact fee. This reads public chain data only and never closes a note.
+    async getWithdrawalFeeBudget(mode = 'mutual') {
+        if (!['mutual', 'escape'].includes(mode)) throw fail('Invalid withdrawal method.');
+        const ctx = await this.context();
+        await this.reload();
+        const own = this.address;
+        if (!own || !this.unlocked) throw fail('Your payment address is not available in this browser.');
+        if (this.hasPendingTransaction) throw fail('Check your saved transaction before withdrawing.');
+        await this.assertChain(ctx);
+        const { fees } = await this.transactionFeeQuote(ctx, MAX_GAS);
+        const balance = uint(await this.rpc(ctx, 'eth_getBalance', [own, 'pending']), 'ETH balance');
+        await this.assertChain(ctx);
+        const transactionFeeWei = MAX_GAS * fees.maxFeePerGas;
+        // An escape needs a second, explicit transaction after the safety window.
+        const reserve = transactionFeeWei * (mode === 'escape' ? 2n : 1n);
+        uint(reserve, 'withdrawal reserve');
+        return { address: own, chainId: Number(ctx.chainId), mode,
+            balanceWei: balance.toString(), feeReserveWei: reserve.toString(),
+            transactionFeeWei: transactionFeeWei.toString(),
+            shortfallWei: (reserve > balance ? reserve - balance : 0n).toString(),
+            expiresAt: Date.now() + FEE_QUOTE_LIFETIME_MS };
     }
 
     async getDepositFeeQuote(intent, { isCurrent = () => true } = {}) {
@@ -775,7 +806,7 @@ export class AddressFundingProvider {
             if (estimate < 21_000n) throw fail('Invalid transaction gas estimate.');
             const gasLimit = maxEthReturn ? 21_000n : input.gas == null ? (estimate * 120n + 99n) / 100n : uint(input.gas, 'gas limit', MAX_GAS);
             if (gasLimit < estimate || gasLimit > MAX_GAS) throw fail('The gas limit is outside the allowed range.', 'transaction_gas_limit_exceeded');
-            const approvedFeeLimit = authorization.kind === 'deposit' && ctx.native ? authorization.feeLimitWei : null;
+            const approvedFeeLimit = (authorization.kind === 'deposit' && ctx.native) || authorization.kind === 'withdrawal' ? authorization.feeLimitWei : null;
             const { fees, minimumFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit, approvedFeeLimit);
             let reserve = fees.maxFeePerGas * gasLimit;
             if (authorization.kind === 'deposit' && ctx.native && authorization.feeLimitWei != null

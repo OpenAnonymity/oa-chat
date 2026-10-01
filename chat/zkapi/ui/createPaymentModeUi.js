@@ -55,6 +55,7 @@ export function createPaymentModeUi(runtime) {
             button.disabled = busy;
         }
         slideTabs(modeControl, previous);
+        if (mode !== 'zkapi' && privateBalance?.isOpen) privateBalance.close({ forModeChange: true });
         privateBalance?.restorePendingOperation();
         renderSettlementComposer();
     }
@@ -108,10 +109,9 @@ export function createPaymentModeUi(runtime) {
             privateBalance = new ZkapiAccountModal(app, {
                 triggerId: null,
                 overlayId: 'payment-balance-modal',
-                // Explicit same-tab dialog intent survives a restored OA chat.
-                // Without it, do not surface unrelated zkAPI work over OA.
-                canRestore: ({ hasSavedModal = false } = {}) => !app.restoringInitialConversation
-                    && (hasSavedModal || runtime.getMode() === 'zkapi')
+                // Saved presentation intent never overrides the current payment mode.
+                canOpen: () => !app.restoringInitialConversation && runtime.getMode() === 'zkapi',
+                canRestore: () => !app.restoringInitialConversation && runtime.getMode() === 'zkapi'
             });
             privateBalance.updateTabIndicator = renderControls;
             renderControls();

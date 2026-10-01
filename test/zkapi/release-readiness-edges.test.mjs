@@ -49,7 +49,7 @@ test('background balance render retains invalid amount and associated error', t 
     for (let refresh = 0; refresh < 3; refresh += 1) {
         const html = modal.renderBalance();
         assert.match(html, /id="zkapi-deposit-amount"[^>]*aria-invalid="true"[^>]*aria-describedby="zkapi-deposit-error"[^>]*value="0"/);
-        assert.match(html, /id="zkapi-deposit-error" role="alert"[^>]*>Enter an amount greater than zero\./);
+        assert.match(html, /id="zkapi-deposit-error" role="alert"[^>]*>[\s\S]*Enter an amount greater than zero\./);
     }
 });
 

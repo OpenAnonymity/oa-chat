@@ -27,6 +27,7 @@ function fixture(t, extra = {}) {
         if (nativeDescriptor) Object.defineProperty(zkapiClient, 'isNativeEthFunding', nativeDescriptor);
         else delete zkapiClient.isNativeEthFunding;
     });
+    t.mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', async () => ({ shortfallWei: '0', transactionFeeWei: '100', feeReserveWei: '200' }));
     const authorizations = [];
     t.mock.method(addressFundingWallet, 'withAuthorizedAction', async (authorization, action) => {
         authorizations.push(authorization);
@@ -121,7 +122,7 @@ test('prepared withdrawal destination and mode take precedence over edited input
     const { owner, authorizations } = fixture(t, { config: { funding, prepared_withdrawal: { destination: savedRecipient, mode: 'escape' } } });
     assert.equal(withdrawalDestination(owner), savedRecipient);
     await runAddressAction(owner, { kind: 'withdraw', phase: 'wallet' }, () => {}, async () => {});
-    assert.deepEqual(authorizations, [{ kind: 'withdrawal', destination: savedRecipient, mode: 'escape', noteId: 7 }]);
+    assert.deepEqual(authorizations, [{ kind: 'withdrawal', feeLimitWei: '100', destination: savedRecipient, mode: 'escape', noteId: 7 }]);
 });
 
 test('background withdrawal retry uses its own persisted destination, note and mode', async t => {
@@ -129,7 +130,7 @@ test('background withdrawal retry uses its own persisted destination, note and m
         withdrawals: [{ recordId: 'background-9', destination: savedRecipient, noteId: 9, mode: 'escape' }]
     });
     await runAddressAction(owner, { kind: 'withdraw', phase: 'wallet', withdrawalRecordId: 'background-9' }, () => {}, async () => {});
-    assert.deepEqual(authorizations, [{ kind: 'withdrawal', destination: savedRecipient, mode: 'escape', noteId: 9 }]);
+    assert.deepEqual(authorizations, [{ kind: 'withdrawal', feeLimitWei: '100', destination: savedRecipient, mode: 'escape', noteId: 9 }]);
 });
 
 test('explicit escape recovery authorizes escape while retaining the interrupted mutual destination', async t => {
@@ -137,7 +138,7 @@ test('explicit escape recovery authorizes escape while retaining the interrupted
         prepared_withdrawal: { destination: savedRecipient, mode: 'mutual', phase: 'reserving' } } });
     owner.withdrawMode = 'escape';
     await runAddressAction(owner, { kind: 'escape', phase: 'settling' }, () => {}, async () => {});
-    assert.deepEqual(authorizations, [{ kind: 'withdrawal', destination: savedRecipient, mode: 'escape', noteId: 7 }]);
+    assert.deepEqual(authorizations, [{ kind: 'withdrawal', feeLimitWei: '100', destination: savedRecipient, mode: 'escape', noteId: 7 }]);
 });
 
 test('finalization authorizes the selected saved note rather than the active note', async t => {
@@ -197,5 +198,23 @@ test('unsafe native pending and changed prepared operations cannot fall back to 
     await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /saved deposit status/);
     zkapiClient.config.pending_deposit.funding_quote_available = true;
     await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /saved deposit changed/);
+    assert.deepEqual(authorizations, []);
+});
+
+test('an unfunded withdrawal is rejected before settlement, proof or signer authorization', async t => {
+    const { owner, authorizations } = fixture(t);
+    t.mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', async () => ({ shortfallWei: '50', chainId: 1, address: recipient }));
+    let starts = 0;
+    await assert.rejects(runAddressAction(owner, { kind: 'withdraw' }, () => {}, async () => { starts++; }), /ETH more/);
+    assert.equal(starts, 0);
+    assert.deepEqual(authorizations, []);
+});
+
+test('a fee increase requires review before any withdrawal work starts', async t => {
+    const { owner, authorizations } = fixture(t);
+    owner.withdrawalFees = { quote: { feeReserveWei: '150' } };
+    let starts = 0;
+    await assert.rejects(runAddressAction(owner, { kind: 'withdraw' }, () => {}, async () => { starts++; }), /fees changed/);
+    assert.equal(starts, 0);
     assert.deepEqual(authorizations, []);
 });

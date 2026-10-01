@@ -80,7 +80,7 @@ test('ticket funding preserves controls and private closure recovery after failu
             assert.match(html, /Recovery record saved\. &lt;Try later&gt;/);
             assert.doesNotMatch(html, /zkapi-state-spinner/);
         } else if (['settling', 'waiting'].includes(phase)) {
-            assert.match(html, /Closing previous chat/);
+            assert.match(html, /Updating your balance/);
         }
         assert.match(html, /role="status" aria-live="polite"/);
         assert.doesNotMatch(html, /Ready for a new chat|Sending will wait|<Try later>/);
@@ -226,7 +226,7 @@ for (const commercial of [false, true]) {
                     assert.match(html, /04:12/);
                     assert.equal(panel.getKeyDisplayInfo().hoverContentHtml, null);
                 } else {
-                    assert.ok(html.includes(mode === 'tickets' ? 'Requested on message send' : 'Key created when you send'));
+                    assert.ok(html.includes('Requested on message send'));
                     assert.match(html, /To be assigned/);
                 }
                 assert.ok(html.indexOf('Ephemeral Access Key') < html.indexOf('Network Proxy'));

@@ -1,3 +1,4 @@
+import { statusIcon } from '../../chat/zkapi/components/StatusIcon.js';
 import { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore } from '../../chat/zkapi/components/WalletModalView.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -58,7 +59,7 @@ function fixture(t, { method = 'metamask', input = '10', currency = 'usd' } = {}
                 records.set(key, value); return true;
             } },
         renderFundingPaymentQr: options => { effects.qr.push(options); return '<svg data-test-qr></svg>'; },
-        prepareWalletMethod: async () => { effects.authorizations++; }, walletMethodText: value => value,
+        prepareWalletMethod: async () => { effects.authorizations++; }, walletMethodText: value => value, statusIcon,
         fundingSetupGuide: () => '', pendingDepositMessage: () => '', isIndexerLag: () => false,
         document: { activeElement: null }, queueMicrotask, setTimeout, clearTimeout
     };
