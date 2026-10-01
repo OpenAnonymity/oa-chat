@@ -70,9 +70,9 @@ test('System Panel keeps closure actionable while waiting and after failure', ()
         for (const phase of ['settling', 'waiting']) {
             const html = renderPanel({ config: { ux_proposal: proposal }, transition: { phase } });
             assert.match(html, /zkapi-panel-experience/);
-            assert.match(html, /<strong>Closing previous chat<\/strong>/);
+            assert.match(html, /<strong>Updating your balance<\/strong>/);
             assert.match(html, /data-zkapi-settlement-action="stop"/);
-            assert.match(html, />Stop waiting<\/button>/);
+            assert.match(html, />Pause update<\/button>/);
         }
         for (const phase of [null, 'ready', 'error']) {
             const html = renderPanel({ config: { ux_proposal: proposal },
@@ -98,7 +98,7 @@ test('concurrent wallet work keeps its badge while the separate card describes c
     const activities = [{ kind: 'deposit', phase: 'wallet', status: 'waiting',
         title: 'Adding funds', message: 'Confirm in MetaMask.' }];
     const html = renderPanel({ activities, transition: { phase: 'waiting' } });
-    assert.match(html, /<strong>Closing previous chat<\/strong>/);
+    assert.match(html, /<strong>Updating your balance<\/strong>/);
     assert.match(html, /send automatically/);
     // Wallet work keeps its spinner and visible text without a warning pill.
     assert.match(html, /class="zkapi-wallet-status" role="status"/);
@@ -113,7 +113,7 @@ test('concurrent wallet work keeps its badge while the separate card describes c
 test('standalone settlement activity removes its card when the operation finishes', () => {
     const activity = { kind: 'settlement', phase: 'syncing', status: 'running',
         title: 'Finishing previous chat', message: 'Closing its temporary key.' };
-    assert.match(renderPanel({ activities: [activity] }), /<strong>Closing previous chat<\/strong>/);
+    assert.match(renderPanel({ activities: [activity] }), /<strong>Updating your balance<\/strong>/);
     for (const status of ['success', 'error', 'canceled']) {
         assert.doesNotMatch(renderPanel({ activities: [{ ...activity, status }] }), /zkapi-panel-experience/);
     }

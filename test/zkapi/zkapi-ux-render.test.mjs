@@ -282,7 +282,7 @@ test('composer and panel show Stop waiting then Retry for every settlement propo
             const action = phase === 'error' ? 'retry' : 'stop';
             for (const html of [element.innerHTML, panel]) {
                 assert.match(html, new RegExp(`data-zkapi-settlement-action="${action}"`));
-                assert.match(html, phase === 'error' ? />Retry<\/button>/ : />Stop waiting<\/button>/);
+                assert.match(html, phase === 'error' ? />Retry<\/button>/ : />Pause update<\/button>/);
                 if (phase === 'error') assert.doesNotMatch(html, /zkapi-state-spinner/);
             }
             if (phase === 'error') assert.equal(element.getAttribute('aria-busy'), 'false');

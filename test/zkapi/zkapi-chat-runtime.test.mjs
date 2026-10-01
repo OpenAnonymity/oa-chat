@@ -220,11 +220,11 @@ test('Stop waiting aborts recovery and releases queued sends while preserving an
     const sending = h.runtime.prepareTurn({ sessionId: 'next' });
     await new Promise(resolve => setImmediate(resolve));
     h.runtime.stopSettlementWaiting();
-    await assert.rejects(sending, /Stopped waiting/);
+    await assert.rejects(sending, /Balance update paused/);
     assert.equal(recoverySignal.aborted, true);
     assert.equal(h.runtime.getTransition().phase, 'error');
     assert.equal(h.client.activeLease.session_id, 'previous');
-    await assert.rejects(h.runtime.retrySettlement(), /Stopped waiting/);
+    await assert.rejects(h.runtime.retrySettlement(), /Balance update paused/);
     assert.equal(calls, 1);
     held.resolve();
     await new Promise(resolve => setImmediate(resolve));
@@ -266,7 +266,7 @@ test('deletion owner discovery has a deadline and Stop waiting before any visibl
         await new Promise(resolve => setImmediate(resolve));
         assert.equal(h.runtime.getTransition().phase, 'settling');
         if (stop) h.runtime.stopSettlementWaiting();
-        await assert.rejects(deletion, stop ? /Stopped waiting/ : /could not finish in time/);
+        await assert.rejects(deletion, stop ? /Balance update paused/ : /could not finish in time/);
         assert.equal(h.runtime.getTransition().phase, 'error');
         assert.equal(h.calls.settlement, 0);
         held.resolve(null);

@@ -5790,3 +5790,17 @@ the disabled local implementation after configured-startup and Stripe CSP fixes.
   the SDK park guard does not atomically cover all ambiguous-history cases or
   validate the identity shown by a stale tab. Close still preserves recovery.
   Existing parked records stay accessible. Shared progress markers are unchanged.
+
+## 2026-09-30: Exclusive help and stable withdrawal fee review
+
+- zkAPI billing/expiry help now shares OA's exclusive System Panel controller.
+  Modal help has scoped outside-click/Escape listeners with cleanup on rerender
+  and close. Explanations omit duplicate headings; main dialog titles remain.
+- Withdrawal amount and irreversible-close warning appear together. Fee data
+  preloads from Balance details, with stable rows on direct entry. Add ETH opens
+  transfer instructions only on request; fresh fee readiness still gates submit.
+- Settlement action says Pause update and uses theme colors; it still aborts only
+  waiting, preserving SDK recovery. Refresh feedback is Balance updated.
+- Leaving the withdrawal form invalidates any pending submission intent. A late
+  fee response may refresh the cache but cannot start a cancelled withdrawal,
+  even if the user has already reopened the form.

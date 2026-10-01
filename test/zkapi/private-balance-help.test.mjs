@@ -11,7 +11,7 @@ function helpRoot(scope = 'panel') {
     // Model that DOM contract so this test exercises the real disclosure path.
     const panel = () => {
         const classes = new Set(['hidden']);
-        return { hidden: true, inert: true, classList: {
+        return { hidden: true, inert: true, contains: () => false, classList: {
             toggle(name, on) { if (on) classes.add(name); else classes.delete(name); },
             contains(name) { return classes.has(name); }
         } };
@@ -22,6 +22,7 @@ function helpRoot(scope = 'panel') {
         return {
             id: `zkapi-${scope}-${kind}-help-toggle`, dataset: { zkapiHelp: kind },
             attributes: new Map(), focusCount: 0,
+            contains(element) { return element === this; },
             addEventListener: (type, listener) => listeners.set(type, listener),
             click: () => listeners.get('click')?.(),
             setAttribute(name, value) { this.attributes.set(name, value); },
@@ -32,6 +33,7 @@ function helpRoot(scope = 'panel') {
         contains: element => buttons.includes(element),
         querySelectorAll: () => buttons,
         querySelector(selector) {
+            if (selector.startsWith('[data-zkapi-help-guide')) return null;
             if (selector.startsWith('#')) return buttons.find(button => `#${button.id}` === selector);
             return content[selector.match(/="(\w+)"/)?.[1]];
         }
@@ -52,6 +54,7 @@ test('billing and expiry help have distinct accessible controls and truthful wit
     }
     const expiry = privateBalanceHelpContent('panel', 'expiry', true);
     assert.match(expiry, /oa-panel-help/);
+    assert.doesNotMatch(expiry, /font-medium|<h[1-6]|<strong/);
     assert.match(expiry, /Withdraw your unused balance before it expires/);
     assert.match(expiry, /Funds are not returned automatically/);
     assert.match(expiry, /service can claim the full original deposit/);
@@ -60,7 +63,7 @@ test('billing and expiry help have distinct accessible controls and truthful wit
     assert.match(privateBalanceGuide('billing'), /No account or Google sign-in is required/);
 });
 
-test('help clicks patch only their own disclosure and preserve independent open preferences', () => {
+test('help opens one explanation at a time without rebuilding the surface', () => {
     const root = helpRoot();
     const owner = {};
     attachPrivateBalanceHelp(root, owner);
@@ -71,8 +74,6 @@ test('help clicks patch only their own disclosure and preserve independent open 
     assert.equal(root.content.expiry.hidden, true);
     assert.equal(root.buttons[0].attributes.get('aria-expanded'), 'true');
     root.buttons[1].click();
-    assert.deepEqual(owner.privateBalanceHelpOpen, { billing: true, expiry: true });
-    root.buttons[0].click();
     assert.deepEqual(owner.privateBalanceHelpOpen, { billing: false, expiry: true });
     assert.equal(root.content.billing.hidden, true);
     assert.equal(root.content.billing.inert, true);
@@ -122,4 +123,58 @@ test('crossing the expiry deadline patches only readiness and the unclaimed-bala
     assert.equal(notice.hidden, false);
     assert.equal(classes.has('badge-status-success'), false);
     assert.equal(classes.has('zkapi-pill--neutral'), true, 'expired is a neutral state, never yellow');
+});
+
+
+test('modal help dismisses on outside click or Escape and detaches old listeners', () => {
+    const root = helpRoot('modal');
+    const listeners = new Map();
+    root.ownerDocument = {
+        addEventListener(type, listener) { listeners.set(type, listener); },
+        removeEventListener(type, listener) { if (listeners.get(type) === listener) listeners.delete(type); }
+    };
+    const owner = {};
+    attachPrivateBalanceHelp(root, owner);
+    root.buttons[0].click();
+    listeners.get('click')({ target: root.buttons[0] });
+    assert.equal(owner.privateBalanceHelpOpen.billing, true);
+    listeners.get('click')({ target: {} });
+    assert.equal(owner.privateBalanceHelpOpen.billing, false);
+    root.buttons[1].click();
+    let prevented = false;
+    listeners.get('keydown')({ key: 'Escape', target: root.buttons[1], preventDefault() { prevented = true; }, stopImmediatePropagation() {} });
+    assert.equal(prevented, true);
+    assert.equal(owner.privateBalanceHelpOpen.expiry, false);
+    assert.equal(root.buttons[1].focusCount, 1);
+    owner.disposePrivateBalanceHelp();
+    assert.equal(listeners.size, 0);
+});
+
+
+test('private panel help uses OA exclusivity across billing, expiry, key and proxy', async t => {
+    const { default: RightPanel } = await import('../../chat/zkapi/components/RightPanel.js');
+    const panel = Object.create(RightPanel.prototype);
+    panel.preserveHelpAnchor = () => {};
+    const nodes = new Map();
+    for (const [, contentId, buttonId] of panel.getHelpDisclosures()) {
+        nodes.set(contentId, { dataset: contentId.includes('zkapi') ? { zkapiHelpContent: 'help' } : {},
+            setAttribute() {}, classList: { toggle() {} } });
+        nodes.set(buttonId, { setAttribute() {} });
+    }
+    const previous = globalThis.document;
+    globalThis.document = { getElementById: id => nodes.get(id) };
+    t.after(() => { globalThis.document = previous; });
+    panel.togglePanelHelp('zkapiBillingHelp');
+    assert.equal(panel.privateBalanceHelpOpen.billing, true);
+    panel.togglePanelHelp('showAccessKeyInfo');
+    assert.equal(panel.privateBalanceHelpOpen.billing, false);
+    assert.equal(panel.showAccessKeyInfo, true);
+    panel.togglePanelHelp('zkapiExpiryHelp');
+    assert.equal(panel.showAccessKeyInfo, false);
+    assert.equal(panel.privateBalanceHelpOpen.expiry, true);
+    panel.togglePanelHelp('showProxyInfo');
+    assert.equal(panel.privateBalanceHelpOpen.expiry, false);
+    assert.equal(panel.showProxyInfo, true);
+    panel.setOpenHelp();
+    assert.equal(panel.showProxyInfo, false);
 });

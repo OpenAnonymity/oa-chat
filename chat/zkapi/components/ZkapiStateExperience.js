@@ -86,7 +86,7 @@ function renderActivityRows(state, escapeHtml = escapeFallback, limit = 4) {
 function renderSettlementAction(state) {
     const action = state.settlementAction;
     if (!['stop', 'retry'].includes(action)) return '';
-    return `<button type="button" class="btn-ghost-hover rounded-md border border-border px-2 py-1 text-xs" data-zkapi-settlement-action="${action}" aria-label="${action === 'stop' ? 'Stop waiting for previous chat' : 'Retry finishing previous chat'}">${action === 'stop' ? 'Stop waiting' : 'Retry'}</button>`;
+    return `<button type="button" class="zkapi-settlement-action" data-zkapi-settlement-action="${action}" aria-label="${action === 'stop' ? 'Pause the balance update; messages will not send until you retry' : 'Retry finishing previous chat'}">${action === 'stop' ? 'Pause update' : 'Retry'}</button>`;
 }
 
 export function attachZkapiSettlementActions(element, app) {

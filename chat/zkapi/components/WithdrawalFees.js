@@ -20,11 +20,12 @@ export function stopWithdrawalFees(owner) {
     clearTimeout(owner.withdrawalFeeTimer);
     owner.withdrawalFeeTimer = null;
     owner.withdrawalFees = null;
+    owner.withdrawalFeeTopUp = null;
 }
 
 export function needsWithdrawalFees(owner) {
     const prepared = zkapiClient.config?.prepared_withdrawal;
-    return owner.isOpen && owner.view === 'withdraw' && getWalletMethod() === 'address'
+    return owner.isOpen && ['balance', 'withdraw'].includes(owner.view) && getWalletMethod() === 'address'
         && zkapiClient.note && !zkapiClient.activeLateWithdrawal
         && zkapiClient.withdrawal?.phase !== 'pending'
         && !prepared?.transaction_hash
@@ -49,7 +50,7 @@ export async function refreshWithdrawalFees(owner, { force = false } = {}) {
         // transaction error or an increased-fee approval requirement.
         if (owner.outcome?.withdrawalFeeIssue === 'address_fee_data') owner.clearTransientOutcome();
     } catch {
-        state.error = 'Couldn’t check the fee or available ETH. Check your connection and try again.';
+        state.error = 'Couldn’t check fees. Try again.';
     } finally {
         state.loading = false;
         if (owner.withdrawalFees === state && scope === withdrawalFeeScope(owner) && needsWithdrawalFees(owner)) {
@@ -71,25 +72,37 @@ export function renderWithdrawalFees(owner) {
         const unit = 1_000_000_000_000n;
         return renderFundingWei(owner, ((wei + (up ? unit - 1n : 0n)) / unit * unit).toString());
     };
-    const heading = '<p class="zkapi-balance-caption">ETH for the network fee</p>';
-    const explanation = '<p class="zkapi-helper">Separate from your private balance. Actual fees may be lower; unused ETH stays here.</p>';
-    if (!quote) return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee">${heading}
-        <p class="zkapi-helper" role="status">${state?.error || 'Checking the fee reserve and available ETH…'}</p>
-        ${state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button" type="button">Check again</button>' : ''}</section>`;
-    const short = BigInt(quote.shortfallWei) > 0n;
-    return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee">${heading}
-        <dl class="zkapi-funding-breakdown"><div><dt>${quote.mode === 'escape' ? 'Reserve for both transactions' : 'Fee reserve to start'}</dt><dd>${amount(quote.feeReserveWei)}</dd></div>
-        <div><dt>Already available</dt><dd>${amount(quote.balanceWei, false)}</dd></div></dl>
-        ${explanation}${quote.mode === 'escape' ? '<p class="zkapi-helper">Includes both transactions. Fees may change during the wait.</p>' : ''}
-        <p class="zkapi-helper" role="status">${state.error ? escape(state.error) : state.loading ? 'Updating fee and balance…' : short ? `Add ${amount(quote.shortfallWei)} to continue.` : 'Fee covered.'}</p>
-        ${short ? `<p class="zkapi-note">Send the additional ETH on ${escape(zkapiClient.networkName())} to this fee-paying address:</p>
-        <div class="zkapi-funding-address"><div class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" aria-label="Fee-paying address">${escape(quote.address)}</div>
-        <button data-withdrawal-fee-copy class="zkapi-secondary-button" type="button">Copy</button></div>` : ''}
-        ${short || state.error ? `<button data-withdrawal-fee-refresh class="zkapi-quiet-button" type="button" ${state.loading || owner.busy ? 'disabled' : ''}>${short ? 'Check for ETH' : 'Check again'}</button>` : ''}
+    const short = quote && BigInt(quote.shortfallWei) > 0n;
+    const loading = !quote && !state?.error;
+    const placeholder = '<span class="zkapi-fee-placeholder" aria-label="Loading">—</span>';
+    const status = state?.error ? escape(state.error) : state?.loading || loading ? 'Checking available ETH…'
+        : short ? `You need ${amount(quote.shortfallWei).split(' <span>')[0]} more.` : 'You have enough ETH for the fee.';
+    const expanded = short && owner.withdrawalFeeTopUp === state.scope;
+    return `<section class="zkapi-withdrawal-fees" aria-label="Withdrawal network fee" aria-busy="${Boolean(state?.loading || loading)}">
+        <p class="zkapi-balance-caption">ETH needed for fees</p>
+        <dl class="zkapi-funding-breakdown">
+            <div><dt>${owner.withdrawMode === 'escape' ? 'Needed for both steps' : 'Needed to start'}</dt><dd>${quote ? amount(quote.feeReserveWei) : placeholder}</dd></div>
+            <div><dt>Available for fees</dt><dd>${quote ? amount(quote.balanceWei, false) : placeholder}</dd></div>
+        </dl>
+        <p class="zkapi-fee-explanation">Paid separately from your private balance. This is a fee allowance; unused ETH stays in your browser’s address.</p>
+        <div class="zkapi-fee-result"><p role="status">${status}</p>
+            <div class="zkapi-fee-action">${state?.error ? '<button data-withdrawal-fee-refresh class="zkapi-secondary-button" type="button">Try again</button>'
+                : short ? `<button data-withdrawal-fee-topup class="zkapi-secondary-button" type="button" aria-expanded="${expanded}">${expanded ? 'Hide address' : 'Add ETH'}</button>`
+                : '<button class="zkapi-secondary-button" type="button" disabled style="visibility:hidden" aria-hidden="true" tabindex="-1">Add ETH</button>'}</div>
+        </div>
+        ${expanded ? `<div class="zkapi-fee-topup"><p class="zkapi-note">Send ${amount(quote.shortfallWei)} on ${escape(zkapiClient.networkName())} to this address, then check again:</p>
+            <div class="zkapi-funding-address"><div class="zkapi-funding-address-value" role="textbox" aria-readonly="true" tabindex="0" aria-label="Fee-paying address">${escape(quote.address)}</div>
+            <button data-withdrawal-fee-copy class="zkapi-secondary-button" type="button">Copy</button></div>
+            <button data-withdrawal-fee-refresh class="zkapi-quiet-button" type="button" ${state?.loading ? 'disabled' : ''}>Check for ETH</button></div>` : ''}
     </section>`;
 }
 
 export function attachWithdrawalFees(owner) {
+    owner.overlay.querySelector('[data-withdrawal-fee-topup]')?.addEventListener('click', () => {
+        const scope = withdrawalFeeScope(owner);
+        owner.withdrawalFeeTopUp = owner.withdrawalFeeTopUp === scope ? null : scope;
+        owner.render();
+    });
     owner.overlay.querySelector('[data-withdrawal-fee-refresh]')?.addEventListener('click', () => {
         void refreshWithdrawalFees(owner, { force: true });
         owner.render();

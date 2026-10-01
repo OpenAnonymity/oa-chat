@@ -975,3 +975,20 @@ states or bind the clicked UI identity across tabs. Removing this action avoids
 moving an unresolved or different balance from a stale dialog. Close preserves
 the withdrawal for later. Existing parked records remain accessible in history.
 Both methods share three progress markers; Send ETH uses browser-send wording.
+
+### Help behavior and withdrawal review layout (2026-09-30)
+
+Private billing and expiry explanations omit internal headings. System Panel help
+participates in OA's single-open controller alongside access-key and proxy help,
+including outside-click and Escape dismissal. The balance dialog coordinates its
+expiry help and billing guide, dismisses outside clicks, and removes document
+listeners on rerender/close. Escape closes help first before closing the dialog.
+
+The withdrawal amount includes ETH as well as available USD pricing. The mutual
+close warning sits directly beneath it. Fee checks preload from an open balance
+view; direct withdrawal entry keeps amount/status/action slots in place while
+loading. All submission gates still require a fresh funded quote. A shortfall
+shows **Add ETH**, which deliberately expands the copyable network/address
+instructions. Fee details never auto-submit. **Pause update** replaces Stop
+waiting in settlement feedback and explains that sending requires retrying the
+balance update; stopping does not discard recovery. Refresh says Balance updated.

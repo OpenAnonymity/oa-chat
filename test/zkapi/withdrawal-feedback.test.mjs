@@ -31,7 +31,7 @@ function fixture(t, { prepared = null, balance = note.current_balance, native = 
 test('withdrawal amount does not claim funds were already returned before submission', t => {
     const modal = fixture(t);
     const html = modal.renderWithdrawal();
-    assert.match(html, /Amount to withdraw/);
+    assert.match(html, /You withdraw/);
     assert.match(html, /To your MetaMask account\. MetaMask pays the network fee\./);
     assert.doesNotMatch(html, /Returned to MetaMask/);
 });

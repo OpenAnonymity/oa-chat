@@ -308,7 +308,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
         getTransition: () => transition,
         stopSettlementWaiting() {
             retirementController?.abort(new Error(
-                'Stopped waiting for private access. Your recovery record is saved. Retry when the temporary-key service is available.'
+                'Balance update paused. Choose Retry to finish updating your balance before sending a message.'
             ));
         },
         retrySettlement() {

@@ -80,7 +80,7 @@ test('ticket funding preserves controls and private closure recovery after failu
             assert.match(html, /Recovery record saved\. &lt;Try later&gt;/);
             assert.doesNotMatch(html, /zkapi-state-spinner/);
         } else if (['settling', 'waiting'].includes(phase)) {
-            assert.match(html, /Closing previous chat/);
+            assert.match(html, /Updating your balance/);
         }
         assert.match(html, /role="status" aria-live="polite"/);
         assert.doesNotMatch(html, /Ready for a new chat|Sending will wait|<Try later>/);

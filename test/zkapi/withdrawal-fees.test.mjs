@@ -35,9 +35,9 @@ test('insufficient ETH prevents the first withdrawal action and renders one neut
     await owner.submitWithdrawal();
     assert.equal(run.mock.callCount(), 0);
     const html = owner.renderWithdrawal();
-    assert.match(html, /Fee reserve to start/);
-    assert.match(html, /Already available/);
-    assert.match(html, /Add .*0\.0006/);
+    assert.match(html, /Needed to start/);
+    assert.match(html, /Available for fees/);
+    assert.match(html, /You need .*0\.0006/);
     assert.match(html, /id="zkapi-withdraw-btn"[^>]*disabled/);
     assert.doesNotMatch(html, /Actual deposit network fee|Return ETH to your wallet|data-tone="error"/);
 });
@@ -46,7 +46,7 @@ test('funding the displayed reserve enables readiness without starting a withdra
     const { owner, quote } = fixture(t);
     await refreshWithdrawalFees(owner);
     assert.equal(withdrawalFeeReady(owner), true);
-    assert.match(renderWithdrawalFees(owner), /Fee covered/);
+    assert.match(renderWithdrawalFees(owner), /You have enough ETH/);
     assert.doesNotMatch(renderWithdrawalFees(owner), /data-withdrawal-fee-copy/);
     quote.expiresAt = Date.now() - 1;
     assert.equal(withdrawalFeeReady(owner), false);
@@ -73,7 +73,7 @@ test('failed balance reads clear readiness even if an earlier quote had enough E
     await refreshWithdrawalFees(owner, { force: true });
     assert.equal(withdrawalFeeReady(owner), false);
     assert.match(renderWithdrawalFees(owner), /Couldn’t check/);
-    assert.doesNotMatch(renderWithdrawalFees(owner), /RPC internal details|Fee covered/);
+    assert.doesNotMatch(renderWithdrawalFees(owner), /RPC internal details|You have enough ETH/);
 });
 
 test('a higher fee on click requires another review even when fully funded', async t => {
@@ -102,4 +102,51 @@ test('fresh fee reads clear a fee-read warning without replaying the withdrawal'
     owner.outcome = { message: 'Different transaction error', tone: 'error' };
     await refreshWithdrawalFees(owner, { force: true });
     assert.equal(owner.outcome.message, 'Different transaction error');
+});
+
+
+test('balance view preloads a quote and loading uses the same fee slots', async t => {
+    const { owner } = fixture(t);
+    owner.view = 'balance';
+    await refreshWithdrawalFees(owner);
+    owner.view = 'withdraw';
+    assert.equal(withdrawalFeeReady(owner), true);
+    const ready = renderWithdrawalFees(owner);
+    stopWithdrawalFees(owner);
+    const loading = renderWithdrawalFees(owner);
+    for (const label of ['Needed to start', 'Available for fees', 'zkapi-fee-result', 'zkapi-fee-action']) {
+        assert.ok(loading.includes(label));
+        assert.ok(ready.includes(label));
+    }
+    assert.match(loading, /aria-busy="true"/);
+    assert.equal(withdrawalFeeReady(owner), false);
+});
+
+test('shortfall shows Add ETH and reveals transfer instructions on request', async t => {
+    const { owner, quote } = fixture(t);
+    quote.balanceWei = '0'; quote.shortfallWei = quote.feeReserveWei;
+    await refreshWithdrawalFees(owner);
+    assert.match(renderWithdrawalFees(owner), /data-withdrawal-fee-topup[^>]*>Add ETH/);
+    assert.doesNotMatch(renderWithdrawalFees(owner), /Fee-paying address/);
+    owner.withdrawalFeeTopUp = owner.withdrawalFees.scope;
+    assert.match(renderWithdrawalFees(owner), /Fee-paying address/);
+    assert.match(renderWithdrawalFees(owner), /Check for ETH/);
+});
+
+
+test('cancelling a pending fee check prevents withdrawal even after returning to the form', async t => {
+    const { owner, quote } = fixture(t);
+    await refreshWithdrawalFees(owner);
+    owner.withdrawEntry = 'balance';
+    let finish;
+    t.mock.method(addressFundingWallet, 'getWithdrawalFeeBudget', () => new Promise(resolve => { finish = resolve; }));
+    const run = t.mock.method(owner, 'run', () => assert.fail('cancelled intent must not reach settlement'));
+    const pending = owner.submitWithdrawal();
+    owner.dismissWithdrawal();
+    assert.equal(owner.view, 'balance');
+    owner.view = 'withdraw';
+    finish(quote);
+    await pending;
+    assert.equal(run.mock.callCount(), 0);
+    assert.equal(owner.withdrawalPreflightBusy, false);
 });

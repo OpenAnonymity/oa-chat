@@ -41,7 +41,7 @@ test('New Chat is immediately typeable while the previous chat closes', () => {
     });
     assert.equal(state.primary.phase, 'closing');
     assert.equal(state.primary.blocksSend, false);
-    assert.match(state.primary.detail, /keep typing/i);
+    assert.match(state.primary.detail, /New messages can send when this finishes/);
     assert.equal(state.showComposer, true);
 });
 

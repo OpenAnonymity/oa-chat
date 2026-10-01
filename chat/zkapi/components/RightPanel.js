@@ -1,3 +1,4 @@
+import { setDisclosure } from '../../ui/uiMotion.js';
 import SharedRightPanel from '../../components/RightPanel.js';
 import { isIndexerLag, zkapiErrorMessage } from '../services/zkapiErrorCopy.mjs';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
@@ -38,6 +39,22 @@ export default class RightPanel extends SharedRightPanel {
             return;
         }
         this.loadSessionData();
+    }
+
+    get zkapiBillingHelp() { return Boolean(this.privateBalanceHelpOpen?.billing); }
+    set zkapiBillingHelp(value) { (this.privateBalanceHelpOpen ||= {}).billing = value; }
+    get zkapiExpiryHelp() { return Boolean(this.privateBalanceHelpOpen?.expiry); }
+    set zkapiExpiryHelp(value) { (this.privateBalanceHelpOpen ||= {}).expiry = value; }
+
+    getHelpDisclosures() {
+        return [...super.getHelpDisclosures(),
+            ['zkapiBillingHelp', 'zkapi-panel-billing-help', 'zkapi-panel-billing-help-toggle'],
+            ['zkapiExpiryHelp', 'zkapi-panel-expiry-help', 'zkapi-panel-expiry-help-toggle']];
+    }
+
+    updateHelpDisclosure(panel, button, open) {
+        super.updateHelpDisclosure(panel, button, open);
+        if (panel?.dataset.zkapiHelpContent) setDisclosure(panel, open);
     }
 
     handleZkapiClock() {

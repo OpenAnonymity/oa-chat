@@ -2249,3 +2249,16 @@ html.dark .zkapi-record-status[data-tone="success"] { color: #6DB88E; }
 .zkapi-withdrawal-fees { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--zkapi-line); border-radius: 16px; }
 .zkapi-withdrawal-fees .zkapi-funding-breakdown { margin: 0; }
 .zkapi-withdrawal-fees .zkapi-funding-address { min-width: 0; }
+
+/* Fee reads fill fixed slots; only the person's Add ETH click expands details. */
+.zkapi-withdrawal-fees .zkapi-funding-breakdown > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: .75rem; min-height: 2.75rem; align-items: start; }
+.zkapi-withdrawal-fees .zkapi-funding-breakdown dd { min-height: 2.75rem; }
+.zkapi-fee-placeholder { display: inline-block; width: 8rem; max-width: 100%; border-radius: .25rem; background: var(--zkapi-hover); color: transparent; }
+.zkapi-fee-explanation { color: hsl(var(--color-muted-foreground)); font-size: .8125rem; line-height: 1.5; }
+.zkapi-fee-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: .75rem; }
+.zkapi-fee-result > p { min-height: 3.75rem; color: hsl(var(--color-muted-foreground)); font-size: .875rem; line-height: 1.4; }
+.zkapi-fee-action { min-height: 2rem; }
+.zkapi-fee-topup { display: grid; gap: .75rem; }
+.zkapi-settlement-action { margin-top: .5rem; border: 1px solid hsl(var(--color-border)); border-radius: .5rem; padding: .375rem .625rem; background: transparent; color: hsl(var(--color-foreground)); font: inherit; font-size: .75rem; cursor: pointer; }
+.zkapi-settlement-action:hover { background: hsl(var(--color-accent)); }
+.zkapi-settlement-action:disabled { opacity: .5; cursor: default; }
