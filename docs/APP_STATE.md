@@ -1,3 +1,14 @@
+## 2026-09-30: Canonical zkAPI service origins
+
+- The September 30 profiles now select
+  `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai` for manifest/protocol/indexer URLs.
+  Vaults, deployment IDs, signing/proof pins, wallet databases and funding signer
+  scopes are unchanged. Generated proxy routes select the same profile.
+- This Commercial rollout preserves the existing `8074795` frontend and SDK
+  patch. The frontend origin stays the same so browser wallets and history
+  persist. Earlier funded acceptance remains tied to its recorded build.
+
 ## 2026-09-30: Withdrawal reveal and modal motion
 
 - Add ETH softly reveals its stacked details, then scrolls only the dialog and
