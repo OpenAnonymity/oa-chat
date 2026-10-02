@@ -21,6 +21,7 @@ export class VerifierAttestationModal {
         this.context = null;
         this.zeroTrustOpenSteps = new Set();
         this.services = null;
+        this.loadGeneration = 0;
     }
 
     get verifier() {
@@ -58,6 +59,7 @@ export class VerifierAttestationModal {
     close() {
         if (!this.isOpen) return;
         this.isOpen = false;
+        this.loadGeneration++;
         if (this.escapeHandler) {
             document.removeEventListener('keydown', this.escapeHandler);
         }
@@ -66,19 +68,27 @@ export class VerifierAttestationModal {
     }
 
     async fetchAndVerifyAttestation() {
+        const generation = ++this.loadGeneration;
+        const context = this.context;
+        const verifier = this.verifier;
+        const isCurrent = () => this.loadGeneration === generation && this.context === context;
         try {
             const [attestation, zeroTrustEvidence] = await Promise.all([
-                this.verifier.getAttestation(true),
-                this.collectZeroTrustEvidence()
+                verifier.getAttestation(true),
+                this.collectZeroTrustEvidence({ context, verifier })
             ]);
+            if (!isCurrent()) return;
+            const verification = await this.verifyAttestation(attestation);
+            if (!isCurrent()) return;
             this.attestation = attestation;
-            this.verification = await this.verifyAttestation(this.attestation);
+            this.verification = verification;
             this.zeroTrustEvidence = zeroTrustEvidence;
 
             this.isLoading = false;
             this.render();
             this.setupEventListeners();
         } catch (e) {
+            if (!isCurrent()) return;
             console.error('Failed to fetch attestation:', e);
             this.error = e.message;
             this.isLoading = false;
@@ -361,8 +371,8 @@ export class VerifierAttestationModal {
         };
     }
 
-    async collectZeroTrustEvidence() {
-        const access = this.getActiveAccessContext();
+    async collectZeroTrustEvidence({ context = this.context, verifier = this.verifier } = {}) {
+        const access = this.getActiveAccessContext(context);
         const evidence = {
             hasActiveKey: access.hasActiveKey,
             stationId: access.stationId,
@@ -425,11 +435,11 @@ export class VerifierAttestationModal {
             }
         }
 
-        let broadcastData = this.verifier.getLastBroadcastData();
+        let broadcastData = verifier.getLastBroadcastData();
         if (!broadcastData && access.stationId) {
             try {
-                await this.verifier.queryBroadcast();
-                broadcastData = this.verifier.getLastBroadcastData();
+                await verifier.queryBroadcast();
+                broadcastData = verifier.getLastBroadcastData();
             } catch (error) {
                 evidence.broadcastError = error?.message || 'Could not fetch broadcast';
             }
@@ -490,20 +500,20 @@ export class VerifierAttestationModal {
             evidence.localStationSignature.error = 'Station public key is not available from broadcast.';
         }
 
-        evidence.submitKeyOwnership = this.extractSubmitKeyOwnershipEvidence(access, evidence);
+        evidence.submitKeyOwnership = this.extractSubmitKeyOwnershipEvidence(access, evidence, context, verifier);
 
         return evidence;
     }
 
-    extractSubmitKeyOwnershipEvidence(access, evidence) {
+    extractSubmitKeyOwnershipEvidence(access, evidence, context = this.context, verifier = this.verifier) {
         const allLogs = this.services.networkLogger?.getAllLogs?.() || [];
-        const sessionId = this.context?.session?.id || null;
+        const sessionId = context?.session?.id || null;
         const expectedHashPrefix = evidence?.apiKeyHashPrefix16 || null;
         const storedProof = access?.submitKeyProof || null;
 
         const candidates = allLogs.filter((log) => {
             if (log?.type !== 'verification') return false;
-            if (!String(log?.url || '').includes('/submit_key')) return false;
+            if (log?.url !== `${verifier.verifierUrl || VERIFIER_URL}/submit_key`) return false;
             if (access?.stationId && log?.request?.station_id && log.request.station_id !== access.stationId) return false;
             if (sessionId && log?.sessionId && log.sessionId !== sessionId) return false;
             return true;
@@ -606,18 +616,18 @@ export class VerifierAttestationModal {
         };
     }
 
-    getActiveAccessContext() {
-        const sessionFromContext = this.context?.session || null;
+    getActiveAccessContext(context = this.context) {
+        const sessionFromContext = context?.session || null;
         const sessionFromApp = window.app?.getCurrentSession ? window.app.getCurrentSession() : null;
         const selectedSession = sessionFromContext || sessionFromApp || null;
-        const accessInfo = this.context?.accessInfo ||
+        const accessInfo = context?.accessInfo ||
             selectedSession?.apiKeyInfo ||
             null;
 
         const stationId = accessInfo?.stationId ||
             accessInfo?.station_id ||
             accessInfo?.station_name ||
-            this.context?.stationId ||
+            context?.stationId ||
             null;
         const apiKey = accessInfo?.key || accessInfo?.token || selectedSession?.apiKey || null;
         const expiresAtUnix = this.parseUnixTimestamp(
