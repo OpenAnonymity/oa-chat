@@ -34,6 +34,11 @@ export const VERIFIER_URL = disposableDemoVerifierBypass
     ? ORG_API_BASE
     : configuredVerifierOrigin || 'https://verifier2.openanonymity.ai';
 
+// zkAPI may use Mainnet on a staging host. Its verifier is pinned by the
+// reviewed payment deployment, independently of the ticket org verifier.
+export const ZKAPI_VERIFIER_URL = typeof __OA_ZKAPI_VERIFIER_ORIGIN__ === 'string'
+    && __OA_ZKAPI_VERIFIER_ORIGIN__ ? __OA_ZKAPI_VERIFIER_ORIGIN__ : VERIFIER_URL;
+
 // Explicit operator trust for unverified continuation, independent of the org's
 // recently-attested flag and verifier broadcasts. Changing a pin invalidates
 // previously saved fallback approvals. This is not verifier approval.

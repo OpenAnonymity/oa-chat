@@ -132,3 +132,25 @@ test('verifier error detail is retained instead of falling back to HTTP 401', as
     runtime.remoteFetch = async () => new Response(JSON.stringify({ detail: 'Invalid org signature' }), { status: 401 });
     await assert.rejects(runtime.remoteJson(`${VERIFIER_URL}/submit_key`), error => error.message === 'Invalid org signature' && error.status === 401);
 });
+
+
+test('Mainnet lease on staging uses the separately pinned verifier and keeps SDK checks', async t => {
+    const mainnet = 'https://verifier-production-20260917.openanonymity.ai';
+    const { runtime, lease } = fixture();
+    runtime.config.openrouter.verifier_url = mainnet;
+    lease.verification.verifier_url = mainnet;
+    let calls = 0;
+    const verifier = { verifierUrl: mainnet, async submitKey(data) {
+        calls++;
+        assert.equal(data.key, lease.api_key);
+        return { status: 'verified', keyHash: '0123456789abcdef' };
+    } };
+    host(t, { verifyProviderKey: createProviderKeyVerifier(verifier) });
+    await runtime.verifyLease(lease, 1_000_000, 'request');
+    assert.equal(calls, 1);
+    assert.equal(lease.verifierSubmitKeyProof.status, 'verified');
+    await assert.rejects(createProviderKeyVerifier(verifier)({ verifierUrl: VERIFIER_URL, keyData: keyData(lease) }), /different trusted verifier/);
+    assert.equal(calls, 1, 'mismatched ticket verifier never receives the provider credential');
+    await assert.rejects(runtime.verifyLease({ ...lease, verification: { ...lease.verification, verifier_url: VERIFIER_URL } }, 1_000_000, 'request'));
+    assert.equal(calls, 1);
+});

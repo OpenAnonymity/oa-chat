@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import esbuild from 'esbuild';
 import { minify } from 'terser';
-import { buildZkapiAssets, resolveZkapiNetwork, zkapiBuildPlugins, zkapiBuildProvenance } from './zkapiBuild.mjs';
+import { buildZkapiAssets, readZkapiBuildConfig, resolveZkapiNetwork, zkapiBuildPlugins, zkapiBuildProvenance } from './zkapiBuild.mjs';
 import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
@@ -40,6 +40,14 @@ const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
 const zkapiNetwork = resolveZkapiNetwork();
+const zkapiVerifierOrigin = zkapiNetwork
+    ? readZkapiBuildConfig({ network: zkapiNetwork }).trusted_deployment.verifier_url : '';
+if (zkapiVerifierOrigin) {
+    const origin = new URL(zkapiVerifierOrigin);
+    if (origin.protocol !== 'https:' || origin.origin !== zkapiVerifierOrigin || origin.username || origin.password) {
+        throw new Error('[build] zkAPI verifier pin must be an exact HTTPS origin');
+    }
+}
 const configuredWebAuthnRelayUrl = resolveBuildWebAuthnRelayUrl();
 const sameOriginOrgSetting = process.env.OA_ORG_SAME_ORIGIN;
 if (sameOriginOrgSetting && !['true', 'false'].includes(sameOriginOrgSetting)) {
@@ -253,6 +261,7 @@ const build = async () => {
             '__OA_DEMO_PROXY_URL__': JSON.stringify(demoProxyUrlSetting),
             '__OA_PROXY_URL__': JSON.stringify(productionProxyUrlSetting),
             '__OA_VERIFIER_ORIGIN__': JSON.stringify(verifierOriginSetting),
+            '__OA_ZKAPI_VERIFIER_ORIGIN__': JSON.stringify(zkapiVerifierOrigin),
             '__OA_VERIFIER_OUTAGE_POLICY__': JSON.stringify(verifierOutagePolicySetting)
         },
         minify: true,
@@ -373,6 +382,7 @@ const build = async () => {
                     ? 'same-origin'
                     : configuredOrgOrigin || DEFAULT_PRODUCTION_ORG_ORIGIN,
                 webauthnRelayUrl: configuredWebAuthnRelayUrl,
+                zkapiVerifierOrigin,
                 verifierOrigin: verifierOriginSetting || 'https://verifier2.openanonymity.ai',
                 ...(zkapi ? { zkapi } : {})
             }, null, 2)

@@ -10,7 +10,7 @@ function throwIfAborted(signal) {
 export function createProviderKeyVerifier(verifier) {
     return async ({ verifierUrl, keyData, signal }) => {
         throwIfAborted(signal);
-        if (verifierUrl !== VERIFIER_URL) throw new Error('The private lease uses a different trusted verifier.');
+        if (verifierUrl !== (verifier.verifierUrl || VERIFIER_URL)) throw new Error('The private lease uses a different trusted verifier.');
         // The SDK retains the actual key only in its active lease. Do not leave
         // a second credential in OA's ticket-key retry queue after settlement.
         const result = await verifier.submitKey(keyData, { queueOnFailure: false });

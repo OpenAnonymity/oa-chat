@@ -84,7 +84,18 @@ function redactVerifierLogValue(value, childKey, fieldName = '') {
 }
 
 export class StationVerifier {
-    constructor({ trustedStations = TRUSTED_VERIFIER_STATIONS } = {}) {
+    constructor({ verifierUrl = VERIFIER_URL, trustedStations = verifierUrl === VERIFIER_URL ? TRUSTED_VERIFIER_STATIONS : [] } = {}) {
+        if (verifierUrl !== VERIFIER_URL) {
+            const origin = new URL(verifierUrl);
+            if (origin.protocol !== 'https:' || origin.origin !== verifierUrl || origin.username || origin.password) {
+                throw new Error('Verifier must be an exact trusted HTTPS origin');
+            }
+        }
+        this.verifierUrl = verifierUrl;
+        // Preserve the ticket verifier's existing cache; payment-only instances
+        // use a separate namespace and never read or overwrite that cache.
+        this.broadcastStorageKey = verifierUrl === VERIFIER_URL
+            ? 'lastBroadcastData' : `lastBroadcastData:${verifierUrl}`;
         this.trustedStations = trustedStations;
         // Verification state per station
         this.stationStates = new Map(); // stationId -> state
@@ -189,7 +200,7 @@ export class StationVerifier {
 
         // Load persisted broadcast data from database (ground truth)
         try {
-            const broadcastData = await window.chatDB?.getSetting('lastBroadcastData');
+            const broadcastData = await window.chatDB?.getSetting(this.broadcastStorageKey);
             console.log(`  Raw broadcast data from DB:`, broadcastData);
             if (broadcastData) {
                 this.lastBroadcastData = broadcastData;
@@ -259,7 +270,7 @@ export class StationVerifier {
         }
 
         try {
-            await window.chatDB.saveSetting('lastBroadcastData', this.lastBroadcastData);
+            await window.chatDB.saveSetting(this.broadcastStorageKey, this.lastBroadcastData);
             const verified = this.lastBroadcastData.verified_stations?.length || 0;
             const banned = this.lastBroadcastData.banned_stations?.length || 0;
             console.log(`💾 Persisted broadcast data: ${verified} verified, ${banned} banned, timestamp: ${this.lastBroadcastData.timestamp}`);
@@ -509,7 +520,7 @@ export class StationVerifier {
             // IPs. Even if it saw the user's IP, it cannot link it to user identity
             // because the key carries no identity (blind signatures).
             const { response, data } = await networkProxy.fetchWithRetryJson(
-                `${VERIFIER_URL}/broadcast`,
+                `${this.verifierUrl}/broadcast`,
                 {},
                 {
                     context: 'Verifier broadcast',
@@ -689,7 +700,7 @@ export class StationVerifier {
 
         try {
             const { response, data } = await networkProxy.fetchWithRetryJson(
-                `${VERIFIER_URL}/attestation`,
+                `${this.verifierUrl}/attestation`,
                 {},
                 {
                     context: 'Verifier attestation',
@@ -702,7 +713,7 @@ export class StationVerifier {
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'GET',
-                url: `${VERIFIER_URL}/attestation`,
+                url: `${this.verifierUrl}/attestation`,
                 status: response.status,
                 response: { summary: data?.summary }
             });
@@ -723,7 +734,7 @@ export class StationVerifier {
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'GET',
-                url: `${VERIFIER_URL}/attestation`,
+                url: `${this.verifierUrl}/attestation`,
                 status: 0,
                 error: error.message
             });
@@ -757,7 +768,7 @@ export class StationVerifier {
     async fallbackBlockReason(keyData) {
         const blocked = this.hardBlockReason(keyData);
         if (blocked) return blocked;
-        if (!await isTrustedStationKey(keyData, { trustedStations: this.trustedStations })) {
+        if (!await isTrustedStationKey(keyData, { trustedStations: this.trustedStations, verifierUrl: this.verifierUrl })) {
             return 'The verifier did not approve this key and its station signature does not match a trusted station';
         }
         // The signature check yields; a new ban or elapsed expiry still wins.
@@ -780,14 +791,14 @@ export class StationVerifier {
             if (detail === 'recently_attested_outage') detail = 'verifier_outage';
         }
         networkLogger.logRequest({
-            type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
+            type: 'verification', method: 'POST', url: `${this.verifierUrl}/submit_key`,
             status: VERIFIER_UNAVAILABLE_STATUS,
             request: { station_id: keyData.stationId },
             detail: VERIFIER_UNAVAILABLE_STATUS
         });
         if (queue) this.queuePendingSubmission(keyData, keyHash, detail);
         return { status: VERIFIER_UNAVAILABLE_STATUS, detail, keyHash,
-            trustedStationFallback: buildTrustedStationFallback(keyData, keyHash, this.trustedStations) };
+            trustedStationFallback: buildTrustedStationFallback(keyData, keyHash, this.trustedStations, this.verifierUrl) };
     }
 
     // An explicit "unverified" verdict from a reachable verifier. Only the
@@ -797,7 +808,7 @@ export class StationVerifier {
         const blocked = await this.fallbackBlockReason(keyData);
         if (blocked) return { status: 'rejected', error: new Error(blocked) };
         networkLogger.logRequest({
-            type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
+            type: 'verification', method: 'POST', url: `${this.verifierUrl}/submit_key`,
             status: VERIFIER_UNAVAILABLE_STATUS,
             request: { station_id: keyData.stationId },
             response: logData,
@@ -805,7 +816,7 @@ export class StationVerifier {
         });
         console.warn('⚠️ Key unverified; continuing under the advisory verifier policy:', safeDetail, responseStatus);
         return { status: VERIFIER_UNAVAILABLE_STATUS, detail: 'unverified_advisory', verdict: safeDetail, keyHash,
-            trustedStationFallback: buildTrustedStationFallback(keyData, keyHash, this.trustedStations) };
+            trustedStationFallback: buildTrustedStationFallback(keyData, keyHash, this.trustedStations, this.verifierUrl) };
     }
 
     queuePendingSubmission(keyData, keyHash, detail) {
@@ -934,7 +945,7 @@ export class StationVerifier {
             let result;
             try {
                 result = await networkProxy.fetchWithRetryJson(
-                    `${VERIFIER_URL}/submit_key`,
+                    `${this.verifierUrl}/submit_key`,
                     {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -965,7 +976,7 @@ export class StationVerifier {
                 ));
                 error.status = 'banned';
                 networkLogger.logRequest({
-                    type: 'verification', method: 'POST', url: `${VERIFIER_URL}/submit_key`,
+                    type: 'verification', method: 'POST', url: `${this.verifierUrl}/submit_key`,
                     status: response.status, request: { station_id: keyData.stationId }, response: logData
                 });
                 return {
@@ -1020,7 +1031,7 @@ export class StationVerifier {
                     networkLogger.logRequest({
                         type: 'verification',
                         method: 'POST',
-                        url: `${VERIFIER_URL}/submit_key`,
+                        url: `${this.verifierUrl}/submit_key`,
                         status: response.status,
                         request: { station_id: keyData.stationId },
                         response: logData
@@ -1054,7 +1065,7 @@ export class StationVerifier {
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
-                    url: `${VERIFIER_URL}/submit_key`,
+                    url: `${this.verifierUrl}/submit_key`,
                     status: response.status,
                     request: { station_id: keyData.stationId },
                     response: logData
@@ -1074,7 +1085,7 @@ export class StationVerifier {
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
-                    url: `${VERIFIER_URL}/submit_key`,
+                    url: `${this.verifierUrl}/submit_key`,
                     status: response.status,
                     request: { station_id: keyData.stationId },
                     response: logData,
@@ -1096,7 +1107,7 @@ export class StationVerifier {
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
-                    url: `${VERIFIER_URL}/submit_key`,
+                    url: `${this.verifierUrl}/submit_key`,
                     status: 'pending',
                     request: { station_id: keyData.stationId },
                     response: logData,
@@ -1118,7 +1129,7 @@ export class StationVerifier {
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
-                    url: `${VERIFIER_URL}/submit_key`,
+                    url: `${this.verifierUrl}/submit_key`,
                     status: response.status,
                     request: { station_id: keyData.stationId },
                     response: logData,
@@ -1136,7 +1147,7 @@ export class StationVerifier {
                 networkLogger.logRequest({
                     type: 'verification',
                     method: 'POST',
-                    url: `${VERIFIER_URL}/submit_key`,
+                    url: `${this.verifierUrl}/submit_key`,
                     status: response.status,
                     request: { station_id: keyData.stationId },
                     response: logData,
@@ -1149,7 +1160,7 @@ export class StationVerifier {
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'POST',
-                url: `${VERIFIER_URL}/submit_key`,
+                url: `${this.verifierUrl}/submit_key`,
                 status: response.status,
                 request: { station_id: keyData.stationId },
                 response: logData
@@ -1170,7 +1181,7 @@ export class StationVerifier {
             networkLogger.logRequest({
                 type: 'verification',
                 method: 'POST',
-                url: `${VERIFIER_URL}/submit_key`,
+                url: `${this.verifierUrl}/submit_key`,
                 status: 0,
                 request: { station_id: keyData.stationId },
                 error: friendlyError.message,

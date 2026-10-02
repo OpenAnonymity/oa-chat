@@ -341,3 +341,22 @@ deployment ID, vault, signing/proof pins, and wallet database. Existing wallet
 notes and recovery journals must remain intact; clearing storage or bypassing
 manifest verification is not a repair. Commercial's production artifact gate
 must check the exact expected verifier independently of the source profile.
+
+## Host verifier routing (2026-10-02)
+
+The payment network determines the zkAPI verifier, independently of the website's
+ticket org. Mainnet on staging must contact the production verifier, while
+staging tickets still use verifier2. `build.json.zkapiVerifierOrigin` records the
+compiled origin selected from the reviewed `trusted_deployment.verifier_url`.
+Commercial artifact gates require those pins to agree. No runtime lease or
+server response may select a different verifier. A separate instance on staging
+keeps in-memory station state and persisted broadcasts independent, preserving
+the existing ticket cache key; it has no
+advisory fallback pins, so it requires explicit approval. Production with matching
+origins retains the existing shared instance and policy. Wallet deployment IDs,
+contracts, note databases, balances and recovery journals are unchanged.
+
+Regression coverage exercises the actual SDK host callback with split origins,
+rejects changed lease origins before sending a key, checks each verifier request
+URL, and checks that bans/caches and fallback station pins cannot cross origins.
+These tests do not certify a funded Mainnet inference request.

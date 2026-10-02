@@ -1,5 +1,20 @@
 ## 2026-10-02: Fixed OpenRouter app attribution
 
+## 2026-10-02: Separate zkAPI deployment verifier from ticket verifier
+
+Staging deliberately hosts Mainnet zkAPI while tickets use the staging org and
+verifier2. The host adapter incorrectly compared both against the ticket
+verifier, rejecting valid Mainnet leases as a different trusted verifier.
+Builds now compile `ZKAPI_VERIFIER_URL` from the reviewed SDK deployment profile.
+The payment adapter uses a separate StationVerifier when that differs from the
+ticket origin; payment broadcasts/bans use an origin-scoped cache. The ticket
+verifier retains its existing cache key and behavior. Wallets are untouched.
+The separate instance has no cross-origin advisory station pins: approval must
+come from its pinned verifier. SDK lease/cap/signature/origin validation remains.
+Production currently uses the same verifier for both and reuses one instance.
+See [deployment notes](ZKAPI_FRESH_DEPLOYMENT_20260930.md#host-verifier-routing-2026-10-02).
+
+
 Ticket-mode web completions, streaming, title requests and the provider key
 check send `HTTP-Referer: https://chat.openanonymity.ai` and `X-Title: OA Chat`.
 `chat/services/inference/appAttribution.js` owns these fixed values across

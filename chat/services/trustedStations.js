@@ -41,9 +41,9 @@ export async function isTrustedStationKey(keyData, {
     } catch { return false; }
 }
 
-export function buildTrustedStationFallback(keyData, keyHash, stations = TRUSTED_VERIFIER_STATIONS) {
+export function buildTrustedStationFallback(keyData, keyHash, stations = TRUSTED_VERIFIER_STATIONS, verifierUrl = VERIFIER_URL) {
     return {
-        policy: trustedStationPolicyRevision(stations),
+        policy: trustedStationPolicyRevision(stations, verifierUrl),
         stationId: keyData.stationId,
         keyValidTill: Number(keyData.expiresAtUnix),
         stationSignature: keyData.stationSignature,
