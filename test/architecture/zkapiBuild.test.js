@@ -138,6 +138,9 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.equal(config.trusted_deployment.deployment_id, `zkapi-native-eth-${network}-note-bound-v1-${deployment}`);
         assert.equal(config.trusted_deployment.protocol_server_url,
             `https://zkapi-${network}.openanonymity.ai`);
+        assert.equal(config.trusted_deployment.verifier_url, network === 'mainnet'
+            ? 'https://verifier-production-20260917.openanonymity.ai'
+            : 'https://verifier2.openanonymity.ai');
         assert.equal(result.deployment, deployment);
         if (deployment === 'fresh-20260930' && network === 'mainnet') {
             assert.equal(config.deployment_manifest_url, 'https://zkapi-mainnet.openanonymity.ai/config.json');
@@ -169,6 +172,44 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
             assert.equal(digest(await fs.readFile(path.join(root, 'node_modules/@openanonymity/zkapi-browser-sdk', relative))), hash);
         }
         assert.equal(provenance.files['zkapi/sdk-assets.json'], digest(await fs.readFile(path.join(result.directory, 'sdk-assets.json'))));
+    }
+});
+
+test('SDK manifest trust accepts reviewed production verifier pins and rejects stale or substituted verifiers', async () => {
+    const { root, readZkapiBuildConfig } = await sourceBuildHelpers();
+    const runtimePath = createRequire(path.join(root, 'package.json'))
+        .resolve('@openanonymity/zkapi-browser-sdk/runtime');
+    const { BrowserWalletRuntime } = await import(pathToFileURL(runtimePath).href);
+    const productionVerifier = 'https://verifier-production-20260917.openanonymity.ai';
+    const stagingVerifier = 'https://verifier2.openanonymity.ai';
+    for (const network of ['mainnet', 'sepolia']) {
+        const runtime = new BrowserWalletRuntime();
+        runtime.browserConfig = readZkapiBuildConfig({ network, deployment: 'fresh-20260930' });
+        const pins = runtime.browserConfig.trusted_deployment;
+        const verifier = network === 'mainnet' ? productionVerifier : stagingVerifier;
+        const manifest = {
+            ...structuredClone(pins),
+            proof_setup: {
+                circuit_id: pins.circuit_id,
+                request_proving_key_sha256: pins.request_proving_key_sha256,
+                withdrawal_proving_key_sha256: pins.withdrawal_proving_key_sha256
+            },
+            privacy_mode: { openrouter_inference_base: pins.openrouter_inference_base, verifier_url: verifier }
+        };
+        assert.equal(pins.verifier_url, verifier);
+        assert.equal(runtime.browserConfig.require_oa_key_source, true);
+        assert.doesNotThrow(() => runtime.validateManifestTrust(manifest));
+        for (const changedVerifier of [network === 'mainnet' ? stagingVerifier : productionVerifier,
+            'https://untrusted.example']) {
+            const changed = structuredClone(manifest);
+            changed.privacy_mode.verifier_url = changedVerifier;
+            assert.throws(() => runtime.validateManifestTrust(changed), /pinned OA verifier/);
+        }
+        if (network === 'mainnet') {
+            pins.verifier_url = stagingVerifier;
+            assert.throws(() => runtime.validateManifestTrust(manifest), /pinned OA verifier/,
+                'reproduce the pre-update frontend rejection of the production manifest');
+        }
     }
 });
 

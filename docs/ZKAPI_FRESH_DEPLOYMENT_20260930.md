@@ -326,3 +326,18 @@ deployment root. The new receipt checker requires the deposit signer and payout
 recipient separately, verifies exact calldata/events and captured finalized
 state, and passed 13 offline tests plus independent review. Public documentation
 omits the test accounts, transaction hashes, note identifiers and exact amounts.
+## Mainnet production verifier pin regression (2026-10-01)
+
+Commercial `a8325ba` with public core `549c138` reintroduced a Mainnet browser
+profile pinning `https://verifier2.openanonymity.ai`. The live deployment
+manifest names `https://verifier-production-20260917.openanonymity.ai`; the SDK
+therefore correctly rejects the mismatch with “The deployment manifest changed
+its pinned OA verifier.” The production host verifier setting alone does not
+update the SDK's separately compiled `trusted_deployment.verifier_url`.
+
+The correction restores the earlier reviewed Mainnet pin and runtime trust
+regressions in the current production source line. It retains Sepolia's pin,
+deployment ID, vault, signing/proof pins, and wallet database. Existing wallet
+notes and recovery journals must remain intact; clearing storage or bypassing
+manifest verification is not a repair. Commercial's production artifact gate
+must check the exact expected verifier independently of the source profile.

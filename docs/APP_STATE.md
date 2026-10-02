@@ -1,3 +1,15 @@
+## 2026-10-01: Restore Mainnet verifier pin in the production source line
+
+Production Commercial `a8325ba` selected core `549c138`, which omitted the
+earlier Mainnet verifier-pin fix. Its SDK browser profile still trusted
+`verifier2`, while the live manifest named the production verifier, causing
+initialization to fail closed. Restore the reviewed production verifier in
+the `fresh-20260930` Mainnet profile and retain tests of the SDK's actual
+manifest trust check. Sepolia and wallet/deployment identity remain unchanged.
+Commercial also needs an independent production artifact assertion so a
+reverted source pin cannot satisfy its own expected-profile comparison.
+See [the deployment notes](ZKAPI_FRESH_DEPLOYMENT_20260930.md#mainnet-production-verifier-pin-regression-2026-10-01).
+
 ## 2026-10-01: Deposit wallet labels
 
 The funding selector reads **Ethereum wallet** / **Send to address**. The
