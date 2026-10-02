@@ -1,3 +1,20 @@
+## 2026-10-02: Fixed OpenRouter app attribution
+
+Ticket-mode web completions, streaming, title requests and the provider key
+check send `HTTP-Referer: https://chat.openanonymity.ai` and `X-Title: OA Chat`.
+`chat/services/inference/appAttribution.js` owns these fixed values across
+production, staging and previews. They label the app/cohort without adding an
+account, device or conversation identifier or copying the current page URL.
+The existing proxy, ephemeral credentials and retry paths are unchanged.
+
+Composed providers keep their own request headers; this does not change zkAPI
+SDK attribution or native iOS/chatbar clients. Tests exercise actual completion,
+title, stream and key-check dispatch, and guard the composed-provider boundary.
+The earlier removal (`ebec52a`) gave no reason in its commit message; the user
+requested restoring fixed attribution on staging. Production promotion remains
+a separate review, including the collaborator's requested discussion with Erik.
+See [metadata considerations](PRIVACY_MODEL.md#metadata-considerations).
+
 ## 2026-10-01: Restore Mainnet verifier pin in the production source line
 
 Production Commercial `a8325ba` selected core `549c138`, which omitted the

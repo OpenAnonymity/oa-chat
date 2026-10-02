@@ -27,7 +27,8 @@ function installBrowser() {
 }
 
 const restoreImportGlobals = installBrowser();
-const { OpenRouterAPI, createInferenceService } = await import('../../chat/publicInferenceApi.js');
+const { OpenRouterAPI, createInferenceService, openRouterBackend } = await import('../../chat/publicInferenceApi.js');
+const { default: networkProxy } = await import('../../chat/services/networkProxy.js');
 restoreImportGlobals();
 describe('inference composition', () => {
 let restoreTestGlobals;
@@ -73,6 +74,55 @@ test('ordinary OpenRouter requests retain direct provider URL and bearer key', a
     assert.equal(transport.calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
     assert.equal(transport.calls[0].init.headers.Authorization, 'Bearer ephemeral');
     assert.equal(JSON.parse(transport.calls[0].init.body).max_tokens, 30000);
+});
+
+test('OpenRouter completions, titles and streams use one app label across deployment origins', async () => {
+    for (const origin of ['https://chat.openanonymity.ai', 'https://staging.openanonymity.ai', 'https://preview.example']) {
+        Object.assign(location, { origin, hostname: new URL(origin).hostname, href: `${origin}/?private=query#conversation` });
+        const transport = transportWithResponse();
+        const sse = transportWithSseEvents([{ choices: [{ delta: { content: 'stream answer' }, finish_reason: 'stop' }] }]);
+        transport.fetchWithRetry = async (url, init, config) => {
+            transport.calls.push({ url, init, config });
+            return sse.fetchWithRetry();
+        };
+        const api = new OpenRouterAPI({ networkTransport: transport });
+        await api.sendCompletionStrict([{ role: 'user', content: 'hello' }], 'model', 'completion-key');
+        await api.generateSessionTitle('hello', 'title-key');
+        const chunks = [];
+        await api.streamCompletion([], 'model', 'stream-key', chunk => chunks.push(chunk));
+        assert.deepEqual(chunks, ['stream answer']);
+        assert.equal(transport.calls.length, 3);
+        for (const [index, call] of transport.calls.entries()) {
+            assert.equal(call.url, 'https://openrouter.ai/api/v1/chat/completions');
+            assert.deepEqual(call.init.headers, {
+                Authorization: `Bearer ${['completion-key', 'title-key', 'stream-key'][index]}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://chat.openanonymity.ai',
+                'X-Title': 'OA Chat'
+            });
+        }
+    }
+});
+
+test('OpenRouter key checks use the same fixed attribution through the existing proxy', async () => {
+    const originalFetch = networkProxy.fetch;
+    const calls = [];
+    const response = { ok: true, status: 200 };
+    networkProxy.fetch = async (url, init) => { calls.push({ url, init }); return response; };
+    try {
+        assert.equal(await openRouterBackend.testAccessToken('test-key', 'test-model'), response);
+    } finally {
+        networkProxy.fetch = originalFetch;
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.deepEqual(calls[0].init.headers, {
+        Authorization: 'Bearer test-key',
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://chat.openanonymity.ai',
+        'X-Title': 'OA Chat'
+    });
+    assert.equal(JSON.parse(calls[0].init.body).model, 'test-model');
 });
 
 test('changing the default never retargets existing sessions or unknown paid backends', async () => {
@@ -144,6 +194,8 @@ test('concurrent request leases keep endpoints, headers, policies and releases i
     for (const call of transport.calls) {
         assert.equal(call.url, `https://${call.init.headers['x-session']}.test/v1/chat/completions`);
         assert.equal(call.init.headers.Authorization, undefined);
+        assert.deepEqual(call.init.headers, { 'x-session': call.init.headers['x-session'] },
+            'composed providers retain their own headers without inheriting OpenRouter attribution');
         assert.equal(JSON.parse(call.init.body).max_tokens,
             call.init.headers['x-session'] === 'two' ? 24 : 1234);
         assert.deepEqual(call.config.proxyConfig, { bypassProxy: true });

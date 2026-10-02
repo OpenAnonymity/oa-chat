@@ -515,6 +515,15 @@ independent parties (universities, other organizations).
 
 ## Metadata Considerations
 
+Ticket-mode web OpenRouter requests include one fixed app attribution pair:
+`HTTP-Referer: https://chat.openanonymity.ai` and `X-Title: OA Chat`. This tells
+OpenRouter that the request belongs to the OA Chat app/cohort and enables its
+app rankings and aggregate usage attribution. The values are shared across
+production, staging and preview deployments; they contain no account, device,
+conversation, current-page path or query identifier. They do not remove the
+existing IP, timing, content or credential-reuse correlation surfaces. Composed
+providers such as the zkAPI SDK retain their separate attribution behavior.
+
 See blog post [Section 2.2: Traffic Mixing](https://openanonymity.ai/blog/unlinkable-inference/#22-traffic-mixing)
 for how network relays and mixing mitigate metadata leakage.
 

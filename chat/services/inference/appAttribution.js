@@ -1,11 +1,10 @@
 // OpenRouter app attribution.
 //
 // OpenRouter groups traffic into "apps" by these two headers (shown on its
-// Top Apps rankings and in our own OpenRouter activity). They identify the
-// client, never the user: every OA Chat install sends the same fixed values,
-// so they add nothing that tells one user's requests apart from another's.
-// The referer is a constant (not window.location.origin) so staging, previews
-// and the production domain all count as one app and no hostname leaks.
+// Top Apps rankings and in our own OpenRouter activity). These fixed values
+// identify the app/cohort, not an account, device or conversation. Using a
+// constant instead of window.location avoids sending deployment hostnames,
+// paths or query strings. Other network/content metadata remains observable.
 export const OPENROUTER_APP_URL = 'https://chat.openanonymity.ai';
 export const OPENROUTER_APP_TITLE = 'OA Chat';
 
