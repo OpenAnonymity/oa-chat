@@ -27,6 +27,10 @@ const DEFAULT_OPEN_MIN_WIDTH = 1100;
 const SHOW_UNDERLYING_KEY_DETAILS = true;
 
 class RightPanel {
+    getAttestationVerifier() {
+        return this.app.services.verifier;
+    }
+
     constructor(app) {
         this.app = app; // Reference to main app
         tlsSecurityModal.configureServices?.(this.app.services);
@@ -3114,6 +3118,7 @@ class RightPanel {
         const learnMore = document.getElementById('verifier-attestation-learn-more');
         if (learnMore) {
             learnMore.onclick = () => verifierAttestationModal.open({
+                verifier: this.getAttestationVerifier(),
                 session: this.currentSession || null,
                 accessInfo: this.apiKeyInfo || null,
                 stationId: this.apiKeyInfo?.stationId || this.apiKeyInfo?.station_name || null
@@ -3127,6 +3132,7 @@ class RightPanel {
                 const accessInfo = this.getLaneAttestationAccessInfo(row?.access);
                 if (!accessInfo) return;
                 verifierAttestationModal.open({
+                    verifier: this.getAttestationVerifier(),
                     session: this.currentSession || null,
                     accessInfo,
                     stationId: accessInfo.stationId || accessInfo.station_id || accessInfo.station_name || null

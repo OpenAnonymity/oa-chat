@@ -154,3 +154,45 @@ test('Mainnet lease on staging uses the separately pinned verifier and keeps SDK
     await assert.rejects(runtime.verifyLease({ ...lease, verification: { ...lease.verification, verifier_url: VERIFIER_URL } }, 1_000_000, 'request'));
     assert.equal(calls, 1);
 });
+
+test('payment verification waits for database and cached bans before it can approve a lease', async () => {
+    const { createProviderVerifierReadiness } = await import('../../chat/zkapi/services/providerVerification.mjs');
+    let openDb;
+    let cacheLoaded = false;
+    let submissions = 0;
+    let polls = 0;
+    const dbReady = new Promise(resolve => { openDb = resolve; });
+    const verifier = { verifierUrl: VERIFIER_URL,
+        async init() { await dbReady; cacheLoaded = true; },
+        startBroadcastCheck() { polls++; },
+        async submitKey() {
+            submissions++;
+            assert.equal(cacheLoaded, true);
+            return { status: 'rejected', error: new Error('Station is banned') };
+        }
+    };
+    const ready = createProviderVerifierReadiness(verifier, { init: () => dbReady });
+    const verify = createProviderKeyVerifier(verifier, { ensureReady: ready });
+    const pending = assert.rejects(verify({ verifierUrl: VERIFIER_URL, keyData: {} }), /banned/);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(submissions, 0);
+    assert.equal(polls, 0);
+    openDb();
+    await pending;
+    await ready();
+    assert.equal(polls, 1);
+    assert.equal(submissions, 1);
+});
+
+test('failed database startup never sends a key and can retry safely', async () => {
+    const { createProviderVerifierReadiness } = await import('../../chat/zkapi/services/providerVerification.mjs');
+    let attempts = 0;
+    let starts = 0;
+    const ready = createProviderVerifierReadiness({ async init() { starts++; }, startBroadcastCheck() {} }, {
+        async init() { if (++attempts === 1) throw new Error('storage unavailable'); }
+    });
+    await assert.rejects(ready(), /storage unavailable/);
+    assert.equal(starts, 0);
+    await ready();
+    assert.equal(starts, 1);
+});

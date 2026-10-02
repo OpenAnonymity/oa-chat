@@ -11,6 +11,9 @@ ticket origin; payment broadcasts/bans use an origin-scoped cache. The ticket
 verifier retains its existing cache key and behavior. Wallets are untouched.
 The separate instance has no cross-origin advisory station pins: approval must
 come from its pinned verifier. SDK lease/cap/signature/origin validation remains.
+Payment verifier initialization is lazy and awaits shared DB readiness before
+loading cached bans and accepting a key. The attestation dialog receives the
+verifier for the selected payment mode, keeping its evidence and command aligned.
 Production currently uses the same verifier for both and reuses one instance.
 See [deployment notes](ZKAPI_FRESH_DEPLOYMENT_20260930.md#host-verifier-routing-2026-10-02).
 

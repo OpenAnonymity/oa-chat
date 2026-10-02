@@ -36,3 +36,20 @@ test('an outage key never gets a verified-chain summary even when broadcast is h
     assert.equal(presentation.summaryTitle, 'Key not verified');
     assert.match(presentation.summaryBody, /have not been verified/);
 });
+
+test('payment modal uses its verifier context and returns to the ticket verifier afterward', async () => {
+    const modal = new VerifierAttestationModal();
+    const requests = [];
+    const ticket = { verifierUrl: 'https://verifier2.openanonymity.ai', getAttestation: async () => { requests.push('tickets'); return {}; } };
+    const payment = { verifierUrl: 'https://verifier-production-20260917.openanonymity.ai', getAttestation: async () => { requests.push('payments'); return {}; } };
+    modal.configureServices({ verifier: ticket });
+    modal.render = modal.setupEventListeners = () => {};
+    modal.verifyAttestation = modal.collectZeroTrustEvidence = async () => ({});
+    modal.context = { verifier: payment };
+    await modal.fetchAndVerifyAttestation();
+    assert.equal(modal.verifier, payment);
+    assert.equal(modal.services.verifier, ticket, 'ticket services are never replaced');
+    modal.context = null;
+    await modal.fetchAndVerifyAttestation();
+    assert.deepEqual(requests, ['payments', 'tickets']);
+});

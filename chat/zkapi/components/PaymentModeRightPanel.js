@@ -4,6 +4,11 @@ import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
 import { attachZkapiSettlementActions, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
 
 export default class PaymentModeRightPanel extends ZkapiRightPanel {
+    getAttestationVerifier() {
+        return this.isTicketMode() || !this.providerVerifier
+            ? super.getAttestationVerifier() : this.providerVerifier;
+    }
+
     isTicketMode() {
         return this.app.integration.getMode(this.currentSession) === 'tickets';
     }

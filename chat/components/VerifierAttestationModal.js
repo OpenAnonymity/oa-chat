@@ -23,6 +23,10 @@ export class VerifierAttestationModal {
         this.services = null;
     }
 
+    get verifier() {
+        return this.context?.verifier || this.services.verifier;
+    }
+
     configureServices(services) {
         this.services = services;
     }
@@ -64,7 +68,7 @@ export class VerifierAttestationModal {
     async fetchAndVerifyAttestation() {
         try {
             const [attestation, zeroTrustEvidence] = await Promise.all([
-                this.services.verifier.getAttestation(true),
+                this.verifier.getAttestation(true),
                 this.collectZeroTrustEvidence()
             ]);
             this.attestation = attestation;
@@ -421,11 +425,11 @@ export class VerifierAttestationModal {
             }
         }
 
-        let broadcastData = this.services.verifier.getLastBroadcastData();
+        let broadcastData = this.verifier.getLastBroadcastData();
         if (!broadcastData && access.stationId) {
             try {
-                await this.services.verifier.queryBroadcast();
-                broadcastData = this.services.verifier.getLastBroadcastData();
+                await this.verifier.queryBroadcast();
+                broadcastData = this.verifier.getLastBroadcastData();
             } catch (error) {
                 evidence.broadcastError = error?.message || 'Could not fetch broadcast';
             }
@@ -1026,7 +1030,7 @@ export class VerifierAttestationModal {
                     <div class="rounded-lg border border-border bg-muted/20 p-3 text-muted-foreground space-y-2">
                         <p class="text-xs font-medium text-foreground">Run the verification script</p>
                         <p>Download and run the zero-trust verification script:</p>
-                        <code class="verifier-command p-2 bg-muted/70 border border-border rounded text-[11px] font-mono text-foreground"><span class="verifier-command-line">curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify.sh \\</span><span class="verifier-command-line">| bash -s ${VERIFIER_URL}</span></code>
+                        <code class="verifier-command p-2 bg-muted/70 border border-border rounded text-[11px] font-mono text-foreground"><span class="verifier-command-line">curl -sL https://raw.githubusercontent.com/OpenAnonymity/oa-verifier/main/verify.sh \\</span><span class="verifier-command-line">| bash -s ${this.verifier.verifierUrl || VERIFIER_URL}</span></code>
                         <p>This script independently verifies the attestation without trusting this UI.</p>
                     </div>
                     <div class="rounded-lg border border-border bg-muted/20 p-3 text-muted-foreground space-y-1.5">
@@ -1199,9 +1203,9 @@ export class VerifierAttestationModal {
         const localSig = evidence?.localStationSignature || { verified: null, supported: true, error: null };
         const ownership = evidence?.submitKeyOwnership || {};
         const ownershipPassed = ownership?.ownership_passed === true;
-        const verifierOffline = typeof this.services.verifier?.isOffline === 'function' &&
-            typeof this.services.verifier?.hasEverConnected === 'function'
-            ? (this.services.verifier.hasEverConnected() && this.services.verifier.isOffline())
+        const verifierOffline = typeof this.verifier?.isOffline === 'function' &&
+            typeof this.verifier?.hasEverConnected === 'function'
+            ? (this.verifier.hasEverConnected() && this.verifier.isOffline())
             : false;
         const hideAllLiveEvidence = verifierOffline || Boolean(evidence?.broadcastError);
 

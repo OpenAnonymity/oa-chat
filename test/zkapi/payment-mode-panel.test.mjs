@@ -299,3 +299,19 @@ test('switching to Tickets mid-close shows no notice when the close finishes qui
     panel.updateBackgroundClosingNotice();
     assert.equal(hidden, false, 'a failure shows at once');
 });
+
+test('payment and ticket Learn more keep their verifier instances separate across mode changes', () => {
+    const { panel } = panelFixture();
+    const ticket = { verifierUrl: 'https://verifier2.openanonymity.ai' };
+    const payment = { verifierUrl: 'https://verifier-production-20260917.openanonymity.ai' };
+    panel.app.services = { verifier: ticket };
+    panel.providerVerifier = payment;
+    let mode = 'tickets';
+    panel.app.integration.getMode = () => mode;
+    assert.equal(panel.getAttestationVerifier(), ticket);
+    mode = 'zkapi';
+    assert.equal(panel.getAttestationVerifier(), payment);
+    mode = 'tickets';
+    assert.equal(panel.getAttestationVerifier(), ticket);
+    assert.equal(panel.app.services.verifier, ticket);
+});

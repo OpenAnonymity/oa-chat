@@ -9,7 +9,7 @@ import { applyZkapiModeClass } from '../services/zkapiModeClass.js';
 import { getZkapiExperience, renderZkapiComposerStatus } from '../components/ZkapiStateExperience.js';
 
 /** Keep the payment choice in the toolbar and funding in the System Panel. */
-export function createPaymentModeUi(runtime) {
+export function createPaymentModeUi(runtime, { providerVerifier } = {}) {
     const zkUi = createZkapiUi(runtime);
     let app;
     let privateBalance;
@@ -78,7 +78,11 @@ export function createPaymentModeUi(runtime) {
                 welcome.init = async () => {};
                 return welcome;
             },
-            rightPanel: facade => new PaymentModeRightPanel(facade)
+            rightPanel: facade => {
+                const panel = new PaymentModeRightPanel(facade);
+                panel.providerVerifier = providerVerifier;
+                return panel;
+            }
         },
         mountShell() {
             document.getElementById('chat-toolbar').classList.add('payment-mode-toolbar');
