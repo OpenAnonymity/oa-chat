@@ -3,6 +3,7 @@ import { chatDB } from '../../../db.js';
 import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
 import networkProxy from '../../networkProxy.js';
+import { OPENROUTER_APP_HEADERS } from '../appAttribution.js';
 import stationVerifier from '../../verifier.js';
 import {
     getVerifierBypassDetail,
@@ -254,7 +255,8 @@ const openRouterBackend = {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                ...OPENROUTER_APP_HEADERS
             },
             body: JSON.stringify({
                 model: modelId,

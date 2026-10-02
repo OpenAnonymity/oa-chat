@@ -12,6 +12,7 @@ import { validateInferenceInput, validateSerializedInferenceBody } from './servi
 
 import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
 import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
+import { OPENROUTER_APP_HEADERS } from './services/inference/appAttribution.js';
 import {
     cancelAndroidNativeInferenceJob,
     isAndroidNativeInferenceAvailable,
@@ -124,7 +125,11 @@ export class OpenRouterAPI {
         return {
             apiKey: key,
             baseUrl: this.baseUrl,
-            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }
+            headers: {
+                Authorization: `Bearer ${key}`,
+                'Content-Type': 'application/json',
+                ...OPENROUTER_APP_HEADERS
+            }
         };
     }
 
