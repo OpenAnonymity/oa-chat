@@ -69,7 +69,7 @@ export const VERIFIER_OUTAGE_POLICY = (
 // content (TLS terminates at the destination). For stronger IP privacy, users
 // can use their own VPN/Tor instead of or in addition to this relay.
 const configuredProxyUrl = typeof __OA_PROXY_URL__ === 'string' ? __OA_PROXY_URL__ : '';
-export const PROXY_URL = disposableDemoProxyUrl || configuredProxyUrl || 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf';
+export const PROXY_URL = disposableDemoProxyUrl || configuredProxyUrl || 'wss://oa-1.refraction.network/?secret=1f45ceecf768790c8389ff704612d5cf/';
 export const DEMO_PROXY_FETCH_TIMEOUT_MS = disposableDemoProxyUrl ? 10000 : null;
 
 // Base URL for shared chat links

@@ -480,7 +480,8 @@ class NetworkProxy {
         }
 
         try {
-            console.debug('[networkProxy] Ensuring proxy is applied, url:', url);
+            const relayHost = new URL(url).host;
+            console.debug('[networkProxy] Ensuring proxy is applied, host:', relayHost);
             const libcurl = await this.ensureLibcurlReady();
 
             console.debug('[networkProxy] Got libcurl:', {
@@ -504,7 +505,7 @@ class NetworkProxy {
 
             const needsReconnect = force || this.state.activeProxyUrl !== url;
             if (needsReconnect) {
-                console.log('[networkProxy] Setting websocket to:', url);
+                console.log('[networkProxy] Setting websocket to:', relayHost);
 
                 // Enable TLS inspection BEFORE creating session (to capture first handshake)
                 this.enableTlsInspection();
@@ -527,7 +528,7 @@ class NetworkProxy {
 
                 // Create new session that will use the new proxy URL
                 this.httpSession = new libcurl.HTTPSession();
-                console.log('[networkProxy] Created new HTTPSession for proxy:', url);
+                console.log('[networkProxy] Created new HTTPSession for proxy:', relayHost);
 
                 this.state.activeProxyUrl = url;
                 this.state.usingProxy = false;

@@ -318,7 +318,7 @@ class TLSSecurityModal {
                 </h3>
                 <div class="p-4 rounded-lg border border-border bg-card text-xs">
                     <div class="space-y-1.5 font-mono text-muted-foreground">
-                        ${proxyUrl ? `<div class="flex justify-between"><span>Relay Server</span><span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span></div>` : ''}
+                        ${proxyUrl ? `<div class="flex justify-between"><span>Relay Server</span><span class="text-foreground truncate ml-2" title="${this.formatProxyHostname(proxyUrl)}">${this.formatProxyHostname(proxyUrl)}</span></div>` : ''}
                         ${tlsInfo.version ? `<div class="flex justify-between"><span>TLS Version</span><span class="text-foreground">${tlsInfo.version}</span></div>` : ''}
                         ${tlsInfo.cipher ? `<div class="flex justify-between"><span>Cipher</span><span class="text-foreground">${tlsInfo.cipher}</span></div>` : ''}
                         ${tlsInfo.certSubject ? `<div class="flex justify-between"><span>Certificate</span><span class="text-foreground">${this.formatCertName(tlsInfo.certSubject)}</span></div>` : ''}
@@ -352,7 +352,7 @@ class TLSSecurityModal {
                     ${proxyUrl ? `
                         <div class="flex justify-between font-mono text-muted-foreground mb-2">
                             <span>Relay Server</span>
-                            <span class="text-foreground truncate ml-2" title="${proxyUrl}">${this.formatProxyHostname(proxyUrl)}</span>
+                            <span class="text-foreground truncate ml-2" title="${this.formatProxyHostname(proxyUrl)}">${this.formatProxyHostname(proxyUrl)}</span>
                         </div>
                     ` : ''}
                     <p class="text-center text-muted-foreground truncate" title="No TLS captured yet. Make a proxied request to see details.">No TLS captured yet. Make a proxied request to see details.</p>
@@ -374,7 +374,7 @@ class TLSSecurityModal {
             const parsed = new URL(url);
             return parsed.host;
         } catch {
-            return url;
+            return 'Unknown relay';
         }
     }
 
