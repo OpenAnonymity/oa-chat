@@ -1,6 +1,7 @@
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
 import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
+import { createComposerImageUrls } from './services/composerImageUrls.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
 import { enterKeyAction } from './domain/composerKeys.js';
 
@@ -2629,7 +2630,13 @@ class ChatApp {
             // Create modal overlay
             const modal = document.createElement('div');
             modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/80 animate-fade-in cursor-pointer p-4';
-            modal.onclick = () => modal.remove();
+            const releaseImage = this.composerImageUrls?.retainViewer(img.dataset?.fullSrc);
+            const closeModal = () => {
+                modal.remove();
+                releaseImage?.();
+                document.removeEventListener('keydown', escHandler);
+            };
+            modal.onclick = closeModal;
 
             // Create image container
             const container = document.createElement('div');
@@ -2651,7 +2658,7 @@ class ChatApp {
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             `;
-            closeBtn.onclick = () => modal.remove();
+            closeBtn.onclick = closeModal;
 
             // Assemble modal
             container.appendChild(fullImg);
@@ -2662,8 +2669,7 @@ class ChatApp {
             // Add escape key handler
             const escHandler = (e) => {
                 if (e.key === 'Escape') {
-                    modal.remove();
-                    document.removeEventListener('keydown', escHandler);
+                    closeModal();
                 }
             };
             document.addEventListener('keydown', escHandler);
@@ -11469,7 +11475,9 @@ Your API key has been cleared. A new key from a different station will be obtain
         const container = this.elements.filePreviewsContainer;
         const renderVersion = ++this.filePreviewRenderVersion;
         const files = [...this.uploadedFiles];
+        (this.composerImageUrls ||= createComposerImageUrls()).setFiles(files);
         if (files.length === 0) {
+            container.innerHTML = '';
             container.classList.add('hidden');
             return;
         }
@@ -11579,11 +11587,7 @@ Your API key has been cleared. A new key from a different station will be obtain
 
     /** Tapping a composer preview opens the picture itself, read only then. */
     getComposerFullImageUrl(file) {
-        const urls = (this.composerFullImageUrls ||= new WeakMap());
-        if (!urls.has(file)) {
-            try { urls.set(file, URL.createObjectURL(file)); } catch { urls.set(file, ''); }
-        }
-        return urls.get(file);
+        try { return this.composerImageUrls?.getUrl(file) || ''; } catch { return ''; }
     }
 
     formatFileSize(bytes) {

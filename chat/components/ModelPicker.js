@@ -454,12 +454,10 @@ export default class ModelPicker {
      * @param {string} modelName - Display name chosen by the user
      */
     async selectModel(modelName) {
-        // The list closes on the tap; the choice is saved after. Saving waits
-        // on the device's database, which on a phone could hold the list open
-        // long enough to feel stuck. close() handles input focus.
+        // Keep the picker over the composer until the choice has applied.
+        // Closing earlier lets an immediate Send capture the previous model.
         const secondary = this.isSecondarySelectionMode();
         const synthesis = this.isSynthesisSelectionMode();
-        this.close();
         if (secondary && this.app.actions.selectCouncilSecondaryModel) {
             await this.app.actions.selectCouncilSecondaryModel(modelName);
         } else if (synthesis && this.app.actions.selectCouncilSynthesisModel) {
@@ -468,6 +466,7 @@ export default class ModelPicker {
             await this.app.actions.selectModel(modelName);
         }
         this.app.refreshEditModelPickerButton?.();
+        this.close();
     }
 
     /**

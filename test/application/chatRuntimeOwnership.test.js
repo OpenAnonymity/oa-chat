@@ -925,6 +925,30 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(memoryOptions.memoryFeatureEnabled, true);
     });
 
+    test('a stale thumbnail render cannot retain an attachment removed while decoding', async () => {
+        const app = appHarness();
+        const decoding = deferred();
+        const photo = new File(['fixture'], 'photo.png', { type: 'image/png' });
+        const revoked = [], created = [];
+        const { createComposerImageUrls } = await import('../../chat/services/composerImageUrls.js');
+        app.composerImageUrls = createComposerImageUrls({
+            createObjectURL(file) { created.push(file); return 'blob:fixture'; },
+            revokeObjectURL(url) { revoked.push(url); }
+        });
+        app.filePreviewRenderVersion = 0;
+        app.uploadedFiles = [photo];
+        app.createComposerThumbnail = () => decoding.promise;
+        app.elements.filePreviewsContainer = { innerHTML: 'old preview', classList: { add() {}, remove() {} } };
+        const rendering = app.renderFilePreviews();
+        app.uploadedFiles = [];
+        await app.renderFilePreviews();
+        decoding.resolve('data:image/png,thumbnail');
+        await rendering;
+        assert.equal(app.elements.filePreviewsContainer.innerHTML, '');
+        assert.deepEqual(created, [], 'stale work must not allocate a browser-owned URL');
+        assert.deepEqual(revoked, []);
+    });
+
     test('an image Send saves the picked file as bytes, never as a File object', async () => {
         const app = appHarness();
         const photo = new File([new Uint8Array([1, 2, 3])], 'IMG_4917.jpeg', { type: 'image/jpeg' });

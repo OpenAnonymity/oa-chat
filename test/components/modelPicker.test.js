@@ -34,6 +34,26 @@ function createModelPicker({ selectionMode = 'primary' } = {}) {
     return picker;
 }
 
+for (const [selectionMode, action] of [
+    ['primary', 'selectModel'],
+    ['council-secondary', 'selectCouncilSecondaryModel'],
+    ['council-synthesis', 'selectCouncilSynthesisModel'],
+]) {
+    test(`${selectionMode} keeps the composer covered until model selection applies`, async () => {
+        const picker = createModelPicker({ selectionMode });
+        let resolve, selected = 'old', closed = false;
+        const saving = new Promise(done => { resolve = done; });
+        picker.app.actions = { [action]: async model => { await saving; selected = model; } };
+        picker.close = () => { closed = true; assert.equal(selected, 'new'); };
+        const choosing = picker.selectModel('new');
+        await Promise.resolve();
+        assert.equal(closed, false, 'an immediate Send must not be exposed with the old selection');
+        resolve();
+        await choosing;
+        assert.equal(closed, true);
+    });
+}
+
 test('primary model picker allows selecting the active secondary model', () => {
     const picker = createModelPicker({ selectionMode: 'primary' });
     const modelNames = picker.filterModels('').map((model) => model.name.trim());

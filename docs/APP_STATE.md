@@ -1,3 +1,17 @@
+## 2026-10-03: iPhone attachment persistence and preview ownership
+
+Picked attachments are stored as bytes plus metadata before message acceptance,
+because iPhone Safari may reject picked File objects in IndexedDB. Retry revives
+the bytes as Files and still accepts older stored File records. Composer images
+use small thumbnails. Full-image blob URLs have explicit composer/viewer owners:
+removal or Send releases them, obsolete renders cannot recreate them, and an
+already-open expanded image retains its URL until all viewers close.
+
+Keep model selection applied before closing the picker. Closing before the
+database-backed action resolves exposes Send while the previous model is still
+selected, potentially selecting a different ticket tier. No authentication,
+ticket-wallet, database schema, zkAPI or deployment settings change here.
+
 ## 2026-10-02: Fixed OpenRouter app attribution
 
 ## 2026-10-02: Separate zkAPI deployment verifier from ticket verifier
