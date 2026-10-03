@@ -64,6 +64,7 @@ class AccountModal {
         this.usernameUnlockReady = false;
         this.usernamePasskeyBusy = false;
         this.passkeyAutoPromptAttempted = false;
+        this.passkeySetupAfterSignIn = false;
         this.loginViewVersion = 0;
         this.recoveryInputValue = '';
         this.showRecoveryInput = false;
@@ -437,7 +438,17 @@ class AccountModal {
         this.app?.showSidebar?.({ persist: false });
     }
 
-    open(returnFocusEl = null) {
+    /**
+     * `afterSignIn`: the person has just signed in with Google (the landing's
+     * hand-off), so a new account may open its passkey setup by itself.
+     * Every other open waits for a tap.
+     */
+    open(returnFocusEl = null, { afterSignIn = false } = {}) {
+        if (this.isOpen && afterSignIn) {
+            this.passkeySetupAfterSignIn = true;
+            this.maybeAutoPromptPasskey();
+            return;
+        }
         if (this.isOpen || !this.overlay) return;
         this.closeAccountMenu();
         this.dismissOverlaySidebar();
@@ -450,6 +461,7 @@ class AccountModal {
         // clearErrors notifies subscribers synchronously and can schedule the
         // automatic prompt. Reset the one-attempt guard before that notification.
         this.passkeyAutoPromptAttempted = false;
+        this.passkeySetupAfterSignIn = afterSignIn === true;
         this.accountService.clearErrors();
         // The arrival layer from index.html has been showing the same caption
         // since before any script ran: the dialog's copy is already on
@@ -476,10 +488,16 @@ class AccountModal {
         this.maybeAutoPromptPasskey();
     }
 
-    /** New Google accounts get one setup prompt; returning users choose their passkey. */
+    /**
+     * A new Google account gets one setup prompt, right after signing in.
+     * Opening the site later never raises the passkey sheet by itself: the
+     * card waits for Create passkey (people who backed out once were asked
+     * again on every visit). Returning users choose their passkey.
+     */
     maybeAutoPromptPasskey() {
         const state = this.accountState || {};
-        if (!this.isOpen || this.passkeyAutoPromptAttempted || this.oauthHandoffPending || this.usernameLoginIntent) return;
+        if (!this.isOpen || this.passkeySetupAfterSignIn !== true) return;
+        if (this.passkeyAutoPromptAttempted || this.oauthHandoffPending || this.usernameLoginIntent) return;
         if (state.busy || state.error || state.passkeySupported === false) return;
         if (state.oauthRecoveryRequired || state.oauthLegacyPasskeyRequired) return;
         const setup = state.oauthSetupRequired === true;
@@ -778,6 +796,7 @@ class AccountModal {
         this.usernameLoginIntent = false;
         this.oauthProvider = provider;
         this.passkeyAutoPromptAttempted = false;
+        this.passkeySetupAfterSignIn = true;
         this.creationStep = 'oauth_authorizing';
         this.creationError = null;
         this.oauthHandoffPending = Boolean(completionToken);
@@ -2150,7 +2169,8 @@ class AccountModal {
         const showLogout = Boolean(state.oauthRecoveryRequired || state.oauthSetupRequired);
         // Paint the caption from the first setup frame, without flashing the
         // Create button before maybeAutoPromptPasskey schedules the ceremony.
-        const automaticSetup = state.oauthSetupRequired && state.sessionVerified && !this.passkeyAutoPromptAttempted &&
+        const automaticSetup = state.oauthSetupRequired && state.sessionVerified &&
+            this.passkeySetupAfterSignIn === true && !this.passkeyAutoPromptAttempted &&
             !state.error && state.passkeySupported !== false &&
             !state.oauthRecoveryRequired && !state.oauthLegacyPasskeyRequired;
         return this.renderPasskeyUnlockCard({

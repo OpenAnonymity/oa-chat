@@ -16,6 +16,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
     const bootstrap = new Promise(resolve => { releaseBootstrap = resolve; });
     const replacements = [];
     let opens = 0;
+    let lastOpen = null;
     let clears = 0;
     const usernameOpens = [];
     const usernameOptions = [];
@@ -47,7 +48,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
     return {
         accountService,
         accountModal: {
-            open() { opens += 1; },
+            open(_returnFocusEl, options = {}) { opens += 1; lastOpen = options; },
             openForUsername(username, returnFocusEl, options) {
                 usernameOpens.push(username);
                 usernameOptions.push(options);
@@ -68,6 +69,7 @@ function createHarness(state, search = '?auth=google&billingDemo=1', hash = '#la
         usernameOptions,
         completions,
         get opens() { return opens; },
+        get lastOpen() { return lastOpen; },
         get clears() { return clears; }
     };
 }
@@ -181,6 +183,7 @@ test('signed-out authentication intent opens only the Google sign-in surface', a
     assert.deepEqual(await routing, { handled: true, action: 'sign-in' });
     assert.equal(harness.clears, 0);
     assert.equal(harness.opens, 1);
+    assert.deepEqual(harness.lastOpen, { afterSignIn: true }, 'just signed in with Google: a new account may set up its passkey');
 });
 
 test('signed-out username intent starts the passkey handoff without blocking Chat startup', async () => {

@@ -2065,7 +2065,7 @@ test('a Google-authenticated locked account explains that passkey unlock is stil
     }
 });
 
-test('opening a Google account only prompts automatically for new-account setup', async () => {
+test('after signing in with Google, only a new account prompts automatically (setup)', async () => {
     const originalDocument = globalThis.document;
     globalThis.document = {
         activeElement: null,
@@ -2110,7 +2110,7 @@ test('opening a Google account only prompts automatically for new-account setup'
         modal.remainingPasskeyIntroMs = () => 0;
         modal.escapeHtml = value => String(value ?? '');
         try {
-            modal.open();
+            modal.open(null, { afterSignIn: true });
             await new Promise(resolve => setTimeout(resolve, 10));
             assert.equal(prompts, expectedPrompts, JSON.stringify(flags));
             if (flags.oauthSetupRequired) assert.equal(modal.animationTimeouts.length, 1);
@@ -2597,7 +2597,7 @@ test('new Google setup shows the shared caption before one automatic prompt and 
     let prompts = 0;
     const state = { accountId: 'new-google', sessionVerified: true, oauthSetupRequired: true, passkeySupported: true, busy: false };
     const modal = Object.assign(Object.create(AccountModal.prototype), {
-        isOpen: true, accountState: state, loginViewVersion: 2,
+        isOpen: true, accountState: state, loginViewVersion: 2, passkeySetupAfterSignIn: true,
         animationTimeouts: [], passkeyAutoPromptAttempted: false,
         escapeHtml: value => String(value ?? ''),
         accountService: { getState: () => state },
@@ -2642,7 +2642,7 @@ test('scheduled Google setup cannot prompt after closing, changing accounts, or 
             let fire;
             const state = { accountId: 'new-google', sessionVerified: true, oauthSetupRequired: true };
             const modal = Object.assign(Object.create(AccountModal.prototype), {
-                isOpen: true, accountState: state, loginViewVersion: 2, animationTimeouts: [],
+                isOpen: true, accountState: state, loginViewVersion: 2, animationTimeouts: [], passkeySetupAfterSignIn: true,
                 accountService: { getState: () => state }, render() {}, focusModal() {}, remainingPasskeyIntroMs: () => 1500,
                 handleOAuthKeyringUnlock() { assert.fail('stale setup must not open a passkey prompt'); }
             });
@@ -2654,7 +2654,47 @@ test('scheduled Google setup cannot prompt after closing, changing accounts, or 
     } finally { globalThis.setTimeout = previousSetTimeout; }
 });
 
-test('Google setup arriving after the dialog opens schedules once when restoration becomes ready', async () => {
+test('opening the site with Google setup still pending waits for Create passkey', async () => {
+    const previousDocument = globalThis.document;
+    let prompts = 0;
+    const state = { accountId: 'pending-google', sessionVerified: true, status: 'locked', oauthProvider: 'google',
+        oauthSetupRequired: true, passkeySupported: true, busy: false, authBootstrapComplete: true };
+    let onState;
+    globalThis.document = { activeElement: null, getElementById: () => null, addEventListener() {}, removeEventListener() {} };
+    const modal = new AccountModal({ services: {
+        account: {
+            getState: () => state,
+            subscribe(listener) { onState = listener; return () => {}; },
+            clearErrors() { onState?.(state); },
+            async setupOAuthKeyring() { prompts += 1; return false; }
+        },
+        sync: { getStatus: () => ({}), subscribe: () => () => {} }
+    } });
+    modal.overlay = { classList: { add() {}, remove() {} }, innerHTML: '', querySelector: () => null, querySelectorAll: () => [] };
+    modal.render = () => {};
+    modal.focusModal = () => {};
+    modal.remainingPasskeyIntroMs = () => 0;
+    modal.escapeHtml = value => String(value ?? '');
+    try {
+        modal.open();
+        onState({ ...state });
+        await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(prompts, 0, 'no passkey sheet on a plain visit');
+        const card = modal.renderOAuthUnlockUI();
+        assert.doesNotMatch(card, /data-waiting="true"/);
+        assert.match(card, /Create passkey/);
+        assert.match(card, /id="oauth-keyring-submit-btn"/);
+        // A Google sign-in finishing into this open dialog may still ask once.
+        modal.open(null, { afterSignIn: true });
+        await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(prompts, 1);
+    } finally {
+        modal.destroy();
+        globalThis.document = previousDocument;
+    }
+});
+
+test('Google setup arriving after the sign-in dialog opens schedules once when restoration becomes ready', async () => {
     const previousDocument = globalThis.document;
     let onState;
     let prompts = 0;
@@ -2674,7 +2714,7 @@ test('Google setup arriving after the dialog opens schedules once when restorati
     modal.focusModal = () => {};
     modal.remainingPasskeyIntroMs = () => 0;
     try {
-        modal.open();
+        modal.open(null, { afterSignIn: true });
         assert.equal(prompts, 0);
         state = { ...state, accountId: 'restored-new-google', sessionVerified: true, oauthSetupRequired: true };
         onState(state);

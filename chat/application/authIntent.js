@@ -176,7 +176,9 @@ export async function routeAuthenticationIntent({
         account = accountService.getState();
     }
 
-    accountModal?.open?.();
+    // Arriving from Continue with Google (the popup finished it): a new
+    // account may open its passkey setup at once. Any other visit waits.
+    accountModal?.open?.(null, { afterSignIn: intent === GOOGLE_AUTH_INTENT });
     return Object.freeze({
         handled: true,
         action: account?.sessionVerified === true ? 'unlock' : 'sign-in'
