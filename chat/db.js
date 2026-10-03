@@ -41,6 +41,15 @@ function setCompatFlag() {
     }
 }
 
+// What a person sees when a message cannot be written to this device; the
+// browser's own reason stays on the error (and in the console) for debugging.
+function messageSaveError(cause) {
+    const error = new Error('This message could not be saved on this device. Please try again.');
+    error.cause = cause || null;
+    if (cause) console.error('[ChatDB] Saving the message failed:', cause);
+    return error;
+}
+
 class ChatDatabase {
     constructor() {
         this.dbName = 'oa-fastchat'; // Intentional: preserve existing IndexedDB data across app rename to oa-chat
@@ -330,13 +339,16 @@ class ChatDatabase {
                 this.emitStorageEventDebounced('messages-updated', session.id, { sessionId: session.id }, 500);
                 resolve();
             };
-            transaction.onerror = () => reject(transaction.error);
+            // A failed put reaches the transaction before the transaction has
+            // an error of its own, so read the request's: rejecting with null
+            // showed only a generic "Could not send the message".
+            transaction.onerror = event => reject(messageSaveError(event?.target?.error || transaction.error));
 
             this.putSessionNotingOverwrite(sessionsStore, session);
             (messages || []).forEach(message => {
                 messagesStore.put(message);
             });
-            transaction.onabort = () => reject(transaction.error || new Error('The chat message was not committed.'));
+            transaction.onabort = () => reject(messageSaveError(transaction.error));
         });
     }
 

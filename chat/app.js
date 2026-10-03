@@ -1,5 +1,6 @@
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
+import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
 import { enterKeyAction } from './domain/composerKeys.js';
 
@@ -2637,7 +2638,8 @@ class ChatApp {
 
             // Create full-size image
             const fullImg = document.createElement('img');
-            fullImg.src = img.src;
+            // Composer previews are thumbnails; they carry the full picture.
+            fullImg.src = img.dataset?.fullSrc || img.src;
             fullImg.alt = img.alt;
             fullImg.className = 'max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl';
 
@@ -7801,10 +7803,11 @@ class ChatApp {
                 reasoningEnabled: submission.reasoningEnabled, reasoningEffort: submission.reasoningEffort,
                 memoryMode: Boolean(submission.memoryFeatureEnabled && submission.memoryMode) } };
             if (hasFiles) {
-                // IndexedDB can durably clone File objects before asynchronous
-                // decoding. A reload or failed conversion keeps them retryable.
+                // The files' bytes are saved with the message before decoding, so
+                // a reload or failed conversion keeps them retryable. Bytes, not
+                // File objects: iPhone Safari can refuse to store a picked File.
                 metadata.files = currentFiles.map(file => ({ name: file.name, type: file.type, size: file.size }));
-                metadata.extra.pendingFileObjects = currentFiles;
+                metadata.extra.pendingFileObjects = await toStorableFiles(currentFiles);
             }
             if (searchEnabled) {
                 metadata.searchEnabled = true;
@@ -8920,9 +8923,7 @@ class ChatApp {
         if (this.isSessionDeleted(message.sessionId)) throw this.createCancelledError();
         const pendingFiles = Array.isArray(rawFiles) && rawFiles.length
             ? rawFiles
-            : Array.isArray(message.pendingFileObjects)
-                ? message.pendingFileObjects
-                : [];
+            : revivePendingFiles(message.pendingFileObjects);
         if (!pendingFiles.length) return message.files || [];
         const existing = this.messageFilePreparationInFlight.get(message.id);
         if (existing) {
@@ -11484,7 +11485,7 @@ Your API key has been cleared. A new key from a different station will be obtain
             let iconOrPreview = '';
 
             if (isImage) {
-                const imageUrl = await this.createImagePreview(file);
+                const imageUrl = await this.createComposerThumbnail(file);
                 const imageId = `preview-image-${Date.now()}-${index}`;
                 iconOrPreview = `
                     <img
@@ -11492,6 +11493,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                         class="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
                         alt="${file.name}"
                         data-image-id="${imageId}"
+                        data-full-src="${this.getComposerFullImageUrl(file)}"
                         onclick="window.expandImage('${imageId}')"
                     >
                 `;
@@ -11564,6 +11566,24 @@ Your API key has been cleared. A new key from a different station will be obtain
             reader.onload = (e) => resolve(e.target.result);
             reader.readAsDataURL(file);
         });
+    }
+
+    /** The composer's small preview, drawn once per file (see createImageThumbnail). */
+    createComposerThumbnail(file) {
+        const thumbnails = (this.composerThumbnails ||= new WeakMap());
+        if (!thumbnails.has(file)) {
+            thumbnails.set(file, createImageThumbnail(file).catch(() => this.createImagePreview(file)));
+        }
+        return thumbnails.get(file);
+    }
+
+    /** Tapping a composer preview opens the picture itself, read only then. */
+    getComposerFullImageUrl(file) {
+        const urls = (this.composerFullImageUrls ||= new WeakMap());
+        if (!urls.has(file)) {
+            try { urls.set(file, URL.createObjectURL(file)); } catch { urls.set(file, ''); }
+        }
+        return urls.get(file);
     }
 
     formatFileSize(bytes) {

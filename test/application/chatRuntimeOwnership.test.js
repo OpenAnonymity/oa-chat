@@ -925,6 +925,42 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(memoryOptions.memoryFeatureEnabled, true);
     });
 
+    test('an image Send saves the picked file as bytes, never as a File object', async () => {
+        const app = appHarness();
+        const photo = new File([new Uint8Array([1, 2, 3])], 'IMG_4917.jpeg', { type: 'image/jpeg' });
+        app.uploadedFiles = [photo];
+        app.elements.messageInput.value = '';
+        app.ensureDatabaseReady = async () => true;
+        app.validateCapturedInput = async () => {};
+        app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
+        app.preflightTurnTicketBudget = async () => true;
+        app.activateCouncilLayoutForSubmittedTurn = async () => {};
+        app.reserveAccessAcquisitionHandoff = () => {};
+        app.resolvePendingPhaseForSession = () => 'requesting-key';
+        app.setSessionStreamingState = () => {};
+        app.renderFilePreviews = app.updateFileCountBadge = app.resetMessageInputLayout = app.startPromptSlideUpEffect = () => {};
+        app.updateScrollButtonVisibility = () => {};
+        let saved;
+        app.addMessage = async (_role, _content, metadata) => {
+            saved = structuredClone(metadata.extra);
+            const message = { id: 'accepted' };
+            metadata.onPersisted?.(message);
+            return message;
+        };
+        let readFiles;
+        app.ensureMessageFileMetadata = async (_message, files) => {
+            readFiles = files;
+            throw Object.assign(new Error('Stop after acceptance'), { isCancelled: true });
+        };
+        await app.sendMessage();
+        const [stored] = saved.pendingFileObjects;
+        assert.ok(!(stored instanceof Blob));
+        assert.deepEqual([...new Uint8Array(stored.bytes)], [1, 2, 3]);
+        assert.equal(stored.name, 'IMG_4917.jpeg');
+        assert.deepEqual(readFiles, [photo], 'this Send still reads the picked file itself');
+        assert.deepEqual(app.uploadedFiles, []);
+    });
+
     test('session creation cannot restore an old URL after navigation during settings persistence', async () => {
         const app = appHarness();
         const saving = deferred();
