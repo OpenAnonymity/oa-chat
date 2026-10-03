@@ -1,3 +1,14 @@
+## 2026-10-03: Group repeated verifier-unavailable timeline rows
+
+The System Panel groups consecutive unavailable retries for the same key digest,
+station, verifier and chat into one row. Its first timestamp and expansion ID stay
+stable; expanded details show the check count and latest check time. A collapsed
+retry does not scroll the panel or notify the floating panel. Other activity,
+new keys and verifier verdicts start separate rows. Raw logs stay memory-only
+and unchanged; the existing 200-entry cap also bounds the displayed history.
+The added key digest is non-secret and stays in the existing local log. No retry,
+trust policy, grace clock, account, ticket or wallet behavior changes.
+
 ## 2026-10-03: Pending Google passkey setup on a later visit
 
 An ordinary visit or Account reopen no longer automatically starts WebAuthn when

@@ -11,6 +11,8 @@ globalThis.window = {
 
 const { default: networkProxy } = await import('../../chat/services/networkProxy.js');
 const { StationVerifier } = await import('../../chat/services/verifier.js');
+const { default: networkLogger } = await import('../../chat/services/networkLogger.js');
+const { groupVerificationRetries } = await import('../../chat/services/activityTimeline.js');
 const { VERIFIER_OUTAGE_POLICY } = await import('../../chat/config.js');
 
 test.after(() => {
@@ -50,6 +52,23 @@ const pendingReply = { response: { ok: true, status: 200 }, data: { status: 'pen
 const serverErrorUnverifiedBody = { response: { ok: false, status: 500 }, data: { status: 'unverified', detail: 'internal' } };
 const bannedReply = { response: { ok: false, status: 403 }, data: { status: 'banned', banned_station: { station_id: UNATTESTED.stationId, reason: 'logging detected' } } };
 const malformedReply = { response: { ok: true, status: 200 }, data: { hello: 'world' } };
+
+test('actual outage retries group by digest without changing retry queue or exposing the key', async () => {
+    const { verifier, restore } = withVerifier('strict', transportError());
+    networkLogger.clearLogs();
+    try {
+        const first = await verifier.submitKey(ATTESTED);
+        const second = await verifier.submitKey(ATTESTED);
+        assert.equal(first.status, 'verifier-unavailable');
+        assert.equal(second.status, first.status);
+        assert.equal(verifier.pendingSubmissions.size, 1);
+        const logs = networkLogger.getAllLogs();
+        assert.equal(logs.length, 2);
+        assert.equal(logs[0].request.key_hash, first.keyHash);
+        assert.doesNotMatch(JSON.stringify(logs), /child-secret/);
+        assert.equal(groupVerificationRetries(logs).length, 1);
+    } finally { restore(); networkLogger.clearLogs(); }
+});
 
 test('unbuilt sources default to the strict policy', () => {
     assert.equal(VERIFIER_OUTAGE_POLICY, 'strict');
