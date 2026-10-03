@@ -1,3 +1,14 @@
+## 2026-10-03: Pending Google passkey setup on a later visit
+
+An ordinary visit or Account reopen no longer automatically starts WebAuthn when
+Google session restoration finds unfinished encryption-passkey setup. The card
+shows **Create passkey** and waits for the user's click. A fresh Google sign-in
+or its one-use landing handoff retains the single automatic setup attempt.
+The permission is modal-local UI state, not a persisted account preference.
+Existing keyring unlock and preview-domain recovery remain explicit choices;
+username sign-in, key ownership checks, encrypted storage and wallet scopes are
+unchanged. OAuth completion does not itself establish encrypted-data unlock.
+
 ## 2026-10-03: iPhone attachment persistence and preview ownership
 
 Picked attachments are stored as bytes plus metadata before message acceptance,

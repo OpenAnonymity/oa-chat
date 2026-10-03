@@ -47,6 +47,11 @@ username setup, then opens the native creation prompt automatically once.
 If the browser refuses or the user cancels, an explicit retry button remains.
 This removes an extra UI click; it does not remove encryption-passkey setup.
 
+The automatic attempt belongs only to the fresh Google sign-in flow. If setup
+remains unfinished on a later ordinary visit or Account reopen, the card shows
+**Create passkey** and waits for a click. Restoring a Google session does not
+grant permission to open the native creation sheet on every page load.
+
 
 1. The org completes OAuth and maps the provider's stable subject to an internal
    OA account ID.

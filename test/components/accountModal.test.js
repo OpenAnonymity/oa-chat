@@ -2688,6 +2688,16 @@ test('opening the site with Google setup still pending waits for Create passkey'
         modal.open(null, { afterSignIn: true });
         await new Promise(resolve => setTimeout(resolve, 10));
         assert.equal(prompts, 1);
+        // Leaving an unfinished setup and reopening Account must not inherit
+        // the previous Google sign-in's permission to open a native sheet.
+        modal.close();
+        modal.open();
+        onState({ ...state });
+        await new Promise(resolve => setTimeout(resolve, 10));
+        assert.equal(prompts, 1, 'ordinary reopen waits for a fresh click');
+        assert.match(modal.renderOAuthUnlockUI(), /Create passkey/);
+        await modal.handleOAuthKeyringUnlock();
+        assert.equal(prompts, 2, 'the explicit Create passkey action still starts setup');
     } finally {
         modal.destroy();
         globalThis.document = previousDocument;
