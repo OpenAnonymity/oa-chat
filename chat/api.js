@@ -1,3 +1,4 @@
+import { getErrorMessage } from './domain/errorMessage.js';
 // OpenRouter API integration
 //
 // Direct-to-provider architecture: all inference requests (completions, streaming)
@@ -622,7 +623,7 @@ export class OpenRouterAPI {
             }
 
             if (!response.ok) {
-                const errorMessage = data?.error?.message || data?.message || `HTTP error! status: ${response.status}`;
+                const errorMessage = getErrorMessage(data?.error, getErrorMessage(data, `HTTP error! status: ${response.status}`));
                 const error = new Error(errorMessage);
                 error.status = response.status;
                 error.data = data;
@@ -1103,7 +1104,7 @@ export class OpenRouterAPI {
 
                 // Check for mid-stream errors
                 if (parsed.error) {
-                    const errorMessage = parsed.error.message || 'Stream error occurred';
+                    const errorMessage = getErrorMessage(parsed.error, 'Stream error occurred');
                     const error = new Error(errorMessage);
                     // The raw message stays on the error (credit detection reads
                     // it); the chat shows a readable summary, see app.js.
@@ -1465,8 +1466,13 @@ export class OpenRouterAPI {
             // Handle pre-stream errors
             if (!response.ok) {
                 const errorData = await readInferenceErrorBody(response, watchdog.signal);
-                const errorMessage = errorData.error?.message || `HTTP error! status: ${response.status}`;
-                const error = new Error(errorMessage);
+                const fallbackMessage = `HTTP error! status: ${response.status}`;
+                const originalMessage = errorData?.error?.message;
+                const error = new Error(typeof originalMessage === 'string' && originalMessage || fallbackMessage);
+                // Preserve the previous policy input before extracting display
+                // text. Nested credit text alone cannot authorize a new ticket.
+                error.creditRecoveryMessage = error.message;
+                error.message = getErrorMessage(errorData?.error, getErrorMessage(errorData, fallbackMessage));
                 error.status = response.status;
                 error.data = errorData;
                 if (response.status === 402) error.code = getCreditErrorCode(errorData);

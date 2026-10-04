@@ -117,7 +117,7 @@ class TicketClient {
 
     createTicketRedemptionError(data, status, fallbackMessage) {
         const parsed = getStructuredTicketError(data, fallbackMessage);
-        const messageLower = String(parsed.message || '').toLowerCase();
+        const messageLower = String(parsed.classificationMessage || '').toLowerCase();
 
         if (parsed.code === 'TICKET_KEY_INVALIDATED') {
             const error = new Error('The org rotated its ticket signing key. Tickets from the old key were invalidated.');

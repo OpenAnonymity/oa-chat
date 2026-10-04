@@ -1,3 +1,4 @@
+import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
 import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
@@ -7135,12 +7136,12 @@ class ChatApp {
                 } catch (error) {
                     if (typingId) this.removeTypingIndicator(typingId);
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(error.message, 'error', 5000);
+                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
                     }
                     if (lastUserMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true }, session);
+                    await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
                     return;
                 }
             }
@@ -7432,7 +7433,7 @@ class ChatApp {
                 console.error('Error getting AI response:', error);
                 if (typingId) this.removeTypingIndicator(typingId);
 
-                if (error.isCancelled) {
+                if (error?.isCancelled) {
                     // If cancelled before first chunk, delete the placeholder message
                     if (streamingMessage && !firstChunkReceived) {
                         await chatDB.deleteMessage(streamingMessage.id);
@@ -7471,7 +7472,7 @@ class ChatApp {
                 } else {
                     if (firstChunkReceived && streamingMessage) {
                         this.preserveInterruptedResponse(streamingMessage, streamedContent, streamedReasoning,
-                            `**Response interrupted:** ${error.message || 'Please retry.'}`);
+                            `**Response interrupted:** ${getErrorMessage(error, 'Please retry.')}`);
                         await chatDB.saveMessage(streamingMessage);
                         // Only update UI if still viewing the same session
                         if (this.chatArea && this.isViewingSession(session.id)) {
@@ -7489,7 +7490,7 @@ class ChatApp {
                                 }
                             }
                         }
-                        await this.addMessage('assistant', `**Error:** ${error.message || 'The response failed. Please retry.'}`, { isLocalOnly: true }, session);
+                        await this.addMessage('assistant', `**Error:** ${getErrorMessage(error, 'The response failed. Please retry.')}`, { isLocalOnly: true }, session);
                     }
                 }
             }
@@ -7948,12 +7949,12 @@ class ChatApp {
                     await this.discardPendingTurn(pendingTurn);
                     if (this.pageUnloading === true) return;
                     if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(error.message, 'error', 5000);
+                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
                     }
                     if (userMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
                     }
-                    await this.addMessage('assistant', `**Error:** ${error.message}`, { isLocalOnly: true }, session);
+                    await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
                     return; // Return early if key acquisition fails
                 }
             }
@@ -8290,7 +8291,7 @@ class ChatApp {
                 if (this.pageUnloading === true) break retryLoop;
 
                 // Check if error was due to cancellation
-                if (error.isCancelled) {
+                if (error?.isCancelled) {
                     // Keep the partial message if there's content, otherwise remove it
                     if (streamingMessage && firstChunkReceived) {
                         if (streamedContent.trim() || streamedReasoning.trim() || streamingMessage.images?.length) {
@@ -8343,7 +8344,7 @@ class ChatApp {
                 // Check if we should retry (only if no content received yet)
                 if (!firstChunkReceived && retryCount < MAX_RETRIES && isRetryableError(error)) {
                     retryCount++;
-                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, error.message);
+                    console.log(`Retrying request (attempt ${retryCount + 1}/${MAX_RETRIES + 1}) after error:`, getErrorMessage(error));
                     // Small delay before retry (500ms * attempt number)
                     await new Promise(r => setTimeout(r, 500 * retryCount));
                     // Re-show typing indicator for retry
@@ -8355,19 +8356,19 @@ class ChatApp {
                 }
 
                 // Non-retryable or exhausted retries - show error to user
-                const errorMessage = terminalError.message;
+                const errorMessage = getErrorMessage(terminalError);
 
                 // Customize messages for specific error types
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
                 // The following are inference backend HTTP status codes, not OA infra
-                if (terminalError.status === 402) {
+                if (terminalError?.status === 402) {
                     // Credit/token limit errors
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
-                } else if (terminalError.status === 401) {
+                } else if (terminalError?.status === 401) {
                     // Authentication errors
                     userFriendlyMessage = `Authentication error. Please check the system panel (right side) and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor)!`;
-                } else if (terminalError.status === 503 || terminalError.status === 502 || terminalError.status === 504) {
+                } else if (terminalError?.status === 503 || terminalError?.status === 502 || terminalError?.status === 504) {
                     // Service unavailable / gateway errors (after retries exhausted)
                     userFriendlyMessage = `Gateway error (after ${retryCount} retries). Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;
                 } else if (terminalError?.providerReported && !terminalError?.status) {

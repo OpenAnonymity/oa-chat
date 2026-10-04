@@ -32,6 +32,7 @@ const { default: preferencesStore } = await import('../../chat/services/preferen
 const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
+const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
 const { default: ChatArea } = await import('../../chat/components/ChatArea.js');
 const { chatDB } = await import('../../chat/db.js');
 const { createInferenceService } = await import('../../chat/publicInferenceApi.js');
@@ -326,6 +327,103 @@ describe('production ChatApp runtime ownership', () => {
         const error = [...records.values()].find(m => m.role === 'assistant');
         assert.equal(error.sessionId, 'one');
         assert.match(error.content, /timed out/);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    for (const action of ['send', 'retry']) {
+        for (const partial of [false, true]) {
+            test(`${action} handles structured errors with partial=${partial} without hiding the original failure`, async () => {
+                let calls = 0;
+                const { app, records } = streamHarness(async (...args) => {
+                    calls++;
+                    if (partial) await args[3]('Partial answer');
+                    throw { message: { detail: [{ msg: 'Model unavailable', input: 'private input' }] },
+                        status: 400, retryable: false };
+                });
+                if (action === 'retry') {
+                    records.set('accepted', { id: 'accepted', role: 'user', content: 'Earlier prompt', model: 'Accepted model', memoryMode: false });
+                    await app.regenerateResponse();
+                } else await app.sendMessage();
+                const assistant = [...records.values()].find(message => message.role === 'assistant');
+                assert.ok(assistant);
+                assert.match(partial ? assistant.inferenceError : assistant.content, /Model unavailable/);
+                assert.doesNotMatch(JSON.stringify(assistant), /private input|\[object Object\]|includes is not a function/);
+                if (partial) assert.equal(assistant.content, 'Partial answer');
+                else assert.equal(assistant.isLocalOnly, true);
+                assert.equal(calls, 1, 'permanent errors must not replay inference');
+                assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+            });
+        }
+    }
+
+    test('null and string throws leave a readable local error and release the composer', async () => {
+        for (const failure of [null, 'Request rejected']) {
+            const { app, records } = streamHarness(async () => { throw failure; });
+            await app.sendMessage();
+            const assistant = [...records.values()].find(message => message.role === 'assistant');
+            assert.match(assistant.content, failure ? /Request rejected/ : /The request failed/);
+            assert.equal(assistant.isLocalOnly, true);
+            assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+        }
+    });
+
+    test('a structured key-acquisition failure is shown without sending inference', async () => {
+        const { app, records } = streamHarness(async () => assert.fail('No inference without access'));
+        app.inferenceService.getAccessToken = () => null;
+        app.acquireAndSetAccess = async () => { throw { detail: { message: 'Tickets are being moved. Please retry.' } }; };
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /Tickets are being moved/);
+        assert.equal(assistant.isLocalOnly, true);
+        assert.equal(app.getSessionStreamingState('one').isStreaming, false);
+    });
+
+    test('structured legacy ticket errors keep recovery metadata and ambiguous failures never consume tickets', () => {
+        const keyId = 'ab'.repeat(32);
+        const legacy = ticketClient.createTicketRedemptionError({ detail: {
+            error_code: 'TICKET_KEY_LEGACY', legacy_key_id: keyId,
+            message: { message: 'Legacy ticket' }
+        } }, 409, 'fallback');
+        assert.equal(legacy.code, 'TICKET_KEY_LEGACY');
+        assert.equal(legacy.legacyKeyId, keyId);
+        assert.equal(legacy.status, 409);
+        assert.notEqual(legacy.consumeTickets, true);
+        const invalidated = ticketClient.createTicketRedemptionError({ detail: {
+            error_code: 'TICKET_KEY_INVALIDATED', invalidated_key_id: keyId,
+            message: { message: 'Old signing key' }
+        } }, 409, 'fallback');
+        assert.equal(invalidated.code, 'TICKET_KEY_INVALIDATED');
+        assert.equal(invalidated.invalidatedKeyId, keyId);
+        for (const data of [{ detail: { message: { message: 'Service unavailable' } } },
+            { detail: { message: { message: 'Authentication refused' } } },
+            { detail: [{ msg: 'Invalid request', input: 'private ticket' }] },
+            { detail: { input: 'private ticket' } }]) {
+            for (const status of [400, 401]) {
+                const error = ticketClient.createTicketRedemptionError(data, status, 'fallback');
+                assert.equal(typeof error.message, 'string');
+                assert.notEqual(error.consumeTickets, true);
+                assert.notEqual(error.code, 'TICKET_USED');
+                assert.doesNotMatch(error.message, /private ticket|\[object Object\]/);
+            }
+        }
+    });
+
+    test('a failed credit refresh preserves its structured error without repeating access or inference', async () => {
+        let calls = 0, refreshes = 0;
+        const { app, records } = streamHarness(async () => {
+            calls++;
+            throw Object.assign(new Error('Key limit exceeded'), { status: 402,
+                data: { error: { metadata: { limit_source: 'openrouter_key_limit' } } } });
+        });
+        app.refreshAccessAfterCreditExhaustion = async () => {
+            refreshes++;
+            throw { message: { detail: 'Ticket service unavailable' }, status: 400 };
+        };
+        await app.sendMessage();
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.match(assistant.content, /Ticket service unavailable/);
+        assert.equal(calls, 1);
+        assert.equal(refreshes, 1);
         assert.equal(app.getSessionStreamingState('one').isStreaming, false);
     });
 

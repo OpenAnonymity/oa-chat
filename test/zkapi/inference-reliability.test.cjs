@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
 const url = relative => pathToFileURL(path.join(__dirname, '../../chat', relative)).href;
-let API, helpers, limits, proxy, fetchRetry;
+let API, helpers, limits, proxy, fetchRetry, isAccessCreditExhaustedError;
 test.before(async () => {
     globalThis.window = globalThis;
     window.location = {hostname:'localhost',origin:'http://localhost',search:''};
@@ -14,6 +14,7 @@ test.before(async () => {
     limits = await import(url('services/inference/inputLimits.js'));
     proxy = (await import(url('services/networkProxy.js'))).default;
     fetchRetry = (await import(url('services/fetchRetry.js'))).fetchRetry;
+    ({ isAccessCreditExhaustedError } = await import(url('application/accessController.js')));
 });
 const encoder = new TextEncoder();
 const delta = 'data: {"choices":[{"delta":{"content":"Partial answer"}}]}\n\n';
@@ -39,6 +40,30 @@ test('empty, malformed and truncated streams reject rather than succeed', async 
 test('provider error and explicit incomplete events reject', async () => {
     await assert.rejects(stream(apiFor(async()=>response(delta+'data: {"error":{"message":"provider failed"}}\n'))),/provider failed/);
     await assert.rejects(stream(apiFor(async()=>response(delta+'data: {"type":"response.incomplete"}\n'))),{code:'INFERENCE_INCOMPLETE'});
+});
+test('nested HTTP and stream errors retain text and metadata without dumping request data', async () => {
+    const detail = { message: { detail: [{ msg: 'Model unavailable', input: 'private input' }] }, code: 400 };
+    await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify({ error: detail }), { status: 400 }))),
+        error => error.message === 'Model unavailable' && error.status === 400);
+    await assert.rejects(stream(apiFor(async () => response(delta + `data: ${JSON.stringify({ error: detail })}\n`))),
+        error => error.message === 'Model unavailable' && error.isStreamError === true && error.retryable === false);
+});
+test('richer nested provider credit messages never authorize extra ticket spending', async () => {
+    for (const message of ['This request requires more credits, or fewer max_tokens. You requested up to 65536 tokens, but can only afford 54775.',
+        'Insufficient credits']) {
+        const data = { error: { message: { message } } };
+        await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify(data), { status: 402 }))), error => {
+            assert.equal(error.message, message);
+            assert.equal(error.status, 402);
+            assert.equal(isAccessCreditExhaustedError(error), false);
+            return true;
+        });
+    }
+    const data = { error: { message: { message: 'Key credits exhausted' }, metadata: { limit_source: 'openrouter_key_limit' } } };
+    await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify(data), { status: 402 }))), error => {
+        assert.equal(isAccessCreditExhaustedError(error), true, 'explicit key-limit policy remains unchanged');
+        return true;
+    });
 });
 test('connection timeout bounds fetch that ignores abort', async () => {
     await assert.rejects(stream(apiFor(()=>new Promise(()=>{}))),{code:'INFERENCE_CONNECTION_TIMEOUT',retryable:false});

@@ -8,15 +8,19 @@ import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
 export function isAccessCreditExhaustedError(error) {
     if (error?.status !== 402) return false;
     const responseData = error.data || error.responseData || null;
+    // Richer display text must not widen the legacy credit-refresh heuristic:
+    // a refresh can spend a ticket. Provider adapters retain its original text.
+    const recoveryMessage = typeof error.creditRecoveryMessage === 'string'
+        ? error.creditRecoveryMessage : error.message;
     const source = getCreditLimitSource(responseData);
     // Account-wide funding and in-flight holds cannot be repaired by spending
     // another ticket. Nor is a key exhausted when a smaller output still fits.
     if (source && source !== 'openrouter_key_limit') return false;
-    const affordability = parseOutputAffordability(responseData?.error?.message || error.message);
+    const affordability = parseOutputAffordability(responseData?.error?.message || recoveryMessage);
     if (affordability?.affordable > 0) return false;
     if (source === 'openrouter_key_limit') return true;
     const details = [
-        error.message,
+        recoveryMessage,
         responseData?.error?.message,
         responseData?.detail,
         responseData?.message

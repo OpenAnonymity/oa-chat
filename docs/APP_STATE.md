@@ -1,3 +1,29 @@
+## 2026-10-04: Structured send errors
+
+Send and Retry now extract text from error `message`, `detail`, `error` and `msg`
+fields, including nested objects and validation arrays. The terminal send
+handler previously called `includes` directly on `error.message`; a structured
+message could crash error reporting, lose the local error row or leave a partial
+reply without its interruption notice. Missing or non-Error throws use a readable
+fallback. Provider HTTP/stream and ticket parsing use the same helper so useful
+text survives instead of becoming `[object Object]`. Unknown objects are never
+serialized into chat history: request input, tickets and response metadata are
+not message fields. Traversal is cycle/depth bounded.
+
+Error codes, HTTP statuses, legacy-ticket recovery, wallet mutation, verifier
+policy and automatic retry rules are unchanged. Regression tests cover Send,
+Retry, partial replies, access acquisition, failed credit refresh, null/string
+throws, nested provider errors and structured legacy-ticket metadata. The
+reported real-user trigger is unconfirmed; this fixes reproduced error handling
+failures without claiming every underlying server rejection is repaired.
+
+Keep display text separate from policy input: `classificationMessage` preserves
+the string-only ticket heuristic and `creditRecoveryMessage` preserves provider
+credit-refresh decisions. Newly extracted nested text must not mark a ticket
+spent (for example `Authentication refused` contains `used`) or buy another key
+for a structured credit error. Tests cover both cases, including positive output
+affordability and the existing explicit `openrouter_key_limit` recovery signal.
+
 ## 2026-10-03: Pending Google passkey setup on a later visit
 
 An ordinary visit or Account reopen no longer automatically starts WebAuthn when
