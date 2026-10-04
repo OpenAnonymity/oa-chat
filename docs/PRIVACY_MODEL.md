@@ -179,7 +179,10 @@ Clients submit newly issued keys to the verifier before inference. Unverified
 continuation additionally requires an explicit client-side station ID/public-key
 pin scoped to the configured verifier origin, and local Ed25519 verification of
 the station signature over the exact station ID, provider key and expiry. The
-current operator trust list contains only `oa-station` at verifier2. Neither an
+current operator trust list contains `oa-station` at verifier2 and
+`oa-production-station` at the existing production verifier origin. The latter
+pin was matched against both the TLS-protected verifier broadcast and production
+org trust cache on October 4, 2026; it permits temporary outages only. Neither an
 org `recentlyAttested` flag nor membership in a live broadcast adds a trusted
 station. The initial `oa-station` pin is the key observed in the HTTPS verifier
 broadcast on October 1, 2026; its operator identity was not independently
@@ -215,14 +218,18 @@ replacement. Outage keys cannot enter shared-chat access payloads.
 The compiled `OA_VERIFIER_OUTAGE_POLICY` also supports `tolerant` and `advisory`;
 the production build defaults to `advisory`. Tolerant admits temporary outages,
 pending or malformed replies for locally authenticated pinned stations. Advisory
-also admits a verifier refusal, including `Invalid org signature`, for those
-same stations. This is an explicit operator trust exception: a valid pinned
+also admits a verifier refusal, including `Invalid org signature`, for the
+staging pin. The production pin explicitly forbids that exception: negative
+ownership, invalid signatures and other explicit refusals block even inside a
+5xx or success envelope. This is an explicit operator trust exception: a valid pinned
 station signature establishes who issued the key, but does not establish org
 signature validity, provider-account ownership or logging/training settings.
 The interface retains `verifier-unavailable`/unverified status. This weaker
 assurance must not be described as verifier approval or zero-trust station
 compliance. The local trust policy revision is bound into saved fallback proofs;
 older unscoped advisory approvals and approvals under changed pins are invalid.
+Revisions include only the configured verifier origin's pins, so adding a
+production pin does not invalidate existing staging proofs.
 
 Browser zkAPI uses this same host policy after its SDK's request identity,
 spending-cap, quote, expiry, origin and evidence checks. It retains the raw key

@@ -8,13 +8,20 @@ function normalizedOrigin(value) {
 }
 
 export function trustedStationPolicyRevision(stations = TRUSTED_VERIFIER_STATIONS, verifierUrl = VERIFIER_URL) {
-    return `station-ed25519-v1:${normalizedOrigin(verifierUrl)}:${JSON.stringify(stations)}`;
+    const origin = normalizedOrigin(verifierUrl);
+    // A pin for a different environment must not invalidate this origin's
+    // existing proofs. The original staging-only revision remains unchanged.
+    return `station-ed25519-v1:${origin}:${JSON.stringify(stations.filter(pin => pin.verifierOrigin === origin))}`;
 }
 
 function stationPin(stationId, stations, verifierUrl) {
     const origin = normalizedOrigin(verifierUrl);
     return origin && stations.find(pin => pin.stationId === stationId &&
         pin.verifierOrigin === origin && /^[a-f0-9]{64}$/i.test(pin.publicKey));
+}
+
+export function stationFallbackIsOutageOnly(stationId, stations, verifierUrl) {
+    return stationPin(stationId, stations, verifierUrl)?.outageOnly === true;
 }
 
 function hexBytes(value, byteLength) {

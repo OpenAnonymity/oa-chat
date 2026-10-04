@@ -46,6 +46,12 @@ export const TRUSTED_VERIFIER_STATIONS = Object.freeze([Object.freeze({
     stationId: 'oa-station',
     publicKey: '20019ebb3cfa61a34ac75879bca8ccf9168ce435c6007d5279b84ebeb83fd097',
     verifierOrigin: 'https://verifier2.openanonymity.ai'
+}), Object.freeze({
+    stationId: 'oa-production-station',
+    publicKey: '02a294fde1113c43bec88175429bab20d0795c5d51b2f27ebd596bd80fdc4585',
+    verifierOrigin: 'https://verifier-production-20260917.openanonymity.ai',
+    // Production continuity is for outages, never an explicit refusal.
+    outageOnly: true
 })]);
 
 // Verifier outage policy -- what the client does when the verifier cannot give

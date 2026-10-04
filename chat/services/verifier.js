@@ -6,7 +6,7 @@
 import networkLogger from './networkLogger.js';
 import networkProxy from './networkProxy.js';
 import { VERIFIER_URL, VERIFIER_OUTAGE_POLICY, VERIFIER_OUTAGE_POLICIES, TRUSTED_VERIFIER_STATIONS } from '../config.js';
-import { buildTrustedStationFallback, isTrustedStationKey } from './trustedStations.js';
+import { buildTrustedStationFallback, isTrustedStationKey, stationFallbackIsOutageOnly } from './trustedStations.js';
 import { chatDB } from '../db.js';
 import { VERIFIER_UNAVAILABLE_STATUS } from './inference/verifiedAccess.js';
 
@@ -39,8 +39,7 @@ function isHardFailure(error, response, data) {
 
     // Signature/validation errors from verifier = hard failure
     const errorMsg = JSON.stringify([error?.message, data?.detail, data?.error, data?.message]).toLowerCase();
-    if (errorMsg.includes('invalid signature') ||
-        errorMsg.includes('signature mismatch') ||
+    if (/invalid\s+(?:(?:org|station)\s+)?signature|signature\s+(?:mismatch|invalid|failed)/.test(errorMsg) ||
         errorMsg.includes('expired') ||
         errorMsg.includes('invalid key') ||
         /privacy|logging|training|ownership.*(?:mismatch|failed)|banned/.test(errorMsg)) {
@@ -806,6 +805,9 @@ export class StationVerifier {
     // advisory policy continues here; the verdict is final, so nothing is
     // queued for retry and the Activity Timeline says the station failed.
     async recordUnverifiedVerdict(keyData, keyHash, safeDetail, logData, responseStatus) {
+        if (stationFallbackIsOutageOnly(keyData.stationId, this.trustedStations, this.verifierUrl)) {
+            return { status: 'rejected', error: new Error('The verifier refused this key; the station permits outage recovery only') };
+        }
         const blocked = await this.fallbackBlockReason(keyData);
         if (blocked) return { status: 'rejected', error: new Error(blocked) };
         networkLogger.logRequest({
@@ -991,11 +993,26 @@ export class StationVerifier {
                 };
             }
 
+            // Production's pinned station can survive a verifier outage, but
+            // must not inherit staging's broader advisory refusal exception.
+            // A verifier's documented ownership-service outage is temporary;
+            // an explicit negative ownership result still blocks below.
+            const ownershipUnavailable = response.status === 503 &&
+                data?.status === 'unverified' && data?.detail === 'ownership_check_error';
+            const failureData = ownershipUnavailable ? { ...data, status: 'error', detail: '' } : data;
+            if (stationFallbackIsOutageOnly(keyData.stationId, this.trustedStations, this.verifierUrl) &&
+                isHardFailure(null, response, failureData)) {
+                const detail = redactVerifierLogValue(data?.detail || data?.error || 'Verifier refused this key', keyData.key);
+                networkLogger.logRequest({
+                    type: 'verification', method: 'POST', url: `${this.verifierUrl}/submit_key`,
+                    status: response.status, request: { station_id: keyData.stationId }, response: logData
+                });
+                return { status: 'rejected', error: new Error(detail) };
+            }
+
             if (!response.ok) {
                 // Production treats this specific response as temporary, not a
                 // failed ownership verdict. Other unverified/refused results block.
-                const ownershipUnavailable = response.status === 503 &&
-                    data?.status === 'unverified' && data?.detail === 'ownership_check_error';
                 const temporaryDetail = ownershipUnavailable ? 'ownership_check_error' :
                     (response.status === 429 ? 'rate_limited' : null);
                 const temporaryData = ownershipUnavailable

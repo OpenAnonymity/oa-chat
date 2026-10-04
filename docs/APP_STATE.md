@@ -173,6 +173,27 @@ The matching production build serves the exact final-origin allowlist at
 login-generation checks prevent late keyring reads/passkey results from
 restoring an old key into a replacement account. See ENCRYPTION_PASSKEYS.md.
 
+## 2026-10-04: Production verifier outage continuity
+
+- Production now pins `oa-production-station` to its existing Ed25519 public
+  identity and `https://verifier-production-20260917.openanonymity.ai`. The pin
+  was checked independently against the TLS-protected verifier broadcast and
+  production org cache. It grants outage continuity, never fresh verification.
+- The production pin is `outageOnly`: explicit refusals, failed ownership,
+  bans and signature errors block even under an advisory build and even inside
+  5xx/pending/success envelopes. The documented 503 `ownership_check_error`
+  remains temporary only when it contains no explicit negative result.
+- Every outage key still needs a locally valid Ed25519 signature, exact station
+  and verifier origin, and unexpired lifetime. Cached bans remain binding.
+  No wallet data, login flow, contract, SDK pin or storage namespace changes.
+- Proof policy revisions include only pins for their verifier origin, preserving
+  existing staging fallback proofs when the production pin is added. Staging's
+  separate Mainnet zkAPI verifier still has no outage pins; production OA and
+  zkAPI share the production verifier and the same constrained fallback.
+- Recovery uses the existing unverified warning and bounded retry behavior;
+  zkAPI does not copy its private lease key into OA's retry queue. Org grace and
+  encrypted verifier persistence are separate server rollout steps.
+
 ## 2026-10-01: Trusted-station fallback and stale proving-key cache repair
 
 - The user's staging response exposes `Invalid org signature`. OA's former
