@@ -8,6 +8,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
 import { getActivityDescription, getActivityIcon, getStatusIconClass, formatTimestamp } from '../services/networkLogRenderer.js';
+import { groupVerificationRetries } from '../services/activityTimeline.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -214,7 +215,7 @@ class RightPanel {
         this.expiresAt = accessInfo?.expiresAt || null;
 
         // Load ALL network logs globally (not just for this session)
-        this.networkLogs = this.app.services.networkLogger.getAllLogs();
+        this.networkLogs = groupVerificationRetries(this.app.services.networkLogger.getAllLogs());
         this.previousLogCount = this.networkLogs.length;
 
         // Only update the top section (API key/tickets) without re-rendering logs
@@ -484,17 +485,19 @@ class RightPanel {
             // Reload ALL logs globally
             // DON'T clear expandedLogIds - preserve expansion state
             const previousCount = this.previousLogCount;
-            this.networkLogs = this.app.services.networkLogger.getAllLogs();
+            const previousLatestId = this.networkLogs[0]?.id;
+            this.networkLogs = groupVerificationRetries(this.app.services.networkLogger.getAllLogs());
             this.previousLogCount = this.networkLogs.length;
+            const hasNewRow = this.networkLogs[0]?.id !== previousLatestId;
 
             // Use incremental update to preserve scroll and expansion state
-            this.renderLogsOnly(false, previousCount); // Don't preserve scroll - we'll scroll to bottom
+            this.renderLogsOnly(!hasNewRow, previousCount);
 
             // Auto-scroll to bottom to show newest activity (instant for immediate feedback)
-            this.scrollToBottomInstant();
+            if (hasNewRow) this.scrollToBottomInstant();
 
             // Notify app about new log for floating panel
-            if (this.app.floatingPanel && this.networkLogs.length > 0) {
+            if (hasNewRow && this.app.floatingPanel && this.networkLogs.length > 0) {
                 const latestLog = this.networkLogs[0];
                 this.app.floatingPanel.updateWithLog(latestLog);
             }
@@ -1550,6 +1553,7 @@ class RightPanel {
                     <!-- Detailed description -->
                     <div class="px-3 pt-2.5 pb-2 bg-muted/5 border-b border-border/50">
                         <div class="text-foreground leading-relaxed">${log.status === 'pending' || log.status === 'queued' ? getActivityDescription(log, true) : this.escapeHtml(getActivityDescription(log, true))}</div>
+                        ${log.verificationChecks > 1 ? `<div class="mt-1 text-muted-foreground">${log.verificationChecks} checks · Last checked ${formatTimestamp(log.lastCheckTimestamp)}. Repeated unavailable results are grouped here.</div>` : ''}
                     </div>
 
                 <!-- Technical Details -->

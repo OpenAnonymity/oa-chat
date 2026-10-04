@@ -793,7 +793,8 @@ export class StationVerifier {
         networkLogger.logRequest({
             type: 'verification', method: 'POST', url: `${this.verifierUrl}/submit_key`,
             status: VERIFIER_UNAVAILABLE_STATUS,
-            request: { station_id: keyData.stationId },
+            // Non-secret digest lets the timeline group retries of this key only.
+            request: { station_id: keyData.stationId, key_hash: keyHash },
             detail: VERIFIER_UNAVAILABLE_STATUS
         });
         if (queue) this.queuePendingSubmission(keyData, keyHash, detail);
