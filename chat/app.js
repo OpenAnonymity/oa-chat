@@ -1,4 +1,4 @@
-import { trackFeatureUsage } from './services/featureUsage.js';
+import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
@@ -5994,12 +5994,15 @@ class ChatApp {
     }
 
     async setMemoryAutoInclude(enabled, options = {}) {
-        this.memoryAutoInclude = enabled === true;
+        const previous = this.memoryAutoInclude === true;
+        const next = enabled === true;
+        this.memoryAutoInclude = next;
         if (this.chatInput?.refreshMemorySettingsUI) {
             this.chatInput.refreshMemorySettingsUI();
         }
         if (options.persist === false) return;
-        await chatDB.saveSetting('memoryAutoInclude', this.memoryAutoInclude);
+        await chatDB.saveSetting('memoryAutoInclude', next);
+        trackSettingChange('memory_auto_include', previous, next);
     }
 
     isMemoryFeatureActive(generation = this.memoryWorkGeneration, session = this.getCurrentSession()) {
@@ -6088,6 +6091,7 @@ class ChatApp {
         await Promise.all(writes);
         if (wasEnabled !== resolvedState.memoryFeatureEnabled) {
             trackFeatureUsage(resolvedState.memoryFeatureEnabled ? 'memory_enabled' : 'memory_disabled');
+            trackSettingChange('memory_saving', wasEnabled, resolvedState.memoryFeatureEnabled);
         }
     }
 

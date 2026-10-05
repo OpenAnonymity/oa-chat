@@ -1,4 +1,4 @@
-import { trackFeatureUsage } from '../services/featureUsage.js';
+import { trackFeatureUsage, trackSettingChange } from '../services/featureUsage.js';
 import { enterKeyAction } from '../domain/composerKeys.js';
 import { setupRadioGroupKeyboard } from '../ui/radioGroupKeyboard.js';
 import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
@@ -379,11 +379,14 @@ export default class ChatInput {
         // Search toggle functionality — the composer's own control and the
         // Tools switch in the settings panel flip the same state.
         const toggleSearch = async () => {
-            this.app.searchEnabled = !this.app.searchEnabled;
+            const previous = this.app.searchEnabled;
+            const next = !previous;
+            this.app.searchEnabled = next;
             this.updateSearchToggleUI();
             this.app.updateInputState();
             // Persist search state globally
-            await this.app.data.saveSetting('searchEnabled', this.app.searchEnabled);
+            await this.app.data.saveSetting('searchEnabled', next);
+            trackSettingChange('search', previous, next);
         };
         this.app.elements.searchToggle.addEventListener('click', toggleSearch);
         const searchSettingToggle = document.getElementById('search-setting-toggle');
@@ -437,9 +440,11 @@ export default class ChatInput {
                 if (!btn || btn.disabled) return;
 
                 const nextEffort = normalizeReasoningEffort(btn.dataset.reasoningEffort);
+                const previous = this.app.reasoningEffort;
                 this.app.reasoningEffort = nextEffort;
                 this.updateReasoningEffortUI();
                 await this.app.data.saveSetting('reasoningEffort', nextEffort);
+                trackSettingChange('reasoning', previous, nextEffort);
             });
         }
 
@@ -2218,7 +2223,7 @@ export default class ChatInput {
         button?.classList.remove('tooltip-disabled');
     }
 
-    async setMemoryContextEnabled(enabled) {
+    async setMemoryContextEnabled(enabled, { userAction = false } = {}) {
         if (!this.requireFeature('memory')) return;
         if (enabled === true && this.app.memoryFeatureEnabled === false) {
             this.app.memoryMode = false;
@@ -2226,9 +2231,12 @@ export default class ChatInput {
             await this.app.data.saveSetting('memoryMode', false);
             return;
         }
-        this.app.memoryMode = enabled === true;
+        const previous = this.app.memoryMode === true;
+        const next = enabled === true;
+        this.app.memoryMode = next;
         this.updateMemoryToggleUI();
-        await this.app.data.saveSetting('memoryMode', this.app.memoryMode);
+        await this.app.data.saveSetting('memoryMode', next);
+        if (userAction) trackSettingChange('memory_replies', previous, next);
     }
 
     async openMemoryContextPanel() {
@@ -2258,7 +2266,7 @@ export default class ChatInput {
             return;
         }
 
-        this.setMemoryContextEnabled(!this.app.memoryMode).catch(error => {
+        this.setMemoryContextEnabled(!this.app.memoryMode, { userAction: true }).catch(error => {
             console.error('Failed to toggle memory context:', error);
         });
     }
@@ -2345,6 +2353,13 @@ export default class ChatInput {
             persistMode: true
         });
 
+        // Read immediately before applying, so overlapping clicks on the same
+        // choice do not count twice. Navigation during persistence is uncounted.
+        const sameScope = this.app.getCurrentSession() === session;
+        const previous = session
+            ? session.responseMode === RESPONSE_MODE_COUNCIL && session.councilConfig?.enabled === true
+            : this.app.getPendingCouncilConfig?.()?.enabled === true;
+
         if (!session) {
             this.app.setPendingCouncilConfig?.({
                 enabled,
@@ -2353,15 +2368,18 @@ export default class ChatInput {
                 outputMode,
                 reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
+            if (sameScope) trackSettingChange('parallel', previous, enabled);
             return null;
         }
 
-        return this.app.setCouncilModeForCurrentSession({
+        const result = await this.app.setCouncilModeForCurrentSession({
             enabled,
             members,
             synthesisModel,
             outputMode
         });
+        if (sameScope) trackSettingChange('parallel', previous, enabled);
+        return result;
     }
 
     async persistParallelDefaults(options = {}) {
@@ -2434,6 +2452,10 @@ export default class ChatInput {
             persistMode: (enabled && !currentlyMultiModelEnabled) || leaveParallelToo
         });
 
+        const sameScope = this.app.getCurrentSession() === session;
+        const currentConfig = session ? session.councilConfig : this.app.getPendingCouncilConfig?.();
+        const previous = (!session || session.responseMode === RESPONSE_MODE_COUNCIL)
+            && currentConfig?.enabled === true && currentConfig?.outputMode === COUNCIL_OUTPUT_SYNTHESIS;
         if (!session) {
             this.app.setPendingCouncilConfig?.({
                 enabled: nextMultiModelEnabled,
@@ -2442,6 +2464,7 @@ export default class ChatInput {
                 outputMode,
                 reviewEnabled: outputMode === COUNCIL_OUTPUT_SYNTHESIS
             });
+            if (sameScope) trackSettingChange('council', previous, enabled);
             this.refreshMultiModelSettingsUI();
             this.updateMemoryToggleUI();
             return;
@@ -2453,6 +2476,7 @@ export default class ChatInput {
             synthesisModel,
             outputMode
         });
+        if (sameScope) trackSettingChange('council', previous, enabled);
         this.refreshMultiModelSettingsUI();
         this.updateMemoryToggleUI();
     }
@@ -2975,7 +2999,9 @@ export default class ChatInput {
             const btn = event.target.closest('.theme-toggle-btn');
             if (btn) {
                 const preference = btn.dataset.themeOption || 'system';
+                const previous = themeManager.getPreference();
                 themeManager.setPreference(preference);
+                trackSettingChange('theme', previous, themeManager.getPreference());
             }
         });
     }

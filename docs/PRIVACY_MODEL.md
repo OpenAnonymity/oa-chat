@@ -652,3 +652,9 @@ accounts to inference keys. The analytics provider still sees ordinary network
 metadata and event timing; this feature telemetry is outside the cryptographic
 unlinkability guarantee. Browser Global Privacy Control and Do Not Track disable
 collection. See [event definitions and limits](FEATURE_ANALYTICS.md).
+
+Settings-change analytics use the same optional fixed-event boundary. Only the
+covered setting name and direction relative to its built-in default are reported;
+the previous and next values stay in the browser. No preference census, user
+history, identity, model selection or content is sent. See
+[FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for scope and exclusions.

@@ -1,3 +1,4 @@
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -70,4 +71,38 @@ test('the memory is per conversation, and covers the no-session (pending) state'
     assert.equal(h.calls.at(-1)[1].enabled, true);
     await h.input.setCouncilReviewEnabledFromSettings(false);
     assert.equal(h.calls.at(-1)[1].enabled, false, 'back to Chat before any message was sent');
+});
+
+
+test('settings analytics count review actions once and exclude the dependent Parallel changes', async () => {
+    const events = [];
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        for (const session of [null, { id: 's1', responseMode: 'chat', councilConfig: null }]) {
+            const h = harness({ session, pending: { enabled: false } });
+            await h.input.setCouncilReviewEnabledFromSettings(true);
+            await h.input.setCouncilReviewEnabledFromSettings(true);
+            await h.input.setCouncilReviewEnabledFromSettings(false);
+            assert.deepEqual(events.splice(0), ['settings_changed', 'setting_council_away', 'settings_changed', 'setting_council_back']);
+            await Promise.all([h.input.setCouncilModeFromComposer(true), h.input.setCouncilModeFromComposer(true)]);
+            await h.input.setCouncilModeFromComposer(false);
+            assert.deepEqual(events.splice(0), ['settings_changed', 'setting_parallel_away', 'settings_changed', 'setting_parallel_back']);
+            h.input.persistParallelDefaults = async () => { throw new Error('storage failed'); };
+            await assert.rejects(h.input.setCouncilModeFromComposer(true), /storage failed/);
+            await assert.rejects(h.input.setCouncilReviewEnabledFromSettings(true), /storage failed/);
+            assert.deepEqual(events, []);
+        }
+    } finally { setFeatureUsageReporter(null); }
+});
+
+
+test('an existing Chat session does not inherit the pending draft Council analytics state', async () => {
+    const events = [];
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        const h = harness({ session: { id: 'existing', responseMode: 'chat', councilConfig: null },
+            pending: { enabled: true, outputMode: COUNCIL_OUTPUT_SYNTHESIS } });
+        await h.input.setCouncilReviewEnabledFromSettings(true);
+        assert.deepEqual(events, ['settings_changed', 'setting_council_away']);
+    } finally { setFeatureUsageReporter(null); }
 });

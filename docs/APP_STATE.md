@@ -1,5 +1,13 @@
 ## 2026-10-05: Optional commercial feature usage counts
 
+## October 5, 2026 — settings-change analytics
+
+Added optional fixed events for eight deliberate setting changes, comparing the
+previous and next states with built-in defaults. One total and one direction event
+per change; no values or identifiers leave the client. Restores, same-choice
+clicks and coupled automatic changes are excluded. See [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md)
+for coverage, overlap with existing Memory events and interpretation limits.
+
 [Feature analytics](FEATURE_ANALYTICS.md) defines the fixed event vocabulary and
 exact counting points for Memory, Tab Tab, Parallel and Council. The public app
 has no reporter by default. Commercial startup opts into its existing Fathom

@@ -22,10 +22,54 @@ commercial startup explicitly installs the build-time loader's reporter.
 
 Council also generates the applicable Parallel events. Do not sum these as
 independent people or conversations. Per-lane regeneration, automatic memory
-extraction, backfill, import/export, composer toggles, and other buttons are not
-instrumented in this first version. Counts are feature uses, not exact unique
+extraction, backfill, import/export, and unlisted controls are not
+instrumented. Counts are feature uses, not exact unique
 users. A started/completed gap is not proof of failure: cancellation, navigation,
 privacy settings, and blocked analytics can also cause it.
+
+## Settings changes
+
+`Settings changed` counts each explicit change of a covered setting once, after
+its existing update succeeds. A second event classifies that same action:
+`Settings: <setting> - away from default`, `back to default`, or (for theme and
+reasoning effort) `between custom choices`. Do not sum the total event and its
+breakdowns together. These are action counts, not a census of current settings,
+unique people, or a first-ever customization/retention metric.
+
+| Setting label | Built-in default |
+| --- | --- |
+| Memory saving | Off |
+| Memory in replies | Off |
+| Memory auto include | Off |
+| Parallel mode | Off (Chat) |
+| Council review | Off |
+| Web search | On |
+| Reasoning effort | Medium |
+| Theme | System |
+
+The baseline is the shipped built-in default, not a person's saved preference.
+Leaving a default can happen repeatedly. Switching dark to light counts as
+between custom choices; switching either to System counts as back to default.
+For Parallel/Council, comparison uses the current conversation or pending new
+chat's mode. Memory auto include also counts the explicit “Always include” choice.
+Existing Memory enabled/disabled events overlap Memory saving changes.
+
+Reloads, importing settings, switching conversations, cross-tab synchronization,
+system theme changes, same-choice clicks, unsupported actions and failed writes
+are not new setting changes. Council automatically enabling Parallel and Memory
+saving disabling use-in-replies do not generate extra setting-change events.
+Opening the Memory panel's implicit enable is excluded. Theme counts the applied
+choice; its existing storage layer is best-effort, so this is not a durability
+metric. Other settings (including model selections) are outside this scope.
+
+In Fathom, trend `Settings changed` by date for overall change frequency, then
+compare the per-setting direction rows to see which defaults people leave or
+restore. Sum the direction rows for a setting to get its total changes. Fathom's
+pageview-based conversion percentage is not a percentage of people who changed a
+default. No new identifier, per-user history or initial-state survey is added.
+These rows appear only after a release containing these hooks and a first event;
+there is no historical backfill. Privacy blocking and the bounded startup queue
+can undercount or make totals and breakdowns differ.
 
 ## Privacy and delivery
 

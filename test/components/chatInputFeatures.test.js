@@ -398,3 +398,63 @@ test('Tab Tab counts accepted operations and usable results without draft conten
         }
     } finally { scrubberService.redactPrompt = original; setFeatureUsageReporter(null); }
 });
+
+
+test('memory reply settings count deliberate transitions, not implicit panel enable or blocked actions', async () => {
+    const f = fixture();
+    f.input.updateMemoryToggleUI = () => {};
+    f.app.memoryMode = false;
+    const events = [];
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        await f.input.setMemoryContextEnabled(true); // Panel open, not explicit preference toggle.
+        assert.deepEqual(events, []);
+        await f.input.setMemoryContextEnabled(false, { userAction: true });
+        await f.input.setMemoryContextEnabled(false, { userAction: true });
+        await f.input.setMemoryContextEnabled(true, { userAction: true });
+        assert.deepEqual(events, ['settings_changed', 'setting_memory_replies_back', 'settings_changed', 'setting_memory_replies_away']);
+        events.length = 0;
+        f.app.memoryFeatureEnabled = false;
+        await f.input.setMemoryContextEnabled(true, { userAction: true });
+        assert.deepEqual(events, []);
+        f.app.memoryFeatureEnabled = true;
+        f.app.data.saveSetting = async () => { throw new Error('storage failed'); };
+        await assert.rejects(f.input.setMemoryContextEnabled(true, { userAction: true }), /storage failed/);
+        assert.deepEqual(events, []);
+    } finally { setFeatureUsageReporter(null); }
+});
+
+
+test('theme click analytics distinguish changing custom choices from restoring System', async () => {
+    const { default: themeManager } = await import('../../chat/services/themeManager.js');
+    const original = { preference: themeManager.preference, apply: themeManager.applyTheme, notify: themeManager.notify };
+    const { default: preferencesStore } = await import('../../chat/services/preferencesStore.js');
+    const save = preferencesStore.savePreference;
+    const input = Object.create(ChatInput.prototype);
+    let click;
+    input.app = { elements: { themeToggle: { addEventListener: (_type, handler) => { click = handler; } } } };
+    const events = [];
+    preferencesStore.savePreference = async () => {};
+    themeManager.applyTheme = () => {};
+    themeManager.notify = () => {};
+    themeManager.preference = 'system';
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        input.setupThemeControls();
+        const choose = value => click({ stopPropagation() {}, target: { closest: () => ({ dataset: { themeOption: value } }) } });
+        choose('dark');
+        choose('dark');
+        choose('light');
+        choose('system');
+        assert.deepEqual(events, ['settings_changed', 'setting_theme_away', 'settings_changed', 'setting_theme_other', 'settings_changed', 'setting_theme_back']);
+        events.length = 0;
+        themeManager.setPreference('dark'); // Sync/import callers bypass the UI hook.
+        assert.deepEqual(events, []);
+    } finally {
+        themeManager.preference = original.preference;
+        themeManager.applyTheme = original.apply;
+        themeManager.notify = original.notify;
+        preferencesStore.savePreference = save;
+        setFeatureUsageReporter(null);
+    }
+});
