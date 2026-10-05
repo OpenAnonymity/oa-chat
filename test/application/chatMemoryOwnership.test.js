@@ -143,15 +143,15 @@ test('Memory events reflect each persisted toggle even when writes overlap', asy
         assert.deepEqual(events, []);
         writes.forEach(resolve => resolve());
         await Promise.all([enable, disable]);
-        assert.deepEqual(events, ['memory_enabled', 'settings_changed', 'setting_memory_saving_away', 'memory_disabled', 'settings_changed', 'setting_memory_saving_back']);
+        assert.deepEqual(events, ['memory_enabled', 'settings_changed', 'default_changed', 'setting_memory_saving_away', 'memory_disabled', 'settings_changed', 'setting_memory_saving_back']);
         await app.setMemoryFeatureEnabled(true, { persist: false });
-        assert.deepEqual(events, ['memory_enabled', 'settings_changed', 'setting_memory_saving_away', 'memory_disabled', 'settings_changed', 'setting_memory_saving_back'], 'restoring settings is not a user toggle');
+        assert.deepEqual(events, ['memory_enabled', 'settings_changed', 'default_changed', 'setting_memory_saving_away', 'memory_disabled', 'settings_changed', 'setting_memory_saving_back'], 'restoring settings is not a user toggle');
         chatDB.saveSetting = async () => {};
         await app.setMemoryFeatureEnabled(true);
-        assert.equal(events.length, 6, 'unchanged setting is not a new toggle');
+        assert.equal(events.length, 7, 'unchanged setting is not a new toggle');
         chatDB.saveSetting = async () => { throw new Error('storage failed'); };
         await assert.rejects(app.setMemoryFeatureEnabled(false), /storage failed/);
-        assert.equal(events.length, 6, 'failed persistence is not a completed toggle');
+        assert.equal(events.length, 7, 'failed persistence is not a completed toggle');
     } finally { chatDB.saveSetting = original; setFeatureUsageReporter(null); }
 });
 
@@ -169,7 +169,7 @@ test('auto include counts captured user changes, excludes restore and failed per
         const off = app.setMemoryAutoInclude(false);
         writes.reverse().forEach(resolve => resolve());
         await Promise.all([on, off]);
-        assert.deepEqual(events, ['settings_changed', 'setting_memory_auto_include_back', 'settings_changed', 'setting_memory_auto_include_away']);
+        assert.deepEqual(events, ['settings_changed', 'setting_memory_auto_include_back', 'settings_changed', 'default_changed', 'setting_memory_auto_include_away']);
         events.length = 0;
         await app.setMemoryAutoInclude(true, { persist: false });
         chatDB.saveSetting = async () => {};

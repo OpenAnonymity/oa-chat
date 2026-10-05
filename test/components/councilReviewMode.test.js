@@ -83,10 +83,10 @@ test('settings analytics count review actions once and exclude the dependent Par
             await h.input.setCouncilReviewEnabledFromSettings(true);
             await h.input.setCouncilReviewEnabledFromSettings(true);
             await h.input.setCouncilReviewEnabledFromSettings(false);
-            assert.deepEqual(events.splice(0), ['settings_changed', 'setting_council_away', 'settings_changed', 'setting_council_back']);
+            assert.deepEqual(events.splice(0), ['settings_changed', 'default_changed', 'setting_council_away', 'settings_changed', 'setting_council_back']);
             await Promise.all([h.input.setCouncilModeFromComposer(true), h.input.setCouncilModeFromComposer(true)]);
             await h.input.setCouncilModeFromComposer(false);
-            assert.deepEqual(events.splice(0), ['settings_changed', 'setting_parallel_away', 'settings_changed', 'setting_parallel_back']);
+            assert.deepEqual(events.splice(0), ['settings_changed', 'default_changed', 'setting_parallel_away', 'settings_changed', 'setting_parallel_back']);
             h.input.persistParallelDefaults = async () => { throw new Error('storage failed'); };
             await assert.rejects(h.input.setCouncilModeFromComposer(true), /storage failed/);
             await assert.rejects(h.input.setCouncilReviewEnabledFromSettings(true), /storage failed/);
@@ -103,6 +103,6 @@ test('an existing Chat session does not inherit the pending draft Council analyt
         const h = harness({ session: { id: 'existing', responseMode: 'chat', councilConfig: null },
             pending: { enabled: true, outputMode: COUNCIL_OUTPUT_SYNTHESIS } });
         await h.input.setCouncilReviewEnabledFromSettings(true);
-        assert.deepEqual(events, ['settings_changed', 'setting_council_away']);
+        assert.deepEqual(events, ['settings_changed', 'default_changed', 'setting_council_away']);
     } finally { setFeatureUsageReporter(null); }
 });

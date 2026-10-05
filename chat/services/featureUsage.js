@@ -25,6 +25,8 @@ const settingEvents = Object.fromEntries(Object.entries(SETTINGS).flatMap(([key,
 // Optional host integration. The standalone app has no reporter or network calls.
 // Only fixed event codes cross this boundary; never accept event properties.
 export const FEATURE_USAGE_EVENTS = Object.freeze({
+    app_active: 'App active',
+    default_changed: 'Default changed',
     settings_changed: 'Settings changed',
     ...settingEvents,
     memory_enabled: 'Memory enabled',
@@ -65,5 +67,6 @@ export function trackSettingChange(setting, previous, next) {
     const direction = next === definition.defaultValue ? 'back'
         : previous === definition.defaultValue ? 'away' : 'other';
     trackFeatureUsage('settings_changed');
+    if (direction === 'away') trackFeatureUsage('default_changed');
     trackFeatureUsage(`setting_${setting}_${direction}`);
 }

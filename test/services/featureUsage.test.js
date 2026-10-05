@@ -30,11 +30,11 @@ test('setting events classify defaults without exposing setting values or accept
         trackSettingChange('search', true, false);
         trackSettingChange('reasoning', 'medium', 'high');
         assert.deepEqual(calls, [
-            ['settings_changed'], ['setting_theme_away'],
+            ['settings_changed'], ['default_changed'], ['setting_theme_away'],
             ['settings_changed'], ['setting_theme_other'],
             ['settings_changed'], ['setting_theme_back'],
-            ['settings_changed'], ['setting_search_away'],
-            ['settings_changed'], ['setting_reasoning_away']
+            ['settings_changed'], ['default_changed'], ['setting_search_away'],
+            ['settings_changed'], ['default_changed'], ['setting_reasoning_away']
         ]);
         for (const [code] of calls) assert.equal(typeof FEATURE_USAGE_EVENTS[code], 'string');
         calls.length = 0;

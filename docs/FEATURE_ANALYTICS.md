@@ -94,3 +94,24 @@ After deployment, events appear in the existing Fathom Events section once they
 are triggered. Historical feature use cannot be reconstructed. Local tests use a
 fake tracker and never submit analytics. The deployment must include both the
 updated oa-chat source and commercial adapter/loader; no server change is needed.
+
+
+## Daily summary events (October 5 addition)
+
+`Default changed` is an additional aggregate event emitted once for each covered
+setting move away from its built-in default. It follows `Settings changed` and
+precedes the per-setting direction event. Back-to-default and between-custom
+moves do not emit it. Its daily unique completions deduplicate visitors across
+all covered settings; never sum unique counts from individual settings.
+
+`App active` is reserved for optional host integration. The commercial host
+reports deliberate interaction with covered chat controls, or a successful
+settings change, and coalesces activity per tab UTC day. Standalone compositions
+still have no reporter and do not send it. It is not a page-load or account event.
+
+Daily summary ratios use Settings changed uniques / App active uniques, Default
+changed uniques / App active uniques, and Settings changed totals / its uniques.
+Multi-day summaries sum daily uniques as visitor-days rather than claiming a
+unique-person count over the range. These are observed activity estimates;
+privacy choices, network/browser changes, older tabs and delivery failures can
+bias them. The commercial report documents coverage and never joins identities.

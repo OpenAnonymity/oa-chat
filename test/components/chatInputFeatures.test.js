@@ -412,7 +412,7 @@ test('memory reply settings count deliberate transitions, not implicit panel ena
         await f.input.setMemoryContextEnabled(false, { userAction: true });
         await f.input.setMemoryContextEnabled(false, { userAction: true });
         await f.input.setMemoryContextEnabled(true, { userAction: true });
-        assert.deepEqual(events, ['settings_changed', 'setting_memory_replies_back', 'settings_changed', 'setting_memory_replies_away']);
+        assert.deepEqual(events, ['settings_changed', 'setting_memory_replies_back', 'settings_changed', 'default_changed', 'setting_memory_replies_away']);
         events.length = 0;
         f.app.memoryFeatureEnabled = false;
         await f.input.setMemoryContextEnabled(true, { userAction: true });
@@ -446,7 +446,7 @@ test('theme click analytics distinguish changing custom choices from restoring S
         choose('dark');
         choose('light');
         choose('system');
-        assert.deepEqual(events, ['settings_changed', 'setting_theme_away', 'settings_changed', 'setting_theme_other', 'settings_changed', 'setting_theme_back']);
+        assert.deepEqual(events, ['settings_changed', 'default_changed', 'setting_theme_away', 'settings_changed', 'setting_theme_other', 'settings_changed', 'setting_theme_back']);
         events.length = 0;
         themeManager.setPreference('dark'); // Sync/import callers bypass the UI hook.
         assert.deepEqual(events, []);

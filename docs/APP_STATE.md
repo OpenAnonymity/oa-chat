@@ -1,3 +1,13 @@
+## October 5, 2026 — settings summary events
+
+Added aggregate `Default changed` for away-from-built-in-default actions. It
+shares the existing successful explicit-setting hook, so hydration, same-choice
+clicks and dependent automatic changes remain excluded. `App active` is a fixed
+code for the commercial host's daily interaction denominator; no standalone
+network or storage behavior is added. See [FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md).
+The commercial local report uses daily visitor estimates and labels multi-day
+counts as visitor-days. Deploy the client and commercial event adapter together.
+
 ## 2026-10-05: Optional commercial feature usage counts
 
 ## October 5, 2026 — settings-change analytics
