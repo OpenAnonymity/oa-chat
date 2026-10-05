@@ -1,3 +1,11 @@
+## 2026-10-05: Optional commercial feature usage counts
+
+[Feature analytics](FEATURE_ANALYTICS.md) defines the fixed event vocabulary and
+exact counting points for Memory, Tab Tab, Parallel and Council. The public app
+has no reporter by default. Commercial startup opts into its existing Fathom
+loader, which enforces host and browser privacy checks. No dynamic event fields
+or persistent telemetry state are added; completion counts exclude aborted work.
+
 ## 2026-10-04: Structured send errors
 
 Send and Retry now extract text from error `message`, `detail`, `error` and `msg`

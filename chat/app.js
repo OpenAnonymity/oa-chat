@@ -1,3 +1,4 @@
+import { trackFeatureUsage } from './services/featureUsage.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateInferenceInput } from './services/inference/inputLimits.js';
@@ -6046,6 +6047,7 @@ class ChatApp {
     }
 
     async setMemoryFeatureEnabled(enabled, options = {}) {
+        const wasEnabled = this.memoryFeatureEnabled === true;
         const resolvedState = resolveMemoryFeatureToggleValue({
             currentMemoryMode: this.memoryMode,
             nextMemoryFeatureEnabled: enabled === true
@@ -6084,6 +6086,9 @@ class ChatApp {
             writes.push(chatDB.saveSetting('memoryMode', false));
         }
         await Promise.all(writes);
+        if (wasEnabled !== resolvedState.memoryFeatureEnabled) {
+            trackFeatureUsage(resolvedState.memoryFeatureEnabled ? 'memory_enabled' : 'memory_disabled');
+        }
     }
 
     resolvePendingMemoryApprovalsAsSkipped() {
@@ -6588,6 +6593,7 @@ class ChatApp {
 
             const previouslyRetrievedContext = this.buildPreviouslyRetrievedMemoryContext(session);
             const hasPriorMemoryContext = !!previouslyRetrievedContext;
+            trackFeatureUsage('memory_started');
             const result = hasPriorMemoryContext
                 ? await runMemoryAugmentQueryAdaptive({
                     query,
@@ -6608,6 +6614,9 @@ class ChatApp {
                     onProgress: handleMemoryProgress,
                     onModelText: handleMemoryModelText
                 });
+            if (!memorySignal.aborted && this.isMemoryFeatureActive(memoryRunGeneration, session)) {
+                trackFeatureUsage('memory_completed');
+            }
             const memoryRetrievalAssessment = normalizeMemoryRetrievalAssessment(result || {}, {
                 treatConfidenceFieldAsExplicit: true
             });

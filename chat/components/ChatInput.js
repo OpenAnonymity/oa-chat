@@ -1,3 +1,4 @@
+import { trackFeatureUsage } from '../services/featureUsage.js';
 import { enterKeyAction } from '../domain/composerKeys.js';
 import { setupRadioGroupKeyboard } from '../ui/radioGroupKeyboard.js';
 import { setupResponsiveComposer } from '../ui/responsiveComposer.js';
@@ -982,6 +983,7 @@ export default class ChatInput {
             // The confidential service does not support aborting its transport.
             // Keep the reservation through its actual completion, and discard
             // a late result when its captured chat or draft no longer owns it.
+            trackFeatureUsage('scrubber_started');
             const result = await scrubberService.redactPrompt(text, session, {
                 onTicketSpent: count => this.app.showToast?.(`${count} ticket${count === 1 ? '' : 's'} used for scrubbing`, 'info', 4000)
             });
@@ -991,6 +993,7 @@ export default class ChatInput {
                 return;
             }
 
+            trackFeatureUsage('scrubber_completed');
             const hasChanges = text.trim() !== result.text.trim();
             input.value = result.text;
             input.dispatchEvent(new Event('input', { bubbles: true }));

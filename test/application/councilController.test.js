@@ -1,3 +1,4 @@
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { recordedTrustedAccess, recordedTrustedResult } from '../helpers/trustedStation.js';
@@ -2122,4 +2123,41 @@ test('the existing local development bypass still ignores production station ban
     } });
     const lane = { apiKey: 'local-key', apiKeyInfo: { verifierSubmitKeyProof: { status: 'local-loopback-bypass' } } };
     assert.equal(controller.getBannedLaneAccessInfo({}, lane), null);
+});
+
+
+test('feature counts distinguish Parallel from Council and exclude failed, partial, cancelled, and blocked completions', async () => {
+    for (const scenario of ['success', 'parallel', 'partial', 'cancelled', 'blocked', 'synthesis_failed']) {
+        const events = [];
+        const abortController = new AbortController();
+        const h = createRunTurnHarness({
+            councilConfig: { outputMode: scenario === 'parallel' ? 'parallel' : 'synthesis' },
+            sendLaneCompletion: async ({ entry }) => {
+                if (scenario === 'cancelled') {
+                    abortController.abort();
+                    throw new DOMException('Stopped', 'AbortError');
+                }
+                if (scenario === 'partial' && entry.laneId === 'secondary') throw new Error('unavailable');
+                return { content: 'Private response' };
+            },
+            runSynthesisCompletion: async () => {
+                if (scenario === 'synthesis_failed') throw new Error('unavailable');
+                return { content: 'Private review' };
+            }
+        });
+        if (scenario === 'blocked') h.controller.ensureAccessForEntries = async () => { throw new Error('access blocked'); };
+        setFeatureUsageReporter((...args) => events.push(args));
+        try {
+            await h.controller.runMultiModelTurn({ session: h.session, userMessage: h.userMessage, abortController });
+        } finally { setFeatureUsageReporter(null); }
+        const expected = {
+            success: ['parallel_started', 'parallel_completed', 'council_started', 'council_completed'],
+            parallel: ['parallel_started', 'parallel_completed'],
+            partial: ['parallel_started', 'council_started', 'council_completed'],
+            cancelled: ['parallel_started'],
+            blocked: [],
+            synthesis_failed: ['parallel_started', 'parallel_completed', 'council_started']
+        }[scenario];
+        assert.deepEqual(events, expected.map(code => [code]), scenario);
+    }
 });

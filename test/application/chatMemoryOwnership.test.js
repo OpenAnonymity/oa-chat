@@ -1,3 +1,5 @@
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
+import { chatDB } from '../../chat/db.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -119,4 +121,36 @@ test('composer refreshes preserve animated nodes and navigation cannot send into
     app.updateInputState();
     assert.equal(writes, 3, 'idle button also retains its descendants');
     assert.equal(attributes.get('aria-label'), 'Send message');
+});
+
+
+test('Memory events reflect each persisted toggle even when writes overlap', async () => {
+    const app = harness();
+    app.memoryFeatureEnabled = false;
+    app.memoryMode = false;
+    app.memoryExtractionAbortControllers = new Map();
+    app.memoryAugmentAbortControllers = new Set();
+    app.memoryApprovalRequests = new Map();
+    app.clearPendingMemoryApprovalPromptsForCurrentSession = async () => {};
+    const original = chatDB.saveSetting;
+    const writes = [];
+    const events = [];
+    chatDB.saveSetting = () => new Promise(resolve => writes.push(resolve));
+    setFeatureUsageReporter(code => events.push(code));
+    try {
+        const enable = app.setMemoryFeatureEnabled(true);
+        const disable = app.setMemoryFeatureEnabled(false);
+        assert.deepEqual(events, []);
+        writes.forEach(resolve => resolve());
+        await Promise.all([enable, disable]);
+        assert.deepEqual(events, ['memory_enabled', 'memory_disabled']);
+        await app.setMemoryFeatureEnabled(true, { persist: false });
+        assert.deepEqual(events, ['memory_enabled', 'memory_disabled'], 'restoring settings is not a user toggle');
+        chatDB.saveSetting = async () => {};
+        await app.setMemoryFeatureEnabled(true);
+        assert.equal(events.length, 2, 'unchanged setting is not a new toggle');
+        chatDB.saveSetting = async () => { throw new Error('storage failed'); };
+        await assert.rejects(app.setMemoryFeatureEnabled(false), /storage failed/);
+        assert.equal(events.length, 2, 'failed persistence is not a completed toggle');
+    } finally { chatDB.saveSetting = original; setFeatureUsageReporter(null); }
 });

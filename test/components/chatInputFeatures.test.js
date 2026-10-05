@@ -1,3 +1,4 @@
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -375,4 +376,25 @@ test('the composer rewrites only a paste that needs trimming, keeping native pas
         input.handleTextPaste(withFile);
         assert.equal(withFile.prevented, false, 'files stay with the document-level handler');
     } finally { globalThis.document = oldDocument; }
+});
+
+
+test('Tab Tab counts accepted operations and usable results without draft contents', async () => {
+    const original = scrubberService.redactPrompt;
+    try {
+        for (const scenario of ['success', 'failed', 'navigated', 'unsupported', 'empty', 'busy']) {
+            const f = fixture({ backend: scenario === 'unsupported' ? 'zkapi' : 'openrouter' });
+            f.messageInput.value = scenario === 'empty' ? '' : 'Private draft';
+            if (scenario === 'busy') f.input.scrubberState.isRunning = true;
+            const calls = [];
+            setFeatureUsageReporter((...args) => calls.push(args));
+            scrubberService.redactPrompt = async () => {
+                if (scenario === 'navigated') f.navigate({ id: 'other', inferenceBackend: 'openrouter' });
+                return { success: scenario !== 'failed', text: 'Redacted draft' };
+            };
+            await f.input.runScrubberShortcut();
+            assert.deepEqual(calls, (scenario === 'success' ? ['scrubber_started', 'scrubber_completed']
+                : ['failed', 'navigated'].includes(scenario) ? ['scrubber_started'] : []).map(code => [code]), scenario);
+        }
+    } finally { scrubberService.redactPrompt = original; setFeatureUsageReporter(null); }
 });

@@ -1,3 +1,4 @@
+import { trackFeatureUsage } from '../services/featureUsage.js';
 import { chatDB as defaultChatDB } from '../db.js';
 import { parseReasoningContent } from '../services/reasoningParser.js';
 import {
@@ -1064,6 +1065,7 @@ export default class CouncilController {
                 await this.saveAndRender(assistantMessage, session, { skipSessionsRender: !force });
             };
 
+            if (!abortController?.signal?.aborted) trackFeatureUsage('parallel_started');
             await Promise.all(entries.map(async (entry, index) => {
                 const stageEntry = assistantMessage.council.stage1[index];
                 try {
@@ -1120,6 +1122,9 @@ export default class CouncilController {
 
             const completed = assistantMessage.council.stage1.filter((entry) => entry.status === 'complete' && entry.response);
             const wasCancelled = abortController?.signal?.aborted === true;
+            if (!wasCancelled && completed.length === entries.length) {
+                trackFeatureUsage('parallel_completed');
+            }
             if (wasCancelled && completed.length === 0) {
                 await this.chatDB.deleteMessage(assistantMessage.id);
                 await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
@@ -1149,6 +1154,7 @@ export default class CouncilController {
 
                     try {
                         await this.ensureAccessForEntries(session, [synthesisEntry], null, abortController?.signal || null);
+                        if (!abortController?.signal?.aborted) trackFeatureUsage('council_started');
                         const synthesisResult = await this.runSynthesisCompletion({
                             session,
                             synthesisEntry,
@@ -1167,6 +1173,7 @@ export default class CouncilController {
                         if (!synthesisResponse) {
                             throw new Error('Council synthesis returned an empty response.');
                         }
+                        if (!abortController?.signal?.aborted) trackFeatureUsage('council_completed');
                         const synthesisCitations = extractCitations(synthesisResult);
                         const synthesisStatus = completed.length === entries.length ? 'complete' : 'partial';
                         const synthesisReasoning = extractReasoning(synthesisResult);

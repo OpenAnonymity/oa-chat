@@ -640,3 +640,15 @@ approvals, deposits and withdrawals remain visible to the chain/RPC; the extra
 funding account does not make these anonymous. Private-note secrets, proofs and
 recovery ownership remain in the SDK. No account identity, ticket contents or
 inference prompts enter the address-funding service.
+
+
+## Optional commercial feature analytics
+
+The commercial web composition can opt into fixed-name feature usage events for
+Memory, Tab Tab, Parallel and Council through its existing Fathom loader. The
+standalone app has no reporter by default. Events have no prompt, response,
+memory content, model, account, chat, credential or ticket fields, and do not join
+accounts to inference keys. The analytics provider still sees ordinary network
+metadata and event timing; this feature telemetry is outside the cryptographic
+unlinkability guarantee. Browser Global Privacy Control and Do Not Track disable
+collection. See [event definitions and limits](FEATURE_ANALYTICS.md).
