@@ -119,7 +119,7 @@ bias them. The commercial report documents coverage and never joins identities.
 ## OA versus zkAPI selections (October 6 addition)
 
 `Payment selected: OA` and `Payment selected: zkAPI` count a successful explicit
-switch to that payment method. The current conversation (or new-chat default)
+switch from the toolbar or explicit “Use zkAPI instead” entry. The current conversation (or new-chat default)
 must have changed; same-choice clicks, startup, restored preferences, navigation
 to saved chats, automatic billing-return switches, locked switches and rejected updates do not count. A selected
 zkAPI mode counts before its optional balance check, even if funding is needed.

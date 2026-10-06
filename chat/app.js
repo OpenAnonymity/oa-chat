@@ -576,9 +576,9 @@ class ChatApp {
         return typeof this.runtime?.changeMode === 'function';
     }
 
-    async changePaymentMode(mode) {
+    async changePaymentMode(mode, { userAction = false } = {}) {
         if (!this.hasPaymentModes()) throw new Error('This build has one payment mode.');
-        await this.runtime.changeMode(mode);
+        await this.runtime.changeMode(mode, { userAction });
         this.announcePaymentMode();
     }
 

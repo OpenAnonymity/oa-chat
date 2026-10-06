@@ -2447,7 +2447,7 @@ class AccountModal {
         // funding dialog. Reuse its mode-switch and active-response guards.
         this.close({ afterAuthentication: true });
         try {
-            await this.app.changePaymentMode('zkapi');
+            await this.app.changePaymentMode('zkapi', { userAction: true });
         } catch (error) {
             this.restoreOverlaySidebar = restoreOverlaySidebar;
             this.open(returnFocusEl);

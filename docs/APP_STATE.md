@@ -2,7 +2,7 @@
 
 The optional commercial reporter counts successful explicit payment-mode changes
 inside `changeMode`, after the backend update and before optional zkAPI funding
-checks. Only the toolbar passes `userAction: true`; automatic billing-return
+checks. The toolbar and explicit “Use zkAPI instead” entry pass `userAction: true`; automatic billing-return
 switches remain uncounted. Capture the previous mode from the owning conversation, not just the
 new-chat default. Restores, navigation, same-choice and failed switches do not
 count. Only fixed OA/zkAPI labels leave this hook. See
