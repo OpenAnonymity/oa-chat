@@ -26,6 +26,8 @@ const settingEvents = Object.fromEntries(Object.entries(SETTINGS).flatMap(([key,
 // Only fixed event codes cross this boundary; never accept event properties.
 export const FEATURE_USAGE_EVENTS = Object.freeze({
     app_active: 'App active',
+    payment_selected_oa: 'Payment selected: OA',
+    payment_selected_zkapi: 'Payment selected: zkAPI',
     default_changed: 'Default changed',
     settings_changed: 'Settings changed',
     ...settingEvents,

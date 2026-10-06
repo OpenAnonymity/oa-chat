@@ -115,3 +115,22 @@ Multi-day summaries sum daily uniques as visitor-days rather than claiming a
 unique-person count over the range. These are observed activity estimates;
 privacy choices, network/browser changes, older tabs and delivery failures can
 bias them. The commercial report documents coverage and never joins identities.
+
+## OA versus zkAPI selections (October 6 addition)
+
+`Payment selected: OA` and `Payment selected: zkAPI` count a successful explicit
+switch to that payment method. The current conversation (or new-chat default)
+must have changed; same-choice clicks, startup, restored preferences, navigation
+to saved chats, automatic billing-return switches, locked switches and rejected updates do not count. A selected
+zkAPI mode counts before its optional balance check, even if funding is needed.
+Selection is not proof of funding, inference, or successful model requests.
+
+In Fathom Events, compare these two rows' totals and daily unique visitors. A
+visitor choosing both appears in both rows, so their uniques must not be added
+as distinct people. This is a count of observed switches, not a census of each
+user's current mode: people who keep the default or a restored choice are absent.
+No account-by-account history or cross-day identifier is created. Events contain
+only these fixed labels, never wallet addresses, account IDs, keys or chat IDs.
+Commercial selection events also establish `App active` without contributing to
+`Settings changed` or `Default changed`; the settings summary remains scoped to
+its eight existing controls. Counts begin only after deployment and first use.

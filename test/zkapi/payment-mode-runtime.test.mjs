@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { setFeatureUsageReporter } from '../../chat/services/featureUsage.js';
 import assert from 'node:assert/strict';
 import { createPaymentModeRuntimeCore, PAYMENT_MODE_PREFERENCE } from '../../chat/zkapi/services/paymentModeRuntimeCore.mjs';
 import { createZkapiChatRuntimeCore } from '../../chat/zkapi/services/zkapiChatRuntimeCore.mjs';
@@ -475,4 +476,58 @@ test('a failed mode save keeps the private chat intact while its registered reti
     retirement.resolve();
     await preparing;
     assert.equal(h.events.some(([kind]) => kind === 'cancel'), false);
+});
+
+
+test('payment analytics counts accepted switches, not restores, navigation or same-choice actions', async () => {
+    const calls = [];
+    setFeatureUsageReporter((...args) => calls.push(args));
+    try {
+        const h = harness({ initialMode: 'zkapi' });
+        h.select('ticket-chat');
+        h.select('zk-chat');
+        h.select(null);
+        assert.deepEqual(calls, []);
+        await h.runtime.changeMode('tickets'); // Automatic billing/navigation return.
+        await h.runtime.changeMode('zkapi');
+        assert.deepEqual(calls, []);
+        await h.runtime.changeMode('zkapi', { userAction: true });
+        assert.deepEqual(calls, []);
+        await h.runtime.changeMode('tickets', { userAction: true });
+        await h.runtime.changeMode('zkapi', { userAction: true });
+        h.select('ticket-chat'); // Owning chat differs from the new-chat default.
+        await h.runtime.changeMode('zkapi', { userAction: true });
+        assert.deepEqual(calls, [
+            ['payment_selected_oa'], ['payment_selected_zkapi'], ['payment_selected_zkapi']
+        ]);
+        h.setBusy(true);
+        await assert.rejects(h.runtime.changeMode('tickets', { userAction: true }));
+        h.setBusy(false);
+        await assert.rejects(h.runtime.changeMode('unknown', { userAction: true }));
+        assert.equal(calls.length, 3);
+        const failing = harness({ save: async () => { throw new Error('save failed'); } });
+        failing.select('ticket-chat');
+        await assert.rejects(failing.runtime.changeMode('zkapi', { userAction: true }), /save failed/);
+        assert.equal(calls.length, 3);
+    } finally { setFeatureUsageReporter(null); }
+});
+
+test('accepted payment switches report before funding completes and contain tracker failures', async () => {
+    const calls = [];
+    const waitForFunding = deferred();
+    const h = harness();
+    h.client.init = () => waitForFunding.promise;
+    setFeatureUsageReporter((...args) => calls.push(args));
+    try {
+        const switching = h.runtime.changeMode('zkapi', { userAction: true });
+        await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(calls, [['payment_selected_zkapi']]);
+        waitForFunding.reject(new Error('funding unavailable'));
+        await switching;
+        assert.equal(h.runtime.getMode(), 'zkapi');
+        assert.equal(calls.length, 1);
+        setFeatureUsageReporter(() => { throw new Error('tracker unavailable'); });
+        await h.runtime.changeMode('tickets', { userAction: true });
+        assert.equal(h.runtime.getMode(), 'tickets');
+    } finally { setFeatureUsageReporter(null); }
 });

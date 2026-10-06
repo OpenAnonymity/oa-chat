@@ -1,3 +1,13 @@
+## October 6, 2026 — OA/zkAPI selection analytics
+
+The optional commercial reporter counts successful explicit payment-mode changes
+inside `changeMode`, after the backend update and before optional zkAPI funding
+checks. Only the toolbar passes `userAction: true`; automatic billing-return
+switches remain uncounted. Capture the previous mode from the owning conversation, not just the
+new-chat default. Restores, navigation, same-choice and failed switches do not
+count. Only fixed OA/zkAPI labels leave this hook. See
+[FEATURE_ANALYTICS.md](FEATURE_ANALYTICS.md) for interpretation and privacy limits.
+
 ## October 5, 2026 — settings summary events
 
 Added aggregate `Default changed` for away-from-built-in-default actions. It

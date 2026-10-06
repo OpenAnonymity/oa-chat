@@ -98,7 +98,7 @@ export function createPaymentModeUi(runtime, { providerVerifier } = {}) {
                 const button = event.target.closest('[data-payment-mode]');
                 if (!button || button.disabled) return;
                 try {
-                    await runtime.changeMode(button.dataset.paymentMode);
+                    await runtime.changeMode(button.dataset.paymentMode, { userAction: true });
                 } catch (error) { app.showToast(error.message || 'Could not switch payment method. Please try again.', 'error'); }
                 renderControls();
             });
