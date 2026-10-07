@@ -12,6 +12,7 @@ globalThis.localStorage ??= { getItem: () => null, setItem() {}, removeItem() {}
 globalThis.window ??= { addEventListener() {}, removeEventListener() {}, matchMedia: () => ({ matches: false, addEventListener() {} }), location: { search: '' } };
 globalThis.document ??= { addEventListener() {}, removeEventListener() {}, getElementById: () => null, querySelector: () => null, querySelectorAll: () => [], documentElement: { setAttribute() {}, removeAttribute() {}, getAttribute: () => null, classList: { toggle() {}, contains: () => false } } };
 const { default: ChatInput } = await import('../../chat/components/ChatInput.js');
+const { getPinnedModels } = await import('../../chat/services/modelConfig.js');
 globalThis.window = originalWindow;
 globalThis.document = originalDocument;
 globalThis.localStorage = originalStorage;
@@ -105,4 +106,53 @@ test('an existing Chat session does not inherit the pending draft Council analyt
         await h.input.setCouncilReviewEnabledFromSettings(true);
         assert.deepEqual(events, ['settings_changed', 'default_changed', 'setting_council_away']);
     } finally { setFeatureUsageReporter(null); }
+});
+
+test('Council dropdowns use pin order and preserve an unpinned saved choice without selecting it anew', () => {
+    const beforeDocument = globalThis.document;
+    const controls = Object.fromEntries([
+        'council-review-model-select', 'council-synthesis-inline-select', 'multi-model-synthesis-select'
+    ].map(id => [id, { innerHTML: '', dataset: {}, setAttribute() {} }]));
+    globalThis.document = { getElementById: id => controls[id] || null };
+    try {
+        const input = Object.create(ChatInput.prototype);
+        const [firstId, secondId] = getPinnedModels();
+        const first = { id: firstId, name: 'Provider: First pinned' };
+        const second = { id: secondId, name: 'Provider: Second pinned' };
+        const old = { id: 'unpinned/old', name: 'Provider: Saved <model>' };
+        const session = {
+            responseMode: RESPONSE_MODE_COUNCIL,
+            councilConfig: { enabled: true, outputMode: COUNCIL_OUTPUT_SYNTHESIS, synthesisModel: old.name }
+        };
+        input.app = {
+            state: { models: [second, old, first, { id: 'unpinned/other', name: 'Other unpinned' }] },
+            elements: {}, getCurrentSession: () => session
+        };
+        input.supportsFeature = () => true;
+        input.setComposerModeDataset = () => {};
+        input.getPrimaryModelName = () => first.name;
+        input.refreshMultiModelSettingsUI();
+        for (const control of Object.values(controls)) {
+            assert.match(control.innerHTML, /selected disabled>Saved &lt;model&gt; \(current\)/);
+            assert.doesNotMatch(control.innerHTML, /Other unpinned/);
+            assert.ok(control.innerHTML.indexOf(first.name) < control.innerHTML.indexOf(second.name));
+            assert.equal(control.disabled, false);
+        }
+        assert.equal(session.councilConfig.synthesisModel, old.name);
+        session.councilConfig.synthesisModel = first.id;
+        input.refreshMultiModelSettingsUI();
+        assert.doesNotMatch(controls['council-review-model-select'].innerHTML, /Saved|\(current\)/);
+        assert.equal(controls['council-review-model-select'].value, first.name);
+
+        input.app.state.models = [old];
+        session.councilConfig.synthesisModel = old.name;
+        input.refreshMultiModelSettingsUI();
+        for (const control of Object.values(controls)) {
+            assert.equal(control.disabled, true);
+            assert.match(control.innerHTML, /Saved &lt;model&gt; \(current\)/);
+        }
+        assert.equal(session.councilConfig.synthesisModel, old.name);
+    } finally {
+        globalThis.document = beforeDocument;
+    }
 });

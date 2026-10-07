@@ -26,6 +26,7 @@ import { normalizeReasoningEffort } from '../services/reasoningConfig.js';
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
 import { onModelTiersUpdate } from '../services/modelTiers.js';
+import { getPinnedModels, onPinnedModelsUpdate } from '../services/modelConfig.js';
 import {
     RESPONSE_MODE_COUNCIL,
     COUNCIL_OUTPUT_PARALLEL,
@@ -100,6 +101,7 @@ export default class ChatInput {
         this.councilReviewToggle = null;
         this.councilReviewModelSelect = null;
         onModelTiersUpdate(() => this.refreshMultiModelSettingsUI());
+        onPinnedModelsUpdate(() => this.refreshMultiModelSettingsUI());
         this.applyComposerLayout();
         // Store undone scrubber state for redo functionality
         this.scrubberUndoState = null;
@@ -2782,9 +2784,11 @@ export default class ChatInput {
         this.app.updateCouncilLayoutMode?.(session);
         const models = Array.isArray(this.app.state.models) ? this.app.state.models : [];
         const availableModels = models.filter((model) => model?.name);
-        const allSelectableModels = models.filter((model) => model?.name);
-        const modelsLoaded = allSelectableModels.length > 0;
-        const councilSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
+        const pinnedCouncilModels = getPinnedModels()
+            .map((id) => availableModels.find((model) => model.id === id))
+            .filter(Boolean);
+        const resolvedSynthesisModel = this.resolveCouncilSynthesisModelName(requestedCouncilSynthesisModel, primary);
+        const councilSynthesisModel = this.getModelEntryByName(resolvedSynthesisModel)?.name || resolvedSynthesisModel;
         const configuredSecondary = this.getConfiguredSecondaryModelName(primary);
         const selectedSecondary = this.resolveSecondaryModelName(primary, configuredSecondary);
 
@@ -2866,17 +2870,19 @@ export default class ChatInput {
         }
 
         const renderSynthesisOptions = () => {
-            const options = [...allSelectableModels];
-            if (!modelsLoaded && councilSynthesisModel && !options.some((model) => model.name === councilSynthesisModel)) {
-                options.unshift({ name: councilSynthesisModel });
+            const options = [...pinnedCouncilModels];
+            // Keep the saved choice visible without silently replacing the model
+            // a chat uses. New choices come only from the pinned list.
+            if (councilSynthesisModel && !options.some((model) => model.name === councilSynthesisModel)) {
+                options.unshift({ name: councilSynthesisModel, currentOnly: true });
             }
             return options.map((model, index) => {
                 const value = model.name;
-                const label = this.getFullModelHoverName(value);
+                const label = this.getFullModelHoverName(value) + (model.currentOnly ? ' (current)' : '');
                 const selected = councilSynthesisModel
                     ? value === councilSynthesisModel
                     : index === 0;
-                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}>${this.escapeOptionText(label)}</option>`;
+                return `<option value="${this.escapeOptionValue(value)}"${selected ? ' selected' : ''}${model.currentOnly ? ' disabled' : ''}>${this.escapeOptionText(label)}</option>`;
             }).join('');
         };
 
@@ -2918,11 +2924,11 @@ export default class ChatInput {
                 : 'No model available';
             councilReviewModelSelect.setAttribute('aria-label', `Council model: ${councilHoverName}`);
             councilReviewModelSelect.title = councilHoverName;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                councilReviewModelSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+            if (pinnedCouncilModels.length === 0 && !councilSynthesisModel) {
+                councilReviewModelSelect.innerHTML = '<option value="" disabled selected>No pinned models available</option>';
                 councilReviewModelSelect.disabled = true;
             } else {
-                councilReviewModelSelect.disabled = !isCouncilReviewEnabled;
+                councilReviewModelSelect.disabled = !isCouncilReviewEnabled || pinnedCouncilModels.length === 0;
                 councilReviewModelSelect.innerHTML = renderSynthesisOptions();
                 if (councilSynthesisModel) {
                     councilReviewModelSelect.value = councilSynthesisModel;
@@ -2932,22 +2938,22 @@ export default class ChatInput {
 
         if (synthesisInlineSelect) {
             this.councilSynthesisInlineSelect = synthesisInlineSelect;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+            if (pinnedCouncilModels.length === 0 && !councilSynthesisModel) {
+                synthesisInlineSelect.innerHTML = '<option value="" disabled selected>No pinned models available</option>';
                 synthesisInlineSelect.disabled = true;
             } else {
-                synthesisInlineSelect.disabled = !isCouncilReviewEnabled;
+                synthesisInlineSelect.disabled = !isCouncilReviewEnabled || pinnedCouncilModels.length === 0;
                 synthesisInlineSelect.innerHTML = renderSynthesisOptions();
             }
         }
 
         if (synthesisSelect) {
             this.multiModelSynthesisSelect = synthesisSelect;
-            if (allSelectableModels.length === 0 && !councilSynthesisModel) {
-                synthesisSelect.innerHTML = '<option value="" disabled selected>No council model</option>';
+            if (pinnedCouncilModels.length === 0 && !councilSynthesisModel) {
+                synthesisSelect.innerHTML = '<option value="" disabled selected>No pinned models available</option>';
                 synthesisSelect.disabled = true;
             } else {
-                synthesisSelect.disabled = !isCouncilReviewEnabled;
+                synthesisSelect.disabled = !isCouncilReviewEnabled || pinnedCouncilModels.length === 0;
                 synthesisSelect.innerHTML = renderSynthesisOptions();
             }
         }

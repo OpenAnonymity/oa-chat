@@ -195,6 +195,9 @@ export default class ModelPicker {
         let allowedModels = this.app.state.models.filter(model =>
             !this.disabledModels.has(model.id)
         );
+        if (this.isSynthesisSelectionMode()) {
+            allowedModels = allowedModels.filter(model => this.pinnedModels.includes(model.id));
+        }
 
         // Split into non-empty lowercase terms
         const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
@@ -308,7 +311,9 @@ export default class ModelPicker {
         this.highlightedIndex = -1;
 
         if (filteredModels.length === 0) {
-            const message = this.app.state.models.length === 0
+            const message = this.isSynthesisSelectionMode() && this.filterModels('').length === 0
+                ? 'No pinned models are available for Council right now.'
+                : this.app.state.models.length === 0
                 ? 'No models are available right now. Try again later.'
                 : 'No models match your search. Try a different name.';
             this.app.elements.modelsList.innerHTML = `<p role="status" class="px-3 py-8 text-center text-sm text-muted-foreground">${message}</p>`;

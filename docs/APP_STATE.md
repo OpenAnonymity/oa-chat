@@ -6513,3 +6513,13 @@ colors. Loading spinners and normal OA access-key controls are unchanged.
   instead of radios. The review is rows (You withdraw / To / Network fee / You
   receive) with "Withdraw $X" and Back. A saved (prepared) withdrawal keeps the
   full `renderWithdrawalFees()` receipt.
+
+## 2026-10-07: Council model selection uses pinned models
+
+- Council review dropdowns and the Council keyboard picker offer only available
+  pinned models. Primary/secondary selection, inference and wallet flows are
+  unchanged. An existing unpinned selection is shown as disabled `(current)` in
+  the dropdown, preserving the actual session model until an explicit change.
+- Pin updates refresh the settings controls as well as the searchable picker.
+  No available pins means no new selectable Council model, not a full-catalog
+  fallback. See [Parallel and Council](PARALLEL_COUNCIL.md).

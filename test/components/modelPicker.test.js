@@ -68,6 +68,24 @@ test('secondary model picker allows selecting the active primary model', () => {
     assert.deepEqual(modelNames, ['OpenAI: Primary', 'Anthropic: Secondary', 'Google: Other']);
 });
 
+test('Council search offers pinned models only and still excludes disabled models', () => {
+    const picker = createModelPicker({ selectionMode: 'council-synthesis' });
+    picker.pinnedModels = ['anthropic/secondary', 'openai/primary'];
+    picker.disabledModels = new Set(['openai/primary']);
+    assert.deepEqual(picker.filterModels('').map(model => model.id), ['anthropic/secondary']);
+    assert.deepEqual(picker.filterModels('google'), []);
+    assert.equal(picker.filterModels('anthropic secondary').length, 1);
+});
+
+test('Council picker reports unavailable pins without exposing the full catalog', () => {
+    const picker = createModelPicker({ selectionMode: 'council-synthesis' });
+    picker.pinnedModels = ['missing/model'];
+    picker.app.elements.modelsList = { innerHTML: '', querySelectorAll: () => [] };
+    picker.renderModels('');
+    assert.match(picker.app.elements.modelsList.innerHTML, /No pinned models are available for Council/);
+    assert.doesNotMatch(picker.app.elements.modelsList.innerHTML, /data-model-name/);
+});
+
 test('ordinary model rows retain ticket prices without a product presenter', () => {
     const picker = createModelPicker();
     const html = picker.buildModelOptionHTML(picker.app.state.models[0]);

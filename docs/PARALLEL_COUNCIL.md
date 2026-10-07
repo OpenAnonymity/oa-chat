@@ -12,6 +12,15 @@ ticket, station, verifier, and inference paths as ordinary Chat.
   settle, a separately selected synthesis model receives the canonical chat
   context plus the anonymous first-stage responses and writes one review.
 
+The Council review model selector offers only available pinned models, in the
+same order as the main model picker's Pinned section. Its searchable keyboard
+picker uses the same restriction. Primary and secondary model pickers retain
+the full catalog. A previously chosen unpinned Council model stays visible as
+`(current)` but cannot be selected again after switching; rendering the shorter
+list never rewrites a saved chat or acquires a key. If no pinned models are
+available, selection is disabled rather than falling back to the full catalog.
+Both selectors refresh when the pinned-model configuration changes.
+
 Parallel is selected explicitly and the latest Chat/Parallel composer choice is
 remembered across new chats and newly opened browser tabs/windows. If the user
 opens a new view while Parallel is selected, its empty composer starts in
