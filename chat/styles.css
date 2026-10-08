@@ -271,6 +271,34 @@ body {
     touch-action: pan-y;
 }
 
+#model-list-scroll-area {
+    height: 270px;
+    min-height: 0;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+    #model-picker-modal {
+        top: var(--composer-viewport-top, 0px);
+        bottom: auto;
+        height: var(--composer-viewport-height, 100dvh);
+    }
+
+    #model-picker-modal > [role="dialog"] {
+        max-height: calc(100% - 2rem);
+        min-height: 0;
+    }
+
+    #model-picker-modal .model-picker-search { flex-shrink: 0; }
+    #model-list-scroll-area { height: min(55dvh, 420px); }
+    #model-search { min-width: 0; min-height: 44px; font-size: 16px; }
+    #close-modal-btn { min-width: 44px; min-height: 44px; }
+    #close-modal-btn > svg { margin: auto; }
+    #model-list-scroll-area .model-option { min-height: 44px; align-content: center; }
+}
+
 code, pre, kbd, .font-mono {
     font-family: var(--font-mono);
 }
@@ -8180,6 +8208,10 @@ div:has(> #input-card.scrubber-preview-expanded) {
     transition: opacity 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
     opacity: 0;
     pointer-events: none;
+}
+
+.scroll-to-bottom-btn.hidden {
+    display: none;
 }
 
 .scroll-to-bottom-btn.visible {

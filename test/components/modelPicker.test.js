@@ -190,3 +190,129 @@ test('an empty settled model catalog does not spin forever', () => {
     assert.match(picker.app.elements.modelsList.innerHTML, /No models are available/);
     assert.doesNotMatch(picker.app.elements.modelsList.innerHTML, /Loading models|modelpicker-spin/);
 });
+
+function interactivePicker(t, { touch = true, keyboard = false } = {}) {
+    const picker = createModelPicker();
+    const frames = [];
+    t.mock.method(globalThis, 'requestAnimationFrame', callback => frames.push(callback));
+    const focused = [];
+    const handlers = new Map();
+    const focusable = name => ({ focus: () => focused.push(name), value: '',
+        addEventListener: (event, callback) => handlers.set(`${name}:${event}`, callback) });
+    const hidden = new Set(['hidden']);
+    const dialog = focusable('dialog');
+    const modal = {
+        classList: { contains: key => hidden.has(key), add: key => hidden.add(key), remove: key => hidden.delete(key) },
+        dataset: {},
+        ownerDocument: { defaultView: { matchMedia: () => ({ matches: touch }) },
+            documentElement: { hasAttribute: () => keyboard } },
+        querySelector: () => dialog,
+        addEventListener() {}
+    };
+    let html = '', writes = 0;
+    picker.app.elements = {
+        modelPickerModal: modal,
+        modelSearch: focusable('search'), messageInput: focusable('composer'),
+        modelPickerBtn: focusable('trigger'), closeModalBtn: focusable('close'),
+        modelListScrollArea: { scrollTop: 0 },
+        modelsList: { get innerHTML() { return html; }, set innerHTML(value) { html = value; writes++; },
+            querySelectorAll: () => [], addEventListener() {} }
+    };
+    return { picker, focused, handlers, flush: () => frames.splice(0).forEach(fn => fn()), writes: () => writes };
+}
+
+// The browser provides RAF. Keep the Node fixture local to these lifecycle tests.
+globalThis.requestAnimationFrame ??= () => {};
+
+test('touch opening/closing leaves text fields unfocused and restores the list position', t => {
+    const { picker, focused, flush } = interactivePicker(t);
+    picker.savedScrollTop = 500;
+    picker.open(); flush();
+    assert.deepEqual(focused, ['dialog']);
+    assert.equal(picker.app.elements.modelListScrollArea.scrollTop, 500);
+    picker.close(); flush();
+    assert.deepEqual(focused, ['dialog', 'trigger']);
+});
+
+test('desktop and deliberate hardware-keyboard opening still focus model search', t => {
+    for (const options of [{ touch: false }, { touch: true, keyboard: true }]) {
+        const { picker, focused, flush } = interactivePicker(t, options);
+        picker.open(); flush();
+        assert.equal(focused[0], 'search');
+    }
+});
+
+test('closing before the opening frame cannot bring back the search keyboard', t => {
+    const { picker, focused, flush } = interactivePicker(t, { touch: false });
+    picker.open(); picker.close(); flush();
+    assert.deepEqual(focused, ['composer']);
+});
+
+test('keyboard shortcut can focus search after touch cleared keyboard modality', t => {
+    const { picker, focused, flush } = interactivePicker(t, { touch: true, keyboard: false });
+    picker.toggle({ focusSearch: true }); flush();
+    picker.toggle({ selectionMode: 'council-secondary', focusSearch: true }); flush();
+    picker.toggle({ selectionMode: 'council-synthesis', focusSearch: true }); flush();
+    assert.deepEqual(focused, ['search', 'search', 'search']);
+    picker.close(); flush();
+    assert.equal(focused.at(-1), 'composer');
+    picker.open(); flush(); picker.close(); flush();
+    assert.equal(focused.at(-1), 'trigger', 'a later touch opening must not inherit keyboard focus');
+    const app = fs.readFileSync('chat/app.js', 'utf8');
+    assert.match(app, /modelPicker\.toggle\(\{ focusSearch: true \}\)/);
+    for (const mode of ['council-secondary', 'council-synthesis']) {
+        assert.ok(app.includes(`modelPicker.toggle({ selectionMode: '${mode}', focusSearch: true })`));
+    }
+});
+
+test('reopening before the close frame cannot focus the composer behind the picker', t => {
+    const { picker, focused, flush } = interactivePicker(t, { touch: false });
+    picker.open(); flush();
+    picker.close(); picker.open(); flush();
+    assert.deepEqual(focused, ['search', 'search']);
+});
+
+test('a pending search cannot replace the list after closing', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { picker, handlers, writes } = interactivePicker(t);
+    picker.setupEventListeners(); picker.open();
+    handlers.get('search:input')({ target: { value: 'no matches' } });
+    picker.close();
+    const before = writes();
+    t.mock.timers.tick(100);
+    assert.equal(writes(), before);
+});
+
+test('switching selection mode discards the previous debounced search', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { picker, handlers } = interactivePicker(t);
+    picker.setupEventListeners(); picker.open();
+    picker.app.elements.modelSearch.value = 'no matches';
+    handlers.get('search:input')({ target: { value: 'no matches' } });
+    picker.pinnedModels = ['openai/primary'];
+    picker.open({ selectionMode: 'council-synthesis' });
+    t.mock.timers.tick(100);
+    assert.equal(picker.app.elements.modelSearch.value, '');
+    assert.match(picker.app.elements.modelsList.innerHTML, /OpenAI: Primary/);
+    assert.doesNotMatch(picker.app.elements.modelsList.innerHTML, /No models match/);
+});
+
+test('unchanged catalog refresh retains rows, while pricing and search changes replace them', () => {
+    const picker = createModelPicker();
+    let writes = 0, html;
+    picker.app.elements.modelsList = { set innerHTML(value) { html = value; writes++; }, querySelectorAll: () => [] };
+    picker.renderModels('', true, true);
+    picker.renderModels('', true, true);
+    assert.equal(writes, 1, 'unchanged refresh must not replace scrolling rows');
+    let price = '$1';
+    picker.app.presentation = { getModelPricing: () => ({ label: price, description: 'Synthetic price' }) };
+    picker.renderModels('', true, true);
+    assert.equal(writes, 2);
+    price = '$2';
+    picker.renderModels('', true, true);
+    assert.equal(writes, 3);
+    assert.match(html, /\$2/);
+    picker.renderModels('no matches');
+    assert.equal(writes, 4);
+    assert.match(html, /No models match/);
+});

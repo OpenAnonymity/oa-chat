@@ -2483,6 +2483,11 @@ export default class ChatArea {
         const displayContent = state.targetContent.substring(0, state.displayedLength);
         updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
 
+        if (state.displayedLength >= targetLength) {
+            clearInterval(state.interval);
+            state.interval = null;
+        }
+
         if (!state.autoScrollPaused) {
             reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
         }
@@ -2718,7 +2723,11 @@ export default class ChatArea {
         if (!messageId) return;
 
         const reasoningContentEl = document.getElementById(`reasoning-content-${messageId}`);
-        if (!reasoningContentEl) return;
+        if (!reasoningContentEl) {
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
+            return;
+        }
 
         // Set up scroll tracking on first access
         this.setupReasoningScrollTracking(reasoningContentEl);
@@ -2774,8 +2783,10 @@ export default class ChatArea {
         };
 
         if (displayedLength >= targetLength) {
-            // Caught up to target - update content, wait for more
+            // Render same-length corrections once, then sleep until new data.
             updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(targetContent));
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
             // Only auto-scroll if user hasn't scrolled up
             if (!this.reasoningAutoScrollPaused) {
                 reasoningContentEl.scrollTop = reasoningContentEl.scrollHeight;
@@ -2791,6 +2802,10 @@ export default class ChatArea {
         // Update displayed content
         const displayContent = targetContent.substring(0, newLength);
         updateContentPreservingIndicator(this.convertBasicMarkdownToHtml(displayContent));
+        if (newLength >= targetLength) {
+            clearInterval(this.typewriter.interval);
+            this.typewriter.interval = null;
+        }
 
         // Only auto-scroll if user hasn't manually scrolled up
         if (!this.reasoningAutoScrollPaused) {

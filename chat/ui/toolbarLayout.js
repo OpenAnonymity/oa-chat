@@ -17,6 +17,12 @@ export function updateToolbarBackdrop({ toolbar, messagesContainer, widthDelta =
         return;
     }
     const view = toolbar.ownerDocument.defaultView;
+    // Phones always use the opaque toolbar. Scrolling cannot change this,
+    // so avoid forcing transcript/control layout reads on every touch frame.
+    if (view.innerWidth < 768) {
+        if (toolbar.classList.contains('toolbar-wide')) toolbar.classList.remove('toolbar-wide');
+        return;
+    }
     const content = messagesContainer.getBoundingClientRect();
     const style = view.getComputedStyle(messagesContainer);
     const floats = canFloatToolbar({

@@ -147,6 +147,128 @@ function backendHarness() {
 }
 
 describe('production ChatApp runtime ownership', () => {
+    function searchHarness() {
+        const app = appHarness();
+        app.sessionSearchRequestId = 0;
+        app.sessionSearchQuery = 'needle';
+        app.sessionFilters = { starredOnly: false, dateMode: 'all', customDate: '' };
+        app.renderSessions = () => {};
+        app.cacheSessions = () => {};
+        app.refreshSessionConversationSearchText = () => assert.fail('already-indexed history must not read messages');
+        return app;
+    }
+
+    test('long indexed history yields to input and returns ordered matches', async t => {
+        const app = searchHarness();
+        const sessions = Array.from({ length: 350 }, (_, i) => ({
+            id: `history-${i}`, updatedAt: i + 1,
+            title: i === 0 || i === 349 ? 'needle' : 'other', conversationSearchText: ''
+        }));
+        t.mock.method(chatDB, 'getAllSessions', async () => sessions);
+        let completed = false, inputRan = false;
+        const search = app.updateSessionSearchResults().then(() => { completed = true; });
+        setTimeout(() => { inputRan = true; assert.equal(completed, false); }, 0);
+        await search;
+        assert.equal(inputRan, true);
+        assert.deepEqual(app.state.sessionSearchResults.map(s => s.id), ['history-349', 'history-0']);
+        assert.equal(app.state.sessionSearchPending, false);
+    });
+
+    test('a new query interrupts a history scan without publishing old matches', async t => {
+        const app = searchHarness();
+        t.mock.method(chatDB, 'getAllSessions', async () => Array.from({ length: 350 }, (_, i) => ({
+            id: `history-${i}`, updatedAt: i, title: 'other', conversationSearchText: ''
+        })));
+        let scanned = 0;
+        app.sessionMatchesSearchQuery = () => { scanned++; return false; };
+        const search = app.updateSessionSearchResults();
+        const cleared = new Promise(resolve => setTimeout(() => {
+            app.sessionSearchQuery = '';
+            resolve(app.updateSessionSearchResults());
+        }, 0));
+        await Promise.all([search, cleared]);
+        assert.ok(scanned > 0 && scanned < 350, `obsolete query scanned ${scanned} rows`);
+        assert.equal(app.state.sessionSearchResults, null);
+        assert.equal(app.state.sessionSearchPending, false);
+    });
+
+    test('an obsolete database result is discarded before sorting or matching', async t => {
+        const app = searchHarness();
+        const pending = deferred();
+        t.mock.method(chatDB, 'getAllSessions', () => pending.promise);
+        const search = app.updateSessionSearchResults();
+        app.sessionSearchQuery = '';
+        await app.updateSessionSearchResults();
+        pending.resolve({ sort: () => assert.fail('obsolete history must not be sorted') });
+        await search;
+        assert.equal(app.state.sessionSearchResults, null);
+    });
+
+    function reasoningHarness(t, council = false) {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        // Node 24 MockTimers reschedules an interval cleared inside its own
+        // callback. Use a cancellable interval clock for this exact lifecycle.
+        const intervals = new Map();
+        let sequence = 0;
+        t.mock.method(globalThis, 'setInterval', callback => { intervals.set(++sequence, callback); return sequence; });
+        t.mock.method(globalThis, 'clearInterval', id => intervals.delete(id));
+        const tick = ms => {
+            for (let i = 0; i < ms; i += 16) {
+                t.mock.timers.tick(16);
+                for (const callback of [...intervals.values()]) callback();
+            }
+        };
+        const app = { updateActivePromptScrollSpacer() {}, updateScrollButtonVisibility() {} };
+        const area = Object.assign(Object.create(ChatArea.prototype), {
+            app, settledReasoningIds: new Map(), councilReasoningStreams: new Map(),
+            reasoningBuffer: { content: '', timeout: null, messageId: null },
+            typewriter: { targetContent: '', displayedLength: 0, interval: null, messageId: null, charsPerTick: 3, tickMs: 16 },
+            reasoningAutoScrollPaused: false, ensureCouncilLaneReasoningTrace() {}
+        });
+        let writes = 0, rendered = '', present = true;
+        const indicator = {};
+        const content = {
+            dataset: {}, classList: { contains: () => true, add() {} },
+            childNodes: [indicator], querySelector: () => indicator, addEventListener() {},
+            scrollTop: 0, scrollHeight: 200, clientHeight: 100
+        };
+        document.getElementById = id => present && id.startsWith('reasoning-content-') ? content : null;
+        document.createElement = () => ({ set innerHTML(html) { writes++; rendered = html; }, firstChild: null });
+        return {
+            area, content, tick, writes: () => writes, rendered: () => rendered,
+            detach: () => { present = false; },
+            update: text => council ? area.updateCouncilLaneReasoning('m', 'primary', text) : area.updateStreamingReasoning('m', text),
+            advance() { t.mock.timers.tick(80); tick(192); }
+        };
+    }
+
+    for (const council of [false, true]) {
+        test(`${council ? 'Council' : 'single'} reasoning stops idle rewrites and resumes for new text and corrections`, t => {
+            const h = reasoningHarness(t, council);
+            h.update('abc'); h.advance();
+            assert.match(h.rendered(), />abc</);
+            const idleWrites = h.writes();
+            h.tick(5000);
+            assert.equal(h.writes(), idleWrites, 'waiting for the provider must not repeatedly rebuild identical text');
+            h.update('abcdef'); h.advance();
+            assert.match(h.rendered(), />abcdef</);
+            h.update('<tag>!'); h.advance();
+            assert.match(h.rendered(), /&lt;tag&gt;!/, 'same-length corrections still render and stay escaped');
+            const finalWrites = h.writes();
+            h.tick(5000);
+            assert.equal(h.writes(), finalWrites);
+        });
+
+        test(`${council ? 'Council' : 'single'} detached reasoning stops its timer`, t => {
+            const h = reasoningHarness(t, council);
+            h.update('abcdef');
+            t.mock.timers.tick(80);
+            h.detach(); h.tick(16);
+            assert.equal(council ? h.area.councilReasoningStreams.size : h.area.typewriter.interval, council ? 0 : null);
+            assert.equal(h.writes(), 0);
+        });
+    }
+
     test('restored pages resume pending-turn cleanup; canceled navigation never marks unloading', async t => {
         const app = appHarness();
         const events = new EventTarget();

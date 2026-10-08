@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <base href="/chat/">
+    <title>OA interaction checks — local only</title>
+    <link rel="stylesheet" href="tailwind.generated.css">
+    <link rel="stylesheet" href="fonts/fonts.css">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body { overflow: auto; padding: 20px; }
+        main { max-width: 640px; margin: auto; }
+        h1 { font-size: 22px; } h2 { font-weight: 600; margin: 20px 0 8px; }
+        .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+        .controls button { border: 1px solid #999; padding: 9px; border-radius: 8px; }
+        output { display: block; white-space: pre-wrap; margin: 12px 0; }
+        .reasoning-content { max-height: 110px; overflow: auto; }
+        #scroll-sample { position: relative; height: 90px; border: 1px solid #bbb; border-radius: 12px; }
+        #scroll-sample .scroll-to-bottom-btn { position: absolute; bottom: 12px; right: 12px; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>OA interaction checks</h1>
+    <p>Local synthetic text. No login, wallet or inference request.</p>
+    <h2>Thinking display</h2>
+    <div class="controls"><button id="start">Run stream / idle / resume check</button></div>
+    <p>Single response</p>
+    <div id="reasoning-content-demo" class="reasoning-content"></div>
+    <p>Council lane</p>
+    <div id="reasoning-content-demo-primary" class="reasoning-content"></div>
+    <output id="reasoning-result">Ready</output>
+    <h2>Scroll button</h2>
+    <div class="controls">
+        <button id="reverse">Show / hide / reverse</button>
+        <button id="hide">Hide button</button>
+    </div>
+    <div id="scroll-sample"><button id="scroll-to-bottom-btn" class="scroll-to-bottom-btn hidden">Scroll to bottom ↓</button></div>
+    <output id="scroll-result">Ready</output>
+</main>
+<script type="module">
+    import ChatArea from './components/ChatArea.js';
+    import { setScrollButtonVisible } from './ui/scrollToBottom.js';
+    const area = Object.assign(Object.create(ChatArea.prototype), {
+        app: { updateActivePromptScrollSpacer() {}, updateScrollButtonVisibility() {} },
+        settledReasoningIds: new Map(), councilReasoningStreams: new Map(),
+        reasoningBuffer: { content: '', timeout: null, messageId: null },
+        typewriter: { targetContent: '', displayedLength: 0, interval: null, messageId: null, charsPerTick: 3, tickMs: 16 },
+        reasoningAutoScrollPaused: false, ensureCouncilLaneReasoningTrace() {}
+    });
+    // Use a simple explicit lane id while running the real rendering/timer methods.
+    area.getCouncilLaneReasoningId = () => 'demo-primary';
+    let writes = 0;
+    const convert = area.convertBasicMarkdownToHtml.bind(area);
+    area.convertBasicMarkdownToHtml = text => { writes++; return convert(text); };
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    document.getElementById('start').onclick = async event => {
+        event.target.disabled = true;
+        const result = document.getElementById('reasoning-result');
+        result.textContent = 'Receiving synthetic text…';
+        const first = 'Checking the available details.';
+        area.updateStreamingReasoning('demo', first);
+        area.updateCouncilLaneReasoning('demo', 'primary', first);
+        await wait(700);
+        const before = writes;
+        await wait(1200);
+        const idle = writes - before;
+        const resumed = `${first} New text arrived.`;
+        area.updateStreamingReasoning('demo', resumed);
+        area.updateCouncilLaneReasoning('demo', 'primary', resumed);
+        await wait(700);
+        result.textContent = `Idle text rewrites: ${idle}\nResumed both displays: ${[...document.querySelectorAll('.reasoning-content')].every(el => el.textContent.includes('New text arrived.'))}\nRemaining active timers: ${Number(Boolean(area.typewriter.interval)) + [...area.councilReasoningStreams.values()].filter(state => state.interval).length}`;
+        event.target.disabled = false;
+    };
+    const button = document.getElementById('scroll-to-bottom-btn');
+    document.getElementById('reverse').onclick = async () => {
+        setScrollButtonVisible(button, true);
+        await wait(250); setScrollButtonVisible(button, false);
+        await wait(80); setScrollButtonVisible(button, true);
+        await wait(350);
+        document.getElementById('scroll-result').textContent = `Visible after reversal: ${!button.classList.contains('hidden') && getComputedStyle(button).opacity === '1'}`;
+    };
+    document.getElementById('hide').onclick = async () => {
+        setScrollButtonVisible(button, false); await wait(300);
+        document.getElementById('scroll-result').textContent = `Removed from layout after hide: ${getComputedStyle(button).display === 'none'}`;
+    };
+</script>
+</body>
+</html>

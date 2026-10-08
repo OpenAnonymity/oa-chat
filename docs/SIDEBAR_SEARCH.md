@@ -73,3 +73,10 @@ The downside is bounded recall: very long chats may not match content from the
 middle of the conversation if it falls outside the first-message-plus-recent-turns
 window. A more accurate alternative would be an inverted index or semantic index,
 but that would add more code, storage, migration work, and update complexity.
+
+Large indexed histories yield to the browser after each 50 scanned sessions.
+Previously that loop could contain no asynchronous work at all, delaying input
+and cancellation despite the search request-generation checks. Every resumed
+batch checks the request generation again, and an obsolete database result is
+discarded before sorting. Matching, ordering, limits and lazy indexing are
+unchanged; this is cooperative scheduling, not a new search index or cache.

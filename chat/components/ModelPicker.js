@@ -41,6 +41,9 @@ export default class ModelPicker {
         this.modelConfigVersion = 0;
         this.searchDebounceTimer = null;
         this.selectionMode = 'primary';
+        this.focusRequest = 0;
+        this.returnFocusToComposer = false;
+        this.renderedModelsHTML = null;
 
         // Listen for pinned/disabled updates (API fetch completed)
         onPinnedModelsUpdate(() => this._onConfigUpdate());
@@ -93,7 +96,9 @@ export default class ModelPicker {
             const searchTerm = e.target.value;
             clearTimeout(this.searchDebounceTimer);
             this.searchDebounceTimer = setTimeout(() => {
-                this.renderModels(searchTerm);
+                if (!this.app.elements.modelPickerModal.classList.contains('hidden')) {
+                    this.renderModels(searchTerm);
+                }
             }, 80);
         });
 
@@ -115,14 +120,21 @@ export default class ModelPicker {
     }
 
     /**
-     * Opens the model picker modal and focuses the search input.
+     * Opens the model picker; touch browsing waits for a tap to focus search.
      */
     open(options = {}) {
+        clearTimeout(this.searchDebounceTimer);
+        const focusRequest = ++this.focusRequest;
         this.selectionMode = options.selectionMode || options.mode || 'primary';
         const modal = this.app.elements.modelPickerModal;
+        const touchLayout = this.usesTouchLayout();
+        const keyboard = options.focusSearch === true
+            || modal.ownerDocument?.documentElement?.hasAttribute('data-keyboard-nav');
+        this.returnFocusToComposer = !touchLayout || keyboard;
         showSurface(modal);
         modal.dataset.selectionMode = this.selectionMode;
         if (this.app.elements.modelSearch) {
+            this.app.elements.modelSearch.value = '';
             this.app.elements.modelSearch.placeholder = this.isSecondarySelectionMode()
                 ? 'Search second model...'
                 : this.isSynthesisSelectionMode()
@@ -131,13 +143,19 @@ export default class ModelPicker {
         }
         this.highlightedIndex = -1;
         const shouldRestoreScroll = this.savedScrollTop > 0;
-        this.renderModels('', shouldRestoreScroll, true);
+        this.renderModels('', shouldRestoreScroll || touchLayout, true);
         // Restore scroll position after browser renders the content
         requestAnimationFrame(() => {
+            if (focusRequest !== this.focusRequest || modal.classList.contains('hidden')) return;
             if (shouldRestoreScroll) {
                 this.app.elements.modelListScrollArea.scrollTop = this.savedScrollTop;
             }
-            this.app.elements.modelSearch.focus();
+            // Browsing the list should not summon the phone keyboard or zoom
+            // the viewport. Hardware-keyboard navigation still focuses search.
+            const target = touchLayout && !keyboard
+                ? modal.querySelector('[role="dialog"]')
+                : this.app.elements.modelSearch;
+            target?.focus({ preventScroll: true });
         });
     }
 
@@ -145,6 +163,8 @@ export default class ModelPicker {
      * Closes the model picker modal and clears the search.
      */
     close() {
+        clearTimeout(this.searchDebounceTimer);
+        const focusRequest = ++this.focusRequest;
         // Save scroll position before hiding (from the scroll container, not inner list)
         this.savedScrollTop = this.app.elements.modelListScrollArea.scrollTop;
         hideSurface(this.app.elements.modelPickerModal);
@@ -153,12 +173,27 @@ export default class ModelPicker {
         this.app.elements.modelSearch.value = '';
         this.app.elements.modelSearch.placeholder = 'Search models...';
         this.selectionMode = 'primary';
-        // Focus input after closing modal
+        // Restore focus without summoning the phone keyboard.
         requestAnimationFrame(() => {
-            if (this.app.elements.messageInput) {
-                this.app.elements.messageInput.focus();
-            }
+            if (focusRequest !== this.focusRequest) return;
+            const target = this.returnFocusToComposer
+                ? this.app.elements.messageInput : this.app.elements.modelPickerBtn;
+            target?.focus({ preventScroll: true });
         });
+    }
+
+    usesTouchLayout() {
+        return this.app.elements.modelPickerModal?.ownerDocument?.defaultView
+            ?.matchMedia?.('(max-width: 767px), (hover: none) and (pointer: coarse)').matches === true;
+    }
+
+    setModelsHTML(html) {
+        // Recompute pricing/selection on every open, but retain the actual rows
+        // when unchanged: replacing them interrupts touch momentum and lays out
+        // hundreds of icons again, even after warmRender prepared the list.
+        if (html === this.renderedModelsHTML) return;
+        this.app.elements.modelsList.innerHTML = html;
+        this.renderedModelsHTML = html;
     }
 
     /**
@@ -167,9 +202,9 @@ export default class ModelPicker {
     toggle(options = {}) {
         const requestedMode = options.selectionMode || options.mode || 'primary';
         if (this.app.elements.modelPickerModal.classList.contains('hidden')) {
-            this.open({ selectionMode: requestedMode });
+            this.open({ ...options, selectionMode: requestedMode });
         } else if (this.selectionMode !== requestedMode) {
-            this.open({ selectionMode: requestedMode });
+            this.open({ ...options, selectionMode: requestedMode });
         } else {
             this.close();
         }
@@ -295,13 +330,13 @@ export default class ModelPicker {
 
         // Show loading state if models are still being fetched
         if (this.app.state.modelsLoading) {
-            this.app.elements.modelsList.innerHTML = `
+            this.setModelsHTML(`
                 <div class="flex items-center justify-center py-8 text-muted-foreground">
                     <style>@keyframes modelpicker-spin { to { transform: rotate(360deg); } }</style>
                     <div style="width: 14px; height: 14px; border: 2px solid #9ca3af; border-top-color: #3b82f6; border-radius: 50%; animation: modelpicker-spin 0.6s linear infinite;"></div>
                     <span class="text-sm ml-2">Loading models...</span>
                 </div>
-            `;
+            `);
             return;
         }
 
@@ -316,7 +351,7 @@ export default class ModelPicker {
                 : this.app.state.models.length === 0
                 ? 'No models are available right now. Try again later.'
                 : 'No models match your search. Try a different name.';
-            this.app.elements.modelsList.innerHTML = `<p role="status" class="px-3 py-8 text-center text-sm text-muted-foreground">${message}</p>`;
+            this.setModelsHTML(`<p role="status" class="px-3 py-8 text-center text-sm text-muted-foreground">${message}</p>`);
             return;
         }
 
@@ -368,7 +403,7 @@ export default class ModelPicker {
             `;
         }
 
-        this.app.elements.modelsList.innerHTML = html;
+        this.setModelsHTML(html);
 
         // Auto-highlight first item so user can immediately press Enter
         const modelOptions = this.getModelOptions();

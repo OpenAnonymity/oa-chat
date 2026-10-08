@@ -32,7 +32,7 @@ function fixture() {
         } };
     const control = { left: 1210, right: 1432, getBoundingClientRect() { return this; } };
     const toolbar = { ownerDocument: { defaultView: view }, children: [control],
-        classList: { remove: key => state.delete(key), toggle: (key, value) => value ? state.add(key) : state.delete(key) } };
+        classList: { contains: key => state.has(key), remove: key => state.delete(key), toggle: (key, value) => value ? state.add(key) : state.delete(key) } };
     const messagesContainer = { left: 300, right: 1140, getBoundingClientRect() { return this; } };
     const chatArea = {};
     return { toolbar, messagesContainer, chatArea, control, view, observed, state, resize: () => callback() };
@@ -66,5 +66,17 @@ test('panel prediction covers immediately; measured narrowing and mobile cannot 
     assert.equal(f.state.has('toolbar-wide'), true);
     f.view.innerWidth = 640;
     updateToolbarBackdrop(f);
+    assert.equal(f.state.has('toolbar-wide'), false);
+});
+
+test('phone scroll updates perform no transcript, control, or computed-style measurement', () => {
+    const f = fixture();
+    f.view.innerWidth = 390;
+    f.state.add('toolbar-wide');
+    const unexpectedRead = () => assert.fail('phone layout is already known');
+    f.messagesContainer.getBoundingClientRect = unexpectedRead;
+    f.control.getBoundingClientRect = unexpectedRead;
+    f.view.getComputedStyle = unexpectedRead;
+    for (let i = 0; i < 60; i++) updateToolbarBackdrop(f);
     assert.equal(f.state.has('toolbar-wide'), false);
 });

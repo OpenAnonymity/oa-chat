@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <base href="/chat/">
+    <title>OA phone picker — local interaction test</title>
+    <link rel="stylesheet" href="tailwind.generated.css">
+    <link rel="stylesheet" href="fonts/fonts.css">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        body { padding: 16px; overflow: auto; }
+        .test-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+        .test-controls button { border: 1px solid #bbb; border-radius: 8px; padding: 10px; }
+        #test-result { white-space: pre-wrap; margin: 16px 0; }
+        #message-input { display: block; border: 1px solid #bbb; margin-top: 16px; }
+    </style>
+</head>
+<body>
+    <h1>Phone model picker test</h1>
+    <p>Local synthetic catalog. No account, wallet or inference requests.</p>
+    <div class="test-controls">
+        <button id="model-picker-btn">Choose a model</button>
+        <button id="council-test">Choose Council model</button>
+        <button id="keyboard-test">Open with keyboard</button>
+        <button id="short-viewport">Simulate keyboard viewport</button>
+    </div>
+    <textarea id="message-input" aria-label="Message" placeholder="Synthetic composer"></textarea>
+    <output id="test-result">Loading local fixture…</output>
+    <script type="module">
+        import ModelPicker from './components/ModelPicker.js';
+        const source = new DOMParser().parseFromString(await (await fetch('index.html')).text(), 'text/html');
+        document.body.append(document.importNode(source.getElementById('model-picker-modal'), true));
+        const ids = {
+            modelPickerBtn: 'model-picker-btn', modelPickerModal: 'model-picker-modal',
+            modelSearch: 'model-search', closeModalBtn: 'close-modal-btn',
+            modelsList: 'models-list', modelListScrollArea: 'model-list-scroll-area', messageInput: 'message-input'
+        };
+        const elements = Object.fromEntries(Object.entries(ids).map(([name, id]) => [name, document.getElementById(id)]));
+        const models = Array.from({ length: 300 }, (_, i) => ({
+            id: `openai/test-${i}`, name: `OpenAI: Test model ${String(i).padStart(3, '0')}`,
+            provider: 'OpenAI', category: 'Text'
+        }));
+        let selected = models[0].name, replacements = 0;
+        const output = document.getElementById('test-result');
+        const report = () => {
+            output.textContent = `Selected: ${selected}\nRows: ${elements.modelsList.querySelectorAll('.model-option').length}\nList replacements: ${replacements}\nFocus: ${document.activeElement.id || document.activeElement.getAttribute('role')}\nScroll: ${Math.round(elements.modelListScrollArea.scrollTop)}`;
+        };
+        const app = {
+            elements, state: { models, modelsLoading: false, modelsVersion: 1 }, reasoningEnabled: true,
+            getCurrentSession: () => null, getPrimaryModelName: () => selected,
+            normalizeModelName: name => name,
+            actions: { selectModel: async name => { selected = name; }, selectCouncilSynthesisModel: async name => { selected = name; } }
+        };
+        const picker = new ModelPicker(app);
+        picker.pinnedModels = models.slice(0, 4).map(model => model.id);
+        picker.disabledModels.clear();
+        picker.setupEventListeners();
+        new MutationObserver(() => { replacements++; report(); }).observe(elements.modelsList, { childList: true });
+        document.addEventListener('focusin', report);
+        elements.modelListScrollArea.addEventListener('scroll', report);
+        document.addEventListener('pointerdown', () => document.documentElement.removeAttribute('data-keyboard-nav'));
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Tab') document.documentElement.setAttribute('data-keyboard-nav', '');
+            if (e.key === 'Escape') picker.close();
+        });
+        document.getElementById('council-test').onclick = () => picker.open({ selectionMode: 'council-synthesis' });
+        document.getElementById('keyboard-test').onclick = () => {
+            picker.toggle({ focusSearch: true });
+        };
+        document.getElementById('short-viewport').onclick = () => {
+            document.documentElement.style.setProperty('--composer-viewport-height', '280px'); picker.open();
+        };
+        picker.warmRender();
+        report();
+    </script>
+</body>
+</html>

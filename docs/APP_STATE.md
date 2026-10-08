@@ -6523,3 +6523,44 @@ colors. Loading spinners and normal OA access-key controls are unchanged.
 - Pin updates refresh the settings controls as well as the searchable picker.
   No available pins means no new selectable Council model, not a full-catalog
   fallback. See [Parallel and Council](PARALLEL_COUNCIL.md).
+
+## 2026-10-08: Phone scrolling and model picker
+
+- Touch opening focuses the model dialog, not the search input; touch closing
+  returns to the picker button, not the editable composer. This supersedes the
+  older unconditional-autofocus notes. Desktop/hardware-keyboard opening retains
+  search focus and returns to the composer. Cmd/Ctrl+K/J/L pass explicit focus
+  intent even after pointer input cleared the focus-ring modality attribute.
+  Delayed focus and search work cannot run after a close/reopen.
+- Phone/coarse-pointer picker uses a larger, viewport-bounded scrolling area,
+  44px row/close targets, 16px search text and scroll containment. Its visible
+  viewport uses the existing responsive-composer CSS variables, so the search
+  header stays reachable when a keyboard reduces available height.
+- Picker opening still recomputes prices and selection (OA/zkAPI pricing can
+  change without the catalog version changing), but skips replacing identical
+  list markup. Do not cache solely on `getRenderSignature()`.
+- On phones the toolbar avoids geometry reads for the desktop-only floating
+  layout. Message navigation coalesces scroll bursts per animation frame, uses
+  linear ID lookup and changes only indicators whose state changed.
+- Scope, reproduction and verification: [Phone scrolling](PHONE_SCROLLING.md).
+  These are local UI changes; real iPhone Home Screen scroll/keyboard behavior
+  must still be checked before claiming the user's lag is resolved.
+
+## 2026-10-08: Stop idle UI work and recover interrupted scrolling
+
+- Single and Council reasoning reveal timers now stop once the displayed text
+  catches up, retaining the current text and thinking indicator. The next
+  buffered update restarts the timer; same-length corrections still render once.
+  Detached single-reasoning elements also stop the timer rather than polling.
+  Settling the final trace and stored message content are unchanged.
+- Scroll-button fades are reversible and own one hide timer per button. The
+  hidden selector now overrides the component's display style, removing an
+  invisible button from the layout/tab order. The click wait ends on user
+  interruption, chat change, element removal, reaching bottom or 15 100ms checks;
+  no infinite polling or permanently suppressed button after an interrupted jump.
+- Long-history search yields between batches and drops obsolete database
+  responses before sorting. See [Sidebar search](SIDEBAR_SEARCH.md).
+- Verification and measured before/after: [Interaction performance](INTERACTION_PERFORMANCE.md).
+  This work remains local with the phone picker changes, pending staging/device
+  validation. Login, storage format, wallets, payments and inference transport
+  are untouched.

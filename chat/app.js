@@ -9,6 +9,7 @@ import { enterKeyAction } from './domain/composerKeys.js';
 
 import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
+import { setScrollButtonVisible, waitForScrollBottom } from './ui/scrollToBottom.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -2234,26 +2235,16 @@ class ChatApp {
             e.stopPropagation();
             this.clearPromptSlideUpEffect();
             this.isAutoScrollPaused = false;
+            this.cancelScrollButtonWait?.();
             this._scrollButtonClickPending = true;
             this.hideScrollToBottomButton();
             this.scrollToBottom(true);
-
-            // Clear flag only after scroll animation completes and we're at bottom
-            // Use longer timeout to account for smooth scroll animation
-            const clearPendingFlag = () => {
-                const chatArea = this.elements.chatArea;
-                if (chatArea) {
-                    const isAtBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 10;
-                    if (isAtBottom) {
-                        this._scrollButtonClickPending = false;
-                        return;
-                    }
-                }
-                // If not at bottom yet, check again
-                setTimeout(clearPendingFlag, 100);
-            };
-            // Start checking after initial scroll animation time
-            setTimeout(clearPendingFlag, 400);
+            const sessionId = this.state.currentSessionId;
+            this.cancelScrollButtonWait = waitForScrollBottom(this.elements.chatArea, () => {
+                this._scrollButtonClickPending = false;
+                this.cancelScrollButtonWait = null;
+                this.updateScrollButtonVisibility();
+            }, { isCurrent: () => this.state.currentSessionId === sessionId });
         });
 
         // Insert into input container (not input-card which has isolation: isolate that breaks backdrop-filter)
@@ -2277,27 +2268,14 @@ class ChatApp {
             this.createScrollToBottomButton();
         }
 
-        if (this.scrollToBottomButton && this.scrollToBottomButton.classList.contains('hidden')) {
-            this.scrollToBottomButton.classList.remove('hidden');
-            // Trigger reflow to ensure animation plays
-            void this.scrollToBottomButton.offsetWidth;
-            this.scrollToBottomButton.classList.add('visible');
-        }
+        setScrollButtonVisible(this.scrollToBottomButton, true);
     }
 
     /**
      * Hides the scroll-to-bottom button with fade-out animation
      */
     hideScrollToBottomButton() {
-        if (this.scrollToBottomButton && !this.scrollToBottomButton.classList.contains('hidden')) {
-            this.scrollToBottomButton.classList.remove('visible');
-            // Wait for fade-out animation before hiding
-            setTimeout(() => {
-                if (this.scrollToBottomButton) {
-                    this.scrollToBottomButton.classList.add('hidden');
-                }
-            }, 200);
-        }
+        setScrollButtonVisible(this.scrollToBottomButton, false);
     }
 
     // Keep the toolbar opaque whenever its controls would cover the transcript.
@@ -10076,12 +10054,20 @@ class ChatApp {
         const results = [];
         try {
             const allSessions = await chatDB.getAllSessions();
+            if (requestId !== this.sessionSearchRequestId) return;
             allSessions.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
 
+            let processed = 0;
             for (const session of allSessions) {
+                // Large indexed histories otherwise monopolize the main thread
+                // without an await. Let taps and newer searches run between batches.
+                if (processed > 0 && processed % 50 === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
                 if (requestId !== this.sessionSearchRequestId) {
                     return;
                 }
+                processed += 1;
 
                 let sessionToMatch = session;
                 const filterMatches = this.sessionMatchesSidebarFilters(sessionToMatch);
@@ -10796,7 +10782,7 @@ class ChatApp {
             if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
                 e.preventDefault();
                 if (this.modelPicker) {
-                    this.modelPicker.toggle();
+                    this.modelPicker.toggle({ focusSearch: true });
                 }
             }
 
@@ -10806,7 +10792,7 @@ class ChatApp {
                 const pendingCouncilEnabled = this.supportsFeature('council', session) && this.pendingCouncilConfig?.enabled === true;
                 if (this.modelPicker && (this.isCouncilModeActive(session) || pendingCouncilEnabled)) {
                     e.preventDefault();
-                    this.modelPicker.toggle({ selectionMode: 'council-secondary' });
+                    this.modelPicker.toggle({ selectionMode: 'council-secondary', focusSearch: true });
                 }
             }
 
@@ -10824,7 +10810,7 @@ class ChatApp {
                         hideSurface(this.elements.settingsMenu);
                         this.elements.settingsBtn?.classList.remove('tooltip-disabled');
                     }
-                    this.modelPicker.toggle({ selectionMode: 'council-synthesis' });
+                    this.modelPicker.toggle({ selectionMode: 'council-synthesis', focusSearch: true });
                 }
             }
 
