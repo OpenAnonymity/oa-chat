@@ -464,11 +464,6 @@ test('parallel composer keeps the Council model picker out of the input bar', ()
         true,
         'Council review model should use the same settings select pattern as scrubber and memory models'
     );
-    assert.equal(
-        chatInputSource.includes('const label = this.getFullModelHoverName(value);'),
-        true,
-        'Council review model select labels should omit provider/company names while preserving raw model values'
-    );
 });
 
 test('parallel layout stays wide for transcripts and forks with council output', () => {

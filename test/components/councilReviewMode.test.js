@@ -133,6 +133,9 @@ test('Council dropdowns use pin order and preserve an unpinned saved choice with
         input.getPrimaryModelName = () => first.name;
         input.refreshMultiModelSettingsUI();
         for (const control of Object.values(controls)) {
+            assert.ok(control.innerHTML.includes(`<option value="${first.name}">First pinned</option>`),
+                'the visible label omits the provider while the option retains the raw model name');
+            assert.ok(control.innerHTML.includes(`<option value="${second.name}">Second pinned</option>`));
             assert.match(control.innerHTML, /selected disabled>Saved &lt;model&gt; \(current\)/);
             assert.doesNotMatch(control.innerHTML, /Other unpinned/);
             assert.ok(control.innerHTML.indexOf(first.name) < control.innerHTML.indexOf(second.name));
