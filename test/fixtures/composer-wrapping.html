@@ -21,7 +21,7 @@ const input = document.getElementById('message-input');
 const card = document.getElementById('input-card');
 const diff = document.getElementById('scrubber-preview-diff');
 const result = document.getElementById('test-result');
-setupResponsiveComposer({ input, onScrub() {} });
+setupResponsiveComposer({ input, onScrub() {}, onCompactChange: resize });
 const sample = 'What is new on twitter today?';
 function resize() { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; }
 input.addEventListener('input', resize);

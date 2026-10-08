@@ -99,3 +99,11 @@ sentence fits on one line in both hint states. Wide layouts at 768 and 1280px
 retain 150/64px, and pending rewrite input and overlay retain matching 150px.
 Light/dark and normal multiline typing were checked in the browser. Physical
 iPhone keyboard behavior remains a user-assisted check.
+
+Independent review found a breakpoint edge: restoring the desktop padding could
+wrap an existing single-line draft without growing its height. The responsive
+composer now calls its existing autosizer after compact CSS state changes, once
+per transition. At viewport 590→592px (card 558→560), the preserved 48-character
+draft grows from 24px to 48px; returning to compact shrinks it again. The fixture
+keeps the draft intact on resizing, and the unit test guards callback ordering
+and excludes height-only observer loops.

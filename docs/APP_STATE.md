@@ -6585,3 +6585,6 @@ its 150px/64px right padding. This applies below 560px of actual card width,
 including narrow desktop columns. Pending rewrite controls still reserve their
 visible space through the existing more-specific selector. Browser regression
 fixture and evidence: [PHONE_SCROLLING.md](PHONE_SCROLLING.md).
+Changing compact state also invokes ChatInput's existing autosizer after the
+CSS state update, so restoring desktop hint padding cannot clip a saved draft.
+Height-only ResizeObserver notifications do not retrigger this callback.

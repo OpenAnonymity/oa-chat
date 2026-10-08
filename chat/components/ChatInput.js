@@ -218,6 +218,7 @@ export default class ChatInput {
         this.responsiveComposerCleanup?.();
         this.responsiveComposerCleanup = setupResponsiveComposer({
             input: this.app.elements.messageInput,
+            onCompactChange: () => this.resizeMessageInput(),
             onScrub: () => {
                 hideSurface(this.app.elements.settingsMenu);
                 this.app.elements.settingsBtn.setAttribute('aria-expanded', 'false');

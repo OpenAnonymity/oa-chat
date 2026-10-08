@@ -52,7 +52,9 @@ test('resizing moves the original controls without losing selection or the draft
         const mode = elements.get('chat-mode-toggle'); mode.dataset.mode='parallel';
         const memory = elements.get('memory-context-toggle'); memory.attrs['aria-checked']='true';
         let scrubCount=0;
-        const cleanup = setupResponsiveComposer({input,onScrub:()=>scrubCount++});
+        const layoutStates=[];
+        const cleanup = setupResponsiveComposer({input,onScrub:()=>scrubCount++,
+            onCompactChange:()=>layoutStates.push({compact:root.dataset.composerCompact,draft:input.value})});
         const resize = observers[1];
         elements.get('input-card').width=358; resize.callback();
         assert.equal(mode.parent, elements.get('compact-mode-slot'));
@@ -67,6 +69,12 @@ test('resizing moves the original controls without losing selection or the draft
         assert.equal(memory.attrs['aria-checked'],'true');
         assert.equal(input.value,'Keep this draft');
         assert.equal(elements.get('compact-composer-actions').hidden,true);
+        resize.callback(); // A height-only notification must not create a resize loop.
+        assert.deepEqual(layoutStates, [
+            {compact:'false',draft:'Keep this draft'},
+            {compact:'true',draft:'Keep this draft'},
+            {compact:'false',draft:'Keep this draft'}
+        ], 'resize the existing draft after each compact CSS change, not every observer event');
         view.innerWidth=390; view.visualViewport.height=480;
         let writes = 0;
         root.style.setProperty = () => writes++;

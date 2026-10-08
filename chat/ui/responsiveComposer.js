@@ -4,7 +4,7 @@ export function isKeyboardViewport({ width, layoutHeight, height, scale = 1, edi
         && layoutHeight - height > 120;
 }
 
-export function setupResponsiveComposer({ input, onScrub }) {
+export function setupResponsiveComposer({ input, onScrub, onCompactChange }) {
     if (!input?.ownerDocument?.defaultView) return () => {};
     const doc = input.ownerDocument;
     const view = doc.defaultView;
@@ -34,6 +34,8 @@ export function setupResponsiveComposer({ input, onScrub }) {
         }
         button.setAttribute('aria-label', compact ? 'More options' : 'Settings');
         button.setAttribute('data-tooltip', compact ? 'More options' : 'Settings');
+        // Hint padding changes wrapping; size the existing draft after CSS updates.
+        onCompactChange?.();
     };
     let viewportFrame = null;
     let disposed = false;
