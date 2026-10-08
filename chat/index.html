@@ -910,10 +910,13 @@
                                                     </div>
                                                     <div class="settings-row" id="council-review-row">
                                                         <span class="settings-row-label" id="council-review-label">Council review</span>
-                                                        <button id="council-review-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="council-review-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
+                                                        <button id="council-review-toggle" type="button" role="switch" aria-controls="council-review-children" aria-checked="false" aria-labelledby="council-review-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Add a Council answer after the two model responses" data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
                                                     </div>
+                                                    <!-- Council model folds away under Council review while review is off. -->
+                                                    <div id="council-review-children" class="settings-children t-acc" data-open="false">
+                                                    <div class="t-acc-panel"><div class="t-acc-panel-inner">
                                                     <div id="council-review-model-row" class="settings-row is-disabled">
                                                         <label class="settings-row-label" for="council-review-model-select">Council model</label>
                                                         <div class="settings-row-control settings-select">
@@ -924,6 +927,8 @@
                                                                 <option value="" disabled selected>Loading…</option>
                                                             </select>
                                                         </div>
+                                                    </div>
+                                                    </div></div>
                                                     </div>
                                                     <div class="settings-row">
                                                         <span class="settings-row-label" id="reasoning-effort-label">Effort</span>

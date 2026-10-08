@@ -492,7 +492,7 @@ export default class ChatInput {
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI({ instant: true });
-                this.refreshMultiModelSettingsUI();
+                this.refreshMultiModelSettingsUI({ instant: true });
                 // Position and populate before measuring the transition's first frame.
                 showSurface(menu, 'dropdown');
             } else {
@@ -2007,19 +2007,21 @@ export default class ChatInput {
     }
 
     /**
-     * Memory's settings sit under the section's own switch and fold away
-     * while Memory is off (the transitions.dev accordion). Opening the gear
-     * sets them without motion; a click on the switch animates. Tooltips
-     * above the rows need the fold's clip lifted once it has settled open.
+     * Settings that only matter while a switch is on (Memory's under the
+     * Memory heading, Council model under Council review) fold away while it
+     * is off (the transitions.dev accordion). Opening the gear sets them
+     * without motion; a click on the switch animates. Tooltips above the
+     * rows need the fold's clip lifted once it has settled open.
      */
-    setMemorySettingsOpen(open, { instant = false } = {}) {
-        const children = document.getElementById('memory-settings-children');
+    setSettingsChildrenOpen(id, open, { instant = false } = {}) {
+        const children = document.getElementById(id);
         if (!children) return;
         const inner = children.querySelector('.t-acc-panel-inner');
         const panel = children.querySelector('.t-acc-panel');
         if (inner) inner.inert = !open;
         if (children.dataset.open === String(open) && !instant) return;
-        clearTimeout(this.memorySettingsSettleTimer);
+        this.settingsFoldTimers ||= new Map();
+        clearTimeout(this.settingsFoldTimers.get(id));
         delete children.dataset.settled;
         if (instant) {
             children.dataset.instant = '';
@@ -2029,16 +2031,33 @@ export default class ChatInput {
             if (open) children.dataset.settled = '';
             return;
         }
+        // The panel hangs from its bottom edge above the composer, so a fold
+        // opening mid-panel would push the switch just clicked up from under
+        // the pointer. Hold the top edge instead and grow downward.
+        this.pinSettingsMenuTop();
         children.dataset.open = String(open);
         if (!open) return;
         const settle = () => {
-            clearTimeout(this.memorySettingsSettleTimer);
+            clearTimeout(this.settingsFoldTimers.get(id));
             panel?.removeEventListener?.('transitionend', onEnd);
             if (children.dataset.open === 'true') children.dataset.settled = '';
         };
         const onEnd = event => { if (event.target === panel) settle(); };
         panel?.addEventListener?.('transitionend', onEnd);
-        this.memorySettingsSettleTimer = setTimeout(settle, 400);
+        this.settingsFoldTimers.set(id, setTimeout(settle, 400));
+    }
+
+    /** Keeps the open settings panel's top edge where it is; it grows down, and scrolls if it runs out of room. */
+    pinSettingsMenuTop() {
+        const menu = this.app.elements.settingsMenu;
+        if (!menu || menu.classList.contains('hidden') || menu.style.bottom === 'auto') return;
+        const rect = menu.getBoundingClientRect?.();
+        if (!rect) return;
+        const viewport = window.visualViewport;
+        const viewBottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight);
+        menu.style.top = `${rect.top}px`;
+        menu.style.bottom = 'auto';
+        menu.style.maxHeight = `${Math.max(220, viewBottom - 12 - rect.top)}px`;
     }
 
     refreshMemorySettingsUI({ instant = false } = {}) {
@@ -2052,7 +2071,7 @@ export default class ChatInput {
             'Memory is on',
             'Memory is off'
         );
-        this.setMemorySettingsOpen(memoryFeatureEnabled, { instant });
+        this.setSettingsChildrenOpen('memory-settings-children', memoryFeatureEnabled, { instant });
         if (featureToggle) {
             featureToggle.disabled = !memorySupported;
             featureToggle.setAttribute('aria-disabled', String(!memorySupported));
@@ -2771,7 +2790,7 @@ export default class ChatInput {
             || COUNCIL_OUTPUT_PARALLEL;
     }
 
-    refreshMultiModelSettingsUI() {
+    refreshMultiModelSettingsUI({ instant = false } = {}) {
         const session = this.app.getCurrentSession();
         const select = document.getElementById('multi-model-secondary-select');
         const inlineContainer = document.getElementById('council-inline-models');
@@ -2934,10 +2953,11 @@ export default class ChatInput {
         }
 
         if (councilReviewModelRow) {
-            // The row is always there, dimmed while review is off: turning the
-            // switch on must not grow the panel under the pointer.
             councilReviewModelRow.classList.toggle('is-disabled', !isCouncilReviewEnabled || !councilSupported);
         }
+        // Council model folds under Council review while review is off (the
+        // panel holds its top edge, so the switch stays under the pointer).
+        this.setSettingsChildrenOpen('council-review-children', isCouncilReviewEnabled && councilSupported, { instant });
 
         // In zkAPI mode the Council rows dim and the switch's bubble says
         // why, so a greyed switch never reads as "off" when it is "not here".

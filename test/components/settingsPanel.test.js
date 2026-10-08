@@ -161,10 +161,21 @@ test('Memory: the section title carries its switch, and its settings fold away w
     assert.ok(section.indexOf('memory-auto-include-toggle') > section.indexOf('memory-settings-children'));
     assert.ok(section.indexOf('memory-agent-model-select') > section.indexOf('memory-settings-children'));
     const input = read('chat/components/ChatInput.js');
-    assert.match(input, /this\.setMemorySettingsOpen\(memoryFeatureEnabled, \{ instant \}\)/);
-    assert.match(input, /this\.refreshMemorySettingsUI\(\{ instant: true \}\)/, 'opening the gear does not animate the fold');
+    assert.match(input, /this\.setSettingsChildrenOpen\('memory-settings-children', memoryFeatureEnabled, \{ instant \}\)/);
+    assert.match(input, /this\.refreshMemorySettingsUI\(\{ instant: true \}\);\n\s*this\.refreshMultiModelSettingsUI\(\{ instant: true \}\)/, 'opening the gear does not animate the folds');
     assert.match(input, /if \(inner\) inner\.inert = !open;/, 'folded settings take no focus');
     const css = read('chat/styles.css');
     assert.match(css, /\.settings-heading-row \{ display: flex;[^}]*min-height: var\(--settings-row-h\);/);
     assert.match(css, /\.settings-children\[data-open="true"\]\[data-settled\] \.t-acc-panel-inner \{ overflow: visible; \}/);
+});
+
+test('Council model folds under Council review, and a fold never moves the switch just clicked', () => {
+    const html = read('chat/index.html');
+    assert.match(html, /<button id="council-review-toggle"[^>]*aria-controls="council-review-children"/);
+    assert.match(html, /<div id="council-review-children" class="settings-children t-acc" data-open="false">\s*<div class="t-acc-panel"><div class="t-acc-panel-inner">\s*<div id="council-review-model-row"/);
+    const input = read('chat/components/ChatInput.js');
+    assert.match(input, /this\.setSettingsChildrenOpen\('council-review-children', isCouncilReviewEnabled && councilSupported, \{ instant \}\)/);
+    // The panel hangs from its bottom edge; an animated fold first holds the top edge.
+    assert.match(input, /this\.pinSettingsMenuTop\(\);\n\s*children\.dataset\.open = String\(open\);/);
+    assert.match(input, /menu\.style\.top = `\$\{rect\.top\}px`;\n\s*menu\.style\.bottom = 'auto';/);
 });
