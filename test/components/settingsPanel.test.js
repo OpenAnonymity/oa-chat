@@ -45,7 +45,7 @@ test('the gear leads with what is set once — Appearance, Data controls, feedba
         'All', 'Chat history', 'ChatGPT', 'Memories',
         'Share feedback',
         'Scrubber model',
-        'Save memories', 'Always attach retrieval', 'Memory model',
+        'Use memories without asking', 'Memory model',
         'Web search', 'Council review', 'Council model', 'Effort'
     ]);
     // Memory export/import work whether Memory is on or off: the memories
@@ -150,4 +150,21 @@ test('the Delete confirmation paints above the Account card', () => {
     // be above them, and the card isolates its own stacking context.
     assert.match(css, /\.settings-confirm-layer \{[^}]*position: absolute;[^}]*z-index: 2;/s);
     assert.match(css, /\.settings-dialog \{[^}]*position: relative;\s*isolation: isolate;/s);
+});
+
+test('Memory: the section title carries its switch, and its settings fold away while it is off', () => {
+    const html = read('chat/index.html');
+    const start = html.indexOf('<section id="memory-settings-section"');
+    const section = html.slice(start, html.indexOf('</section>', start));
+    assert.match(section, /<div class="settings-heading-row">[\s\S]*id="settings-memory-title"[\s\S]*<button id="memory-feature-toggle"[^>]*aria-controls="memory-settings-children"[^>]*aria-labelledby="settings-memory-title"/);
+    assert.match(section, /<div id="memory-settings-children" class="settings-children t-acc" data-open="false">\s*<div class="t-acc-panel"><div class="t-acc-panel-inner">/);
+    assert.ok(section.indexOf('memory-auto-include-toggle') > section.indexOf('memory-settings-children'));
+    assert.ok(section.indexOf('memory-agent-model-select') > section.indexOf('memory-settings-children'));
+    const input = read('chat/components/ChatInput.js');
+    assert.match(input, /this\.setMemorySettingsOpen\(memoryFeatureEnabled, \{ instant \}\)/);
+    assert.match(input, /this\.refreshMemorySettingsUI\(\{ instant: true \}\)/, 'opening the gear does not animate the fold');
+    assert.match(input, /if \(inner\) inner\.inert = !open;/, 'folded settings take no focus');
+    const css = read('chat/styles.css');
+    assert.match(css, /\.settings-heading-row \{ display: flex;[^}]*min-height: var\(--settings-row-h\);/);
+    assert.match(css, /\.settings-children\[data-open="true"\]\[data-settled\] \.t-acc-panel-inner \{ overflow: visible; \}/);
 });

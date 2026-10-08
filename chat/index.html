@@ -870,28 +870,32 @@
 
                                                 <!-- Memory -->
                                                 <section id="memory-settings-section" class="settings-section" aria-labelledby="settings-memory-title">
-                                                    <div class="settings-heading-with-info"><h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
-                                                        <button type="button" class="settings-info-button" aria-label="About Memory" aria-expanded="false" data-info-toggle data-info-tooltip="Use and save memories from your chats for one ticket."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.6" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11v6" stroke-width="1.8" stroke-linecap="round"/></svg></button>
-                                                    </div>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="memory-feature-label">Save memories</span>
-                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-feature-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Save useful details from your chats." data-tooltip-position="left">
+                                                    <!-- The section's switch is Memory as a whole; its settings fold away while it is off. -->
+                                                    <div class="settings-heading-row">
+                                                        <div class="settings-heading-with-info"><h3 id="settings-memory-title" class="settings-section-title">Memory</h3>
+                                                            <button type="button" class="settings-info-button" aria-label="About Memory" aria-expanded="false" data-info-toggle data-info-tooltip="Use and save memories from your chats for one ticket."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.6" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11v6" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+                                                        </div>
+                                                        <button id="memory-feature-toggle" type="button" role="switch" aria-controls="memory-settings-children" aria-checked="false" aria-labelledby="settings-memory-title" class="switch-toggle settings-switch switch-inactive" data-tooltip="Use and save memories from your chats." data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
                                                     </div>
-                                                    <div class="settings-row">
-                                                        <span class="settings-row-label" id="memory-auto-include-label">Always attach retrieval</span>
-                                                        <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-auto-include-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Automatically attach retrieval without per-message approval" data-tooltip-position="left">
+                                                    <div id="memory-settings-children" class="settings-children t-acc" data-open="false">
+                                                        <div class="t-acc-panel"><div class="t-acc-panel-inner">
+                                                        <div class="settings-row">
+                                                            <span class="settings-row-label" id="memory-auto-include-label">Use memories without asking</span>
+                                                            <button id="memory-auto-include-toggle" type="button" role="switch" aria-checked="false" aria-labelledby="memory-auto-include-label" class="switch-toggle settings-switch switch-inactive" data-tooltip="Use relevant memories in replies without asking each time." data-tooltip-position="left">
                                                             <span class="switch-toggle-indicator"></span>
                                                         </button>
-                                                    </div>
-                                                    <div class="settings-row">
+                                                        </div>
+                                                        <div class="settings-row">
                                                         <label class="settings-row-label" for="memory-agent-model-select">Memory model</label>
                                                         <div class="settings-row-control settings-select">
                                                             <select id="memory-agent-model-select">
                                                                 <option value="" disabled selected>Loading…</option>
                                                             </select>
                                                         </div>
+                                                    </div>
+                                                        </div></div>
                                                     </div>
                                                 </section>
 

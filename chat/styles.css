@@ -9431,6 +9431,14 @@ html[data-keyboard-nav] .settings-link:focus-visible {
 
 /* Privacy and Memory keep the shared small-caps section title; the heading only adds the info button. */
 .settings-heading-with-info { display: flex; align-items: center; gap: 0; margin-bottom: 0.25rem; }
+/* A section whose title carries its own switch (Memory): title left, switch
+   on the rows' right edge, as tall as a row. Its settings fold beneath. */
+.settings-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: var(--settings-row-h); }
+.settings-heading-row .settings-heading-with-info { margin-bottom: 0; }
+.settings-children[data-instant] .t-acc-panel,
+.settings-children[data-instant] .t-acc-panel-inner { transition: none !important; }
+/* Open and settled: lift the fold's clip so a row's tooltip can rise above it. */
+.settings-children[data-open="true"][data-settled] .t-acc-panel-inner { overflow: visible; }
 .settings-heading-with-info .settings-section-title { margin: 0; }
 /* The 24px target overlaps the title's line, so these headings stay as tall as the other section titles. */
 .settings-heading-with-info .settings-info-button { margin-block: -6px; }

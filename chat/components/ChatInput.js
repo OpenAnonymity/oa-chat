@@ -491,7 +491,7 @@ export default class ChatInput {
                 menu.style.overflowY = 'auto';
 
                 this.ensureScrubberModelsLoaded();
-                this.refreshMemorySettingsUI();
+                this.refreshMemorySettingsUI({ instant: true });
                 this.refreshMultiModelSettingsUI();
                 // Position and populate before measuring the transition's first frame.
                 showSurface(menu, 'dropdown');
@@ -2006,7 +2006,42 @@ export default class ChatInput {
         if (!available) toggle.dataset.tooltip = reason;
     }
 
-    refreshMemorySettingsUI() {
+    /**
+     * Memory's settings sit under the section's own switch and fold away
+     * while Memory is off (the transitions.dev accordion). Opening the gear
+     * sets them without motion; a click on the switch animates. Tooltips
+     * above the rows need the fold's clip lifted once it has settled open.
+     */
+    setMemorySettingsOpen(open, { instant = false } = {}) {
+        const children = document.getElementById('memory-settings-children');
+        if (!children) return;
+        const inner = children.querySelector('.t-acc-panel-inner');
+        const panel = children.querySelector('.t-acc-panel');
+        if (inner) inner.inert = !open;
+        if (children.dataset.open === String(open) && !instant) return;
+        clearTimeout(this.memorySettingsSettleTimer);
+        delete children.dataset.settled;
+        if (instant) {
+            children.dataset.instant = '';
+            children.dataset.open = String(open);
+            void children.offsetHeight;
+            delete children.dataset.instant;
+            if (open) children.dataset.settled = '';
+            return;
+        }
+        children.dataset.open = String(open);
+        if (!open) return;
+        const settle = () => {
+            clearTimeout(this.memorySettingsSettleTimer);
+            panel?.removeEventListener?.('transitionend', onEnd);
+            if (children.dataset.open === 'true') children.dataset.settled = '';
+        };
+        const onEnd = event => { if (event.target === panel) settle(); };
+        panel?.addEventListener?.('transitionend', onEnd);
+        this.memorySettingsSettleTimer = setTimeout(settle, 400);
+    }
+
+    refreshMemorySettingsUI({ instant = false } = {}) {
         const memorySupported = this.supportsFeature('memory');
         const memoryFeatureEnabled = this.isMemoryAvailable();
         const memoryUnavailableReason = this.getMemoryUnavailableReason();
@@ -2014,9 +2049,10 @@ export default class ChatInput {
         this.updateSwitchToggleUI(
             featureToggle,
             this.app.memoryFeatureEnabled !== false,
-            'Save memories is on',
-            'Save memories is off'
+            'Memory is on',
+            'Memory is off'
         );
+        this.setMemorySettingsOpen(memoryFeatureEnabled, { instant });
         if (featureToggle) {
             featureToggle.disabled = !memorySupported;
             featureToggle.setAttribute('aria-disabled', String(!memorySupported));
@@ -2028,8 +2064,8 @@ export default class ChatInput {
         this.updateSwitchToggleUI(
             memoryAutoIncludeToggle,
             effectiveMemoryAutoInclude,
-            'Always attach retrieval is on',
-            memoryFeatureEnabled ? 'Always attach retrieval is off' : memoryUnavailableReason
+            'Use memories without asking is on',
+            memoryFeatureEnabled ? 'Use memories without asking is off' : memoryUnavailableReason
         );
         if (memoryAutoIncludeToggle) {
             memoryAutoIncludeToggle.disabled = !memoryFeatureEnabled;
