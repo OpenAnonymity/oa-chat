@@ -94,3 +94,14 @@ content, credentials, and tickets.
 
 Parallel/Council sharing includes transcript and mode configuration, but never
 lane credentials or the ticket wallet.
+
+## Lane output and quiet streams (2026-10-08)
+
+Parallel lanes retain generated images alongside text during streaming and in saved
+responses. An image-only answer counts as completed. Council review receives text
+and an explicit image-count note, not the generated image bytes; it must not claim
+to have inspected those images. The canonical text answer prefers a lane with text.
+After output pauses for 1.2 seconds, an unfinished lane shows “Still working…”.
+The label clears on resumed output, reasoning, completion, failure, or cancellation.
+Lane failures retain the provider error and HTTP code where available. Image,
+working, and error reveals honor reduced motion and do not change access issuance.

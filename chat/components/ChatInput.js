@@ -2131,7 +2131,11 @@ export default class ChatInput {
         const viewBottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight);
         menu.style.top = `${rect.top}px`;
         menu.style.bottom = 'auto';
-        menu.style.maxHeight = `${Math.max(220, viewBottom - 12 - rect.top)}px`;
+        // Retain the composer boundary even when the menu is already scrolling.
+        const restingBottom = this.settingsMenuAnchor
+            ? window.innerHeight - parseFloat(this.settingsMenuAnchor.bottom)
+            : rect.bottom;
+        menu.style.maxHeight = `${Math.max(0, Math.min(viewBottom - 12, restingBottom) - rect.top)}px`;
     }
 
     refreshMemorySettingsUI({ instant = false } = {}) {

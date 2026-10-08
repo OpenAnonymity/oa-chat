@@ -6588,3 +6588,14 @@ fixture and evidence: [PHONE_SCROLLING.md](PHONE_SCROLLING.md).
 Changing compact state also invokes ChatInput's existing autosizer after the
 CSS state update, so restoring desktop hint padding cannot clip a saved draft.
 Height-only ResizeObserver notifications do not retrigger this callback.
+
+## Council, Settings, and host ticket progress release (2026-10-08)
+
+Integrated Council image/quiet/error states and Settings disclosures on top of the
+phone focus, scrolling, motion, and compact-composer wrapping fixes. See
+PARALLEL_COUNCIL.md and MEMORY_MODE.md. Settings populates and positions before
+showSurface runs. Edited prompts no longer flex-shrink against their manual height.
+The optional host tickets.subscribeRedemption interface emits aggregate progress
+and completion only; it never exposes codes, ticket material, credentials, or
+account identifiers. Paid preparation continues to own its existing status and
+deferred wallet-publication path.

@@ -9,8 +9,7 @@ This document describes the root `oa-chat` memory-mode integration that reuses
 it on permits background extraction independently of the book toggle. Turning
 it off disables both extraction and retrieval, without deleting saved memories.
 The book tooltip is “Use memories in replies”; turning the book off alone does
-not stop saving while Save memories is enabled. “Always attach retrieval” keeps
-its existing name and skips per-message approval only when retrieval is active.
+not stop saving while Save memories is enabled. “Use memories without asking” skips per-message approval only when retrieval is active.
 These labels do not change stored preferences, defaults, or runtime behavior.
 
 ## Scope
@@ -386,3 +385,11 @@ forwarding its details into the final prompt.
 - Root backfill is still intentionally simpler than `memory-chat`'s old extractor path:
   - progress is only reflected through the `Backfill` / stop button state + toast summary
   - there is still no separate queue modal or per-item retry UI
+
+## Settings disclosure (2026-10-08)
+
+The Memory heading now contains the existing feature switch. Its child settings
+fold away when disabled, become inert, and retain their preferences. Council review
+uses the same disclosure for its model picker. Opening Settings initializes folds
+without animation; user toggles animate while keeping the panel above the composer.
+These are presentation changes, not changes to memory defaults or consent.

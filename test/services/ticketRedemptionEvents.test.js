@@ -39,3 +39,31 @@ test('the previous-version move is labelled, a failure settles as not ok, and a 
     assert.equal(await runCodeRedemption.call(idle, null), null);
     assert.deepEqual(events, [], 'a resume with nothing pending says nothing');
 });
+
+test('late redemption events cannot reopen status after account changes or relocking', async t => {
+    const { default: accountService } = await import('../../chat/services/accountService.js');
+    const events = withWindow(t);
+    const originalGet = accountService.getState;
+    const originalSubscribe = accountService.subscribe;
+    const owner = { accountId: 'first', isReady: true, status: 'unlocked', sessionVerified: true, accountScopeReady: true, ticketSyncReady: true };
+    let listener; let unsubscribed = 0; let progress; let finish;
+    accountService.getState = () => ({ ...owner });
+    accountService.subscribe = fn => { listener = fn; return () => unsubscribed++; };
+    t.after(() => { accountService.getState = originalGet; accountService.subscribe = originalSubscribe; });
+    for (const changed of [{ ...owner, accountId: 'second' }, { ...owner, ticketSyncReady: false }]) {
+        events.length = 0;
+        const client = { getCodeRedeemer: () => ({ run: (_, report) => { progress = report; return new Promise(resolve => { finish = resolve; }); } }) };
+        const pending = runCodeRedemption.call(client, 'synthetic-code');
+        await Promise.resolve();
+        progress('Preparing tickets…', 2);
+        assert.equal(events.length, 1);
+        listener(changed);
+        listener(owner);
+        progress('Unblinding tickets…', 90);
+        finish({ tickets_issued: 5 });
+        await pending;
+        assert.equal(events.length, 1, 'no progress or completion from the invalidated owner');
+        assert.deepEqual(Object.keys(events[0].detail), ['source', 'message', 'percent']);
+    }
+    assert.equal(unsubscribed, 2);
+});

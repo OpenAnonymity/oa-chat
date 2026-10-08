@@ -937,7 +937,7 @@ export default class CouncilController {
         const stageEntries = Array.isArray(message?.council?.stage1)
             ? message.council.stage1
             : [];
-        const completed = stageEntries.filter((entry) => entry?.status === 'complete' && entry.response);
+        const completed = stageEntries.filter((entry) => entry?.status === 'complete' && hasLaneOutput(entry));
         const existingLabel = message?.council?.canonicalStage1Label || null;
         const canonical = completed.find((entry) => entry.label === preferredLabel)
             || completed.find((entry) => entry.label === existingLabel)
@@ -946,6 +946,7 @@ export default class CouncilController {
 
         if (!canonical) {
             message.content = '';
+            message.images = null;
             message.model = 'Parallel';
             message.citations = null;
             if (message.scrubber) {
@@ -955,6 +956,7 @@ export default class CouncilController {
         }
 
         message.content = canonical.response;
+        message.images = canonical.images || null;
         message.model = canonical.responseModel || canonical.model;
         message.citations = canonical.citations || null;
         message.council.canonicalStage1Label = canonical.label;
@@ -973,19 +975,21 @@ export default class CouncilController {
                 }
 
                 const synthesis = message.council.synthesis;
-                if ((synthesis?.status === 'complete' || synthesis?.status === 'partial') && synthesis.response) {
+                if ((synthesis?.status === 'complete' || synthesis?.status === 'partial') && hasLaneOutput(synthesis)) {
                     return {
                         ...message,
                         content: synthesis.response,
+                        images: synthesis.images || null,
                         model: synthesis.responseModel || 'Council'
                     };
                 }
 
                 const stageEntry = this.getStage1EntryForLane(message, entry, entries);
-                if (stageEntry?.status === 'complete' && stageEntry.response) {
+                if (stageEntry?.status === 'complete' && hasLaneOutput(stageEntry)) {
                     return {
                         ...message,
                         content: stageEntry.response,
+                        images: stageEntry.images || null,
                         model: stageEntry.responseModel || stageEntry.model || entry.name
                     };
                 }
@@ -1177,6 +1181,7 @@ export default class CouncilController {
                 const canonical = completed.find((entry) => typeof entry.response === 'string' && entry.response.trim())
                     || completed[0];
                 assistantMessage.content = canonical.response;
+                assistantMessage.images = canonical.images || null;
                 assistantMessage.model = canonical.responseModel || canonical.model;
                 assistantMessage.citations = canonical.citations || null;
                 assistantMessage.council.canonicalStage1Label = canonical.label;
@@ -1220,6 +1225,7 @@ export default class CouncilController {
                             synthesisResult?.model || synthesisResult?.data?.model, synthesisEntry, session);
                         const synthesisResponseModel = assistantMessage.council.synthesis.responseModel;
                         assistantMessage.content = synthesisResponse;
+                        assistantMessage.images = extractImages(synthesisResult);
                         assistantMessage.model = synthesisResponseModel || 'Council';
                         assistantMessage.reasoning = synthesisReasoning;
                         assistantMessage.reasoningDuration = synthesisResult?.reasoningDuration || null;
@@ -1231,6 +1237,7 @@ export default class CouncilController {
                             ...(synthesisResponseModel ? { responseModel: synthesisResponseModel } : {}),
                             status: synthesisStatus,
                             response: synthesisResponse,
+                            images: extractImages(synthesisResult),
                             reasoning: synthesisReasoning,
                             reasoningDuration: synthesisResult?.reasoningDuration || null,
                             streamingReasoning: false,
@@ -1257,6 +1264,7 @@ export default class CouncilController {
                                 'Council synthesis failed.'
                             );
                             assistantMessage.content = canonical.response;
+                            assistantMessage.images = canonical.images || null;
                             assistantMessage.model = canonical.responseModel || canonical.model;
                             assistantMessage.citations = canonical.citations || null;
                             assistantMessage.council.synthesis = {

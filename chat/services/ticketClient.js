@@ -908,7 +908,16 @@ class TicketClient {
     runCodeRedemption(code, progressCallback, options = {}) {
         const source = options?.source || (code === null ? 'resume' : 'code');
         let reported = false;
+        const owner = accountService.getState();
+        const ownerFields = ['accountId', 'isReady', 'status', 'sessionVerified', 'accountScopeReady', 'ticketSyncReady'];
+        let ownerCurrent = true;
+        // Invalidate permanently if ownership/readiness changes, even if the
+        // same account later unlocks again. Never put the owner in DOM events.
+        const unsubscribe = accountService.subscribe(snapshot => {
+            if (ownerFields.some(field => snapshot[field] !== owner[field])) ownerCurrent = false;
+        });
         const emit = (type, detail) => {
+            if (!ownerCurrent) return;
             if (typeof window === 'undefined' || typeof CustomEvent !== 'function') return;
             window.dispatchEvent(new CustomEvent(type, { detail }));
         };
@@ -917,7 +926,7 @@ class TicketClient {
             reported = true;
             emit('tickets-redemption-progress', { source, message, percent });
         };
-        return this.getCodeRedeemer().run(code, progress, options).then(result => {
+        return Promise.resolve().then(() => this.getCodeRedeemer().run(code, progress, options)).then(result => {
             if (reported) {
                 const issued = Number(result?.restoredTickets ?? result?.tickets_issued ?? 0) || 0;
                 emit('tickets-redemption-settled', { source, ok: true, issued });
@@ -926,7 +935,7 @@ class TicketClient {
         }, error => {
             if (reported) emit('tickets-redemption-settled', { source, ok: false, issued: 0 });
             throw error;
-        });
+        }).finally(unsubscribe);
     }
 
     getPendingCodeRedemption() {

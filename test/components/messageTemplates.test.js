@@ -329,7 +329,8 @@ test('lane images render, and a quiet running lane says it is still working', as
             ] }
         }, helpers, [], 'Image');
         assert.match(html, /class="council-lane-images"[\s\S]*data:image\/png;base64,AAAA/);
-        assert.match(html, /copy-council-lane-btn/, 'an image-only answer still gets lane actions');
+        assert.doesNotMatch(html, /copy-council-lane-btn/, 'image-only answers have nothing to copy as text');
+        assert.match(html, /regenerate-council-lane-btn/, 'image-only answers can still regenerate');
         assert.match(html, /Still working…/);
 
         const streaming = buildMessageHTML({

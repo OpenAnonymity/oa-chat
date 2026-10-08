@@ -2262,7 +2262,7 @@ test('an image-only lane counts as an answer and reaches Council as a described 
     const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
         sendLaneCompletion: async ({ entry }) => (entry.laneId === 'secondary'
             ? { content: '', images: [image] }
-            : { content: 'Primary text answer' }),
+            : { content: 'Primary text answer', images: [image] }),
         runSynthesisCompletion: async (request) => {
             synthesisCalls.push(controller.buildSynthesisResponses(request.stageEntries));
             return { content: 'Council answer' };
@@ -2282,10 +2282,36 @@ test('an image-only lane counts as an answer and reaches Council as a described 
     assert.equal(imageLane.status, 'complete');
     assert.deepEqual(imageLane.images, [image]);
     assert.equal(finalMessage.council.synthesis.status, 'complete');
+    assert.equal(finalMessage.images, null, 'text synthesis does not inherit lane images');
 
     // Council sees both answers; before, the image lane was dropped and the
     // reviewer reported "Response B was not provided".
     assert.equal(synthesisCalls.length, 1);
     assert.equal(synthesisCalls[0].length, 2);
     assert.match(synthesisCalls[0][1].response, /generated 1 image/);
+});
+
+test('image-only and mixed lanes keep their own follow-up history and canonical output', () => {
+    const controller = createController();
+    const imageA = { image_url: { url: 'data:image/png;base64,AAAA' } };
+    const imageB = { image_url: { url: 'data:image/png;base64,BBBB' } };
+    const entries = [{ laneId: 'primary', id: 'image-a', name: 'Image A' }, { laneId: 'secondary', id: 'image-b', name: 'Image B' }];
+    const message = { role: 'assistant', content: '', images: [imageA], council: { stage1: [
+        { ...entries[0], label: 'Response A', status: 'complete', model: 'Image A', response: '', images: [imageA] },
+        { ...entries[1], label: 'Response B', status: 'complete', model: 'Image B', response: 'Here is B', images: [imageB] }
+    ] } };
+    for (const [index, entry] of entries.entries()) {
+        const history = controller.buildLaneConversationMessages([message], entry, entries);
+        assert.equal(history.length, 1);
+        assert.deepEqual(history[0].images, [index === 0 ? imageA : imageB]);
+        assert.equal(history[0].content, index === 0 ? '' : 'Here is B');
+    }
+    const canonical = controller.refreshStage1CanonicalResponse(message, 'Response A');
+    assert.equal(canonical.label, 'Response A');
+    assert.deepEqual(message.images, [imageA]);
+    message.council.synthesis = { status: 'complete', response: 'Review without images' };
+    assert.equal(controller.buildLaneConversationMessages([message], entries[1], entries)[0].images, null);
+    message.council.stage1.forEach(entry => entry.status = 'pending');
+    controller.refreshStage1CanonicalResponse(message);
+    assert.equal(message.images, null);
 });

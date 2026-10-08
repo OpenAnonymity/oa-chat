@@ -189,3 +189,15 @@ test('after a fold, the panel glides back above the composer once the pointer ha
     assert.match(input, /menu\.addEventListener\('pointerleave', this\.settingsMenuReanchorOnLeave\)/);
     assert.match(input, /menu\.style\.transition = 'translate 260ms cubic-bezier\(0\.22, 1, 0\.36, 1\)';/);
 });
+
+test('folding a scrollable settings menu keeps the composer boundary', async t => {
+    const { default: ChatInput } = await import('../../chat/components/ChatInput.js');
+    const original = globalThis.window;
+    globalThis.window = { innerHeight: 600, visualViewport: { offsetTop: 0, height: 600 } };
+    t.after(() => { if (original === undefined) delete globalThis.window; else globalThis.window = original; });
+    const menu = { style: { bottom: '200px', maxHeight: '350px' }, classList: { contains: () => false },
+        getBoundingClientRect: () => ({ top: 50, bottom: 400 }) };
+    ChatInput.prototype.pinSettingsMenuTop.call({ app: { elements: { settingsMenu: menu } }, settingsMenuAnchor: { bottom: '200px', maxHeight: '350px' } });
+    assert.equal(menu.style.top, '50px');
+    assert.equal(menu.style.maxHeight, '350px', 'never expand into the 200px composer area');
+});
