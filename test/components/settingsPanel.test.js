@@ -176,7 +176,9 @@ test('Council model folds under Council review, and a fold never moves the switc
     const input = read('chat/components/ChatInput.js');
     assert.match(input, /this\.setSettingsChildrenOpen\('council-review-children', isCouncilReviewEnabled && councilSupported, \{ instant \}\)/);
     // The panel hangs from its bottom edge; an animated fold first holds the top edge.
-    assert.match(input, /this\.pinSettingsMenuTop\(\);\n\s*children\.dataset\.open = String\(open\);/);
+    // Folding away holds the top edge; unfolding grows up from rest (never over the composer).
+    assert.match(input, /if \(!open\) this\.pinSettingsMenuTop\(\);\n\s*else this\.prepareSettingsMenuGrowth\(inner\?\.scrollHeight \|\| 0\);\n\s*children\.dataset\.open = String\(open\);/);
+    assert.match(input, /if \(growth <= room \+ 1\) return;/, 'rows that fit the gap a fold left fill it in place');
     assert.match(input, /menu\.style\.top = `\$\{rect\.top\}px`;\n\s*menu\.style\.bottom = 'auto';/);
 });
 

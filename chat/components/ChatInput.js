@@ -2038,10 +2038,14 @@ export default class ChatInput {
             if (open) children.dataset.settled = '';
             return;
         }
-        // The panel hangs from its bottom edge above the composer, so a fold
-        // opening mid-panel would push the switch just clicked up from under
-        // the pointer. Hold the top edge instead and grow downward.
-        this.pinSettingsMenuTop();
+        // The panel hangs from its bottom edge above the composer. Folding
+        // settings away holds the top edge, so the switch just clicked stays
+        // under the pointer (the panel glides back down once it is left).
+        // Unfolding grows the panel upward from its resting place, so it
+        // never covers the composer; if a fold just left a gap that fits the
+        // new rows, they fill that gap first and nothing above them moves.
+        if (!open) this.pinSettingsMenuTop();
+        else this.prepareSettingsMenuGrowth(inner?.scrollHeight || 0);
         children.dataset.open = String(open);
         const settle = () => {
             clearTimeout(this.settingsFoldTimers.get(id));
@@ -2098,6 +2102,23 @@ export default class ChatInput {
             menu.style.transition = '';
             menu.style.translate = '';
         }, 300);
+    }
+
+    /**
+     * Before settings unfold: a panel still held by its top edge keeps it when
+     * the rows fit in the gap above the composer; otherwise it goes back to
+     * hanging from its bottom edge first (gliding, if it had moved), so the
+     * rows push it up rather than down over the composer.
+     */
+    prepareSettingsMenuGrowth(growth) {
+        const menu = this.app.elements.settingsMenu;
+        const anchor = this.settingsMenuAnchor;
+        if (!menu || !anchor || menu.style.bottom !== 'auto') return;
+        const restingBottom = window.innerHeight - parseFloat(anchor.bottom);
+        const room = restingBottom - menu.getBoundingClientRect().bottom;
+        if (growth <= room + 1) return;
+        menu.removeEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+        this.restoreSettingsMenuAnchor();
     }
 
     /** Keeps the open settings panel's top edge where it is; it grows down, and scrolls if it runs out of room. */
