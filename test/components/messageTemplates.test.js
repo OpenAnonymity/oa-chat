@@ -300,7 +300,7 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             council: { enabled: true, stage1: lanes, errors: [{ model: 'Image', message: 'Request failed. (HTTP 429)' }] }
         }, helpers, [], 'GPT');
         assert.match(parallel, /class="council-lane-error"/);
-        assert.match(parallel, /This model is busy right now\. Try again in a moment\./);
+        assert.match(parallel, /<p class="council-lane-error-message">Too many requests\.<\/p>/);
         assert.match(parallel, /Error 429/);
         assert.match(parallel, /council-lane-retry-btn regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
         assert.doesNotMatch(parallel, /model request failed|Request failed\.|council-stage-warning|>Failed</);
@@ -310,7 +310,7 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm2', role: 'assistant', model: 'Council', content: '',
             council: { enabled: true, stage1: lanes, synthesis: { model: 'Fable', status: 'partial', response: 'Review' } }
         }, helpers, [], 'GPT');
-        assert.match(council, /This model is busy right now/);
+        assert.match(council, /Too many requests\./);
         assert.doesNotMatch(council, /council-lane-retry-btn/);
     } finally { restoreGlobals(); }
 });
@@ -342,9 +342,11 @@ test('lane images render, and a quiet running lane says it is still working', as
     } finally { restoreGlobals(); }
 });
 
-test('describeCouncilLaneError keeps a specific provider message and drops the generic one', async () => {
+test('describeCouncilLaneError states the error: the status by name, the code as detail', async () => {
     const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
-    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 503)'), { message: 'This model’s provider ran into a problem.', detail: 'Error 503' });
-    assert.deepEqual(describeCouncilLaneError('Request failed.'), { message: 'This model didn’t return a response.', detail: '' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'Too many requests.', detail: 'Error 429' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 503, PROVIDER_ERROR)'), { message: 'Service unavailable.', detail: 'Error 503' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 418)'), { message: 'Request failed.', detail: 'Error 418' });
+    assert.deepEqual(describeCouncilLaneError('Request failed.'), { message: 'Request failed.', detail: '' });
     assert.equal(describeCouncilLaneError('Context window exceeded').message, 'Context window exceeded');
 });

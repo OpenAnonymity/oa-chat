@@ -1454,26 +1454,31 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     `;
 }
 
-const COUNCIL_LANE_ERROR_COPY = [
-    { test: (code) => code === 429, message: 'This model is busy right now. Try again in a moment.' },
-    { test: (code) => code === 408 || code === 504, message: 'This model took too long to respond.' },
-    { test: (code) => code === 413, message: 'This conversation is too long for this model.' },
-    { test: (code) => code === 401 || code === 403, message: 'This model turned the request down.' },
-    { test: (code) => code === 402, message: 'This model needs more credit to answer.' },
-    { test: (code) => code >= 500 && code < 600, message: 'This model’s provider ran into a problem.' }
-];
+// A failed lane states the error itself: the HTTP status by its standard
+// name, the code as the detail. No interpretation of what it might mean.
+const HTTP_STATUS_NAMES = Object.freeze({
+    400: 'Bad request.',
+    401: 'Unauthorized.',
+    402: 'Payment required.',
+    403: 'Forbidden.',
+    404: 'Not found.',
+    408: 'Request timeout.',
+    413: 'Request too large.',
+    429: 'Too many requests.',
+    500: 'Internal server error.',
+    502: 'Bad gateway.',
+    503: 'Service unavailable.',
+    504: 'Gateway timeout.'
+});
 
 export function describeCouncilLaneError(errorText) {
     const raw = typeof errorText === 'string' ? errorText.trim() : '';
     const httpMatch = raw.match(/HTTP\s+(\d{3})/i);
     const code = httpMatch ? Number(httpMatch[1]) : null;
-    const known = code ? COUNCIL_LANE_ERROR_COPY.find((rule) => rule.test(code)) : null;
-    // Stored errors read "Request failed. (HTTP 429, CODE)"; the generic
-    // lead adds nothing once the code has a sentence of its own.
+    // Stored errors read "Request failed. (HTTP 429, CODE)"; the lead line
+    // is the error's own text when there is no status to name.
     const stripped = raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
-    const isGeneric = !stripped || /^request failed\.?$/i.test(stripped);
-    const message = known?.message
-        || (isGeneric ? 'This model didn’t return a response.' : stripped);
+    const message = (code && HTTP_STATUS_NAMES[code]) || stripped || 'Request failed.';
     return {
         message,
         detail: code ? `Error ${code}` : ''
