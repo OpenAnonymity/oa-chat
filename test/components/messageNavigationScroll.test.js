@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import MessageNavigation from '../../chat/components/MessageNavigation.js';
 
+function mockGlobal(t, key, value) {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    t.after(() => {
+        if (previous) Object.defineProperty(globalThis, key, previous);
+        else delete globalThis[key];
+    });
+}
+
 function navigation(t) {
     const nav = Object.assign(Object.create(MessageNavigation.prototype), {
         isVisible: true, isNavigating: false, awaitingScrollEnd: false,
@@ -10,16 +19,12 @@ function navigation(t) {
     });
     const frames = new Map();
     let id = 0;
-    t.mock.method(globalThis, 'requestAnimationFrame', fn => { frames.set(++id, fn); return id; });
-    t.mock.method(globalThis, 'cancelAnimationFrame', id => frames.delete(id));
+    mockGlobal(t, 'requestAnimationFrame', fn => { frames.set(++id, fn); return id; });
+    mockGlobal(t, 'cancelAnimationFrame', id => frames.delete(id));
     return { nav, frames, flush() {
         const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn());
     } };
 }
-
-globalThis.requestAnimationFrame ??= () => {};
-globalThis.cancelAnimationFrame ??= () => {};
-globalThis.document ??= {};
 
 test('a burst of manual scrolls measures the latest position once per frame', t => {
     const { nav, frames, flush } = navigation(t);
@@ -48,7 +53,7 @@ test('a queued manual scroll cannot override a navigation click', t => {
 });
 
 test('hiding navigation cancels pending scroll work and clears stale state', t => {
-    t.mock.property(globalThis, 'document', { getElementById: () => null });
+    mockGlobal(t, 'document', { getElementById: () => null });
     const { nav, frames, flush } = navigation(t);
     nav.updateCurrentMessageIndex = () => assert.fail('hidden navigation must not measure');
     nav.handleScroll(); nav.hide(); flush();
@@ -74,7 +79,7 @@ test('long mixed chats select the nearest assistant with linear ID lookup and no
         };
     });
     const chat = { scrollTop: 29940, clientHeight: 400 };
-    t.mock.property(globalThis, 'document', {
+    mockGlobal(t, 'document', {
         querySelectorAll: selector => selector === '[data-message-id]' ? elements : indicators,
         getElementById: () => chat
     });

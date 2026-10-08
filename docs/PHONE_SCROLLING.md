@@ -45,6 +45,12 @@ The explicit keyboard opening also focused search at phone width with
 The required independent adversarial review approved after that shortcut
 regression was fixed; all 30 directly affected tests passed separately.
 
+The full release suite also caught a test-harness leak: the navigation test
+created a top-level `document` stub that triggered relay-page initialization in
+a later test. Browser globals are now installed per test and restored, including
+their original absence. Running navigation and passkey-relay tests together
+with `--test-isolation=none` passes all 12 tests. No relay/app code was changed.
+
 This is a desktop browser at phone dimensions, not a real iPhone. It does not
 measure iOS momentum, actual keyboard presentation, or whole-app frame rate.
 After staging release, test Home Screen launch, fast list swipes, search with
