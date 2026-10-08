@@ -83,3 +83,19 @@ shell/styles and UI helpers with a simulated visual viewport, photo-sized prompt
 menu/dialog open/close, rapid reopen and native disclosure. It does not start the
 app, access an account, or send inference. Actual iOS keyboard animation and
 Home Screen scrolling still require a real-phone check.
+
+## Compact composer wrapping (2026-10-08)
+
+The compact layout hid the scrubber shortcut but still reserved 150px for short
+drafts and 64px for longer drafts. This made ordinary phone text wrap early and
+change available width at 50 characters. The compact textarea now releases that
+unused space for either hint class. The visible pending rewrite/preview controls
+retain their more-specific 150px reservation; wide desktop hint layout is unchanged.
+
+`/test/fixtures/composer-wrapping.html` imports the real shell/styles without
+starting the app. Its layout assertions failed before the fix at 402px (two
+lines with 150px blank space), then passed at 375, 390, 402 and 430px: the reported
+sentence fits on one line in both hint states. Wide layouts at 768 and 1280px
+retain 150/64px, and pending rewrite input and overlay retain matching 150px.
+Light/dark and normal multiline typing were checked in the browser. Physical
+iPhone keyboard behavior remains a user-assisted check.

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<base href="/chat/"><title>Composer wrapping regression</title>
+<link rel="stylesheet" href="tailwind.generated.css"><link rel="stylesheet" href="fonts/fonts.css"><link rel="stylesheet" href="styles.css?wrapping-regression=20261008">
+<style>
+.test-controls { position:fixed; top:0; left:0; right:0; z-index:200; background:#eef2ff; color:#111; padding:12px; font:14px sans-serif; }
+.test-controls button { border:1px solid #999; padding:8px; background:white; margin:4px; }
+#test-result { display:block; white-space:pre-wrap; }
+</style></head><body>
+<div class="test-controls"><button id="test-run">Check wrapping</button><button id="test-pending">Toggle rewrite preview</button><button id="test-theme">Theme</button><output id="test-result">Loading…</output></div>
+<script type="module">
+import { setupResponsiveComposer } from './ui/responsiveComposer.js';
+// Real shell and CSS, with no application startup, accounts, or inference.
+const source = new DOMParser().parseFromString(await (await fetch('index.html')).text(), 'text/html');
+document.body.append(document.importNode(source.getElementById('app'), true));
+for (const id of ['sidebar', 'right-panel']) document.getElementById(id)?.remove();
+document.documentElement.dataset.leftSidebarHidden = 'true';
+document.documentElement.dataset.rightPanelHidden = 'true';
+const input = document.getElementById('message-input');
+const card = document.getElementById('input-card');
+const diff = document.getElementById('scrubber-preview-diff');
+const result = document.getElementById('test-result');
+setupResponsiveComposer({ input, onScrub() {} });
+const sample = 'What is new on twitter today?';
+function resize() { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; }
+input.addEventListener('input', resize);
+function check() {
+    card.classList.remove('has-scrubber-pending', 'scrubber-preview-active');
+    const compact = document.documentElement.dataset.composerCompact === 'true';
+    const checks = [];
+    for (const hint of [true, false]) {
+        input.classList.toggle('hint-visible', hint);
+        input.value = sample;
+        resize();
+        const style = getComputedStyle(input);
+        const padding = parseFloat(style.paddingRight);
+        const lines = input.scrollHeight / parseFloat(style.lineHeight);
+        checks.push({ hint, padding, lines, pass: compact ? padding === 0 && lines === 1 : padding === (hint ? 150 : 64) });
+    }
+    input.classList.add('hint-visible');
+    resize();
+    result.textContent = `${checks.every(c => c.pass) ? 'PASS' : 'FAIL'} · ${innerWidth}px · compact ${compact}\n${checks.map(c => `Hint ${c.hint}: ${c.padding}px reserved, ${c.lines} lines`).join('\n')}`;
+}
+document.getElementById('test-run').onclick = check;
+document.getElementById('test-theme').onclick = () => document.documentElement.classList.toggle('dark');
+document.getElementById('test-pending').onclick = () => {
+    const pending = !card.classList.contains('has-scrubber-pending');
+    card.classList.toggle('has-scrubber-pending', pending);
+    card.classList.toggle('scrubber-preview-active', pending);
+    diff.textContent = input.value;
+    resize();
+    result.textContent = `Rewrite preview ${pending ? 'on' : 'off'} · input ${getComputedStyle(input).paddingRight} / diff ${getComputedStyle(diff).paddingRight} reserved`;
+};
+await document.fonts.ready;
+requestAnimationFrame(check);
+</script></body></html>

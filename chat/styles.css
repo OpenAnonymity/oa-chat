@@ -10138,6 +10138,9 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 html[data-composer-compact="true"] .composer-bottom-actions { gap: 4px; }
 html[data-composer-compact="true"] .model-shortcut,
 html[data-composer-compact="true"] #scrubber-shortcut-hint { display: none !important; }
+/* The hidden shortcut must not reserve 150px (or the 64px long-draft gap).
+   Visible rewrite-preview controls retain their more-specific reservation. */
+html[data-composer-compact="true"] #message-input { padding-right: 0 !important; }
 html[data-composer-compact="true"] #settings-btn > svg { display: none; }
 html[data-composer-compact="true"] #settings-btn > .composer-more-glyph {
     display: block !important;

@@ -6577,3 +6577,11 @@ Shared `showSurface` calls must not replay entrance animation on a refresh or
 snap to the starting scale on rapid reopen; close still makes controls inert
 immediately. Disclosure observation visits only added subtrees (including a
 root details), never the entire parent transcript on streamed insertions.
+
+### Compact composer wrapping (2026-10-08)
+
+Compact cards hide the keyboard shortcut, so ordinary input no longer reserves
+its 150px/64px right padding. This applies below 560px of actual card width,
+including narrow desktop columns. Pending rewrite controls still reserve their
+visible space through the existing more-specific selector. Browser regression
+fixture and evidence: [PHONE_SCROLLING.md](PHONE_SCROLLING.md).
