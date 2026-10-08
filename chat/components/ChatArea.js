@@ -2335,6 +2335,7 @@ export default class ChatArea {
         this.removeCouncilLanePending(bodyEl);
 
         let imagesEl = bodyEl.querySelector(':scope > .council-lane-images');
+        const isNew = !imagesEl;
         if (!imagesEl) {
             imagesEl = document.createElement('div');
             imagesEl.className = 'council-lane-images';
@@ -2344,6 +2345,7 @@ export default class ChatArea {
         if (buildGeneratedImages) {
             imagesEl.innerHTML = buildGeneratedImages(images);
         }
+        if (isNew) this.revealCouncilLanePart(imagesEl);
         this.app.updateActivePromptScrollSpacer();
         this.app.updateScrollButtonVisibility();
     }
@@ -2354,15 +2356,52 @@ export default class ChatArea {
         if (!bodyEl) return;
         const existing = bodyEl.querySelector(':scope > .council-lane-working');
         if (!working) {
-            existing?.remove();
+            if (existing) this.dismissCouncilLanePart(existing);
             return;
         }
-        if (existing) return;
+        if (existing) {
+            // Coming back while it fades out: turn around from where it is.
+            if (existing.dataset.reveal === 'leave') this.revealCouncilLanePart(existing, { fromCurrent: true });
+            return;
+        }
         const workingEl = document.createElement('div');
         workingEl.className = 'council-lane-working';
         workingEl.dataset.councilLaneWorking = '';
         workingEl.innerHTML = '<span class="pending-response-label pending-response-streaming">Still working…</span>';
         bodyEl.appendChild(workingEl);
+        this.revealCouncilLanePart(workingEl);
+    }
+
+    /** Fades in a lane's part when it arrives mid-stream (a re-render shows it at rest). */
+    revealCouncilLanePart(el, { fromCurrent = false } = {}) {
+        if (!el) return;
+        clearTimeout(el._councilLeaveTimer);
+        el._councilLeaveTimer = null;
+        el.classList.add('council-lane-reveal');
+        if (!fromCurrent) {
+            el.dataset.reveal = 'enter';
+            void el.offsetWidth;
+        }
+        el.dataset.reveal = 'shown';
+    }
+
+    /** Fades a lane's part out, a little faster than it came in, then removes it. */
+    dismissCouncilLanePart(el) {
+        if (!el || el.dataset.reveal === 'leave') return;
+        el.classList.add('council-lane-reveal');
+        el.dataset.reveal = 'leave';
+        const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        el._councilLeaveTimer = setTimeout(() => {
+            if (el.dataset.reveal === 'leave') el.remove();
+        }, reduced ? 80 : 160);
+    }
+
+    /** Fades in a lane's failure notice after the message re-rendered with it. */
+    revealCouncilLaneError(messageId, laneId) {
+        const messageEl = document.querySelector(`[data-message-id="${messageId}"]`);
+        const panel = Array.from(messageEl?.querySelectorAll('.council-response-panel') || [])
+            .find(element => element.dataset.councilLaneId === laneId);
+        this.revealCouncilLanePart(panel?.querySelector('.council-lane-error'));
     }
 
     updateCouncilLaneContent(messageId, laneId, content) {

@@ -286,6 +286,9 @@ export default class CouncilController {
         assistantMessage.streamingPhase = null;
         assistantMessage.streamingTokens = null;
         await this.saveAndRender(assistantMessage, session);
+        if (stageEntry.status === 'error' && this.app.chatArea && this.app.isViewingSession(session.id)) {
+            this.app.chatArea.revealCouncilLaneError?.(assistantMessage.id, laneId);
+        }
         await this.app.recomputeSessionCouncilTranscriptHint?.(session);
         if (stageEntry.status === 'complete') {
             this.app.triggerPostTurnMemoryExtraction?.(session);
@@ -1145,7 +1148,11 @@ export default class CouncilController {
                         model: entry.name,
                         message: stageEntry.error
                     });
-                    await persistProgress();
+                    // Show the failure now, not at the next throttled save.
+                    await persistProgress(true);
+                    if (this.app.chatArea && this.app.isViewingSession(session.id)) {
+                        this.app.chatArea.revealCouncilLaneError?.(assistantMessage.id, entry.laneId);
+                    }
                 }
             }));
 

@@ -1517,6 +1517,39 @@ a.quick-ask-source:focus-visible {
     pointer-events: none;
 }
 
+/* Lane parts that arrive mid-stream (images, "Still working…", a failure
+   notice) enter with the transitions.dev reveal: a fade from a 2px blur and
+   a 4px rise. They leave by fading, faster and without travel. Transitions,
+   so a reversal turns around mid-way. A re-render shows them at rest. */
+.council-lane-reveal {
+    transition:
+        opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        filter 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.council-lane-reveal[data-reveal="enter"] {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(4px);
+    transition: none;
+}
+.council-lane-reveal[data-reveal="leave"] {
+    opacity: 0;
+    filter: blur(1px);
+    transition:
+        opacity 150ms ease-in,
+        filter 150ms ease-in;
+}
+@media (prefers-reduced-motion: reduce) {
+    .council-lane-reveal,
+    .council-lane-reveal[data-reveal="leave"] {
+        transform: none;
+        filter: none;
+        transition: opacity 80ms linear;
+    }
+    .council-lane-reveal[data-reveal="enter"] { transform: none; filter: none; }
+}
+
 /* Output already shown, model not finished: same shimmer as the pending
    line, aligned to the response text. */
 .council-lane-working {
