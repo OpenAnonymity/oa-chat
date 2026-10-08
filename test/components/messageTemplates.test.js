@@ -285,3 +285,66 @@ test('standalone typing indicators expose session and model hooks for pre-output
         assert.match(html, /Waiting for response/);
     } finally { restoreGlobals(); }
 });
+
+test('a failed Parallel lane reads as one plain sentence with a way to try again', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const lanes = [
+            { label: 'Response A', laneId: 'primary', model: 'GPT', status: 'complete', response: 'Hello' },
+            { label: 'Response B', laneId: 'secondary', model: 'Image', status: 'error', error: 'Request failed. (HTTP 429)' }
+        ];
+        const parallel = buildMessageHTML({
+            id: 'm1', role: 'assistant', model: 'Parallel', content: 'Hello',
+            council: { enabled: true, stage1: lanes, errors: [{ model: 'Image', message: 'Request failed. (HTTP 429)' }] }
+        }, helpers, [], 'GPT');
+        assert.match(parallel, /class="council-lane-error"/);
+        assert.match(parallel, /This model is busy right now\. Try again in a moment\./);
+        assert.match(parallel, /Error 429/);
+        assert.match(parallel, /council-lane-retry-btn regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
+        assert.doesNotMatch(parallel, /model request failed|Request failed\.|council-stage-warning|>Failed</);
+
+        // With a Council review the lane cannot be retried on its own.
+        const council = buildMessageHTML({
+            id: 'm2', role: 'assistant', model: 'Council', content: '',
+            council: { enabled: true, stage1: lanes, synthesis: { model: 'Fable', status: 'partial', response: 'Review' } }
+        }, helpers, [], 'GPT');
+        assert.match(council, /This model is busy right now/);
+        assert.doesNotMatch(council, /council-lane-retry-btn/);
+    } finally { restoreGlobals(); }
+});
+
+test('lane images render, and a quiet running lane says it is still working', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+        const html = buildMessageHTML({
+            id: 'm3', role: 'assistant', model: 'Parallel', content: '',
+            council: { enabled: true, stage1: [
+                { label: 'Response A', laneId: 'primary', model: 'Image', status: 'complete', response: '', images: [image] },
+                { label: 'Response B', laneId: 'secondary', model: 'GPT Image', status: 'running', response: 'Making it now.', stillWorking: true }
+            ] }
+        }, helpers, [], 'Image');
+        assert.match(html, /class="council-lane-images"[\s\S]*data:image\/png;base64,AAAA/);
+        assert.match(html, /copy-council-lane-btn/, 'an image-only answer still gets lane actions');
+        assert.match(html, /Still working…/);
+
+        const streaming = buildMessageHTML({
+            id: 'm4', role: 'assistant', model: 'Parallel', content: '',
+            council: { enabled: true, stage1: [
+                { label: 'Response A', laneId: 'primary', model: 'GPT', status: 'running', response: 'Streaming text' }
+            ] }
+        }, helpers, [], 'GPT');
+        assert.doesNotMatch(streaming, /Still working/, 'text that is still arriving needs no label');
+    } finally { restoreGlobals(); }
+});
+
+test('describeCouncilLaneError keeps a specific provider message and drops the generic one', async () => {
+    const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 503)'), { message: 'This model’s provider ran into a problem.', detail: 'Error 503' });
+    assert.deepEqual(describeCouncilLaneError('Request failed.'), { message: 'This model didn’t return a response.', detail: '' });
+    assert.equal(describeCouncilLaneError('Context window exceeded').message, 'Context window exceeded');
+});

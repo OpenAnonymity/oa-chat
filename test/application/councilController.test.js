@@ -2161,3 +2161,131 @@ test('feature counts distinguish Parallel from Council and exclude failed, parti
         assert.deepEqual(events, expected.map(code => [code]), scenario);
     }
 });
+
+test('streamed lane keeps generated images and reports them in the result', async () => {
+    const uiCalls = [];
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+    const controller = createController({
+        inferenceService: {
+            streamCompletion: async (_messages, modelId, _laneSession, onChunk, _onTokenUpdate, _files, _search, _abort, onStreamOpen, onReasoningChunk) => {
+                onStreamOpen();
+                onReasoningChunk('planning the picture');
+                onChunk(null, { images: [image] });
+                return { totalTokens: 1, promptTokens: 1, completionTokens: 1, model: modelId };
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneReasoning: () => {},
+            settleCouncilLaneReasoning: (...args) => uiCalls.push(['settle', ...args]),
+            finalizeCouncilLaneReasoning: () => {},
+            updateCouncilLaneImages: (...args) => uiCalls.push(['images', ...args]),
+            setCouncilLaneWorking: (...args) => uiCalls.push(['working', ...args])
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            secondary: { apiKey: 'k', apiKeyInfo: {}, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+        }
+    };
+    const laneState = { status: 'pending', response: '' };
+    const result = await controller.sendLaneCompletion({
+        session,
+        entry: { laneId: 'secondary', id: 'google/image', name: 'Image' },
+        sanitizedMessages: [{ role: 'user', content: 'draw' }],
+        searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: { assistantMessage: { id: 'assistant-1' }, laneState, persistProgress: () => {} }
+    });
+
+    assert.deepEqual(result.images, [image]);
+    assert.deepEqual(laneState.images, [image]);
+    assert.notEqual(laneState.stillWorking, true);
+    assert.equal(uiCalls.some((call) => call[0] === 'images' && call[2] === 'secondary'), true);
+    // The image ends the thinking the same way text does.
+    assert.equal(uiCalls.some((call) => call[0] === 'settle'), true);
+});
+
+test('a lane that goes quiet after output says it is still working until the stream ends', async () => {
+    const workingCalls = [];
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const controller = createController({
+        inferenceService: {
+            streamCompletion: async (_messages, modelId, _laneSession, onChunk, _onTokenUpdate, _files, _search, _abort, onStreamOpen) => {
+                onStreamOpen();
+                onChunk('Here is a preamble. ');
+                await gate;
+                return { totalTokens: 1, promptTokens: 1, completionTokens: 1, model: modelId };
+            }
+        }
+    });
+    Object.assign(controller.app, {
+        isViewingSession: () => true,
+        chatArea: {
+            updateCouncilLaneContent: () => {},
+            finalizeCouncilLaneReasoning: () => {},
+            setCouncilLaneWorking: (_messageId, _laneId, working) => workingCalls.push(working)
+        }
+    });
+    const session = {
+        id: 'session-1',
+        councilAccess: {
+            secondary: { apiKey: 'k', apiKeyInfo: {}, expiresAt: new Date(Date.now() + 60_000).toISOString() }
+        }
+    };
+    const laneState = { status: 'pending', response: '' };
+    const pending = controller.sendLaneCompletion({
+        session,
+        entry: { laneId: 'secondary', id: 'openai/image', name: 'Image' },
+        sanitizedMessages: [{ role: 'user', content: 'draw' }],
+        searchEnabled: false,
+        abortController: new AbortController(),
+        streamTarget: { assistantMessage: { id: 'assistant-1' }, laneState, persistProgress: () => {} }
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 1400));
+    assert.equal(laneState.status, 'running');
+    assert.equal(laneState.stillWorking, true);
+    release();
+    await pending;
+    assert.equal(laneState.stillWorking, false);
+    assert.deepEqual(workingCalls, [true, false]);
+});
+
+test('an image-only lane counts as an answer and reaches Council as a described response', async () => {
+    const synthesisCalls = [];
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+    const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+        sendLaneCompletion: async ({ entry }) => (entry.laneId === 'secondary'
+            ? { content: '', images: [image] }
+            : { content: 'Primary text answer' }),
+        runSynthesisCompletion: async (request) => {
+            synthesisCalls.push(controller.buildSynthesisResponses(request.stageEntries));
+            return { content: 'Council answer' };
+        }
+    });
+
+    await controller.runMultiModelTurn({
+        session,
+        userMessage,
+        searchEnabled: false,
+        abortController: new AbortController(),
+        initialPendingPhase: 'requesting-key'
+    });
+
+    const finalMessage = savedMessages.at(-1);
+    const imageLane = finalMessage.council.stage1[1];
+    assert.equal(imageLane.status, 'complete');
+    assert.deepEqual(imageLane.images, [image]);
+    assert.equal(finalMessage.council.synthesis.status, 'complete');
+
+    // Council sees both answers; before, the image lane was dropped and the
+    // reviewer reported "Response B was not provided".
+    assert.equal(synthesisCalls.length, 1);
+    assert.equal(synthesisCalls[0].length, 2);
+    assert.match(synthesisCalls[0][1].response, /generated 1 image/);
+});

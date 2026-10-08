@@ -2322,8 +2322,47 @@ export default class ChatArea {
         const contentShell = document.createElement('div');
         contentShell.className = 'py-3 px-4 font-normal message-assistant w-full flex items-center council-lane-content-shell';
         contentShell.innerHTML = '<div class="min-w-0 w-full overflow-hidden message-content prose council-lane-content"></div>';
-        bodyEl.appendChild(contentShell);
+        // Text sits above any generated images and the "still working" line.
+        const trailingEl = bodyEl.querySelector(':scope > .council-lane-images, :scope > .council-lane-working');
+        bodyEl.insertBefore(contentShell, trailingEl || null);
         return contentShell.querySelector('.council-lane-content');
+    }
+
+    updateCouncilLaneImages(messageId, laneId, images) {
+        if (!Array.isArray(images) || images.length === 0) return;
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return;
+        this.removeCouncilLanePending(bodyEl);
+
+        let imagesEl = bodyEl.querySelector(':scope > .council-lane-images');
+        if (!imagesEl) {
+            imagesEl = document.createElement('div');
+            imagesEl.className = 'council-lane-images';
+            bodyEl.insertBefore(imagesEl, bodyEl.querySelector(':scope > .council-lane-working'));
+        }
+        const { buildGeneratedImages } = window.MessageTemplates || {};
+        if (buildGeneratedImages) {
+            imagesEl.innerHTML = buildGeneratedImages(images);
+        }
+        this.app.updateActivePromptScrollSpacer();
+        this.app.updateScrollButtonVisibility();
+    }
+
+    /** Shows or clears a lane's "Still working…" line under output that has already arrived. */
+    setCouncilLaneWorking(messageId, laneId, working) {
+        const bodyEl = this.getCouncilLaneBody(messageId, laneId);
+        if (!bodyEl) return;
+        const existing = bodyEl.querySelector(':scope > .council-lane-working');
+        if (!working) {
+            existing?.remove();
+            return;
+        }
+        if (existing) return;
+        const workingEl = document.createElement('div');
+        workingEl.className = 'council-lane-working';
+        workingEl.dataset.councilLaneWorking = '';
+        workingEl.innerHTML = '<span class="pending-response-label pending-response-streaming">Still working…</span>';
+        bodyEl.appendChild(workingEl);
     }
 
     updateCouncilLaneContent(messageId, laneId, content) {
@@ -2361,12 +2400,9 @@ export default class ChatArea {
         const traceEl = traceWrapper.firstElementChild;
         if (!traceEl) return null;
 
-        const firstContentShell = bodyEl.querySelector('.council-lane-content-shell');
-        if (firstContentShell) {
-            bodyEl.insertBefore(traceEl, firstContentShell);
-        } else {
-            bodyEl.appendChild(traceEl);
-        }
+        // Thinking always leads the lane, above text, images and status.
+        const firstOutputEl = bodyEl.querySelector(':scope > .council-lane-content-shell, :scope > .council-lane-images, :scope > .council-lane-working');
+        bodyEl.insertBefore(traceEl, firstOutputEl || null);
         return document.getElementById(`reasoning-content-${reasoningId}`);
     }
 

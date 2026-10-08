@@ -178,9 +178,9 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Parallel/Council typing indicators should hide the redundant text label'
     );
     assert.equal(
-        source.includes("const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);"),
+        source.includes("const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting', 'error']);"),
         true,
-        'completed and in-progress lane/synthesis statuses should be hidden while important non-complete statuses can remain visible'
+        'completed, in-progress and failed lane/synthesis statuses should be hidden (a failed lane explains itself in its body) while other non-complete statuses can remain visible'
     );
     assert.equal(
         source.includes('!hiddenStatuses.has(normalizedStatus)'),

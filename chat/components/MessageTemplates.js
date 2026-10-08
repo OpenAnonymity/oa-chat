@@ -342,6 +342,8 @@ function sanitizeUrl(url, options = {}) {
  * @param {Array} images - Array of image objects with type and image_url
  * @returns {string} HTML string for image display
  */
+let generatedImageSequence = 0;
+
 function buildGeneratedImages(images) {
     if (!images || images.length === 0) return '';
 
@@ -353,7 +355,10 @@ function buildGeneratedImages(images) {
         if (image.image_url?.url) {
             const safeUrl = sanitizeUrl(image.image_url.url, { allowData: true, allowBlob: true, allowHash: false, allowMailto: false, allowTel: false });
             if (!safeUrl) return '';
-            const imageId = `image-${Date.now()}-${index}`;
+            // Unique per render: Parallel lanes render their images in the
+            // same tick, and a shared id would expand the wrong lane's image.
+            generatedImageSequence += 1;
+            const imageId = `image-${Date.now()}-${generatedImageSequence}-${index}`;
             return `
                 <div class="relative inline-block max-w-full">
                     <img
@@ -1410,7 +1415,8 @@ function resolveCouncilProviderName(modelName, modelId = '') {
 }
 
 function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
-    if (entry?.status !== 'complete' || !entry.response) {
+    const hasImages = Array.isArray(entry?.images) && entry.images.length > 0;
+    if (entry?.status !== 'complete' || !(entry.response || hasImages)) {
         return '';
     }
 
@@ -1448,11 +1454,88 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     `;
 }
 
+const COUNCIL_LANE_ERROR_COPY = [
+    { test: (code) => code === 429, message: 'This model is busy right now. Try again in a moment.' },
+    { test: (code) => code === 408 || code === 504, message: 'This model took too long to respond.' },
+    { test: (code) => code === 413, message: 'This conversation is too long for this model.' },
+    { test: (code) => code === 401 || code === 403, message: 'This model turned the request down.' },
+    { test: (code) => code === 402, message: 'This model needs more credit to answer.' },
+    { test: (code) => code >= 500 && code < 600, message: 'This model’s provider ran into a problem.' }
+];
+
+export function describeCouncilLaneError(errorText) {
+    const raw = typeof errorText === 'string' ? errorText.trim() : '';
+    const httpMatch = raw.match(/HTTP\s+(\d{3})/i);
+    const code = httpMatch ? Number(httpMatch[1]) : null;
+    const known = code ? COUNCIL_LANE_ERROR_COPY.find((rule) => rule.test(code)) : null;
+    // Stored errors read "Request failed. (HTTP 429, CODE)"; the generic
+    // lead adds nothing once the code has a sentence of its own.
+    const stripped = raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    const isGeneric = !stripped || /^request failed\.?$/i.test(stripped);
+    const message = known?.message
+        || (isGeneric ? 'This model didn’t return a response.' : stripped);
+    return {
+        message,
+        detail: code ? `Error ${code}` : ''
+    };
+}
+
+function buildCouncilLaneErrorBody(entry, messageId, options = {}) {
+    const { showRetry = false } = options;
+    const { message, detail } = describeCouncilLaneError(entry?.error);
+    const laneId = entry?.laneId || '';
+    const label = entry?.label || laneId || 'response';
+    const retryButton = showRetry && laneId
+        ? `
+            <button
+                type="button"
+                class="council-lane-retry-btn regenerate-council-lane-btn"
+                data-message-id="${escapeHtmlAttribute(messageId)}"
+                data-council-lane-id="${escapeHtmlAttribute(laneId)}"
+                data-council-label="${escapeHtmlAttribute(label)}"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                <span>Try again</span>
+            </button>
+        `
+        : '';
+    return buildCouncilErrorNotice({ message, detail, actionHtml: retryButton });
+}
+
+function buildCouncilErrorNotice({ message, detail = '', actionHtml = '' }) {
+    return `
+        <div class="council-lane-error" role="status">
+            <svg class="council-lane-error-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path stroke-linecap="round" d="M12 7.75v5" />
+                <path stroke-linecap="round" d="M12 16.25h.01" stroke-width="2.25" />
+            </svg>
+            <div class="council-lane-error-text">
+                <p class="council-lane-error-message">${escapeHtml(message)}</p>
+                ${detail ? `<p class="council-lane-error-detail">${escapeHtml(detail)}</p>` : ''}
+                ${actionHtml}
+            </div>
+        </div>
+    `;
+}
+
+function buildCouncilLaneWorkingIndicator() {
+    return `
+        <div class="council-lane-working" data-council-lane-working>
+            <span class="pending-response-label pending-response-streaming">Still working…</span>
+        </div>
+    `;
+}
+
 function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
     const { showLaneActions = false } = options;
     const status = typeof entry?.status === 'string' ? entry.status : 'pending';
+    const laneImages = Array.isArray(entry?.images) ? entry.images : [];
     const hasRenderableOutput = !!(
         entry?.response ||
+        laneImages.length > 0 ||
         entry?.reasoning ||
         entry?.streamingReasoning
     );
@@ -1489,10 +1572,20 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
                 </div>
             `
             : '';
+        const imagesHtml = laneImages.length > 0
+            ? `<div class="council-lane-images">${buildGeneratedImages(laneImages)}</div>`
+            : '';
+        // Text or an image can arrive before the model is finished; keep
+        // saying it is still working until the lane completes.
+        const isStillWorking = status === 'running'
+            && entry.stillWorking === true
+            && !entry.streamingReasoning;
         return `
             <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
                 ${reasoningHtml}
                 ${contentHtml}
+                ${imagesHtml}
+                ${isStillWorking ? buildCouncilLaneWorkingIndicator() : ''}
             </div>
             ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
             ${!showLaneActions && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
@@ -1501,11 +1594,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
     }
 
     if (entry?.status === 'error') {
-        return `
-            <div class="council-response-placeholder council-response-placeholder-error">
-                ${escapeHtml(entry.error || 'This model failed to return a first opinion.')}
-            </div>
-        `;
+        return buildCouncilLaneErrorBody(entry, messageId, { showRetry: showLaneActions });
     }
 
     if (entry?.status === 'cancelled') {
@@ -1600,9 +1689,10 @@ function buildCouncilSynthesisSection(synthesis, processContentWithLatex, messag
     } else if (status === 'error') {
         const fallbackLabel = synthesis.fallbackLabel || 'Response A';
         bodyHtml = `
-            <div class="council-response-placeholder council-response-placeholder-error">
-                Council synthesis failed. Continuing from ${escapeHtml(fallbackLabel)}.
-            </div>
+            ${buildCouncilErrorNotice({
+                message: `The Council review didn’t finish. Continuing from ${fallbackLabel}.`,
+                detail: describeCouncilLaneError(synthesis.error).detail
+            })}
             ${synthesisActionsRow}
         `;
     } else if (status === 'cancelled') {
@@ -1671,9 +1761,10 @@ function formatCouncilResponseStatus(status, options = {}) {
     const normalizedStatus = typeof status === 'string'
         ? status.trim().toLowerCase()
         : '';
-    const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting']);
+    const hiddenStatuses = new Set(['complete', 'pending', 'running', 'waiting', 'error']);
+    // A failed lane explains itself in its body; a "Failed" tag beside the
+    // model name only repeats it.
     const statusLabel = {
-        error: 'Failed',
         cancelled: 'Cancelled',
         partial: 'Partial'
     }[normalizedStatus] || (normalizedStatus && !hiddenStatuses.has(normalizedStatus) ? status : '');
@@ -1780,9 +1871,6 @@ function buildCouncilAssistantMessage({
         ? 'Stage 1'
         : 'Council';
     const canonicalLabel = council.canonicalStage1Label || null;
-    const stage1ErrorCount = Array.isArray(council.errors)
-        ? council.errors.filter((error) => !error?.stage || error.stage === 'stage1').length
-        : 0;
     const synthesis = council.synthesis || null;
     const showLaneActions = !hasSynthesis;
     const useSideBySide = stage1Entries.length > 1 && stage1Entries.length <= 2;
@@ -1858,7 +1946,6 @@ function buildCouncilAssistantMessage({
                 <div class="council-stage-block">
                     ${stageStatusRow}
                     ${stageNoteRow}
-                    ${stage1ErrorCount > 0 ? `<div class="council-stage-warning">${stage1ErrorCount} model request${stage1ErrorCount === 1 ? '' : 's'} failed.</div>` : ''}
                     ${stage1Tabs}
                     <div class="${useSideBySide ? 'council-response-grid' : 'council-response-stack'}">
                         ${stage1Panels}

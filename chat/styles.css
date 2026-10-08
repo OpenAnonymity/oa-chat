@@ -1255,12 +1255,6 @@ a.quick-ask-source:focus-visible {
     line-height: 1.45;
 }
 
-.council-stage-warning {
-    color: hsl(var(--color-destructive));
-    font-size: 0.78rem;
-    line-height: 1.4;
-}
-
 .council-tabs {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
@@ -1433,10 +1427,115 @@ a.quick-ask-source:focus-visible {
     line-height: 1.5;
 }
 
-.council-response-placeholder-error {
-    color: hsl(var(--color-destructive));
-    border-style: solid;
-    background: hsl(var(--color-destructive) / 0.07);
+/* A failed lane: one quiet line in the lane's own column, not a red box.
+   The icon carries the error tone; the sentence stays readable text. The
+   icon sits in the same column as the "Thought for" sparkle above answers. */
+.council-lane-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.75rem 0.5rem;
+}
+
+.council-lane-error-icon {
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    /* Optical: centre the 16px glyph on the first 14px/20px text line. */
+    margin-top: 0.125rem;
+    color: hsl(var(--color-destructive-text));
+}
+
+.council-lane-error-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.125rem;
+    min-width: 0;
+}
+
+.council-lane-error-message {
+    margin: 0;
+    color: hsl(var(--color-foreground) / 0.88);
+    font-size: 0.875rem;
+    line-height: 1.43;
+    text-wrap: pretty;
+    overflow-wrap: break-word;
+}
+
+.council-lane-error-detail {
+    margin: 0;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.75rem;
+    line-height: 1.33;
+    font-variant-numeric: tabular-nums;
+}
+
+.council-lane-retry-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 1.75rem;
+    margin-top: 0.5rem;
+    /* Icon side gets less padding so the pair looks centred. */
+    padding: 0 0.625rem 0 0.5rem;
+    border: 1px solid hsl(var(--color-border));
+    border-radius: 0.5rem;
+    background: transparent;
+    color: hsl(var(--color-foreground));
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1;
+    transition:
+        background-color 150ms ease,
+        border-color 150ms ease,
+        transform 100ms ease;
+}
+
+.council-lane-retry-btn svg {
+    width: 0.875rem;
+    height: 0.875rem;
+    color: hsl(var(--color-muted-foreground));
+    transition: transform 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.council-lane-retry-btn:hover {
+    background: hsl(var(--color-muted) / 0.6);
+    border-color: hsl(var(--color-border) / 1);
+}
+
+.council-lane-retry-btn:hover svg {
+    transform: rotate(-30deg);
+}
+
+.council-lane-retry-btn:active {
+    transform: scale(0.97);
+}
+
+.council-lane-retry-btn:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+/* Output already shown, model not finished: same shimmer as the pending
+   line, aligned to the response text. */
+.council-lane-working {
+    padding: 0 1rem 0.5rem;
+    line-height: 1.25;
+}
+
+.council-lane-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.25rem 1rem 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .council-lane-retry-btn,
+    .council-lane-retry-btn svg {
+        transition-duration: 0ms;
+    }
 }
 
 @media (max-width: 820px) {
