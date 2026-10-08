@@ -489,6 +489,13 @@ export default class ChatInput {
                 menu.style.maxWidth = `${width}px`;
                 menu.style.maxHeight = `${availableAbove >= 220 ? availableAbove : viewHeight - viewportMargin * 2}px`;
                 menu.style.overflowY = 'auto';
+                // Where the panel sits at rest, so a fold that briefly pinned
+                // its top edge can glide it back (restoreSettingsMenuAnchor).
+                this.settingsMenuAnchor = availableAbove >= 220
+                    ? { bottom: menu.style.bottom, maxHeight: menu.style.maxHeight }
+                    : null;
+                menu.style.translate = '';
+                menu.style.transition = '';
 
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI({ instant: true });
@@ -2036,15 +2043,61 @@ export default class ChatInput {
         // the pointer. Hold the top edge instead and grow downward.
         this.pinSettingsMenuTop();
         children.dataset.open = String(open);
-        if (!open) return;
         const settle = () => {
             clearTimeout(this.settingsFoldTimers.get(id));
             panel?.removeEventListener?.('transitionend', onEnd);
-            if (children.dataset.open === 'true') children.dataset.settled = '';
+            if (open && children.dataset.open === 'true') children.dataset.settled = '';
+            this.scheduleSettingsMenuReanchor();
         };
         const onEnd = event => { if (event.target === panel) settle(); };
         panel?.addEventListener?.('transitionend', onEnd);
         this.settingsFoldTimers.set(id, setTimeout(settle, 400));
+    }
+
+    /**
+     * Once a fold has settled, the panel glides back to rest just above the
+     * composer: right away when the pointer is elsewhere (a keyboard toggle),
+     * otherwise when the pointer leaves the panel. The switch never moves
+     * from under the pointer, and the gap a closed fold leaves does not stay.
+     */
+    scheduleSettingsMenuReanchor() {
+        const menu = this.app.elements.settingsMenu;
+        if (!menu || !this.settingsMenuAnchor || menu.style.bottom !== 'auto') return;
+        menu.removeEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+        if (!menu.matches?.(':hover')) {
+            this.restoreSettingsMenuAnchor();
+            return;
+        }
+        this.settingsMenuReanchorOnLeave ||= () => {
+            menu.removeEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+            this.restoreSettingsMenuAnchor();
+        };
+        menu.addEventListener('pointerleave', this.settingsMenuReanchorOnLeave);
+    }
+
+    restoreSettingsMenuAnchor() {
+        const menu = this.app.elements.settingsMenu;
+        const anchor = this.settingsMenuAnchor;
+        if (!menu || !anchor || menu.style.bottom !== 'auto' || menu.classList.contains('hidden')) return;
+        const before = menu.getBoundingClientRect().top;
+        menu.style.top = 'auto';
+        menu.style.bottom = anchor.bottom;
+        menu.style.maxHeight = anchor.maxHeight;
+        const delta = before - menu.getBoundingClientRect().top;
+        const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        if (Math.abs(delta) < 1 || reduced) return;
+        // FLIP: start where it was, glide to rest (translate, so the
+        // dropdown's own transform and opacity transitions are untouched).
+        menu.style.transition = 'none';
+        menu.style.translate = `0 ${delta}px`;
+        void menu.offsetHeight;
+        menu.style.transition = 'translate 260ms cubic-bezier(0.22, 1, 0.36, 1)';
+        menu.style.translate = '0 0';
+        clearTimeout(this.settingsMenuGlideTimer);
+        this.settingsMenuGlideTimer = setTimeout(() => {
+            menu.style.transition = '';
+            menu.style.translate = '';
+        }, 300);
     }
 
     /** Keeps the open settings panel's top edge where it is; it grows down, and scrolls if it runs out of room. */

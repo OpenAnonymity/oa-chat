@@ -179,3 +179,11 @@ test('Council model folds under Council review, and a fold never moves the switc
     assert.match(input, /this\.pinSettingsMenuTop\(\);\n\s*children\.dataset\.open = String\(open\);/);
     assert.match(input, /menu\.style\.top = `\$\{rect\.top\}px`;\n\s*menu\.style\.bottom = 'auto';/);
 });
+
+test('after a fold, the panel glides back above the composer once the pointer has left it', () => {
+    const input = read('chat/components/ChatInput.js');
+    assert.match(input, /this\.settingsMenuAnchor = availableAbove >= 220\n\s*\? \{ bottom: menu\.style\.bottom, maxHeight: menu\.style\.maxHeight \}/);
+    assert.match(input, /if \(!menu\.matches\?\.\('\:hover'\)\) \{\n\s*this\.restoreSettingsMenuAnchor\(\);/, 'a keyboard toggle re-anchors at once');
+    assert.match(input, /menu\.addEventListener\('pointerleave', this\.settingsMenuReanchorOnLeave\)/);
+    assert.match(input, /menu\.style\.transition = 'translate 260ms cubic-bezier\(0\.22, 1, 0\.36, 1\)';/);
+});
