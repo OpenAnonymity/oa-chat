@@ -731,7 +731,7 @@ class TicketClient {
                     put: (accountId, value) => chatDB.updateSettings([{ key: `legacy-transfer-rejected:${accountId}`, value }])
                 },
                 getAccountScope: () => this.getReadyWalletScope(),
-                redeemPending: options => this.getCodeRedeemer().run(null, undefined, options)
+                redeemPending: options => this.runCodeRedemption(null, undefined, options)
             });
         }
         return this.legacyTransfer;
@@ -894,7 +894,39 @@ class TicketClient {
     }
 
     alphaRegister(invitationCode, progressCallback) {
-        return this.getCodeRedeemer().run(invitationCode, progressCallback);
+        return this.runCodeRedemption(invitationCode, progressCallback);
+    }
+
+    /**
+     * Runs the code redeemer and announces its progress on the page, so the
+     * ticket status (top right) can show any redemption: a code typed in,
+     * the free trial, a resumed one, or the move from the previous version.
+     * Events: tickets-redemption-progress { source, message, percent } while
+     * it works, then tickets-redemption-settled { source, ok, issued } once,
+     * only for a run that reported progress.
+     */
+    runCodeRedemption(code, progressCallback, options = {}) {
+        const source = options?.source || (code === null ? 'resume' : 'code');
+        let reported = false;
+        const emit = (type, detail) => {
+            if (typeof window === 'undefined' || typeof CustomEvent !== 'function') return;
+            window.dispatchEvent(new CustomEvent(type, { detail }));
+        };
+        const progress = (message, percent) => {
+            progressCallback?.(message, percent);
+            reported = true;
+            emit('tickets-redemption-progress', { source, message, percent });
+        };
+        return this.getCodeRedeemer().run(code, progress, options).then(result => {
+            if (reported) {
+                const issued = Number(result?.restoredTickets ?? result?.tickets_issued ?? 0) || 0;
+                emit('tickets-redemption-settled', { source, ok: true, issued });
+            }
+            return result;
+        }, error => {
+            if (reported) emit('tickets-redemption-settled', { source, ok: false, issued: 0 });
+            throw error;
+        });
     }
 
     getPendingCodeRedemption() {
@@ -902,7 +934,7 @@ class TicketClient {
     }
 
     resumeCodeRedemption(progressCallback) {
-        return this.getCodeRedeemer().run(null, progressCallback);
+        return this.runCodeRedemption(null, progressCallback);
     }
 
     /**

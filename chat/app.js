@@ -730,7 +730,28 @@ class ChatApp {
                     const result = await this.services.tickets.resumeCodeRedemption((message, percent) => onProgress?.({ message, percent }));
                     return result ? Object.freeze({ ticketCount: this.services.tickets.getTicketCount(), pendingCount: result.pendingCount || 0 }) : null;
                 },
-                registerShortageHandler: handler => this.registerTicketShortageHandler(handler)
+                registerShortageHandler: handler => this.registerTicketShortageHandler(handler),
+                // Redemptions and the move from the previous version as they
+                // run, for the host's ticket status: { phase: 'moving',
+                // tickets } | { phase: 'redeeming', source, message, percent }
+                // | { phase: 'done', source, ok, issued } | { phase:
+                // 'move-settled' }. Returns an unsubscribe.
+                subscribeRedemption: listener => {
+                    if (typeof listener !== 'function' || typeof window === 'undefined') return () => {};
+                    const call = event => {
+                        try { listener(event); } catch (error) { console.warn('Ticket redemption listener failed:', error); }
+                    };
+                    const handlers = {
+                        'legacy-tickets-moving': event => call({ phase: 'moving', tickets: Number(event?.detail?.tickets) || 0 }),
+                        'tickets-redemption-progress': event => call({ phase: 'redeeming', source: event?.detail?.source || null, message: String(event?.detail?.message || ''), percent: Number(event?.detail?.percent) }),
+                        'tickets-redemption-settled': event => call({ phase: 'done', source: event?.detail?.source || null, ok: event?.detail?.ok === true, issued: Number(event?.detail?.issued) || 0 }),
+                        'legacy-tickets-move-settled': () => call({ phase: 'move-settled' })
+                    };
+                    for (const [type, handler] of Object.entries(handlers)) window.addEventListener(type, handler);
+                    return () => {
+                        for (const [type, handler] of Object.entries(handlers)) window.removeEventListener(type, handler);
+                    };
+                }
             }),
             payments: Object.freeze({
                 // 'tickets' or 'zkapi'. Hosts use it to keep ticket
