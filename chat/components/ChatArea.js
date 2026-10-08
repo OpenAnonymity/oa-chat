@@ -334,6 +334,16 @@ export default class ChatArea {
             }
         });
 
+        // A drag on the edit box's resize corner sets the size the person
+        // wants; auto-grow keeps at least that much from then on.
+        messagesContainer.addEventListener('pointerup', (e) => {
+            const textarea = e.target.closest?.('.edit-prompt-textarea');
+            if (!textarea) return;
+            const height = Math.round(textarea.getBoundingClientRect().height);
+            const autoHeight = Number(textarea.dataset.autoHeight || 0);
+            if (height && Math.abs(height - autoHeight) > 1) textarea.dataset.manualHeight = String(height);
+        });
+
         // Auto-grow edit textarea on input (debounced via requestAnimationFrame)
         messagesContainer.addEventListener('input', (e) => {
             const textarea = e.target.closest('.edit-prompt-textarea');
@@ -3483,8 +3493,11 @@ export default class ChatArea {
         // Reset to minimum to get true scrollHeight
         textarea.style.height = '0';
         // Set height to scrollHeight, respecting CSS min-height (80px via CSS)
-        const newHeight = Math.max(textarea.scrollHeight, 80);
+        // and any size the person dragged it to.
+        const manualHeight = Number(textarea.dataset.manualHeight || 0);
+        const newHeight = Math.max(textarea.scrollHeight, 80, manualHeight);
         textarea.style.height = newHeight + 'px';
+        textarea.dataset.autoHeight = String(Math.round(textarea.getBoundingClientRect().height));
         // Restore overflow for manual resize capability
         textarea.style.overflow = prevOverflow || '';
     }

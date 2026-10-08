@@ -6294,6 +6294,10 @@ html {
 }
 
 .edit-prompt-textarea {
+    /* Sized by its height, not by the column it sits in: with flex-1's
+       0% basis the column ignored the height, so neither auto-grow nor a
+       drag on the resize corner could change it. */
+    flex: 0 0 auto;
     appearance: none;
     border: 0;
     font-size: 0.875rem;
