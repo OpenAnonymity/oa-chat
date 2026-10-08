@@ -35,7 +35,12 @@ export function setupResponsiveComposer({ input, onScrub }) {
         button.setAttribute('aria-label', compact ? 'More options' : 'Settings');
         button.setAttribute('data-tooltip', compact ? 'More options' : 'Settings');
     };
+    let viewportFrame = null;
+    let disposed = false;
+    let previousViewport = {};
     const updateViewport = () => {
+        viewportFrame = null;
+        if (disposed) return;
         const viewport = view.visualViewport;
         const editing = doc.activeElement === input;
         const keyboard = isKeyboardViewport({
@@ -43,9 +48,15 @@ export function setupResponsiveComposer({ input, onScrub }) {
             height: viewport?.height || view.innerHeight,
             scale: viewport?.scale || 1, editing
         });
-        root.toggleAttribute('data-composer-keyboard', keyboard);
-        root.style.setProperty('--composer-viewport-height', `${viewport?.height || view.innerHeight}px`);
-        root.style.setProperty('--composer-viewport-top', `${viewport?.offsetTop || 0}px`);
+        const height = `${viewport?.height || view.innerHeight}px`;
+        const top = `${viewport?.offsetTop || 0}px`;
+        if (keyboard !== previousViewport.keyboard) root.toggleAttribute('data-composer-keyboard', keyboard);
+        if (height !== previousViewport.height) root.style.setProperty('--composer-viewport-height', height);
+        if (top !== previousViewport.top) root.style.setProperty('--composer-viewport-top', top);
+        previousViewport = { keyboard, height, top };
+    };
+    const scheduleViewport = () => {
+        if (!disposed && viewportFrame === null) viewportFrame = view.requestAnimationFrame(updateViewport);
     };
     // A settings panel can dismiss via outside click or Escape as well as its button.
     const menuObserver = new MutationObserver(() => {
@@ -54,22 +65,24 @@ export function setupResponsiveComposer({ input, onScrub }) {
     menuObserver.observe(menu, { attributes: true, attributeFilter: ['class'] });
     const resize = new ResizeObserver(updateWidth);
     resize.observe(card);
-    view.addEventListener('resize', updateViewport);
-    view.visualViewport?.addEventListener('resize', updateViewport);
-    view.visualViewport?.addEventListener('scroll', updateViewport);
-    doc.addEventListener('focusin', updateViewport);
-    const afterBlur = () => queueMicrotask(updateViewport);
+    view.addEventListener('resize', scheduleViewport);
+    view.visualViewport?.addEventListener('resize', scheduleViewport);
+    view.visualViewport?.addEventListener('scroll', scheduleViewport);
+    doc.addEventListener('focusin', scheduleViewport);
+    const afterBlur = scheduleViewport;
     doc.addEventListener('focusout', afterBlur);
     scrub.addEventListener('click', onScrub);
     updateWidth();
     updateViewport();
     return () => {
+        disposed = true;
+        if (viewportFrame !== null) view.cancelAnimationFrame(viewportFrame);
         resize.disconnect();
         menuObserver.disconnect();
-        view.removeEventListener('resize', updateViewport);
-        view.visualViewport?.removeEventListener('resize', updateViewport);
-        view.visualViewport?.removeEventListener('scroll', updateViewport);
-        doc.removeEventListener('focusin', updateViewport);
+        view.removeEventListener('resize', scheduleViewport);
+        view.visualViewport?.removeEventListener('resize', scheduleViewport);
+        view.visualViewport?.removeEventListener('scroll', scheduleViewport);
+        doc.removeEventListener('focusin', scheduleViewport);
         doc.removeEventListener('focusout', afterBlur);
         scrub.removeEventListener('click', onScrub);
     };

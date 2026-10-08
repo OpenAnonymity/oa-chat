@@ -6564,3 +6564,16 @@ colors. Loading spinners and normal OA access-key controls are unchanged.
   This work remains local with the phone picker changes, pending staging/device
   validation. Login, storage format, wallets, payments and inference transport
   are untouched.
+
+### Phone keyboard / shared motion follow-up (2026-10-08)
+
+See [PHONE_SCROLLING.md](PHONE_SCROLLING.md). No HTML composer autofocus on load;
+startup and async send/regenerate completion use phone-aware automatic focus.
+User-triggered focus remains available. Phone prompt anchoring measures the
+usable space above the fixed composer and can move the top of a tall prompt
+out of view to show the reply; desktop anchor semantics remain unchanged.
+`responsiveComposer` coalesces viewport writes and cancels pending work on cleanup.
+Shared `showSurface` calls must not replay entrance animation on a refresh or
+snap to the starting scale on rapid reopen; close still makes controls inert
+immediately. Disclosure observation visits only added subtrees (including a
+root details), never the entire parent transcript on streamed insertions.

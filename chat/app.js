@@ -5,6 +5,7 @@ import { validateInferenceInput } from './services/inference/inputLimits.js';
 import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
 import { createComposerImageUrls } from './services/composerImageUrls.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
+import { isPhoneComposer, dismissSubmittedPhoneKeyboard, promptReadingOffset } from './ui/composerFocus.js';
 import { enterKeyAction } from './domain/composerKeys.js';
 
 import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
@@ -2070,7 +2071,13 @@ class ChatApp {
         const areaRect = chatArea.getBoundingClientRect();
         const messageRect = messageEl.getBoundingClientRect();
         const promptTop = chatArea.scrollTop + messageRect.top - areaRect.top;
-        const targetOffset = Math.round(chatArea.clientHeight * 0.25);
+        const phone = isPhoneComposer(this.elements.messageInput);
+        const composerTop = phone ? this.elements.inputCard?.getBoundingClientRect().top : null;
+        const visibleHeight = Number.isFinite(composerTop)
+            ? Math.max(0, Math.min(areaRect.bottom, composerTop) - areaRect.top - 24)
+            : chatArea.clientHeight;
+        const targetOffset = promptReadingOffset({ phone, areaHeight: chatArea.clientHeight,
+            visibleHeight, promptHeight: messageRect.height });
         const desiredScrollTop = Math.max(0, promptTop - targetOffset);
         const contentEndWithoutSpacer = chatArea.scrollHeight - spacerHeight;
         const requiredScrollHeight = desiredScrollTop + chatArea.clientHeight;
@@ -7492,7 +7499,7 @@ class ChatApp {
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.focusMessageInput();
             });
         }
     }
@@ -7622,7 +7629,7 @@ class ChatApp {
             this.isAutoScrollPaused = false;
             this.updateScrollButtonVisibility();
             requestAnimationFrame(() => {
-                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.focusMessageInput();
             });
         }
         } finally {
@@ -7825,7 +7832,10 @@ class ChatApp {
                 submission.messageId = message.id;
                 if (this.isViewingSession(session.id)) this.announceChatOperation('Message accepted.');
                 if (submission.consumeComposer && this.isViewingSession(session.id)) {
-                    if (this.elements.messageInput.value === rawContent) this.elements.messageInput.value = '';
+                    if (this.elements.messageInput.value === rawContent) {
+                        this.elements.messageInput.value = '';
+                        dismissSubmittedPhoneKeyboard(this.elements.messageInput);
+                    }
                     this.uploadedFiles = this.uploadedFiles.filter(file => !currentFiles.includes(file));
                     this.fileUndoStack = [];
                     this.renderFilePreviews();
@@ -8412,7 +8422,7 @@ class ChatApp {
             this.updateScrollButtonVisibility();
             // Use requestAnimationFrame to ensure focus happens after UI updates
             requestAnimationFrame(() => {
-                if (this.isViewingSession(session.id)) this.elements.messageInput.focus();
+                if (this.isViewingSession(session.id)) this.focusMessageInput();
             });
         }
     }
@@ -11254,7 +11264,7 @@ class ChatApp {
 
     focusMessageInput({ force = false } = {}) {
         const input = this.elements.messageInput;
-        if (!input || input.disabled) return;
+        if (!input || input.disabled || isPhoneComposer(input)) return;
         // Startup autofocus must not steal focus from an authentication intent.
         if (this.accountModal?.isOpen) return;
 

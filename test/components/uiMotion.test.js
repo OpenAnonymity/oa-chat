@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { showSurface, hideSurface } from '../../chat/ui/uiMotion.js';
+import { showSurface, hideSurface, watchDisclosures, motionDuration } from '../../chat/ui/uiMotion.js';
 
 function fixture({ reduced = false, display = '' } = {}) {
     const classes = () => {
@@ -50,4 +50,49 @@ test('disclosure close measures visible height before becoming hidden', async ()
     assert.equal(frames[1].height, '0px');
     assert.equal(root.hidden, true); assert.equal(root.inert, true);
     await Promise.resolve(); assert.equal(root.style.getPropertyValue('display'), '');
+});
+
+
+test('refresh and interrupted close preserve an existing surface without layout flushes', async () => {
+    const { root } = fixture(); let reads = 0;
+    Object.defineProperty(root.firstElementChild, 'offsetWidth', { get() { reads++; return 560; } });
+    showSurface(root);
+    assert.equal(reads, 1);
+    showSurface(root); showSurface(root);
+    hideSurface(root, { remove: true }); showSurface(root);
+    assert.equal(reads, 1, 'refresh/reversal must not force the closed starting frame');
+    await finish();
+    assert.equal(root.isConnected, true);
+    assert.equal(root.dataset.motionPhase, 'open');
+    assert.equal(root.firstElementChild.classList.contains('is-open'), true);
+});
+
+test('invalid duration falls back instead of closing a surface immediately', () => {
+    const { root } = fixture();
+    root.ownerDocument.defaultView.getComputedStyle = () => ({ getPropertyValue: () => 'invalid' });
+    assert.equal(motionDuration(root, '--modal-close-dur'), 150);
+});
+
+test('stream insertions scan only new subtrees and skip descendants covered by a batch', () => {
+    let callback, disconnected = false;
+    const scans = [];
+    const root = { ownerDocument: { defaultView: { MutationObserver: class {
+        constructor(fn) { callback = fn; } observe() {} disconnect() { disconnected = true; }
+    } } }, querySelectorAll() { scans.push('root'); return []; } };
+    const make = (name, parentElement) => ({ nodeType: 1, parentElement,
+        querySelectorAll() { scans.push(name); return []; } });
+    const added = make('new message', root), child = make('new span', added);
+    const stop = watchDisclosures(root);
+    scans.length = 0;
+    callback([{ addedNodes: [added, child, { nodeType: 3 }] }]);
+    assert.deepEqual(scans, ['new message']);
+    scans.length = 0;
+    const details = make('unfinished details', root);
+    details.matches = () => false;
+    const summary = make('summary', details);
+    const target = { ...details, matches: () => true, dataset: {}, querySelector: () => null };
+    summary.parentElement = target;
+    callback([{ target, addedNodes: [summary] }]);
+    assert.deepEqual(scans, ['unfinished details']);
+    stop(); assert.equal(disconnected, true);
 });

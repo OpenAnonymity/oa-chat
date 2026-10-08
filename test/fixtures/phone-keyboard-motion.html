@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<base href="/chat/"><title>OA phone keyboard and motion — local test</title>
+<link rel="stylesheet" href="tailwind.generated.css"><link rel="stylesheet" href="fonts/fonts.css"><link rel="stylesheet" href="styles.css">
+<style>
+.test-controls { position:fixed; top:0; left:0; right:0; z-index:200; display:flex; gap:4px; flex-wrap:wrap; background:#eef2ff; padding:4px; font-size:11px; }
+.test-controls button { border:1px solid #999; border-radius:5px; padding:3px; background:white; color:#111; }
+#chat-toolbar { margin-top:64px; }
+#test-result { position:fixed; bottom:0; left:0; right:0; font:11px monospace; background:#eef2ff; color:#111; z-index:200; pointer-events:none; }
+</style></head><body>
+<div class="test-controls"><button id="test-keyboard">Keyboard up</button><button id="test-dismiss">Keyboard down</button><button id="test-response">Finish reply</button><button id="test-menu">Menu</button><button id="test-modal">Dialog</button><button id="test-reverse">Rapid reopen</button><button id="test-dark">Theme</button></div>
+<output id="test-result">Loading synthetic UI…</output>
+<script type="module">
+import { setupResponsiveComposer } from './ui/responsiveComposer.js';
+import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
+import { isPhoneComposer, promptReadingOffset } from './ui/composerFocus.js';
+const source = new DOMParser().parseFromString(await (await fetch('index.html')).text(), 'text/html');
+const app = document.importNode(source.getElementById('app'), true);
+document.body.append(app);
+// No application startup, account storage or requests. Real shell and CSS only.
+for (const id of ['sidebar','right-panel']) { const node=document.getElementById(id); node?.remove(); }
+document.documentElement.setAttribute('data-left-sidebar-hidden','true');
+document.documentElement.setAttribute('data-right-panel-hidden','true');
+const modal=document.importNode(source.getElementById('model-picker-modal'),true); document.body.append(modal);
+const input=document.getElementById('message-input'), card=document.getElementById('input-card');
+const area=document.getElementById('chat-area'), messages=document.getElementById('messages-container');
+messages.innerHTML='<article id="sample-prompt" style="padding:18px;margin:24px 0 32px auto;width:220px;border:1px solid #ddd;border-radius:16px;background:#f8f9fa;color:#111"><div style="padding:12px;background:#eee;border-radius:12px;margin-bottom:12px">📷 Synthetic photo · 6.7 MB</div>What is this?</article><article id="sample-answer"><b>Gemini 3.8 Flash</b><p style="margin-top:18px">This is a test reply. Its first lines should remain readable above the composer.</p><details><summary>More details</summary><p>Native keyboard-accessible disclosure.</p></details></article>';
+const simulated = Object.assign(new EventTarget(),{height:innerHeight,offsetTop:0,scale:1});
+Object.defineProperty(window,'visualViewport',{configurable:true,value:simulated});
+setupResponsiveComposer({input,onScrub(){}});watchDisclosures(document.body);
+const output=document.getElementById('test-result');
+function report(){ const p=card.getBoundingClientRect(),r=area.getBoundingClientRect(); output.textContent=`Focus: ${document.activeElement.id || 'none'} · card: ${Math.round(p.top)}–${Math.round(p.bottom)} · chat: ${Math.round(r.top)}–${Math.round(r.bottom)}`; }
+function positionPrompt(){const a=area.getBoundingClientRect(),p=document.getElementById('sample-prompt').getBoundingClientRect();const top=card.getBoundingClientRect().top;const offset=promptReadingOffset({phone:innerWidth<768,areaHeight:area.clientHeight,visibleHeight:Math.max(0,Math.min(a.bottom,top)-a.top-24),promptHeight:p.height});area.scrollTop=Math.max(0,area.scrollTop+p.top-a.top-offset);report();}
+document.getElementById('test-keyboard').onclick=()=>{input.focus();simulated.height=440;simulated.offsetTop=30;simulated.dispatchEvent(new Event('resize'));requestAnimationFrame(()=>requestAnimationFrame(positionPrompt));};
+document.getElementById('test-dismiss').onclick=()=>{input.blur();simulated.height=innerHeight;simulated.offsetTop=0;simulated.dispatchEvent(new Event('resize'));requestAnimationFrame(()=>requestAnimationFrame(positionPrompt));};
+document.getElementById('test-response').onclick=()=>{if(!isPhoneComposer(input))input.focus({preventScroll:true});report();};
+const menu=document.getElementById('settings-menu');document.body.append(menu);Object.assign(menu.style,{position:'fixed',top:'90px',left:'20px',width:'340px',maxWidth:'calc(100vw - 40px)',maxHeight:'65vh',overflowY:'auto'});
+document.getElementById('test-menu').onclick=()=>{if(menu.classList.contains('hidden'))showSurface(menu,'dropdown');else hideSurface(menu);};
+document.getElementById('test-modal').onclick=()=>showSurface(modal);
+document.getElementById('close-modal-btn').onclick=()=>hideSurface(modal);
+document.getElementById('test-reverse').onclick=()=>{showSurface(modal);setTimeout(()=>{hideSurface(modal,{clear:true});setTimeout(()=>showSurface(modal),50);},80);};
+document.getElementById('test-dark').onclick=()=>document.documentElement.classList.toggle('dark');
+requestAnimationFrame(report);
+</script></body></html>

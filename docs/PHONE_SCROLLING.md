@@ -56,3 +56,30 @@ measure iOS momentum, actual keyboard presentation, or whole-app frame rate.
 After staging release, test Home Screen launch, fast list swipes, search with
 the actual keyboard, tapping a row after scrolling, closing/reopening, long
 conversation scrolling, and rotating the phone. Check light and dark themes.
+
+## Keyboard and shared motion follow-up (2026-10-08)
+
+- The HTML textarea had `autofocus`, and send/regeneration completion directly
+  focused it. Phone startup/completion now leave the keyboard under user control;
+  explicit taps and keyboard shortcuts still work. Clearing an accepted phone
+  submission dismisses its keyboard only if the draft has not been replaced.
+- Phone prompt positioning uses the space above the composer, reserving a reply
+  preview. A tall photo may scroll partly out of view instead of leaving the
+  entire answer hidden. Desktop keeps its quarter-height anchor.
+- Visual-viewport events are coalesced to one frame; unchanged height, pan and
+  keyboard attributes do not cause style mutations. Cleanup cancels the frame.
+- Shared surface transitions are idempotent on refresh and reverse during rapid
+  reopen. Logical close/inert behavior remains immediate. Settings is positioned
+  before its entrance measurement. Reduced-motion cleanup is still immediate.
+- Disclosure observation scans only newly inserted subtrees, including a new
+  details element itself. It no longer rescans the parent transcript/body for
+  each streamed insertion. Motion token overrides now follow recipe defaults;
+  broad `transition: all` rules were narrowed to the painted properties.
+- Commercial phone CSS separately reduces the composer fade and slides the
+  half-width history rail with a transform, avoiding per-frame row reflow.
+
+Synthetic fixture: `/test/fixtures/phone-keyboard-motion.html` exercises the real
+shell/styles and UI helpers with a simulated visual viewport, photo-sized prompt,
+menu/dialog open/close, rapid reopen and native disclosure. It does not start the
+app, access an account, or send inference. Actual iOS keyboard animation and
+Home Screen scrolling still require a real-phone check.

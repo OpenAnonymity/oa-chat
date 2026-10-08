@@ -2166,3 +2166,22 @@ test('send waits for shared account reconciliation and blocks locked or incomple
         restore();
     }
 });
+
+
+test('automatic composer focus never opens the phone keyboard or interrupts an account dialog', () => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness(); let focuses = 0;
+        const input = app.elements.messageInput;
+        input.ownerDocument = document;
+        input.offsetParent = {}; input.focus = () => focuses++;
+        document.defaultView = window;
+        window.innerWidth = 390;
+        app.focusMessageInput({ force: true }); app.focusMessageInput();
+        assert.equal(focuses, 0);
+        window.innerWidth = 1200; app.focusMessageInput();
+        assert.equal(focuses, 1);
+        app.accountModal = { isOpen: true }; app.focusMessageInput({ force: true });
+        assert.equal(focuses, 1);
+    } finally { restore(); }
+});

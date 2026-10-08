@@ -467,7 +467,6 @@ export default class ChatInput {
                 const btnRect = btn.getBoundingClientRect();
                 // Move menu to body for backdrop-filter to work (escapes input-card stacking context)
                 document.body.appendChild(menu);
-                showSurface(menu, 'dropdown');
                 btn.classList.add('tooltip-disabled'); // Hide tooltip while menu is open
 
                 // Centre the panel over the gear button, clamped so it never
@@ -493,6 +492,8 @@ export default class ChatInput {
                 this.ensureScrubberModelsLoaded();
                 this.refreshMemorySettingsUI();
                 this.refreshMultiModelSettingsUI();
+                // Position and populate before measuring the transition's first frame.
+                showSurface(menu, 'dropdown');
             } else {
                 hideSurface(menu);
                 btn.classList.remove('tooltip-disabled');

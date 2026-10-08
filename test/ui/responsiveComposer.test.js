@@ -40,7 +40,10 @@ test('resizing moves the original controls without losing selection or the draft
         const row = element('row');
         const send = elements.get('send-btn'); send.parent=row;
         const root = element('root');
+        let frame = 0; const frames = new Map();
         const view = Object.assign(new EventTarget(), {innerWidth:1440, innerHeight:900,
+            requestAnimationFrame(callback) { frames.set(++frame, callback); return frame; },
+            cancelAnimationFrame(id) { frames.delete(id); },
             visualViewport:Object.assign(new EventTarget(), {height:900, offsetTop:0, scale:1})});
         const doc = Object.assign(new EventTarget(), {defaultView:view,documentElement:root,
             getElementById:id=>elements.get(id)});
@@ -65,9 +68,19 @@ test('resizing moves the original controls without losing selection or the draft
         assert.equal(input.value,'Keep this draft');
         assert.equal(elements.get('compact-composer-actions').hidden,true);
         view.innerWidth=390; view.visualViewport.height=480;
+        let writes = 0;
+        root.style.setProperty = () => writes++;
+        for (let i=0; i<10; i++) view.visualViewport.dispatchEvent(new Event('resize'));
+        assert.equal(frames.size, 1, 'one layout update for a burst');
+        for (const callback of frames.values()) callback(); frames.clear();
+        assert.equal(writes, 1, 'only the changed height is written');
+        view.visualViewport.dispatchEvent(new Event('scroll'));
+        for (const callback of frames.values()) callback(); frames.clear();
+        assert.equal(writes, 1, 'unchanged viewport does not invalidate styles');
         view.visualViewport.dispatchEvent(new Event('resize'));
         assert.equal(root.attrs['data-composer-keyboard'],true);
         cleanup();
+        assert.equal(frames.size, 0, 'cleanup cancels a queued viewport frame');
         assert.ok(observers.every(o=>o.disconnected));
         elements.get('compact-scrub-btn').dispatchEvent(new Event('click'));
         assert.equal(scrubCount,1);

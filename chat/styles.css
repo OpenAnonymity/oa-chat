@@ -708,7 +708,7 @@ html.switching-theme *::after {
 }
 
 .chat-session {
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease;
     -webkit-tap-highlight-color: transparent; /* Remove iOS tap highlight */
 }
 
@@ -2189,7 +2189,7 @@ a.quick-ask-source:focus-visible {
     background: transparent;
     border: none;
     cursor: pointer;
-    transition: all 0.12s ease;
+    transition: color 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
     white-space: nowrap;
 }
 
@@ -2852,7 +2852,7 @@ a.quick-ask-source:focus-visible {
     border: 1px solid hsl(var(--color-border));
     border-radius: 0.75rem;
     text-decoration: none;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
     flex-shrink: 0;
     overflow: hidden;
@@ -2992,7 +2992,7 @@ a.quick-ask-source:focus-visible {
     margin-right: 0.1em;
     padding: 0.1em 0.2em;
     border-radius: 0.2em;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
     text-decoration: none;
     line-height: 0;
     vertical-align: super;
@@ -3021,7 +3021,7 @@ a.quick-ask-source:focus-visible {
     font-size: 0.65rem;
     font-weight: 500;
     text-decoration: none;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
     white-space: nowrap;
     max-width: 160px;
     overflow: hidden;
@@ -3368,7 +3368,7 @@ a.quick-ask-source:focus-visible {
     border: none;
     border-radius: 0.25rem;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease, background-color 0.15s ease;
     white-space: nowrap;
     flex-shrink: 0;
 }
@@ -4089,7 +4089,7 @@ html.flat-mode.dark .file-attachment-icon .text-destructive {
 
 /* Legacy Network Log Styles (for compatibility) */
 .network-log-entry {
-    transition: all 0.2s ease;
+    transition: background-color 0.2s ease;
 }
 
 .network-log-header:hover {
@@ -5090,7 +5090,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     border-radius: 3px;
     color: hsl(var(--color-muted-foreground));
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
     padding: 0;
 }
 
@@ -5130,7 +5130,7 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     border: none;
     border-radius: 2px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, transform 0.15s ease;
     padding: 0;
     flex-shrink: 0;
 }
@@ -9307,7 +9307,6 @@ html[data-keyboard-nav] .settings-info-button:focus-visible { outline: 2px solid
 [data-info-tooltip][data-tooltip]:hover::after, [data-info-tooltip][data-tooltip]:hover::before { display: none; }
 
 /* Approved motion studies: quiet travel, shared timings, native controls. */
-:root { --modal-scale: .98; --modal-scale-close: .98; --dropdown-pre-scale: .98; --dropdown-closing-scale: .99; --text-swap-blur: 1px; --icon-swap-blur: 1px; --icon-swap-start-scale: .85; }
 [data-motion-phase] > .t-modal { animation: none; }
 [data-motion-phase="closing"] { pointer-events: none; }
 [data-motion-phase="open"] > .t-modal { opacity: 1; }
@@ -10220,3 +10219,28 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
 
 /* Account recovery and passkey errors must remain legible in dark themes. */
 .dark #account-modal .text-destructive { color: #fca5a5; }
+
+/* App-level tuning follows the verbatim motion recipes so their defaults do
+   not override it. Dialogs, menus, tabs and both rails share quiet movement. */
+:root { --modal-scale: .98; --modal-scale-close: .98; --dropdown-pre-scale: .98; --dropdown-closing-scale: .99; --text-swap-blur: 1px; --icon-swap-blur: 1px; --icon-swap-start-scale: .85; }
+:root {
+    --sidebar-open-duration: var(--modal-open-dur);
+    --sidebar-close-duration: var(--modal-close-dur);
+    --sidebar-close-ease: var(--modal-ease);
+    --system-panel-open-duration: var(--modal-open-dur);
+    --system-panel-close-duration: var(--modal-close-dur);
+    --system-panel-close-ease: var(--modal-ease);
+}
+@media (max-width: 767px) {
+    /* Scrolling text need not be re-blurred behind fixed phone controls. */
+    #input-card, .settings-menu-glass {
+        background: hsl(var(--color-card));
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat-session, .mem-header-btn, .citation-card-modern, .inline-citation,
+    .inline-link-button, .code-block-copy-btn, .network-log-entry,
+    .nav-btn, .message-indicator { transition: none; }
+}
