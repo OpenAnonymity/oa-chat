@@ -1611,6 +1611,11 @@ a.quick-ask-source:focus-visible {
 /* Reasoning trace styles for thinking models */
 /* NOTE: Removed fadeIn animation to prevent flash on session switch.
    Animation is added via .fade-in class in appendMessage() for new messages only. */
+/* Thinking the provider kept private: the header alone, nothing to open. */
+.reasoning-trace-withheld .reasoning-toggle { cursor: default; }
+.reasoning-trace-withheld .reasoning-toggle:hover { background: transparent; }
+.reasoning-withheld-note { color: hsl(var(--color-muted-foreground) / .75); }
+
 .reasoning-trace {
     margin-bottom: 0;
 }

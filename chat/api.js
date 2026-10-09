@@ -1056,7 +1056,12 @@ export class OpenRouterAPI {
                 const reasoningDelta = parsed.choices?.[0]?.delta;
                 const reasoningString = typeof reasoningDelta?.reasoning === 'string' ? reasoningDelta.reasoning : '';
                 const detailReasoning = reasoningString ? '' : reasoningTextFromDetails(reasoningDelta?.reasoning_details);
-                if (!reasoningWithheld && hasWithheldReasoning(reasoningDelta?.reasoning_details)) reasoningWithheld = true;
+                if (!reasoningWithheld && hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
+                    reasoningWithheld = true;
+                    // The model is thinking but the provider keeps the words: tell
+                    // the UI once, so it can say "Thinking..." and time the trace.
+                    if (!accumulatedReasoning && onReasoningChunk) await onReasoningChunk('', { withheld: true });
+                }
                 if (parsed.type === 'response.reasoning.delta' ||
                     parsed.reasoning_delta ||
                     reasoningString || detailReasoning) {

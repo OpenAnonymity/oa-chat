@@ -85,26 +85,29 @@ test('reasoning carried only in reasoning_details reaches the trace; a chunk wit
     const reasoningOf = async text => {
         const api = apiFor(async () => response(text));
         let reasoning = '';
-        const result = await api.streamCompletion([{role:'user',content:'hi'}],'x-ai/grok-4.7','synthetic-key',()=>{},null,[],false,null,null,chunk => { reasoning += chunk; },true,'medium');
-        return { reasoning, result };
+        const withheldSignals = [];
+        const result = await api.streamCompletion([{role:'user',content:'hi'}],'x-ai/grok-4.7','synthetic-key',()=>{},null,[],false,null,null,(chunk, meta) => { reasoning += chunk; if (meta?.withheld) withheldSignals.push(chunk); },true,'medium');
+        return { reasoning, result, withheldSignals };
     };
     // Structured details only (no `reasoning` string on the delta).
     const detailsOnly = 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"Looking at the post. ","format":"xai-responses-v1","index":0}]}}]}\n\n'
         + 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"Two clips."}]}}]}\n\n' + delta + done;
-    let { reasoning, result } = await reasoningOf(detailsOnly);
+    let { reasoning, result, withheldSignals } = await reasoningOf(detailsOnly);
     assert.equal(reasoning, 'Looking at the post. Two clips.');
     assert.equal(result.reasoning, 'Looking at the post. Two clips.');
     assert.equal(result.reasoningWithheld, false);
+    assert.deepEqual(withheldSignals, [], 'words shown: the UI is not told the reasoning was withheld');
     // Both shapes in one chunk: the string wins, the details are not appended again.
     const both = 'data: {"choices":[{"delta":{"reasoning":"Once. ","reasoning_details":[{"type":"reasoning.text","text":"Once. "}]}}]}\n\n' + delta + done;
     ({ reasoning, result } = await reasoningOf(both));
     assert.equal(reasoning, 'Once. ');
     // Encrypted only: nothing to show, and the result says the words were withheld.
     const withheld = 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"opaque-blob"}]}}]}\n\n' + delta + done;
-    ({ reasoning, result } = await reasoningOf(withheld));
+    ({ reasoning, result, withheldSignals } = await reasoningOf(withheld));
     assert.equal(reasoning, '');
     assert.equal(result.reasoning, null);
     assert.equal(result.reasoningWithheld, true);
+    assert.deepEqual(withheldSignals, [''], 'the UI is told once, with no words, so it can say Thinking... and time the trace');
     // A plain answer reports neither.
     ({ result } = await reasoningOf(delta + done));
     assert.equal(result.reasoningWithheld, false);

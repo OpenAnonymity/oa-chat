@@ -103,8 +103,10 @@ export default class VanillaChatUi {
         indicator.dataset.phase = normalizedPhase;
         const label = indicator.querySelector('.pending-response-label');
         if (label) {
-            label.textContent = normalizedPhase === 'waiting-response'
-                ? 'Waiting for response' : 'Requesting ephemeral key';
+            label.textContent = normalizedPhase === 'thinking'
+                ? 'Thinking...'
+                : normalizedPhase === 'waiting-response'
+                    ? 'Waiting for response' : 'Requesting ephemeral key';
             label.classList.add('pending-response-streaming');
         }
     }

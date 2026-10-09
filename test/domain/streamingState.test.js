@@ -7,5 +7,6 @@ test('normalizePendingPhase preserves key-request phase and maps later phases to
     assert.equal(normalizePendingPhase('waiting'), 'requesting-key');
     assert.equal(normalizePendingPhase('waiting-response'), 'waiting-response');
     assert.equal(normalizePendingPhase('stream-open'), 'waiting-response');
+    assert.equal(normalizePendingPhase('thinking'), 'thinking');
     assert.equal(normalizePendingPhase(null), 'waiting-response');
 });

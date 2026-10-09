@@ -6623,3 +6623,7 @@ the provider reasoned but withheld the words; the stream result reports it as
 `extractReasoning` reads the same details. Tests:
 `test/services/reasoningDetails.test.js`, `test/zkapi/inference-reliability.test.cjs`,
 `test/application/accessController.test.js`, `test/services/openRouterCreditRecovery.test.js`.
+
+## 2026-10-09 — Reasoning the provider keeps private
+
+When a stream carries only `reasoning.encrypted` details before any content, `api.js` calls `onReasoningChunk('', { withheld: true })` once. The send loops set `streamingMessage.reasoningWithheld`, start the reasoning timer, and move the pending indicator to the `thinking` phase ("Thinking..."; `normalizePendingPhase` passes it through in both domain modules, and the zkAPI presentation has a matching entry). The first content chunk sets `reasoningDuration`. `buildReasoningTrace(..., { withheld: true })` with no words renders the header alone: "Thought for 12s · not shared by the provider", no chevron, no body, not a button (`.reasoning-trace-withheld`). Words always win over the flag.
