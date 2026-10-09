@@ -1,3 +1,4 @@
+import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
@@ -10549,6 +10550,12 @@ class ChatApp {
 
         clearTimeout(this.sidebarToggleButtonTimer);
         this.setSidebarClosingAttribute(false);
+
+        // Only the phone app and phone browser use mutually exclusive rails.
+        // This automatic dismissal must not change synced panel preferences.
+        if (isPhoneAppLayout() && this.rightPanel) {
+            this.rightPanel.closeRightPanel({ persist: false });
+        }
 
         if (sidebar) {
             // Use CSS class instead of inline styles

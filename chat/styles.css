@@ -10394,3 +10394,46 @@ html[data-composer-compact="true"][data-composer-mode="parallel"] #model-picker-
     .inline-link-button, .code-block-copy-btn, .network-log-entry,
     .nav-btn, .message-indicator { transition: none; }
 }
+
+/* Phone touch-layout follow-up; laptop and Electron layouts are unchanged. */
+@media (max-width: 767px) {
+    /* The sheet slides; its width is fixed by the host, and its border
+       may stay while it is off screen. Animating transform alone keeps
+       the slide on the compositor. */
+    html[data-phone-app-panels] #right-panel {
+        transition-property: transform;
+        transition-duration: var(--system-panel-open-duration);
+        transition-timing-function: var(--system-panel-open-ease);
+    }
+    html[data-phone-app-panels][data-right-panel-hidden="true"] #right-panel {
+        border-left-width: 1px;
+        transition-duration: var(--system-panel-close-duration);
+        transition-timing-function: var(--system-panel-close-ease);
+    }
+    /* The settings panel spans the card below it; it grows from the card's
+       middle, not from a corner. */
+    html[data-phone-app-panels] #settings-menu.t-dropdown { transform-origin: bottom center; }
+    /* Segment thumbs sit on solid surfaces here (the panel's glass is off
+       on phones): a blur behind them has nothing to blur and costs a pass. */
+    html[data-phone-app-panels] .display-toggle-indicator,
+    html[data-phone-app-panels] .theme-toggle-indicator,
+    html[data-phone-app-panels] .chat-mode-toggle-indicator,
+    html[data-phone-app-panels] .expiry-toggle-indicator {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+    html[data-phone-app-panels] #model-picker-modal { align-items: flex-start; }
+    html[data-phone-app-panels] #model-picker-modal > [role="dialog"] {
+        margin-top: max(1rem, env(safe-area-inset-top, 0px));
+    }
+    html[data-phone-app-panels] #model-list-scroll-area {
+        height: auto;
+        max-height: min(55dvh, 420px);
+    }
+}
+@media (max-width: 767px) and (prefers-reduced-motion: reduce) {
+    html[data-phone-app-panels] #right-panel,
+    html[data-phone-app-panels][data-right-panel-hidden="true"] #right-panel {
+        transition: none;
+    }
+}

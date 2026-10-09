@@ -1,3 +1,4 @@
+import { isPhoneAppLayout, PHONE_APP_LAYOUT_CHANGE } from '../ui/phoneAppLayout.js';
 import { motionDuration, setDisclosure } from '../ui/uiMotion.js';
 /**
  * Right Panel Component
@@ -124,8 +125,7 @@ class RightPanel {
         preferencesStore.getPreference(PREF_KEYS.rightPanelVisible, { isDesktop: this.defaultOpen })
             .then((isVisible) => {
                 if (typeof isVisible === 'boolean') {
-                    this.isVisible = isVisible;
-                    this.updatePanelVisibility();
+                    this.applyVisibilityPreference(isVisible);
                 }
             });
 
@@ -151,8 +151,7 @@ class RightPanel {
 
         preferencesStore.onChange((key, value) => {
             if (key === PREF_KEYS.rightPanelVisible && typeof value === 'boolean') {
-                this.isVisible = value;
-                this.updatePanelVisibility();
+                this.applyVisibilityPreference(value);
             }
             if (key === PREF_KEYS.ticketInfoVisible && typeof value === 'boolean') {
                 this.showTicketInfo = value;
@@ -165,6 +164,26 @@ class RightPanel {
                 this.renderTopSectionOnly();
             }
         });
+    }
+
+    applyVisibilityPreference(value) {
+        // A late read/save notification must not undo the phone user's latest
+        // rail choice. Laptop and desktop preference handling is unchanged.
+        this.isVisible = isPhoneAppLayout() && typeof this.phoneVisibilityIntent === 'boolean'
+            ? this.phoneVisibilityIntent : value;
+        this.updatePanelVisibility();
+    }
+
+    setVisibilityIntent(value) {
+        this.phoneVisibilityIntent = isPhoneAppLayout() ? value : undefined;
+        this.isVisible = value;
+    }
+
+    reconcilePhonePanels() {
+        if (isPhoneAppLayout() && this.isVisible
+            && this.app?.elements?.sidebar?.classList.contains('mobile-visible')) {
+            this.closeRightPanel({ persist: false });
+        }
     }
 
     /** The count shown: held steady while previous-version tickets move. */
@@ -507,6 +526,9 @@ class RightPanel {
     setupResponsive() {
         // The sheet's scrim (phones only, by CSS) closes it like a tap outside.
         document.getElementById('right-panel-scrim')?.addEventListener('click', () => this.closeRightPanel());
+        // Rotation back to phone portrait can activate the new layout without
+        // crossing the legacy 1100px breakpoint. Keep the visible chat list.
+        window.addEventListener(PHONE_APP_LAYOUT_CHANGE, () => this.reconcilePhonePanels());
 
         // Handle window resize - only update layout mode, NOT visibility
         // User's panel visibility choice is preserved across all screen sizes
@@ -616,7 +638,7 @@ class RightPanel {
     }
 
     show() {
-        this.isVisible = true;
+        this.setVisibilityIntent(true);
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, true);
         this.updatePanelVisibility();
         // Predict final width: panel is opening, main area will be NARROWER
@@ -626,7 +648,7 @@ class RightPanel {
     }
 
     hide() {
-        this.isVisible = false;
+        this.setVisibilityIntent(false);
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
@@ -637,7 +659,7 @@ class RightPanel {
     toggle() {
         // Toggle the right panel visibility
         const wasVisible = this.isVisible;
-        this.isVisible = !this.isVisible;
+        this.setVisibilityIntent(!this.isVisible);
         preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, this.isVisible);
         this.updatePanelVisibility();
         // Predict final width based on toggle direction
@@ -645,10 +667,10 @@ class RightPanel {
         this.app?.updateToolbarDivider(this.isDesktop ? (wasVisible ? RIGHT_PANEL_WIDTH : -RIGHT_PANEL_WIDTH) : 0);
     }
 
-    closeRightPanel() {
+    closeRightPanel({ persist = true } = {}) {
         // Close the right panel (works in both desktop and mobile)
-        this.isVisible = false;
-        preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
+        this.setVisibilityIntent(false);
+        if (persist) preferencesStore.savePreference(PREF_KEYS.rightPanelVisible, false);
         this.updatePanelVisibility();
         // Predict final width: panel is closing, main area will be WIDER
         // Only affects width while the panel is inline (>=1100px); the sheet overlays
@@ -670,6 +692,12 @@ class RightPanel {
 
         if (this.isDesktop && this.lastAppliedVisibility !== this.isVisible) {
             this.app?.preserveChatBottomDuringWidthChange?.();
+        }
+
+        // Automatic phone rail hand-off is local UI state, not a saved preference.
+        if (this.isVisible && isPhoneAppLayout()
+            && this.app?.elements?.sidebar?.classList.contains('mobile-visible')) {
+            this.app.hideSidebar({ persist: false });
         }
 
         // Data attribute for CSS initial load protection

@@ -6599,3 +6599,33 @@ The optional host tickets.subscribeRedemption interface emits aggregate progress
 and completion only; it never exposes codes, ticket material, credentials, or
 account identifiers. Paid preparation continues to own its existing status and
 deferred wallet-publication path.
+
+## 2026-10-09: Phone panels and menus (Safari + Home Screen)
+
+- `ui/phoneAppLayout.js` owns the presentation scope: viewport under 768px,
+  physical screen short side under 768px, touch support and a coarse pointer.
+  Both phone Safari and the Home Screen app qualify. Laptop browser windows,
+  large tablet layouts, Electron and `app:` pages retain their released layout. The prelude
+  sets `data-phone-app-panels`; changes to the width/pointer media query update
+  it without polling. Wide phone landscape keeps the existing wide layout.
+- Only in that scope, opening history dismisses System Panel and vice versa.
+  Automatic dismissal uses `persist: false`, so it does not alter synced panel
+  preferences. Local `phoneVisibilityIntent` wins over a late initial preference
+  read or a delayed save notification, even if System Panel was initially hidden.
+  Returning from a wide layout reconciles two open rails, keeping history.
+- Settings anchors to `#input-card`, matching its edges and using at most 70%
+  of the visible viewport. Existing fold/glide helpers keep working. Laptop and
+  Electron use the released 340px/button-based placement.
+- In the same scope, the model list sizes to its rows (up to 55dvh/420px), with
+  the dialog anchored at the top so filtering does not move the search field.
+  Right-panel motion animates transform only; solid segment controls drop their
+  blur. Reduced-motion overrides still disable the transition.
+- Host `oa-commercial/src/chat/phoneAppPanels.css` adds guarded key-row layout,
+  headings, timeline wrapping, hit areas and the 44px account row. The original
+  host `phonePanels.css` is unchanged. Long station names wrap within a bounded
+  value column rather than overflow.
+- Tests: `test/ui/phoneAppLayout.test.js` and
+  `test/components/phoneOverlays.test.js` cover scope, geometry, media changes,
+  delayed preferences and rotation. See [PHONE_SCROLLING.md](PHONE_SCROLLING.md)
+  for the browser fixture and real-device limitations. This is local preparation;
+  no production or staging deployment is implied by these changes.

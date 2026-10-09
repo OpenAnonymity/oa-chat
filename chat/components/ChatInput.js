@@ -1,3 +1,4 @@
+import { isPhoneAppLayout } from '../ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from '../services/featureUsage.js';
 import { enterKeyAction } from '../domain/composerKeys.js';
 import { setupRadioGroupKeyboard } from '../ui/radioGroupKeyboard.js';
@@ -476,18 +477,37 @@ export default class ChatInput {
                 const viewport = window.visualViewport;
                 const viewTop = viewport?.offsetTop || 0;
                 const viewHeight = viewport?.height || window.innerHeight;
-                const width = Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
+                // Phones: the gear sits in the card's second row, so a panel
+                // hung from the gear covered the text box. The panel hangs
+                // from the card instead, shares the card's edges, and stops
+                // at 70% of the viewport so the conversation stays in view
+                // above it — it scrolls inside rather than growing further.
+                const cardRect = isPhoneAppLayout()
+                    ? this.app.elements.inputCard?.getBoundingClientRect() || null
+                    : null;
+                const anchorTop = cardRect ? cardRect.top : btnRect.top;
+                const width = cardRect
+                    ? Math.round(cardRect.width)
+                    : Math.min(SETTINGS_MENU_WIDTH_PX, window.innerWidth - viewportMargin * 2);
                 const centred = btnRect.left + btnRect.width / 2 - width / 2;
-                const left = Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
-                const availableAbove = btnRect.top - viewTop - viewportMargin - 8;
-                const bottom = window.innerHeight - btnRect.top + 8;
+                const left = cardRect
+                    ? Math.round(cardRect.left)
+                    : Math.max(viewportMargin, Math.min(centred, window.innerWidth - width - viewportMargin));
+                const availableAbove = anchorTop - viewTop - viewportMargin - 8;
+                const bottom = window.innerHeight - anchorTop + 8;
+                const restingMaxHeight = cardRect
+                    ? Math.min(availableAbove, Math.round(viewHeight * 0.7))
+                    : availableAbove;
                 menu.style.left = `${left}px`;
                 menu.style.bottom = availableAbove >= 220 ? `${bottom}px` : 'auto';
                 menu.style.top = availableAbove >= 220 ? 'auto' : `${viewTop + viewportMargin}px`;
                 menu.style.width = `${width}px`;
                 menu.style.minWidth = `${width}px`;
                 menu.style.maxWidth = `${width}px`;
-                menu.style.maxHeight = `${availableAbove >= 220 ? availableAbove : viewHeight - viewportMargin * 2}px`;
+                const fallbackMaxHeight = cardRect
+                    ? Math.min(viewHeight - viewportMargin * 2, Math.round(viewHeight * 0.7))
+                    : viewHeight - viewportMargin * 2;
+                menu.style.maxHeight = `${Math.max(0, availableAbove >= 220 ? restingMaxHeight : fallbackMaxHeight)}px`;
                 menu.style.overflowY = 'auto';
                 // Where the panel sits at rest, so a fold that briefly pinned
                 // its top edge can glide it back (restoreSettingsMenuAnchor).

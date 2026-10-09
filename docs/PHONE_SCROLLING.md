@@ -107,3 +107,24 @@ per transition. At viewport 590→592px (card 558→560), the preserved 48-chara
 draft grows from 24px to 48px; returning to compact shrinks it again. The fixture
 keeps the draft intact on resizing, and the unit test guards callback ordering
 and excludes height-only observer loops.
+
+## Phone panels follow-up (2026-10-09)
+
+The new panel/menu changes apply to phone Safari and the Home Screen app,
+using the gate documented in [APP_STATE.md](APP_STATE.md). They do not change
+laptop-browser or native-desktop layout. In the commercial integration, build
+and serve `test/fixtures/phone-app-panels.html` as documented in
+`oa-commercial/docs/PHONE_INTERACTIONS.md`. It exercises real panel and picker
+components with synthetic state; it never logs in or requests inference.
+
+Browser checks at 375×812 and 393×852 cover light/dark panel layout, pending and
+active key rows, long station names, mutually exclusive rails, and settings
+matching the composer width. Filtering three pinned models to one reduced the
+list from 184px to 96px while search stayed at y=17px. Rotation 844→393 closes
+the extra panel. A synthetic narrow laptop retains the original 340px settings
+and width/border/transform transition; Electron is excluded as well.
+
+These are browser geometry checks with simulated phone capabilities, not proof
+of real iOS scroll performance. On a physical iPhone, check Safari and Home
+Screen, keyboard open/close, quick panel swaps, search after swiping, rotation,
+and light/dark themes before calling device validation complete.
