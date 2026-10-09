@@ -1,3 +1,14 @@
+## October 9, 2026 — site icons are back in sources and inline links
+
+The sources chip stack, the source cards and inline links show each site's
+icon from DuckDuckGo's icon service again (`chat/services/citationIcons.js`,
+`citationIconUrl`), as before 2026-08-21; the providers OA ships with keep
+their bundled icons and a local website symbol appears when the service has no
+icon or fails. Loading an icon tells icons.duckduckgo.com the cited hostname
+and the browser's IP (hostname only, no referrer; see PRIVACY_MODEL.md).
+Preview proxies and any fetch of the cited page stay out; the privacy test now
+pins exactly that.
+
 ## October 9, 2026 — local input-size cutoff
 
 OA Chat rejects requests above **64,000 estimated text-input tokens**, even when

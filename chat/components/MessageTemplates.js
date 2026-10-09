@@ -6,7 +6,7 @@
 
 import { getProviderIcon } from '../services/providerIcons.js';
 import { resolveProvider, resolveProviderFromModelReference } from '../services/providerRegistry.js';
-import { citationIconHtml } from '../services/citationIcons.js';
+import { citationIconHtml, citationIconUrl } from '../services/citationIcons.js';
 import { extractDomain } from '../services/urlMetadata.js';
 import { getFileIconSvg } from '../services/fileUtils.js';
 import { getStandardizedModelDisplayName } from '../services/modelConfig.js';
@@ -1193,6 +1193,7 @@ function enhanceInlineLinks(content, messageId) {
 
         // Create the enhanced link button with space before
         const linkId = `inline-link-${messageId}-${index}`;
+        const inlineIconUrl = citationIconUrl(safeUrl);
         const enhancedLink = doc.createElement('span');
         enhancedLink.className = 'inline-link-citation';
 
@@ -1203,7 +1204,8 @@ function enhanceInlineLinks(content, messageId) {
             data-link-id="${escapeHtmlAttribute(linkId)}"
             data-url="${escapeHtmlAttribute(safeUrl)}"
             data-domain="${escapeHtmlAttribute(domain)}">
-            <svg class="inline-link-icon-fallback" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            ${inlineIconUrl ? `<img class="inline-link-icon" src="${escapeHtmlAttribute(inlineIconUrl)}" alt="" aria-hidden="true" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.style.display='none';this.nextElementSibling.style.display='';">` : ''}
+            <svg class="inline-link-icon-fallback" aria-hidden="true"${inlineIconUrl ? ' style="display:none"' : ''} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13.19 8.688a4.5 4.5 0 0 1 1.242 7.244l-4.5 4.5a4.5 4.5 0 0 1-6.364-6.364l1.757-1.757m13.35-.622 1.757-1.757a4.5 4.5 0 0 0-6.364-6.364l-4.5 4.5a4.5 4.5 0 0 0 1.242 7.244" />
             </svg>
             <span class="inline-link-domain">${escapeHtml(domain)}</span>
@@ -1227,8 +1229,8 @@ function buildCitationsToggleButton(citations, messageId) {
 
     const toggleId = `citations-toggle-${messageId}`;
 
-    // Build local domain markers. Remote favicons would disclose response-derived
-    // domains and the browser IP before the user chooses to open a source.
+    // Stack the first four sites' icons (see citationIcons.js for what the
+    // icon service learns when these load).
     const seenDomains = new Set();
     const uniqueDomains = [];
     for (const c of citations) {

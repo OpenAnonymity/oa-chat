@@ -10020,6 +10020,8 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
 }
 .citation-site-icon { width: 1rem; height: 1rem; object-fit: contain; flex-shrink: 0; }
 .citations-toggle-favicon .citation-site-icon { width: .75rem; height: .75rem; }
+.citations-toggle-favicon img.citation-site-icon { width: 13px; height: 13px; border-radius: 50%; object-fit: cover; }
+.citation-favicon-fallback:has(> img.citation-site-icon) { background: transparent; }
 
 /* Transitions.dev — verifier check */
 :root {
