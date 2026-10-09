@@ -205,13 +205,20 @@ export async function acquireVerifiedAccess(options = {}) {
     }
     const modelId = modelEntry.id;
     const overrideTickets = Number(ticketsRequiredOverride);
-    const ticketsRequired = Number.isFinite(overrideTickets) && overrideTickets > 0
-        ? Math.ceil(overrideTickets)
-        : getTicketCost(modelId, reasoningEnabled);
-
-    if (availableTickets < ticketsRequired) {
-        throw new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-    }
+    const hasTicketOverride = Number.isFinite(overrideTickets) && overrideTickets > 0;
+    const resolveTicketCost = async () => {
+        if (hasTicketOverride) return Math.ceil(overrideTickets);
+        const liveCost = await inferenceService.getAccessTicketCost?.(session, { modelId, signal });
+        return liveCost ?? getTicketCost(modelId, reasoningEnabled);
+    };
+    const checkBalance = () => {
+        const balance = ticketClient.getTicketCount();
+        if (balance < ticketsRequired) {
+            throw new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${balance} available.`);
+        }
+    };
+    let ticketsRequired = await resolveTicketCost();
+    checkBalance();
 
     if (signal?.aborted) {
         const error = new Error('Request aborted');
@@ -224,9 +231,16 @@ export async function acquireVerifiedAccess(options = {}) {
 
     let result;
     let retries = 0;
+    let pricingRetried = false;
     const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
 
     while (retries < maxRetries) {
+        if (signal?.aborted) {
+            const error = new Error('Request aborted');
+            error.name = 'AbortError';
+            error.isCancelled = true;
+            throw error;
+        }
         try {
             result = await inferenceService.requestAccess(session, {
                 ticketsRequired,
@@ -234,6 +248,13 @@ export async function acquireVerifiedAccess(options = {}) {
             });
             break;
         } catch (error) {
+            if (error.code === 'TICKET_PRICE_CHANGED' && !pricingRetried && !hasTicketOverride
+                && typeof inferenceService.getAccessTicketCost === 'function') {
+                pricingRetried = true;
+                ticketsRequired = await resolveTicketCost();
+                checkBalance();
+                continue;
+            }
             if (error.code === 'TICKET_USED') {
                 retries += 1;
                 await onTicketUsed(retries, error);

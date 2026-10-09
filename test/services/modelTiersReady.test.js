@@ -102,3 +102,48 @@ test('waiting for live pricing can be cancelled without waiting for the shared f
         else globalThis.localStorage = previousLocalStorage;
     }
 });
+
+test('an open tab refreshes before redemption, shares in-flight loads, and fails closed', async () => {
+    const previousFetch = globalThis.fetch;
+    const previousLocalStorage = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    let price = 5;
+    let fail = false;
+    let requests = 0;
+    globalThis.fetch = async (_url, init) => {
+        requests++;
+        assert.equal(init.credentials, 'omit');
+        assert.equal(init.cache, 'no-store');
+        return new Response(fail ? '{}' : JSON.stringify({ 'openai/gpt-6.1-sol': price }),
+            { status: fail ? 400 : 200 });
+    };
+    try {
+        const tiers = await import('../../chat/services/modelTiers.js?price-change-test');
+        await tiers.ensureModelTiersReady();
+        assert.equal(tiers.getTicketCost('openai/gpt-6.1-sol'), 5);
+        price = 9;
+        assert.deepEqual(await Promise.all([
+            tiers.getAccessTicketCost('openai/gpt-6.1-sol'),
+            tiers.getAccessTicketCost('openai/gpt-6.1-sol:online')
+        ]), [9, 9]);
+        assert.equal(requests, 2);
+        fail = true;
+        await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol'),
+            { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+        fail = false;
+        price = 3;
+        assert.equal(await tiers.getAccessTicketCost('openai/gpt-6.1-sol'), 3);
+        await assert.rejects(tiers.getAccessTicketCost('missing-model'), { code: 'MODEL_TIER_UNAVAILABLE' });
+        const controller = new AbortController();
+        controller.abort();
+        const beforeAbort = requests;
+        await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol', { signal: controller.signal }),
+            { name: 'AbortError' });
+        assert.equal(requests, beforeAbort);
+    } finally {
+        if (previousFetch === undefined) delete globalThis.fetch;
+        else globalThis.fetch = previousFetch;
+        if (previousLocalStorage === undefined) delete globalThis.localStorage;
+        else globalThis.localStorage = previousLocalStorage;
+    }
+});

@@ -46,6 +46,20 @@ function transportWithResponse(result = { content: 'answer' }) {
     };
 }
 
+test('ticket price capabilities stay scoped to the selected backend', async () => {
+    const calls = [];
+    const service = createInferenceService({ backends: [
+        { id: 'ticket', getAccessTicketCost: async options => { calls.push(options); return 9; } },
+        { id: 'paid' }
+    ] });
+    const session = { inferenceBackend: 'ticket' };
+    assert.equal(await service.getAccessTicketCost(session, { modelId: 'model-a' }), 9);
+    assert.equal(calls[0].modelId, 'model-a');
+    assert.equal(calls[0].session, session);
+    assert.equal(await service.getAccessTicketCost({ inferenceBackend: 'paid' }), null);
+    assert.equal(calls.length, 1);
+});
+
 test('inference registries are isolated and preserve backend defaults', async () => {
     const calls = [];
     const backend = {

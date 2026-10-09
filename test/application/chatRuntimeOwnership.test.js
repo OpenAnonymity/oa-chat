@@ -501,6 +501,11 @@ describe('production ChatApp runtime ownership', () => {
     });
 
     test('structured legacy ticket errors keep recovery metadata and ambiguous failures never consume tickets', () => {
+        const priceChange = ticketClient.createTicketRedemptionError({ detail: 'Invalid ticket count' }, 400, 'fallback');
+        assert.equal(priceChange.code, 'TICKET_PRICE_CHANGED');
+        assert.notEqual(priceChange.consumeTickets, true);
+        const ambiguous = ticketClient.createTicketRedemptionError({ detail: 'Invalid ticket count' }, 500, 'fallback');
+        assert.notEqual(ambiguous.code, 'TICKET_PRICE_CHANGED');
         const keyId = 'ab'.repeat(32);
         const legacy = ticketClient.createTicketRedemptionError({ detail: {
             error_code: 'TICKET_KEY_LEGACY', legacy_key_id: keyId,
@@ -780,6 +785,27 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(captured.inferenceBackend, 'paid');
         gate.resolve();
         await sending;
+    });
+
+    test('valid chat and Council keys do not depend on pricing availability', async () => {
+        let fetches = 0;
+        globalThis.fetch = async () => { fetches++; return new Response('{}', { status: 400 }); };
+        const app = Object.create(ChatApp.prototype);
+        const session = { id: 'reuse', model: 'Model A' };
+        app.getModelsForSession = () => [{ id: 'model-a', name: 'Model A' }];
+        app.inferenceService = { getAccessToken: () => 'usable-key', isAccessExpired: () => false };
+        app.isCouncilModeActive = () => false;
+        assert.equal((await app.getFreshInferenceTicketRequirement(session)).tickets, 0);
+        app.isCouncilModeActive = () => true;
+        app.councilController = {
+            resolveModelEntries: () => [{ id: 'model-a', name: 'Model A' }],
+            resolveEntryForStage1Entry: () => ({ id: 'model-a', name: 'Model A' }),
+            getFreshEntriesForAccess: () => [],
+            calculateCouncilTicketRequirement: () => assert.fail('No pricing needed for reused keys')
+        };
+        assert.equal((await app.getFreshInferenceTicketRequirement(session)).tickets, 0);
+        assert.equal((await app.getFreshInferenceTicketRequirement(session, { councilStageEntry: {} })).tickets, 0);
+        assert.equal(fetches, 0);
     });
 
     test('per-session ticket policy keeps paid access off the ticket pricing and redemption path', async () => {

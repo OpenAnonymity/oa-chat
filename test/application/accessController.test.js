@@ -727,3 +727,97 @@ test('outage access activates once, persists its warning state, and consumes no 
     assert.equal(harness.verificationInputs[0].activeKeyDuringVerification, null);
     assert.equal(harness.savedSessions[0].apiKeyInfo.verifierSubmitKeyProof.status, 'verifier-unavailable');
 });
+
+function pricingHarness(overrides = {}) {
+    const harness = createAccessHarness({ ticketCount: 20, ...overrides });
+    return { harness, options: {
+        session: harness.session,
+        models: [{ id: 'model-a', name: 'Model A' }],
+        reasoningEnabled: false,
+        inferenceService: harness.inferenceService,
+        ticketClient: harness.ticketClient,
+        getTicketCost: () => 5,
+        ...harness.callbacks
+    } };
+}
+
+const priceChanged = () => Object.assign(new Error('Model pricing changed. Please try again.'), {
+    code: 'TICKET_PRICE_CHANGED', status: 400
+});
+
+test('new access uses live pricing instead of the open tab price', async () => {
+    const { harness, options } = pricingHarness();
+    harness.inferenceService.getAccessTicketCost = async (session, { modelId }) => {
+        assert.equal(session, harness.session);
+        assert.equal(modelId, 'model-a');
+        return 9;
+    };
+    await acquireVerifiedAccess(options);
+    assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [9]);
+});
+
+test('a price change during redemption refreshes and retries once before verification', async () => {
+    const { harness, options } = pricingHarness({ requestAccess: async (_s, _r, attempt) => {
+        if (attempt === 1) throw priceChanged();
+        return { key: 'test-key' };
+    } });
+    let reads = 0;
+    harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
+    await acquireVerifiedAccess(options);
+    assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [5, 9]);
+    assert.equal(harness.verificationInputs.length, 1);
+    assert.equal(harness.ticketUsed.length, 0);
+});
+
+test('repricing rechecks the balance and never submits an unaffordable retry', async () => {
+    const { harness, options } = pricingHarness({ ticketCount: 7, requestAccess: async () => { throw priceChanged(); } });
+    let reads = 0;
+    harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
+    await assert.rejects(acquireVerifiedAccess(options), /Need 9, but only 7 available/);
+    assert.equal(harness.requested.length, 1);
+    assert.equal(harness.verificationInputs.length, 0);
+});
+
+test('repeated price rejection stops after one recovery attempt', async () => {
+    const { harness, options } = pricingHarness({ requestAccess: async () => { throw priceChanged(); } });
+    harness.inferenceService.getAccessTicketCost = async () => 9;
+    await assert.rejects(acquireVerifiedAccess(options), { code: 'TICKET_PRICE_CHANGED' });
+    assert.equal(harness.requested.length, 2);
+});
+
+test('failed or cancelled repricing never issues a second request', async () => {
+    for (const cancel of [false, true]) {
+        const controller = new AbortController();
+        const { harness, options } = pricingHarness({ requestAccess: async () => { throw priceChanged(); } });
+        let reads = 0;
+        harness.inferenceService.getAccessTicketCost = async () => {
+            if (++reads === 2) {
+                if (cancel) controller.abort();
+                else throw Object.assign(new Error('Pricing unavailable'), { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+            }
+            return 5;
+        };
+        await assert.rejects(acquireVerifiedAccess({ ...options, signal: controller.signal }),
+            cancel ? { name: 'AbortError' } : { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+        assert.equal(harness.requested.length, 1);
+    }
+});
+
+test('ambiguous access failures are not retried as price changes', async () => {
+    const { harness, options } = pricingHarness({ requestAccess: async () => {
+        throw Object.assign(new Error('Network failure'), { status: 503 });
+    } });
+    let reads = 0;
+    harness.inferenceService.getAccessTicketCost = async () => { reads++; return 9; };
+    await assert.rejects(acquireVerifiedAccess(options), /Network failure/);
+    assert.equal(harness.requested.length, 1);
+    assert.equal(reads, 1);
+});
+
+test('an explicit ticket budget is neither repriced nor retried as a model price', async () => {
+    const { harness, options } = pricingHarness({ requestAccess: async () => { throw priceChanged(); } });
+    harness.inferenceService.getAccessTicketCost = async () => assert.fail('Explicit budget must stay fixed');
+    await assert.rejects(acquireVerifiedAccess({ ...options, ticketsRequiredOverride: 4 }),
+        { code: 'TICKET_PRICE_CHANGED' });
+    assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [4]);
+});

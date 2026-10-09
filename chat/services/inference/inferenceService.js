@@ -188,6 +188,10 @@ const inferenceService = {
     isAccessExpired(session) {
         return getBackendForSession(session).isAccessExpired(session);
     },
+    async getAccessTicketCost(session, options = {}) {
+        const backend = getBackendForSession(session);
+        return backend.getAccessTicketCost?.({ ...options, session }) ?? null;
+    },
     async requestAccess(session, options = {}) {
         const backend = getBackendForSession(session);
         return backend.requestAccess({ ...options, session });

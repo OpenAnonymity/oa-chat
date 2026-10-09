@@ -2315,3 +2315,40 @@ test('image-only and mixed lanes keep their own follow-up history and canonical 
     controller.refreshStage1CanonicalResponse(message);
     assert.equal(message.images, null);
 });
+
+test('Council reprices each lane model and keeps recovered access with its lane', async () => {
+    const requests = [];
+    const lookups = [];
+    const controller = createController({
+        ticketCount: 20,
+        costs: { 'primary-model': 5, 'secondary-model': 5 },
+        chatDB: { saveSession: async () => {} },
+        inferenceService: {
+            getAccessLabel: () => 'OpenRouter key',
+            getAccessTicketCost: async (_session, { modelId }) => {
+                lookups.push(modelId);
+                return modelId === 'primary-model' ? (lookups.length === 1 ? 5 : 9) : 3;
+            },
+            requestAccess: async (_session, { ticketsRequired }) => {
+                requests.push(ticketsRequired);
+                if (requests.length === 1) {
+                    throw Object.assign(new Error('Model pricing changed'), { code: 'TICKET_PRICE_CHANGED' });
+                }
+                return { key: `key-${ticketsRequired}`, ticketsConsumed: ticketsRequired,
+                    expiresAt: new Date(Date.now() + 60000).toISOString() };
+            },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    const session = { id: 'pricing-council', model: 'Primary', councilAccess: {} };
+    for (const laneId of ['primary', 'secondary']) {
+        await controller.requestLaneAccess(session,
+            { laneId, id: `${laneId}-model`, name: laneId }, null);
+    }
+    assert.deepEqual(lookups, ['primary-model', 'primary-model', 'secondary-model']);
+    assert.deepEqual(requests, [5, 9, 3]);
+    assert.equal(session.councilAccess.primary.apiKey, 'key-9');
+    assert.equal(session.councilAccess.primary.ticketsConsumed, 9);
+    assert.equal(session.councilAccess.secondary.apiKey, 'key-3');
+    assert.equal(session.councilAccess.secondary.ticketsConsumed, 3);
+});

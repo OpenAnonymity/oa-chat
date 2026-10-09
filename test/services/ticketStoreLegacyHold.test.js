@@ -103,3 +103,15 @@ test('stranded tickets stay held and in the wallet, but leave the held count', (
     store.setHeldKeyIds([]);
     assert.equal(store.getStrandedCount(), 0);
 });
+
+
+test('a rejected obsolete price preserves selected tickets for the corrected request', async () => {
+    const { store, persisted } = storeWith(current);
+    await assert.rejects(store.consumeTickets(1, async () => {
+        throw Object.assign(new Error('Model pricing changed'), { code: 'TICKET_PRICE_CHANGED' });
+    }), { code: 'TICKET_PRICE_CHANGED' });
+    assert.equal(persisted.length, 0);
+    await store.consumeTickets(2, async ({ tickets }) => assert.deepEqual(tickets, current));
+    assert.equal(persisted[0].archive.length, 2);
+    assert.equal(persisted[0].active.length, 0);
+});

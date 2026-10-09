@@ -679,11 +679,6 @@ export default class CouncilController {
     async requestLaneAccess(session, entry, typingId, signal = null) {
         throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.getTicketCostForEntry(entry));
-        const availableTickets = this.ticketClient.getTicketCount();
-        if (availableTickets < ticketsRequired) {
-            throw new Error(`Not enough tickets for ${entry.name}. Need ${ticketsRequired}, but only ${availableTickets} available.`);
-        }
-
         const accessLabel = this.inferenceService.getAccessLabel(session);
         if (this.app.floatingPanel) {
             this.app.floatingPanel.showMessage(`Acquiring ${accessLabel} for ${entry.name}...`, 'info');
@@ -700,7 +695,6 @@ export default class CouncilController {
             modelIdOverride: entry.id,
             modelNameOverride: entry.name,
             modelEntryOverride: entry,
-            ticketsRequiredOverride: ticketsRequired,
             ticketRequirementLabel: entry.name,
             signal,
             onTicketUsed: () => this.app.showToast?.('Ticket already used, trying next available'),

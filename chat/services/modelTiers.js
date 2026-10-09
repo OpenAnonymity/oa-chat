@@ -25,6 +25,8 @@ let modelTickets = {};
 let initializationPromise = null;
 let cacheLoaded = false;
 let livePricingReady = false;
+let pricingFetchedAt = 0;
+const PRICING_MAX_AGE_MS = 60_000;
 
 /**
  * Patterns for detecting model characteristics when not explicitly tiered.
@@ -97,7 +99,7 @@ async function fetchModelTickets() {
     try {
         const { response, data } = await fetchRetryJson(
             `${ORG_API_BASE}/chat/model-tickets`,
-            { credentials: 'omit' },
+            { credentials: 'omit', cache: 'no-store' },
             {
                 context: 'Model tickets',
                 maxAttempts: 3,
@@ -117,9 +119,12 @@ async function fetchModelTickets() {
  * Loads from cache immediately, then fetches fresh data in background.
  * Call this early in app init (non-blocking).
  */
-export function initModelTiers() {
-    if (livePricingReady) return Promise.resolve(true);
+export function initModelTiers({ forceRefresh = false } = {}) {
     if (initializationPromise) return initializationPromise;
+    if (!forceRefresh && livePricingReady && Date.now() - pricingFetchedAt < PRICING_MAX_AGE_MS) {
+        return Promise.resolve(true);
+    }
+    livePricingReady = false;
 
     // Load cached data first (synchronous, fast)
     loadCache();
@@ -139,6 +144,7 @@ export function initModelTiers() {
             modelTickets = ticketsData;
             saveCache(ticketsData);
             livePricingReady = true;
+            pricingFetchedAt = Date.now();
             eventTarget.dispatchEvent(new CustomEvent('update'));
             return true;
         }
@@ -147,7 +153,7 @@ export function initModelTiers() {
     })().finally(() => {
         // A failed refresh must remain retryable. Cached and heuristic prices
         // are display hints only and must never authorize ticket redemption.
-        if (!livePricingReady) initializationPromise = null;
+        initializationPromise = null;
     });
 
     return initializationPromise;
@@ -183,8 +189,10 @@ async function waitForInitialization(promise, signal) {
  * The app starts initialization in the background, so this usually resolves
  * immediately while preventing an early send from using stale fallback costs.
  */
-export async function ensureModelTiersReady({ signal = null } = {}) {
-    const ready = await waitForInitialization(initModelTiers(), signal);
+export async function ensureModelTiersReady({ signal = null, forceRefresh = false } = {}) {
+    if (signal?.aborted) throw createPricingAbortError();
+    const ready = await waitForInitialization(initModelTiers({ forceRefresh }), signal);
+    if (signal?.aborted) throw createPricingAbortError();
     if (!ready) {
         const error = new Error('Live model pricing is unavailable. Please try again.');
         error.code = 'MODEL_TIER_CONFIG_UNAVAILABLE';
@@ -265,3 +273,16 @@ export function hasEnoughTickets(availableTickets, modelId, reasoningEnabled = f
 
 // Load cache on module init (synchronous)
 loadCache();
+
+/** Authoritative price for redemption; heuristic prices are display-only. */
+export async function getAccessTicketCost(modelId, { signal = null } = {}) {
+    await ensureModelTiersReady({ signal, forceRefresh: true });
+    const baseModelId = String(modelId || '').replace(/:online$/, '');
+    const tickets = Object.hasOwn(modelTickets, baseModelId) ? modelTickets[baseModelId] : null;
+    if (!Number.isSafeInteger(tickets) || tickets <= 0) {
+        const error = new Error('This model is no longer available. Please choose another model.');
+        error.code = 'MODEL_TIER_UNAVAILABLE';
+        throw error;
+    }
+    return tickets;
+}

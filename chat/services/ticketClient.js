@@ -119,6 +119,15 @@ class TicketClient {
         const parsed = getStructuredTicketError(data, fallbackMessage);
         const messageLower = String(parsed.classificationMessage || '').toLowerCase();
 
+        // Only the explicit rejected-count response permits repricing and retry.
+        // The org rolls this rejection back; the local wallet must keep its tickets.
+        if (status === 400 && messageLower.trim() === 'invalid ticket count') {
+            const error = new Error('Model pricing changed. Please try again.');
+            error.code = 'TICKET_PRICE_CHANGED';
+            error.status = status;
+            return error;
+        }
+
         if (parsed.code === 'TICKET_KEY_INVALIDATED') {
             const error = new Error('The org rotated its ticket signing key. Tickets from the old key were invalidated.');
             error.code = 'TICKET_KEY_INVALIDATED';

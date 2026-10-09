@@ -5133,8 +5133,18 @@ class ChatApp {
     async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
         modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
+        const councilActive = this.isCouncilModeActive(session) && this.councilController;
+        if (!councilActive && this.inferenceService.getAccessToken(session)
+            && !this.inferenceService.isAccessExpired(session)) {
+            return { tickets: 0, label: session.model || 'the selected model' };
+        }
         let models = this.getModelsForSession(session);
-        await ensureModelTiersReady({ signal });
+        const councilTicketRequirement = async entries => {
+            const fresh = this.councilController.getFreshEntriesForAccess(session, entries);
+            if (fresh.length === 0) return 0;
+            await ensureModelTiersReady({ signal, forceRefresh: true });
+            return this.councilController.calculateCouncilTicketRequirement(fresh);
+        };
 
         if (models.length === 0) {
             try {
@@ -5159,7 +5169,7 @@ class ChatApp {
                 );
                 return {
                     tickets: laneEntry?.id
-                        ? this.councilController.calculateFreshTicketRequirement(session, [laneEntry])
+                        ? await councilTicketRequirement([laneEntry])
                         : 0,
                     label: laneEntry?.name || councilStageEntry?.model || 'the selected model'
                 };
@@ -5173,16 +5183,12 @@ class ChatApp {
                 : null;
             const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
             return {
-                tickets: this.councilController.calculateFreshTicketRequirement(session, accessEntries),
+                tickets: await councilTicketRequirement(accessEntries),
                 label: accessEntries.length > 1 ? 'the selected models' : (accessEntries[0]?.name || 'the selected model')
             };
         }
 
-        const hasAccessToken = !!this.inferenceService.getAccessToken(session);
-        if (hasAccessToken && !this.inferenceService.isAccessExpired(session)) {
-            return { tickets: 0, label: session.model || 'the selected model' };
-        }
-
+        await ensureModelTiersReady({ signal, forceRefresh: true });
         const modelName = this.normalizeModelName(requestedModelName || session.model, session)
             || requestedModelName || session.model
             || this.inferenceService.getDefaultModelName(session);

@@ -4480,8 +4480,42 @@ reachable from the menu only in the composed commercial app.
   `/auth/*` and `/api/billing/*` routes. Public ticket redemption/inference
   requests do not pass through the identity session bridge.
 
+## 2026-10-09: Refresh ticket pricing for open chats
+
+- OA preflight refreshes the anonymous model-price map before checking a new
+  turn's ticket requirement. New OpenRouter key acquisition independently obtains
+  an authoritative price through the backend's optional `getAccessTicketCost`
+  capability. Council lanes use their own model ID, not a previously computed
+  fixed ticket override. Existing usable keys and non-ticket backends retain
+  their acquisition behavior; explicit ticket-budget overrides remain explicit.
+- Pricing loads coalesce while in flight, bypass the browser HTTP cache, and
+  refresh normally after 60 seconds. New key requests force a refresh even inside
+  that window. Failed refreshes cannot authorize cached prices; unknown models
+  cannot use heuristic prices for redemption. Model IDs stay client-side: only
+  the existing public all-model pricing endpoint is fetched without credentials.
+- Only HTTP 400 with the exact `Invalid ticket count` message is classified as
+  `TICKET_PRICE_CHANGED`. The wallet keeps rejected tickets. Acquisition refreshes
+  the model price, rechecks available tickets and cancellation, and retries once.
+  A second rejection is surfaced as a pricing-change message. Network errors and
+  ambiguous failures are not retried by this recovery path.
+- Regression coverage exercises 5-to-9 repricing before/during acquisition,
+  concurrent refreshes, failed refreshes, unknown models, insufficient balance,
+  cancellation, bounded retry, and preservation of rejected tickets. This is a
+  client fix; publication still requires the normal commercial release workflow.
+
 ## 2026-08-24: Live ticket pricing and non-blocking relay fallback
 
+- Investigation on 2026-10-09: `livePricingReady` remains true for the lifetime
+  of the page, so subsequent `ensureModelTiersReady()` calls do not refresh a
+  successfully loaded map after server tier changes. Production's public map
+  priced `openai/gpt-6.1-sol` at 9; its active tiers had no 5-ticket option.
+  Sanitized issuance history showed earlier successful 5-ticket requests and
+  rejected 5-ticket requests beginning at 15:27:18 PDT, matching the reported
+  screenshot, followed by a successful 9-ticket request. The public tier
+  configuration's latest update was 12:43:19 PDT. This supports stale in-page
+  pricing after a tier change; it does not identify an anonymous request's owner
+  or the specific admin edit. The October 9 implementation above addresses
+  stale pricing and recovery from rejected obsolete counts.
 - Key acquisition waits for the live model-ticket map before selecting tickets,
   including the synthetic `openrouter/auto` price. A failed refresh remains
   retryable and fails the send clearly instead of redeeming cached or heuristic

@@ -2,6 +2,7 @@ import { applyVerifierRetryResult } from '../../../application/verifierRecovery.
 import { chatDB } from '../../../db.js';
 import openRouterAPI from '../../../api.js';
 import ticketClient from '../../ticketClient.js';
+import { getAccessTicketCost } from '../../modelTiers.js';
 import networkProxy from '../../networkProxy.js';
 import { OPENROUTER_APP_HEADERS } from '../appAttribution.js';
 import stationVerifier from '../../verifier.js';
@@ -160,6 +161,9 @@ const openRouterBackend = {
         if (!session?.apiKey || !hasUsableAccess(session)) return true;
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
+    },
+    getAccessTicketCost({ modelId, signal }) {
+        return getAccessTicketCost(modelId, { signal });
     },
     async requestAccess({ ticketsRequired, signal }) {
         return ticketClient.requestApiKey(ticketsRequired || 1, { signal });
