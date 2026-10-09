@@ -1005,6 +1005,29 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(app.sendSubmissionsInFlight.size, 0);
     });
 
+    test('oversized conversation keeps the draft and history without spending tickets', async () => {
+        const app = appHarness();
+        const draft = 'a'.repeat((64_000 - 8) * 4);
+        app.elements.messageInput.value = draft;
+        const files = [{ name: 'notes.txt', size: 10, type: 'text/plain' }];
+        app.uploadedFiles = files;
+        app.ensureDatabaseReady = async () => true;
+        app.getModelsForSession = () => [];
+        app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
+        const history = [];
+        chatDB.getSessionMessages = async () => history;
+        chatDB.saveMessage = async () => assert.fail('Rejected input must not append to history');
+        app.preflightTurnTicketBudget = async () => assert.fail('Rejected input must not begin ticket spending');
+        const notices = [];
+        app.showToast = message => notices.push(message);
+        await app.sendMessage();
+        assert.equal(app.elements.messageInput.value, draft);
+        assert.equal(app.uploadedFiles, files);
+        assert.equal(history.length, 0);
+        assert.match(notices[0], /64,000 estimated input-token limit/);
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
     test('database delay cannot redirect an existing-chat Send to the newly selected chat', async () => {
         const app = appHarness();
         const gate = deferred();

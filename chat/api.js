@@ -1,3 +1,4 @@
+import { getSystemPrompt } from './services/inference/systemPrompt.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 // OpenRouter API integration
 //
@@ -9,7 +10,7 @@ import { getErrorMessage } from './domain/errorMessage.js';
 import networkProxy from './services/networkProxy.js';
 import { consumeSseBody } from './services/inference/sseStream.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
-import { validateInferenceInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
+import { validateInferenceInput, validateConversationInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
 
 import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
 import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
@@ -31,27 +32,6 @@ import { paragraphBreakBefore } from './services/streamSegments.js';
 const OPENROUTER_BACKEND_ID = 'openrouter';
 const TITLE_SUMMARY_MODEL_ID = 'google/gemini-3.1-flash-lite-preview';
 const TITLE_SUMMARY_MAX_INPUT_CHARS = 4000;
-
-// System prompt to prepend to all conversations
-// Modify this function to change the default AI behavior
-// Use template literals (backticks) for multi-line prompts
-// This is a function so dynamic values (like date) are evaluated per request
-const getSystemPrompt = (modelId) => `
-You are ${modelId ? `${modelId}, ` : ''}a highly capable, thoughtful, and precise assistant. Your goal is to deeply understand the user's intent, ask clarifying questions when needed, think step-by-step through complex problems, provide clear, and direct answers, and proactively anticipate helpful follow-up information. Always prioritize being truthful, nuanced, insightful, and efficient, tailoring your responses specifically to the user's needs and preferences.  It is important to be concise: keep answers brief and to the point, but without losing important details.
-
-Formatting Rules:
-- Use Markdown for lists, tables, and styling.
-- Use \`\`\`code fences\`\`\` for all code blocks.
-- Format file names, paths, and function names with \`inline code\` backticks.
-- For all mathematical expressions, you must use \\(...\\) for inline math and \\[...\\] for block math. Use multi-line block math for complex equations.
-
-Current date: ${new Date().toLocaleDateString()}.
-`.trim();
-
-// To disable system prompt, return an empty string:
-// const getSystemPrompt = () => '';
-// Example:
-// const getSystemPrompt = () => `You are a helpful AI assistant.
 
 function hasPdfContent(messages = []) {
     return messages.some((message) => {
@@ -145,7 +125,10 @@ export class OpenRouterAPI {
             : body;
         // Composed billing adapters may reduce the allowance further, but may
         // not raise the user's 30,000-token ceiling or a smaller caller limit.
-        return applyOutputTokenLimit(prepared, model, callerLimit);
+        const finalBody = applyOutputTokenLimit(prepared, model, callerLimit);
+        validateInferenceInput(finalBody.messages, model);
+        validateSerializedInferenceBody(JSON.stringify(finalBody));
+        return finalBody;
     }
 
     prepareFetchOptions(access, init) {
@@ -180,6 +163,8 @@ export class OpenRouterAPI {
     }
 
     sendCompletionStrict(messages, modelId, token, options = {}) {
+        try { validateConversationInput(messages, this.getModelBudgetMetadata(modelId), [], modelId); }
+        catch (error) { return Promise.reject(error); }
         const requestOptions = { ...options, modelId, reasoningEnabled: options.reasoningEnabled ?? true };
         return this.withRequestAccess(token, requestOptions, request =>
             request._sendCompletionStrict(messages, modelId, token, requestOptions));
@@ -197,7 +182,7 @@ export class OpenRouterAPI {
     }
 
     streamCompletion(messages, modelId, token, onChunk, onTokenUpdate, files = [], searchEnabled = false, abortController = null, onStreamOpen = null, onReasoningChunk = null, reasoningEnabled = true, reasoningEffort = DEFAULT_REASONING_EFFORT, onAccessProgress = null, onStreamHealth = null) {
-        try { validateInferenceInput(messages, this.getModelBudgetMetadata(modelId), files); }
+        try { validateConversationInput(messages, this.getModelBudgetMetadata(modelId), files, modelId); }
         catch (error) { return Promise.reject(error); }
         return this.withRequestAccess(token, {
             signal: abortController?.signal,

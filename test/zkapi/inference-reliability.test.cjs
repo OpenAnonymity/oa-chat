@@ -159,3 +159,42 @@ test('a stalled credit-error body is canceled when the shared request times out'
     assert.equal(canceled, true, 'both response branches must stop reading after timeout');
     assert.equal(result.body.locked, false);
 });
+
+test('64k estimated input boundary includes every message and applies without model metadata', () => {
+    const content = 'a'.repeat((64_000 - 8) * 4);
+    limits.validateInferenceInput([{ role: 'user', content }], null);
+    assert.throws(() => limits.validateInferenceInput([{ role: 'user', content: content + 'a' }], { context_length: 1_000_000 }),
+        { code: 'INFERENCE_INPUT_TOKEN_LIMIT', retryable: false });
+    assert.throws(() => limits.validateInferenceInput([
+        { role: 'user', content: 'a'.repeat(150_000) },
+        { role: 'assistant', content: 'b'.repeat(150_000) }
+    ]), { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+    assert.throws(() => limits.validateInferenceInput([{ role: 'user', content: [
+        { type: 'text', text: 'a'.repeat(130_000) }, { type: 'text', text: 'b'.repeat(130_000) }
+    ] }]), { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+});
+
+test('oversized streaming and strict requests cannot acquire access or send, including system instructions', async () => {
+    let acquired = 0, sent = 0;
+    const api = new API({ acquireRequestAccess: () => { acquired++; throw new Error('must not acquire'); },
+        networkTransport: { fetchWithRetry: () => { sent++; }, fetchWithRetryJson: () => { sent++; } } });
+    // This text fits alone; OA's system instructions push the final request over.
+    const messages = [{ role: 'user', content: 'a'.repeat((64_000 - 8) * 4) }];
+    for (const invoke of [() => api.streamCompletion(messages, 'test/model', 'synthetic', () => {}),
+        () => api.sendCompletionStrict(messages, 'test/model', 'synthetic')]) {
+        await assert.rejects(invoke(), error => error.code === 'INFERENCE_INPUT_TOKEN_LIMIT'
+            && !isAccessCreditExhaustedError(error) && !helpers.isRetryableInferenceError(error));
+    }
+    assert.equal(acquired, 0); assert.equal(sent, 0);
+});
+
+test('final prepared requests reject added text and converted document text before transport', () => {
+    const oversized = [{ role: 'user', content: [{ type: 'text', text: 'document '.repeat(40_000) }] }];
+    const api = new API({ prepareRequestBody: body => ({ ...body, messages: oversized }) });
+    assert.throws(() => api.prepareFetchOptions({ headers: {} }, { body: JSON.stringify({ model: 'test/model', messages: [{ role: 'user', content: 'hi' }] }) }),
+        { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+    const ordinary = new API();
+    assert.throws(() => ordinary.prepareRequestBody({ model: 'test/model', messages: oversized }, {}),
+        { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+    assert.equal(ordinary.prepareRequestBody({ model: 'test/model', messages: [{ role: 'user', content: 'Short request' }] }, {}).messages[0].content, 'Short request');
+});
