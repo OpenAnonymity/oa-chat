@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReasoningTrace } from '../../chat/components/MessageTemplates.js';
 
-// Reasoning the provider kept private (encrypted reasoning only): the trace is
+// Reasoning not shared by the provider (encrypted reasoning only): the trace is
 // a timed header with nothing to open, and it says the words were withheld.
 test('withheld reasoning renders a timed header with nothing to open', () => {
     const html = buildReasoningTrace('', 'm1', false, null, 12000, null, { withheld: true });

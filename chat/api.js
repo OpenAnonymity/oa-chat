@@ -1058,7 +1058,7 @@ export class OpenRouterAPI {
                 const detailReasoning = reasoningString ? '' : reasoningTextFromDetails(reasoningDelta?.reasoning_details);
                 if (!reasoningWithheld && hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
                     reasoningWithheld = true;
-                    // The model is thinking but the provider keeps the words: tell
+                    // The model is thinking but the words are not shared by the provider: tell
                     // the UI once, so it can say "Thinking..." and time the trace.
                     if (!accumulatedReasoning && onReasoningChunk) await onReasoningChunk('', { withheld: true });
                 }
