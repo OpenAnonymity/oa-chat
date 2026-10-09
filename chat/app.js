@@ -53,7 +53,7 @@ import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
 import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
 import { hasConversationParam, readConversationParam, setConversationParam, deleteConversationParam, normalizeConversationAddress } from './services/conversationLink.js';
-import { ensureModelTiersReady, getTicketCost, initModelTiers } from './services/modelTiers.js';
+import { ensureModelTiersReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import sessionService from './services/sessionService.js';
@@ -2899,7 +2899,7 @@ class ChatApp {
         this.messageNavigation = this.ui.mountMessageNavigation();
 
         // Initialize model tiers and model availability (loads cache, fetches fresh data in background)
-        if (this.features.tickets) initModelTiers();
+        if (this.features.tickets) startModelTierRefresh();
         this.modelConfiguration.initPinnedModels();
         this.modelConfiguration.onPinnedModelsUpdate(() => {
             void this.refreshModelsForAvailabilityUpdate();

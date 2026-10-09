@@ -4489,11 +4489,13 @@ reachable from the menu only in the composed commercial app.
   fixed ticket override. Existing usable keys and non-ticket backends retain
   their acquisition behavior; explicit ticket-budget overrides remain explicit.
 - Pricing loads coalesce while in flight, bypass the browser HTTP cache, and
-  refresh normally after 60 seconds. New key requests force a refresh even inside
+  refresh after ten minutes while visible and immediately on returning to the
+  foreground, updating model-picker badges through the existing update event. New key requests force a refresh even inside
   that window. Failed refreshes cannot authorize cached prices; unknown models
   cannot use heuristic prices for redemption. Model IDs stay client-side: only
   the existing public all-model pricing endpoint is fetched without credentials.
-- Only HTTP 400 with the exact `Invalid ticket count` message is classified as
+- HTTP 400 with structured `TIER_TICKETS_MISMATCH` (or the exact legacy
+  `Invalid ticket count` message when no code is present) is classified as
   `TICKET_PRICE_CHANGED`. The wallet keeps rejected tickets. Acquisition refreshes
   the model price, rechecks available tickets and cancellation, and retries once.
   A second rejection is surfaced as a pricing-change message. Network errors and

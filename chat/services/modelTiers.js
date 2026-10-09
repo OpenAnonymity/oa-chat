@@ -26,7 +26,8 @@ let initializationPromise = null;
 let cacheLoaded = false;
 let livePricingReady = false;
 let pricingFetchedAt = 0;
-const PRICING_MAX_AGE_MS = 60_000;
+const PRICING_MAX_AGE_MS = 10 * 60_000;
+let stopAutomaticRefresh = null;
 
 /**
  * Patterns for detecting model characteristics when not explicitly tiered.
@@ -285,4 +286,25 @@ export async function getAccessTicketCost(modelId, { signal = null } = {}) {
         throw error;
     }
     return tickets;
+}
+
+/** Keep picker badges fresh while the app is open, without background-tab polling. */
+export function startModelTierRefresh() {
+    if (stopAutomaticRefresh) return stopAutomaticRefresh;
+    const refresh = forceRefresh => { initModelTiers({ forceRefresh }).catch(() => {}); };
+    const onVisibilityChange = () => {
+        if (document.visibilityState === 'visible') refresh(true);
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const timer = setInterval(() => {
+        if (document.visibilityState === 'visible') refresh(true);
+    }, PRICING_MAX_AGE_MS);
+    timer.unref?.();
+    stopAutomaticRefresh = () => {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
+        clearInterval(timer);
+        stopAutomaticRefresh = null;
+    };
+    refresh(false);
+    return stopAutomaticRefresh;
 }

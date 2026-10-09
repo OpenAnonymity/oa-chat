@@ -121,7 +121,8 @@ class TicketClient {
 
         // Only the explicit rejected-count response permits repricing and retry.
         // The org rolls this rejection back; the local wallet must keep its tickets.
-        if (status === 400 && messageLower.trim() === 'invalid ticket count') {
+        if (status === 400 && (parsed.code === 'TIER_TICKETS_MISMATCH'
+            || (!parsed.code && messageLower.trim() === 'invalid ticket count'))) {
             const error = new Error('Model pricing changed. Please try again.');
             error.code = 'TICKET_PRICE_CHANGED';
             error.status = status;

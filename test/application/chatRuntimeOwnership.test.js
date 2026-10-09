@@ -502,6 +502,14 @@ describe('production ChatApp runtime ownership', () => {
 
     test('structured legacy ticket errors keep recovery metadata and ambiguous failures never consume tickets', () => {
         const priceChange = ticketClient.createTicketRedemptionError({ detail: 'Invalid ticket count' }, 400, 'fallback');
+        const structuredPriceChange = ticketClient.createTicketRedemptionError({ detail: {
+            error_code: 'TIER_TICKETS_MISMATCH', message: 'A localized pricing mismatch'
+        } }, 400, 'fallback');
+        assert.equal(ticketClient.createTicketRedemptionError({
+            detail: 'Invalid ticket count', error_code: 'TIER_TICKETS_MISMATCH'
+        }, 400, 'fallback').code, 'TICKET_PRICE_CHANGED');
+        assert.equal(structuredPriceChange.code, 'TICKET_PRICE_CHANGED');
+        assert.notEqual(structuredPriceChange.consumeTickets, true);
         assert.equal(priceChange.code, 'TICKET_PRICE_CHANGED');
         assert.notEqual(priceChange.consumeTickets, true);
         const ambiguous = ticketClient.createTicketRedemptionError({ detail: 'Invalid ticket count' }, 500, 'fallback');

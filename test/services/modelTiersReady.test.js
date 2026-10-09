@@ -147,3 +147,52 @@ test('an open tab refreshes before redemption, shares in-flight loads, and fails
         else globalThis.localStorage = previousLocalStorage;
     }
 });
+
+test('foreground and ten-minute refreshes update badges without polling hidden tabs', async () => {
+    const keys = ['fetch', 'localStorage', 'document', 'setInterval', 'clearInterval'];
+    const saved = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    const now = Date.now;
+    let clock = 1000, requests = 0, price = 5, onVisibility, onTimer, updates = 0;
+    Date.now = () => clock;
+    Object.assign(globalThis, {
+        localStorage: { getItem: () => null, setItem() {} },
+        document: { visibilityState: 'visible',
+            addEventListener: (_event, callback) => { onVisibility = callback; },
+            removeEventListener: (_event, callback) => { assert.equal(callback, onVisibility); onVisibility = null; } },
+        setInterval: (callback, delay) => { assert.equal(delay, 600000); onTimer = callback; return 123; },
+        clearInterval: id => { assert.equal(id, 123); onTimer = null; },
+        fetch: async () => { requests++; return new Response(JSON.stringify({ 'model-a': price })); }
+    });
+    let stop;
+    try {
+        const tiers = await import('../../chat/services/modelTiers.js?badge-refresh-test');
+        tiers.onModelTiersUpdate(() => updates++);
+        stop = tiers.startModelTierRefresh();
+        assert.equal(tiers.startModelTierRefresh(), stop);
+        await tiers.ensureModelTiersReady();
+        assert.equal(tiers.getTicketCost('model-a'), 5);
+        price = 9;
+        document.visibilityState = 'hidden';
+        onVisibility(); onTimer();
+        assert.equal(requests, 1);
+        document.visibilityState = 'visible';
+        onVisibility();
+        await tiers.ensureModelTiersReady();
+        assert.equal(tiers.getTicketCost('model-a'), 9);
+        assert.equal(updates, 2);
+        // Fetch completion can lag the timer; each visible ten-minute tick refreshes.
+        price = 3; clock += 599999;
+        onTimer();
+        await tiers.ensureModelTiersReady();
+        assert.equal(tiers.getTicketCost('model-a'), 3);
+        assert.equal(updates, 3);
+        assert.equal(requests, 3);
+    } finally {
+        stop?.();
+        Date.now = now;
+        for (const [key, descriptor] of saved) {
+            if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+            else delete globalThis[key];
+        }
+    }
+});
