@@ -1,7 +1,7 @@
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
-import { validateInferenceInput } from './services/inference/inputLimits.js';
+import { validateConversationInput } from './services/inference/inputLimits.js';
 import { createImageThumbnail, revivePendingFiles, toStorableFiles } from './services/pendingFiles.js';
 import { createComposerImageUrls } from './services/composerImageUrls.js';
 import { renderInferenceWarnings } from './ui/inferenceWarning.js';
@@ -7715,7 +7715,7 @@ class ChatApp {
     async validateCapturedInput(session, submission, content) {
         const history = await chatDB.getSessionMessages(session.id);
         const model = this.getModelsForSession(session).find(entry => entry.name === submission.model || entry.id === submission.model) || {};
-        validateInferenceInput([...history.filter(message => !message.isLocalOnly), { role: 'user', content }], model, submission.files);
+        validateConversationInput([...history.filter(message => !message.isLocalOnly), { role: 'user', content }], model, submission.files, model.id || submission.model);
     }
 
     async sendCapturedMessage(submission) {

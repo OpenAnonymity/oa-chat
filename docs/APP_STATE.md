@@ -1,3 +1,26 @@
+## October 9, 2026 — local input-size cutoff
+
+OA Chat rejects requests above **64,000 estimated text-input tokens**, even when
+model metadata is missing or the model advertises a larger context. The existing
+local estimate is text characters / 4, rounded up, plus eight tokens per message
+for framing. This is not exact tokenization (especially for code/non-English text),
+and does not guarantee the provider sees at most 64,000 tokens. Opaque images,
+audio, PDF OCR and provider-side search expansion are not counted as text. Their
+existing 32 MB aggregate and 32-image safeguards remain in place. Extracted text
+and Word documents are checked once converted into outgoing text content.
+
+Composer validation preserves the draft and existing history on rejection.
+Streaming and strict completions check history plus OA system instructions before
+request-access acquisition, then validate the final prepared body again before
+transport. Final validation covers memory/parallel/council requests that use the
+shared API and text added by billing adapters. Late attachment conversion can
+still occur after access acquisition; no rejected oversized completion is sent.
+The error is non-retryable and never triggers automatic credit/key recovery.
+
+This is a client guardrail only. Other clients and older open tabs can bypass it;
+no OpenRouter settings, issued-key allowances, account linkage, analytics, or
+privacy boundaries change. There is no automatic deletion or summarization.
+
 ## October 6, 2026 — OA/zkAPI selection analytics
 
 The optional commercial reporter counts successful explicit payment-mode changes
