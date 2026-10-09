@@ -1,3 +1,23 @@
+## October 9, 2026 — the activity timeline names the key each entry ran under
+
+A separator in the System Panel timeline used to label every session with the
+current conversation's key: `getSessionKey` read that session's live token,
+and `maskApiKey` formatted it with the *current* session's ephemeral key id. So
+older activity carried the current conversation's label (a display defect only;
+requests always used their own session's key). Entries from `api.js` also fell
+back to `networkLogger.currentSessionId`, so a stream or title request that
+finished after a conversation switch was filed under the new conversation.
+
+Now `networkLogger.logRequest` records `keyRef` (the last four characters of the
+Authorization bearer, captured before redaction; never the key), `api.js` passes
+the request's own `sessionId` and `keyRef`, and `RightPanel.getLogKeyLabel(log)`
+names the entry's key for the entry's own session: the ephemeral key id that
+session assigned to that key (`inferenceService.findEphemeralKeyId`, formatted by
+`formatEphemeralKeyId`), the session's current key for entries without a
+reference, or `...<ref>` when the session no longer knows the key. A session
+that moved to a new key gets a new separator. Tests:
+`test/components/rightPanelTimelineKeys.test.js`.
+
 ## October 9, 2026 — local input-size cutoff
 
 OA Chat rejects requests above **64,000 estimated text-input tokens**, even when

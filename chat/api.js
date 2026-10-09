@@ -467,6 +467,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: response.status,
+                    sessionId: options.sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
@@ -513,6 +515,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: Number.isFinite(error?.status) ? error.status : 0,
+                    sessionId: options.sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: body
@@ -594,6 +598,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url,
                     status: response.status,
+                    sessionId: sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: {
@@ -901,6 +907,8 @@ export class OpenRouterAPI {
                 method: 'POST',
                 url: url,
                 status,
+                sessionId: sessionId || undefined,
+                keyRef: window.networkLogger.keyRefForHeaders(headers),
                 request: {
                     headers: window.networkLogger.sanitizeHeaders(headers),
                     body: logBody
@@ -1517,6 +1525,8 @@ export class OpenRouterAPI {
                     method: 'POST',
                     url: url,
                     status: streamError.status || 0,
+                    sessionId: sessionId || undefined,
+                    keyRef: window.networkLogger.keyRefForHeaders(headers),
                     request: {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody

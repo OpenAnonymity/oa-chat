@@ -280,13 +280,25 @@ const inferenceService = {
         }
         return null;
     },
+    /** How an ephemeral key id is shown everywhere: prefix, head and tail. */
+    formatEphemeralKeyId(id) {
+        const value = String(id || '');
+        return value ? `ek-oa-v1-${value.slice(0, 6)}...${value.slice(-4)}` : '';
+    },
+    /**
+     * The ephemeral key id a session assigned to the key with this reference
+     * (the key's last four characters, as the network log records it), or null.
+     */
+    findEphemeralKeyId(session, keyRef) {
+        const mappings = session?.ephemeralKeyMappings;
+        if (!mappings || typeof keyRef !== 'string' || !keyRef) return null;
+        return Object.keys(mappings).find(id =>
+            String(mappings[id]?.underlyingKeyId || '').endsWith(keyRef)) || null;
+    },
     maskAccessToken(session, token) {
-        const prefix = 'ek-oa-v1-';
-
         // Use current ephemeral key ID if available (with ek-oa-v1- prefix)
         if (session?.currentEphemeralKeyId && session?.ephemeralKeyMappings) {
-            const id = session.currentEphemeralKeyId;
-            return `${prefix}${id.slice(0, 6)}...${id.slice(-4)}`;
+            return this.formatEphemeralKeyId(session.currentEphemeralKeyId);
         }
 
         // Fallback to backend-specific masking (no prefix - not an ephemeral key)
