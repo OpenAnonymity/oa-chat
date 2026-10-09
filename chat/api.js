@@ -11,7 +11,7 @@ import { consumeSseBody } from './services/inference/sseStream.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
 import { validateInferenceInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
 
-import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode, isKeyLimitExceededResponse } from './services/inference/openRouterCreditRecovery.js';
 import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
 import { OPENROUTER_APP_HEADERS } from './services/inference/appAttribution.js';
 import {
@@ -1475,7 +1475,9 @@ export class OpenRouterAPI {
                 error.message = getErrorMessage(errorData?.error, getErrorMessage(errorData, fallbackMessage));
                 error.status = response.status;
                 error.data = errorData;
-                if (response.status === 402) error.code = getCreditErrorCode(errorData);
+                if (response.status === 402 || isKeyLimitExceededResponse(response.status, errorData, error.creditRecoveryMessage)) {
+                    error.code = getCreditErrorCode(errorData);
+                }
                 throw error;
             }
 

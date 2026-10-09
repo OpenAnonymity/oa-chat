@@ -179,6 +179,21 @@ test('isAccessCreditExhaustedError recognizes OpenRouter credit exhaustion shape
     assert.equal(isAccessCreditExhaustedError({ status: 402, data: { detail: 'unrelated error text' } }), false);
 });
 
+test('isAccessCreditExhaustedError recognizes the 403 "Key limit exceeded" shape OpenRouter sends since October 2026', () => {
+    const spent = 'Key limit exceeded (total limit). Manage it using https://openrouter.ai/settings/keys';
+    // The 403 body carries no metadata; the words are the only signal.
+    assert.equal(isAccessCreditExhaustedError({ status: 403, message: spent, data: { error: { message: spent, code: 403 } } }), true);
+    assert.equal(isAccessCreditExhaustedError({ status: 403, message: 'Key limit exceeded (daily limit). Manage it using https://openrouter.ai/settings/keys' }), true);
+    // Display text may be rewritten; the retained original still decides.
+    assert.equal(isAccessCreditExhaustedError({ status: 403, message: 'Forbidden.', creditRecoveryMessage: spent }), true);
+    // Other 403s keep the key: a refresh spends a ticket.
+    assert.equal(isAccessCreditExhaustedError({ status: 403, message: 'Your input was flagged for moderation', data: { error: { message: 'Your input was flagged for moderation', code: 403 } } }), false);
+    assert.equal(isAccessCreditExhaustedError({ status: 403, message: 'Insufficient credits' }), false);
+    assert.equal(isAccessCreditExhaustedError({ status: 403 }), false);
+    // The old 402 shape keeps working.
+    assert.equal(isAccessCreditExhaustedError({ status: 402, message: spent, data: { error: { message: spent, metadata: { limit_source: 'openrouter_key_limit' } } } }), true);
+});
+
 test('buildVerifierSubmitKeyProof normalizes verifier and org key fields', () => {
     const proof = buildVerifierSubmitKeyProof(
         {

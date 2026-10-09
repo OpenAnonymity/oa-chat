@@ -65,6 +65,21 @@ test('richer nested provider credit messages never authorize extra ticket spendi
         return true;
     });
 });
+test('a 403 "Key limit exceeded" pre-stream rejection is a spent key; other 403s are not', async () => {
+    const spent = 'Key limit exceeded (total limit). Manage it using https://openrouter.ai/settings/keys';
+    await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify({ error: { message: spent, code: 403 } }), { status: 403 }))), error => {
+        assert.equal(error.status, 403);
+        assert.equal(error.code, 'INFERENCE_KEY_CREDITS');
+        assert.equal(isAccessCreditExhaustedError(error), true, 'the 403 shape OpenRouter sends since 2026-10 requests a new key');
+        return true;
+    });
+    await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify({ error: { message: 'Input flagged by moderation', code: 403 } }), { status: 403 }))), error => {
+        assert.equal(error.status, 403);
+        assert.notEqual(error.code, 'INFERENCE_KEY_CREDITS');
+        assert.equal(isAccessCreditExhaustedError(error), false, 'a moderation 403 keeps the key');
+        return true;
+    });
+});
 test('connection timeout bounds fetch that ignores abort', async () => {
     await assert.rejects(stream(apiFor(()=>new Promise(()=>{}))),{code:'INFERENCE_CONNECTION_TIMEOUT',retryable:false});
 });

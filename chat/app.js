@@ -8384,8 +8384,9 @@ class ChatApp {
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
                 // The following are inference backend HTTP status codes, not OA infra
-                if (terminalError?.status === 402) {
-                    // Credit/token limit errors
+                if (terminalError?.status === 402 ||
+                    (terminalError?.status === 403 && this.isAccessCreditExhaustedError(terminalError))) {
+                    // Credit/token limit errors (a spent key limit arrives as 403 since 2026-10)
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
                 } else if (terminalError?.status === 401) {
                     // Authentication errors

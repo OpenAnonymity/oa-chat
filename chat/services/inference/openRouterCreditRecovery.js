@@ -6,6 +6,23 @@ export function getCreditLimitSource(data) {
     return data?.error?.metadata?.limit_source || null;
 }
 
+// Since October 2026 OpenRouter reports a spent per-key limit as HTTP 403
+// with "Key limit exceeded (total limit). Manage it using https://openrouter.ai/..."
+// and no metadata, where it used to send 402 with limit_source
+// "openrouter_key_limit". Only the message identifies it.
+const KEY_LIMIT_EXCEEDED = /\bkey limit exceeded\b/i;
+
+export function isKeyLimitExceededMessage(message) {
+    return typeof message === 'string' && KEY_LIMIT_EXCEEDED.test(message);
+}
+
+export function isKeyLimitExceededResponse(status, data, message = null) {
+    if (status !== 402 && status !== 403) return false;
+    if (getCreditLimitSource(data) === 'openrouter_key_limit') return true;
+    return [data?.error?.message, data?.message, message]
+        .some(text => isKeyLimitExceededMessage(text));
+}
+
 export function parseOutputAffordability(message) {
     const match = typeof message === 'string' && message.match(
         /requested up to ([\d,]+) tokens, but can only afford ([\d,]+)\b/i
@@ -23,7 +40,7 @@ export function getCreditErrorCode(data) {
     if (source === 'openrouter_in_flight_budget') return 'INFERENCE_CREDIT_BUSY';
     if (parseOutputAffordability(data?.error?.message)?.affordable > 0) return 'INFERENCE_OUTPUT_BUDGET';
     if (source === 'openrouter_credits') return 'INFERENCE_PROVIDER_CREDITS';
-    if (source === 'openrouter_key_limit') return 'INFERENCE_KEY_CREDITS';
+    if (source === 'openrouter_key_limit' || isKeyLimitExceededMessage(data?.error?.message)) return 'INFERENCE_KEY_CREDITS';
     return 'INFERENCE_CREDIT_LIMIT';
 }
 
