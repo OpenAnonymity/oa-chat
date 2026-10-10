@@ -26,12 +26,19 @@ test('citation metadata is derived locally without automatic network requests', 
     }
 });
 
-test('citation rendering contains no remote preview or favicon services', () => {
-    const sources = [
+// Site icons are the one deliberate remote load (icons.duckduckgo.com, hostname
+// only, no referrer; decided 2026-10-09, see PRIVACY_MODEL.md). Everything else
+// about rendering a response stays network-silent: no preview proxies, no
+// fetch of cited pages, and the icon host is named in exactly one module.
+test('citation rendering contains no preview proxies or fetches; the icon service is the only remote host', () => {
+    const rendering = [
         readFileSync('chat/services/urlMetadata.js', 'utf8'),
         readFileSync('chat/components/MessageTemplates.js', 'utf8')
     ].join('\n');
+    const icons = readFileSync('chat/services/citationIcons.js', 'utf8');
 
-    assert.doesNotMatch(sources, /corsproxy\.io|allorigins\.win|icons\.duckduckgo\.com/);
-    assert.doesNotMatch(sources, /fetch\s*\(/);
+    assert.doesNotMatch(rendering, /corsproxy\.io|allorigins\.win|icons\.duckduckgo\.com/);
+    assert.doesNotMatch(rendering + icons, /fetch\s*\(/);
+    assert.match(icons, /https:\/\/icons\.duckduckgo\.com\/ip3\//);
+    assert.match(icons, /referrerpolicy="no-referrer"/);
 });

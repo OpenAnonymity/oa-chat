@@ -157,10 +157,17 @@ station, and verifier do not receive any of these prompts or responses. Browser
 activity logs retain only operational metadata and redact
 prompt/response content at the logging sink.
 
-Response rendering also remains inside this boundary. Citation and inline-link
-domains are derived locally; the client does not automatically send response URLs
-to preview proxies, favicon services, or cited origins. A source origin sees the
-browser only after the user explicitly opens that link.
+Response rendering stays mostly inside this boundary. Citation and inline-link
+titles and domains are derived locally; the client never sends response URLs to
+preview proxies or to the cited origins, and a source origin sees the browser
+only after the user explicitly opens that link. Site icons are the one
+exception, by product decision on 2026-10-09 (they were removed on 2026-08-21
+and restored because unmarked sources were not recognisable): as an answer
+renders, the browser loads `https://icons.duckduckgo.com/ip3/<hostname>.ico`
+for each cited or linked hostname, so DuckDuckGo's icon service learns those
+hostnames and the browser's IP address at that moment. It receives the hostname
+only, never the path or query, and no referrer. Icons for the providers OA ships
+with are bundled and never requested.
 
 ### 4. Key verification (verifier)
 
