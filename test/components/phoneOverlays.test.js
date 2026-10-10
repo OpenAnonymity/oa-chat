@@ -31,12 +31,17 @@ test('phone Safari and Home Screen settings sit above the composer, match its ed
     assert.equal(style.maxHeight, '596px');
 });
 
-test('laptop browser and Electron settings retain their released button anchoring', () => {
+test('laptop browser and Electron settings hang above the composer card, centred on the gear', () => {
     for (const view of [phoneView({ screen: { width: 1280, height: 852 } }), phoneView({ electronAPI: { isElectron: true } }),
         phoneView({ innerWidth: 1280 })]) {
         const style = position(view);
-        assert.equal(style.width, '340px'); assert.equal(style.bottom, '130px');
-        assert.equal(style.maxHeight, '710px');
+        // 340 wide, centred on the gear (270 + 16 - 170 = 116) and clamped to the
+        // viewport's 12px margin, not the card's edges.
+        assert.equal(style.width, '340px');
+        assert.equal(style.left, `${Math.max(12, Math.min(116, view.innerWidth - 340 - 12))}px`);
+        // Bottom edge 8px above the card's top (852 - 650 + 8), never over the text box.
+        assert.equal(style.bottom, '210px'); assert.equal(style.top, 'auto');
+        assert.equal(style.maxHeight, '630px');
     }
 });
 

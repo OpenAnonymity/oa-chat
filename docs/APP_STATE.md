@@ -1,3 +1,13 @@
+## October 9, 2026 — the settings panel hangs above the composer on every layout
+
+On laptops the gear's panel was hung from the gear button, so its bottom edge
+sat inside the composer card, over the text box. It now hangs 8px above the
+card's top edge on every layout (`ChatInput`: `anchorTop` is the card's top
+whenever the card is measurable), still centred on the gear and clamped to the
+viewport on laptops; phones keep the card's edges and the 70% cap. The fold /
+re-anchor logic is unchanged (it reads the resting `bottom`). Test:
+`test/components/phoneOverlays.test.js`.
+
 ## October 9, 2026 — release test browser fixtures must stay local
 
 The unit-test runner uses `--test-isolation=none`. A module-level `document`/
