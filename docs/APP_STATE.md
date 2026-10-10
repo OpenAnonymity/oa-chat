@@ -1,3 +1,21 @@
+## October 9, 2026 — release test browser fixtures must stay local
+
+The unit-test runner uses `--test-isolation=none`. A module-level `document`/
+`window` fixture in `councilLaneStoppedRender.test.js` was overwritten before
+its rendering assertions ran. The rendering tests now install their browser
+fixtures inside each test's render call, import the template there, and restore
+the previous globals in `finally`.
+
+Separately, shared browser fixtures caused `passkeyRelay.test.js` to initialize
+a nonexistent relay page at import time. Its pure-helper tests now import the
+module with `document` temporarily absent, then restore the original property
+descriptor in `finally`. Keep both files in the full suite: isolated runs miss
+these interactions. The subsequent zkAPI suite also needed its credit-recovery
+logger mock to supply the new `keyRefForHeaders` method; otherwise the mock's
+TypeError hid the provider error being asserted. It now restores the previous
+logger after the test, including on failure. No application rendering, passkey
+behavior, test assertions, or release gate is changed.
+
 ## October 9, 2026 — the activity timeline names the key each entry ran under
 
 A separator in the System Panel timeline used to label every session with the

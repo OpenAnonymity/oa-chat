@@ -98,9 +98,15 @@ test('real private-payment adapter retains its affordability calculation before 
     assert.equal(api.prepareRequestBody({}, { spendingLimitUsd: 5 }).max_tokens, 30000);
 });
 
-test('terminal failure preserves diagnostics while activity logs exclude provider text', async () => {
+test('terminal failure preserves diagnostics while activity logs exclude provider text', async t => {
     const logs = [];
-    window.networkLogger = { sanitizeHeaders: () => ({}), logRequest: entry => logs.push(entry) };
+    const previousLogger = window.networkLogger;
+    t.after(() => { window.networkLogger = previousLogger; });
+    window.networkLogger = {
+        sanitizeHeaders: () => ({}),
+        keyRefForHeaders: () => '',
+        logRequest: entry => logs.push(entry)
+    };
     const api = new OpenRouterAPI({ networkTransport: { fetchWithRetry: async () => fail() } });
     await assert.rejects(api.streamCompletion([], 'test/model', 'key', () => {}), error => {
         assert.equal(error.status, 402);
@@ -110,5 +116,4 @@ test('terminal failure preserves diagnostics while activity logs exclude provide
     });
     assert.deepEqual(logs.at(-1).error, { status: 402, code: 'INFERENCE_OUTPUT_BUDGET' });
     assert.doesNotMatch(JSON.stringify(logs), /can only afford|Bearer key/);
-    delete window.networkLogger;
 });
