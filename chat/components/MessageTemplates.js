@@ -131,7 +131,7 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
-    if (phase === 'preparing-access') return phase;
+    if (phase === 'preparing-access' || phase === 'thinking') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -147,7 +147,9 @@ function formatPendingTimestamp(timestamp) {
 }
 
 function getPendingIndicatorLabel(phase) {
-    return normalizePendingPhase(phase) === 'waiting-response'
+    const normalizedPhase = normalizePendingPhase(phase);
+    if (normalizedPhase === 'thinking') return 'Thinking...';
+    return normalizedPhase === 'waiting-response'
         ? 'Waiting for response'
         : 'Requesting ephemeral key';
 }
@@ -937,12 +939,29 @@ function generateReasoningSubtitle(reasoning, reasoningDuration) {
  * @param {boolean} isStreaming - Whether reasoning is currently streaming
  * @param {function} processContent - Function to process and render reasoning content as HTML
  * @param {number} reasoningDuration - Duration in milliseconds (optional)
+ * @param {Array} accessTrace - Private-access steps to show inside the trace (optional)
+ * @param {{withheld?: boolean}} options - withheld: the provider reported thinking but kept the words
  * @returns {string} HTML string or empty string
  */
-function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration, accessTrace = null) {
+function buildReasoningTrace(reasoning, messageId, isStreaming = false, processContent, reasoningDuration, accessTrace = null, options = {}) {
+    const reasoningId = `reasoning-${messageId}`;
+    // Thinking happened, but the provider kept the words (encrypted reasoning
+    // only): the header alone, timed, with nothing to open.
+    if (!reasoning && !isStreaming && options?.withheld) {
+        const duration = formatReasoningDuration(reasoningDuration);
+        return `
+        <div class="reasoning-trace reasoning-trace-withheld w-full" id="${reasoningId}">
+            <div class="reasoning-toggle inline-flex items-center gap-2 px-2 py-1 text-left rounded">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                </svg>
+                <span id="reasoning-subtitle-${messageId}" class="text-xs text-muted-foreground">${duration || 'Thought'}<span class="reasoning-withheld-note"> · not shared by the provider</span></span>
+            </div>
+        </div>
+    `;
+    }
     if (!reasoning && !isStreaming) return '';
 
-    const reasoningId = `reasoning-${messageId}`;
     const contentId = `reasoning-content-${messageId}`;
     const toggleId = `reasoning-toggle-${messageId}`;
     const subtitleId = `reasoning-subtitle-${messageId}`;
@@ -2066,7 +2085,8 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
         message.streamingReasoning || false,
         processContentWithLatex,
         message.reasoningDuration,
-        accessStages
+        accessStages,
+        { withheld: message.reasoningWithheld === true }
     );
     const hasAgentTrace = message.agentTraceStreaming || (Array.isArray(message.agentTrace) && message.agentTrace.length > 0);
     const agentTraceBubble = hasAgentTrace

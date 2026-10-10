@@ -1307,9 +1307,9 @@ class ChatApp {
                     await onTokenUpdate?.(usage);
                     await this.tryRecordRuntimeUsage({ sessionId: session.id, requestId: id,
                         usage: latestUsage, kind, final: false });
-                }, files, searchEnabled, controller, onStreamOpen, async chunk => {
+                }, files, searchEnabled, controller, onStreamOpen, async (chunk, meta) => {
                     if (chunk) receivedOutput = true;
-                    await onReasoningChunk?.(chunk);
+                    await onReasoningChunk?.(chunk, meta);
                 },
                 reasoningEnabled, reasoningEffort,
                 progress => this.setSessionPendingProgress(session.id, progress),
@@ -7292,6 +7292,11 @@ class ChatApp {
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
+                            // Thinking the provider kept to itself ends with the first word of the answer.
+                            if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
+                                reasoningEndTime = Date.now();
+                                streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                            }
 
                             // Handle text content
                             if (chunk) {
@@ -7370,7 +7375,19 @@ class ChatApp {
                             this.updateTypingIndicator(typingId, 'stream-open');
                         }
                     },
-                    async (reasoningChunk) => {
+                    async (reasoningChunk, meta) => {
+                        // Reasoning the provider withholds: no words to show, so the
+                        // pending line says "Thinking..." and the trace is timed from here.
+                        if (meta?.withheld) {
+                            if (!reasoningStartTime) {
+                                reasoningStartTime = Date.now();
+                                streamingMessage.reasoningWithheld = true;
+                                this.updateSessionStreamingPhase(session.id, 'thinking');
+                                streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                                if (typingId) this.updateTypingIndicator(typingId, 'thinking');
+                            }
+                            return;
+                        }
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -8124,6 +8141,11 @@ class ChatApp {
                             this.markPendingTurnStarted(streamingMessage);
                             streamingMessage.streamingPending = false;
                             streamingMessage.streamingPhase = null;
+                            // Thinking the provider kept to itself ends with the first word of the answer.
+                            if (streamingMessage.reasoningWithheld && reasoningStartTime && !reasoningEndTime) {
+                                reasoningEndTime = Date.now();
+                                streamingMessage.reasoningDuration = reasoningEndTime - reasoningStartTime;
+                            }
 
                             // Handle text content
                             if (chunk) {
@@ -8223,7 +8245,19 @@ class ChatApp {
                             this.updateTypingIndicator(typingId, 'stream-open');
                         }
                     },
-                    async (reasoningChunk) => {
+                    async (reasoningChunk, meta) => {
+                        // Reasoning the provider withholds: no words to show, so the
+                        // pending line says "Thinking..." and the trace is timed from here.
+                        if (meta?.withheld) {
+                            if (!reasoningStartTime) {
+                                reasoningStartTime = Date.now();
+                                streamingMessage.reasoningWithheld = true;
+                                this.updateSessionStreamingPhase(session.id, 'thinking');
+                                streamingMessage.streamingPhase = this.getSessionStreamingState(session.id).phase;
+                                if (typingId) this.updateTypingIndicator(typingId, 'thinking');
+                            }
+                            return;
+                        }
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -8392,8 +8426,9 @@ class ChatApp {
                 let userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try re-submitting the query. **Error**: ${errorMessage}`;
 
                 // The following are inference backend HTTP status codes, not OA infra
-                if (terminalError?.status === 402) {
-                    // Credit/token limit errors
+                if (terminalError?.status === 402 ||
+                    (terminalError?.status === 403 && this.isAccessCreditExhaustedError(terminalError))) {
+                    // Credit/token limit errors (a spent key limit arrives as 403 since 2026-10)
                     userFriendlyMessage = `Sorry, I encountered an error while processing your request. Try submitting the query again. **Error**: ${errorMessage}`;
                 } else if (terminalError?.status === 401) {
                     // Authentication errors

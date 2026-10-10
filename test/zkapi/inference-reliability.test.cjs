@@ -65,6 +65,53 @@ test('richer nested provider credit messages never authorize extra ticket spendi
         return true;
     });
 });
+test('a 403 "Key limit exceeded" pre-stream rejection is a spent key; other 403s are not', async () => {
+    const spent = 'Key limit exceeded (total limit). Manage it using https://openrouter.ai/settings/keys';
+    await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify({ error: { message: spent, code: 403 } }), { status: 403 }))), error => {
+        assert.equal(error.status, 403);
+        assert.equal(error.code, 'INFERENCE_KEY_CREDITS');
+        assert.equal(isAccessCreditExhaustedError(error), true, 'the 403 shape OpenRouter sends since 2026-10 requests a new key');
+        return true;
+    });
+    await assert.rejects(stream(apiFor(async () => new Response(JSON.stringify({ error: { message: 'Input flagged by moderation', code: 403 } }), { status: 403 }))), error => {
+        assert.equal(error.status, 403);
+        assert.notEqual(error.code, 'INFERENCE_KEY_CREDITS');
+        assert.equal(isAccessCreditExhaustedError(error), false, 'a moderation 403 keeps the key');
+        return true;
+    });
+});
+test('reasoning carried only in reasoning_details reaches the trace; a chunk with both is not doubled; withheld reasoning is reported', async () => {
+    const done = 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n';
+    const reasoningOf = async text => {
+        const api = apiFor(async () => response(text));
+        let reasoning = '';
+        const withheldSignals = [];
+        const result = await api.streamCompletion([{role:'user',content:'hi'}],'x-ai/grok-4.7','synthetic-key',()=>{},null,[],false,null,null,(chunk, meta) => { reasoning += chunk; if (meta?.withheld) withheldSignals.push(chunk); },true,'medium');
+        return { reasoning, result, withheldSignals };
+    };
+    // Structured details only (no `reasoning` string on the delta).
+    const detailsOnly = 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"Looking at the post. ","format":"xai-responses-v1","index":0}]}}]}\n\n'
+        + 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"Two clips."}]}}]}\n\n' + delta + done;
+    let { reasoning, result, withheldSignals } = await reasoningOf(detailsOnly);
+    assert.equal(reasoning, 'Looking at the post. Two clips.');
+    assert.equal(result.reasoning, 'Looking at the post. Two clips.');
+    assert.equal(result.reasoningWithheld, false);
+    assert.deepEqual(withheldSignals, [], 'words shown: the UI is not told the reasoning was withheld');
+    // Both shapes in one chunk: the string wins, the details are not appended again.
+    const both = 'data: {"choices":[{"delta":{"reasoning":"Once. ","reasoning_details":[{"type":"reasoning.text","text":"Once. "}]}}]}\n\n' + delta + done;
+    ({ reasoning, result } = await reasoningOf(both));
+    assert.equal(reasoning, 'Once. ');
+    // Encrypted only: nothing to show, and the result says the words were withheld.
+    const withheld = 'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"opaque-blob"}]}}]}\n\n' + delta + done;
+    ({ reasoning, result, withheldSignals } = await reasoningOf(withheld));
+    assert.equal(reasoning, '');
+    assert.equal(result.reasoning, null);
+    assert.equal(result.reasoningWithheld, true);
+    assert.deepEqual(withheldSignals, [''], 'the UI is told once, with no words, so it can say Thinking... and time the trace');
+    // A plain answer reports neither.
+    ({ result } = await reasoningOf(delta + done));
+    assert.equal(result.reasoningWithheld, false);
+});
 test('connection timeout bounds fetch that ignores abort', async () => {
     await assert.rejects(stream(apiFor(()=>new Promise(()=>{}))),{code:'INFERENCE_CONNECTION_TIMEOUT',retryable:false});
 });

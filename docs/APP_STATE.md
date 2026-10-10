@@ -6724,6 +6724,34 @@ and completion only; it never exposes codes, ticket material, credentials, or
 account identifiers. Paid preparation continues to own its existing status and
 deferred wallet-publication path.
 
+## 2026-10-09: Spent keys arrive as 403; reasoning read from reasoning_details
+
+OpenRouter now reports a spent per-key limit as HTTP 403 with the body
+`{"error":{"message":"Key limit exceeded (total limit). Manage it using
+https://openrouter.ai/…","code":403}}` and no `metadata`, where it used to send
+402 with `limit_source: "openrouter_key_limit"`. `isAccessCreditExhaustedError`
+now accepts a 403 whose retained original message says "Key limit exceeded"
+(`isKeyLimitExceededResponse` in `openRouterCreditRecovery.js`), so the send
+loop, Council lanes and quick ask request a new key once, as they did on 402.
+Every other 403 (moderation, permissions) keeps the key: a refresh spends a
+ticket. The error code for that shape is `INFERENCE_KEY_CREDITS`, and the
+"try again" credit copy covers it when the refresh itself fails.
+
+Reasoning: the stream parser read only `delta.reasoning` (plus the
+Responses-style events). It now also reads the delta's structured
+`reasoning_details` (`reasoning.text` text, `reasoning.summary` summary;
+`reasoningTextFromDetails` in `reasoningParser.js`) when the string is absent, so
+a chunk carrying both is not counted twice. A `reasoning.encrypted` entry means
+the provider reasoned but withheld the words; the stream result reports it as
+`reasoningWithheld: true` and nothing is drawn for it. Council's non-streaming
+`extractReasoning` reads the same details. Tests:
+`test/services/reasoningDetails.test.js`, `test/zkapi/inference-reliability.test.cjs`,
+`test/application/accessController.test.js`, `test/services/openRouterCreditRecovery.test.js`.
+
+## 2026-10-09 — Reasoning not shared by the provider
+
+When a stream carries only `reasoning.encrypted` details before any content, `api.js` calls `onReasoningChunk('', { withheld: true })` once. The send loops set `streamingMessage.reasoningWithheld`, start the reasoning timer, and move the pending indicator to the `thinking` phase ("Thinking..."; `normalizePendingPhase` passes it through in both domain modules, and the zkAPI presentation has a matching entry). The first content chunk sets `reasoningDuration`. `buildReasoningTrace(..., { withheld: true })` with no words renders the header alone: "Thought for 12s · not shared by the provider", no chevron, no body, not a button (`.reasoning-trace-withheld`). Words always win over the flag.
+
 ## 2026-10-09: Phone panels and menus (Safari + Home Screen)
 
 - `ui/phoneAppLayout.js` owns the presentation scope: viewport under 768px,

@@ -12,7 +12,7 @@ import { consumeSseBody } from './services/inference/sseStream.js';
 import { createInferenceWatchdog, inferenceError, discardResponseBody, readInferenceErrorBody } from './services/inference/reliability.js';
 import { validateInferenceInput, validateConversationInput, validateSerializedInferenceBody } from './services/inference/inputLimits.js';
 
-import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode } from './services/inference/openRouterCreditRecovery.js';
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode, isKeyLimitExceededResponse } from './services/inference/openRouterCreditRecovery.js';
 import { applyOutputTokenLimit } from './services/inference/outputTokenLimit.js';
 import { OPENROUTER_APP_HEADERS } from './services/inference/appAttribution.js';
 import {
@@ -27,6 +27,7 @@ import apiKeyStore from './services/apiKeyStore.js';
 import { loadModelCatalog, saveModelCatalog } from './services/modelCatalogCache.js';
 import { normalizeOpenRouterModelProviders, resolveProviderFromModelId } from './services/providerRegistry.js';
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort } from './services/reasoningConfig.js';
+import { hasWithheldReasoning, reasoningTextFromDetails } from './services/reasoningParser.js';
 import { paragraphBreakBefore } from './services/streamSegments.js';
 
 const OPENROUTER_BACKEND_ID = 'openrouter';
@@ -716,6 +717,9 @@ export class OpenRouterAPI {
             || null;
         let accumulatedContent = '';
         let accumulatedReasoning = '';
+        // The provider said the model reasoned but kept the words to itself
+        // (encrypted reasoning_details). There is nothing to show for it.
+        let reasoningWithheld = false;
         let completionFinishReason = null;
         let hasReceivedFirstToken = false;
         // Which stream the last delta belonged to. When a model interleaves
@@ -1037,15 +1041,27 @@ export class OpenRouterAPI {
                     }
                 }
 
-                // Check for reasoning in various possible formats
-                // OpenRouter might send reasoning in different ways
+                // Reasoning arrives in one of several shapes: a Responses-style
+                // event, a bare reasoning_delta, the chat delta's `reasoning`
+                // string, or only the delta's structured `reasoning_details`
+                // (reasoning.text / reasoning.summary). The string is read first
+                // so a chunk carrying both is not counted twice.
+                const reasoningDelta = parsed.choices?.[0]?.delta;
+                const reasoningString = typeof reasoningDelta?.reasoning === 'string' ? reasoningDelta.reasoning : '';
+                const detailReasoning = reasoningString ? '' : reasoningTextFromDetails(reasoningDelta?.reasoning_details);
+                if (!reasoningWithheld && hasWithheldReasoning(reasoningDelta?.reasoning_details)) {
+                    reasoningWithheld = true;
+                    // The model is thinking but the words are not shared by the provider: tell
+                    // the UI once, so it can say "Thinking..." and time the trace.
+                    if (!accumulatedReasoning && onReasoningChunk) await onReasoningChunk('', { withheld: true });
+                }
                 if (parsed.type === 'response.reasoning.delta' ||
                     parsed.reasoning_delta ||
-                    (parsed.choices?.[0]?.delta?.reasoning)) {
+                    reasoningString || detailReasoning) {
 
                     let reasoningContent = parsed.delta ||
                                            parsed.reasoning_delta ||
-                                           parsed.choices?.[0]?.delta?.reasoning || '';
+                                           reasoningString || detailReasoning || '';
 
                     if (reasoningContent && onReasoningChunk) {
                         hasReceivedFirstToken = true;
@@ -1283,6 +1299,8 @@ export class OpenRouterAPI {
                 model: modelUsed,
                 finishReason: completionFinishReason,
                 reasoning: accumulatedReasoning || null,
+                // True when the provider reported reasoning it did not share.
+                reasoningWithheld: reasoningWithheld && !accumulatedReasoning,
                 citations: citations.length > 0 ? citations : null
             };
         };
@@ -1468,7 +1486,9 @@ export class OpenRouterAPI {
                 error.message = getErrorMessage(errorData?.error, getErrorMessage(errorData, fallbackMessage));
                 error.status = response.status;
                 error.data = errorData;
-                if (response.status === 402) error.code = getCreditErrorCode(errorData);
+                if (response.status === 402 || isKeyLimitExceededResponse(response.status, errorData, error.creditRecoveryMessage)) {
+                    error.code = getCreditErrorCode(errorData);
+                }
                 throw error;
             }
 

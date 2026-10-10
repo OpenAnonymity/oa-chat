@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchWithOpenRouterCreditRecovery, parseOutputAffordability } from '../../chat/services/inference/openRouterCreditRecovery.js';
+import { fetchWithOpenRouterCreditRecovery, getCreditErrorCode, isKeyLimitExceededResponse, parseOutputAffordability } from '../../chat/services/inference/openRouterCreditRecovery.js';
 import { isAccessCreditExhaustedError } from '../../chat/application/accessController.js';
 
 const url = 'https://openrouter.ai/api/v1/chat/completions';
@@ -115,4 +115,24 @@ test('affordability parser rejects malformed or inconsistent amounts', () => {
     for (const text of [null, 'credits', message.replace('54775', '65536'), message.replace('54775', '-1')]) {
         assert.equal(parseOutputAffordability(text), null);
     }
+});
+
+test('a 403 "Key limit exceeded" is the spent-key code and is returned intact, not retried on the same key', async () => {
+    const spent = 'Key limit exceeded (total limit). Manage it using https://openrouter.ai/settings/keys';
+    const body = { error: { message: spent, code: 403 } };
+    assert.equal(isKeyLimitExceededResponse(403, body), true);
+    assert.equal(isKeyLimitExceededResponse(403, { error: { message: 'Forbidden' } }), false);
+    assert.equal(isKeyLimitExceededResponse(403, null, spent), true);
+    assert.equal(isKeyLimitExceededResponse(500, body), false);
+    assert.equal(isKeyLimitExceededResponse(402, { error: { message: 'x', metadata: { limit_source: 'openrouter_key_limit' } } }), true);
+    assert.equal(getCreditErrorCode(body), 'INFERENCE_KEY_CREDITS');
+    let calls = 0;
+    const result = await fetchWithOpenRouterCreditRecovery(async () => {
+        calls++;
+        return new Response(JSON.stringify(body), { status: 403 });
+    }, url, init);
+    assert.equal(calls, 1);
+    assert.equal(result.status, 403);
+    const data = await result.json();
+    assert.equal(isAccessCreditExhaustedError({ status: 403, data, message: spent }), true);
 });

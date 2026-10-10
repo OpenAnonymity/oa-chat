@@ -1,5 +1,5 @@
 export function normalizePendingPhase(phase) {
-    if (phase === 'settling-previous') return 'settling-previous';
+    if (phase === 'settling-previous' || phase === 'thinking') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -222,6 +222,15 @@ export function derivePendingIndicatorPresentation(phase, progress = null) {
             current: 'Waiting for response',
             description: 'Message sent. Waiting for the response.',
             progressPhase: 'waiting-response',
+            steps: []
+        };
+    }
+    if (normalizedPhase === 'thinking') {
+        return {
+            mode: 'thinking',
+            current: 'Thinking...',
+            description: 'The model is reasoning before it answers. The reasoning is not shared by the provider.',
+            progressPhase: 'thinking',
             steps: []
         };
     }

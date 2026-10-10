@@ -2,16 +2,20 @@ import {
     isVerifierResultUsable,
     LOCAL_LOOPBACK_VERIFIER_BYPASS_STATUS
 } from '../services/inference/verifiedAccess.js';
-import { getCreditLimitSource, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
+import { getCreditLimitSource, isKeyLimitExceededResponse, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
 import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
 
 export function isAccessCreditExhaustedError(error) {
-    if (error?.status !== 402) return false;
+    const status = error?.status;
+    if (status !== 402 && status !== 403) return false;
     const responseData = error.data || error.responseData || null;
     // Richer display text must not widen the legacy credit-refresh heuristic:
     // a refresh can spend a ticket. Provider adapters retain its original text.
     const recoveryMessage = typeof error.creditRecoveryMessage === 'string'
         ? error.creditRecoveryMessage : error.message;
+    // A 403 is a key whose limit is spent only when OpenRouter says so in
+    // words; every other 403 (moderation, permissions) keeps the key.
+    if (status === 403) return isKeyLimitExceededResponse(status, responseData, recoveryMessage);
     const source = getCreditLimitSource(responseData);
     // Account-wide funding and in-flight holds cannot be repaired by spending
     // another ticket. Nor is a key exhausted when a smaller output still fits.

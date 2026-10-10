@@ -1,6 +1,6 @@
 import { trackFeatureUsage } from '../services/featureUsage.js';
 import { chatDB as defaultChatDB } from '../db.js';
-import { parseReasoningContent } from '../services/reasoningParser.js';
+import { parseReasoningContent, reasoningTextFromDetails } from '../services/reasoningParser.js';
 import {
     acquireVerifiedAccess,
     buildSafeAccessErrorMetadata
@@ -102,8 +102,9 @@ function describeLaneForSynthesis(entry) {
 
 function extractReasoning(result) {
     const message = result?.data?.choices?.[0]?.message;
-    const reasoning = result?.reasoning || message?.reasoning || message?.reasoning_details || null;
-    return typeof reasoning === 'string' ? parseReasoningContent(reasoning) : null;
+    const reasoning = result?.reasoning || message?.reasoning
+        || reasoningTextFromDetails(message?.reasoning_details) || null;
+    return typeof reasoning === 'string' && reasoning ? parseReasoningContent(reasoning) : null;
 }
 
 function extractCitations(result) {

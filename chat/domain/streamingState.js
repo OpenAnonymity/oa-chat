@@ -1,5 +1,6 @@
 export function normalizePendingPhase(phase) {
-    if (phase === 'preparing-access') return phase;
+    // 'thinking': the model is reasoning; the words are not shared by the provider.
+    if (phase === 'preparing-access' || phase === 'thinking') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
