@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { canAnchorSources, setSourcePopover } from '../../chat/ui/sourcePopover.js';
 import { revealSources, cancelSourceReveal, isLastSourceResponse } from '../../chat/ui/sourceReveal.js';
 
 // Exercise the actual controller methods without booting auth/wallet services.
 const source = fs.readFileSync('chat/app.js', 'utf8');
-const start = source.indexOf('    toggleCitations(messageId) {');
+const start = source.indexOf('    toggleCitations(messageId, pointerType) {');
 const end = source.indexOf('    /**\n     * Toggle scrubber', start);
 function fixture() {
     const element = () => ({ attrs: {}, setAttribute(name, value) { this.attrs[name] = value; }, getAttribute(name) { return this.attrs[name]; } });
@@ -16,7 +17,7 @@ function fixture() {
     const content = { closest: () => section };
     const toggle = { ...element(), focus: options => { toggle.focusOptions = options; } };
     const document = { getElementById: id => id === 'citations-content-test' ? content : id === 'citations-toggle-test' ? toggle : null };
-    const Controller = vm.runInNewContext(`(class { ${source.slice(start, end)} })`, { document, console, revealSources, cancelSourceReveal, isLastSourceResponse });
+    const Controller = vm.runInNewContext(`(class { ${source.slice(start, end)} })`, { document, console, revealSources, cancelSourceReveal, isLastSourceResponse, canAnchorSources, setSourcePopover });
     const app = new Controller(); app.state = { currentSessionId: 'test-chat' }; app.elements = {}; app.updateScrollButtonVisibility = () => {};
     return { app, toggle, section, inner };
 }

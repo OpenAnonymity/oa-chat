@@ -6857,3 +6857,30 @@ native compositor frames cannot move a newly selected chat. Core behavioral
 checks are in `test/ui/sourceReveal.test.js` and `test/components/citationDisclosure.test.js`;
 local browser fixtures also cover phone layouts, both animation directions and
 Parallel ordering. No live inference, accounts or wallet data are needed.
+
+
+## 2026-10-10: Keep newest Sources under the desktop pointer
+
+For the bottommost response, mouse/keyboard users now get an anchored Sources
+popup. The list opens below the toggle when it fits and above when space below
+is tight. Only the `.t-acc-panel` enters the native popover top layer; its section
+retains the existing transcript spacing, so opening and closing do not change
+scroll position or move the toggle away from the mouse. The popup uses the shared
+Transitions.dev dropdown motion in both directions; the chevron keeps its shared
+accordion flip. Restore the collapsed grid without a second height transition
+when removing the popover styles, or closing briefly moves the transcript.
+
+`ui/sourcePopover.js` owns one popup per transcript, including Escape, outside
+click/focus, scroll/resize dismissal, rapid reversal and detached-message cleanup.
+Closed cards become inert before exit motion. A focused card returns focus to
+Sources on close. The popup is torn down on rerender without mutating a new node
+that reused the same message ID. Current browsers without the native Popover API
+fall back to the existing inline reveal.
+
+Touch events (including touch on a mouse-capable hybrid), phone layouts with a
+coarse pointer, older answers, and inline citations whose Sources button is
+offscreen keep the existing smooth inline reveal. Inline citation clicks forward
+the input pointer type too. No app data or backend behavior changes. Regression
+coverage includes `test/ui/sourcePopover.test.js` plus local browser fixtures that
+click the same physical coordinates to open and close, check above/below placement,
+and exercise Escape, focus, rerenders, resize and the phone/older-answer paths.

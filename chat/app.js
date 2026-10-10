@@ -13,6 +13,7 @@ import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
 import { setScrollButtonVisible, waitForScrollBottom } from './ui/scrollToBottom.js';
 import { revealSources, cancelSourceReveal, isSourceRevealActive, isLastSourceResponse } from './ui/sourceReveal.js';
+import { canAnchorSources, setSourcePopover } from './ui/sourcePopover.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -2607,7 +2608,7 @@ class ChatApp {
             const toggleBtn = e.target.closest('.citations-toggle-btn');
             if (toggleBtn) {
                 const messageId = toggleBtn.getAttribute('data-message-id');
-                this.toggleCitations(messageId);
+                this.toggleCitations(messageId, e.pointerType);
                 return;
             }
 
@@ -2616,7 +2617,7 @@ class ChatApp {
             if (citation) {
                 const messageId = citation.getAttribute('data-message-id');
                 const citationNum = citation.getAttribute('data-citation');
-                this.scrollToCitation(messageId, citationNum);
+                this.scrollToCitation(messageId, citationNum, e.pointerType);
                 return;
             }
         });
@@ -11878,12 +11879,12 @@ Your API key has been cleared. A new key from a different station will be obtain
      * Toggles citation visibility for a message.
      * @param {string} messageId - The message ID
      */
-    toggleCitations(messageId) {
+    toggleCitations(messageId, pointerType) {
         const toggle = document.getElementById(`citations-toggle-${messageId}`);
-        this.setCitationsOpen(messageId, toggle?.getAttribute('aria-expanded') !== 'true');
+        this.setCitationsOpen(messageId, toggle?.getAttribute('aria-expanded') !== 'true', pointerType);
     }
 
-    setCitationsOpen(messageId, opening) {
+    setCitationsOpen(messageId, opening, pointerType) {
         const carousel = document.getElementById(`citations-content-${messageId}`);
         const toggle = document.getElementById(`citations-toggle-${messageId}`);
         const section = carousel?.closest('.citations-section');
@@ -11893,6 +11894,8 @@ Your API key has been cleared. A new key from a different station will be obtain
 
         const scroller = this.elements.chatArea;
         cancelSourceReveal(scroller);
+        const wasOpen = section.getAttribute('data-open') === 'true';
+        const latest = isLastSourceResponse(section, this.elements.messagesContainer);
         const bottomTarget = () => {
             const spacer = this.activePromptScroll?.spacerEl;
             const spacerHeight = spacer?.isConnected && !spacer.hidden ? spacer.getBoundingClientRect().height : 0;
@@ -11900,8 +11903,7 @@ Your API key has been cleared. A new key from a different station will be obtain
         };
         // A lower Parallel lane/synthesis or a later user turn also counts as
         // later content. Never jump past it when opening an older response.
-        const followBottom = isLastSourceResponse(section, this.elements.messagesContainer)
-            && (opening || Math.abs(bottomTarget() - scroller.scrollTop) <= 4);
+        const followBottom = latest && (opening || Math.abs(bottomTarget() - scroller.scrollTop) <= 4);
         panel.getBoundingClientRect(); // Commit the starting layout for a reversible CSS transition.
         if (!opening && inner.contains(document.activeElement)) toggle.focus({ preventScroll: true });
         section.setAttribute('data-open', String(opening));
@@ -11910,6 +11912,21 @@ Your API key has been cleared. A new key from a different station will be obtain
         inner.inert = !opening;
         inner.setAttribute('aria-hidden', String(!opening));
         const sessionId = this.state.currentSessionId;
+        const popover = setSourcePopover({
+            scroller, section, panel, trigger: toggle, opening, wasOpen,
+            toolbar: document.getElementById('chat-toolbar'), composer: this.elements.inputCard,
+            preferPopover: latest && canAnchorSources(scroller?.ownerDocument?.defaultView, pointerType),
+            onDismiss: () => {
+                if (this.state.currentSessionId === sessionId
+                    && document.getElementById(`citations-content-${messageId}`) === carousel) {
+                    this.setCitationsOpen(messageId, false);
+                }
+            }
+        });
+        if (popover) {
+            this.updateScrollButtonVisibility();
+            return;
+        }
         revealSources({
             scroller, panel, trigger: toggle, opening, followBottom, bottomTarget,
             toolbar: document.getElementById('chat-toolbar'), composer: this.elements.inputCard,
@@ -11921,8 +11938,8 @@ Your API key has been cleared. A new key from a different station will be obtain
     }
 
     /** Scroll to a source using the same disclosure motion as its button. */
-    scrollToCitation(messageId, citationNum) {
-        this.setCitationsOpen(messageId, true);
+    scrollToCitation(messageId, citationNum, pointerType) {
+        this.setCitationsOpen(messageId, true, pointerType);
         const carousel = document.getElementById(`citations-content-${messageId}`);
         const citationEl = document.getElementById(`citation-${messageId}-${citationNum}`);
         if (citationEl && carousel) {

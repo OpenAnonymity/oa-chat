@@ -3046,6 +3046,42 @@ a.quick-ask-source:focus-visible {
     min-width: 0;
 }
 
+/* Desktop Sources opens outside transcript flow so its trigger stays under the
+   mouse. The shared dropdown supplies reversible opening/closing motion. */
+.sources-popover[popover] {
+    position: fixed;
+    inset: var(--sources-top, auto) auto var(--sources-bottom, auto) var(--sources-left);
+    width: var(--sources-width);
+    max-width: none;
+    max-height: var(--sources-height);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0.875rem;
+    color: inherit;
+    background: hsl(var(--color-background));
+    box-shadow: 0 8px 28px hsl(var(--color-foreground) / 0.12);
+    overflow: hidden;
+    grid-template-rows: 1fr;
+}
+/* Override the inline accordion's transition property only while floating. */
+.citations-section .sources-popover.t-dropdown[popover] {
+    transition: transform var(--dropdown-open-dur) var(--dropdown-ease),
+        opacity var(--dropdown-open-dur) var(--dropdown-ease);
+}
+.citations-section .sources-popover.t-dropdown.is-closing[popover] {
+    transition-duration: var(--dropdown-close-dur);
+}
+.sources-popover[popover]:not(:popover-open) { display: none; }
+.citations-section .sources-popover > .t-acc-panel-inner {
+    opacity: 1;
+    filter: none;
+    transition: none;
+    max-height: var(--sources-height);
+    overflow-y: auto;
+}
+.sources-popover .citations-carousel { padding-block: 0.5rem; }
+
 .citation-card-header {
     display: flex;
     align-items: center;
