@@ -11869,25 +11869,17 @@ Your API key has been cleared. A new key from a different station will be obtain
      */
     toggleCitations(messageId) {
         const contentEl = document.getElementById(`citations-content-${messageId}`);
-        const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
+        const toggleEl = document.getElementById(`citations-toggle-${messageId}`);
 
         if (!contentEl) {
             console.debug('[toggleCitations] Content element not found for message:', messageId);
             return;
         }
 
-        const isHidden = contentEl.classList.contains('hidden');
-        if (isHidden) {
-            contentEl.classList.remove('hidden');
-            if (chevronEl) {
-                chevronEl.style.transform = 'rotate(180deg)';
-            }
-        } else {
-            contentEl.classList.add('hidden');
-            if (chevronEl) {
-                chevronEl.style.transform = 'rotate(0deg)';
-            }
-        }
+        const opening = contentEl.classList.contains('hidden');
+        contentEl.classList.toggle('hidden', !opening);
+        toggleEl?.setAttribute('data-open', String(opening));
+        toggleEl?.setAttribute('aria-expanded', String(opening));
 
         // Update scroll button visibility after content change
         this.updateScrollButtonVisibility();
@@ -11901,13 +11893,12 @@ Your API key has been cleared. A new key from a different station will be obtain
     scrollToCitation(messageId, citationNum) {
         // First expand the citations if collapsed
         const carousel = document.getElementById(`citations-content-${messageId}`);
-        const chevronEl = document.querySelector(`#citations-toggle-${messageId} .citations-chevron`);
+        const toggleEl = document.getElementById(`citations-toggle-${messageId}`);
 
         if (carousel && carousel.classList.contains('hidden')) {
             carousel.classList.remove('hidden');
-            if (chevronEl) {
-                chevronEl.style.transform = 'rotate(180deg)';
-            }
+            toggleEl?.setAttribute('data-open', 'true');
+            toggleEl?.setAttribute('aria-expanded', 'true');
 
             // Update scroll button visibility after content change
             this.updateScrollButtonVisibility();

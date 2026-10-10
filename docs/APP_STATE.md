@@ -1,3 +1,13 @@
+## October 10, 2026 — Sources chevrons use the shared accordion motion
+
+The Sources chip keeps its site icons and now uses the existing Transitions.dev
+`.t-acc-chevron` flip (250 ms, reduced-motion aware). Both clicking Sources and
+opening from an inline citation update the trigger's `data-open` and
+`aria-expanded`; `aria-controls` names the existing carousel. No inline rotation
+competes with the CSS transition. Fast repeated clicks reverse the transition.
+Source links, icon requests, carousel layout and inference behavior are unchanged.
+Controller regressions: `test/components/citationDisclosure.test.js`.
+
 ## October 9, 2026 — the settings panel hangs above the composer on every layout
 
 On laptops the gear's panel was hung from the gear button, so its bottom edge
