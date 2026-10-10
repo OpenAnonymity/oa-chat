@@ -12,7 +12,7 @@ import { enterKeyAction } from './domain/composerKeys.js';
 import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
 import { setScrollButtonVisible, waitForScrollBottom } from './ui/scrollToBottom.js';
-import { revealSources, cancelSourceReveal, isSourceRevealActive } from './ui/sourceReveal.js';
+import { revealSources, cancelSourceReveal, isSourceRevealActive, isLastSourceResponse } from './ui/sourceReveal.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -2328,6 +2328,12 @@ class ChatApp {
         const chatArea = this.elements.chatArea;
         if (!chatArea) return;
 
+        // Avoid covering Sources while its disclosure is moving. Recheck when
+        // the motion finishes or a manual gesture cancels it.
+        if (isSourceRevealActive(chatArea)) {
+            this.hideScrollToBottomButton();
+            return;
+        }
         // Don't re-show button while scroll-to-bottom click is still processing
         if (this._scrollButtonClickPending) return;
 
@@ -11873,74 +11879,61 @@ Your API key has been cleared. A new key from a different station will be obtain
      * @param {string} messageId - The message ID
      */
     toggleCitations(messageId) {
-        const contentEl = document.getElementById(`citations-content-${messageId}`);
-        const toggleEl = document.getElementById(`citations-toggle-${messageId}`);
+        const toggle = document.getElementById(`citations-toggle-${messageId}`);
+        this.setCitationsOpen(messageId, toggle?.getAttribute('aria-expanded') !== 'true');
+    }
 
-        if (!contentEl) {
-            console.debug('[toggleCitations] Content element not found for message:', messageId);
-            return;
-        }
+    setCitationsOpen(messageId, opening) {
+        const carousel = document.getElementById(`citations-content-${messageId}`);
+        const toggle = document.getElementById(`citations-toggle-${messageId}`);
+        const section = carousel?.closest('.citations-section');
+        const panel = section?.querySelector('.t-acc-panel');
+        const inner = section?.querySelector('.t-acc-panel-inner');
+        if (!panel || !toggle || !inner) return;
 
-        cancelSourceReveal(this.elements?.chatArea);
-        const opening = contentEl.classList.contains('hidden');
-        contentEl.classList.toggle('hidden', !opening);
-        toggleEl?.setAttribute('data-open', String(opening));
-        toggleEl?.setAttribute('aria-expanded', String(opening));
-        if (opening) {
-            const sessionId = this.state.currentSessionId;
-            revealSources({
-                scroller: this.elements.chatArea, panel: contentEl, trigger: toggleEl,
-                toolbar: document.getElementById('chat-toolbar'), composer: this.elements.inputCard,
-                isCurrent: () => this.state.currentSessionId === sessionId
-            });
-        }
-
-        // Update scroll button visibility after content change
+        const scroller = this.elements.chatArea;
+        cancelSourceReveal(scroller);
+        const bottomTarget = () => {
+            const spacer = this.activePromptScroll?.spacerEl;
+            const spacerHeight = spacer?.isConnected && !spacer.hidden ? spacer.getBoundingClientRect().height : 0;
+            return Math.max(0, scroller.scrollHeight - scroller.clientHeight - spacerHeight);
+        };
+        // A lower Parallel lane/synthesis or a later user turn also counts as
+        // later content. Never jump past it when opening an older response.
+        const followBottom = isLastSourceResponse(section, this.elements.messagesContainer)
+            && (opening || Math.abs(bottomTarget() - scroller.scrollTop) <= 4);
+        panel.getBoundingClientRect(); // Commit the starting layout for a reversible CSS transition.
+        if (!opening && inner.contains(document.activeElement)) toggle.focus({ preventScroll: true });
+        section.setAttribute('data-open', String(opening));
+        toggle.setAttribute('data-open', String(opening));
+        toggle.setAttribute('aria-expanded', String(opening));
+        inner.inert = !opening;
+        inner.setAttribute('aria-hidden', String(!opening));
+        const sessionId = this.state.currentSessionId;
+        revealSources({
+            scroller, panel, trigger: toggle, opening, followBottom, bottomTarget,
+            toolbar: document.getElementById('chat-toolbar'), composer: this.elements.inputCard,
+            isCurrent: () => this.state.currentSessionId === sessionId
+                && section.getAttribute('data-open') === String(opening),
+            onUpdate: () => this.updateScrollButtonVisibility()
+        });
         this.updateScrollButtonVisibility();
     }
 
-    /**
-     * Scrolls to a specific citation.
-     * @param {string} messageId - The message ID
-     * @param {string} citationNum - The citation number
-     */
+    /** Scroll to a source using the same disclosure motion as its button. */
     scrollToCitation(messageId, citationNum) {
-        cancelSourceReveal(this.elements?.chatArea);
-        // First expand the citations if collapsed
+        this.setCitationsOpen(messageId, true);
         const carousel = document.getElementById(`citations-content-${messageId}`);
-        const toggleEl = document.getElementById(`citations-toggle-${messageId}`);
-
-        if (carousel && carousel.classList.contains('hidden')) {
-            carousel.classList.remove('hidden');
-            toggleEl?.setAttribute('data-open', 'true');
-            toggleEl?.setAttribute('aria-expanded', 'true');
-
-            // Update scroll button visibility after content change
-            this.updateScrollButtonVisibility();
-        }
-
-        // Then find and scroll to the citation
         const citationEl = document.getElementById(`citation-${messageId}-${citationNum}`);
         if (citationEl && carousel) {
-            // Add a brief highlight effect
             citationEl.classList.add('citation-highlight');
-            setTimeout(() => {
-                citationEl.classList.remove('citation-highlight');
-            }, 2000);
-
-            // Calculate scroll position to center the citation
-            const citationLeft = citationEl.offsetLeft;
-            const citationWidth = citationEl.offsetWidth;
-            const carouselWidth = carousel.offsetWidth;
-            const scrollPosition = citationLeft - (carouselWidth / 2) + (citationWidth / 2);
-
+            setTimeout(() => citationEl.classList.remove('citation-highlight'), 2000);
+            const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             carousel.scrollTo({
-                left: scrollPosition,
-                behavior: 'smooth'
+                left: carousel.scrollLeft + citationEl.getBoundingClientRect().left - carousel.getBoundingClientRect().left
+                    - carousel.clientWidth / 2 + citationEl.offsetWidth / 2,
+                behavior: reduced ? 'instant' : 'smooth'
             });
-
-            // Also scroll the citation section into view if needed
-            citationEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
 

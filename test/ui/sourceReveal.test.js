@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { revealSources, cancelSourceReveal, isSourceRevealActive } from '../../chat/ui/sourceReveal.js';
+import { revealSources, cancelSourceReveal, isSourceRevealActive, isLastSourceResponse } from '../../chat/ui/sourceReveal.js';
 
 function fixture({ panelBottom = 760, reduced = false, maxScroll = 1000, current = true } = {}) {
     let nextId = 0;
@@ -8,15 +8,17 @@ function fixture({ panelBottom = 760, reduced = false, maxScroll = 1000, current
     const state = { current };
     const view = { innerHeight: 800, performance: { now: () => 0 },
         matchMedia: () => ({ matches: reduced }),
+        getComputedStyle: () => ({ getPropertyValue: () => "250ms" }),
         requestAnimationFrame: fn => { frames.set(++nextId, fn); return nextId; },
         cancelAnimationFrame: id => frames.delete(id) };
     const rect = (top, bottom) => ({ top, bottom, left: 0, right: 900, height: bottom - top });
     const scroller = { isConnected: true, scrollTop: 0, clientTop: 0, clientHeight: 800, scrollHeight: 800 + maxScroll,
         ownerDocument: { defaultView: view }, getBoundingClientRect: () => rect(0, 800),
-        scrollTo: options => calls.push(options),
+        scrollTo: options => { calls.push(options); scroller.scrollTop = options.top; },
         addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) };
-    const panel = { isConnected: true, classList: { contains: () => false }, getBoundingClientRect: () => rect(640, panelBottom) };
-    const options = { scroller, panel, trigger: { isConnected: true, getBoundingClientRect: () => rect(610, 634) },
+    const panel = { isConnected: true, getBoundingClientRect: () => rect(640 - scroller.scrollTop, state.panelBottom - scroller.scrollTop) };
+    state.panelBottom = panelBottom;
+    const options = { scroller, panel, trigger: { isConnected: true, getBoundingClientRect: () => rect(610 - scroller.scrollTop, 634 - scroller.scrollTop) },
         toolbar: { getBoundingClientRect: () => rect(0, 80) }, composer: { getBoundingClientRect: () => rect(650, 800) },
         isCurrent: () => state.current };
     const tick = time => { const pending = [...frames.values()]; frames.clear(); pending.forEach(fn => fn(time)); };
@@ -37,7 +39,7 @@ test('Sources reveals the cards above the composer, not at the bottom of chat', 
 
 test('already visible sources do not move the reader', () => {
     const h = fixture({ panelBottom: 625 }); revealSources(h.options);
-    assert.equal(h.calls.length, 0); assert.equal(h.frames.size, 0);
+    h.tick(250); assert.equal(h.scroller.scrollTop, 0); assert.equal(h.frames.size, 0);
 });
 
 test('tall sources retain their trigger below the toolbar and respect scroll limits', () => {
@@ -71,7 +73,7 @@ test('manual gestures cancel pending frames without moving the reading position'
 test('collapse and same-chat replacement stop motion; a different chat keeps its new scroll', () => {
     for (const type of ['collapse', 'replace', 'switch']) {
         const h = fixture(); revealSources(h.options);
-        if (type === 'collapse') h.panel.classList.contains = () => true;
+        if (type === 'collapse') h.state.current = false;
         if (type === 'replace') h.panel.isConnected = false;
         if (type === 'switch') h.state.current = false;
         h.tick(16);
@@ -86,5 +88,66 @@ test('a new disclosure cancels the previous one and a delayed frame finishes wit
     assert.equal(h.frames.has(first), false); assert.equal(h.frames.size, 1);
     h.tick(1501);
     assert.equal(h.frames.size, 0); assert.equal(h.listeners.size, 0);
+    assert.equal(isSourceRevealActive(h.scroller), false);
+});
+
+
+test('newest response follows the growing bottom, including the final expanded height', () => {
+    const h = fixture({ maxScroll: 50 });
+    revealSources({ ...h.options, followBottom: true });
+    h.scroller.scrollHeight = 900;
+    h.tick(125);
+    assert.equal(h.scroller.scrollTop, 87.5);
+    h.scroller.scrollHeight = 1050;
+    h.tick(250);
+    assert.equal(h.scroller.scrollTop, 250);
+});
+
+test('older sources follow the expanding edge without overshooting to later messages', () => {
+    const h = fixture({ panelBottom: 638 });
+    revealSources(h.options);
+    h.state.panelBottom = 700; h.tick(125);
+    assert.equal(h.scroller.scrollTop, 54.25);
+    h.state.panelBottom = 760; h.tick(250);
+    assert.equal(h.scroller.scrollTop, 122);
+});
+
+test('closing keeps the latest response bottom anchored but never scrolls older answers', () => {
+    const h = fixture(); h.scroller.scrollTop = 1000;
+    revealSources({ ...h.options, opening: false, followBottom: true });
+    h.scroller.scrollHeight = 1740; h.tick(125);
+    assert.equal(h.scroller.scrollTop, 947.5);
+    h.scroller.scrollHeight = 1680; h.tick(250);
+    assert.equal(h.scroller.scrollTop, 880);
+    const old = fixture(); revealSources({ ...old.options, opening: false });
+    old.tick(250); assert.equal(old.calls.length, 0); assert.equal(old.frames.size, 0);
+});
+
+test('the effective bottom excludes the temporary prompt spacer', () => {
+    const h = fixture();
+    revealSources({ ...h.options, followBottom: true, bottomTarget: () => 700 });
+    h.tick(250); assert.equal(h.scroller.scrollTop, 700);
+});
+
+test('only the last real turn and lowest visible Parallel response follow the bottom', () => {
+    const lane = {}, lower = { getClientRects: () => [1], lastElementChild: { getBoundingClientRect: () => ({ bottom: 800 }) } };
+    const section = { closest: () => null, getBoundingClientRect: () => ({ bottom: 700 }) };
+    const last = { hasAttribute: () => true, contains: el => el === section, querySelectorAll: () => [lane, lower] };
+    const spacer = { hasAttribute: () => false };
+    assert.equal(isLastSourceResponse(section, { children: [last, spacer] }), true);
+    assert.equal(isLastSourceResponse(section, { children: [last, { hasAttribute: () => true, contains: () => false }, spacer] }), false);
+    section.closest = () => lane;
+    assert.equal(isLastSourceResponse(section, { children: [last] }), false);
+    lower.getClientRects = () => [];
+    assert.equal(isLastSourceResponse(section, { children: [last] }), true);
+});
+
+
+test('closing older sources reevaluates the bottom pill after the height settles, without scrolling', () => {
+    const h = fixture(); let updates = 0;
+    revealSources({ ...h.options, opening: false, onUpdate: () => updates++ });
+    assert.equal(isSourceRevealActive(h.scroller), true);
+    h.tick(125); assert.equal(updates, 0); assert.equal(h.calls.length, 0);
+    h.tick(250); assert.equal(updates, 1); assert.equal(h.calls.length, 0);
     assert.equal(isSourceRevealActive(h.scroller), false);
 });

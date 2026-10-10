@@ -1377,9 +1377,13 @@ function buildCitationsSection(citations, messageId) {
     }).join('');
 
     return `
-        <div class="citations-section w-full" id="${citationsId}">
-            <div class="citations-carousel hidden" id="citations-content-${messageId}">
-                ${citationCards}
+        <div class="citations-section t-acc w-full" id="${citationsId}" data-open="false">
+            <div class="t-acc-panel">
+                <div class="t-acc-panel-inner" inert aria-hidden="true">
+                    <div class="citations-carousel" id="citations-content-${messageId}">
+                        ${citationCards}
+                    </div>
+                </div>
             </div>
         </div>
     `;

@@ -6834,3 +6834,26 @@ When a stream carries only `reasoning.encrypted` details before any content, `ap
   delayed preferences and rotation. See [PHONE_SCROLLING.md](PHONE_SCROLLING.md)
   for the browser fixture and real-device limitations. This is local preparation;
   no production or staging deployment is implied by these changes.
+
+
+## 2026-10-10: Sources disclosure follows the right response
+
+Sources cards now use the shared Transitions.dev accordion (grid height, opacity,
+blur and chevron), in both directions. Closed links are inert and aria-hidden;
+closing with a card focused returns focus to the Sources button without scrolling.
+Inline citation links use the same opening path and independently center their
+card horizontally. Reduced motion disables the disclosure and scroll animation.
+
+`ui/sourceReveal.js` follows the animated edge for older responses, revealing the
+cards above the composer without skipping later answers. Opening the bottommost
+response follows the effective transcript bottom, excluding a temporary prompt
+spacer; closing stays bottom-anchored only if the reader was already there. A later
+user turn or lower visible Parallel lane/synthesis prevents the bottom follow.
+The scroll-to-bottom pill stays out of the way during motion and is reevaluated
+at completion/cancellation. Scroll targets are recomputed while the CSS height
+changes; measuring only once stops short against the collapsed scroll height.
+Owned animation frames stop on gestures, chat changes and detached panels, so
+native compositor frames cannot move a newly selected chat. Core behavioral
+checks are in `test/ui/sourceReveal.test.js` and `test/components/citationDisclosure.test.js`;
+local browser fixtures also cover phone layouts, both animation directions and
+Parallel ordering. No live inference, accounts or wallet data are needed.

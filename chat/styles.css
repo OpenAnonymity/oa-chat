@@ -2923,7 +2923,6 @@ a.quick-ask-source:focus-visible {
 
 /* Citations section styles */
 .citations-section {
-    animation: fadeIn 0.3s ease-in;
     margin-top: 0.5rem;
     margin-bottom: 0;
 }
@@ -3042,9 +3041,9 @@ a.quick-ask-source:focus-visible {
     will-change: scroll-position;
 }
 
-/* Override display:flex when hidden - needed because display:flex comes after .hidden in cascade */
-.citations-carousel.hidden {
-    display: none;
+/* The shared accordion clips the cards during both directions of motion. */
+.citations-section .t-acc-panel-inner {
+    min-width: 0;
 }
 
 .citation-card-header {
