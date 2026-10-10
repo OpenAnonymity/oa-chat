@@ -1812,6 +1812,28 @@ class RightPanel {
     }
 
     /**
+     * The key label for a timeline entry: the key that entry ran under, named
+     * for the entry's own session. An entry that recorded its key (keyRef) is
+     * labelled from that session's ephemeral key ids, so it keeps its label
+     * after the session moves to a new key; an older entry without one shows
+     * the session's current key. Never the current conversation's key.
+     */
+    getLogKeyLabel(log) {
+        const session = this.getSessionInfo(log?.sessionId);
+        if (!session) return null;
+        const inference = this.app.services.inference;
+        const keyRef = typeof log?.keyRef === 'string' ? log.keyRef : '';
+        const token = inference.getAccessInfo(session)?.token || null;
+        if (keyRef) {
+            const ephemeralId = inference.findEphemeralKeyId?.(session, keyRef);
+            if (ephemeralId) return inference.formatEphemeralKeyId(ephemeralId);
+            if (token && token.endsWith(keyRef)) return inference.maskAccessToken(session, token);
+            return `...${keyRef}`;
+        }
+        return token ? inference.maskAccessToken(session, token) : null;
+    }
+
+    /**
      * Counts how many sessions share the current API key
      * @returns {number} Number of sessions with matching API key
      */
@@ -3279,8 +3301,8 @@ class RightPanel {
         // Calculate how many new logs were added
         const newLogsCount = this.networkLogs.length - previousLogCount;
 
-        // Track session changes for separators
-        let lastSessionId = null;
+        // Track session (and key) changes for separators
+        let lastGroupKey = null;
 
         return logsToShow.map((log, index) => {
             const isExpanded = this.expandedLogIds.has(log.id);
@@ -3304,15 +3326,16 @@ class RightPanel {
             // For grouping purposes, treat system events as a special "system" session
             const effectiveSessionId = isSystemEvent ? 'system' : log.sessionId;
 
-            // Check if we need a session separator
-            const needsSeparator = effectiveSessionId !== lastSessionId;
+            // A separator opens a new session, or the same session on a new key
+            const keyLabel = isSystemEvent ? null : this.getLogKeyLabel(log);
+            const groupKey = isSystemEvent ? 'system' : `${effectiveSessionId}|${keyLabel || ''}`;
+            const needsSeparator = groupKey !== lastGroupKey;
             const sessionTitleRaw = this.getSessionTitle(log.sessionId);
             const sessionTitleAttr = this.escapeHtmlAttribute(sessionTitleRaw);
             const sessionTitleDisplayRaw = sessionTitleRaw.length > 14 ? sessionTitleRaw.substring(0, 14) + '...' : sessionTitleRaw;
             const sessionTitleDisplay = this.escapeHtml(sessionTitleDisplayRaw);
             const isCurrentSess = this.isCurrentSession(log.sessionId);
-            const sessionKey = this.getSessionKey(log.sessionId);
-            lastSessionId = effectiveSessionId;
+            lastGroupKey = groupKey;
 
             let sessionSeparator = '';
             if (needsSeparator) {
@@ -3332,7 +3355,7 @@ class RightPanel {
                     `;
                 } else if (log.sessionId) {
                     // Chat session separator
-                    const keyDisplay = sessionKey ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.escapeHtml(this.maskApiKey(sessionKey))}</span>` : '';
+                    const keyDisplay = keyLabel ? `<span class="text-[10px] font-mono whitespace-nowrap ${isCurrentSess ? 'text-foreground' : 'text-muted-foreground'} ml-auto">${this.escapeHtml(keyLabel)}</span>` : '';
                     sessionSeparator = `
                         <div class="session-separator mb-2 mt-2">
                             <div class="flex items-center gap-2 px-2 py-1.5 rounded-md border whitespace-nowrap ${isCurrentSess ? 'border-foreground bg-primary/10' : 'border-border'}">
