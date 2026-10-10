@@ -1,9 +1,9 @@
-// One explicit Sources reveal per transcript. Native smooth scrolling owns the
-// motion; the guard only cancels stale work or yields to the reader's input.
+// One short Sources reveal per transcript. Own the scroll frames so a gesture,
+// collapse or chat switch cancels without native smooth-scroll work left queued.
 const pending = new WeakMap();
 
 export function cancelSourceReveal(scroller) {
-    pending.get(scroller)?.(true);
+    pending.get(scroller)?.();
 }
 
 export function isSourceRevealActive(scroller) {
@@ -39,25 +39,25 @@ export function revealSources({ scroller, panel, trigger, toolbar, composer, isC
     let frame;
     const started = view.performance.now();
     const events = ['wheel', 'touchstart', 'pointerdown', 'keydown'];
-    const finish = (interrupt = false) => {
+    const from = scroller.scrollTop;
+    const finish = () => {
         view.cancelAnimationFrame(frame);
-        events.forEach(type => scroller.removeEventListener(type, interruptScroll));
+        events.forEach(type => scroller.removeEventListener(type, finish));
         pending.delete(scroller);
-        if (interrupt) scroller.scrollTo({ top: scroller.scrollTop, behavior: 'instant' });
     };
-    const interruptScroll = () => finish(true);
-    const check = now => {
-        // Do not stop a newer chat's own scroll when this panel was replaced.
-        if (!scroller.isConnected || !isCurrent()) return finish();
-        if (!panel.isConnected) return finish(true);
-        if (panel.classList.contains('hidden')) return finish(true);
+    const step = now => {
+        if (!scroller.isConnected || !panel.isConnected || !isCurrent() || panel.classList.contains('hidden')) {
+            finish();
+            return;
+        }
+        const progress = Math.min(1, Math.max(0, (now - started) / 250));
+        const eased = 1 - (1 - progress) ** 3;
         const end = Math.min(target, scroller.scrollHeight - scroller.clientHeight);
-        if (Math.abs(scroller.scrollTop - end) <= 1) return finish();
-        if (now - started >= 1500) return finish(true);
-        frame = view.requestAnimationFrame(check);
+        scroller.scrollTo({ top: from + (end - from) * eased, behavior: 'instant' });
+        if (progress < 1) frame = view.requestAnimationFrame(step);
+        else finish();
     };
     pending.set(scroller, finish);
-    events.forEach(type => scroller.addEventListener(type, interruptScroll, { passive: true }));
-    scroller.scrollTo({ top: target, behavior: 'smooth' });
-    frame = view.requestAnimationFrame(check);
+    events.forEach(type => scroller.addEventListener(type, finish, { passive: true }));
+    frame = view.requestAnimationFrame(step);
 }

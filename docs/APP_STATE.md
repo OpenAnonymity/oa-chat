@@ -3,9 +3,10 @@
 Opening a Sources chip now scrolls the transcript only enough to show its cards,
 accounting for the toolbar, composer and phone visual viewport. Already visible
 cards do not scroll; tall lists retain their trigger below the toolbar. This uses
-native smooth scrolling (instant for reduced motion), yields to wheel/touch/
+a 250 ms eased scroll (instant for reduced motion), yields to wheel/touch/
 pointer/keyboard input, and cancels on collapse or panel/session replacement.
-`ui/sourceReveal.js` bounds the operation to 1.5 seconds; normal streaming
+`ui/sourceReveal.js` owns the animation frames, avoiding a browser-native scroll
+that can continue a frame after cancellation. Normal streaming
 bottom-follow pauses while it is active. Explicit scroll-to-bottom takes over.
 Closing does not request another reveal. The shared handler also covers Parallel
 lane source chips. Existing inline-citation navigation cancels any chip reveal
