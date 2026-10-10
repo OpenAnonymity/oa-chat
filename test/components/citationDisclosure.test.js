@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 // Exercise the actual controller methods without booting auth/wallet services.
-const source = fs.readFileSync(new URL('../../chat/app.js', import.meta.url), 'utf8');
+const source = fs.readFileSync('chat/app.js', 'utf8');
 const start = source.indexOf('    toggleCitations(messageId) {');
 const end = source.indexOf('    /**\n     * Toggle scrubber', start);
 function fixture() {
