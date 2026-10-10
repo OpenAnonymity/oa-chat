@@ -1,3 +1,37 @@
+## October 9, 2026 — Stop keeps partial Parallel output; a stopped lane closes its turn
+
+Round-2 robustness checks found two Parallel cancellation defects. Both are in
+`application/councilController.js` and `components/MessageTemplates.js`.
+
+1. Stop no longer erases what was on screen. `runMultiModelTurn` deleted the
+   assistant row whenever the request was cancelled and no lane had *completed*,
+   ignoring partial text. Now a cancelled lane that had shown anything (text,
+   an image, or reasoning; `hasLanePartialOutput`) keeps it: the row stays,
+   each such lane is `cancelled` with its partial `response`/`reasoning`, the
+   lane with the most text becomes the message's canonical content (as a
+   stopped single chat keeps its partial), and the status line reads "Stopped
+   before any model finished." Only a turn in which no lane had shown anything
+   is still removed. In the template a cancelled lane with output renders like a
+   complete one plus a "Stopped here." line and its copy/regenerate actions; a
+   cancelled lane with nothing says "Stopped before this model answered." with
+   Try again.
+
+2. A stopped lane's history no longer leaves old requests open. For its own
+   lane, `buildLaneConversationMessages` dropped the assistant turn of any lane
+   that had not completed, so after one-lane or all-lane stops the lane saw
+   user, user, user and treated every earlier task as still pending (Gemini
+   spent ~85 s reworking cancelled tasks on a two-line prompt). Now a cancelled
+   lane that spoke answers with its partial text, and a cancelled or failed
+   lane that never spoke gets a one-line closing turn ("[This reply was stopped
+   by the user before it began. That request is no longer open.]" / "[This
+   reply failed before it began. …]"), so roles alternate and only the latest
+   prompt is open.
+
+Tests: `test/application/councilStopKeepsPartial.test.js`,
+`test/components/councilLaneStoppedRender.test.js`. Not changed: a single chat
+stopped before its first chunk still deletes the pending row, which leaves
+user, user in that history too; same fix, separate change.
+
 ## October 9, 2026 — local input-size cutoff
 
 OA Chat rejects requests above **64,000 estimated text-input tokens**, even when
