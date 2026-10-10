@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { revealSources, cancelSourceReveal } from '../../chat/ui/sourceReveal.js';
 
 // Exercise the actual controller methods without booting auth/wallet services.
 const source = fs.readFileSync('chat/app.js', 'utf8');
@@ -13,8 +14,8 @@ function fixture() {
         toggle: (name, on) => on ? classes.add(name) : classes.delete(name) } };
     const toggle = { setAttribute: (name, value) => { attrs[name] = value; } };
     const document = { getElementById: id => id === 'citations-content-test' ? content : id === 'citations-toggle-test' ? toggle : null };
-    const Controller = vm.runInNewContext(`(class { ${source.slice(start, end)} })`, { document, console });
-    const app = new Controller(); app.updateScrollButtonVisibility = () => {};
+    const Controller = vm.runInNewContext(`(class { ${source.slice(start, end)} })`, { document, console, revealSources, cancelSourceReveal });
+    const app = new Controller(); app.state = { currentSessionId: 'test-chat' }; app.elements = {}; app.updateScrollButtonVisibility = () => {};
     return { app, attrs, classes };
 }
 

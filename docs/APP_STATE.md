@@ -1,3 +1,17 @@
+## October 10, 2026 — opening Sources reveals the cards in the chat viewport
+
+Opening a Sources chip now scrolls the transcript only enough to show its cards,
+accounting for the toolbar, composer and phone visual viewport. Already visible
+cards do not scroll; tall lists retain their trigger below the toolbar. This uses
+native smooth scrolling (instant for reduced motion), yields to wheel/touch/
+pointer/keyboard input, and cancels on collapse or panel/session replacement.
+`ui/sourceReveal.js` bounds the operation to 1.5 seconds; normal streaming
+bottom-follow pauses while it is active. Explicit scroll-to-bottom takes over.
+Closing does not request another reveal. The shared handler also covers Parallel
+lane source chips. Existing inline-citation navigation cancels any chip reveal
+before it takes over. No extra network requests or persisted state are added.
+Tests: `test/ui/sourceReveal.test.js`, `test/components/citationDisclosure.test.js`.
+
 ## October 10, 2026 — Sources chevrons use the shared accordion motion
 
 The Sources chip keeps its site icons and now uses the existing Transitions.dev

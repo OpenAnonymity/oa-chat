@@ -12,6 +12,7 @@ import { enterKeyAction } from './domain/composerKeys.js';
 import { preserveBottomDuringWidthChange } from './ui/widthScrollAnchor.js';
 import { updateToolbarBackdrop, watchToolbarLayout } from './ui/toolbarLayout.js';
 import { setScrollButtonVisible, waitForScrollBottom } from './ui/scrollToBottom.js';
+import { revealSources, cancelSourceReveal, isSourceRevealActive } from './ui/sourceReveal.js';
 import { installToggleMotion } from './ui/toggleMotion.js';
 import { positionAppToast, watchToastPosition, stopToastPositioning } from './ui/toastPosition.js';
 import { showSurface, hideSurface, watchDisclosures } from './ui/uiMotion.js';
@@ -1808,7 +1809,11 @@ class ChatApp {
     }
 
     shouldAutoScrollChat(force = false) {
-        if (force) return true;
+        if (force) {
+            cancelSourceReveal(this.elements?.chatArea);
+            return true;
+        }
+        if (isSourceRevealActive(this.elements?.chatArea)) return false;
         if (this.isPromptSlideUpEffectActive()) return false;
         return !this.isAutoScrollPaused;
     }
@@ -11876,10 +11881,19 @@ Your API key has been cleared. A new key from a different station will be obtain
             return;
         }
 
+        cancelSourceReveal(this.elements?.chatArea);
         const opening = contentEl.classList.contains('hidden');
         contentEl.classList.toggle('hidden', !opening);
         toggleEl?.setAttribute('data-open', String(opening));
         toggleEl?.setAttribute('aria-expanded', String(opening));
+        if (opening) {
+            const sessionId = this.state.currentSessionId;
+            revealSources({
+                scroller: this.elements.chatArea, panel: contentEl, trigger: toggleEl,
+                toolbar: document.getElementById('chat-toolbar'), composer: this.elements.inputCard,
+                isCurrent: () => this.state.currentSessionId === sessionId
+            });
+        }
 
         // Update scroll button visibility after content change
         this.updateScrollButtonVisibility();
@@ -11891,6 +11905,7 @@ Your API key has been cleared. A new key from a different station will be obtain
      * @param {string} citationNum - The citation number
      */
     scrollToCitation(messageId, citationNum) {
+        cancelSourceReveal(this.elements?.chatArea);
         // First expand the citations if collapsed
         const carousel = document.getElementById(`citations-content-${messageId}`);
         const toggleEl = document.getElementById(`citations-toggle-${messageId}`);
