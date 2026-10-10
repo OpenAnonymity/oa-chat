@@ -1557,6 +1557,26 @@ a.quick-ask-source:focus-visible {
     line-height: 1.25;
 }
 
+/* A lane stopped mid-answer keeps its text; one quiet line closes it. */
+.council-response-stopped {
+    padding: 0.125rem 1rem 0.5rem;
+    color: hsl(var(--color-muted-foreground));
+    font-size: 0.75rem;
+    line-height: 1.25;
+}
+
+/* Stopped before it spoke: the placeholder carries the lane's Try again. */
+.council-response-placeholder-stopped {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+}
+
+.council-response-placeholder-stopped .council-lane-retry-btn {
+    margin-top: 0.625rem;
+}
+
 .council-lane-images {
     display: flex;
     flex-wrap: wrap;

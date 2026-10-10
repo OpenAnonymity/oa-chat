@@ -80,6 +80,18 @@ function hasLaneOutput(entry) {
     return hasText || hasImages;
 }
 
+// What a lane had already shown when it was stopped: text, an image, or
+// reasoning. Stop keeps all of it, the way a single chat keeps its partial.
+function hasLanePartialOutput(entry) {
+    return hasLaneOutput(entry) || (typeof entry?.reasoning === 'string' && entry.reasoning.trim().length > 0);
+}
+
+// The turn a lane sees in its own history when it was stopped or failed
+// before showing anything. Without it the lane's history runs user, user,
+// user, and the model reads the old requests as still open.
+const STOPPED_LANE_TURN = '[This reply was stopped by the user before it began. That request is no longer open.]';
+const FAILED_LANE_TURN = '[This reply failed before it began. That request is no longer open.]';
+
 function describeLaneForSynthesis(entry) {
     const text = typeof entry?.response === 'string' ? entry.response.trim() : '';
     const imageCount = Array.isArray(entry?.images) ? entry.images.length : 0;
@@ -987,6 +999,20 @@ export default class CouncilController {
                         model: stageEntry.responseModel || stageEntry.model || entry.name
                     };
                 }
+                // A stopped lane answers with what it had said, as a single
+                // chat does; a lane that never got to speak still closes its
+                // turn, so the next prompt is the only open request.
+                if (stageEntry?.status === 'cancelled' || stageEntry?.status === 'error') {
+                    const spoke = hasLaneOutput(stageEntry);
+                    return {
+                        ...message,
+                        content: spoke
+                            ? stageEntry.response
+                            : (stageEntry.status === 'cancelled' ? STOPPED_LANE_TURN : FAILED_LANE_TURN),
+                        images: spoke ? (stageEntry.images || null) : null,
+                        model: stageEntry.responseModel || stageEntry.model || entry.name
+                    };
+                }
 
                 return null;
             })
@@ -1156,10 +1182,15 @@ export default class CouncilController {
 
             const completed = assistantMessage.council.stage1.filter((entry) => entry.status === 'complete' && hasLaneOutput(entry));
             const wasCancelled = abortController?.signal?.aborted === true;
+            // Stop keeps every lane's partial output on screen and on disk.
+            // Only a turn in which no lane had shown anything is removed.
+            const stopped = wasCancelled
+                ? assistantMessage.council.stage1.filter((entry) => entry.status === 'cancelled' && hasLanePartialOutput(entry))
+                : [];
             if (!wasCancelled && completed.length === entries.length) {
                 trackFeatureUsage('parallel_completed');
             }
-            if (wasCancelled && completed.length === 0) {
+            if (wasCancelled && completed.length === 0 && stopped.length === 0) {
                 await this.chatDB.deleteMessage(assistantMessage.id);
                 await this.app.refreshSessionConversationSearchText(session, null, { persist: true });
                 await this.app.recomputeSessionCouncilTranscriptHint?.(session);
@@ -1293,6 +1324,25 @@ export default class CouncilController {
                     assistantMessage.council.statusMessage = 'Stopped after partial responses.';
                 } else {
                     assistantMessage.council.statusMessage = null;
+                }
+            } else if (stopped.length > 0) {
+                // Nothing finished, but something was said: the lane with the
+                // most text stands as the turn, exactly as a stopped single
+                // chat keeps its partial answer.
+                const canonical = [...stopped].sort((a, b) =>
+                    String(b.response || '').trim().length - String(a.response || '').trim().length)[0];
+                assistantMessage.content = canonical.response || '';
+                assistantMessage.images = canonical.images || null;
+                assistantMessage.model = canonical.responseModel || canonical.model;
+                assistantMessage.citations = canonical.citations || null;
+                assistantMessage.council.canonicalStage1Label = canonical.label;
+                assistantMessage.council.canonicalModel = canonical.responseModel || canonical.model;
+                assistantMessage.council.statusMessage = 'Stopped before any model finished.';
+                if (assistantMessage.scrubber) {
+                    assistantMessage.scrubber.redactedResponse = canonical.response || '';
+                }
+                if (assistantMessage.council.synthesis) {
+                    assistantMessage.council.synthesis.status = 'skipped';
                 }
             } else {
                 assistantMessage.content = 'All selected models failed to respond.';

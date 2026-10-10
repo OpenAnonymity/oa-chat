@@ -1416,7 +1416,11 @@ function resolveCouncilProviderName(modelName, modelId = '') {
 
 function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     const hasImages = Array.isArray(entry?.images) && entry.images.length > 0;
-    if (entry?.status !== 'complete' || !(entry.response || hasImages)) {
+    const hasReasoning = typeof entry?.reasoning === 'string' && entry.reasoning.trim().length > 0;
+    // A finished lane with output, or a lane stopped after showing something
+    // (text, an image, or reasoning), gets copy and regenerate.
+    const settled = entry?.status === 'complete' || entry?.status === 'cancelled';
+    if (!settled || !(entry.response || hasImages || (entry.status === 'cancelled' && hasReasoning))) {
         return '';
     }
 
@@ -1544,7 +1548,7 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
         entry?.reasoning ||
         entry?.streamingReasoning
     );
-    if ((status === 'complete' || status === 'running') && hasRenderableOutput) {
+    if ((status === 'complete' || status === 'running' || status === 'cancelled') && hasRenderableOutput) {
         const citations = Array.isArray(entry.citations) ? entry.citations : [];
         const citationScopeId = buildCitationScopeId(messageId, entry.laneId || entry.label || 'lane');
         const citationsToggle = buildCitationsToggleButton(citations, citationScopeId);
@@ -1585,15 +1589,21 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
         const isStillWorking = status === 'running'
             && entry.stillWorking === true
             && !entry.streamingReasoning;
+        // Stopped mid-answer: everything it had shown stays, with one line
+        // saying why it ends there. Retry lives in the lane actions.
+        const stoppedNote = status === 'cancelled'
+            ? '<div class="council-response-stopped" role="status">Stopped here.</div>'
+            : '';
         return `
             <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry.laneId || entry.label || 'lane')}">
                 ${reasoningHtml}
                 ${contentHtml}
                 ${imagesHtml}
                 ${isStillWorking ? buildCouncilLaneWorkingIndicator() : ''}
+                ${stoppedNote}
             </div>
-            ${showLaneActions ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
-            ${!showLaneActions && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
+            ${showLaneActions || status === 'cancelled' ? buildCouncilLaneActionRow(entry, messageId, citationsToggle) : ''}
+            ${!showLaneActions && status !== 'cancelled' && citationsToggle ? `<div class="council-response-sources-row">${citationsToggle}</div>` : ''}
             ${citationsSection}
         `;
     }
@@ -1603,9 +1613,29 @@ function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, 
     }
 
     if (entry?.status === 'cancelled') {
+        // Stopped before it said anything: say so, and offer the lane again.
+        const laneId = entry?.laneId || '';
+        const label = entry?.label || laneId || 'response';
+        const retryButton = laneId
+            ? `
+            <button
+                type="button"
+                class="council-lane-retry-btn regenerate-council-lane-btn"
+                data-message-id="${escapeHtmlAttribute(messageId)}"
+                data-council-lane-id="${escapeHtmlAttribute(laneId)}"
+                data-council-label="${escapeHtmlAttribute(label)}"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
+                </svg>
+                <span>Try again</span>
+            </button>
+        `
+            : '';
         return `
-            <div class="council-response-placeholder">
-                Cancelled before this model finished.
+            <div class="council-response-placeholder council-response-placeholder-stopped">
+                <span>Stopped before this model answered.</span>
+                ${retryButton}
             </div>
         `;
     }
