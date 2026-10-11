@@ -1020,8 +1020,13 @@ export default class ChatInput {
             // Keep the reservation through its actual completion, and discard
             // a late result when its captured chat or draft no longer owns it.
             trackFeatureUsage('scrubber_started');
+            // The ticket is charged when the confidential key is issued, before
+            // the scrub itself runs. Announcing it then would replace the
+            // loading toast and read as if the scrub had finished, so the
+            // charge is reported with the result instead.
+            let ticketNote = '';
             const result = await scrubberService.redactPrompt(text, session, {
-                onTicketSpent: count => this.app.showToast?.(`${count} ticket${count === 1 ? '' : 's'} used for scrubbing`, 'info', 4000)
+                onTicketSpent: count => { ticketNote = `${count} ticket${count === 1 ? '' : 's'} used`; }
             });
             if (!ownsDraft() || operation.signal.aborted || !this.supportsFeature('scrubber', session)) return;
             if (!result?.success || !result.text) {
@@ -1040,7 +1045,8 @@ export default class ChatInput {
                 redacted: result.text,
                 timestamp: Date.now()
             } : null;
-            this.app.showToast(hasChanges ? 'PII removed' : 'No PII detected', 'success');
+            const outcome = hasChanges ? 'PII removed' : 'No PII detected';
+            this.app.showToast(ticketNote ? `${outcome} · ${ticketNote}` : outcome, 'success');
             this.updateScrubberHintVisibility();
             this.updateScrubberPreviewHintVisibility();
             this.scrubberDiffState.previewRendered = false;

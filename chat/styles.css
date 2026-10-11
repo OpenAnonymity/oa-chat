@@ -3273,6 +3273,10 @@ a.quick-ask-source:focus-visible {
 /* The app toast: one line of 13px, tight padding, a 10px radius. Wallet
    progress and feature notices all pass through it, so it stays small. */
 #app-toast {
+    /* Centred with left: 50% and a translate, an auto width shrinks to the
+       right half of the viewport. Size to the content so the max-width below
+       is what limits a line, especially on phones. */
+    width: max-content;
     max-width: min(24rem, calc(100vw - 2rem));
     padding: 0.5rem 0.875rem;
     border-radius: 0.625rem;

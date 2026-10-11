@@ -286,6 +286,50 @@ test('scrubber binds a new chat before session persistence and updates only its 
 });
 
 
+test('first-use ticket charge is reported with the result, not over the scrubbing spinner', async () => {
+    const originalRedact = scrubberService.redactPrompt;
+    const scrub = deferred();
+    const f = fixture();
+    const loading = [];
+    f.app.showLoadingToast = message => {
+        const entry = { message, stopped: 0 };
+        loading.push(entry);
+        return () => { entry.stopped += 1; };
+    };
+    f.messageInput.value = 'My name is Alex';
+    scrubberService.redactPrompt = async (_text, _session, options) => {
+        options.onTicketSpent(1);
+        return scrub.promise;
+    };
+    try {
+        const work = f.input.runScrubberShortcut();
+        await Promise.resolve();
+        assert.equal(loading.length, 1);
+        assert.match(loading[0].message, /^Scrubbing input query/);
+        assert.equal(loading[0].stopped, 0, 'the spinner stays up while the scrub runs');
+        assert.equal(f.toasts.length, 0, 'no toast replaces the spinner when the ticket is charged');
+        scrub.resolve({ success: true, text: 'My name is [PERSON_1]' });
+        await work;
+        assert.equal(loading[0].stopped, 1);
+        assert.deepEqual(f.toasts, [['PII removed · 1 ticket used', 'success']]);
+    } finally {
+        scrubberService.redactPrompt = originalRedact;
+    }
+});
+
+test('scrubs on an existing key report no ticket', async () => {
+    const originalRedact = scrubberService.redactPrompt;
+    const f = fixture();
+    f.messageInput.value = 'Plain draft';
+    scrubberService.redactPrompt = async () => ({ success: true, text: 'Plain draft' });
+    try {
+        await f.input.runScrubberShortcut();
+        assert.deepEqual(f.toasts, [['No PII detected', 'success']]);
+    } finally {
+        scrubberService.redactPrompt = originalRedact;
+    }
+});
+
 test('pending scrub resizes newly wrapped text without another draft input', () => {
     const previousWindow = globalThis.window;
     globalThis.window = { innerHeight: 900 };

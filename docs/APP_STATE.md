@@ -6865,3 +6865,17 @@ was the wrong interaction. Preserve smooth bottom follow on the latest response
 and local reveal for older responses. A web page cannot reposition the user's
 mouse cursor; do not substitute an above-trigger popup to promise a stationary
 click target while the page scrolls.
+
+## 2026-10-11: First-use scrub charge is reported with the result
+
+The confidential key behind the Scrubber costs one ticket, charged when the key
+is issued, before the scrub itself runs. The composer used to announce it at
+that moment with a second toast (`showToast`, which replaces the current
+toast), so the loading spinner disappeared mid-scrub and the rewrite looked
+finished. The loading toast now stays untouched for the whole scrub; the charge
+is kept and reported on the completion toast instead ("PII removed · 1 ticket
+used", "No PII detected · 1 ticket used"). Scrubs on an already valid key stay
+silent about tickets. `#app-toast` is also sized `width: max-content`: centred
+with `left: 50%` and a translate, its auto width shrank to the right half of the
+viewport, so phone toasts wrapped at roughly half the width the `max-width`
+rule allows. Covered by `test/components/chatInputFeatures.test.js`.
