@@ -1,3 +1,25 @@
+## October 11, 2026 — the first send no longer queues behind start-up work
+
+Between the send click and the prompt appearing, the ticket preflight waited on
+two start-up jobs that could not change its answer. Both waits are gone:
+
+- The move of previous-version tickets starts on every page load of a signed-in
+  wallet (status request, cross-tab lock, several reads). The preflight awaited it
+  unconditionally, so the first send of every visit queued behind it. It now
+  waits only when the wallet does not already cover the turn — the one case
+  where the move can turn a shortage into a sufficient balance — and rechecks the
+  balance afterwards. The held-ticket notice, the automatic reload and the
+  shortage dialog are unchanged.
+- A send before the model catalog had arrived started a second download of the
+  same catalog (`fetchModels`) and waited for it. `loadModels()` now publishes its
+  in-flight download (`modelsLoadPromise`, cleared when it settles) and the
+  preflight waits for that download instead; the fallback fetch remains for a
+  catalog that is empty with no download in flight.
+
+Pricing is untouched: the preflight still refreshes the live price map, and key
+acquisition still obtains the authoritative price before redemption.
+Tests: `test/application/sendPreflightStartup.test.js`.
+
 ## October 10, 2026 — opening Sources reveals the cards in the chat viewport
 
 Opening a Sources chip now scrolls the transcript only enough to show its cards,

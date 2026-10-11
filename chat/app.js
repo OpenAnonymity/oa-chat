@@ -4440,7 +4440,18 @@ class ChatApp {
         resizeObserver.observe(this.elements.inputCard || inputContainer);
     }
 
-    async loadModels() {
+    loadModels() {
+        // One catalog download at a time. A send that needs the catalog while
+        // the page-load download is still in flight shares that download
+        // (getFreshInferenceTicketRequirement) instead of starting a second one.
+        const load = this.runModelCatalogLoad().finally(() => {
+            if (this.modelsLoadPromise === load) this.modelsLoadPromise = null;
+        });
+        this.modelsLoadPromise = load;
+        return load;
+    }
+
+    async runModelCatalogLoad() {
         const session = this.getCurrentSession();
         const sessionId = this.state.currentSessionId;
         const backendId = session?.inferenceBackend || this.inferenceService.getDefaultBackendId();
@@ -5157,6 +5168,12 @@ class ChatApp {
             return this.councilController.calculateCouncilTicketRequirement(fresh);
         };
 
+        if (models.length === 0 && this.modelsLoadPromise) {
+            // The page-load catalog download is still in flight: wait for it
+            // rather than download the same catalog a second time.
+            await this.modelsLoadPromise;
+            models = this.getModelsForSession(session);
+        }
         if (models.length === 0) {
             try {
                 const fetchedModels = await this.inferenceService.fetchModels(session);
@@ -5258,15 +5275,23 @@ class ChatApp {
             this.floatingPanel?.showMessage?.(message, 'error', 7000);
             return false;
         }
-        // A move of previous-version tickets may be finishing right now.
-        await ticketClient.awaitLegacyTransfer?.();
-        const heldTickets = ticketClient.getHeldTicketCount?.() || 0;
-        const budget = buildTurnTicketBudget({
-            availableTickets: ticketClient.getTicketCount() - heldTickets,
+        const buildBudget = () => buildTurnTicketBudget({
+            availableTickets: ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0),
             inferenceTickets: inference.tickets,
             memoryTickets,
             modelLabel: inference.label
         });
+        let budget = buildBudget();
+        if (!budget.sufficient && ticketClient.isLegacyTransferRunning?.()) {
+            // A move of previous-version tickets may be finishing right now
+            // and is the only thing that can turn this shortage into a
+            // sufficient balance without a purchase. A wallet that already
+            // covers the turn never waits for it: the move starts on every
+            // page load, and the first send would otherwise queue behind it.
+            await ticketClient.awaitLegacyTransfer?.();
+            budget = buildBudget();
+        }
+        const heldTickets = ticketClient.getHeldTicketCount?.() || 0;
 
         if (budget.sufficient) return true;
 
