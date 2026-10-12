@@ -8,6 +8,7 @@ import esbuild from 'esbuild';
 import { minify } from 'terser';
 import { buildZkapiAssets, readZkapiBuildConfig, resolveZkapiNetwork, zkapiBuildPlugins, zkapiBuildProvenance } from './zkapiBuild.mjs';
 import { prepareNanomemBrowser } from './prepareNanomemBrowser.mjs';
+import { injectSentry, resolveSentryConfig } from './sentryBuild.mjs';
 import {
     DEFAULT_PRODUCTION_ORG_ORIGIN,
     resolveBuildOrgOrigin,
@@ -39,6 +40,7 @@ const vectorDir = path.join(repoRoot, 'vector');
 const localInferenceDir = path.join(repoRoot, 'local_inference');
 const nanomemDir = path.join(repoRoot, 'nanomem');
 const configuredOrgOrigin = resolveBuildOrgOrigin();
+const sentryConfig = resolveSentryConfig();
 const zkapiNetwork = resolveZkapiNetwork();
 const zkapiVerifierOrigin = zkapiNetwork
     ? readZkapiBuildConfig({ network: zkapiNetwork }).trusted_deployment.verifier_url : '';
@@ -287,6 +289,7 @@ const build = async () => {
 
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
+    html = await injectSentry(html, { outDir, outputs, config: sentryConfig });
 
     if (sameOriginOrg || configuredOrgOrigin) {
         // Never warm production-org DNS in a same-origin or staging build.

@@ -38,6 +38,7 @@
   },
   "dependencies": {
     "@openanonymity/zkapi-browser-sdk": "github:OpenAnonymity/zkapi#3342c95871e8422bb878ad40072687c241a68a5b",
+    "@sentry/browser": "11.7.0",
     "ethers": "6.17.0",
     "qrcode": "1.5.4",
     "supertokens-web-js": "^0.16.0"

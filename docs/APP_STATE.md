@@ -3618,6 +3618,12 @@ shell, not only isolated RightPanel previews, when changing header controls.
 
 # App State and Handoff
 
+- 2026-10-12: Added opt-in, build-time Sentry browser error reporting. The SDK
+  sends only fixed error categories and generated code locations; private scope,
+  error text, request data, breadcrumbs and attachments are discarded. See
+  [SENTRY.md](SENTRY.md) for setup, verification, coverage and network metadata
+  tradeoffs. No deployment is enabled merely by adding this code.
+
 ## 2026-09-22: Recover zkAPI chats interrupted during key issuance
 
 - A failed first Send can retain an ownerless SDK proof journal while the server

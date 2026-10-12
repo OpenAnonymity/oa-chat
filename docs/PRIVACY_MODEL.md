@@ -1,5 +1,15 @@
 # Privacy Model: Unlinkable Inference
 
+## Optional error reporting
+
+Builds with `SENTRY_DSN` explicitly set send limited uncaught JavaScript errors
+to Sentry. Reports contain fixed error categories and generated code locations,
+not exception text, chats, credentials, account identifiers or activity histories.
+The direct transport still exposes source IP, browser HTTP metadata and error
+arrival time to Sentry. It is not covered by OA's inference relay or strongest
+metadata-unlinkability claims. Reporting is absent from unconfigured builds.
+See [SENTRY.md](SENTRY.md) for the exact data boundary and deployment controls.
+
 This document defines the full-system unlinkability and zero-trust model for
 oa-chat users, including the metadata tradeoff introduced when a user opts to
 sync inference tickets through a Google or pseudonymous username account.
