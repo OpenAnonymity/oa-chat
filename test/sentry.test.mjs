@@ -92,6 +92,7 @@ test('real SDK sends only sanitized error payload without cookies, referrer or a
     assert.equal(request.referrerPolicy, 'no-referrer');
     assert.equal(body.split('\n').filter(Boolean).length, 3);
     assert.equal(JSON.parse(body.split('\n')[1]).type, 'event');
+    assert.equal(JSON.parse(body.split('\n')[2]).sdk.settings.infer_ip, 'never');
 });
 
 test('build emits a self-hosted SDK only when configured, before app modules', async () => {
