@@ -51,6 +51,7 @@ function preflightHarness() {
         memoryFeatureEnabled: false,
         memoryMode: false,
         reasoningEnabled: false,
+        isCouncilModeActive: () => false,
         getFreshInferenceTicketRequirement: async () => ({ tickets: 1, label: 'Model one' }),
         showToast: () => assert.fail('A covered turn must not raise a notice'),
         notifyTicketShortage: async () => assert.fail('A covered turn is not a shortage')
@@ -107,6 +108,35 @@ test('a shortage with no move in flight is reported without waiting', async () =
     assert.equal(shortage?.sufficient, false);
     assert.equal(shortage?.requiredTickets, 1);
     assert.equal(notices.length, 1);
+});
+
+test('a stale high preview is repriced before any reload or shortage dialog', async () => {
+    const app = preflightHarness();
+    const refreshes = [];
+    app.getFreshInferenceTicketRequirement = async (_session, options) => {
+        refreshes.push(options.refreshPricing);
+        return { tickets: options.refreshPricing ? 1 : 5, label: 'Model one' };
+    };
+    await withTicketClient({ getTicketCount: () => 3, getHeldTicketCount: () => 0,
+        isLegacyTransferRunning: () => false }, async () => {
+        assert.equal(await app.preflightTurnTicketBudget({ id: 'one' }, 'Hello'), true);
+    });
+    assert.deepEqual(refreshes, [false, true]);
+});
+
+test('failed authoritative shortage pricing cannot trigger an automatic purchase', async () => {
+    const app = preflightHarness();
+    const notices = [];
+    app.showToast = text => notices.push(text);
+    app.getFreshInferenceTicketRequirement = async (_session, options) => {
+        if (options.refreshPricing) throw Object.assign(new Error('offline'), { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+        return { tickets: 5, label: 'Model one' };
+    };
+    await withTicketClient({ getTicketCount: () => 3, getHeldTicketCount: () => 0,
+        isLegacyTransferRunning: () => false }, async () => {
+        assert.equal(await app.preflightTurnTicketBudget({ id: 'one' }, 'Hello'), false);
+    });
+    assert.deepEqual(notices, ['Ticket pricing is temporarily unavailable. Please try again.']);
 });
 
 test('a send before the catalog has loaded shares the page-load download instead of starting another', async () => {

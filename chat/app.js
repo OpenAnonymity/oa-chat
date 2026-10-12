@@ -54,7 +54,7 @@ import shareService from './services/shareService.js';
 import { configureAppRouteRoot } from './services/appRoutes.js';
 import { saveNavigationSelection, restoreNavigationSelection, isConversationRestorePending } from './services/navigationState.js';
 import { hasConversationParam, readConversationParam, setConversationParam, deleteConversationParam, normalizeConversationAddress } from './services/conversationLink.js';
-import { ensureModelTiersReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
+import { ensureModelTiersReady, ensureModelTiersPreviewReady, getTicketCost, startModelTierRefresh } from './services/modelTiers.js';
 import { initPinnedModels, onPinnedModelsUpdate, getDefaultModelConfig, getDisabledModels, getPinnedModels, getStandardizedModelDisplayName } from './services/modelConfig.js';
 import accountService from './services/accountService.js';
 import sessionService from './services/sessionService.js';
@@ -5195,7 +5195,7 @@ class ChatApp {
     }
 
     async getFreshInferenceTicketRequirement(session, { councilStageEntry = null, signal = null,
-        modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled } = {}) {
+        modelName: requestedModelName = null, reasoningEnabled = this.reasoningEnabled, refreshPricing = false } = {}) {
         if (!session) return { tickets: 0, label: 'the selected model' };
         const councilActive = this.isCouncilModeActive(session) && this.councilController;
         if (!councilActive && this.inferenceService.getAccessToken(session)
@@ -5262,7 +5262,8 @@ class ChatApp {
             };
         }
 
-        await ensureModelTiersReady({ signal });
+        if (refreshPricing) await ensureModelTiersReady({ signal, forceRefresh: true });
+        else await ensureModelTiersPreviewReady({ signal });
         const modelName = this.normalizeModelName(requestedModelName || session.model, session)
             || requestedModelName || session.model
             || this.inferenceService.getDefaultModelName(session);
@@ -5310,17 +5311,19 @@ class ChatApp {
             && !hasValidMemoryKey(session)
             ? CONFIDENTIAL_KEY_TICKETS
             : 0;
-        let inference;
-        try {
-            inference = await this.getFreshInferenceTicketRequirement(session, options);
-        } catch (error) {
-            if (error?.code !== 'MODEL_TIER_CONFIG_UNAVAILABLE') throw error;
-
-            const message = 'Ticket pricing is temporarily unavailable. Please try again.';
-            this.showToast(message, 'error', 7000);
-            this.floatingPanel?.showMessage?.(message, 'error', 7000);
-            return false;
-        }
+        const readRequirement = async (refreshPricing = false) => {
+            try {
+                return await this.getFreshInferenceTicketRequirement(session, { ...options, refreshPricing });
+            } catch (error) {
+                if (error?.code !== 'MODEL_TIER_CONFIG_UNAVAILABLE') throw error;
+                const message = 'Ticket pricing is temporarily unavailable. Please try again.';
+                this.showToast(message, 'error', 7000);
+                this.floatingPanel?.showMessage?.(message, 'error', 7000);
+                return null;
+            }
+        };
+        let inference = await readRequirement();
+        if (!inference) return false;
         const buildBudget = () => buildTurnTicketBudget({
             availableTickets: ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0),
             inferenceTickets: inference.tickets,
@@ -5349,6 +5352,16 @@ class ChatApp {
             this.showToast(message, 'info', 6000);
             this.floatingPanel?.showMessage?.(message, 'info', 6000);
             return false;
+        }
+
+        // A stale preview may overestimate the cost after a price reduction.
+        // Refresh before opening offers or attempting a paid reload, rather
+        // than making that financial decision from the preview alone.
+        if (inference.tickets > 0 && !this.isCouncilModeActive(session)) {
+            inference = await readRequirement(true);
+            if (!inference) return false;
+            budget = buildBudget();
+            if (budget.sufficient) return true;
         }
 
         const accountState = accountService.getState();

@@ -3628,11 +3628,34 @@ class AccountService {
         this.lock({ accountChanged: true });
     }
 
+    async sharedAccountBindingIsCurrent() {
+        const accountId = this.state.accountId;
+        const generation = this.loginGeneration;
+        const locallyReady = () => accountId && this.state.accountId === accountId
+            && this.loginGeneration === generation && !this.state.accountHandoffPending
+            && this.state.sessionVerified === true && this.state.accountScopeReady === true
+            && this.state.ticketSyncReady === true && this.getSyncKeyMaterial()
+            && syncService.getLocalAccountScope() === accountId;
+        if (!locallyReady()) return false;
+        const saved = await chatDB.getSettingsSnapshot([
+            ACCOUNT_SETTINGS_KEY, ACCOUNT_LOGIN_PENDING_KEY, SYNC_ACCOUNT_SCOPE_SETTING
+        ]);
+        return Boolean(locallyReady()
+            && !saved[ACCOUNT_LOGIN_PENDING_KEY]
+            && normalizeAccountId(saved[ACCOUNT_SETTINGS_KEY]?.accountId) === accountId
+            && saved[SYNC_ACCOUNT_SCOPE_SETTING] === accountId);
+    }
+
     async restoreSharedAccount() {
         if (this.state.busy && !this.state.accountHandoffPending) return;
         let generation;
         let restored = false;
         try {
+            // A stable account needs only a coherent read of the shared binding,
+            // not the exclusive lock held across encrypted network sync. Actual
+            // handoffs still use that lock, and ticket selection/commit retain
+            // their own locked account-scope checks before anything is spent.
+            if (await this.sharedAccountBindingIsCurrent()) return;
             await withAccountDataLock(async () => {
                 const settings = await chatDB.getSetting(ACCOUNT_SETTINGS_KEY);
                 const pending = await chatDB.getSetting(ACCOUNT_LOGIN_PENDING_KEY);

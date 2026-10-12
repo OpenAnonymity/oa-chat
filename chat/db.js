@@ -774,6 +774,23 @@ class ChatDatabase {
         });
     }
 
+    // Read related account markers together. Separate getSetting transactions
+    // can observe opposite sides of a cross-tab account transition.
+    async getSettingsSnapshot(keys) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['settings'], 'readonly');
+            const store = transaction.objectStore('settings');
+            const values = Object.create(null);
+            transaction.oncomplete = () => resolve(values);
+            transaction.onerror = () => reject(transaction.error || new Error('Settings snapshot failed'));
+            transaction.onabort = () => reject(transaction.error || new Error('Settings snapshot aborted'));
+            for (const key of keys) {
+                const request = store.get(key);
+                request.onsuccess = () => { values[key] = request.result?.value; };
+            }
+        });
+    }
+
     // Compare JSON-compatible settings and write in the same transaction so a
     // display-only update cannot replace another tab's newer deposit amount.
     // A missing record and a cleared (null) setting both mean no current value.
@@ -815,7 +832,10 @@ class ChatDatabase {
         if (typeof window === 'undefined') return;
         const events = window.storageEvents;
         if (events && typeof events.broadcast === 'function') {
-            events.broadcast(type, detail);
+            // The write has already committed. A closed/unavailable cross-tab
+            // channel must not strand its promise (and leave Send spinning).
+            try { events.broadcast(type, detail); }
+            catch { console.warn('[ChatDB] Cross-tab notification unavailable.'); }
         }
     }
 
@@ -823,13 +843,14 @@ class ChatDatabase {
         if (typeof window === 'undefined') return;
         const events = window.storageEvents;
         if (events && typeof events.broadcastDebounced === 'function') {
-            events.broadcastDebounced(type, key, detail, delayMs);
+            try { events.broadcastDebounced(type, key, detail, delayMs); }
+            catch { console.warn('[ChatDB] Cross-tab notification unavailable.'); }
         } else if (events && typeof events.broadcast === 'function') {
             const debounceKey = `${type}:${key || ''}`;
             if (this.broadcastTimers.has(debounceKey)) return;
             const timer = setTimeout(() => {
                 this.broadcastTimers.delete(debounceKey);
-                events.broadcast(type, detail);
+                this.emitStorageEvent(type, detail);
             }, delayMs);
             this.broadcastTimers.set(debounceKey, timer);
         }
