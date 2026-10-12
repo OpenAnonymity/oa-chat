@@ -24,6 +24,9 @@ export function sanitizeErrorEvent(event, { origin, scriptPaths, environment, re
         return [{
             type: ERROR_TYPES.has(exception.type) ? exception.type : 'Error',
             value: 'OA Chat runtime error (details withheld)',
+            ...(typeof exception.mechanism?.handled === 'boolean'
+                ? { mechanism: { type: 'generic', handled: exception.mechanism.handled } }
+                : {}),
             stacktrace: { frames }
         }];
     });

@@ -43,6 +43,10 @@ test('only build script locations and fixed error categories survive', () => {
     const custom = event();
     custom.exception.values[0].type = privateText;
     assert.equal(sanitizeErrorEvent(custom, config).exception.values[0].type, 'Error');
+    custom.exception.values[0].mechanism = { handled: false, type: privateText, data: { secret: privateText } };
+    const uncaught = sanitizeErrorEvent(custom, config);
+    assert.deepEqual(uncaught.exception.values[0].mechanism, { type: 'generic', handled: false });
+    assert.equal(JSON.stringify(uncaught).includes(privateText), false);
 });
 
 test('drop events without known application frames and non-error event types', () => {
