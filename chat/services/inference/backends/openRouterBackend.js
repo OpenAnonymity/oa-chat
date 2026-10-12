@@ -162,8 +162,8 @@ const openRouterBackend = {
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
-    getAccessTicketCost({ modelId, signal }) {
-        return getAccessTicketCost(modelId, { signal });
+    getAccessTicketCost({ modelId, signal, forceRefresh = false }) {
+        return getAccessTicketCost(modelId, { signal, forceRefresh });
     },
     async requestAccess({ ticketsRequired, signal }) {
         return ticketClient.requestApiKey(ticketsRequired || 1, { signal });

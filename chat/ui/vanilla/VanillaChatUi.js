@@ -105,8 +105,10 @@ export default class VanillaChatUi {
         if (label) {
             label.textContent = normalizedPhase === 'thinking'
                 ? 'Thinking...'
-                : normalizedPhase === 'waiting-response'
-                    ? 'Waiting for response' : 'Requesting ephemeral key';
+                : normalizedPhase === 'reloading-tickets'
+                    ? 'Reloading tickets…'
+                    : normalizedPhase === 'waiting-response'
+                        ? 'Waiting for response' : 'Requesting ephemeral key';
             label.classList.add('pending-response-streaming');
         }
     }

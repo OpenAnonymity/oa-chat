@@ -131,7 +131,7 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
-    if (phase === 'preparing-access' || phase === 'thinking') return phase;
+    if (phase === 'preparing-access' || phase === 'thinking' || phase === 'reloading-tickets') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -149,6 +149,7 @@ function formatPendingTimestamp(timestamp) {
 function getPendingIndicatorLabel(phase) {
     const normalizedPhase = normalizePendingPhase(phase);
     if (normalizedPhase === 'thinking') return 'Thinking...';
+    if (normalizedPhase === 'reloading-tickets') return 'Reloading tickets…';
     return normalizedPhase === 'waiting-response'
         ? 'Waiting for response'
         : 'Requesting ephemeral key';

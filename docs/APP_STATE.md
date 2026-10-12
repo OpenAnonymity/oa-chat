@@ -1,3 +1,27 @@
+## October 12, 2026 — the ticket price at send is the one the tab holds
+
+A send no longer asks the org for the model's price. The budget check before
+the message is accepted and the key request after it both use the live price
+map this page holds (fetched at load, on each return to the tab and every ten
+minutes; never a cached or heuristic price). The org remains the authority: a
+count it no longer accepts comes back as `TICKET_PRICE_CHANGED`, which
+re-prices with a forced refresh and retries once, as before. On the common
+path this removes two round trips per new chat, one of them before the prompt
+appeared.
+
+A shortage found at the key request (the price rose after the budget check)
+now gets the same answer as one found before it, through `onTicketShortage`
+in `acquireVerifiedAccess`: the host's shortage handler reloads the wallet
+automatically or opens the offers. While a reload is being attempted the
+pending reply reads "Reloading tickets…" (`reloading-tickets` phase; the host
+reports it through the handler's `onReloadStarted` hook). If nothing covers
+the turn, the prompt stays in the chat and its reply is an interrupted turn
+with Retry (`TICKET_SHORTAGE`), not an error bubble, and the shortage message
+is announced as the preflight would have. Tests:
+`test/application/sendPreflightStartup.test.js`,
+`test/application/accessController.test.js`,
+`test/services/modelTiersReady.test.js`.
+
 ## October 11, 2026 — the first send no longer queues behind start-up work
 
 Between the send click and the prompt appearing, the ticket preflight waited on

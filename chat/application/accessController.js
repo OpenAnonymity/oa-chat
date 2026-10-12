@@ -180,6 +180,7 @@ export async function acquireVerifiedAccess(options = {}) {
         onGranted = null,
         onAccessRequestError = () => {},
         onVerificationWarning = () => {},
+        onTicketShortage = null,
         modelIdOverride = null,
         modelNameOverride = null,
         modelEntryOverride = null,
@@ -210,19 +211,38 @@ export async function acquireVerifiedAccess(options = {}) {
     const modelId = modelEntry.id;
     const overrideTickets = Number(ticketsRequiredOverride);
     const hasTicketOverride = Number.isFinite(overrideTickets) && overrideTickets > 0;
-    const resolveTicketCost = async () => {
+    // The first request carries the price this page holds; only a rejected
+    // count (TICKET_PRICE_CHANGED below) fetches the price again.
+    const resolveTicketCost = async ({ forceRefresh = false } = {}) => {
         if (hasTicketOverride) return Math.ceil(overrideTickets);
-        const liveCost = await inferenceService.getAccessTicketCost?.(session, { modelId, signal });
+        const liveCost = await inferenceService.getAccessTicketCost?.(session, { modelId, signal, forceRefresh });
         return liveCost ?? getTicketCost(modelId, reasoningEnabled);
     };
-    const checkBalance = () => {
-        const balance = ticketClient.getTicketCount();
-        if (balance < ticketsRequired) {
-            throw new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${balance} available.`);
+    const shortageError = balance => Object.assign(
+        new Error(`Not enough tickets for ${ticketRequirementLabel}. Need ${ticketsRequired}, but only ${balance} available.`),
+        { code: 'TICKET_SHORTAGE', requiredTickets: ticketsRequired, availableTickets: balance }
+    );
+    // A shortage found here (the price rose after the send was accepted) gets
+    // the same answer as one found before it: the caller may reload the wallet
+    // and ask for one more balance check, or open its offers and stop.
+    const checkBalance = async () => {
+        let balance = ticketClient.getTicketCount();
+        if (balance >= ticketsRequired) return;
+        if (typeof onTicketShortage === 'function') {
+            const outcome = await onTicketShortage({ requiredTickets: ticketsRequired, availableTickets: balance, label: ticketRequirementLabel });
+            if (signal?.aborted) {
+                const error = new Error('Request aborted');
+                error.name = 'AbortError';
+                error.isCancelled = true;
+                throw error;
+            }
+            balance = ticketClient.getTicketCount();
+            if (outcome?.retry === true && balance >= ticketsRequired) return;
         }
+        throw shortageError(balance);
     };
     let ticketsRequired = await resolveTicketCost();
-    checkBalance();
+    await checkBalance();
 
     if (signal?.aborted) {
         const error = new Error('Request aborted');
@@ -255,8 +275,8 @@ export async function acquireVerifiedAccess(options = {}) {
             if (error.code === 'TICKET_PRICE_CHANGED' && !pricingRetried && !hasTicketOverride
                 && typeof inferenceService.getAccessTicketCost === 'function') {
                 pricingRetried = true;
-                ticketsRequired = await resolveTicketCost();
-                checkBalance();
+                ticketsRequired = await resolveTicketCost({ forceRefresh: true });
+                await checkBalance();
                 continue;
             }
             if (error.code === 'TICKET_USED') {

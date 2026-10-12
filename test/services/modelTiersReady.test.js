@@ -103,7 +103,7 @@ test('waiting for live pricing can be cancelled without waiting for the shared f
     }
 });
 
-test('an open tab refreshes before redemption, shares in-flight loads, and fails closed', async () => {
+test('redemption uses the live map the tab holds; only a rejected count refreshes it, and it fails closed', async () => {
     const previousFetch = globalThis.fetch;
     const previousLocalStorage = globalThis.localStorage;
     globalThis.localStorage = { getItem: () => null, setItem() {} };
@@ -121,23 +121,35 @@ test('an open tab refreshes before redemption, shares in-flight loads, and fails
         const tiers = await import('../../chat/services/modelTiers.js?price-change-test');
         await tiers.ensureModelTiersReady();
         assert.equal(tiers.getTicketCost('openai/gpt-6.1-sol'), 5);
+        assert.equal(requests, 1);
+        // The common path: the price the tab holds, no request before the key request.
         price = 9;
         assert.deepEqual(await Promise.all([
             tiers.getAccessTicketCost('openai/gpt-6.1-sol'),
             tiers.getAccessTicketCost('openai/gpt-6.1-sol:online')
+        ]), [5, 5]);
+        assert.equal(requests, 1);
+        // The org rejected the count: the retry refreshes, and concurrent refreshes share one load.
+        assert.deepEqual(await Promise.all([
+            tiers.getAccessTicketCost('openai/gpt-6.1-sol', { forceRefresh: true }),
+            tiers.getAccessTicketCost('openai/gpt-6.1-sol:online', { forceRefresh: true })
         ]), [9, 9]);
         assert.equal(requests, 2);
         fail = true;
+        await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol', { forceRefresh: true }),
+            { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+        // A failed refresh never authorizes the previous map either.
         await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol'),
             { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
         fail = false;
         price = 3;
+        assert.equal(await tiers.getAccessTicketCost('openai/gpt-6.1-sol', { forceRefresh: true }), 3);
         assert.equal(await tiers.getAccessTicketCost('openai/gpt-6.1-sol'), 3);
         await assert.rejects(tiers.getAccessTicketCost('missing-model'), { code: 'MODEL_TIER_UNAVAILABLE' });
         const controller = new AbortController();
         controller.abort();
         const beforeAbort = requests;
-        await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol', { signal: controller.signal }),
+        await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol', { signal: controller.signal, forceRefresh: true }),
             { name: 'AbortError' });
         assert.equal(requests, beforeAbort);
     } finally {

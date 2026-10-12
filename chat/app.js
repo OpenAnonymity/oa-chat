@@ -535,10 +535,10 @@ class ChatApp {
      * when it reloaded the wallet (automatic reloads on) and the send should
      * be tried again; anything else means the request stays unsent.
      */
-    async notifyTicketShortage(budget) {
+    async notifyTicketShortage(budget, hooks = {}) {
         if (typeof this.ticketShortageHandler !== 'function') return { retry: false };
         try {
-            const result = await this.ticketShortageHandler(toExtensionTicketShortage(budget));
+            const result = await this.ticketShortageHandler(toExtensionTicketShortage(budget), hooks);
             return { retry: result?.retry === true };
         } catch (error) {
             console.warn('Ticket shortage handler failed:', error);
@@ -1214,6 +1214,32 @@ class ChatApp {
         if (!message?.pendingTurn) return;
         delete message.pendingTurn;
         message.isLocalOnly = false;
+    }
+
+    /** The pending reply's label while an automatic reload buys this turn's tickets. */
+    showTicketReloadPending(sessionId) {
+        this.updateSessionStreamingPhase(sessionId, 'reloading-tickets');
+        const indicator = document.querySelector(`.typing-indicator[data-pending-session-id="${String(sessionId).replace(/["\\]/g, '\\$&')}"]`);
+        if (indicator) this.ui?.updatePendingIndicator?.(indicator, 'reloading-tickets', null);
+    }
+
+    // A send whose price rose before its key request: the prompt is already
+    // in the chat, so its reply becomes an interrupted turn with Retry (the
+    // same row a reload shows) rather than an error bubble under it.
+    async keepPendingTurnForTicketShortage(message, error, session) {
+        if (!message) return;
+        delete message.pendingTurn;
+        Object.assign(message, {
+            streamingPending: false, streamingPhase: null, streamingTokens: null, streamingReasoning: false,
+            isLocalOnly: true,
+            inferenceError: `${getErrorMessage(error, 'Not enough tickets for this request.')} Get tickets, then retry.`
+        });
+        try {
+            await chatDB.saveMessage(message);
+        } catch (storageError) {
+            console.warn('Could not keep the interrupted turn:', storageError?.message || storageError);
+        }
+        if (this.chatArea && this.isViewingSession(session.id)) await this.chatArea.appendMessage(message);
     }
 
     async discardPendingTurn(message) {
@@ -5161,10 +5187,15 @@ class ChatApp {
             return { tickets: 0, label: session.model || 'the selected model' };
         }
         let models = this.getModelsForSession(session);
+        // The budget check uses the live price map this page holds (fetched at
+        // load, on each return to the tab and every ten minutes). It does not
+        // ask the org again before the message is accepted: key acquisition
+        // sends that price, and a count the org no longer accepts comes back
+        // as a rejection that re-prices and retries once (accessController).
         const councilTicketRequirement = async entries => {
             const fresh = this.councilController.getFreshEntriesForAccess(session, entries);
             if (fresh.length === 0) return 0;
-            await ensureModelTiersReady({ signal, forceRefresh: true });
+            await ensureModelTiersReady({ signal });
             return this.councilController.calculateCouncilTicketRequirement(fresh);
         };
 
@@ -5216,7 +5247,7 @@ class ChatApp {
             };
         }
 
-        await ensureModelTiersReady({ signal, forceRefresh: true });
+        await ensureModelTiersReady({ signal });
         const modelName = this.normalizeModelName(requestedModelName || session.model, session)
             || requestedModelName || session.model
             || this.inferenceService.getDefaultModelName(session);
@@ -8029,13 +8060,19 @@ class ChatApp {
                     }
                 } catch (error) {
                     if (typingId) this.removeTypingIndicator(typingId);
-                    await this.discardPendingTurn(pendingTurn);
                     if (this.pageUnloading === true) return;
-                    if (this.floatingPanel) {
-                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
-                    }
                     if (userMessage?.id) {
                         await this.clearSessionTitleGenerationPending(session.id);
+                    }
+                    if (error?.code === 'TICKET_SHORTAGE') {
+                        // The offers are open (or a reload did not land). The
+                        // prompt stays; its reply is interrupted with Retry.
+                        await this.keepPendingTurnForTicketShortage(pendingTurn, error, session);
+                        return;
+                    }
+                    await this.discardPendingTurn(pendingTurn);
+                    if (this.floatingPanel) {
+                        this.floatingPanel.showMessage(getErrorMessage(error), 'error', 5000);
                     }
                     await this.addMessage('assistant', `**Error:** ${getErrorMessage(error)}`, { isLocalOnly: true }, session);
                     return; // Return early if key acquisition fails
@@ -11861,7 +11898,9 @@ Your API key has been cleared. A new key from a different station will be obtain
                     modelNameOverride: options.modelNameOverride,
                     signal: controller.signal,
                     ticketsRequiredOverride: options.ticketsRequiredOverride,
-                    ticketRequirementLabel: options.ticketRequirementLabel,
+                    ticketRequirementLabel: options.ticketRequirementLabel
+                        || this.normalizeModelName(options.modelNameOverride || session.model, session)
+                        || options.modelNameOverride || session.model || 'this model',
                     onTicketUsed: () => {
                         this.showToast('Ticket already used, trying next available');
                     },
@@ -11875,6 +11914,21 @@ Your API key has been cleared. A new key from a different station will be obtain
                     },
                     onVerificationWarning: (...args) => {
                         console.warn(...args);
+                    },
+                    // The price rose between the send's budget check and the
+                    // key request. Same answer as a shortage found before the
+                    // send: reload the wallet automatically (the pending reply
+                    // says so) or open the offers.
+                    onTicketShortage: async ({ requiredTickets, label }) => {
+                        const budget = buildTurnTicketBudget({
+                            availableTickets: ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0),
+                            inferenceTickets: requiredTickets, memoryTickets: 0, modelLabel: label
+                        });
+                        const { retry } = await this.notifyTicketShortage(budget, {
+                            onReloadStarted: () => this.showTicketReloadPending(session.id)
+                        });
+                        if (!retry) this.showToast(budget.message, 'error', 7000);
+                        return { retry };
                     },
                     onSessionChanged: (changedSession) => {
                         if (this.rightPanel && this.isViewingSession(changedSession.id)) {

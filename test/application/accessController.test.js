@@ -760,11 +760,12 @@ const priceChanged = () => Object.assign(new Error('Model pricing changed. Pleas
     code: 'TICKET_PRICE_CHANGED', status: 400
 });
 
-test('new access uses live pricing instead of the open tab price', async () => {
+test('new access carries the price the tab holds, without asking the org first', async () => {
     const { harness, options } = pricingHarness();
-    harness.inferenceService.getAccessTicketCost = async (session, { modelId }) => {
+    harness.inferenceService.getAccessTicketCost = async (session, { modelId, forceRefresh }) => {
         assert.equal(session, harness.session);
         assert.equal(modelId, 'model-a');
+        assert.equal(forceRefresh, false);
         return 9;
     };
     await acquireVerifiedAccess(options);
@@ -776,10 +777,15 @@ test('a price change during redemption refreshes and retries once before verific
         if (attempt === 1) throw priceChanged();
         return { key: 'test-key' };
     } });
-    let reads = 0;
-    harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
+    const reads = [];
+    harness.inferenceService.getAccessTicketCost = async (_session, { forceRefresh }) => {
+        reads.push(forceRefresh);
+        return reads.length === 1 ? 5 : 9;
+    };
     await acquireVerifiedAccess(options);
     assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [5, 9]);
+    // Only the rejected count asks the org for the price again.
+    assert.deepEqual(reads, [false, true]);
     assert.equal(harness.verificationInputs.length, 1);
     assert.equal(harness.ticketUsed.length, 0);
 });
@@ -788,9 +794,56 @@ test('repricing rechecks the balance and never submits an unaffordable retry', a
     const { harness, options } = pricingHarness({ ticketCount: 7, requestAccess: async () => { throw priceChanged(); } });
     let reads = 0;
     harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
-    await assert.rejects(acquireVerifiedAccess(options), /Need 9, but only 7 available/);
+    await assert.rejects(acquireVerifiedAccess(options), error => {
+        assert.match(error.message, /Need 9, but only 7 available/);
+        assert.equal(error.code, 'TICKET_SHORTAGE');
+        assert.deepEqual([error.requiredTickets, error.availableTickets], [9, 7]);
+        return true;
+    });
     assert.equal(harness.requested.length, 1);
     assert.equal(harness.verificationInputs.length, 0);
+});
+
+test('a shortage found at the key request asks the caller, and a reload that lands lets it continue', async () => {
+    let balance = 7;
+    const { harness, options } = pricingHarness({ ticketCount: 7, requestAccess: async (_s, _r, attempt) => {
+        if (attempt === 1) throw priceChanged();
+        return { key: 'test-key' };
+    } });
+    harness.ticketClient.getTicketCount = () => balance;
+    let reads = 0;
+    harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
+    const shortages = [];
+    const onTicketShortage = async shortage => { shortages.push(shortage); balance = 27; return { retry: true }; };
+    await acquireVerifiedAccess({ ...options, onTicketShortage });
+    assert.deepEqual(shortages, [{ requiredTickets: 9, availableTickets: 7, label: 'this model' }]);
+    assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [5, 9]);
+    assert.equal(harness.verificationInputs.length, 1);
+});
+
+test('a shortage the caller cannot cover stops before any further request', async () => {
+    const { harness, options } = pricingHarness({ ticketCount: 7, requestAccess: async () => { throw priceChanged(); } });
+    let reads = 0;
+    harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
+    for (const outcome of [{ retry: false }, { retry: true }, undefined]) {
+        harness.requested.length = 0;
+        reads = 0;
+        let asked = 0;
+        await assert.rejects(acquireVerifiedAccess({ ...options, onTicketShortage: async () => { asked += 1; return outcome; } }),
+            { code: 'TICKET_SHORTAGE' });
+        assert.equal(asked, 1);
+        assert.equal(harness.requested.length, 1);
+    }
+});
+
+test('a cancellation during the shortage answer is reported as cancelled, not as a shortage', async () => {
+    const controller = new AbortController();
+    const { harness, options } = pricingHarness({ ticketCount: 7, requestAccess: async () => { throw priceChanged(); } });
+    let reads = 0;
+    harness.inferenceService.getAccessTicketCost = async () => ++reads === 1 ? 5 : 9;
+    await assert.rejects(acquireVerifiedAccess({ ...options, signal: controller.signal,
+        onTicketShortage: async () => { controller.abort(); return { retry: false }; } }), { name: 'AbortError' });
+    assert.equal(harness.requested.length, 1);
 });
 
 test('repeated price rejection stops after one recovery attempt', async () => {

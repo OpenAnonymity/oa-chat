@@ -275,9 +275,15 @@ export function hasEnoughTickets(availableTickets, modelId, reasoningEnabled = f
 // Load cache on module init (synchronous)
 loadCache();
 
-/** Authoritative price for redemption; heuristic prices are display-only. */
-export async function getAccessTicketCost(modelId, { signal = null } = {}) {
-    await ensureModelTiersReady({ signal, forceRefresh: true });
+/**
+ * Price for redemption: the live map this page holds (fetched at load, on
+ * each return to the tab and every ten minutes), never a cached or heuristic
+ * price. The org answers a count it no longer accepts with a rejection, and
+ * that retry passes `forceRefresh` so the second request carries the new
+ * price. No request is made here on the common path.
+ */
+export async function getAccessTicketCost(modelId, { signal = null, forceRefresh = false } = {}) {
+    await ensureModelTiersReady({ signal, forceRefresh });
     const baseModelId = String(modelId || '').replace(/:online$/, '');
     const tickets = Object.hasOwn(modelTickets, baseModelId) ? modelTickets[baseModelId] : null;
     if (!Number.isSafeInteger(tickets) || tickets <= 0) {
