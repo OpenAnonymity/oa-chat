@@ -162,7 +162,7 @@ const openRouterBackend = {
         if (!session.expiresAt) return true;
         return new Date(session.expiresAt) <= new Date();
     },
-    getAccessTicketCost({ modelId, signal, forceRefresh = false }) {
+    getAccessTicketCost({ modelId, signal, forceRefresh = true }) {
         return getAccessTicketCost(modelId, { signal, forceRefresh });
     },
     async requestAccess({ ticketsRequired, signal }) {

@@ -1,26 +1,34 @@
-## October 12, 2026 — the ticket price at send is the one the tab holds
+## October 12, 2026 — accept sends promptly, validate before spending
 
-A send no longer asks the org for the model's price. The budget check before
-the message is accepted and the key request after it both use the live price
-map this page holds (fetched at load, on each return to the tab and every ten
-minutes; never a cached or heuristic price). The org remains the authority: a
-count it no longer accepts comes back as `TICKET_PRICE_CHANGED`, which
-re-prices with a forced refresh and retries once, as before. On the common
-path this removes two round trips per new chat, one of them before the prompt
-appeared.
+Single-model courtesy preflight reuses the successfully loaded pricing map,
+removing the forced price fetch before the prompt appears. Acquisition still
+refreshes immediately before spending and retries one explicit rejected-count
+response. Council keeps its aggregate preflight refresh and per-lane spending
+check. Never remove the final refresh based on `TICKET_PRICE_CHANGED`: deployed
+org `920ece8` selects a credit tier by ticket count, not the requested model.
+An old price may still be a valid tier and would not be rejected (including a
+higher old price after a reduction). No model IDs or identities were added to
+anonymous redemption, and no backend change is required.
 
-A shortage found at the key request (the price rose after the budget check)
-now gets the same answer as one found before it, through `onTicketShortage`
-in `acquireVerifiedAccess`: the host's shortage handler reloads the wallet
-automatically or opens the offers. While a reload is being attempted the
-pending reply reads "Reloading tickets…" (`reloading-tickets` phase; the host
-reports it through the handler's `onReloadStarted` hook). If nothing covers
-the turn, the prompt stays in the chat and its reply is an interrupted turn
-with Retry (`TICKET_SHORTAGE`), not an error bubble, and the shortage message
-is announced as the preflight would have. Tests:
-`test/application/sendPreflightStartup.test.js`,
-`test/application/accessController.test.js`,
-`test/services/modelTiersReady.test.js`.
+Acquisition shortages share the existing host reload/offers path, including a
+wallet emptied by another tab. Recovery is bounded to one reload attempt and
+one locked-selection retry. Held previous-version tickets stay held and do
+not trigger purchases. TicketStore reports only counts on selection failure;
+its selection, persistence, tombstones and archive behavior are unchanged.
+Rejected prices and failed refreshes do not consume tickets.
+
+The single-model pending reply can show “Reloading tickets…” when the host starts a reload. Council retains its existing reload toast.
+An uncovered single-model turn keeps its prompt and a Retry reply. Council
+lanes share the shortage handler and retain keys already acquired by other
+lanes. Stop ends the caller's wait promptly and suppresses late reload/offers
+UI. Billing checks the send's cancellation before submitting a new charge;
+a payment already submitted continues the existing idempotent preparation
+path so paid tickets are not abandoned. Existing reload references and
+account-generation checks remain in force.
+
+Regression coverage: accessController, councilController, sendPreflightStartup,
+modelTiersReady, ticketStoreLegacyHold, and commercial billingClient suites.
+No account, wallet, sync, issuer, database-schema or storage-origin migration.
 
 ## October 11, 2026 — the first send no longer queues behind start-up work
 

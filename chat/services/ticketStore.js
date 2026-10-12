@@ -990,12 +990,16 @@ export class TicketStore {
             if (spendable.length === 0) {
                 const error = new Error('No inference tickets available. Please register with an invitation code first.');
                 error.code = 'NO_TICKETS';
+                error.availableTickets = 0;
+                error.heldTickets = active.length - spendable.length;
                 throw error;
             }
 
             if (spendable.length < count) {
                 const error = new Error(`Not enough tickets. Need ${count}, but only ${spendable.length} available.`);
                 error.code = 'INSUFFICIENT_TICKETS';
+                error.availableTickets = spendable.length;
+                error.heldTickets = active.length - spendable.length;
                 throw error;
             }
 

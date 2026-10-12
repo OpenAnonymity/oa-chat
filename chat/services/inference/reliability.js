@@ -12,7 +12,10 @@ export function inferenceError(code, message) {
 export function waitForSignal(operation, signal) {
     if (!signal) return Promise.resolve(operation);
     return new Promise((resolve, reject) => {
-        const aborted = () => reject(signal.reason || new DOMException('Request stopped', 'AbortError'));
+        const aborted = () => {
+            signal.removeEventListener('abort', aborted);
+            reject(signal.reason || new DOMException('Request stopped', 'AbortError'));
+        };
         if (signal.aborted) {
             Promise.resolve(operation).catch(() => {});
             aborted();

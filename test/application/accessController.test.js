@@ -760,12 +760,12 @@ const priceChanged = () => Object.assign(new Error('Model pricing changed. Pleas
     code: 'TICKET_PRICE_CHANGED', status: 400
 });
 
-test('new access carries the price the tab holds, without asking the org first', async () => {
+test('new access refreshes pricing even when an old count would still be accepted', async () => {
     const { harness, options } = pricingHarness();
     harness.inferenceService.getAccessTicketCost = async (session, { modelId, forceRefresh }) => {
         assert.equal(session, harness.session);
         assert.equal(modelId, 'model-a');
-        assert.equal(forceRefresh, false);
+        assert.equal(forceRefresh, true);
         return 9;
     };
     await acquireVerifiedAccess(options);
@@ -784,8 +784,8 @@ test('a price change during redemption refreshes and retries once before verific
     };
     await acquireVerifiedAccess(options);
     assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [5, 9]);
-    // Only the rejected count asks the org for the price again.
-    assert.deepEqual(reads, [false, true]);
+    // Both the spending boundary and the one rejected-count retry refresh.
+    assert.deepEqual(reads, [true, true]);
     assert.equal(harness.verificationInputs.length, 1);
     assert.equal(harness.ticketUsed.length, 0);
 });
@@ -888,4 +888,77 @@ test('an explicit ticket budget is neither repriced nor retried as a model price
     await assert.rejects(acquireVerifiedAccess({ ...options, ticketsRequiredOverride: 4 }),
         { code: 'TICKET_PRICE_CHANGED' });
     assert.deepEqual(harness.requested.map(x => x.request.ticketsRequired), [4]);
+});
+
+test('zero tickets at acquisition can reload once and issue a key', async () => {
+    let balance = 0, reloads = 0;
+    const { harness, options } = pricingHarness({ ticketCount: () => balance });
+    await acquireVerifiedAccess({ ...options, onTicketShortage: async () => {
+        reloads++; balance = 10; return { retry: true };
+    } });
+    assert.equal(reloads, 1);
+    assert.equal(harness.requested.length, 1);
+});
+
+test('held previous-version tickets never trigger a purchase at acquisition', async () => {
+    const { harness, options } = pricingHarness({ ticketCount: 6 });
+    harness.ticketClient.getHeldTicketCount = () => 5;
+    await assert.rejects(acquireVerifiedAccess({ ...options,
+        onTicketShortage: () => assert.fail('Held tickets must not cause a reload')
+    }), { code: 'TICKETS_MOVING' });
+    assert.equal(harness.requested.length, 0);
+});
+
+test('locked selection shortages recover once, and repeated races stop without another reload', async () => {
+    for (const repeat of [false, true]) {
+        let reloads = 0;
+        const { harness, options } = pricingHarness({ requestAccess: async (_s, _r, attempt) => {
+            if (attempt === 1 || repeat) throw Object.assign(new Error('Another tab spent tickets'), {
+                code: 'INSUFFICIENT_TICKETS', availableTickets: 1, heldTickets: 0
+            });
+            return { key: 'race-recovered' };
+        } });
+        const work = acquireVerifiedAccess({ ...options, onTicketShortage: async shortage => {
+            assert.equal(shortage.availableTickets, 1);
+            reloads++; return { retry: true };
+        } });
+        if (repeat) await assert.rejects(work, { code: 'TICKET_SHORTAGE' });
+        else await work;
+        assert.equal(reloads, 1);
+        assert.equal(harness.requested.length, 2);
+    }
+});
+
+test('a hold discovered at locked selection preserves tickets without reload', async () => {
+    const { options } = pricingHarness({ requestAccess: async () => {
+        throw Object.assign(new Error('Held'), { code: 'NO_TICKETS', availableTickets: 0, heldTickets: 6 });
+    } });
+    await assert.rejects(acquireVerifiedAccess({ ...options,
+        onTicketShortage: () => assert.fail('Must not purchase')
+    }), { code: 'TICKETS_MOVING' });
+});
+
+test('Stop cancels a hung shortage wait promptly and cannot issue a late key', async () => {
+    let release, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    const controller = new AbortController();
+    const { harness, options } = pricingHarness({ ticketCount: 0 });
+    const work = acquireVerifiedAccess({ ...options, signal: controller.signal,
+        onTicketShortage: () => { entered(); return new Promise(resolve => { release = resolve; }); }
+    });
+    await started;
+    controller.abort();
+    await assert.rejects(work, { name: 'AbortError' });
+    release({ retry: true });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(harness.requested.length, 0);
+});
+
+test('a cancellation during pricing never starts shortage billing', async () => {
+    const controller = new AbortController();
+    const { harness, options } = pricingHarness({ ticketCount: 0 });
+    harness.inferenceService.getAccessTicketCost = async () => { controller.abort(); return 5; };
+    await assert.rejects(acquireVerifiedAccess({ ...options, signal: controller.signal,
+        onTicketShortage: () => assert.fail('Cancelled send must not buy tickets')
+    }), { name: 'AbortError' });
 });

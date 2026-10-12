@@ -1223,6 +1223,22 @@ class ChatApp {
         if (indicator) this.ui?.updatePendingIndicator?.(indicator, 'reloading-tickets', null);
     }
 
+    async handleAcquisitionTicketShortage(session, { requiredTickets, availableTickets, label }, signal = null) {
+        this.throwIfAborted(signal);
+        const budget = buildTurnTicketBudget({
+            availableTickets, inferenceTickets: requiredTickets, memoryTickets: 0, modelLabel: label
+        });
+        const { retry } = await this.notifyTicketShortage(budget, {
+            signal,
+            onReloadStarted: () => {
+                if (!signal?.aborted) this.showTicketReloadPending(session.id);
+            }
+        });
+        this.throwIfAborted(signal);
+        if (!retry && this.isViewingSession(session.id)) this.showToast(budget.message, 'error', 7000);
+        return { retry };
+    }
+
     // A send whose price rose before its key request: the prompt is already
     // in the chat, so its reply becomes an interrupted turn with Retry (the
     // same row a reload shows) rather than an error bubble under it.
@@ -5189,13 +5205,12 @@ class ChatApp {
         let models = this.getModelsForSession(session);
         // The budget check uses the live price map this page holds (fetched at
         // load, on each return to the tab and every ten minutes). It does not
-        // ask the org again before the message is accepted: key acquisition
-        // sends that price, and a count the org no longer accepts comes back
-        // as a rejection that re-prices and retries once (accessController).
+        // ask the org again before the message is accepted. Key acquisition
+        // refreshes immediately before spending; rejected counts retry once.
         const councilTicketRequirement = async entries => {
             const fresh = this.councilController.getFreshEntriesForAccess(session, entries);
             if (fresh.length === 0) return 0;
-            await ensureModelTiersReady({ signal });
+            await ensureModelTiersReady({ signal, forceRefresh: true });
             return this.councilController.calculateCouncilTicketRequirement(fresh);
         };
 
@@ -11919,17 +11934,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                     // key request. Same answer as a shortage found before the
                     // send: reload the wallet automatically (the pending reply
                     // says so) or open the offers.
-                    onTicketShortage: async ({ requiredTickets, label }) => {
-                        const budget = buildTurnTicketBudget({
-                            availableTickets: ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0),
-                            inferenceTickets: requiredTickets, memoryTickets: 0, modelLabel: label
-                        });
-                        const { retry } = await this.notifyTicketShortage(budget, {
-                            onReloadStarted: () => this.showTicketReloadPending(session.id)
-                        });
-                        if (!retry) this.showToast(budget.message, 'error', 7000);
-                        return { retry };
-                    },
+                    onTicketShortage: shortage => this.handleAcquisitionTicketShortage(session, shortage, controller.signal),
                     onSessionChanged: (changedSession) => {
                         if (this.rightPanel && this.isViewingSession(changedSession.id)) {
                             this.rightPanel.onSessionChange(changedSession);

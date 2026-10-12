@@ -2352,3 +2352,44 @@ test('Council reprices each lane model and keeps recovered access with its lane'
     assert.equal(session.councilAccess.secondary.apiKey, 'key-3');
     assert.equal(session.councilAccess.secondary.ticketsConsumed, 3);
 });
+
+test('Council shares acquisition shortage recovery without replacing a successful lane', async () => {
+    let balance = 2, reloads = 0;
+    const requested = [];
+    const controller = createController({ ticketCount: 2, models: [{ id: 'model-a', name: 'Model A' }],
+        chatDB: { saveSession: async () => {} },
+        inferenceService: {
+            getAccessLabel: () => 'key', getDefaultModelName: () => 'Model A',
+            getAccessTicketCost: async (_s, options) => { assert.equal(options.forceRefresh, true); return 5; },
+            requestAccess: async (_s, options) => { requested.push(options.ticketsRequired); return { key: 'fresh-lane' }; },
+            getVerificationAdapter: () => ({ supports: false })
+        }
+    });
+    controller.ticketClient.getTicketCount = () => balance;
+    controller.app.handleAcquisitionTicketShortage = async (_s, shortage) => {
+        assert.equal(shortage.requiredTickets, 5);
+        reloads++; balance = 10; return { retry: true };
+    };
+    const session = { id: 's', councilAccess: { primary: { apiKey: 'existing-lane', modelId: 'other-model' } } };
+    await controller.requestLaneAccess(session, { laneId: 'secondary', id: 'model-a', name: 'Model A' });
+    assert.equal(session.councilAccess.primary.apiKey, 'existing-lane');
+    assert.equal(session.councilAccess.secondary.apiKey, 'fresh-lane');
+    assert.equal(reloads, 1);
+    assert.deepEqual(requested, [5]);
+});
+
+test('Council checks the synthesis budget before issuing any opinion keys', async () => {
+    const { controller, session, userMessage } = createRunTurnHarness();
+    controller.ticketClient.getTicketCount = () => 6;
+    controller.app.getTicketCost = () => 3;
+    controller.assertSufficientTicketsForEntries = CouncilController.prototype.assertSufficientTicketsForEntries;
+    controller.getFreshEntriesForAccess = (_session, entries) => entries;
+    let issued = 0, shortage;
+    controller.ensureAccessForEntries = async () => { issued++; };
+    controller.app.handleAcquisitionTicketShortage = async (_session, value) => { shortage = value; return { retry: false }; };
+    await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false,
+        abortController: new AbortController(), initialPendingPhase: 'requesting-key' });
+    assert.equal(shortage.requiredTickets, 9);
+    assert.equal(shortage.availableTickets, 6);
+    assert.equal(issued, 0);
+});

@@ -1,4 +1,5 @@
 import { trackFeatureUsage } from '../services/featureUsage.js';
+import { waitForSignal } from '../services/inference/reliability.js';
 import { chatDB as defaultChatDB } from '../db.js';
 import { parseReasoningContent, reasoningTextFromDetails } from '../services/reasoningParser.js';
 import {
@@ -571,11 +572,30 @@ export default class CouncilController {
 
     assertSufficientTicketsForEntries(session, entries, label = 'selected model responses') {
         const freshTicketCost = this.calculateFreshTicketRequirement(session, entries);
-        const availableTickets = this.ticketClient.getTicketCount();
+        const heldTickets = this.ticketClient.getHeldTicketCount?.() || 0;
+        const availableTickets = Math.max(0, this.ticketClient.getTicketCount() - heldTickets);
         if (freshTicketCost > availableTickets) {
-            throw new Error(`Not enough tickets for ${label}. Need ${freshTicketCost}, but only ${availableTickets} available.`);
+            throw Object.assign(new Error(heldTickets > 0
+                ? 'Your tickets from the previous version are still being moved. Try again in a moment.'
+                : `Not enough tickets for ${label}. Need ${freshTicketCost}, but only ${availableTickets} available.`), {
+                code: heldTickets > 0 ? 'TICKETS_MOVING' : 'TICKET_SHORTAGE',
+                requiredTickets: freshTicketCost, availableTickets, label
+            });
         }
         return freshTicketCost;
+    }
+
+    async ensureSufficientTicketsForEntries(session, entries, signal) {
+        throwIfAborted(signal);
+        try {
+            return this.assertSufficientTicketsForEntries(session, entries);
+        } catch (error) {
+            if (error.code !== 'TICKET_SHORTAGE' || !this.app.handleAcquisitionTicketShortage) throw error;
+            const outcome = await waitForSignal(this.app.handleAcquisitionTicketShortage(session, error, signal), signal);
+            throwIfAborted(signal);
+            if (outcome?.retry !== true) throw error;
+            return this.assertSufficientTicketsForEntries(session, entries);
+        }
     }
 
     needsFreshLaneAccess(session, entry) {
@@ -710,6 +730,7 @@ export default class CouncilController {
             modelEntryOverride: entry,
             ticketRequirementLabel: entry.name,
             signal,
+            onTicketShortage: shortage => this.app.handleAcquisitionTicketShortage?.(session, shortage, signal),
             onTicketUsed: () => this.app.showToast?.('Ticket already used, trying next available'),
             onNetworkSession: (sessionId) => {
                 if (typeof window !== 'undefined' && window.networkLogger) {
@@ -765,7 +786,7 @@ export default class CouncilController {
     async ensureAccessForEntries(session, entries, typingId, signal = null) {
         throwIfAborted(signal);
         const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(entries));
-        this.assertSufficientTicketsForEntries(session, entries);
+        await this.ensureSufficientTicketsForEntries(session, entries, signal);
         for (const entry of entries) {
             await this.ensureLaneAccess(session, entry, typingId, signal);
         }
@@ -1075,7 +1096,6 @@ export default class CouncilController {
             const synthesisEntry = shouldRunSynthesis ? this.resolveSynthesisEntry(session, entries) : null;
             const accessEntries = synthesisEntry ? [...entries, synthesisEntry] : entries;
 
-            this.assertSufficientTicketsForEntries(session, accessEntries);
             const ticketsRequired = Math.max(1, this.calculateCouncilTicketRequirement(accessEntries));
 
             const messages = await this.chatDB.getSessionMessages(session.id);
@@ -1097,6 +1117,9 @@ export default class CouncilController {
 
             await this.saveAndRender(assistantMessage, session);
 
+            // Reserve enough budget for synthesis too before spending on any
+            // opinions. A concurrent send may have changed the wallet since preflight.
+            await this.ensureSufficientTicketsForEntries(session, accessEntries, abortController?.signal || null);
             await this.ensureAccessForEntries(session, entries, typingId, abortController?.signal || null);
 
             if (userMessage?.id) {

@@ -115,3 +115,12 @@ test('a rejected obsolete price preserves selected tickets for the corrected req
     assert.equal(persisted[0].archive.length, 2);
     assert.equal(persisted[0].active.length, 0);
 });
+
+test('locked selection reports spendable and held counts without changing the wallet', async () => {
+    const { store, persisted } = storeWith([...legacy, current[0]]);
+    store.setHeldKeyIds([LEGACY_KEY]);
+    await assert.rejects(store.consumeTickets(2, () => assert.fail('No redemption')), {
+        code: 'INSUFFICIENT_TICKETS', availableTickets: 1, heldTickets: 2
+    });
+    assert.equal(persisted.length, 0);
+});

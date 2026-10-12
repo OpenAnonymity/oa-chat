@@ -103,7 +103,7 @@ test('waiting for live pricing can be cancelled without waiting for the shared f
     }
 });
 
-test('redemption uses the live map the tab holds; only a rejected count refreshes it, and it fails closed', async () => {
+test('redemption refreshes while courtesy preflight reuses the live map, and failed refreshes fail closed', async () => {
     const previousFetch = globalThis.fetch;
     const previousLocalStorage = globalThis.localStorage;
     globalThis.localStorage = { getItem: () => null, setItem() {} };
@@ -122,19 +122,21 @@ test('redemption uses the live map the tab holds; only a rejected count refreshe
         await tiers.ensureModelTiersReady();
         assert.equal(tiers.getTicketCost('openai/gpt-6.1-sol'), 5);
         assert.equal(requests, 1);
-        // The common path: the price the tab holds, no request before the key request.
+        // Accepting the prompt uses the loaded map; spending always refreshes.
         price = 9;
+        await tiers.ensureModelTiersReady();
+        assert.equal(requests, 1);
         assert.deepEqual(await Promise.all([
             tiers.getAccessTicketCost('openai/gpt-6.1-sol'),
             tiers.getAccessTicketCost('openai/gpt-6.1-sol:online')
-        ]), [5, 5]);
-        assert.equal(requests, 1);
+        ]), [9, 9]);
+        assert.equal(requests, 2);
         // The org rejected the count: the retry refreshes, and concurrent refreshes share one load.
         assert.deepEqual(await Promise.all([
             tiers.getAccessTicketCost('openai/gpt-6.1-sol', { forceRefresh: true }),
             tiers.getAccessTicketCost('openai/gpt-6.1-sol:online', { forceRefresh: true })
         ]), [9, 9]);
-        assert.equal(requests, 2);
+        assert.equal(requests, 3);
         fail = true;
         await assert.rejects(tiers.getAccessTicketCost('openai/gpt-6.1-sol', { forceRefresh: true }),
             { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });

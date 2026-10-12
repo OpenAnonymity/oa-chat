@@ -4,6 +4,7 @@ import {
 } from '../services/inference/verifiedAccess.js';
 import { getCreditLimitSource, isKeyLimitExceededResponse, parseOutputAffordability } from '../services/inference/openRouterCreditRecovery.js';
 import { logAccessReplace } from '../services/inference/accessDiscardLog.js';
+import { waitForSignal } from '../services/inference/reliability.js';
 
 export function isAccessCreditExhaustedError(error) {
     const status = error?.status;
@@ -194,11 +195,6 @@ export async function acquireVerifiedAccess(options = {}) {
         throw new Error('Access controller is missing required dependencies.');
     }
 
-    const availableTickets = ticketClient.getTicketCount();
-    if (availableTickets === 0) {
-        throw new Error('You have no inference tickets left. Please redeem an invite code for more tickets at the System Panel (right) or request invite code at [here](https://openanonymity.ai/beta/).');
-    }
-
     const modelName = modelNameOverride || session.model || inferenceService.getDefaultModelName(session);
     const modelEntry = modelEntryOverride || (modelIdOverride && Array.isArray(models)
         ? models.find(model => model.id === modelIdOverride)
@@ -211,9 +207,9 @@ export async function acquireVerifiedAccess(options = {}) {
     const modelId = modelEntry.id;
     const overrideTickets = Number(ticketsRequiredOverride);
     const hasTicketOverride = Number.isFinite(overrideTickets) && overrideTickets > 0;
-    // The first request carries the price this page holds; only a rejected
-    // count (TICKET_PRICE_CHANGED below) fetches the price again.
-    const resolveTicketCost = async ({ forceRefresh = false } = {}) => {
+    // The org chooses a tier by ticket count, not model ID. Refresh here,
+    // after accepting the prompt, so a still-valid old tier cannot overcharge.
+    const resolveTicketCost = async ({ forceRefresh = true } = {}) => {
         if (hasTicketOverride) return Math.ceil(overrideTickets);
         const liveCost = await inferenceService.getAccessTicketCost?.(session, { modelId, signal, forceRefresh });
         return liveCost ?? getTicketCost(modelId, reasoningEnabled);
@@ -225,18 +221,25 @@ export async function acquireVerifiedAccess(options = {}) {
     // A shortage found here (the price rose after the send was accepted) gets
     // the same answer as one found before it: the caller may reload the wallet
     // and ask for one more balance check, or open its offers and stop.
-    const checkBalance = async () => {
-        let balance = ticketClient.getTicketCount();
+    const throwIfCancelled = () => {
+        if (!signal?.aborted) return;
+        throw Object.assign(new Error('Request aborted'), { name: 'AbortError', isCancelled: true });
+    };
+    const spendableBalance = () => Math.max(0, ticketClient.getTicketCount() - (ticketClient.getHeldTicketCount?.() || 0));
+    let shortageHandled = false;
+    const checkBalance = async (selectionError = null) => {
+        throwIfCancelled();
+        let balance = Number.isFinite(selectionError?.availableTickets)
+            ? selectionError.availableTickets : spendableBalance();
         if (balance >= ticketsRequired) return;
-        if (typeof onTicketShortage === 'function') {
-            const outcome = await onTicketShortage({ requiredTickets: ticketsRequired, availableTickets: balance, label: ticketRequirementLabel });
-            if (signal?.aborted) {
-                const error = new Error('Request aborted');
-                error.name = 'AbortError';
-                error.isCancelled = true;
-                throw error;
-            }
-            balance = ticketClient.getTicketCount();
+        if ((selectionError?.heldTickets || ticketClient.getHeldTicketCount?.() || 0) > 0) {
+            throw Object.assign(new Error('Your tickets from the previous version are still being moved. Try again in a moment.'), { code: 'TICKETS_MOVING' });
+        }
+        if (!shortageHandled && typeof onTicketShortage === 'function') {
+            shortageHandled = true;
+            const outcome = await waitForSignal(onTicketShortage({ requiredTickets: ticketsRequired, availableTickets: balance, label: ticketRequirementLabel }), signal);
+            throwIfCancelled();
+            balance = spendableBalance();
             if (outcome?.retry === true && balance >= ticketsRequired) return;
         }
         throw shortageError(balance);
@@ -256,7 +259,8 @@ export async function acquireVerifiedAccess(options = {}) {
     let result;
     let retries = 0;
     let pricingRetried = false;
-    const maxRetries = Math.min(availableTickets, ticketsRequired + 10);
+    const maxRetries = Math.max(1, Math.min(spendableBalance(), ticketsRequired + 10));
+    let selectionRetried = false;
 
     while (retries < maxRetries) {
         if (signal?.aborted) {
@@ -272,6 +276,12 @@ export async function acquireVerifiedAccess(options = {}) {
             });
             break;
         } catch (error) {
+            if (['NO_TICKETS', 'INSUFFICIENT_TICKETS'].includes(error.code)) {
+                if (selectionRetried) throw shortageError(error.availableTickets ?? spendableBalance());
+                selectionRetried = true;
+                await checkBalance(error);
+                continue;
+            }
             if (error.code === 'TICKET_PRICE_CHANGED' && !pricingRetried && !hasTicketOverride
                 && typeof inferenceService.getAccessTicketCost === 'function') {
                 pricingRetried = true;

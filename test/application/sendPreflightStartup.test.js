@@ -207,9 +207,7 @@ test('a key-request shortage reaches the shortage handler with the reload hook, 
         const source = (await import('node:fs')).readFileSync('chat/app.js', 'utf8');
         const start = source.indexOf('    async acquireAndSetAccess(');
         const method = source.slice(start, source.indexOf('\n    toggleCitations(', start));
-        assert.match(method, /onTicketShortage: async \(\{ requiredTickets, label \}\) => \{/);
-        assert.match(method, /this\.notifyTicketShortage\(budget, \{\s*onReloadStarted: \(\) => this\.showTicketReloadPending\(session\.id\)\s*\}\)/);
-        assert.match(method, /if \(!retry\) this\.showToast\(budget\.message, 'error', 7000\);/);
+        assert.match(method, /onTicketShortage: shortage => this\.handleAcquisitionTicketShortage\(session, shortage, controller\.signal\)/);
         // The send keeps the prompt on a shortage instead of posting an error bubble.
         const send = source.slice(source.indexOf('    async sendCapturedMessage('), source.indexOf('\n    async ', source.indexOf('    async sendCapturedMessage(') + 20));
         const shortage = send.indexOf("error?.code === 'TICKET_SHORTAGE'");
@@ -280,4 +278,28 @@ test('a shortage after the prompt is in the chat keeps it and leaves the reply i
         chatDB.saveMessage = originalSave;
         restore();
     }
+});
+
+test('late reload hooks after Stop cannot update the stopped chat', async () => {
+    const restore = installBrowser();
+    try {
+        const controller = new AbortController();
+        let reloadLabels = 0, notices = 0;
+        const app = Object.assign(Object.create(ChatApp.prototype), {
+            showTicketReloadPending: () => { reloadLabels++; },
+            showToast: () => { notices++; },
+            isViewingSession: () => true,
+            notifyTicketShortage: async (_budget, hooks) => {
+                assert.equal(hooks.signal, controller.signal);
+                controller.abort();
+                hooks.onReloadStarted();
+                return { retry: false };
+            }
+        });
+        await assert.rejects(app.handleAcquisitionTicketShortage({ id: 'one' }, {
+            requiredTickets: 5, availableTickets: 1, label: 'Model one'
+        }, controller.signal), error => error.isCancelled === true);
+        assert.equal(reloadLabels, 0);
+        assert.equal(notices, 0);
+    } finally { restore(); }
 });

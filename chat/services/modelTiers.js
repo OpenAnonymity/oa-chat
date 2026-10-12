@@ -276,13 +276,12 @@ export function hasEnoughTickets(availableTickets, modelId, reasoningEnabled = f
 loadCache();
 
 /**
- * Price for redemption: the live map this page holds (fetched at load, on
- * each return to the tab and every ten minutes), never a cached or heuristic
- * price. The org answers a count it no longer accepts with a rejection, and
- * that retry passes `forceRefresh` so the second request carries the new
- * price. No request is made here on the common path.
+ * Refresh immediately before redemption. The org validates ticket counts,
+ * not a model's price, so an older price could still select a valid tier.
+ * The courtesy preflight uses the loaded map; only this spending boundary
+ * requires a fresh map. Concurrent callers share the same refresh.
  */
-export async function getAccessTicketCost(modelId, { signal = null, forceRefresh = false } = {}) {
+export async function getAccessTicketCost(modelId, { signal = null, forceRefresh = true } = {}) {
     await ensureModelTiersReady({ signal, forceRefresh });
     const baseModelId = String(modelId || '').replace(/:online$/, '');
     const tickets = Object.hasOwn(modelTickets, baseModelId) ? modelTickets[baseModelId] : null;
