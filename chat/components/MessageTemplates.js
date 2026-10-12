@@ -1926,9 +1926,15 @@ function shouldShowCouncilAssistantActions(synthesis) {
 }
 
 function buildRegenerationStatus(message) {
+    const laneId = message.regenerationLaneId;
+    const validLane = laneId && !message.council?.synthesis
+        && message.council?.stage1?.some(entry => entry.laneId === laneId);
+    const retry = laneId
+        ? (validLane ? `<button type="button" class="regenerate-council-lane-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}" data-council-lane-id="${escapeHtmlAttribute(laneId)}">Retry response</button>` : '')
+        : `<button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>`;
     return message.regenerationNotice ? `<div class="regeneration-status" role="status">
         <div>${message.regenerationNotice === 'stopped' ? 'Stopped. Your previous answer was kept.' : 'The replacement did not finish. Your previous answer was kept.'}</div>
-        <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+        ${retry}
     </div>` : '';
 }
 

@@ -32,6 +32,28 @@ async function freshDatabase() {
 }
 
 const cases = [
+    ['Parallel rollback preserves both lanes, later turns and the lane-specific retry after reopen', async ({ db, reader }) => {
+        const baseline = structuredClone(original);
+        baseline[1].council = {stage1: [
+            {laneId: 'primary', response: 'Original A', status: 'complete'},
+            {laneId: 'secondary', response: 'Original B', status: 'complete'}
+        ]};
+        await db.saveMessage(baseline[1]);
+        const draft = await db.beginMessageReplacement('test', 'answer');
+        const candidate = {...structuredClone(baseline[1]), id: 'lane-candidate'};
+        candidate.council.stage1[0].response = '';
+        candidate.council.stage1[0].status = 'pending';
+        await db.saveMessage(candidate);
+        equal(await reader.getSessionMessages('test'), baseline, 'pending lane leaked to disk');
+        await db.finishMessageReplacement(draft, {notice: 'stopped', laneId: 'primary'});
+        reader.db.close(); reader.db = null; await reader.init();
+        const saved = await reader.getSessionMessages('test');
+        assert(saved[1].regenerationLaneId === 'primary', 'Retry lost its original lane');
+        equal(saved.map(({regenerationNotice, regenerationLaneId, ...row}) => row), baseline, 'Parallel rollback lost content');
+        await db.saveMessage(candidate);
+        equal(await reader.getSessionMessages('test'), saved, 'late lane snapshot resurrected discarded draft');
+    }],
+
     ['Stop restores the complete answer and later turns, including after reopen', async ({ db, reader }) => {
         const draft = await db.beginMessageReplacement('test', 'answer');
         await db.saveMessage(response('partial'));

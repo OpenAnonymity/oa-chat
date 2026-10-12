@@ -7694,6 +7694,7 @@ class ChatApp {
         if (!operation) return;
         const mutation = this.beginSessionMutation(session.id, { exclusive: true });
         if (!mutation) { this.finishFeatureOperation(operation); return; }
+        let replacement = null;
         try {
         if (!options.skipMemoryAugment) this.clearMemoryApiOverrideContent(session.id);
 
@@ -7732,12 +7733,18 @@ class ChatApp {
         })) return;
         if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
 
-        const messagesToDelete = messages.slice(messageIndex + 1);
-        for (const msg of messagesToDelete) {
-            await chatDB.deleteMessage(msg.id);
+        replacement = await chatDB.beginMessageReplacement(session.id, messageId);
+        if (operation.signal.aborted || this.isSessionDeleted(session.id)) return;
+        if (!replacement.matches(messages)) {
+            this.showToast?.('The chat changed while preparing the retry. Your saved conversation was kept.', 'info');
+            return;
         }
-        const remainingMessages = messages.slice(0, messageIndex + 1);
-        await this.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
+        // A fresh ID also prevents late enrichment of the original response from
+        // overwriting the replacement or resurrecting it after cancellation.
+        const candidate = { ...structuredClone(assistantMessage), id: this.generateId() };
+        delete candidate.regenerationNotice;
+        delete candidate.regenerationLaneId;
+        await chatDB.saveMessage(candidate);
         if (this.chatArea && this.isViewingSession(session.id)) {
             await this.chatArea.render();
         }
@@ -7771,15 +7778,25 @@ class ChatApp {
                 }
             }
 
-            await this.councilController.runRegenerateLaneTurn({
+            const result = await this.councilController.runRegenerateLaneTurn({
                 session,
-                assistantMessageId: messageId,
+                assistantMessageId: candidate.id,
                 laneId,
                 userMessage,
                 searchEnabled: this.searchEnabled,
                 abortController,
-                initialPendingPhase
+                initialPendingPhase,
+                deferMemoryExtraction: true
             });
+
+            const completedLane = this.findCouncilStageEntryByLane(result, laneId);
+            const hasAnswer = Boolean(completedLane?.response?.trim() || completedLane?.images?.length);
+            if (completedLane?.status === 'complete' && hasAnswer
+                && !operation.signal.aborted && !this.isSessionDeleted(session.id)) {
+                await chatDB.finishMessageReplacement(replacement, { commit: true });
+                replacement = null;
+                this.triggerPostTurnMemoryExtraction(session);
+            }
 
             if (this.chatArea && this.isViewingSession(session.id)) {
                 await this.chatArea.render();
@@ -7812,8 +7829,31 @@ class ChatApp {
             });
         }
         } finally {
-            this.endSessionMutation(session.id, mutation);
-            this.finishFeatureOperation(operation);
+            try {
+                if (replacement) {
+                    try {
+                        await chatDB.finishMessageReplacement(replacement, {
+                            notice: operation.signal.aborted ? 'stopped' : 'failed',
+                            laneId
+                        });
+                    } catch {
+                        this.showToast?.('Your previous answer was kept, but the retry status could not be saved.', 'info');
+                    }
+                }
+                if (!this.isSessionDeleted(session.id)) {
+                    try {
+                        await this.recomputeSessionCouncilTranscriptHint?.(session);
+                        await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                    } catch {
+                        this.showToast?.('The conversation was kept, but its search index could not be updated.', 'info');
+                    } finally {
+                        if (this.isViewingSession(session.id)) await this.chatArea?.render();
+                    }
+                }
+            } finally {
+                this.endSessionMutation(session.id, mutation);
+                this.finishFeatureOperation(operation);
+            }
         }
     }
 

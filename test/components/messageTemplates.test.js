@@ -365,3 +365,23 @@ test('stopped replacement keeps the original reply with a neutral, retryable sta
         assert.doesNotMatch(html,/inference-failure-warning/);
     } finally { restore(); }
 });
+
+test('stopped Parallel regeneration retries only the selected lane, never both models', async () => {
+    const restore = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const saved = { id:'parallel',sessionId:'chat',role:'assistant',content:'Original A',timestamp:1,
+            regenerationNotice:'stopped',regenerationLaneId:'primary',council:{enabled:true,stage1:[
+                {laneId:'primary',label:'A',model:'A',status:'complete',response:'Original A'},
+                {laneId:'secondary',label:'B',model:'B',status:'complete',response:'Original B'}
+            ]} };
+        const html = buildMessageHTML(saved, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'A');
+        const notice = html.slice(html.indexOf('<div class="regeneration-status"'));
+        assert.match(notice, /class="regenerate-council-lane-btn inference-retry-button"/);
+        assert.match(notice, /data-council-lane-id="primary"/);
+        assert.doesNotMatch(notice, /class="regenerate-message-btn inference-retry-button"/);
+        saved.regenerationLaneId = 'unavailable';
+        const invalid = buildMessageHTML(saved, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'A');
+        assert.doesNotMatch(invalid.slice(invalid.indexOf('<div class="regeneration-status"')), /inference-retry-button/);
+    } finally { restore(); }
+});

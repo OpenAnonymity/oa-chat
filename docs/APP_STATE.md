@@ -1,3 +1,25 @@
+## October 12, 2026 — preserve Parallel replies during per-model regeneration
+
+Desktop robustness testing reproduced durable answer loss when Stop was pressed
+before a regenerated Parallel lane produced text. The per-lane path now drafts a
+copy with a fresh message ID using the existing message replacement transaction.
+The original lanes and later turns stay on disk throughout the attempt. Only a
+completed selected lane with answer text or images may commit; untouched lanes
+cannot make an empty or failed replacement count as success. Stop (including
+partial replacement output), failure, reload and a failed commit keep the original
+transcript. Successful regeneration retains the other lanes and truncates later
+turns, as before. No ticket, credential, wallet or acquisition behavior changes.
+
+A changed transcript during price preflight cancels the retry before inference.
+Stopped per-lane notices route Retry to that same lane, never to both models.
+Memory extraction waits for the durable commit. Search/council metadata is
+recomputed after commit or rollback, and cleanup releases the operation even if
+metadata or notice persistence fails. Fresh candidate IDs retain the existing
+late-enrichment and cross-tab conflict protections. The existing stopped/failed
+notice is reused; Requesting/Waiting/Thinking/Stop presentation is unchanged.
+Coverage exercises the real app and Council controller together with a synthetic
+provider and store, plus the shared real IndexedDB transaction fixture.
+
 ## October 12, 2026 — preserve the original answer during regeneration
 
 Regenerate keeps the original answer and later turns on disk until a completed
@@ -12,7 +34,7 @@ and acquisition paths are unchanged. This ports the private desktop fix to web.
   tab's edit, append or deletion. Late enrichment cannot resurrect a discarded
   draft or the replaced answer.
 - Full-turn Parallel/Council regeneration commits only after all requested
-  stages complete; per-lane regeneration retains its existing behavior.
+  stages complete; per-lane regeneration now uses the same commit-on-success protection (see above).
 - Unit regressions cover the non-destructive action boundary, commit/rollback
   choice, rollback metadata failures and rendering. Open
   `test-browser/message-replacement.html` on a loopback static server for real
