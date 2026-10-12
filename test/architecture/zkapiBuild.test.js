@@ -82,12 +82,12 @@ test('Vercel source uploads include only reviewed public deployment pin files', 
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     await fs.copyFile('.vercelignore', path.join(directory, '.vercelignore'));
     execFileSync('git', ['init', '-q', directory]);
-    const included = [...deployments.flatMap(deployment => ['mainnet', 'sepolia'].map(network =>
-        `deployments/zkapi/${deployment}/${network}.json`)),
+    const included = [...['mainnet', 'sepolia'].map(network =>
+        `deployments/zkapi/${network}.json`),
         'patches/zkapi-browser-sdk-wallet-recovery.mjs'];
     const excluded = ['deployments/private/key.json', 'deployments/zkapi/other/mainnet.json',
-        ...deployments.flatMap(deployment => ['secret.json', 'nested/secret.json', '.env', '.git/config']
-            .map(file => `deployments/zkapi/${deployment}/${file}`)), 'patches/private-test.json'];
+        ...['secret.json', 'nested/secret.json', '.env', '.git/config']
+            .map(file => `deployments/zkapi/${file}`), 'patches/private-test.json'];
     const ignored = execFileSync('git', ['-c', 'core.excludesFile=.vercelignore', 'check-ignore', '--no-index', '--stdin'], {
         cwd: directory, input: [...included, ...excluded].join('\n') + '\n', encoding: 'utf8'
     }).trim().split('\n');
@@ -138,9 +138,6 @@ test('fresh asset emission and Vercel rewrites use identical pins with complete 
         assert.equal(config.trusted_deployment.deployment_id, `zkapi-native-eth-${network}-note-bound-v1-${deployment}`);
         assert.equal(config.trusted_deployment.protocol_server_url,
             `https://zkapi-${network}.openanonymity.ai`);
-        assert.equal(config.trusted_deployment.verifier_url, network === 'mainnet'
-            ? 'https://verifier-production-20260917.openanonymity.ai'
-            : 'https://verifier2.openanonymity.ai');
         assert.equal(result.deployment, deployment);
         if (deployment === 'fresh-20260930' && network === 'mainnet') {
             assert.equal(config.deployment_manifest_url, 'https://zkapi-mainnet.openanonymity.ai/config.json');

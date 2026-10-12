@@ -172,23 +172,18 @@ export class AddressFundingProvider {
         const chainId = uint(funding.chain_id, 'payment network', MAX_NONCE);
         if (!chainId) throw fail('Invalid payment network.');
         const vault = address(funding.contract_address);
-        const native = funding.billing_asset === 'native_eth';
-        if (native && (funding.billing_unit !== 'gwei'
-            || uint(funding.native_asset_wei_per_unit, 'native payment scale') !== NATIVE_WEI_PER_UNIT)) {
+        if (funding.billing_asset !== 'native_eth' || funding.billing_unit !== 'gwei'
+            || uint(funding.native_asset_wei_per_unit, 'native payment scale') !== NATIVE_WEI_PER_UNIT) {
             throw fail('The native ETH payment settings are invalid.', 'address_native_config');
         }
-        if (funding.billing_asset && !['native_eth', 'erc20'].includes(funding.billing_asset)) {
-            throw fail('This payment asset is not supported.', 'address_native_config');
-        }
-        const token = native ? null : address(funding.demo_billing_token_address);
         let rpc;
         try { rpc = new URL(funding.demo_rpc_url, globalThis.location?.href); } catch { throw fail('The payment network is unavailable.'); }
         if (rpc.username || rpc.password || (rpc.protocol !== 'https:'
             && !(rpc.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(rpc.hostname)))) {
             throw fail('The payment network connection must use HTTPS.');
         }
-        return { funding, chainId, vault, token, native, weiPerUnit: native ? NATIVE_WEI_PER_UNIT : null,
-            rpc: rpc.href, scope: `${chainId}:${vault}:${native ? 'native-eth' : token}` };
+        return { funding, chainId, vault, weiPerUnit: NATIVE_WEI_PER_UNIT,
+            rpc: rpc.href, scope: `${chainId}:${vault}:native-eth` };
     }
 
     async locked(ctx, callback, action = false) {
@@ -271,7 +266,7 @@ export class AddressFundingProvider {
                     || transaction.gasLimit !== BigInt(entry.transaction.gas) || !supportedFees
                     || transaction.gasLimit < 21_000n || transaction.gasLimit > MAX_GAS || feeCap <= 0n
                     || totalFee + transaction.value > UINT256_MAX
-                    || (ctx.native && entry.authorization?.kind === 'deposit' && entry.authorization.feeLimitWei != null
+                    || (entry.authorization?.kind === 'deposit' && entry.authorization.feeLimitWei != null
                         && totalFee > uint(entry.authorization.feeLimitWei, 'authorized fee'))
                     || BigInt(transaction.nonce) >= BigInt(record.highestNonce)) throw new Error();
                 this.validateCall(ctx, record.address, entry.transaction, entry.context, entry.authorization);
@@ -607,7 +602,6 @@ export class AddressFundingProvider {
 
     async getDepositFeeQuote(intent, { isCurrent = () => true } = {}) {
         const ctx = await this.context();
-        if (!ctx.native) throw fail('A native ETH vault is required for this fee quote.', 'address_native_config');
         await this.reload();
         const own = this.address;
         if (!own || !this.unlocked) throw fail('Create or restore a payment address first.', 'address_missing');
@@ -684,37 +678,24 @@ export class AddressFundingProvider {
             if (!sameAddress(address(authorization.destination), to) && authorization.asset === 'eth') deny();
             if (authorization.asset === 'eth') {
                 if (normalized !== '0x' || value !== uint(authorization.amount, 'ETH amount')) deny();
-            } else if (authorization.asset === 'token') {
-                if (ctx.native || !sameAddress(to, ctx.token) || value !== 0n || selector !== 'a9059cbb' || !exactWords(2)
-                    || wordAddress(0) !== address(authorization.destination) || wordUint(1) !== uint(authorization.amount, 'token amount')) deny();
             } else deny();
             return { to, value, data: normalized };
         }
-        const nativeDeposit = ctx.native && sameAddress(to, ctx.vault) && selector === 'c588341c';
+        const nativeDeposit = sameAddress(to, ctx.vault) && selector === 'c588341c';
         if ((!nativeDeposit && value !== 0n) || !recovery || recovery.version !== 1
             || typeof recovery.deploymentId !== 'string' || !recovery.deploymentId
             || uint(recovery.chainId, 'recovery network') !== ctx.chainId
             || !sameAddress(recovery.contractAddress, ctx.vault)
             || Object.keys(recovery).some(key => !RECOVERY_FIELDS.has(key))) deny();
-        if (sameAddress(to, ctx.token)) {
-            if (recovery.kind !== 'token' || !exactWords(2)) deny();
-            if (selector === '095ea7b3') {
-                if (authorization.kind !== 'deposit' || wordAddress(0) !== ctx.vault
-                    || ![0n, uint(authorization.amount, 'deposit amount')].includes(wordUint(1))) deny();
-            } else if (selector === '40c10f19') {
-                if (!['deposit', 'token'].includes(authorization.kind) || ctx.chainId !== 11155111n
-                    || ctx.funding.demo_mint_enabled !== true || wordAddress(0) !== own
-                    || !wordUint(1) || wordUint(1) > uint(authorization.amount, 'test token amount')) deny();
-            } else deny();
-        } else if (sameAddress(to, ctx.vault)) {
+        if (sameAddress(to, ctx.vault)) {
             if (selector === 'c588341c') {
                 if (authorization.kind !== 'deposit' || recovery.kind !== 'deposit' || !exactWords(34)
                     || !recovery.operationId || !recovery.submissionId
                     || wordUint(1) !== uint(authorization.amount, 'deposit amount')
                     || wordUint(1) !== uint(recovery.amount, 'recovery amount')
                     || wordUint(0) !== uint(recovery.commitment, 'commitment')
-                    || (ctx.native && (!wordUint(1) || value !== wordUint(1) * ctx.weiPerUnit))) deny();
-                if (ctx.native && (authorization.preparedOperationId != null || authorization.depositCommitment != null
+                    || !wordUint(1) || value !== wordUint(1) * ctx.weiPerUnit) deny();
+                if ((authorization.preparedOperationId != null || authorization.depositCommitment != null
                     || authorization.feeLimitWei != null)) {
                     if (typeof authorization.preparedOperationId !== 'string' || !authorization.preparedOperationId
                         || authorization.preparedOperationId !== recovery.operationId
@@ -744,7 +725,7 @@ export class AddressFundingProvider {
     async withAuthorizedAction(authorization, callback) {
         const ctx = await this.context();
         if (this.action) throw fail('A payment-address action is already running.', 'address_busy');
-        if (!['deposit', 'withdrawal', 'finalization', 'token', 'recovery', 'sweep'].includes(authorization?.kind)
+        if (!['deposit', 'withdrawal', 'finalization', 'recovery', 'sweep'].includes(authorization?.kind)
             || typeof callback !== 'function') throw fail('Choose a wallet action first.', 4100);
         return this.locked(ctx, async () => {
             await this.locked(ctx, async () => {
@@ -792,7 +773,7 @@ export class AddressFundingProvider {
             if (maxEthReturn && await this.rpc(ctx, 'eth_getCode', [transaction.to, 'pending']) !== '0x') {
                 throw fail('Choose an exact ETH amount when returning funds to a contract account.', 'address_sweep_contract');
             }
-            const maximumSends = authorization.kind === 'deposit' && !ctx.native ? 6 : 1;
+            const maximumSends = 1;
             if (this.action.sends >= maximumSends) throw fail('This action has reached its transaction limit. Check its saved status.', 4100);
             await this.assertChain(ctx);
             const networkNonce = uint(await this.rpc(ctx, 'eth_getTransactionCount', [record.address, 'pending']), 'transaction nonce', MAX_NONCE);
@@ -806,10 +787,10 @@ export class AddressFundingProvider {
             if (estimate < 21_000n) throw fail('Invalid transaction gas estimate.');
             const gasLimit = maxEthReturn ? 21_000n : input.gas == null ? (estimate * 120n + 99n) / 100n : uint(input.gas, 'gas limit', MAX_GAS);
             if (gasLimit < estimate || gasLimit > MAX_GAS) throw fail('The gas limit is outside the allowed range.', 'transaction_gas_limit_exceeded');
-            const approvedFeeLimit = (authorization.kind === 'deposit' && ctx.native) || authorization.kind === 'withdrawal' ? authorization.feeLimitWei : null;
+            const approvedFeeLimit = authorization.kind === 'deposit' || authorization.kind === 'withdrawal' ? authorization.feeLimitWei : null;
             const { fees, minimumFeePerGas } = await this.transactionFeeQuote(ctx, gasLimit, approvedFeeLimit);
             let reserve = fees.maxFeePerGas * gasLimit;
-            if (authorization.kind === 'deposit' && ctx.native && authorization.feeLimitWei != null
+            if (authorization.kind === 'deposit' && authorization.feeLimitWei != null
                 && (reserve > uint(authorization.feeLimitWei, 'authorized fee')
                     || (authorization.feeQuoteExpiresAt != null && BigInt(Date.now()) >= uint(authorization.feeQuoteExpiresAt, 'quote expiry', MAX_NONCE)))) {
                 throw this.paymentFailure('address_fee_quote_changed');
@@ -820,7 +801,7 @@ export class AddressFundingProvider {
                 feeReserveWei: requiredFee.toString(), requiredWei: required.toString(),
                 shortfallWei: (required - balance).toString()
             });
-            if (authorization.kind === 'deposit' && ctx.native && balance < transaction.value + reserve) {
+            if (authorization.kind === 'deposit' && balance < transaction.value + reserve) {
                 const minimumReserve = gasLimit * minimumFeePerGas;
                 const minimumRequired = uint(transaction.value + minimumReserve, 'transaction value and network fee');
                 if (balance < minimumRequired) throw insufficient(minimumRequired, minimumReserve);
@@ -839,7 +820,7 @@ export class AddressFundingProvider {
             await this.assertChain(ctx);
             // Balance/network reads may themselves be slow. Expiry must still
             // hold at the signing boundary, not only at the earlier fee read.
-            if (authorization.kind === 'deposit' && ctx.native && authorization.feeQuoteExpiresAt != null
+            if (authorization.kind === 'deposit' && authorization.feeQuoteExpiresAt != null
                 && BigInt(Date.now()) >= uint(authorization.feeQuoteExpiresAt, 'quote expiry', MAX_NONCE)) {
                 throw this.paymentFailure('address_fee_quote_changed');
             }
@@ -917,18 +898,6 @@ export class AddressFundingProvider {
         return { transactionHash: entry.hash, status: receipt.status === '0x1' ? 'confirmed' : 'reverted' };
     }
 
-    async transferTokens(destination, amount) {
-        const ctx = await this.context();
-        if (ctx.native) throw fail('This payment address uses ETH.', 'address_native_config');
-        const recipient = address(destination);
-        const value = uint(amount, 'token amount');
-        const auth = this.action?.authorization;
-        if (auth?.kind !== 'sweep' || auth.asset !== 'token' || address(auth.destination) !== recipient
-            || uint(auth.amount, 'authorized amount') !== value || !value) throw fail('Confirm the exact token return amount and destination first.', 4100);
-        return this.send({ from: this.address, to: ctx.token,
-            data: `0xa9059cbb${recipient.slice(2).padStart(64, '0')}${word(value)}` }, null);
-    }
-
     async transferEth(destination, amount) {
         const ctx = await this.context();
         const recipient = address(destination);
@@ -944,22 +913,12 @@ export class AddressFundingProvider {
         const ctx = await this.context();
         await this.reload();
         const snapshot = { ...copy(this.state), address: this.address, chainId: Number(ctx.chainId),
-            assetKind: ctx.native ? 'native_eth' : 'erc20',
-            tokenSymbol: ctx.native ? 'ETH' : String(ctx.funding.billing_token_symbol || 'USDC'),
-            tokenDecimals: ctx.native ? 9 : Number(ctx.funding.billing_token_decimals ?? 6) };
+            assetKind: 'native_eth', tokenSymbol: 'ETH', tokenDecimals: 9 };
         if (!this.address) return snapshot;
         await this.assertChain(ctx);
-        if (ctx.native) {
-            const eth = uint(await this.rpc(ctx, 'eth_getBalance', [this.address, 'latest']), 'ETH balance');
-            await this.assertChain(ctx);
-            return { ...snapshot, tokenBalance: (eth / ctx.weiPerUnit).toString(), ethBalance: eth.toString() };
-        }
-        const [tokens, eth] = await Promise.all([
-            this.rpc(ctx, 'eth_call', [{ to: ctx.token, data: `0x70a08231${this.address.slice(2).padStart(64, '0')}` }, 'latest']),
-            this.rpc(ctx, 'eth_getBalance', [this.address, 'latest'])
-        ]);
+        const eth = uint(await this.rpc(ctx, 'eth_getBalance', [this.address, 'latest']), 'ETH balance');
         await this.assertChain(ctx);
-        return { ...snapshot, tokenBalance: uint(tokens, 'token balance').toString(), ethBalance: uint(eth, 'ETH balance').toString() };
+        return { ...snapshot, tokenBalance: (eth / ctx.weiPerUnit).toString(), ethBalance: eth.toString() };
     }
 
     async request({ method, params = [], zkapiRecovery } = {}) {

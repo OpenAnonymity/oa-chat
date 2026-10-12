@@ -2,14 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
 import { addressFundingWallet } from '../../chat/zkapi/services/addressFundingProvider.mjs';
-import { fundingAmount, fundingEthAmount, fundingDestination, runAddressAction, withdrawalDestination } from '../../chat/zkapi/services/addressFunding.js';
+import { fundingEthAmount, fundingDestination, runAddressAction, withdrawalDestination } from '../../chat/zkapi/services/addressFunding.js';
 
 const recipient = '0x2222222222222222222222222222222222222222';
 const savedRecipient = '0x3333333333333333333333333333333333333333';
 const funding = {
     chain_id: 11155111,
-    contract_address: '0x4444444444444444444444444444444444444444',
-    demo_billing_token_address: '0x5555555555555555555555555555555555555555'
+    contract_address: '0x4444444444444444444444444444444444444444'
 };
 
 function fixture(t, extra = {}) {
@@ -38,14 +37,6 @@ function fixture(t, extra = {}) {
     return { owner, authorizations };
 }
 
-test('amount parsing preserves six-decimal units and rejects ambiguous or excessive values', () => {
-    assert.equal(fundingAmount(' 2.123456 '), '2123456');
-    assert.equal(fundingAmount('0.000001'), '1');
-    for (const invalid of ['', '0', '-1', '1e2', '1,000', '1.0000001', '1000000.000001', 'NaN']) {
-        assert.throws(() => fundingAmount(invalid), undefined, invalid);
-    }
-});
-
 test('exact ETH returns preserve 18-decimal precision and reject rounding or exponent notation', () => {
     assert.equal(fundingEthAmount('0.000000000000000001'), '1');
     assert.equal(fundingEthAmount(' 1.123456789012345678 '), '1123456789012345678');
@@ -54,9 +45,9 @@ test('exact ETH returns preserve 18-decimal precision and reject rounding or exp
     }
 });
 
-test('destinations reject zero, token and vault addresses before any signer action', () => {
+test('destinations reject zero and vault addresses before any signer action', () => {
     assert.equal(fundingDestination(recipient, funding), recipient);
-    for (const invalid of ['', 'not an address', `0x${'0'.repeat(40)}`, funding.contract_address, funding.demo_billing_token_address]) {
+    for (const invalid of ['', 'not an address', `0x${'0'.repeat(40)}`, funding.contract_address]) {
         assert.throws(() => fundingDestination(invalid, funding), undefined, invalid);
     }
 });
@@ -81,12 +72,12 @@ test('Next rechecks the saved ETH intent before authorizing its exact native uni
     assert.equal(calls, 1);
 });
 
-test('resuming a saved deposit authorizes the SDK public pending_deposit amount', async t => {
+test('a saved deposit cannot resume until its fee quote can be rechecked', async t => {
     const { owner, authorizations } = fixture(t, { config: { funding, pending_deposit: { amount: 4750000, phase: 'prepared' } } });
     owner.depositAmount = null;
-    owner.fundingFlow = { verifyReady() { assert.fail('a saved SDK deposit must keep its original amount'); } };
-    await runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {});
-    assert.deepEqual(authorizations, [{ kind: 'deposit', amount: '4750000' }]);
+    owner.fundingFlow = { verifyReady() { assert.fail('an unquotable saved deposit must not be re-prepared'); } };
+    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Check the saved deposit status/);
+    assert.deepEqual(authorizations, []);
 });
 
 test('failed readiness after fee or balance changes never enters signer authorization', async t => {
@@ -99,10 +90,8 @@ test('failed readiness after fee or balance changes never enters signer authoriz
     assert.deepEqual(authorizations, []);
 });
 
-test('fresh deposits require a native deployment and a prepared read-only funding flow', async t => {
+test('fresh deposits require a prepared read-only funding flow', async t => {
     const { owner, authorizations } = fixture(t);
-    owner.fundingFlow = { verifyReady() { assert.fail('an ERC20 deployment cannot authorize an ETH deposit'); } };
-    await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Enter a deposit amount before choosing Deposit/);
     zkapiClient.config = { funding: { ...funding, billing_asset: 'native_eth' } };
     owner.fundingFlow = null;
     await assert.rejects(runAddressAction(owner, { kind: 'deposit', phase: 'wallet' }, () => {}, async () => {}), /Enter a deposit amount before choosing Deposit/);

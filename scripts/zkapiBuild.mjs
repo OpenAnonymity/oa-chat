@@ -4,9 +4,9 @@ import fs from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import resetMainnet from '../deployments/zkapi/fresh-20260930/mainnet.json' with { type: 'json' };
-import resetSepolia from '../deployments/zkapi/fresh-20260930/sepolia.json' with { type: 'json' };
-import { patchZkapiSdk, zkapiSdkPatchesProvenance } from './patch-zkapi-sdk.mjs';
+import resetMainnet from '../deployments/zkapi/mainnet.json' with { type: 'json' };
+import resetSepolia from '../deployments/zkapi/sepolia.json' with { type: 'json' };
+import { patchZkapiSdk, zkapiSdkPatchProvenance, zkapiSdkPatchesProvenance } from './patch-zkapi-sdk.mjs';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const DEPLOYMENTS = {

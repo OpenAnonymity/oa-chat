@@ -160,6 +160,15 @@ to zkAPI; the SDK has no OA Chat submodule or UI dependency.
 
 ## Build
 
+The reviewed public deployment configuration lives in
+[`deployments/zkapi/mainnet.json`](../deployments/zkapi/mainnet.json) and
+[`deployments/zkapi/sepolia.json`](../deployments/zkapi/sepolia.json). These files
+pin each network's vault, public signing keys, proof hashes and service URLs.
+Both the asset build and Vercel route generator consume them; they contain no
+private keys or runtime server state. The stable file paths are independent of
+the deployment selector and wallet database names described below. Renaming a
+source directory must not rename those identifiers or reset existing wallets.
+
 The default `npm run build` retains Tickets only. To enable both methods:
 
 ```sh
@@ -202,6 +211,14 @@ SDK defaults. Commercial staging now explicitly selects the September 30 fresh
 Mainnet profile; see [the deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md).
 
 ### September 30 clean-reset profile
+
+The canonical service origins are `https://zkapi-mainnet.openanonymity.ai` and
+`https://zkapi-sepolia.openanonymity.ai`. The hostname migration changes only the
+reviewed manifest/protocol/indexer URLs. It retains the September 30 deployment
+IDs, vaults, signing/proof pins, browser database names and funding-address scopes.
+The websites retain their existing origins, so their browser-local wallets and
+transaction journals remain available. Retired profiles are no longer selectable. Do not substitute a hostname whose
+manifest describes a different vault; retained wallet state is not migrated.
 
 `OA_ZKAPI_DEPLOYMENT=fresh-20260930` selects the live September 30 Mainnet or
 Sepolia pins. Both finalized vaults and isolated services on the new AWS VM passed
@@ -624,13 +641,13 @@ SDK/protocol and new deployment pins; see the deployment progress document.
 
 ## MetaMask funding setup
 
-Native ETH onboarding keeps the “Set up your wallet” disclosure with three
-steps: install MetaMask, add ETH, and return to deposit. ETH also pays network
-fees. The following token-specific details describe the preserved legacy
-deployments: four steps install MetaMask, add USDC, add ETH for fees, and return
-to deposit. Both tokens must be on Ethereum Mainnet in the same account. Official
-MetaMask install/buy links remain alongside the relevant steps. Sepolia retains
-its separate free test ETH/demo-token instructions; no real purchase is suggested.
+Native ETH onboarding is the only funding flow: a “Set up your wallet”
+disclosure with three steps (install MetaMask, add ETH, return to deposit). ETH
+also pays network fees. Official MetaMask install/buy links remain alongside the
+relevant steps. Sepolia uses the identical flow and only asks for Sepolia ETH
+(with a link to the public faucet list). The app has no USDC/ERC-20 approval,
+token-return or token-minting path; funding providers reject any non-ETH
+billing asset.
 
 Account setup, billing explanation, and payment history use the installed
 Transitions.dev grid accordion and chevron hooks, with one guide open at a time.
@@ -647,12 +664,9 @@ Cancellation and submitted/unknown transaction recovery states are unchanged.
 Guide expansion, keyboard focus, and scroll survive wallet refreshes, and the
 funding amount remains editable without refresh stealing focus in `fund` view.
 
-After an automatic Sepolia test-token mint, funding reads the token balance at
-the confirmed receipt block instead of the provider's potentially cached
-`latest` state. The SDK checks the canonical block hash and selected network
-on both sides of the read and bounds read-only retries. A delayed read does not
-send another mint. Mainnet deposits and withdrawals retain their existing
-transaction paths, durable recovery, and on-chain/indexer root checks.
+Mainnet and Sepolia deposits and withdrawals share the same transaction paths,
+durable recovery, and on-chain/indexer root checks. The browser wallet provider
+authorizes no token-mint call on any network.
 
 A saved deposit can still have a pending token approval in MetaMask, including
 after approval confirmation polling times out. The recovery notice preserves

@@ -12,17 +12,18 @@ const UINT256_MAX = (1n << 256n) - 1n;
 const KEY = `0x${'11'.repeat(32)}`;
 const OWN = new Wallet(KEY).address.toLowerCase();
 const VAULT = `0x${'22'.repeat(20)}`;
-const TOKEN = `0x${'33'.repeat(20)}`;
 const DESTINATION = `0x${'44'.repeat(20)}`;
 const PASSWORD = 'not-a-real-wallet-password';
-const FUNDING = { chain_id: 1, contract_address: VAULT, demo_billing_token_address: TOKEN,
-    demo_rpc_url: 'https://rpc.example', billing_token_decimals: 6 };
-const NATIVE_FUNDING = { billing_asset: 'native_eth', billing_unit: 'gwei',
-    native_asset_wei_per_unit: '1000000000', demo_billing_token_address: null };
-const CONTEXT = { version: 1, deploymentId: 'fixture', chainId: 1, contractAddress: VAULT, kind: 'token' };
+const FUNDING = { chain_id: 1, contract_address: VAULT, demo_rpc_url: 'https://rpc.example',
+    billing_asset: 'native_eth', billing_unit: 'gwei', native_asset_wei_per_unit: '1000000000' };
+const NATIVE_FUNDING = FUNDING;
+const PLAN = { commitment: '0x123', zero_path: Array(32).fill('0x0') };
+const CONTEXT = { version: 1, deploymentId: 'fixture', chainId: 1, contractAddress: VAULT, kind: 'deposit',
+    operationId: 'fixture-op', submissionId: 'fixture-sub', amount: '2000000', commitment: PLAN.commitment };
 const auth = { kind: 'deposit', amount: '2000000' };
 const NATIVE_INTENT = { amount: '2000000', depositWei: '2000000000000000', ethAmount: '0.002' };
-const approve = amount => ({ from: OWN, to: TOKEN, data: codec.callData(codec.ABI.approve, [codec.addressWord(VAULT), codec.abiWord(amount)]) });
+const nativeDeposit = amount => ({ from: OWN, to: VAULT, data: codec.encodeDeposit(PLAN, BigInt(amount)),
+    value: `0x${(BigInt(amount) * 1_000_000_000n).toString(16)}` });
 const gate = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
 
 function memoryStore() {
@@ -114,7 +115,7 @@ function harness(options = {}) {
     return { provider, store, locks: lockManager, calls, sent, resumes, rpc, init, config, get generated() { return generated; },
         ready: () => provider.ensureAddress(),
         async legacyReady() { const result = await provider.create(PASSWORD); await provider.markBackedUp(); return result; },
-        send(input = approve(2000000), context = CONTEXT, authorization = auth) {
+        send(input = nativeDeposit(2000000), context = CONTEXT, authorization = auth) {
             return provider.withAuthorizedAction(authorization, () => provider.request({ method: 'eth_sendTransaction', params: [input], zkapiRecovery: context }));
         } };
 }
@@ -122,11 +123,11 @@ function harness(options = {}) {
 async function saveSignedFixture(h, fees) {
     const ctx = await h.provider.context();
     const record = await h.provider.read(ctx, true);
-    const raw = await new Wallet(KEY).signTransaction({ to: TOKEN, data: approve(2000000).data,
-        value: 0n, nonce: 0, chainId: 1, gasLimit: 120000n, ...fees });
+    const raw = await new Wallet(KEY).signTransaction({ to: VAULT, data: nativeDeposit(2000000).data,
+        value: 2_000_000_000_000_000n, nonce: 0, chainId: 1, gasLimit: 120000n, ...fees });
     const hash = Transaction.from(raw).hash;
     record.transactions = [{ hash, raw, kind: 'deposit', authorization: auth, context: CONTEXT,
-        transaction: { ...approve(2000000), value: '0x0', nonce: '0x0', gas: '0x1d4c0', chainId: '0x1' } }];
+        transaction: { ...nativeDeposit(2000000), nonce: '0x0', gas: '0x1d4c0', chainId: '0x1' } }];
     record.pending = hash;
     record.highestNonce = '1';
     await h.provider.save(ctx, record);
@@ -315,8 +316,8 @@ test('transaction is exactly signed and saved before broadcast; only SDK acknowl
     assert.equal(decoded.maxPriorityFeePerGas, BigInt(h.rpc.priorityFee));
     assert.equal(decoded.maxFeePerGas, (BigInt(h.rpc.baseFee) * 5n + 3n) / 4n + BigInt(h.rpc.priorityFee));
     assert.equal(decoded.nonce, 0);
-    assert.equal(decoded.to.toLowerCase(), TOKEN);
-    assert.equal(decoded.data, approve(2000000).data);
+    assert.equal(decoded.to.toLowerCase(), VAULT);
+    assert.equal(decoded.data, nativeDeposit(2000000).data);
     assert.equal(h.provider.pending.hash, hash);
     h.rpc.receipt = { transactionHash: hash, status: '0x1' };
     await h.provider.request({ method: 'eth_getTransactionReceipt', params: [hash] });
@@ -378,7 +379,7 @@ test('encrypted journals reject unsupported transaction types and unsafe type-2 
         { type: 2, maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 0n },
         { type: 2, maxFeePerGas: UINT256_MAX, maxPriorityFeePerGas: 1000000n },
         { type: 2, maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 1000000n,
-            accessList: [{ address: TOKEN, storageKeys: [] }] }
+            accessList: [{ address: VAULT, storageKeys: [] }] }
     ]) {
         // Start each corrupted-but-authentically-encrypted fixture from a clean record.
         h.store.data.clear();
@@ -629,12 +630,12 @@ test('cross-tab action ownership rejects concurrent spending and serializes acco
 test('authorization rejects unexpected contract, allowance, call shape, value and automatic signing', async () => {
     const h = harness();
     await h.ready();
-    await assert.rejects(h.provider.request({ method: 'eth_sendTransaction', params: [approve(2000000)], zkapiRecovery: CONTEXT }), { code: 4100 });
-    for (const input of [approve(2000001), { ...approve(2000000), to: DESTINATION },
-        { ...approve(2000000), value: '0x1' }, { ...approve(2000000), data: `${approve(2000000).data}00` },
-        { ...approve(2000000), gasPrice: '0x1' }]) await assert.rejects(h.send(input));
-    await assert.rejects(h.send(approve(2000000), { ...CONTEXT, secret: KEY }));
-    await assert.rejects(h.send(approve(2000000), CONTEXT, { kind: 'recovery' }), { code: 4100 });
+    await assert.rejects(h.provider.request({ method: 'eth_sendTransaction', params: [nativeDeposit(2000000)], zkapiRecovery: CONTEXT }), { code: 4100 });
+    for (const input of [nativeDeposit(2000001), { ...nativeDeposit(2000000), to: DESTINATION },
+        { ...nativeDeposit(2000000), value: '0x1' }, { ...nativeDeposit(2000000), data: `${nativeDeposit(2000000).data}00` },
+        { ...nativeDeposit(2000000), gasPrice: '0x1' }]) await assert.rejects(h.send(input));
+    await assert.rejects(h.send(nativeDeposit(2000000), { ...CONTEXT, secret: KEY }));
+    await assert.rejects(h.send(nativeDeposit(2000000), CONTEXT, { kind: 'recovery' }), { code: 4100 });
     assert.equal(h.sent.length, 0);
 });
 
@@ -678,21 +679,13 @@ test('late acknowledgements never erase a newer pending transaction', async () =
     assert.equal(h.provider.pending.hash, second);
 });
 
-test('token sweep uses explicit amount and destination, remains blocked until canonical finality', async () => {
+test('token transfers are never authorized, even as a sweep', async () => {
     const h = harness();
     await h.ready();
-    await assert.rejects(h.provider.transferTokens(DESTINATION, '1000'), { code: 4100 });
-    const hash = await h.provider.withAuthorizedAction({ kind: 'sweep', asset: 'token', destination: DESTINATION, amount: '1000' },
-        () => h.provider.transferTokens(DESTINATION, '1000'));
-    assert.equal(Transaction.from(h.sent[0]).data, `0xa9059cbb${DESTINATION.slice(2).padStart(64, '0')}${'3e8'.padStart(64, '0')}`);
-    await assert.rejects(h.provider.acknowledgeTransaction(hash), { code: 4100 });
-    h.rpc.receipt = { transactionHash: hash, blockHash: h.rpc.blockHash, blockNumber: '0x21', status: '0x1' };
-    assert.equal((await h.provider.recoverPending()).status, 'pending');
-    assert.equal(h.provider.pending.hash, hash);
-    h.rpc.finalized = '0x21';
-    assert.equal((await h.provider.recoverPending()).status, 'confirmed');
-    assert.equal(h.provider.pending, null);
-    assert.equal(h.resumes.length, 0, 'public sweeps never enter private-note recovery');
+    assert.equal(h.provider.transferTokens, undefined);
+    const transfer = { from: OWN, to: VAULT, data: `0xa9059cbb${DESTINATION.slice(2).padStart(64, '0')}${'3e8'.padStart(64, '0')}` };
+    await assert.rejects(h.send(transfer, null, { kind: 'sweep', asset: 'token', destination: DESTINATION, amount: '1000' }), { code: 4100 });
+    assert.equal(h.sent.length, 0);
 });
 
 test('ETH max sweep reserves the signed maximum fee using one quote on an ordinary account', async () => {
@@ -803,7 +796,8 @@ test('actual SDK accepts observed deposit gas, sends its public context and pers
     client.waitForReceipt = async hash => ({ transactionHash: hash, status: '0x1' });
     const receipt = await h.provider.withAuthorizedAction(auth, () => client.sendContractTransaction(OWN, VAULT, codec.encodeDeposit(plan, 2000000n),
         async hash => { assert.equal(h.provider.pending.hash, hash); persisted = hash; },
-        async metadata => { assert.deepEqual(metadata, { from: OWN, nonce: 0 }); }, null, { kind: 'deposit', submission }));
+        async metadata => { assert.deepEqual(metadata, { from: OWN, nonce: 0 }); }, null, { kind: 'deposit', submission },
+        2_000_000n * 1_000_000_000n));
     assert.equal(receipt.transactionHash, persisted);
     assert.equal(h.provider.pending, null);
     assert.equal(h.sent.length, 1);
@@ -866,12 +860,10 @@ test('storage read failures clear previously usable custody state', async () => 
     assert.equal(h.generated, 1);
 });
 
-test('native vault rejects token calls, positive-value finalization and invalid ledger scales', async () => {
+test('native vault rejects mismatched deposit calls, positive-value finalization and invalid ledger scales', async () => {
     const h = harness({ config: NATIVE_FUNDING });
     await h.ready();
-    await assert.rejects(h.send(), { code: 4100 });
-    await assert.rejects(h.provider.withAuthorizedAction({ kind: 'sweep', asset: 'token', amount: '1', destination: DESTINATION },
-        () => h.provider.transferTokens(DESTINATION, '1')), { code: 'address_native_config' });
+    await assert.rejects(h.send({ ...nativeDeposit(2000000), value: '0x0' }), { code: 4100 });
     const context = { ...CONTEXT, kind: 'finalization', noteId: 7, operationId: 'finalize-op', submissionId: 'finalize-sub' };
     const input = { from: OWN, to: VAULT, data: `0xff8f5585${codec.abiWord(7)}`, value: '0x1' };
     await assert.rejects(h.send(input, context, { kind: 'finalization', noteId: 7 }), { code: 4100 });
@@ -1318,7 +1310,7 @@ test('safe malformed-fee explanations survive generic SDK copy without RPC detai
         await h.ready();
         h.rpc.baseFee = scenario.baseFee;
         await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
-            try { await h.provider.request({ method: 'eth_sendTransaction', params: [approve(2000000)], zkapiRecovery: CONTEXT }); }
+            try { await h.provider.request({ method: 'eth_sendTransaction', params: [nativeDeposit(2000000)], zkapiRecovery: CONTEXT }); }
             catch (error) { error.shortMessage = `Generic SDK copy ${KEY}`; throw error; }
         }), error => {
             assert.equal(error.addressCode, scenario.code);
@@ -1338,7 +1330,7 @@ test('a later SDK failure or a new action never inherits a prior safe funding ex
     h.rpc.baseFee = undefined;
     const different = new Error('SDK journal persistence failed');
     await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
-        try { await h.provider.request({ method: 'eth_sendTransaction', params: [approve(2000000)], zkapiRecovery: CONTEXT }); }
+        try { await h.provider.request({ method: 'eth_sendTransaction', params: [nativeDeposit(2000000)], zkapiRecovery: CONTEXT }); }
         catch { throw different; }
     }), error => error === different && error.shortMessage === undefined);
     const next = new Error('Different action failed');
@@ -1417,7 +1409,7 @@ test('IndexedDB atomically adds the browser key with its envelope and cannot ove
     assert.throws(() => store.save(scope, { ...envelope, privateKey: KEY }), { code: 'address_storage' });
 });
 
-test('local Anvil executes native deposit value, signed approval, exact recovery replay and ETH return', { timeout: 30_000 }, async t => {
+test('local Anvil executes native deposit value, exact recovery replay and ETH return', { timeout: 30_000 }, async t => {
     const { spawn, spawnSync } = await import('node:child_process');
     if (spawnSync('anvil', ['--version'], { stdio: 'ignore' }).status !== 0) {
         t.skip('Anvil is not installed; deterministic signing/recovery tests still run.');
@@ -1444,7 +1436,7 @@ test('local Anvil executes native deposit value, signed approval, exact recovery
     assert(started, 'local chain starts');
     // Deliberately minimal fixture: records the second call argument in slot0.
     // This validates EVM execution/signing, not the private-vault proof protocol.
-    await rpc('anvil_setCode', [TOKEN, '0x602435600055600160005260206000f3']);
+    await rpc('anvil_setCode', [VAULT, '0x34600055600160005260206000f3']);
     await rpc('anvil_setBalance', [OWN, '0xde0b6b3a7640000']);
     const broadcastBytes = [];
     let interruptResponse = true;
@@ -1460,7 +1452,7 @@ test('local Anvil executes native deposit value, signed approval, exact recovery
     } });
     await h.ready();
     const hash = await h.send();
-    assert.equal(BigInt(await rpc('eth_getStorageAt', [TOKEN, '0x0', 'latest'])), 2000000n);
+    assert.equal(BigInt(await rpc('eth_getStorageAt', [VAULT, '0x0', 'latest'])), 2_000_000_000_000_000n);
     const client = new ZkapiClient();
     client.config = { funding: { ...FUNDING, demo_rpc_url: url } };
     client.browserMode = true;
@@ -1491,7 +1483,7 @@ test('local Anvil executes native deposit value, signed approval, exact recovery
 
     // A payable EVM fixture records msg.value. It verifies native execution and
     // durable signer restart, while the full vault/proof flow has separate E2E.
-    await rpc('anvil_setCode', [VAULT, '0x34600055600160005260206000f3']);
+    await rpc('anvil_setBalance', [VAULT, '0x0']);
     await rpc('anvil_setBalance', [OWN, '0x0']);
     const native = harness({ config: { ...NATIVE_FUNDING, demo_rpc_url: url }, transport: h.init.transport });
     await native.ready();
@@ -1539,7 +1531,9 @@ test('actual SDK normalization keeps safe provider fee copy and pre-broadcast cl
     client.setWalletProvider(h.provider);
     h.rpc.baseFee = undefined;
     await assert.rejects(h.provider.withAuthorizedAction(auth, async () => {
-        try { return await client.sendContractTransaction(OWN, TOKEN, approve(2000000).data); }
+        try { return await client.sendContractTransaction(OWN, VAULT, nativeDeposit(2000000).data, null, null, null,
+            { kind: 'deposit', submission: { operationId: 'deposit-op', submissionId: 'deposit-claim', amount: 2000000, commitment: PLAN.commitment, noteId: 7 } },
+            2_000_000_000_000_000n); }
         catch (error) {
             // sendContractTransaction has run the real SDK normalization and
             // stage tagging. Its later withdrawal handler changes this copy.
@@ -1560,18 +1554,19 @@ test('actual SDK normalization keeps safe provider fee copy and pre-broadcast cl
     assert.equal(h.provider.pending, null);
 });
 
-test('test-token mint is bounded by explicit authorization and unavailable on mainnet', async () => {
-    const mint = { from: OWN, to: TOKEN, data: codec.callData(codec.ABI.mint, [codec.addressWord(OWN), codec.abiWord(1000)]) };
+test('token mint calls are never authorized, on any network', async () => {
+    const token = `0x${'33'.repeat(20)}`;
+    const mint = { from: OWN, to: token, data: codec.callData(codec.ABI.mint, [codec.addressWord(OWN), codec.abiWord(1000)]) };
     const mainnet = harness();
     await mainnet.ready();
-    await assert.rejects(mainnet.send(mint, CONTEXT, { kind: 'token', amount: '1000' }), { code: 4100 });
-    const sepolia = harness({ config: { chain_id: 11155111, demo_mint_enabled: true } });
+    await assert.rejects(mainnet.send(mint, CONTEXT, { kind: 'deposit', amount: '1000' }), { code: 4100 });
+    const sepolia = harness({ config: { chain_id: 11155111 } });
     sepolia.rpc.chain = '0xaa36a7';
     await sepolia.ready();
     const context = { ...CONTEXT, chainId: 11155111 };
-    await assert.rejects(sepolia.send(mint, context, { kind: 'token', amount: '999' }), { code: 4100 });
-    await sepolia.send(mint, context, { kind: 'token', amount: '1000' });
-    assert.equal(Transaction.from(sepolia.sent[0]).chainId, 11155111n);
+    await assert.rejects(sepolia.send(mint, context, { kind: 'deposit', amount: '1000' }), { code: 4100 });
+    await assert.rejects(sepolia.send(mint, context, { kind: 'token', amount: '1000' }), { code: 4100 });
+    assert.equal(sepolia.sent.length, 0);
 });
 
 test('sweep overrides cannot turn a deposit action into an arbitrary transfer', async () => {
@@ -1587,14 +1582,14 @@ test('SDK-aligned gas ceiling still rejects oversized requests', async () => {
     await h.ready();
     h.rpc.gas = `0x${6_897_262n.toString(16)}`;
     const gas = bufferedGasLimit(6_897_262n);
-    await assert.rejects(h.send({ ...approve(2000000), gas: `0x${(MAX_TRANSACTION_GAS_LIMIT + 1n).toString(16)}` }), { code: 4100 });
+    await assert.rejects(h.send({ ...nativeDeposit(2000000), gas: `0x${(MAX_TRANSACTION_GAS_LIMIT + 1n).toString(16)}` }), { code: 4100 });
     h.rpc.gas = `0x${(MAX_TRANSACTION_GAS_LIMIT + 1n).toString(16)}`;
-    await assert.rejects(h.send({ ...approve(2000000), gas }), { code: 4100 });
+    await assert.rejects(h.send({ ...nativeDeposit(2000000), gas }), { code: 4100 });
     h.rpc.gas = `0x${6_897_262n.toString(16)}`;
     assert.equal(h.sent.length, 0, 'gas-limit rejection never broadcasts');
     assert.equal(h.provider.pending, null);
     h.rpc.baseFee = '0x1dcd6500';
-    await h.send({ ...approve(2000000), gas: `0x${MAX_TRANSACTION_GAS_LIMIT.toString(16)}` });
+    await h.send({ ...nativeDeposit(2000000), gas: `0x${MAX_TRANSACTION_GAS_LIMIT.toString(16)}` });
     assert.equal(Transaction.from(h.sent[0]).gasLimit, 16_777_216n, 'the exact SDK/network gas ceiling remains allowed');
     await h.provider.reload();
 });

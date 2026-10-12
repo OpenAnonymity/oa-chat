@@ -465,6 +465,44 @@ restoring an old key into a replacement account. See ENCRYPTION_PASSKEYS.md.
   journal and fail-closed verification while diagnosing; public station health
   does not establish verification of a particular key.
 
+## 2026-10-12: Remove Sepolia test tokens and the ERC-20 funding path
+
+- Sepolia is a native-ETH deployment identical to Mainnet except for the chain,
+  so the demo-token path and the legacy ERC-20 (USDC) path were dead code (the
+  build already rejects any pin with a billing token). Both are removed.
+- Removed: the "Get 10 test ZKAPI" button and `mintDemoTokens` call; the `token`
+  wallet-action kind; the "Get test billing tokens" and "Approve USDC" journey
+  steps; the USD "Starting balance" / deposit-amount inputs of the token UI;
+  "Send USDC" returns and `transferTokens`; ERC-20 balance reads, approve/mint
+  call authorization and the six-send deposit allowance in the address provider;
+  the testnet demo-token and USDC setup-guide copy.
+- The address funding provider now requires `billing_asset: native_eth`
+  (gwei, 1e9 wei/unit) or throws `address_native_config`. Its storage scope is
+  still `${chainId}:${vault}:native-eth`, so existing encrypted addresses and
+  journals are unaffected. Only the vault `deposit`, withdrawal, finalization
+  and ETH-sweep calls are authorized; any call to another contract is denied.
+- UI call sites no longer branch on `isNativeEthFunding`; a saved deposit in
+  MetaMask mode now shows a "Saved deposit" amount row beside its resume note.
+- Left alone: SDK plan fields such as `approvals` (still checked so an old
+  plan blocks a new one), and the SDK's own mint/approve code, which the app no
+  longer calls. The Sepolia shared-password gate is unrelated and unchanged.
+- Tests: the provider harness now defaults to a native vault with a payable
+  deposit fixture; ERC-20-only tests were deleted or converted. Full `npm test`
+  passes (742 pass, 2 skipped). The Anvil EVM test was converted but is skipped
+  without `anvil`, so it was not executed here.
+
+## 2026-10-01: Stable zkAPI deployment configuration paths
+
+- Public network pins now live directly at `deployments/zkapi/mainnet.json` and
+  `deployments/zkapi/sepolia.json`, without a dated rollout subdirectory. Build
+  imports and the Vercel upload allowlist use these paths. See
+  [payment build configuration](ZKAPI_PAYMENTS.md#build) for their purpose.
+- The JSON contents, `OA_ZKAPI_DEPLOYMENT=fresh-20260930` selector, deployment
+  IDs and wallet database names are unchanged. The selector also determines
+  wallet storage, so a cosmetic path cleanup must not rename it and hide
+  existing notes or transaction journals. Emitted browser configuration and
+  service routes retain their existing locations.
+
 ## 2026-10-01: Retire legacy zkAPI origins
 
 - Only the canonical September 30 profiles remain selectable. The retired
@@ -894,6 +932,40 @@ Found with oa-commercial `test-robustness/signup.mjs`; report in oa-commercial
 - Tickets signed by the previous org's key are moved once, automatically, after sign-in (`application/legacyTicketTransfer.js`, started by `ticketClient.startLegacyTransferWatcher()` from app init). The org checks them against the previous org's public key and answers with a redeem code; the code is saved to the durable code-recovery store before the old tickets are removed (with tombstones), then redeemed through the normal `TicketCodeRedeemer`. A crash leaves either the old tickets or a saved code, never neither. `recovered_codes` returns codes the same account already received for tickets another tab or device moved.
 - While the org advertises the transfer (`GET /api/billing/legacy-transfer`), those tickets are held: they stay in the wallet and count, but `consumeTickets`/`peekTickets` never select them. Send preflight waits (bounded) for a running move and never treats held tickets as a shortage, so no automatic reload can be triggered by them. The org answers a legacy ticket on any spend path with 409 `TICKET_KEY_LEGACY` (never `TICKET_KEY_INVALIDATED`, which would delete them); the client then holds the key and starts the move.
 - The POST uses the account-session transport, which only allows `/auth` and `/api/billing`, hence the `/api/billing/...` path. While a move runs, the extension ticket snapshot reports `busy`, so commercial empty-wallet logic does not read the wallet as empty.
+
+## 2026-09-30: Canonical zkAPI domain configuration
+
+- Completed rollout: Sepolia serves core `9452a75` in deployment
+  `dpl_F576xsZknHfB3K8ro57ErAQBPgDb`; Mainnet staging serves Commercial
+  `0023cd2` / core `04bc8ca` in `dpl_HG2ubVXGmyMQfzuZcc8AU9Vmvkrz`.
+  Each preserves its existing UI revision. Both exact application bundle hashes
+  and SDK patches are unchanged; only backend configuration and source metadata
+  differ. Canonical website acceptance passes 24 Sepolia and 20 Mainnet checks.
+- Both new TLS hosts and both legacy hosts pass direct acceptance. Only the
+  shared TLS container restarted; all ten network containers and their runtime
+  environment hashes remain unchanged. No keys, contracts or database changed.
+- Reloading the existing Sepolia browser restored its private balance and
+  prepared withdrawal. No signing, withdrawal submission or new inference was
+  performed during this hostname migration.
+- zkAPI source PR #4, merged at `66874f1`, updates the CLI and default SDK
+  profiles too. Saved September 30 Sepolia CLI manifests migrate only from an
+  exact prior manifest with the three approved URLs changed; different trust
+  pins remain rejected. New Mainnet CLI/SDK defaults also select the fresh
+  September 30 vault. Old-deployment wallets remain preserved and rejected,
+  requiring their matching historical client/configuration for recovery.
+
+- The `fresh-20260930` profiles now select
+  `https://zkapi-mainnet.openanonymity.ai` and
+  `https://zkapi-sepolia.openanonymity.ai` for manifest, protocol and indexer
+  requests. Generated Vercel rewrites use the same selected profile.
+- This is an origin change within the existing September 30 deployments:
+  contract addresses, deployment IDs, signing/proof pins and wallet databases
+  are unchanged. The funding signer scope remains chain/vault/asset, while
+  private-note history remains scoped by deployment ID. Keep the frontend
+  hostnames unchanged to retain their IndexedDB state.
+- Server TLS and frontend promotion are separate operational steps. The
+  [deployment record](ZKAPI_FRESH_DEPLOYMENT_20260930.md) records rollout status;
+  the original funded acceptance below remains tied to its tested build.
 
 ## 2026-09-30: Repeatable complete local v2 lifecycle acceptance passed
 

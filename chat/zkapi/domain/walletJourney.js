@@ -10,7 +10,7 @@ const STATES = ['complete', 'active', 'waiting', 'paused', 'upcoming', 'error'];
 // With Send ETH (addressFunding) nobody confirms anything: this browser holds
 // the funding address's key and signs the transaction itself. Its steps say
 // what the browser does, and none of them waits on the person.
-function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, nativeEth = false, escapePeriod = '', addressFunding = false } = {}) {
+function stepsFor(kind, { hasLease = false, escapePeriod = '', addressFunding = false } = {}) {
     if (kind === 'deposit' && addressFunding) {
         return [
             { id: 'connect', label: 'Prepare funding address', detail: 'Checks the ETH at this address and the current network fee.' },
@@ -21,8 +21,6 @@ function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = fal
     if (kind === 'deposit') {
         return [
             { id: 'connect', label: 'Connect MetaMask', detail: 'Opens MetaMask to use your account.' },
-            ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
-            ...(!nativeEth ? [{ id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' }] : []),
             { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'Moves the funds from your wallet into your private balance.' },
             { id: 'chain', label: 'Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
@@ -54,8 +52,6 @@ export function classifyWalletStatus(kind, message = '') {
     if (/^(?:(?:Deposit|Withdrawal|Replacement|Background replacement|Finalization)(?: replacement)? submitted\b|Checking submitted\b)|waiting for confirmation|checking confirmation/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
-        if (/allowance|Approving/i.test(text)) return { step: 'approve', state: 'waiting' };
-        if (/Minting|test billing tokens|test ZKAPI/i.test(text)) return { step: 'tokens', state: 'waiting' };
         if (/Connecting to MetaMask|Connecting to the MetaMask account/i.test(text)) return { step: 'connect', state: 'active' };
         if (/Confirm .*in MetaMask/i.test(text)) return { step: 'deposit', state: 'waiting' };
         return null;

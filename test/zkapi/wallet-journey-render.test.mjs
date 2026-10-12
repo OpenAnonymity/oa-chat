@@ -111,11 +111,11 @@ test('a deposit in flight shows its steps under the figure; a persisted pending 
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config, withdrawal: zkapiClient.withdrawal, withdrawals: zkapiClient.withdrawals, lastError: zkapiClient.lastError };
     Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {} }, withdrawal: null, withdrawals: [], lastError: null });
     try {
-        const busy = modalWith({}, { view: 'balance', busy: true, journeyKind: 'deposit', status: 'Approving USDC… confirm in MetaMask.' });
+        const busy = modalWith({}, { view: 'balance', busy: true, journeyKind: 'deposit', status: 'Depositing into the private-note vault… confirm in MetaMask.' });
         const html = busy.renderBalance();
         assert.match(html, /data-zkapi-journey data-kind="deposit"/);
         assert.match(html, /data-step="connect" data-state="complete"/);
-        assert.match(html, /data-step="approve" data-state="waiting"/);
+        assert.match(html, /data-step="deposit" data-state="waiting"/);
         assert.doesNotMatch(html, /id="zkapi-deposit-btn"/);
 
         zkapiClient.config = { funding: {}, pending_deposit: { phase: 'submitted', amount: 4_000_000 } };

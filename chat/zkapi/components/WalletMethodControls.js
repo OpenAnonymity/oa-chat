@@ -7,7 +7,7 @@ import { renderFundingPaymentQr } from './FundingPaymentQr.js';
 import { renderFundingProgress } from './FundingProgress.js';
 import { motionDuration } from '../../ui/uiMotion.js';
 import { getWalletMethod, setWalletMethod, prepareWalletMethod, walletMethodActionBusy } from '../services/walletMethod.mjs';
-import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
+import { canQuotePendingAddressDeposit, formatFundingAmount, fundingEthAmount, fundingDestination } from '../services/addressFunding.js';
 
 export function refreshWalletView(owner, { immediate = false } = {}) {
     if (!owner.isOpen || owner.fundingBusy || globalThis.document?.activeElement?.type === 'password') return;
@@ -110,13 +110,13 @@ function canFund(owner) {
 }
 
 export function isFundingViewHydrating(owner) {
-    if (!zkapiClient.isNativeEthFunding || !canFund(owner) || addressFundingWallet.migrationRequired || owner.fundingError) return false;
+    if (!canFund(owner) || addressFundingWallet.migrationRequired || owner.fundingError) return false;
     const flow = owner.fundingFlow;
     return !flow?.error && !flow?.fee && !flow?.displayQuote;
 }
 
 function canSelectAmount(owner) {
-    return zkapiClient.isNativeEthFunding && !zkapiClient.note && !owner.depositBalanceRefreshPending
+    return !zkapiClient.note && !owner.depositBalanceRefreshPending
         && !['withdraw', 'withdrawals'].includes(owner.view) && !['success', 'redeeming'].includes(owner.step);
 }
 
@@ -227,7 +227,7 @@ function fundingUsdValue(value) {
     let usd = null;
     // ETH stays exact. USD is only a current reference value; native accounting
     // uses whole gwei, so discard sub-gwei dust for this approximate display.
-    if (zkapiClient.isNativeEthFunding && /^\d+$/.test(String(value))) {
+    if (/^\d+$/.test(String(value))) {
         try {
             const formatted = zkapiClient.formatMoney((BigInt(value) / 1_000_000_000n).toString());
             if (formatted && formatted !== '—') usd = formatted;
@@ -526,7 +526,7 @@ export function renderDepositAmount(owner) {
 /** Whether the Send ETH instructions (amount, QR, address, Deposit) are
  *  the view's main content, rather than the funding address's receipt. */
 export function fundingInstructionsVisible(owner) {
-    return canFund(owner) && Boolean(zkapiClient.isNativeEthFunding);
+    return canFund(owner);
 }
 
 const SPINNER = '<span class="zkapi-pill-spinner" aria-hidden="true"></span>';
@@ -535,7 +535,7 @@ const SPINNER = '<span class="zkapi-pill-spinner" aria-hidden="true"></span>';
  *  uses: what is deposited, the fee (MetaMask shows its exact figure when
  *  you confirm), where it comes from, and the network. */
 export function renderMetaMaskTransfer(owner) {
-    if (getWalletMethod() !== 'metamask' || !zkapiClient.isNativeEthFunding) return '';
+    if (getWalletMethod() !== 'metamask') return '';
     const escape = value => owner.escapeHtml(value);
     const intent = amountFlow(owner)?.intent;
     const depositUsd = intent ? fundingUsdValue(intent.depositWei) : null;
@@ -554,14 +554,13 @@ export function renderMetaMaskTransfer(owner) {
 }
 
 export function renderFundingAccount(owner, { destination = true, rows = true, pending = true, receipt: receiptOnly = false } = {}) {
+    const native = true;
     if (getWalletMethod() !== 'address') return '';
     const escape = value => owner.escapeHtml(value);
     const wallet = addressFundingWallet;
     const latestReturn = wallet.lastReturn;
     const disabled = owner.busy || owner.fundingBusy ? 'disabled' : '';
     const network = zkapiClient.networkName();
-    const native = zkapiClient.isNativeEthFunding;
-    const token = zkapiClient.billingTokenSymbol || 'USDC';
     const flow = owner.fundingFlow;
     // Existing encrypted accounts are never overwritten. This one-time upgrade
     // is shown only for a legacy record; new accounts have no password or backup.
@@ -872,7 +871,7 @@ export function attachWalletMethodControls(owner) {
         // afterward and is never part of this click's critical path.
         if (owner.isOpen) owner.render();
     }));
-    for (const [name, property] of [['withdrawal-destination', 'fundingDestination'], ['return-destination', 'fundingReturnDestination'], ['return-amount', 'fundingReturnAmount'], ['return-eth-amount', 'fundingReturnEthAmount']]) {
+    for (const [name, property] of [['withdrawal-destination', 'fundingDestination'], ['return-destination', 'fundingReturnDestination'], ['return-eth-amount', 'fundingReturnEthAmount']]) {
         input(name)?.addEventListener('input', event => { owner[property] = event.target.value; });
     }
     input('amount')?.addEventListener('input', event => {
@@ -1024,17 +1023,17 @@ export function attachWalletMethodControls(owner) {
             }
         } finally { release?.(); }
     }));
-    const transfer = asset => {
+    const transferEth = () => {
         const destination = value('return-destination');
-        const amount = value(asset === 'eth' ? 'return-eth-amount' : 'return-amount');
+        const amount = value('return-eth-amount');
         return perform(async () => {
             const to = fundingDestination(destination);
-            const units = asset === 'eth' ? (amount.trim() ? fundingEthAmount(amount) : 'max') : fundingAmount(amount);
-            if (!globalThis.confirm(`Send ${asset === 'eth' ? (units === 'max' ? 'remaining ETH after reserving network fees (a small balance may remain)' : `${amount} ETH`) : `${amount} ${zkapiClient.billingTokenSymbol || 'USDC'}`} to ${to} on ${zkapiClient.networkName()}?`)) return;
+            const units = amount.trim() ? fundingEthAmount(amount) : 'max';
+            if (!globalThis.confirm(`Send ${units === 'max' ? 'remaining ETH after reserving network fees (a small balance may remain)' : `${amount} ETH`} to ${to} on ${zkapiClient.networkName()}?`)) return;
             const release = await prepareWalletMethod();
             try {
-                const hash = await addressFundingWallet.withAuthorizedAction({ kind: 'sweep', destination: to, asset, amount: units }, () => asset === 'eth'
-                    ? addressFundingWallet.transferEth(to, units) : addressFundingWallet.transferTokens(to, units));
+                const hash = await addressFundingWallet.withAuthorizedAction({ kind: 'sweep', destination: to, asset: 'eth', amount: units },
+                    () => addressFundingWallet.transferEth(to, units));
                 owner.fundingNoticeScope = 'return';
                 owner.fundingNotice = `Transfer submitted: ${hash}. Check the saved transaction before another transfer.`;
                 try {
@@ -1089,8 +1088,7 @@ export function attachWalletMethodControls(owner) {
         input('return-toggle')?.setAttribute?.('aria-expanded', String(partial));
         if (partial) setTimeout(() => input('return-eth-amount')?.focus?.({ preventScroll: true }), 120);
     });
-    on('return-token', () => transfer('token'));
-    on('return-eth', () => transfer('eth'));
+    on('return-eth', transferEth);
     // Defer hydration until the current render has attached every control.
     queueMicrotask(() => { if (owner.isOpen) ensureDepositAmount(owner); });
 }
