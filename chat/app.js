@@ -4975,7 +4975,7 @@ class ChatApp {
     }
 
     async setSessionCouncilTranscriptHint(session, hasCouncilTranscript, options = {}) {
-        if (!session) return false;
+        if (!session || chatDB.messageReplacements.has(session.id)) return false;
 
         const nextHasCouncilTranscript = hasCouncilTranscript === true;
         const currentHasCouncilTranscript = session.hasCouncilTranscript === true;
@@ -5749,7 +5749,7 @@ class ChatApp {
     }
 
     applySessionConversationSearchText(session, messages) {
-        if (!session) return null;
+        if (!session || chatDB.messageReplacements.has(session.id)) return null;
         const fields = this.buildSessionSearchIndexFields(messages);
         Object.assign(session, fields);
         const loadedSession = this.state.sessionsById.get(session.id);
@@ -5760,10 +5760,11 @@ class ChatApp {
     }
 
     async refreshSessionConversationSearchText(session, messages = null, options = {}) {
-        if (!session?.id) return null;
+        if (!session?.id || chatDB.messageReplacements.has(session.id)) return null;
         const sourceMessages = Array.isArray(messages)
             ? messages
             : await chatDB.getSessionMessages(session.id);
+        if (chatDB.messageReplacements.has(session.id)) return null;
         const fields = this.applySessionConversationSearchText(session, sourceMessages);
         if (options.persist && typeof chatDB.updateSessionSearchIndex === 'function') {
             await chatDB.updateSessionSearchIndex(session.id, fields);
@@ -5975,7 +5976,7 @@ class ChatApp {
 
     triggerPostTurnMemoryExtraction(session) {
         if (!this.memoryFeatureEnabled || !this.supportsFeature('memory', session)) return;
-        if (!session?.id) return;
+        if (!session?.id || chatDB.messageReplacements.has(session.id)) return;
         this.runPostTurnMemoryExtraction(session).catch((error) => {
             console.warn('[App] Background memory extraction failed:', error);
         });
@@ -7135,10 +7136,48 @@ class ChatApp {
         if (mutationOwner && mutationOwner !== options.mutationToken) return;
         const job = { controller: new AbortController() };
         this.regenerationJobs.set(sessionId, job);
+        let draft = null;
         try {
-            return await this.regenerateCapturedResponse({ ...options, sessionId, abortController: job.controller });
+            if (options.replaceFromMessageId) {
+                draft = await chatDB.beginMessageReplacement(sessionId, options.replaceFromMessageId);
+                if (this.isViewingSession(sessionId)) await this.chatArea?.render();
+            }
+            const result = await this.regenerateCapturedResponse({ ...options, sessionId, abortController: job.controller });
+            const completed = result?.completed === true && !job.controller.signal.aborted && !this.isSessionDeleted(sessionId);
+            if (draft && completed) {
+                await chatDB.finishMessageReplacement(draft, { commit: true });
+                draft = null;
+                this.triggerPostTurnMemoryExtraction(this.state.sessionsById.get(sessionId));
+            }
+            return result;
+        } catch (error) {
+            if (!draft) throw error;
+            if (!this.isCancelledError(error, job.controller.signal)) this.showToast?.('The replacement could not be completed. Your previous answer was kept.', 'info');
         } finally {
-            if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
+            try {
+                if (draft) {
+                    try {
+                        await chatDB.finishMessageReplacement(draft, {
+                            notice: job.controller.signal.aborted ? 'stopped' : 'failed'
+                        });
+                    } catch {
+                        this.showToast?.('Your previous answer was kept, but the retry status could not be saved.', 'info');
+                    }
+                }
+                if (options.replaceFromMessageId && !this.isSessionDeleted(sessionId)) {
+                    const session = this.state.sessionsById.get(sessionId);
+                    try {
+                        await this.recomputeSessionCouncilTranscriptHint?.(session);
+                        await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                    } catch {
+                        this.showToast?.('The conversation was kept, but its search index could not be updated.', 'info');
+                    } finally {
+                        if (this.isViewingSession(sessionId)) await this.chatArea?.render();
+                    }
+                }
+            } finally {
+                if (this.regenerationJobs.get(sessionId) === job) this.regenerationJobs.delete(sessionId);
+            }
         }
     }
 
@@ -7216,7 +7255,7 @@ class ChatApp {
             }
 
             if (this.isCouncilModeActive(session)) {
-                await this.councilController.runRegenerateTurn({
+                return await this.councilController.runRegenerateTurn({
                     session,
                     userMessage: lastUserMessage,
                     searchEnabled: retrySearchEnabled,
@@ -7224,7 +7263,6 @@ class ChatApp {
                     initialPendingPhase,
                     preserveLocalOnlyMessages: shouldAttemptMemoryAugment || options.skipMemoryAugment === true
                 });
-                return;
             }
 
             const typingModelName = retryModelName || this.inferenceService.getDefaultModelName(session);
@@ -7566,6 +7604,7 @@ class ChatApp {
                 }
 
                 this.triggerPostTurnMemoryExtraction(session);
+                return { completed: Boolean(streamingMessage.content?.trim() || streamingMessage.images?.length) };
 
             } catch (error) {
                 console.error('Error getting AI response:', error);

@@ -1390,6 +1390,9 @@ export default class CouncilController {
             if (completed.length > 0) {
                 this.app.triggerPostTurnMemoryExtraction(session);
             }
+            return { completed: completed.length === assistantMessage.council.stage1.length
+                && completed.length > 0 && !abortController.signal.aborted
+                && (!assistantMessage.council.synthesis || assistantMessage.council.synthesis.status === 'complete') };
         } catch (error) {
             if (typingId) this.app.removeTypingIndicator(typingId);
             if (isAbortError(error)) {

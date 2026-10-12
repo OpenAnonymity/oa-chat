@@ -2242,3 +2242,101 @@ test('automatic composer focus never opens the phone keyboard or interrupts an a
         assert.equal(focuses, 1);
     } finally { restore(); }
 });
+
+for (const failure of ['notice', 'metadata', 'none']) {
+    test(`regeneration restores the visible original even when ${failure} persistence fails`, async t => {
+        const restore = installBrowser();
+        try {
+            const app = appHarness(); let renders = 0;
+            const draft = {sessionId:'one'};
+            t.mock.method(chatDB, 'beginMessageReplacement', async () => draft);
+            t.mock.method(chatDB, 'finishMessageReplacement', async (_draft, options) => {
+                assert.equal(options.notice, 'stopped');
+                if (failure === 'notice') throw Error('Synthetic quota failure');
+            });
+            app.chatArea = {render: async()=>renders++};
+            app.regenerateCapturedResponse = async ({abortController}) => { abortController.abort(); };
+            app.recomputeSessionCouncilTranscriptHint = async()=>{if(failure === 'metadata')throw Error('Synthetic metadata failure');};
+            app.refreshSessionConversationSearchText = async()=>{};
+            app.showToast = ()=>{};
+            await app.regenerateResponse({sessionId:'one',replaceFromMessageId:'original'});
+            assert.equal(renders,2,'original view restored after the draft view');
+            assert.equal(app.regenerationJobs.size,0);
+        } finally { restore(); }
+    });
+}
+
+test('search and council metadata never persist an unfinished replacement', async () => {
+    const restore = installBrowser();
+    try {
+        const app = appHarness(), session=app.state.sessionsById.get('one');
+        session.conversationSearchText='original index';
+        chatDB.messageReplacements.set('one',{});
+        assert.equal(app.applySessionConversationSearchText(session,[{content:'draft'}]),null);
+        assert.equal(await app.refreshSessionConversationSearchText(session,null,{persist:true}),null);
+        assert.equal(await app.setSessionCouncilTranscriptHint(session,true,{persist:true}),false);
+        assert.equal(session.conversationSearchText,'original index');
+        assert.equal(session.hasCouncilTranscript,undefined);
+    } finally { chatDB.messageReplacements.delete('one'); restore(); }
+});
+
+for (const outcome of ['complete', 'failed', 'empty', 'stopped']) {
+    test(`regeneration ${outcome} selects the correct durable replacement outcome`, async t => {
+        const restore = installBrowser();
+        try {
+            const app = appHarness();
+            const draft = { sessionId: 'one' };
+            const finishes = [];
+            let renders = 0, extractions = 0;
+            t.mock.method(chatDB, 'beginMessageReplacement', async (sessionId, messageId) => {
+                assert.equal(sessionId, 'one');
+                assert.equal(messageId, 'original');
+                return draft;
+            });
+            t.mock.method(chatDB, 'finishMessageReplacement', async (received, options) => {
+                assert.equal(received, draft);
+                finishes.push(options);
+            });
+            app.chatArea = { render: async () => { renders++; } };
+            app.regenerateCapturedResponse = async ({ abortController }) => {
+                if (outcome === 'stopped') abortController.abort();
+                return outcome === 'empty' ? undefined : { completed: outcome === 'complete' || outcome === 'stopped' };
+            };
+            app.recomputeSessionCouncilTranscriptHint = async () => {};
+            app.refreshSessionConversationSearchText = async () => {};
+            app.triggerPostTurnMemoryExtraction = () => { extractions++; };
+            await app.regenerateResponse({ sessionId: 'one', replaceFromMessageId: 'original' });
+            assert.deepEqual(finishes, [outcome === 'complete' ? { commit: true } : { notice: outcome === 'stopped' ? 'stopped' : 'failed' }]);
+            assert.equal(extractions, outcome === 'complete' ? 1 : 0);
+            assert.equal(renders, 2);
+            assert.equal(app.regenerationJobs.size, 0);
+        } finally { restore(); }
+    });
+}
+
+test('regenerate action never deletes the saved transcript before requesting its replacement', async () => {
+    const area = Object.create(ChatArea.prototype);
+    const messages = [
+        { id: 'question', role: 'user' },
+        { id: 'original', role: 'assistant' },
+        { id: 'later', role: 'user' }
+    ];
+    let requested, ended = false;
+    const owner = {};
+    area.setMessageActionBusy = () => {};
+    area.app = {
+        getCurrentSession: () => ({ id: 'one' }),
+        beginSessionMutation: () => owner,
+        endSessionMutation: (_id, token) => { assert.equal(token, owner); ended = true; },
+        stopSessionStreamingAndWait: async () => true,
+        isSessionDeleted: () => false,
+        data: {
+            getSessionMessages: async () => structuredClone(messages),
+            deleteMessage: async () => { throw new Error('Do not delete the previous answer before replacement succeeds'); }
+        },
+        regenerateResponse: async options => { requested = options; }
+    };
+    await area.handleRegenerateMessage('original');
+    assert.deepEqual(requested, { sessionId: 'one', userMessageId: 'question', mutationToken: owner, replaceFromMessageId: 'original' });
+    assert.equal(ended, true);
+});

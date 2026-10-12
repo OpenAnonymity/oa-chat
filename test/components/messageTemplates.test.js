@@ -351,3 +351,17 @@ test('describeCouncilLaneError states the error: the status by name, the code as
     assert.deepEqual(describeCouncilLaneError('Request failed.'), { message: 'Request failed.', detail: '' });
     assert.equal(describeCouncilLaneError('Context window exceeded').message, 'Context window exceeded');
 });
+
+test('stopped replacement keeps the original reply with a neutral, retryable status', async () => {
+    const restore = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const saved = {id:'original',sessionId:'chat',role:'assistant',content:'The original answer.',model:'Test',timestamp:1,regenerationNotice:'stopped'};
+        const html = buildMessageHTML(saved, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
+        assert.match(html,/The original answer/);
+        assert.match(html,/Stopped\. Your previous answer was kept\./);
+        assert.match(html,/regeneration-status/);
+        assert.match(html,/Retry response/);
+        assert.doesNotMatch(html,/inference-failure-warning/);
+    } finally { restore(); }
+});
