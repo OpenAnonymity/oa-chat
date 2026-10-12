@@ -51,12 +51,18 @@ class StorageEvents {
         if (!this.channel) {
             return;
         }
-        this.channel.postMessage({
-            type,
-            payload,
-            sender: this.tabId,
-            timestamp: Date.now()
-        });
+        try {
+            this.channel.postMessage({
+                type,
+                payload,
+                sender: this.tabId,
+                timestamp: Date.now()
+            });
+        } catch {
+            // This also runs from the debounce timer, after the originating
+            // write has completed. Notification failure cannot undo that write.
+            console.warn('Cross-tab storage notification unavailable.');
+        }
     }
 
     broadcastDebounced(type, key, payload, delayMs = 250) {

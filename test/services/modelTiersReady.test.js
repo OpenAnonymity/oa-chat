@@ -1,6 +1,68 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+test('send preview never queues behind a background price refresh, but spending does', async t => {
+    const saved = { fetch: globalThis.fetch, localStorage: globalThis.localStorage };
+    globalThis.localStorage = { getItem: () => null, setItem() {} };
+    let finishRefresh;
+    let requests = 0;
+    globalThis.fetch = async () => {
+        if (++requests === 1) return Response.json({ 'model-one': 1 });
+        return new Promise(resolve => { finishRefresh = resolve; });
+    };
+    t.after(() => Object.assign(globalThis, saved));
+    const tiers = await import('../../chat/services/modelTiers.js?preview-background-race');
+    await tiers.ensureModelTiersReady();
+    const refreshing = tiers.initModelTiers({ forceRefresh: true });
+    let previewReady = false;
+    let spendingReady = false;
+    const preview = tiers.ensureModelTiersPreviewReady()
+        .then(() => { previewReady = true; });
+    const spending = tiers.getAccessTicketCost('model-one').then(price => {
+        spendingReady = true;
+        return price;
+    });
+    try {
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(previewReady, true, 'accepting a send must not wait for the background refresh');
+        assert.equal(spendingReady, false, 'redemption must still await authoritative pricing');
+        assert.equal(tiers.getTicketCost('model-one'), 1);
+    } finally {
+        finishRefresh(Response.json({ 'model-one': 3 }));
+        await Promise.all([refreshing, preview]);
+        assert.equal(await spending, 3);
+    }
+    assert.equal(requests, 2);
+});
+
+test('preview uses only a map validated in this page and never authorizes spending after failure', async t => {
+    const saved = { fetch: globalThis.fetch, localStorage: globalThis.localStorage };
+    const now = Date.now;
+    let clock = 1000, fail = true, requests = 0;
+    Date.now = () => clock;
+    globalThis.localStorage = { getItem: () => JSON.stringify({ data: { 'model-one': 1 } }), setItem() {} };
+    globalThis.fetch = async () => {
+        requests++;
+        return fail ? new Response('{}', { status: 400 }) : Response.json({ 'model-one': 3 });
+    };
+    t.after(() => { Object.assign(globalThis, saved); Date.now = now; });
+    const tiers = await import('../../chat/services/modelTiers.js?preview-validated-only');
+    await assert.rejects(tiers.ensureModelTiersPreviewReady(), { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+    fail = false;
+    await tiers.ensureModelTiersPreviewReady();
+    fail = true;
+    await assert.rejects(tiers.getAccessTicketCost('model-one'), { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+    clock += 600001;
+    const beforePreview = requests;
+    await tiers.ensureModelTiersPreviewReady();
+    assert.equal(requests, beforePreview, 'expired preview does not fetch on the click path');
+    assert.equal(tiers.getTicketCost('model-one'), 3);
+    await assert.rejects(tiers.getAccessTicketCost('model-one'), { code: 'MODEL_TIER_CONFIG_UNAVAILABLE' });
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(tiers.ensureModelTiersPreviewReady({ signal: controller.signal }), { name: 'AbortError' });
+});
+
 
 test('ticket selection can wait for the live Auto Router price', async () => {
     const previousFetch = globalThis.fetch;

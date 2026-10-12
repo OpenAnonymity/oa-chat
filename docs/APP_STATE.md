@@ -1,3 +1,47 @@
+## October 12, 2026 — keep background work off the Send acceptance path
+
+A prompt could remain in the composer while two unrelated background jobs ran:
+the foreground/periodic pricing refresh, and encrypted account sync. Deterministic
+regressions reproduced both waits on `7ec64afa`; two live 0.1.34 sends accepted
+promptly, so the live intermittent incident itself was not captured.
+
+Single-model budget previews now reuse a map validated earlier in this page even
+while a refresh is pending or has failed. A persisted cache alone is insufficient
+on startup. Acquisition still forces a live price refresh and fails closed; an
+apparent preview shortage is freshly priced before offers/automatic reload so a
+price reduction cannot cause an unnecessary purchase. Council's aggregate live
+budget check is unchanged. Initial catalog/pricing loads and genuine shortages
+can still require a wait.
+
+Stable account reconciliation reads the account binding, pending-login marker
+and active scope in one readonly IndexedDB transaction, then rechecks the local
+login generation/readiness. It need not acquire `oa-sync`, whose encrypted
+network pull/push can be slow. Changed bindings still follow the serialized
+handoff path. Wallet mutation, redemption, scope checks and sync retain their
+existing locks; no account/ticket migration or credential telemetry is added.
+
+Coverage: modelTiersReady, usernameSwitch, settingsSnapshot and
+sendPreflightStartup; retain explicit account-change and failed-refresh cases.
+This entry describes a local candidate, not a deployed web/desktop version.
+
+Follow-up screenshot: the submitted draft remained in the composer while the
+red Stop button was visible. Streaming ownership begins after preflight but
+before the user-message transaction finishes. For a text-only submission with
+an unchanged draft, this narrows the wait to the local save/acceptance boundary,
+not the provider's response. It does not prove the cause on the user's device.
+Two regression tests found that a throwing cross-tab notification could leave
+the save promise unresolved even after the IndexedDB transaction committed.
+Those notifications are now best effort; actual storage failures still reject,
+and the draft is still cleared only after a successful durable commit. No
+account/ticket writes, migrations or spend rules change.
+The notification transport also catches late failures from its debounce timer;
+a real closed BroadcastChannel regression covers both immediate and delayed
+delivery, alongside normal coalescing behavior.
+
+User constraint: preserve the existing Requesting / Waiting / Thinking UI,
+labels, indicators and Stop behavior. The illustrative demo is not a proposed
+replacement. These Send fixes do not edit the presentation or status components.
+
 ## October 12, 2026 — accept sends promptly, validate before spending
 
 Single-model courtesy preflight reuses the successfully loaded pricing map,

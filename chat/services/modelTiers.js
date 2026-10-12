@@ -25,6 +25,10 @@ let modelTickets = {};
 let initializationPromise = null;
 let cacheLoaded = false;
 let livePricingReady = false;
+// A previously validated map is sufficient for a non-spending budget preview,
+// even while a foreground/periodic refresh is in flight. Redemption never uses
+// this flag: it still requires the result of its live pricing refresh.
+let previewPricingReady = false;
 let pricingFetchedAt = 0;
 const PRICING_MAX_AGE_MS = 10 * 60_000;
 let stopAutomaticRefresh = null;
@@ -145,6 +149,7 @@ export function initModelTiers({ forceRefresh = false } = {}) {
             modelTickets = ticketsData;
             saveCache(ticketsData);
             livePricingReady = true;
+            previewPricingReady = true;
             pricingFetchedAt = Date.now();
             eventTarget.dispatchEvent(new CustomEvent('update'));
             return true;
@@ -199,6 +204,15 @@ export async function ensureModelTiersReady({ signal = null, forceRefresh = fals
         error.code = 'MODEL_TIER_CONFIG_UNAVAILABLE';
         throw error;
     }
+}
+
+/** Accepting a prompt is not authorization to spend. Reuse this page's last
+ * validated map for that preview, keeping background refreshes off the click
+ * path. A persisted cache alone never satisfies the initial live load. */
+export async function ensureModelTiersPreviewReady({ signal = null } = {}) {
+    if (signal?.aborted) throw createPricingAbortError();
+    if (previewPricingReady) return;
+    await ensureModelTiersReady({ signal });
 }
 
 /**

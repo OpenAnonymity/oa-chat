@@ -55,6 +55,7 @@ async function setup(t, { stale = false, cancel = false, failLogin = false } = {
     replace(accountService, 'keyringWrappers', ['x-wrapper']);
     replace(chatDB, 'db', {});
     replace(chatDB, 'getSetting', async key => settings.get(key));
+    replace(chatDB, 'getSettingsSnapshot', async keys => Object.fromEntries(keys.map(key => [key, settings.get(key)])));
     replace(chatDB, 'saveSetting', async (key, value) => { settings.set(key, value); });
     replace(chatDB, 'updateSettings', async (entries, deletes = []) => {
         for (const { key, value } of entries) settings.set(key, value);
@@ -107,6 +108,72 @@ async function setup(t, { stale = false, cancel = false, failLogin = false } = {
     });
     return { settings, oldMaster, requests, broadcasts, targetKey };
 }
+
+test('unchanged account reconciliation does not wait behind an encrypted-sync lock', async t => {
+    await setup(t);
+    let releaseLock;
+    let lockRequests = 0;
+    const held = new Promise(resolve => { releaseLock = resolve; });
+    navigator.locks = { request: async (_name, _options, callback) => {
+        lockRequests++;
+        await held;
+        return callback();
+    } };
+    let finished = false;
+    const reconciling = accountService.reconcileSharedAccount().then(() => { finished = true; });
+    try {
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(finished, true, 'stable account check must not queue behind network sync');
+        assert.equal(lockRequests, 0);
+        assert.equal(accountService.state.sessionVerified, true);
+    } finally {
+        releaseLock();
+        await reconciling;
+    }
+});
+
+for (const mismatch of ['pending-login', 'different-account', 'missing-account', 'different-scope']) {
+    test(`shared binding preview cannot skip the lock for ${mismatch}`, async t => {
+        const h = await setup(t);
+        if (mismatch === 'pending-login') h.settings.set(ACCOUNT_LOGIN_PENDING_KEY, { accountId: Y });
+        if (mismatch === 'different-account') h.settings.set('account-settings', { accountId: Y });
+        if (mismatch === 'missing-account') h.settings.delete('account-settings');
+        if (mismatch === 'different-scope') h.settings.set('sync-account-scope', Y);
+        let lockRequests = 0;
+        navigator.locks = { request: async (_name, _options, callback) => { lockRequests++; return callback(); } };
+        await accountService.reconcileSharedAccount();
+        assert.equal(lockRequests, 1, 'a changed binding requires the serialized handoff check');
+        if (mismatch !== 'different-scope') assert.equal(accountService.state.sessionVerified, false);
+        assert.deepEqual(h.settings.get('tickets-active'), [{ finalized_ticket: 'x-ticket' }]);
+    });
+}
+
+test('a handoff during the snapshot invalidates the stable-account fast path', async t => {
+    const h = await setup(t);
+    const original = chatDB.getSettingsSnapshot;
+    chatDB.getSettingsSnapshot = async keys => {
+        const snapshot = await original(keys);
+        accountService.beginSharedAccountHandoff();
+        h.settings.set(ACCOUNT_LOGIN_PENDING_KEY, { accountId: Y });
+        return snapshot;
+    };
+    let lockRequests = 0;
+    navigator.locks = { request: async (_name, _options, callback) => { lockRequests++; return callback(); } };
+    await accountService.reconcileSharedAccount();
+    assert.equal(lockRequests, 1);
+    assert.equal(accountService.state.sessionVerified, false);
+    assert.equal(accountService.cryptoKey, null);
+    assert.deepEqual(h.settings.get('tickets-active'), [{ finalized_ticket: 'x-ticket' }]);
+});
+
+test('a failed shared snapshot blocks use without deleting the saved wallet', async t => {
+    const h = await setup(t);
+    chatDB.getSettingsSnapshot = async () => { throw new Error('storage unavailable'); };
+    await accountService.reconcileSharedAccount();
+    assert.equal(accountService.state.sessionVerified, false);
+    assert.equal(accountService.cryptoKey, null);
+    assert.deepEqual(h.settings.get('tickets-active'), [{ finalized_ticket: 'x-ticket' }]);
+});
 
 for (const stale of [false, true]) {
     test(`username switch isolates accounts from a ${stale ? 'stale logged-out' : 'signed-in'} window`, async t => {
