@@ -1,0 +1,110 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { init, captureEvent, flush, makeFetchTransport, getCurrentScope } from '@sentry/browser';
+import { sanitizeErrorEvent, privacyOptions } from '../scripts/sentry/privacy.mjs';
+
+// The repository bundles unit tests into /tmp. Load the build helper from its
+// real location so esbuild's native binary and relative entry resolve correctly.
+const { resolveSentryConfig, injectSentry } = await import(
+    pathToFileURL(path.join(process.cwd(), 'scripts/sentryBuild.mjs')).href
+);
+
+const config = {
+    dsn: 'https://abc123@o0.ingest.sentry.io/123', environment: 'test', release: 'test-123',
+    origin: 'https://chat.example', scriptPaths: ['/assets/app-ABC.js']
+};
+const privateText = 'PRIVATE_PROMPT_KEY_TICKET_EMAIL';
+function event() {
+    return {
+        event_id: 'a'.repeat(32), message: privateText, user: { email: privateText },
+        request: { url: privateText, headers: { Authorization: privateText } },
+        breadcrumbs: [{ message: privateText }], tags: { account: privateText },
+        contexts: { trace: { data: privateText } }, extra: { content: privateText },
+        exception: { values: [{ type: 'TypeError', value: privateText, stacktrace: { frames: [{
+            filename: `${config.origin}/assets/app-ABC.js?key=${privateText}#${privateText}`,
+            lineno: 42, colno: 8, function: privateText, vars: { secret: privateText },
+            context_line: privateText
+        }] } }] }
+    };
+}
+
+test('only build script locations and fixed error categories survive', () => {
+    const sanitized = sanitizeErrorEvent(event(), config);
+    assert.equal(JSON.stringify(sanitized).includes(privateText), false);
+    assert.deepEqual(sanitized.exception.values[0].stacktrace.frames, [{
+        filename: 'app:///assets/app-ABC.js', lineno: 42, colno: 8, in_app: true
+    }]);
+    assert.equal(sanitized.exception.values[0].type, 'TypeError');
+    assert.equal(sanitized.environment, 'test');
+    const custom = event();
+    custom.exception.values[0].type = privateText;
+    assert.equal(sanitizeErrorEvent(custom, config).exception.values[0].type, 'Error');
+});
+
+test('drop events without known application frames and non-error event types', () => {
+    for (const filename of ['https://other.example/assets/app-ABC.js', `${config.origin}/tickets/${privateText}`, 'data:text/plain,secret', 'file:///private/secret.js']) {
+        const input = event();
+        input.exception.values[0].stacktrace.frames[0].filename = filename;
+        assert.equal(sanitizeErrorEvent(input, config), null);
+    }
+    assert.equal(sanitizeErrorEvent({ message: privateText }, config), null);
+    assert.equal(sanitizeErrorEvent({ ...event(), type: 'transaction' }, config), null);
+});
+
+test('Sentry is opt-in and invalid configuration fails without echoing secrets', () => {
+    assert.equal(resolveSentryConfig({}), null);
+    assert.equal(resolveSentryConfig({ SENTRY_DSN: config.dsn }).environment, 'development');
+    for (const dsn of ['invalid', 'http://abc@sentry.io/1', 'https://abc:secret@o0.ingest.sentry.io/1', 'https://abc@evil.example/1']) {
+        assert.throws(() => resolveSentryConfig({ SENTRY_DSN: dsn }), /SENTRY_DSN/);
+    }
+    assert.throws(() => resolveSentryConfig({ SENTRY_DSN: config.dsn, SENTRY_ENVIRONMENT: 'bad environment' }));
+});
+
+test('real SDK sends only sanitized error payload without cookies, referrer or attachments', async () => {
+    const requests = [];
+    init({
+        ...privacyOptions(config),
+        transport: options => makeFetchTransport(options, async (url, request) => {
+            requests.push({ url, request });
+            return { status: 200, headers: new Headers() };
+        })
+    });
+    getCurrentScope().setUser({ email: privateText });
+    getCurrentScope().addAttachment({ filename: privateText, data: privateText });
+    captureEvent(event());
+    await flush(2000);
+    assert.equal(requests.length, 1);
+    const { request } = requests[0];
+    const body = String(request.body);
+    assert.equal(body.includes(privateText), false);
+    assert.equal(body.includes('attachment'), false);
+    assert.equal(body.includes('"trace"'), false);
+    assert.equal(body.includes('"request"'), false);
+    assert.equal(request.credentials, 'omit');
+    assert.equal(request.referrerPolicy, 'no-referrer');
+    assert.equal(body.split('\n').filter(Boolean).length, 3);
+    assert.equal(JSON.parse(body.split('\n')[1]).type, 'event');
+});
+
+test('build emits a self-hosted SDK only when configured, before app modules', async () => {
+    const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-sentry-test-'));
+    try {
+        const html = '<html><head></head><body><script type="module" src="assets/app-ABC.js"></script></body></html>';
+        assert.equal(await injectSentry(html, { config: null }), html);
+        const result = await injectSentry(html, {
+            outDir, config, outputs: { [path.join(outDir, 'assets/app-ABC.js')]: {} }
+        });
+        assert.match(result, /<script src="assets\/sentry-[A-Z0-9]+\.js"><\/script>\s*<\/head>/);
+        const files = await fs.readdir(path.join(outDir, 'assets'));
+        const bundle = await fs.readFile(path.join(outDir, 'assets', files[0]), 'utf8');
+        assert.ok(bundle.includes(config.dsn));
+        assert.ok(bundle.includes('/assets/app-ABC.js'));
+        assert.ok(!bundle.includes('sentry-cdn.com'));
+    } finally {
+        await fs.rm(outDir, { recursive: true, force: true });
+    }
+});
