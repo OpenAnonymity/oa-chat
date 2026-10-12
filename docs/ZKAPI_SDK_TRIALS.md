@@ -18,7 +18,7 @@ passed all public asset and configuration checks.
 
 The mainnet warning banner was removed and funding now includes a shared
 MetaMask prerequisites/setup guide. Mainnet explains ETH, USDC and the Buy
-flow; Sepolia explains free test ETH and automatic demo tokens. All 165 native
+flow; Sepolia then explained free test ETH and automatic demo tokens (since removed; Sepolia now uses the same native-ETH flow as Mainnet). All 165 native
 payment tests passed, including a regression check for pasted quotes in the
 saved deposit amount. A fresh adversarial review approved the final source.
 

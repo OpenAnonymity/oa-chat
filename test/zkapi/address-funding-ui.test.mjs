@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { DepositAmount } from '../../chat/zkapi/services/depositAmount.mjs';
 import { renderFundingPaymentQr } from '../../chat/zkapi/components/FundingPaymentQr.js';
 import { renderFundingProgress } from '../../chat/zkapi/components/FundingProgress.js';
-import { canQuotePendingAddressDeposit, formatFundingAmount, fundingAmount, fundingEthAmount, fundingDestination } from '../../chat/zkapi/services/addressFunding.js';
+import { canQuotePendingAddressDeposit, formatFundingAmount, fundingEthAmount, fundingDestination } from '../../chat/zkapi/services/addressFunding.js';
 
 const recipient = '0x2222222222222222222222222222222222222222';
 const escapeHtml = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
@@ -21,7 +21,7 @@ function fixture({ method = 'address', wallet = {}, client = {}, confirm = () =>
     const timers = new Map();
     const context = { attachWalletModalRestoreCancellation, cancelWalletModalRestore, currentWalletModalRestore, finishWalletModalRestore, isFundingViewHydrating: () => false, DepositAmount, renderFundingPaymentQr, renderFundingProgress, addressFundingWallet, zkapiClient, getWalletMethod: () => method,
         canQuotePendingAddressDeposit: () => canQuotePendingAddressDeposit(zkapiClient, addressFundingWallet),
-        walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingAmount, fundingEthAmount, fundingDestination,
+        walletMethodActionBusy: () => false, prepareWalletMethod: async () => () => {}, setWalletMethod: value => { method = value; }, fundingEthAmount, fundingDestination,
         formatFundingAmount, confirm,
         queueMicrotask: callback => microtasks.push(callback),
         setTimeout: callback => { const id = timers.size + 1; timers.set(id, callback); return id; },
@@ -223,11 +223,6 @@ test('new browser address setup has no password, backup, restore or lock control
     assert.match(html, /Preparing your address/);
     assert.doesNotMatch(html, /password|backup|restore|data-funding-lock/i);
     assert.doesNotMatch(html, /data-funding-address\b/);
-});
-
-test('an unsupported ERC20 deployment does not describe its funding address as native ETH setup', () => {
-    const { controls, owner } = fixture({ wallet: { address: null, exists: false } });
-    assert.match(controls.renderFundingAccount(owner), /ETH funding is not available on this deployment yet/);
 });
 
 function quotedFlow(overrides = {}) {
@@ -661,32 +656,12 @@ test('failed legacy migration preserves the old address and reports the failure 
     assert.equal(f.wallet.migrationRequired, true);
 });
 
-test('returning tokens snapshots the destination and exact amount before the UI rerenders', async () => {
-    const calls = [];
-    const f = fixture({ wallet: {
-        async withAuthorizedAction(auth, action) { calls.push(JSON.parse(JSON.stringify(auth))); return action(); },
-        async transferTokens(to, units) { calls.push({ to, units }); return '0xtransaction'; },
-        async getStatus() { return { tokenBalance: '0', ethBalance: '1' }; }
-    } });
-    f.field('return-destination', recipient);
-    f.field('return-amount', '1.123456');
-    const button = f.field('return-token');
-    f.owner.render = () => { f.field('return-destination', 'invalid'); f.field('return-amount', '999'); };
-    f.controls.attachWalletMethodControls(f.owner);
-    await button.events.click();
-    assert.equal(f.owner.fundingError, '');
-    assert.deepEqual(calls, [
-        { kind: 'sweep', destination: recipient, asset: 'token', amount: '1123456' },
-        { to: recipient, units: '1123456' }
-    ]);
-});
-
 test('declining a public-fund return never authorizes or invokes the signer', async () => {
     let called = false;
     const f = fixture({ confirm: () => false, wallet: { async withAuthorizedAction() { called = true; } } });
     f.field('return-destination', recipient);
-    f.field('return-amount', '2');
-    const button = f.field('return-token');
+    f.field('return-eth-amount', '2');
+    const button = f.field('return-eth');
     f.controls.attachWalletMethodControls(f.owner);
     await button.events.click();
     assert.equal(called, false);

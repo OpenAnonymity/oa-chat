@@ -7,12 +7,10 @@
 
 const STATES = ['complete', 'active', 'waiting', 'upcoming', 'error'];
 
-function stepsFor(kind, { hasLease = false, tokenSymbol = 'USDC', demoMint = false, nativeEth = false, escapePeriod = '' } = {}) {
+function stepsFor(kind, { hasLease = false, escapePeriod = '' } = {}) {
     if (kind === 'deposit') {
         return [
             { id: 'connect', label: 'Connect MetaMask' },
-            ...(demoMint ? [{ id: 'tokens', label: 'Get test billing tokens', detail: 'Confirm in MetaMask.' }] : []),
-            ...(!nativeEth ? [{ id: 'approve', label: `Approve ${tokenSymbol}`, detail: 'Confirm in MetaMask. This lets the vault take the deposit, nothing more.' }] : []),
             { id: 'deposit', label: 'Confirm the deposit in MetaMask', detail: 'This transfer moves funds from your wallet into your zkAPI balance.' },
             { id: 'chain', label: 'Waiting for Ethereum confirmation', detail: 'Your deposit has been submitted and is waiting to be confirmed on Ethereum.' }
         ];
@@ -42,8 +40,6 @@ export function classifyWalletStatus(kind, message = '') {
     if (/submitted|waiting for confirmation|Checking submitted|checking confirmation|Checking (the private-vault deposit|payment status)/i.test(text)) return { step: 'chain', state: 'active' };
     if (kind === 'deposit') {
         if (/Depositing into the private-note vault/i.test(text)) return { step: 'deposit', state: 'waiting' };
-        if (/allowance|Approving/i.test(text)) return { step: 'approve', state: 'waiting' };
-        if (/Minting|test billing tokens|test ZKAPI/i.test(text)) return { step: 'tokens', state: 'waiting' };
         if (/Connecting to MetaMask|Connecting to the MetaMask account/i.test(text)) return { step: 'connect', state: 'active' };
         if (/Confirm .*in MetaMask/i.test(text)) return { step: 'deposit', state: 'waiting' };
         return null;

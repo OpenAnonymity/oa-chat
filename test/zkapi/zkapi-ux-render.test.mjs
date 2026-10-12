@@ -880,7 +880,7 @@ test('wallet work narrates inside the dialog: the action row becomes a status ro
     const originalWallet = zkapiClient.wallet;
     const originalConfig = zkapiClient.config;
     zkapiClient.wallet = { has_note: false, note: null };
-    zkapiClient.config = { funding: { demo_mint_enabled: false, billing_token_symbol: 'USDC' } };
+    zkapiClient.config = { funding: { billing_token_symbol: 'USDC' } };
     const modal = Object.create(AccountModal.prototype);
     const toasts = [];
     modal.app = { showToast: (message, kind) => toasts.push(`${kind}:${message}`) };
@@ -932,7 +932,6 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
             next_note_id: 7
         },
         funding: {
-            demo_mint_enabled: false,
             billing_token_symbol: 'USDC'
         }
     };
@@ -948,7 +947,6 @@ test('a canceled custom deposit resumes from its durable amount after modal stat
         assert.doesNotMatch(html, /zkapi-lede/);
         assert.match(html, /Saved deposit/);
         assert.match(html, /Before resuming, check MetaMask for a pending transaction\./);
-        assert.match(html, /value="5" readonly/);
         assert.doesNotMatch(html, /value="99"/);
         assert.match(html, /Resume with MetaMask/);
     } finally {
@@ -1361,42 +1359,6 @@ test('a missing withdrawal receipt exposes safe same-nonce replacement', () => {
         zkapiClient.config = originalConfig;
         zkapiClient.withdrawal = originalWithdrawal;
         zkapiClient.formatMoney = originalFormatMoney;
-    }
-});
-
-test('funding rerenders keep pasted quote characters inside the amount value', () => {
-    const originalDocument = globalThis.document;
-    const originalWallet = zkapiClient.wallet;
-    const originalConfig = zkapiClient.config;
-    globalThis.document = {
-        ...originalDocument,
-        createElement() {
-            return {
-                textContent: '',
-                // Browser text-node serialization does not escape quotes.
-                get innerHTML() { return this.textContent.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
-            };
-        }
-    };
-    zkapiClient.wallet = { has_note: false, note: null };
-    zkapiClient.config = { funding: {} };
-    try {
-        const amount = '5" autofocus onfocus="alert(1)';
-        const welcome = Object.create(WelcomePanel.prototype);
-        welcome.depositAmount = amount;
-        const account = Object.create(AccountModal.prototype);
-        account.depositAmount = amount;
-        account.renderWithdrawalStatusLink = () => '';
-        for (const html of [welcome.renderWelcome(), account.renderBalance()]) {
-            const input = html.match(/<input\b[^>]*>/)?.[0];
-            assert.ok(input);
-            assert.equal(input.match(/\bvalue="([^"]*)"/)?.[1], '5&quot; autofocus onfocus=&quot;alert(1)');
-            assert.doesNotMatch(input, /"\s+autofocus/);
-        }
-    } finally {
-        globalThis.document = originalDocument;
-        zkapiClient.wallet = originalWallet;
-        zkapiClient.config = originalConfig;
     }
 });
 
@@ -1920,12 +1882,3 @@ test('invalid deposit amounts never start wallet work', () => {
     }
 });
 
-test('valid deposit amounts reach the existing wallet flow', () => {
-    for (const amount of ['2', '0.000001', '2.50']) {
-        const modal = Object.create(AccountModal.prototype);
-        let runs = 0;
-        modal.run = () => { runs += 1; };
-        modal.startDeposit(amount);
-        assert.equal(runs, 1);
-    }
-});

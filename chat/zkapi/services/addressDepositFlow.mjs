@@ -49,7 +49,6 @@ export class AddressDepositFlow extends DepositAmount {
         let edit = this.editGeneration;
         this.initializing = true;
         try {
-            if (!this.client.isNativeEthFunding) throw new Error('This deployment does not yet support ETH deposits.');
             const address = await this.wallet.ensureAddress();
             if (!this.running || generation !== this.generation) return;
             const funding = this.client.config.funding;

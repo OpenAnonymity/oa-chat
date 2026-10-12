@@ -330,7 +330,7 @@ export default class AccountModal {
             if (!pending && !String(amount ?? '').trim()) throw new Error('Enter an amount to deposit.');
             // Saved SDK amounts are already in billing units; never parse
             // their USD display or reprice a native deposit during recovery.
-            const parsed = pending ? BigInt(pending.amount) : zkapiClient.isNativeEthFunding && this.fundingInputCurrency === 'eth' ? ethUnits(amount) : parseTokenAmount(amount);
+            const parsed = pending ? BigInt(pending.amount) : this.fundingInputCurrency === 'eth' ? ethUnits(amount) : parseTokenAmount(amount);
             if (parsed <= 0n) throw new Error('Enter an amount greater than zero.');
             if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Choose a smaller deposit amount.');
         } catch (error) {
@@ -341,7 +341,7 @@ export default class AccountModal {
             return;
         }
         let selectedDeposit = amount;
-        if (!pending && zkapiClient.isNativeEthFunding) {
+        if (!pending) {
             if (this.fundingInputAmount !== amount) {
                 this.depositAmountFlow?.invalidate();
                 this.sharedDepositIntent = null;
@@ -419,9 +419,6 @@ export default class AccountModal {
             last: this.journeyKind === kind ? this.journeyLast : null,
             failed,
             hasLease: Boolean(zkapiClient.activeLease),
-            tokenSymbol: zkapiClient.billingTokenSymbol || 'USDC',
-            nativeEth: zkapiClient.isNativeEthFunding,
-            demoMint: Boolean(zkapiClient.config?.funding?.demo_mint_enabled),
             escapePeriod: typeof zkapiClient.escapePeriodPhrase === 'function' ? zkapiClient.escapePeriodPhrase() : ''
         });
     }
@@ -1006,7 +1003,7 @@ export default class AccountModal {
             const resumingDeposit = pendingDeposit
                 && ['prepared', 'retry_exact'].includes(pendingDeposit.phase);
             if (getWalletMethod() === 'address' && (!pendingDeposit || canQuotePendingAddressDeposit())) return `${this.renderOutcome()}${this.busy ? this.renderProgress(this.status) : pendingDeposit?.phase === 'retry_exact' ? '<p class="zkapi-note">This retry keeps the original deposit transaction. If its network fee cannot be estimated, check the saved payment status before continuing.</p><button id="zkapi-check-deposit-btn" class="zkapi-quiet-button w-full" type="button">Check payment status</button>' : ''}${this.renderWithdrawalStatusLink()}`;
-            if (getWalletMethod() === 'address' && zkapiClient.isNativeEthFunding && resumingDeposit) {
+            if (getWalletMethod() === 'address' && resumingDeposit) {
                 return `<div class="zkapi-stack">
                     <section class="zkapi-section zkapi-deposit" aria-label="Saved deposit">
                         <div class="zkapi-figure-row"><p class="zkapi-balance-amount">${zkapiClient.formatMoney(pendingDeposit.amount)}</p><p class="zkapi-balance-caption">Saved deposit</p></div>
@@ -1020,25 +1017,11 @@ export default class AccountModal {
             }
             // A definitely unsubmitted canceled draft has already been cleared.
             // Any remaining SDK plan still needs its ordinary recovery path.
-            const depositAmount = resumingDeposit
-                ? (zkapiClient.isNativeEthFunding ? zkapiClient.formatMoney(pendingDeposit.amount).replace(/^\$/, '') : zkapiClient.formatBillingAmount(pendingDeposit.amount))
-                : this.depositAmount
-                    ?? zkapiClient.suggestedDeposit.toFixed(zkapiClient.suggestedDeposit < 0.01 ? 6 : 2);
             const mainnet = zkapiClient.isMainnetFunding;
-            const demoMintEnabled = zkapiClient.config?.funding?.demo_mint_enabled;
-            const helper = zkapiClient.isNativeEthFunding ? '' : mainnet
-                ? 'USDC on Ethereum'
-                : demoMintEnabled
-                    ? 'Sepolia testnet · demo billing tokens are provided when needed'
-                    : 'Install MetaMask to get started';
             return `
                 <div class="zkapi-stack">
                     <section class="zkapi-section zkapi-deposit" aria-label="Add funds">
-                        ${zkapiClient.isNativeEthFunding ? '' : `<div class="zkapi-figure-row">
-                            <div class="zkapi-figure"><span aria-hidden="true">$</span><input id="zkapi-deposit-amount" inputmode="decimal" aria-label="Deposit amount" ${this.outcome?.field === 'deposit' ? 'aria-invalid="true" aria-describedby="zkapi-deposit-error"' : ''} size="4" value="${this.escapeHtml(depositAmount)}" ${resumingDeposit ? 'readonly' : ''} /></div>
-                            <label class="zkapi-balance-caption" for="zkapi-deposit-amount">${resumingDeposit ? 'Saved deposit' : 'Deposit'}</label>
-                        </div>`}
-                        ${helper ? `<p class="zkapi-helper">${helper}</p>` : ''}
+                        ${resumingDeposit ? `<div class="zkapi-figure-row"><p class="zkapi-balance-amount">${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="zkapi-balance-caption">Saved deposit</p></div>` : ''}
                         ${resumingDeposit && !this.busy ? '<p class="zkapi-note">Before resuming, check MetaMask for a pending transaction.</p>' : ''}
                         ${this.renderOutcome()}
                         ${this.busy && this.journeyKind === 'deposit'
@@ -1050,7 +1033,7 @@ export default class AccountModal {
                         </div>`}
                     </section>
                     <div class="zkapi-guides">
-                        ${getWalletMethod() === 'address' ? '<p class="zkapi-note">Your saved deposit keeps its original amount. Continue only when you are ready to submit it.</p>' : fundingSetupGuide({ mainnet, demoMintEnabled, nativeEth: zkapiClient.isNativeEthFunding, open: fundingSetup?.open })}
+                        ${getWalletMethod() === 'address' ? '<p class="zkapi-note">Your saved deposit keeps its original amount. Continue only when you are ready to submit it.</p>' : fundingSetupGuide({ mainnet, open: fundingSetup?.open })}
                         ${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}
                         ${this.renderWithdrawalStatusLink()}
                     </div>
@@ -1069,7 +1052,7 @@ export default class AccountModal {
                         <div>
                             <p class="zkapi-balance-caption">Available</p>
                             <p class="zkapi-balance-amount">${zkapiClient.formatMoney(available)}</p>
-                            ${zkapiClient.isNativeEthFunding ? `<p class="zkapi-balance-eth">${this.escapeHtml(zkapiClient.formatBillingAmount(available))} ETH</p>` : ''}
+                            <p class="zkapi-balance-eth">${this.escapeHtml(zkapiClient.formatBillingAmount(available))} ETH</p>
                         </div>
                         <span ${!claimed && !zkapiClient.withdrawalBlocksChat ? 'data-private-balance-readiness' : ''} class="zkapi-pill ${claimed ? 'bg-muted text-muted-foreground' : zkapiClient.withdrawalBlocksChat || expired ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-200' : 'badge-status-success'}">${claimed ? 'claimed' : zkapiClient.withdrawalBlocksChat ? (['submitted', 'late_submitted'].includes(zkapiClient.activeWithdrawal?.phase) ? 'Submitted' : 'Needs attention') : expired ? 'expired' : 'ready'}</span>
                     </div>
@@ -1084,8 +1067,7 @@ export default class AccountModal {
                     ${this.busy ? this.renderProgress(this.status || 'Working…') : `
                     ${claimed ? '' : '<button id="zkapi-withdraw-view-btn" class="zkapi-secondary-button" type="button">Withdraw</button>'}
                     <button id="zkapi-refresh-btn" class="zkapi-secondary-button" type="button">Refresh</button>
-                    ${claimed ? '<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button">Start a new balance</button>' : ''}
-                    ${zkapiClient.config?.funding?.demo_mint_enabled ? '<button id="zkapi-mint-token-btn" class="zkapi-secondary-button" type="button">Get 10 test ZKAPI</button>' : ''}`}
+                    ${claimed ? '<button id="zkapi-archive-expired-balance-btn" class="zkapi-primary-button" type="button">Start a new balance</button>' : ''}`}
                 </div>
                 <div class="zkapi-guides">${privateBalanceGuide('billing', this.privateBalanceHelpOpen?.billing)}${this.renderWithdrawalStatusLink()}</div>
             </div>`;
@@ -1144,7 +1126,7 @@ export default class AccountModal {
 
     formatWithdrawalAmount(amount) {
         const dollars = zkapiClient.formatMoney(amount);
-        return zkapiClient.isNativeEthFunding && (!dollars || /^[—–-]$/.test(dollars.trim()))
+        return (!dollars || /^[—–-]$/.test(dollars.trim()))
             ? `${zkapiClient.formatBillingAmount(amount)} ETH` : dollars;
     }
 
@@ -1414,9 +1396,6 @@ export default class AccountModal {
         this.overlay.querySelectorAll('[data-view-current-deposit]').forEach(button => {
             button.addEventListener('click', () => { this.view = 'balance'; this.render(); });
         });
-        this.overlay.querySelector('#zkapi-mint-token-btn')?.addEventListener('click', () => this.run(async (report) => {
-            await zkapiClient.mintDemoTokens('10', report);
-        }, { kind: 'token', title: 'Getting test ZKAPI', phase: 'wallet' }));
         this.overlay.querySelector('#zkapi-refresh-btn')?.addEventListener('click', () => this.run(async (report) => {
             report('Reading the latest private balance…', 'syncing');
             await zkapiClient.refresh();

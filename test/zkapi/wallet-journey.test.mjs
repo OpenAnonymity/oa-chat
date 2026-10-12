@@ -29,14 +29,12 @@ test('a line that says nothing about position keeps the last one', () => {
     assert.equal(classifyWalletStatus('withdraw', 'Some other words'), null);
 });
 
-test('a deposit walks connect → approve → deposit → chain, with test tokens on a testnet', () => {
-    const at = (message, extra = {}) => states(walletJourney({ kind: 'deposit', message, tokenSymbol: 'USDC', ...extra }));
-    assert.deepEqual(at('Connecting to MetaMask…'), ['connect:active', 'approve:upcoming', 'deposit:upcoming', 'chain:upcoming']);
-    assert.deepEqual(at('Approving USDC… confirm in MetaMask.'), ['connect:complete', 'approve:waiting', 'deposit:upcoming', 'chain:upcoming']);
-    assert.deepEqual(at('Depositing into the private-note vault… confirm in MetaMask.'), ['connect:complete', 'approve:complete', 'deposit:waiting', 'chain:upcoming']);
-    assert.deepEqual(at('Deposit submitted 0xabc… · waiting for confirmation…'), ['connect:complete', 'approve:complete', 'deposit:complete', 'chain:active']);
-    assert.deepEqual(at('Minting free test billing tokens… confirm in MetaMask.', { demoMint: true }), ['connect:complete', 'tokens:waiting', 'approve:upcoming', 'deposit:upcoming', 'chain:upcoming']);
-    assert.equal(walletJourney({ kind: 'deposit', message: 'Approving USDC… confirm in MetaMask.' }).category, 'Adding your balance');
+test('a deposit walks connect → deposit → chain', () => {
+    const at = message => states(walletJourney({ kind: 'deposit', message }));
+    assert.deepEqual(at('Connecting to MetaMask…'), ['connect:active', 'deposit:upcoming', 'chain:upcoming']);
+    assert.deepEqual(at('Depositing into the private-note vault… confirm in MetaMask.'), ['connect:complete', 'deposit:waiting', 'chain:upcoming']);
+    assert.deepEqual(at('Deposit submitted 0xabc… · waiting for confirmation…'), ['connect:complete', 'deposit:complete', 'chain:active']);
+    assert.equal(walletJourney({ kind: 'deposit', message: 'Connecting to MetaMask…' }).category, 'Adding your balance');
 });
 
 test('after a reload the persisted phase places the journey, and a failure marks the step', () => {
@@ -48,15 +46,14 @@ test('after a reload the persisted phase places the journey, and a failure marks
     assert.equal(positionForPersistedPhase('withdraw', ''), null);
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'prepared' })), ['proof:complete', 'wallet:upcoming', 'chain:upcoming']);
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'awaiting_wallet' })), ['proof:complete', 'wallet:waiting', 'chain:upcoming']);
-    assert.deepEqual(states(walletJourney({ kind: 'deposit', persistedPhase: 'dropped_or_pending' })), ['connect:complete', 'approve:complete', 'deposit:complete', 'chain:active']);
+    assert.deepEqual(states(walletJourney({ kind: 'deposit', persistedPhase: 'dropped_or_pending' })), ['connect:complete', 'deposit:complete', 'chain:active']);
     assert.deepEqual(states(walletJourney({ kind: 'withdraw', persistedPhase: 'awaiting_wallet', failed: true })), ['proof:complete', 'wallet:error', 'chain:upcoming']);
 });
 
-test('native ETH funding has one deposit confirmation without token approval', () => {
-    const journey = walletJourney({ kind: 'deposit', nativeEth: true, tokenSymbol: 'ETH',
-        message: 'Depositing into the private-note vault… confirm in MetaMask.' });
+test('a deposit has one MetaMask confirmation and no token approval', () => {
+    const journey = walletJourney({ kind: 'deposit', message: 'Depositing into the private-note vault… confirm in MetaMask.' });
     assert.deepEqual(states(journey), ['connect:complete', 'deposit:waiting', 'chain:upcoming']);
-    assert(!journey.steps.some(step => /Approve|test billing/.test(step.label)));
+    assert(!journey.steps.some(step => /Approve|test/.test(step.label)));
 });
 
 

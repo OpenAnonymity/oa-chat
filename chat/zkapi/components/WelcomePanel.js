@@ -165,10 +165,10 @@ export default class WelcomePanel {
         this.clearTransientOutcome();
         let operationId = depositOperationId();
         const amount = this.overlay.querySelector('[data-funding-amount]')?.value
-            ?? this.overlay.querySelector('#welcome-deposit-amount')?.value ?? this.fundingInputAmount;
+            ?? this.fundingInputAmount;
         this.depositAmount = amount;
         let selectedDeposit = amount;
-        if (getWalletMethod() !== 'address' && zkapiClient.isNativeEthFunding) {
+        if (getWalletMethod() !== 'address') {
             if (this.fundingInputAmount !== amount) {
                 this.depositAmountFlow?.invalidate();
                 this.sharedDepositIntent = null;
@@ -259,7 +259,6 @@ export default class WelcomePanel {
     }
 
     renderWelcome(fundingSetup = null) {
-        const suggested = zkapiClient.suggestedDeposit;
         const daemonError = zkapiClient.lastError?.message;
         const pendingDeposit = zkapiClient.config?.pending_deposit;
         return `
@@ -278,14 +277,8 @@ export default class WelcomePanel {
                 ${renderDepositAmount(this)}
                 ${renderWalletMethod(this, { scope: 'welcome' })}
                 ${renderFundingAccount(this)}
-                ${getWalletMethod() === 'address' ? '' : `<div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, demoMintEnabled: zkapiClient.config?.funding?.demo_mint_enabled, nativeEth: zkapiClient.isNativeEthFunding, open: fundingSetup?.open, scope: 'welcome' })}</div>`}
-                ${pendingDeposit ? `<p class="mt-4 text-sm text-foreground">Saved deposit: ${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="mt-1 text-xs text-muted-foreground">Your original amount and progress are saved. Continue to check or resume this deposit.</p>` : getWalletMethod() === 'address' || zkapiClient.isNativeEthFunding ? '' : `<label class="mt-4 block">
-                    <span class="text-xs font-medium text-foreground">Starting balance</span>
-                    <div class="mt-1.5 flex h-10 items-center rounded-lg border border-input bg-background px-3 input-focus-clean">
-                        <span class="text-sm text-muted-foreground">$</span>
-                        <input id="welcome-deposit-amount" class="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none" inputmode="decimal" value="${this.escapeHtml(this.depositAmount ?? suggested.toFixed(suggested < 0.01 ? 6 : 2))}" />
-                    </div>
-                </label>`}
+                ${getWalletMethod() === 'address' ? '' : `<div class="mt-4">${fundingSetupGuide({ mainnet: zkapiClient.isMainnetFunding, open: fundingSetup?.open, scope: 'welcome' })}</div>`}
+                ${pendingDeposit ? `<p class="mt-4 text-sm text-foreground">Saved deposit: ${this.escapeHtml(zkapiClient.formatMoney(pendingDeposit.amount))}</p><p class="mt-1 text-xs text-muted-foreground">Your original amount and progress are saved. Continue to check or resume this deposit.</p>` : ''}
                 ${daemonError ? `<p class="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Payment service: ${this.escapeHtml(daemonError)}</p>` : ''}
                 ${this.error ? `<p class="mt-3 text-xs text-destructive">${this.escapeHtml(walletMethodText(this.error))}</p>` : ''}
                 ${this.notice ? `<p class="mt-3 text-xs text-muted-foreground" role="status">${this.escapeHtml(walletMethodText(this.notice))}</p>` : ''}
@@ -339,10 +332,6 @@ export default class WelcomePanel {
         restoreWalletView(this, walletView);
         finishWalletModalRestore(this, { hydrating: isFundingViewHydrating(this), method: getWalletMethod() });
         this.rememberRunningModal();
-        this.overlay.querySelector('#welcome-deposit-amount')?.addEventListener('input', event => {
-            this.depositAmount = event.target.value;
-            this.rememberRunningModal();
-        });
         this.overlay.querySelector('#welcome-fund-btn')?.addEventListener('click', () => this.fund());
         this.overlay.querySelector('#welcome-resume-deposit-btn')?.addEventListener('click', () => this.resumeSavedDeposit());
         this.overlay.querySelector('#welcome-skip-btn')?.addEventListener('click', () => this.close());

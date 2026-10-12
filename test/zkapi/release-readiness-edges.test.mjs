@@ -26,33 +26,6 @@ test('deposit parser rejects alternate number syntax and unsafe precision before
     }
 });
 
-test('smallest unit and maximum safe amount retain exact input through the SDK boundary', async t => {
-    const received = [];
-    t.mock.method(zkapiClient, 'deposit', async amount => { received.push(amount); });
-    for (const value of ['0.000001', '9007199254.740991', ' 2.50 ']) {
-        const modal = depositModal();
-        modal.setStatus = () => {};
-        modal.run = action => action(() => {});
-        await modal.startDeposit(value);
-        assert.equal(modal.depositAmount, null, 'successful submission clears the editable amount');
-    }
-    assert.deepEqual(received, ['0.000001', '9007199254.740991', ' 2.50 ']);
-});
-
-test('background balance render retains invalid amount and associated error', t => {
-    const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
-    Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: { chain_id: 1 } } });
-    t.after(() => Object.assign(zkapiClient, original));
-    const modal = depositModal();
-    modal.run = () => assert.fail('invalid input must not reach wallet');
-    modal.startDeposit('0');
-    for (let refresh = 0; refresh < 3; refresh += 1) {
-        const html = modal.renderBalance();
-        assert.match(html, /id="zkapi-deposit-amount"[^>]*aria-invalid="true"[^>]*aria-describedby="zkapi-deposit-error"[^>]*value="0"/);
-        assert.match(html, /id="zkapi-deposit-error" role="alert"[^>]*>Enter an amount greater than zero\./);
-    }
-});
-
 test('native USD validation precedes quoting and keeps the confirmed display-pending result', async t => {
     const original = { wallet: zkapiClient.wallet, config: zkapiClient.config };
     Object.assign(zkapiClient, { wallet: { note: null }, config: { funding: {

@@ -223,15 +223,6 @@ test('a pending transaction and fee quote failure both block a fresh deposit', a
     assert.match(f.flow.error, /Fees unavailable/);
 });
 
-test('a token deployment cannot create an ETH address intent', async t => {
-    const f = fixture(t);
-    f.client.isNativeEthFunding = false;
-    f.wallet.ensureAddress = () => assert.fail('incompatible deployment must be rejected first');
-    await f.flow.start('10');
-    assert.equal(f.saved(), null);
-    assert.match(f.flow.error, /does not yet support ETH/);
-});
-
 test('tampered stored ETH units fail closed', async t => {
     const first = fixture(t);
     await first.flow.start('10');

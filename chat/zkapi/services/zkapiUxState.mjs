@@ -122,15 +122,6 @@ function operationJourney(activity) {
                 ],
                 activeIndex: at(/saving/i, /private balance/i, /ready/i) ? 2 : at(/connect/i) ? 0 : 1
             };
-        case 'token':
-            return {
-                steps: [
-                    { id: 'wallet', label: 'Connect wallet' },
-                    { id: 'confirm', label: 'Confirm in MetaMask' },
-                    { id: 'ready', label: 'Token ready' }
-                ],
-                activeIndex: at(/available/i, /visible/i, /now/i) ? 2 : at(/connect/i) ? 0 : 1
-            };
         case 'withdraw':
         case 'escape':
             return {

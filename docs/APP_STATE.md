@@ -1,3 +1,29 @@
+## 2026-10-12: Remove Sepolia test tokens and the ERC-20 funding path
+
+- Sepolia is a native-ETH deployment identical to Mainnet except for the chain,
+  so the demo-token path and the legacy ERC-20 (USDC) path were dead code (the
+  build already rejects any pin with a billing token). Both are removed.
+- Removed: the "Get 10 test ZKAPI" button and `mintDemoTokens` call; the `token`
+  wallet-action kind; the "Get test billing tokens" and "Approve USDC" journey
+  steps; the USD "Starting balance" / deposit-amount inputs of the token UI;
+  "Send USDC" returns and `transferTokens`; ERC-20 balance reads, approve/mint
+  call authorization and the six-send deposit allowance in the address provider;
+  the testnet demo-token and USDC setup-guide copy.
+- The address funding provider now requires `billing_asset: native_eth`
+  (gwei, 1e9 wei/unit) or throws `address_native_config`. Its storage scope is
+  still `${chainId}:${vault}:native-eth`, so existing encrypted addresses and
+  journals are unaffected. Only the vault `deposit`, withdrawal, finalization
+  and ETH-sweep calls are authorized; any call to another contract is denied.
+- UI call sites no longer branch on `isNativeEthFunding`; a saved deposit in
+  MetaMask mode now shows a "Saved deposit" amount row beside its resume note.
+- Left alone: SDK plan fields such as `approvals` (still checked so an old
+  plan blocks a new one), and the SDK's own mint/approve code, which the app no
+  longer calls. The Sepolia shared-password gate is unrelated and unchanged.
+- Tests: the provider harness now defaults to a native vault with a payable
+  deposit fixture; ERC-20-only tests were deleted or converted. Full `npm test`
+  passes (742 pass, 2 skipped). The Anvil EVM test was converted but is skipped
+  without `anvil`, so it was not executed here.
+
 ## 2026-10-01: Stable zkAPI deployment configuration paths
 
 - Public network pins now live directly at `deployments/zkapi/mainnet.json` and

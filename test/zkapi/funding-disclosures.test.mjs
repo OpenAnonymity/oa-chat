@@ -85,17 +85,17 @@ test('clicks change one disclosure in place and preserve history controls', () =
     assert.ok(items.every(i => i.handlers.size === 0));
 });
 
-test('setup stays one disclosure and distinguishes mainnet from test tokens', () => {
+test('setup stays one disclosure and uses ETH on Mainnet and Sepolia', () => {
     const mainnet = fundingSetupGuide({ mainnet: true });
     assert.equal((mainnet.match(/data-funding-disclosure=/g) || []).length, 1);
-    assert.equal((mainnet.match(/<li>/g) || []).length, 4);
-    assert.match(mainnet, /USDC on Ethereum/);
-    assert.match(mainnet, /same MetaMask account/);
+    assert.equal((mainnet.match(/<li>/g) || []).length, 3);
+    assert.match(mainnet, /Add ETH to MetaMask/);
+    assert.doesNotMatch(mainnet, /USDC|Approve/);
     assert.doesNotMatch(mainnet, /Buying options|identity checks|show you the network fee/);
-    const testnet = fundingSetupGuide({ mainnet: false, demoMintEnabled: true, scope: 'welcome' });
-    assert.match(testnet, /No real ETH or USDC purchase/);
-    assert.match(testnet, /zkapi-welcome-setup/);
-    assert.doesNotMatch(testnet, /How to buy in MetaMask/);
+    const sepolia = fundingSetupGuide({ mainnet: false, scope: 'welcome' });
+    assert.match(sepolia, /Get Sepolia ETH/);
+    assert.match(sepolia, /zkapi-welcome-setup/);
+    assert.doesNotMatch(sepolia, /How to buy in MetaMask|demo|test token|billing token/i);
     assert.match(fundingDisclosure({ key: 'history', label: 'Payment history', body: 'History' }), /aria-expanded="false"/);
 });
 
