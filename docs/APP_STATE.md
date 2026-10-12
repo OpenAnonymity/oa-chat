@@ -1,3 +1,28 @@
+## October 12, 2026 — preserve the original answer during regeneration
+
+Regenerate keeps the original answer and later turns on disk until a completed
+replacement commits in one IndexedDB transaction. Stop, provider failure, or a
+failed write restores the saved transcript with a neutral status and Retry
+response. Existing Requesting/Waiting/Thinking/Stop presentation and all ticket
+and acquisition paths are unchanged. This ports the private desktop fix to web.
+
+- Draft replies remain in memory; reload during a retry leaves the original
+  persisted transcript intact. Search metadata and memory extraction wait for
+  commit. Commit compares the saved baseline and refuses to overwrite another
+  tab's edit, append or deletion. Late enrichment cannot resurrect a discarded
+  draft or the replaced answer.
+- Full-turn Parallel/Council regeneration commits only after all requested
+  stages complete; per-lane regeneration retains its existing behavior.
+- Unit regressions cover the non-destructive action boundary, commit/rollback
+  choice, rollback metadata failures and rendering. Open
+  `test-browser/message-replacement.html` on a loopback static server for real
+  IndexedDB commit, cancellation, reopen, conflict, aborted-transaction and
+  30-retry checks. This fixture uses separate synthetic databases, blocks
+  external connections, and does not boot accounts or spend tickets.
+- Discarded-message IDs are retained only in memory until page reload to reject
+  late enrichment writes. Active drafts are released after each attempt. This
+  targeted fixture is not the complete release soak/latency protocol.
+
 ## October 12, 2026 — keep background work off the Send acceptance path
 
 A prompt could remain in the composer while two unrelated background jobs ran:

@@ -1925,6 +1925,13 @@ function shouldShowCouncilAssistantActions(synthesis) {
     return !COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES.has(status);
 }
 
+function buildRegenerationStatus(message) {
+    return message.regenerationNotice ? `<div class="regeneration-status" role="status">
+        <div>${message.regenerationNotice === 'stopped' ? 'Stopped. Your previous answer was kept.' : 'The replacement did not finish. Your previous answer was kept.'}</div>
+        <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+    </div>` : '';
+}
+
 function buildCouncilAssistantMessage({
     message,
     processContentWithLatex
@@ -2017,6 +2024,7 @@ function buildCouncilAssistantMessage({
                         ${stage1Panels}
                     </div>
                     ${synthesisSection}
+                    ${buildRegenerationStatus(message)}
                 </div>
             </div>
         </div>
@@ -2351,6 +2359,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                     <div>${escapeHtml(message.inferenceError)}</div>
                     <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
                 </div>` : ''}
+                ${buildRegenerationStatus(message)}
                 ${memoryApprovalActions}
                 ${assistantActionsRow}
                 ${citationsBubble}

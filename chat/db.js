@@ -1,4 +1,5 @@
 // IndexedDB implementation for chat history storage
+import { MessageReplacement } from './services/messageReplacement.js';
 import { logAccessOverwrite } from './services/inference/accessDiscardLog.js';
 
 function normalizeId(id) {
@@ -58,6 +59,8 @@ class ChatDatabase {
         this.compatMode = false;
         this.initInFlight = null;
         this.broadcastTimers = new Map();
+        this.messageReplacements = new Map();
+        this.discardedReplacementIds = new Set();
     }
 
     async init() {
@@ -329,6 +332,11 @@ class ChatDatabase {
     }
 
     async saveSessionWithMessages(session, messages) {
+        if (this.messageReplacements.has(session.id)) {
+            await this.saveSession(session);
+            for (const message of messages || []) await this.saveMessage(message);
+            return;
+        }
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions', 'messages'], 'readwrite');
             const sessionsStore = transaction.objectStore('sessions');
@@ -622,8 +630,66 @@ class ChatDatabase {
         });
     }
 
+    // A regeneration drafts messages in memory. The previous transcript stays on
+    // disk until the completed replacement commits in one IndexedDB transaction.
+    async beginMessageReplacement(sessionId, messageId) {
+        if (this.messageReplacements.has(sessionId)) throw new Error('A replacement is already running.');
+        const baseline = await this.getSessionMessages(sessionId);
+        const draft = new MessageReplacement(sessionId, messageId, baseline);
+        this.messageReplacements.set(sessionId, draft);
+        return draft;
+    }
+
+    async finishMessageReplacement(draft, { commit = false, notice = null } = {}) {
+        if (this.messageReplacements.get(draft.sessionId) !== draft) return;
+        let committed = false;
+        try {
+            await new Promise((resolve, reject) => {
+                const tx = this.db.transaction(['sessions', 'messages'], 'readwrite');
+                const store = tx.objectStore('messages');
+                let failure = null;
+                tx.oncomplete = () => { committed = commit; resolve(); };
+                tx.onabort = () => reject(failure || tx.error || new Error('The replacement could not be saved.'));
+                tx.onerror = () => reject(tx.error);
+                const session = tx.objectStore('sessions').get(draft.sessionId);
+                session.onsuccess = () => {
+                    if (!session.result) { if (commit) { failure = new Error('The chat was removed.'); tx.abort(); } return; }
+                    const read = store.index('sessionId').getAll(draft.sessionId);
+                    read.onsuccess = () => {
+                        const current = (read.result || []).sort((a, b) => a.timestamp - b.timestamp);
+                        // Do not overwrite another tab's edits or resurrect deleted messages.
+                        if (!draft.matches(current)) {
+                            if (commit) { failure = new Error('The chat changed during regeneration. The saved conversation was kept.'); tx.abort(); }
+                            return;
+                        }
+                        if (commit) {
+                            for (const message of current) store.delete(message.id);
+                            for (const message of draft.messages()) store.put(message);
+                        } else if (notice) {
+                            const original = current.find(message => message.id === draft.messageId);
+                            if (original) store.put({ ...original, regenerationNotice: notice });
+                        }
+                    };
+                };
+            });
+        } finally {
+            // Late citation enrichment must not re-create a discarded draft.
+            if (!commit || committed) {
+                const keptIds = new Set(committed ? draft.messages().map(message => message.id) : draft.originalIds);
+                for (const id of [...draft.originalIds, ...draft.createdIds]) {
+                    if (!keptIds.has(id)) this.discardedReplacementIds.add(id);
+                }
+                this.messageReplacements.delete(draft.sessionId);
+                this.emitStorageEvent('messages-updated', { sessionId: draft.sessionId });
+            }
+        }
+    }
+
     // Messages
     async saveMessage(message) {
+        if (this.discardedReplacementIds.has(message.id)) return;
+        const draft = this.messageReplacements.get(message.sessionId);
+        if (draft) { draft.save(message); return; }
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['messages'], 'readwrite');
             const store = transaction.objectStore('messages');
@@ -638,6 +704,8 @@ class ChatDatabase {
     }
 
     async getSessionMessages(sessionId) {
+        const draft = this.messageReplacements.get(sessionId);
+        if (draft) return draft.messages();
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['messages'], 'readonly');
             const store = transaction.objectStore('messages');
@@ -676,6 +744,9 @@ class ChatDatabase {
     }
 
     async deleteMessage(messageId) {
+        for (const draft of this.messageReplacements.values()) {
+            if (draft.has(messageId)) { draft.delete(messageId); return; }
+        }
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['messages'], 'readwrite');
             const store = transaction.objectStore('messages');

@@ -1395,19 +1395,8 @@ export default class ChatArea {
             }
             const userMessageId = userMessage.id;
 
-            // Delete the assistant message and all messages after it
-            const messagesToDelete = messages.slice(messageIndex);
-            for (const msg of messagesToDelete) {
-                await this.app.data.deleteMessage(msg.id);
-            }
-
-            // Re-render messages to remove deleted messages from UI
-            const remainingMessages = messages.slice(0, messageIndex);
-            await this.app.recomputeSessionCouncilTranscriptHint?.(session, remainingMessages);
-            await this.render();
-
-            // Trigger regeneration by calling the app's regenerateResponse method
-            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken });
+            // The app keeps the old transcript on disk until a replacement completes.
+            await this.app.regenerateResponse({ sessionId, userMessageId, mutationToken, replaceFromMessageId: messageId });
         } finally {
             this.app.endSessionMutation(sessionId, mutationToken);
             this.setMessageActionBusy(triggerButton, false);
