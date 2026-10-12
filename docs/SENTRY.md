@@ -73,9 +73,14 @@ contain user data.
 
 Direct delivery still exposes the sender's network IP, browser HTTP metadata,
 and error arrival time to Sentry. This is not anonymous transport and does not
-use OA's inference relay. Before enabling a public deployment, account for this
-in the product privacy disclosure and enable Sentry's project setting to prevent
-storing IP addresses. That setting limits storage, not network visibility.
+use OA's inference relay. Account for this in the product privacy disclosure.
+The pinned browser SDK emits `sdk.settings.infer_ip: "never"` because
+`dataCollection.userInfo` is false; the envelope test checks this explicitly.
+As additional defense in depth for events from other SDKs, a project admin can
+enable Sentry's project-wide setting to prevent storing IP addresses. That
+setting limits event storage, not network visibility. The signed-in account
+used during staging setup could not edit this project-wide setting; it remained
+off. Do not claim it was applied or that delivery is anonymous.
 Deployments requiring no third-party metadata exposure should omit `SENTRY_DSN`.
 
 Source maps are not uploaded by this integration. Code locations identify the
