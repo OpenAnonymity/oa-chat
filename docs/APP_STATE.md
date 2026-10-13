@@ -261,28 +261,19 @@ Tests: `test/application/councilStopKeepsPartial.test.js`,
 stopped before its first chunk still deletes the pending row, which leaves
 user, user in that history too; same fix, separate change.
 
-## October 9, 2026 — local input-size cutoff
+## October 12, 2026 — restore model-specific input limits
 
-OA Chat rejects requests above **64,000 estimated text-input tokens**, even when
-model metadata is missing or the model advertises a larger context. The existing
-local estimate is text characters / 4, rounded up, plus eight tokens per message
-for framing. This is not exact tokenization (especially for code/non-English text),
-and does not guarantee the provider sees at most 64,000 tokens. Opaque images,
-audio, PDF OCR and provider-side search expansion are not counted as text. Their
-existing 32 MB aggregate and 32-image safeguards remain in place. Extracted text
-and Word documents are checked once converted into outgoing text content.
+Removed the fixed 64,000 estimated text-input token cap introduced on October 9.
+Long conversations can again use the selected model's advertised context window;
+when metadata is absent, the provider decides its context limit. This is not an
+unlimited-input promise. The local estimate remains characters / 4 plus message
+framing, with the same system instructions counted in composer and API preflights.
+Final prepared request validation, 32 MB aggregate request size, 32-image limit,
+and provider/output/credit controls remain unchanged. Unknown metadata does not
+bypass the byte/image checks. No storage, wallet, ticket, or server changes occur.
+Existing draft/history preservation and no-spend rejection tests now exercise an
+actual model-context limit rather than the removed OA-wide cutoff.
 
-Composer validation preserves the draft and existing history on rejection.
-Streaming and strict completions check history plus OA system instructions before
-request-access acquisition, then validate the final prepared body again before
-transport. Final validation covers memory/parallel/council requests that use the
-shared API and text added by billing adapters. Late attachment conversion can
-still occur after access acquisition; no rejected oversized completion is sent.
-The error is non-retryable and never triggers automatic credit/key recovery.
-
-This is a client guardrail only. Other clients and older open tabs can bypass it;
-no OpenRouter settings, issued-key allowances, account linkage, analytics, or
-privacy boundaries change. There is no automatic deletion or summarization.
 
 ## October 6, 2026 — OA/zkAPI selection analytics
 

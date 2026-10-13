@@ -3,19 +3,6 @@ import { inferenceError } from './reliability.js';
 
 export const MAX_INFERENCE_BYTES = 32 * 1024 * 1024;
 export const MAX_INFERENCE_IMAGES = 32;
-export const MAX_ESTIMATED_INPUT_TOKENS = 64_000;
-
-// A local text estimate, not the provider's tokenizer or a provider-enforced
-// limit. Opaque media and provider-side OCR/search expansion cannot be counted.
-export function assertEstimatedInputTokens(textChars, messageCount = 0) {
-    const estimatedTokens = Math.ceil(textChars / 4) + messageCount * 8;
-    if (estimatedTokens > MAX_ESTIMATED_INPUT_TOKENS) {
-        throw inferenceError('INFERENCE_INPUT_TOKEN_LIMIT',
-            'This conversation exceeds OA Chat’s 64,000 estimated input-token limit. Start a new chat with a short summary, or shorten the conversation and attachments. Your existing chat is kept.');
-    }
-    return estimatedTokens;
-}
-
 // These are OA safety limits. Provider-specific media/context limits may be lower.
 export function validateInferenceInput(messages, model = {}, files = []) {
     let bytes = 0, textChars = 0, images = 0;
@@ -48,7 +35,7 @@ export function validateInferenceInput(messages, model = {}, files = []) {
     }
     if (bytes > MAX_INFERENCE_BYTES) throw inferenceError('INFERENCE_INPUT_TOO_LARGE', 'This conversation exceeds OA’s 32 MB request limit. Start a shorter chat or remove attachments.');
     if (images > MAX_INFERENCE_IMAGES) throw inferenceError('INFERENCE_TOO_MANY_IMAGES', 'This conversation exceeds OA’s 32-image request limit. Start a shorter chat or remove older images.');
-    const estimatedTokens = assertEstimatedInputTokens(textChars, (messages || []).length);
+    const estimatedTokens = Math.ceil(textChars / 4) + (messages || []).length * 8;
     const context = Number(model?.context_length);
     // Approximate text-only check; images/PDF OCR vary by provider and must not
     // be represented as an exact token count. The provider remains authoritative.

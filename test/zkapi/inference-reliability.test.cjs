@@ -207,29 +207,46 @@ test('a stalled credit-error body is canceled when the shared request times out'
     assert.equal(result.body.locked, false);
 });
 
-test('64k estimated input boundary includes every message and applies without model metadata', () => {
-    const content = 'a'.repeat((64_000 - 8) * 4);
-    limits.validateInferenceInput([{ role: 'user', content }], null);
-    assert.throws(() => limits.validateInferenceInput([{ role: 'user', content: content + 'a' }], { context_length: 1_000_000 }),
-        { code: 'INFERENCE_INPUT_TOKEN_LIMIT', retryable: false });
-    assert.throws(() => limits.validateInferenceInput([
+test('model context replaces the fixed 64k cap, including when metadata is absent', () => {
+    const messages = [{ role: 'user', content: 'a'.repeat(300_000) }];
+    for (const model of [null, {}, { context_length: 128_000 }, { context_length: 1_000_000 }]) {
+        assert.doesNotThrow(() => limits.validateInferenceInput(messages, model));
+    }
+    assert.throws(() => limits.validateInferenceInput(messages, { context_length: 64_000 }),
+        { code: 'INFERENCE_CONTEXT_TOO_LARGE', retryable: false });
+    const content = 'a'.repeat((128_000 - 8) * 4);
+    limits.validateInferenceInput([{ role: 'user', content }], { context_length: 128_000 });
+    assert.throws(() => limits.validateInferenceInput([{ role: 'user', content: content + 'a' }], { context_length: 128_000 }),
+        { code: 'INFERENCE_CONTEXT_TOO_LARGE' });
+    assert.doesNotThrow(() => limits.validateInferenceInput([
         { role: 'user', content: 'a'.repeat(150_000) },
-        { role: 'assistant', content: 'b'.repeat(150_000) }
-    ]), { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
-    assert.throws(() => limits.validateInferenceInput([{ role: 'user', content: [
-        { type: 'text', text: 'a'.repeat(130_000) }, { type: 'text', text: 'b'.repeat(130_000) }
-    ] }]), { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+        { role: 'assistant', content: [{ type: 'text', text: 'b'.repeat(150_000) }] }
+    ], { context_length: 128_000 }));
+});
+
+test('streaming and strict requests above 64k reach access acquisition once', async () => {
+    let acquired = 0;
+    const sentinel = new Error('synthetic acquisition boundary');
+    const api = new API({ acquireRequestAccess: () => { acquired++; throw sentinel; } });
+    api.getModelBudgetMetadata = () => ({ context_length: 128_000 });
+    const messages = [{ role: 'user', content: 'a'.repeat(300_000) }];
+    for (const invoke of [() => api.streamCompletion(messages, 'test/model', null, () => {}),
+        () => api.sendCompletionStrict(messages, 'test/model', null)]) {
+        await assert.rejects(invoke(), error => error === sentinel);
+    }
+    assert.equal(acquired, 2);
 });
 
 test('oversized streaming and strict requests cannot acquire access or send, including system instructions', async () => {
     let acquired = 0, sent = 0;
     const api = new API({ acquireRequestAccess: () => { acquired++; throw new Error('must not acquire'); },
         networkTransport: { fetchWithRetry: () => { sent++; }, fetchWithRetryJson: () => { sent++; } } });
+    api.getModelBudgetMetadata = () => ({ context_length: 64_000 });
     // This text fits alone; OA's system instructions push the final request over.
     const messages = [{ role: 'user', content: 'a'.repeat((64_000 - 8) * 4) }];
     for (const invoke of [() => api.streamCompletion(messages, 'test/model', 'synthetic', () => {}),
         () => api.sendCompletionStrict(messages, 'test/model', 'synthetic')]) {
-        await assert.rejects(invoke(), error => error.code === 'INFERENCE_INPUT_TOKEN_LIMIT'
+        await assert.rejects(invoke(), error => error.code === 'INFERENCE_CONTEXT_TOO_LARGE'
             && !isAccessCreditExhaustedError(error) && !helpers.isRetryableInferenceError(error));
     }
     assert.equal(acquired, 0); assert.equal(sent, 0);
@@ -238,10 +255,21 @@ test('oversized streaming and strict requests cannot acquire access or send, inc
 test('final prepared requests reject added text and converted document text before transport', () => {
     const oversized = [{ role: 'user', content: [{ type: 'text', text: 'document '.repeat(40_000) }] }];
     const api = new API({ prepareRequestBody: body => ({ ...body, messages: oversized }) });
+    api.getModelBudgetMetadata = () => ({ context_length: 64_000 });
     assert.throws(() => api.prepareFetchOptions({ headers: {} }, { body: JSON.stringify({ model: 'test/model', messages: [{ role: 'user', content: 'hi' }] }) }),
-        { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+        { code: 'INFERENCE_CONTEXT_TOO_LARGE' });
     const ordinary = new API();
+    ordinary.getModelBudgetMetadata = () => ({ context_length: 64_000 });
     assert.throws(() => ordinary.prepareRequestBody({ model: 'test/model', messages: oversized }, {}),
-        { code: 'INFERENCE_INPUT_TOKEN_LIMIT' });
+        { code: 'INFERENCE_CONTEXT_TOO_LARGE' });
     assert.equal(ordinary.prepareRequestBody({ model: 'test/model', messages: [{ role: 'user', content: 'Short request' }] }, {}).messages[0].content, 'Short request');
+});
+
+test('large final adapter bodies remain allowed within the selected model context', () => {
+    const messages = [{ role: 'user', content: 'a'.repeat(300_000) }];
+    const api = new API({ prepareRequestBody: body => ({ ...body, messages }) });
+    api.getModelBudgetMetadata = () => ({ context_length: 128_000 });
+    assert.doesNotThrow(() => api.prepareFetchOptions({ headers: {} }, {
+        body: JSON.stringify({ model: 'test/model', messages: [{ role: 'user', content: 'hi' }] })
+    }));
 });

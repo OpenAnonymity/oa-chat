@@ -7900,8 +7900,7 @@ class ChatApp {
             return await this.sendCapturedMessage(submission);
         } catch (error) {
             if (!error?.isCancelled && error?.name !== 'AbortError') {
-                this.showToast(error?.message || 'Could not send the message. Please try again.', 'error',
-                    error?.code === 'INFERENCE_INPUT_TOKEN_LIMIT' ? 10000 : 3000);
+                this.showToast(error?.message || 'Could not send the message. Please try again.', 'error', 3000);
             }
         } finally {
             if (this.sendSubmissionsInFlight.get(submissionKey) === submission) {

@@ -1046,7 +1046,7 @@ describe('production ChatApp runtime ownership', () => {
         const files = [{ name: 'notes.txt', size: 10, type: 'text/plain' }];
         app.uploadedFiles = files;
         app.ensureDatabaseReady = async () => true;
-        app.getModelsForSession = () => [];
+        app.getModelsForSession = () => [{ name: 'Model one', context_length: 64_000 }];
         app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
         const history = [];
         chatDB.getSessionMessages = async () => history;
@@ -1058,7 +1058,7 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(app.elements.messageInput.value, draft);
         assert.equal(app.uploadedFiles, files);
         assert.equal(history.length, 0);
-        assert.match(notices[0], /64,000 estimated input-token limit/);
+        assert.match(notices[0], /model’s context limit/);
         assert.equal(app.sendSubmissionsInFlight.size, 0);
     });
 
