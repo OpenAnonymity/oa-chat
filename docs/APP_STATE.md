@@ -1,3 +1,10 @@
+## October 13, 2026 — consistent response model names
+
+Parallel lane and Council synthesis model names use the single-response header's
+0.7rem size, 500 weight and 1rem line height. The change is scoped to
+`.council-response-model-name`; provider icons, role badges and response text
+retain their existing styles.
+
 ## October 13, 2026 — a finished reply settles promptly; Stop stops every update
 
 Three ways a single chat could stay busy or keep changing after it should have
