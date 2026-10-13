@@ -971,7 +971,12 @@ export class OpenRouterAPI {
             if (parsed.type === 'response.completed') sawTerminal = true;
             const progressDelta = parsed.choices?.[0]?.delta;
             if (progressDelta?.content || progressDelta?.reasoning || progressDelta?.reasoning_details?.length
-                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) watchdog?.output();
+                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) {
+                watchdog?.output();
+                // Resumed output invalidates an earlier finish. EOF alone must
+                // not use that stale finish to mark a truncated reply complete.
+                completionFinishReason = null;
+            }
 
             // A router may identify the selected model in a role-only event.
             // Publish it before any output/usage from the same event, without
@@ -1396,8 +1401,6 @@ export class OpenRouterAPI {
                 let afterSequence = 0;
                 let streamOpened = false;
                 let terminal = false;
-                // The bounded tail after a confirmed finish ends polling as well.
-                watchdog.settled.then(() => { terminal = true; });
                 const cancelFromAbort = () => {
                     try {
                         cancelAndroidNativeInferenceJob(jobId);
@@ -1413,6 +1416,8 @@ export class OpenRouterAPI {
                         throwIfStreamAborted();
                         const { events } = pollAndroidNativeInferenceJob(jobId, afterSequence);
                         if (events.length === 0) {
+                            // Drain queued events before ending the completion tail.
+                            if (watchdog.tailExpired()) break;
                             await watchdog.wait(new Promise(resolve => setTimeout(resolve, 75)));
                             continue;
                         }
@@ -1515,7 +1520,7 @@ export class OpenRouterAPI {
             logStreamingRequest(response.status, 'web');
 
             await watchdog.wait(consumeSseBody(response.body, processSseLine, {
-                signal: watchdog.signal, onActivity: () => watchdog.activity(), settled: watchdog.settled
+                signal: watchdog.signal, onActivity: () => watchdog.activity(), getSettled: () => watchdog.settled
             }));
 
             return await watchdog.wait(finalizeStreamResult());

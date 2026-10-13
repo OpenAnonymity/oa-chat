@@ -7044,3 +7044,24 @@ silent about tickets. `#app-toast` is also sized `width: max-content`: centred
 with `left: 50%` and a translate, its auto width shrank to the right half of the
 viewport, so phone toasts wrapped at roughly half the width the `max-width`
 rule allows. Covered by `test/components/chatInputFeatures.test.js`.
+
+## 2026-10-13 — preserve queued events at the completion-tail deadline
+
+The five-second stream tail must not cancel a reader while a line handler awaits
+usage/accounting or rendering. That discards unread transport chunks and can hide
+a provider error or lose final usage/cost/citations. Tail expiry now races only a
+read. A queued read wins the tie with an expired tail; queued events drain before
+an idle read closes the stream. Native polling likewise drains its event queue
+before ending the tail. Required accounting and message saves remain awaited.
+
+Each read consults the current tail promise. Resumed output disarms and replaces
+an expired tail and clears the obsolete finish reason, so EOF after an incomplete
+continuation fails closed. A new finish arms a fresh deadline; `[DONE]` remains
+immediate. Stop still aborts pending reads and callbacks. No UI, ticket, telemetry,
+or production configuration changes are part of this repair.
+
+Regression coverage: `test/zkapi/inference-tail.test.cjs` includes delayed callback
+queues with provider errors, authoritative usage/cost and citations; output after
+an already-expired tail; truncated continuation; Stop; zero-clock/reset behavior;
+and native queue handling. These are synthetic source tests, not a packaged-app
+or live-provider release approval. Sentry remains outside this branch.
