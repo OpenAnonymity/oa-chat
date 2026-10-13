@@ -7134,3 +7134,27 @@ queues with provider errors, authoritative usage/cost and citations; output afte
 an already-expired tail; truncated continuation; Stop; zero-clock/reset behavior;
 and native queue handling. These are synthetic source tests, not a packaged-app
 or live-provider release approval. Sentry remains outside this branch.
+
+## 2026-10-13: Independent new-chat send ownership
+
+- New-chat submissions use unique in-memory map keys. Duplicate prevention is
+  still scoped to the empty composer's navigation generation until creation
+  binds the submission to its session ID. A background first response no longer
+  reserves every later New Chat through a shared `__new_chat__` sentinel.
+- `getPendingSend` matches uncreated work only to its own empty composer; null
+  session IDs alone are not ownership. Created work remains discoverable by its
+  session, including when revisiting it, so duplicate sends and Stop stay local.
+- New Chat captures its departing submission before advancing navigation and
+  respects the existing runtime cancellation policy (OA ticket streams continue;
+  zkAPI retirement still cancels/drains via its runtime). Completion cleanup
+  removes only its own map entry; ticket and account locks are unchanged.
+- Abandoned session creation returns without inference. Never fall back to the
+  visible currentSessionId after an asynchronous creation: navigation may have
+  selected an unrelated conversation while preferences/storage were pending.
+- Regression coverage exercises rapid A/B/C creation, duplicate clicks, Stop
+  isolation, late cleanup, abandoned creation, runtime retirement, and overlapping
+  redemption through separate ticket stores with one or two available tickets.
+- Release check: start long A, New Chat -> B -> Send before A ends; confirm both
+  transcript ownership and independent Stop. Repeat before A has an ID and during
+  final persistence; switch back, reload, and confirm both histories. Repeat from
+  separate browser tabs and check ticket balances. Keep zkAPI's settlement gate.
