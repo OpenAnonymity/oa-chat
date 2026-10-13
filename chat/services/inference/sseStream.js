@@ -5,9 +5,13 @@ import { waitForSignal, discardResponseBody } from './reliability.js';
  * buffered into a single string or JSON value. Async handlers are awaited so
  * that a slow first-line setup cannot be overtaken by later stream deltas.
  * Returning `false` from `onLine` marks a terminal SSE event and cancels the
- * reader without waiting for the server to close the HTTP response.
+ * reader without waiting for the server to close the HTTP response. When the
+ * optional `settled` promise resolves (the provider confirmed completion and
+ * the bounded tail has lapsed) the reader is cancelled the same way: the
+ * pending read resolves as done, lines already received are still handled,
+ * and the loop ends on its own without racing a handler still in progress.
  */
-export async function consumeSseBody(body, onLine, { signal, onActivity } = {}) {
+export async function consumeSseBody(body, onLine, { signal, onActivity, settled } = {}) {
     if (!body?.getReader) {
         throw new Error('The inference response did not include a readable stream.');
     }
@@ -15,6 +19,8 @@ export async function consumeSseBody(body, onLine, { signal, onActivity } = {}) 
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let reading = true;
+    settled?.then(() => { if (reading) discardResponseBody(reader); }, () => {});
 
     try {
         while (true) {
@@ -41,6 +47,7 @@ export async function consumeSseBody(body, onLine, { signal, onActivity } = {}) 
         discardResponseBody(reader);
         throw error;
     } finally {
+        reading = false;
         reader.releaseLock?.();
     }
 }

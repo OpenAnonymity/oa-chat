@@ -700,6 +700,10 @@ export class OpenRouterAPI {
         let responseBody = null;
         let sawTerminal = false;
         let sawAnswer = false;
+        // Set when this request has returned or thrown. A delivery queued
+        // behind a callback that was still running at that moment must not
+        // reach the chat afterwards.
+        let streamSettled = false;
         const throwIfStreamAborted = () => {
             watchdog?.signal.throwIfAborted();
             if (!abortController?.signal?.aborted) return;
@@ -751,6 +755,11 @@ export class OpenRouterAPI {
                 reasoningBuffer = '';
                 reasoningFlushPromise = reasoningFlushPromise.then(async () => {
                     if (reasoningFlushError) return;
+                    // Stop (or a watchdog deadline) may have landed while the
+                    // previous delivery was still running: the request has
+                    // already been reported as cancelled, so this chunk is dropped
+                    // rather than delivered after the transcript was settled.
+                    if (streamSettled || watchdog?.signal.aborted || abortController?.signal?.aborted) return;
                     try {
                         await onReasoningChunk(bufferedReasoning);
                     } catch (error) {
@@ -1218,6 +1227,11 @@ export class OpenRouterAPI {
                 if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response. Please retry.');
                 if (finishReason) {
                     completionFinishReason = finishReason;
+                    // The provider has confirmed completion. Keep reading for the
+                    // tail ([DONE], final usage, citations), but only for a bounded
+                    // time: heartbeats on an otherwise finished connection must not
+                    // keep the answer "busy" until the output deadline.
+                    watchdog?.finished();
                 }
                 if (finishReason && finishReason !== 'stop') {
                     console.warn('Stream finished with reason:', finishReason);
@@ -1382,6 +1396,8 @@ export class OpenRouterAPI {
                 let afterSequence = 0;
                 let streamOpened = false;
                 let terminal = false;
+                // The bounded tail after a confirmed finish ends polling as well.
+                watchdog.settled.then(() => { terminal = true; });
                 const cancelFromAbort = () => {
                     try {
                         cancelAndroidNativeInferenceJob(jobId);
@@ -1499,7 +1515,7 @@ export class OpenRouterAPI {
             logStreamingRequest(response.status, 'web');
 
             await watchdog.wait(consumeSseBody(response.body, processSseLine, {
-                signal: watchdog.signal, onActivity: () => watchdog.activity()
+                signal: watchdog.signal, onActivity: () => watchdog.activity(), settled: watchdog.settled
             }));
 
             return await watchdog.wait(finalizeStreamResult());
@@ -1558,6 +1574,7 @@ export class OpenRouterAPI {
 
             throw streamError;
         } finally {
+            streamSettled = true;
             if (reasoningBufferTimer) clearTimeout(reasoningBufferTimer);
             discardResponseBody(responseBody);
             watchdog?.dispose();

@@ -1,3 +1,45 @@
+## October 13, 2026 — a finished reply settles promptly; Stop stops every update
+
+Three ways a single chat could stay busy or keep changing after it should have
+settled (reproduced in `deployment/stalled-followup-investigation-20261013`).
+The Requesting / Waiting / Thinking / Stop presentation is unchanged.
+
+- **Confirmed finish, open connection.** The stream parser ended a read only on
+  `[DONE]`, `response.completed` or EOF; a `finish_reason` was recorded and the
+  reader kept waiting, with heartbeat comments resetting the idle deadline, until
+  the ten-minute output deadline failed a complete answer. Now a finish reason
+  arms a bounded tail in the watchdog (`tailMs`, 5 s; heartbeats do not extend
+  it) during which `[DONE]`, final usage and citations are still consumed; when
+  it lapses the reader is cancelled and the stream finalizes as complete. Output
+  after a finish reason disarms the tail until completion is confirmed again.
+  Error and incomplete events in the tail still fail the stream. `[DONE]` still
+  ends the read at once.
+- **Deliveries after Stop.** A reasoning flush queued behind a delivery still
+  running when Stop landed was delivered after the cancellation; a chunk or
+  reasoning callback resuming from its own awaited IndexedDB write repainted the
+  stopped row and could re-save it as still thinking. The queued flush is now
+  dropped once the request is aborted or settled, and the chunk/reasoning
+  callbacks in `sendCapturedMessage` and `regenerateCapturedResponse` return at
+  entry and after each await when the turn's signal is aborted (`turnStopped`).
+  The first delivery's `appendMessage` still runs after its write so a partial
+  row is never missing; it shows the settled record. Parallel lanes have
+  synchronous callbacks and are covered by the API-side fence.
+- **Bookkeeping on the acceptance path.** The conversation search-index refresh
+  ran, awaited, between the final save and the render, inside the turn that
+  holds `sendSubmissionsInFlight`; a slow or failing index write kept the
+  composer busy or turned a finished reply into an error row. It now runs in the
+  background (`refreshSessionSearchTextInBackground`) once the reply is on disk.
+  Usage recording (zkAPI ledger), the final message save, pending-row cleanup
+  and the final render remain awaited before the composer is released — a
+  follow-up still waits for the reply to be written.
+
+Tests: `test/zkapi/inference-reliability.test.cjs` (tail, usage in the tail,
+re-armed finish, error in the tail, dropped queued reasoning) and
+`test/application/streamSettle.test.js` (held writes at Stop, late deliveries,
+background indexing, the required save). The investigation's diagnostic
+fixtures invert on this change except the injected usage-hook stall, which is
+accounting and stays protected.
+
 ## October 12, 2026 — preserve the original answer during regeneration
 
 Regenerate keeps the original answer and later turns on disk until a completed

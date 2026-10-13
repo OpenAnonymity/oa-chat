@@ -2,7 +2,7 @@
 // activity, not generation progress. All state stays in this browser.
 export const INFERENCE_TIMING = Object.freeze({
     warningMs: 45000, connectionMs: 120000, idleMs: 180000,
-    outputMs: 600000, pollMs: 1000
+    outputMs: 600000, tailMs: 5000, pollMs: 1000
 });
 
 export function inferenceError(code, message) {
@@ -36,6 +36,12 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
     const controller = new AbortController();
     const started = now();
     let activityAt = started, outputAt = started, opened = false, health = null;
+    // Set once the provider has confirmed completion (a finish reason). From
+    // then on the connection is only kept for its tail (usage, [DONE]); a
+    // provider that confirms completion but keeps the socket open with
+    // heartbeats must not hold the chat for the whole output deadline.
+    let finishedAt = 0, settleTail;
+    const settled = new Promise(resolve => { settleTail = resolve; });
     const publish = value => {
         if (value?.kind === health?.kind) return;
         health = value;
@@ -47,6 +53,7 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
     const timer = setInterval(() => {
         if (controller.signal.aborted) return;
         const elapsed = now() - started, silence = now() - activityAt;
+        if (finishedAt && now() - finishedAt >= policy.tailMs) settleTail();
         let error;
         if (!opened && elapsed >= policy.connectionMs) {
             error = inferenceError('INFERENCE_CONNECTION_TIMEOUT', 'The provider did not open a response in time. Please retry.');
@@ -60,10 +67,16 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
     }, policy.pollMs);
     return {
         signal: controller.signal,
+        // Resolves when the tail after a confirmed finish has lapsed; the
+        // transport then stops reading and the stream finalizes as complete.
+        settled,
         wait: operation => waitForSignal(operation, controller.signal),
         opened() { opened = true; activityAt = now(); outputAt = now(); publish(null); },
         activity() { activityAt = now(); publish(null); },
-        output() { outputAt = now(); activityAt = outputAt; publish(null); },
+        // Output after a finish reason means the finish was not final: the
+        // tail is disarmed until the provider confirms completion again.
+        output() { outputAt = now(); activityAt = outputAt; finishedAt = 0; publish(null); },
+        finished() { if (!finishedAt) finishedAt = now(); },
         dispose() { clearInterval(timer); signal?.removeEventListener('abort', abort); publish(null); }
     };
 }

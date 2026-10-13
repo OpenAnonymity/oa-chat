@@ -141,6 +141,64 @@ test('explicit completion events and clean EOF after finish_reason succeed', asy
     await stream(apiFor(async()=>response(delta+'data: {"type":"response.completed"}\n',true)));
     await stream(apiFor(async()=>response(delta+'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n')));
 });
+function openStream(timing = {}) {
+    // A provider that keeps the HTTP response open: lines are pushed by the test.
+    let controller, canceled = false;
+    const body = new ReadableStream({ start(c) { controller = c; }, cancel() { canceled = true; } });
+    const push = text => { if (!canceled) controller.enqueue(encoder.encode(text)); };
+    const api = apiFor(async () => new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }), timing);
+    return { api, push, get canceled() { return canceled; }, close() { try { controller.close(); } catch { /* already canceled */ } } };
+}
+test('a confirmed finish followed only by heartbeats completes within the tail and keeps the usage that arrives in it', async () => {
+    const feed = openStream({ tailMs: 40, outputMs: 400 });
+    const health = [], chunks = [];
+    const started = Date.now();
+    const pending = stream(feed.api, { health: h => health.push(h), chunk: c => chunks.push(c) });
+    feed.push(delta + 'data: {"choices":[{"delta":{"content":" done"},"finish_reason":"stop"}]}\n\n');
+    await new Promise(r => setTimeout(r, 5));
+    feed.push('data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n');
+    const heartbeat = setInterval(() => feed.push(': OPENROUTER PROCESSING\n\n'), 3);
+    try {
+        const result = await pending;
+        assert.ok(Date.now() - started < 300, 'settles after the tail, not after the output deadline');
+        assert.equal(result.finishReason, 'stop');
+        assert.equal(result.totalTokens, 5, 'usage sent after the finish reason is kept');
+        assert.deepEqual(chunks, ['Partial answer', ' done']);
+        assert.equal(feed.canceled, true, 'the open connection is released');
+        assert.ok(!health.some(h => h?.kind === 'silence'));
+    } finally { clearInterval(heartbeat); feed.close(); }
+});
+test('output after a finish reason disarms the tail until completion is confirmed again', async () => {
+    const feed = openStream({ tailMs: 30, outputMs: 400 });
+    const chunks = [];
+    const pending = stream(feed.api, { chunk: c => chunks.push(c) });
+    feed.push(delta + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
+    await new Promise(r => setTimeout(r, 10));
+    feed.push('data: {"choices":[{"delta":{"content":" more"}}]}\n\n');
+    await new Promise(r => setTimeout(r, 45));
+    assert.equal(feed.canceled, false, 'late output reopens the stream: no cut at the first finish');
+    feed.push('data: {"choices":[{"delta":{"content":" end"},"finish_reason":"stop"}]}\n\n');
+    const result = await pending;
+    assert.deepEqual(chunks, ['Partial answer', ' more', ' end']);
+    assert.equal(result.finishReason, 'stop');
+    feed.close();
+});
+test('an error event in the tail still fails the stream; DONE still completes at once', async () => {
+    const feed = openStream({ tailMs: 60, outputMs: 400 });
+    const pending = stream(feed.api);
+    feed.push(delta + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
+    await new Promise(r => setTimeout(r, 5));
+    feed.push('data: {"error":{"message":"provider failed late"}}\n\n');
+    await assert.rejects(pending, /provider failed late/);
+    feed.close();
+    const quick = openStream({ tailMs: 200 });
+    const started = Date.now();
+    const done = stream(quick.api);
+    quick.push(delta + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    await done;
+    assert.ok(Date.now() - started < 100, 'DONE does not wait for the tail');
+    assert.equal(quick.canceled, true);
+});
 test('silent stream warns and times out, retaining already delivered output', async () => {
     const health = [], chunks = [];
     await assert.rejects(stream(apiFor(async()=>response(delta,true)),{health:h=>health.push(h),chunk:c=>chunks.push(c)}),{code:'INFERENCE_IDLE_TIMEOUT'});
@@ -159,6 +217,30 @@ test('activity clears warning; heartbeats cannot hold open no-output forever', a
         now=65; guard.activity(); await new Promise(r=>setTimeout(r,5));
         assert.equal(guard.signal.reason.code,'INFERENCE_OUTPUT_TIMEOUT');
     } finally {guard.dispose();}
+});
+test('reasoning queued behind a delivery still running at Stop is dropped, not delivered after the cancellation', async () => {
+    const feed = openStream();
+    const controller = new AbortController();
+    const calls = [];
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const entered = new Promise(resolve => {
+        feed.api.streamCompletion([{role:'user',content:'hi'}],'test/model','synthetic-key',()=>{},null,[],false,controller,null,
+            async text => { calls.push({ text, afterStop: controller.signal.aborted }); if (calls.length === 1) { resolve(); await gate; } },
+            true,'high').then(() => assert.fail('a stopped request must not complete'), error => { calls.rejected = error; });
+    });
+    feed.push('data: {"choices":[{"delta":{"reasoning":"first"}}]}\n\n');
+    await entered;
+    // Long enough to flush at once: it queues behind the delivery still running.
+    feed.push('data: {"choices":[{"delta":{"reasoning":"second reasoning chunk exceeds buffer threshold"}}]}\n\n');
+    await new Promise(r => setTimeout(r, 20));
+    controller.abort();
+    await new Promise(r => setTimeout(r, 5));
+    assert.equal(calls.rejected?.isCancelled, true);
+    release();
+    await new Promise(r => setTimeout(r, 20));
+    assert.deepEqual(calls.map(c => c.text), ['first'], 'the queued chunk never reaches the chat after Stop');
+    feed.close();
 });
 test('Stop rejects promptly as cancellation, not timeout', async () => {
     const controller=new AbortController();
