@@ -14,7 +14,7 @@
 
 import { ORG_API_BASE } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
-import { fetchRetry } from './fetchRetry.js';
+import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
 import storageEvents from './storageEvents.js';
 import { withAccountDataLock, ACCOUNT_LOGIN_PENDING_KEY } from './accountDataLock.js';
 import sessionService from './sessionService.js';
@@ -38,7 +38,8 @@ const ACCOUNT_SETTINGS_KEY = 'account-settings';
 // Settings keys for sync metadata (local only)
 const SYNC_LAST_TIME_KEY = 'sync-lastSyncTime';
 const SYNC_SCHEMA_VERSION_KEY = 'sync-schema-version';
-const CURRENT_SYNC_SCHEMA_VERSION = 2;
+const CURRENT_SYNC_SCHEMA_VERSION = 3;
+const SYNC_WALLET_WRITER_KEY = 'sync-wallet-writer-id';
 
 // Settings keys for syncable data
 const TICKETS_ACTIVE_KEY = 'tickets-active';
@@ -63,6 +64,7 @@ const LOGICAL_IDS = {
     TICKETS_TOMBSTONES: 'tickets-tombstones',
     TICKETS_INVALIDATED_KEYS: 'tickets-invalidated-key-ids',
     TICKET_INVALIDATION_ITEM: 'ticket-invalidation-item',
+    TICKET_REMOVALS: 'ticket-removals',
     // Preferences use their key as logical ID
 };
 const MAX_SYNC_BLOBS_PER_REQUEST = 100;
@@ -246,6 +248,7 @@ export class SyncService {
             TICKETS_INVALIDATED_KEYS_KEY,
             SYNC_LAST_TIME_KEY,
             SYNC_SCHEMA_VERSION_KEY,
+            SYNC_WALLET_WRITER_KEY,
             ...SYNCABLE_PREF_KEYS,
             ...SYNCABLE_PREF_KEYS.map(key => this.getPreferenceTimestampKey(key))
         ];
@@ -758,7 +761,21 @@ export class SyncService {
         }
     }
 
-    async fetchWithRetry(url, options, context = 'Sync') {
+    async fetchWithRetry(url, options, context = 'Sync', { background = false } = {}) {
+        if (background) {
+            // Periodic work shares the wallet lock with sending. Bound headers
+            // AND body, and retry on the next tick rather than holding the lock.
+            const { response, data } = await fetchRetryJson(url, options, {
+                context,
+                maxAttempts: 1,
+                timeoutMs: 5000,
+                fetchFn: sessionService.fetch.bind(sessionService)
+            });
+            if (response.ok && (!data || typeof data !== 'object')) {
+                throw new Error('Invalid sync response');
+            }
+            return { ok: response.ok, status: response.status, json: async () => data };
+        }
         // SuperTokens performs one session refresh/retry. The shared retry
         // utility handles only transient network and server failures.
         // Sync operations are idempotent (version-based) - safe to retry
@@ -770,7 +787,7 @@ export class SyncService {
         });
     }
 
-    async sync() {
+    async sync({ background = false } = {}) {
         if (!this.isEnabled()) {
             return { success: false, error: 'Not logged in' };
         }
@@ -795,7 +812,8 @@ export class SyncService {
             () => this._doSync(
                 masterKey,
                 accountId,
-                credentialGeneration
+                credentialGeneration,
+                { background }
             )
         );
     }
@@ -803,7 +821,8 @@ export class SyncService {
     async _doSync(
         masterKey,
         accountId,
-        credentialGeneration
+        credentialGeneration,
+        requestOptions = {}
     ) {
 
         try {
@@ -823,12 +842,14 @@ export class SyncService {
             const pullResult = await this._pull(
                 masterKey,
                 credentialGeneration,
-                idMapping
+                idMapping,
+                requestOptions
             );
             this.assertCredentialsCurrent(credentialGeneration);
             const pushResult = await this._push(
                 masterKey,
-                credentialGeneration
+                credentialGeneration,
+                requestOptions
             );
             this.assertCredentialsCurrent(credentialGeneration);
 
@@ -867,15 +888,15 @@ export class SyncService {
     async _pull(
         masterKey,
         credentialGeneration = this.credentialGeneration,
-        idMapping = this.idMapping || new Map()
+        idMapping = this.idMapping || new Map(),
+        requestOptions = {}
     ) {
         this.assertCredentialsCurrent(credentialGeneration);
         const localSchemaVersion = Number(
             await chatDB.getSetting(SYNC_SCHEMA_VERSION_KEY)
         ) || 0;
-        // Version 2 introduced dynamically addressed per-generation
-        // invalidation records. Each account performs one full pull after
-        // upgrade so blobs skipped as unknown by an older client are found.
+        // Schema upgrades introduce dynamically addressed wallet records.
+        // Pull once from zero to recover records older clients skipped.
         const lastSync = localSchemaVersion < CURRENT_SYNC_SCHEMA_VERSION
             ? 0
             : await chatDB.getSetting(SYNC_LAST_TIME_KEY) || 0;
@@ -890,7 +911,8 @@ export class SyncService {
                 },
                 credentials: 'include'
             },
-            'Sync pull'
+            'Sync pull',
+            requestOptions
         );
         this.assertCredentialsCurrent(credentialGeneration);
 
@@ -944,49 +966,61 @@ export class SyncService {
         this.assertCredentialsCurrent(credentialGeneration);
         if (!serverBlob.ciphertext || !serverBlob.iv) return false;
 
-        // Fixed records map directly. Per-generation invalidation records use
-        // distinct opaque IDs so concurrent devices cannot overwrite one
-        // another; unknown IDs are therefore probed with the shared item key.
+        // Unknown IDs can be generation invalidations or per-device removal
+        // records. Both carry their address discriminator inside ciphertext.
         const mappedLogicalId = idMapping.get(serverBlob.id);
-        const logicalId = mappedLogicalId || LOGICAL_IDS.TICKET_INVALIDATION_ITEM;
-
+        const candidates = mappedLogicalId ? [mappedLogicalId] : [
+            LOGICAL_IDS.TICKET_INVALIDATION_ITEM,
+            LOGICAL_IDS.TICKET_REMOVALS
+        ];
         let payload;
-        try {
-            // Decrypt - the payload contains type and data
-            payload = await decryptBlob(
-                masterKey,
-                logicalId,
-                serverBlob.ciphertext,
-                serverBlob.iv
-            );
-            if (!mappedLogicalId) {
-                const keyId = normalizeTicketKeyId(payload?.key_id);
-                if (payload?.type !== 'ticket-invalidation' || !keyId) {
-                    console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
-                    return false;
-                }
-                const expectedOpaqueId = await deriveOpaqueBlobId(
-                    masterKey,
-                    `${LOGICAL_IDS.TICKET_INVALIDATION_ITEM}:${keyId}`
+        let logicalId;
+        for (const candidate of candidates) {
+            try {
+                const decoded = await decryptBlob(
+                    masterKey, candidate, serverBlob.ciphertext, serverBlob.iv
                 );
-                if (expectedOpaqueId !== serverBlob.id) {
-                    console.warn('[SyncService] Invalid ticket tombstone ID');
-                    return false;
+                if (!mappedLogicalId) {
+                    let discriminator;
+                    if (candidate === LOGICAL_IDS.TICKET_INVALIDATION_ITEM) {
+                        if (decoded?.type !== 'ticket-invalidation') continue;
+                        discriminator = normalizeTicketKeyId(decoded.key_id);
+                    } else {
+                        if (decoded?.type !== 'ticket-removals' ||
+                            !/^[a-f0-9]{32}$/.test(decoded.writer_id) ||
+                            !Array.isArray(decoded.archived) ||
+                            !Array.isArray(decoded.tombstones)) continue;
+                        discriminator = decoded.writer_id;
+                    }
+                    if (!discriminator) continue;
+                    const expectedId = await deriveOpaqueBlobId(
+                        masterKey, `${candidate}:${discriminator}`
+                    );
+                    if (expectedId !== serverBlob.id) continue;
                 }
+                payload = decoded;
+                logicalId = candidate;
+                break;
+            } catch {
+                // A failed probe is expected for a different record key.
             }
-        } catch (error) {
-            if (mappedLogicalId) {
-                console.warn('[SyncService] Failed to decrypt blob:', serverBlob.id, error);
-            } else {
-                console.warn('[SyncService] Unknown blob ID:', serverBlob.id);
-            }
-            return false;
         }
+        if (!payload) return false;
         this.assertCredentialsCurrent(credentialGeneration);
 
         // Apply based on type (stored inside encrypted payload)
         let applied = false;
-        if (payload.type === 'tickets') {
+        if (payload.type === 'ticket-removals') {
+            await this._mergeTickets(
+                LOGICAL_IDS.TICKETS_TOMBSTONES, payload.tombstones,
+                credentialGeneration
+            );
+            await this._mergeTickets(
+                LOGICAL_IDS.TICKETS_ARCHIVE, payload.archived,
+                credentialGeneration
+            );
+            applied = true;
+        } else if (payload.type === 'tickets') {
             await this._mergeTickets(
                 logicalId,
                 payload.data,
@@ -1025,6 +1059,7 @@ export class SyncService {
             });
             if (
                 payload.type === 'tickets' ||
+                payload.type === 'ticket-removals' ||
                 payload.type === 'ticket-invalidations' ||
                 payload.type === 'ticket-invalidation'
             ) {
@@ -1248,7 +1283,8 @@ export class SyncService {
 
     async _push(
         masterKey,
-        credentialGeneration = this.credentialGeneration
+        credentialGeneration = this.credentialGeneration,
+        requestOptions = {}
     ) {
         if (!this.credentialsAreCurrent(credentialGeneration)) {
             throw new Error('Sync credentials changed');
@@ -1282,7 +1318,8 @@ export class SyncService {
                     credentials: 'include',
                     body: JSON.stringify({ blobs: batch })
                 },
-                'Sync push'
+                'Sync push',
+                requestOptions
             );
 
             const response = await sendBatch();
@@ -1343,6 +1380,32 @@ export class SyncService {
                 { type: 'tickets', data: tombstones }
             );
             blobs.push({ id: opaqueId, ciphertext, iv, version: 1 });
+        }
+
+        // Keep a separate removal record per local account installation.
+        // Two devices can pull the same state then overwrite the shared archive
+        // with disjoint spends. Their writer records cannot overwrite each
+        // other, so a fresh device still learns every spend/transfer. Keep the
+        // aggregate records above for older clients. This runs under oa-sync.
+        if (Array.isArray(archivedTickets) || Array.isArray(tombstones)) {
+            let writerId = await chatDB.getSetting(SYNC_WALLET_WRITER_KEY);
+            if (!/^[a-f0-9]{32}$/.test(writerId)) {
+                writerId = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+                    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+                await chatDB.saveSetting(SYNC_WALLET_WRITER_KEY, writerId);
+            }
+            const id = await deriveOpaqueBlobId(
+                masterKey, `${LOGICAL_IDS.TICKET_REMOVALS}:${writerId}`
+            );
+            const encrypted = await encryptBlob(
+                masterKey, LOGICAL_IDS.TICKET_REMOVALS, {
+                    type: 'ticket-removals',
+                    writer_id: writerId,
+                    archived: Array.isArray(archivedTickets) ? archivedTickets : [],
+                    tombstones: Array.isArray(tombstones) ? tombstones : []
+                }
+            );
+            blobs.push({ id, ...encrypted, version: 1 });
         }
 
         // Invalidated issuer generations are encrypted, append-only
@@ -1416,7 +1479,7 @@ export class SyncService {
         this.stopPeriodicSync();
 
         const statusCheckInterval = options.statusCheckInterval || 5 * 60 * 1000;   // 5min default
-        const fullSyncInterval = options.fullSyncInterval || 30 * 60 * 1000;       // 30min full sync fallback
+        const fullSyncInterval = options.fullSyncInterval || 30 * 1000; // fixed 30s cadence
 
         // Fast status polling - check if server has newer data
         const doStatusCheck = async () => {
@@ -1425,17 +1488,18 @@ export class SyncService {
             try {
                 const hasChanges = await this.hasRemoteChanges();
                 if (hasChanges) {
-                    await this.sync();
+                    await this.sync({ background: true });
                 }
             } catch (err) {
                 console.warn('[SyncService] Background status check failed:', err);
             }
         };
 
-        // Full sync periodically as fallback
+        // Upload even when the server is unchanged: identity-backed redemption
+        // deliberately skips triggerSync(). Keep cadence independent of spends.
         const doFullSync = async () => {
             if (document.visibilityState === 'visible' && this.isEnabled()) {
-                await this.sync().catch(() => {});
+                await this.sync({ background: true }).catch(() => {});
             }
         };
 
@@ -1445,13 +1509,13 @@ export class SyncService {
         // Sync when tab becomes visible
         this.visibilityHandler = () => {
             if (document.visibilityState === 'visible' && this.isEnabled()) {
-                doStatusCheck();
+                doFullSync();
             }
         };
         document.addEventListener('visibilitychange', this.visibilityHandler);
 
-        // Initial status check
-        doStatusCheck();
+        // Reconcile local deferred spends as well as remote changes on resume.
+        doFullSync();
     }
 
     stopPeriodicSync() {

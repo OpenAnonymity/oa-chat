@@ -257,7 +257,8 @@ test('local and remote invalidations share one ticket storage lock', async () =>
 
 test('sync schema upgrade performs one full pull for dynamic tombstones', async () => {
     const settings = new Map([
-        ['sync-lastSyncTime', 900]
+        ['sync-lastSyncTime', 900],
+        ['sync-schema-version', 2]
     ]);
     const requestedUrls = [];
     const originalGetSetting = chatDB.getSetting;
@@ -288,7 +289,7 @@ test('sync schema upgrade performs one full pull for dynamic tombstones', async 
 
         assert.match(requestedUrls[0], /\?since=0$/);
         assert.match(requestedUrls[1], /\?since=1000$/);
-        assert.equal(settings.get('sync-schema-version'), 2);
+        assert.equal(settings.get('sync-schema-version'), 3);
         assert.equal(settings.get('sync-lastSyncTime'), 1000);
     } finally {
         chatDB.getSetting = originalGetSetting;

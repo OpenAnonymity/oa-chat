@@ -98,6 +98,7 @@ export class TicketStore {
                     }
                     if (payload.event === 'blob_received' && (
                         payload.data?.type === 'tickets' ||
+                        payload.data?.type === 'ticket-removals' ||
                         payload.data?.type === 'ticket-invalidations' ||
                         payload.data?.type === 'ticket-invalidation'
                     )) {

@@ -1,3 +1,64 @@
+## 2026-10-13: Quiet reasoning headers
+
+- Removed the “not shared by the provider” suffix from completed reasoning with
+  no visible reasoning text. The existing non-expandable “Thought”/timing header
+  remains; actual reasoning still expands normally. The same phrase is removed
+  from the zkAPI thinking description. No hidden text is invented.
+- Positive sub-second durations show “Thought for less than 1s” in both initial
+  rendering and live updates, instead of rounding down to “Thought for 0s”.
+- Ticket-sync and reasoning changes are now based on the live staging client
+  `44001ac4`, preserving the recent stream-settlement and independent-send fixes.
+  Staging and production still lack this local ticket-sync patch as of the
+  manifest check on October 13. The installed development phone targets staging;
+  the user confirmed testing the staging web origin too. Account identity/unlock
+  and live convergence still need verification after deployment.
+
+## 2026-10-13: Cross-device spent-ticket reconciliation
+
+- Google/username redemption intentionally avoids an immediate authenticated
+  sync. The previous status-only poll could not upload these local changes and
+  the full-sync fallback waited 30 minutes. Visible, unlocked clients now run a
+  full pull/merge/push every 30 seconds, regardless of spending, and on initial
+  polling/resume. Healthy foreground devices normally converge within two ticks
+  (about a minute plus request time). Offline, hidden, locked-account, throttled,
+  or older clients can take longer. This is eventual consistency, not a global
+  reservation: simultaneous redemptions still rely on server double-spend checks.
+- Shared archive/deletion blobs use server last-write-wins. Two devices pulling
+  before either pushes could overwrite disjoint removals. Each account's local
+  installation now retains a random `sync-wallet-writer-id` and publishes its
+  encrypted archive and transfer tombstones under its own HMAC-derived address.
+  All devices union these records using the existing consumed/deleted-wins rules.
+  The writer ID is local account-scoped metadata, never synced as a preference
+  or sent in plaintext. No per-ticket plaintext identifiers or new API required.
+- Aggregate records remain for compatibility. Schema 3 forces a one-time full
+  pull to recover dynamic records an older client skipped. Both clients need
+  the update for full concurrent-write protection. Existing lost server records
+  can only be recovered from a device that still retains the consumption state.
+- Background requests allow one attempt with a five-second header/body deadline,
+  retrying on the next tick rather than holding the wallet lock through network
+  retries. Explicit account sync retains its normal retry policy.
+- Sync still holds the account-data lock; ticket listeners finish hydration
+  before sync completion. Hidden clients do no periodic work; foreground resume
+  reconciles local deferred changes even if server status has not advanced.
+- Cost/tradeoff: frequent full sync uploads the wallet even when unchanged,
+  including one extra removal snapshot per installation. The combined snapshot
+  shares the server's 10 MiB blob limit; very large archives plus tombstones may
+  reach it sooner than the separate legacy records. Compaction/chunking remains
+  follow-up work. Stable opaque writer
+  records and more frequent ciphertext-size observations add metadata/bandwidth;
+  see [Privacy Model](PRIVACY_MODEL.md#5-optional-account-sign-in-and-encrypted-sync).
+- Synthetic tests cover disjoint simultaneous spends/transfers, both blob orders,
+  stale active replay, clean-device restore, original-device convergence, writer
+  persistence, encrypted address validation, awaited wallet notifications,
+  schema upgrade, fixed foreground scheduling and a stalled-body lock-release
+  regression. No live tickets were spent. The earlier origin/main candidate
+  passed 1,103 core and 742 payment tests (2 skipped), production build and
+  adversarial review. The staging-based candidate passed 1,556 core and 889
+  payment tests (2 environment-dependent skips), production build, and a fresh
+  adversarial review. Two time-sensitive stream checks failed during the first
+  run alongside a build, then passed in isolation and in the complete serial
+  rerun; no stream code was changed. This fix is local, not deployed.
+
 ## October 13, 2026 — a finished reply settles promptly; Stop stops every update
 
 Three ways a single chat could stay busy or keep changing after it should have

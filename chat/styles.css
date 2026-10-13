@@ -1634,7 +1634,6 @@ a.quick-ask-source:focus-visible {
 /* Thinking not shared by the provider: the header alone, nothing to open. */
 .reasoning-trace-withheld .reasoning-toggle { cursor: default; }
 .reasoning-trace-withheld .reasoning-toggle:hover { background: transparent; }
-.reasoning-withheld-note { color: hsl(var(--color-muted-foreground) / .75); }
 
 .reasoning-trace {
     margin-bottom: 0;

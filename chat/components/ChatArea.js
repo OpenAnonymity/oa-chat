@@ -2995,7 +2995,8 @@ export default class ChatArea {
      * @returns {string} Formatted duration string
      */
     formatReasoningDuration(durationMs) {
-        if (!durationMs) return '';
+        if (!Number.isFinite(durationMs) || durationMs <= 0) return '';
+        if (durationMs < 1000) return 'Thought for less than 1s';
 
         const seconds = Math.round(durationMs / 1000);
 

@@ -292,6 +292,15 @@ an OA sync account. In those opt-in flows:
    are inside ciphertext or represented only by HMAC-derived opaque IDs.
    For these accounts, redemption consumption does not trigger
    immediate sync; it propagates during the next initial/periodic sync.
+   Visible unlocked clients reconcile every 30 seconds and on foreground resume,
+   independently of whether a redemption occurred. Each installation also keeps
+   a separate encrypted removal snapshot at a stable HMAC-derived address so
+   concurrent devices cannot overwrite each other's spent/deleted-ticket state.
+   Its random writer ID is inside ciphertext and local account-scoped storage.
+   This adds a stable installation-level opaque record and increases sync traffic
+   and the frequency of observable ciphertext-size changes. Fixed scheduling
+   avoids a direct redemption-triggered request, but does not eliminate timing
+   or size correlation. Background/offline clients catch up on resume.
 7. Neither a provider identity nor a username can be linked onto an existing
    legacy account. Each resolves a dedicated account partition so it cannot
    inherit a namespace with historical ticket-sync metadata.

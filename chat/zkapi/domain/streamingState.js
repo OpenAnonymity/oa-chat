@@ -229,7 +229,7 @@ export function derivePendingIndicatorPresentation(phase, progress = null) {
         return {
             mode: 'thinking',
             current: 'Thinking...',
-            description: 'The model is reasoning before it answers. The reasoning is not shared by the provider.',
+            description: 'The model is reasoning before it answers.',
             progressPhase: 'thinking',
             steps: []
         };
