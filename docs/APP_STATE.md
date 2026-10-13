@@ -57,7 +57,10 @@
   payment tests (2 environment-dependent skips), production build, and a fresh
   adversarial review. Two time-sensitive stream checks failed during the first
   run alongside a build, then passed in isolation and in the complete serial
-  rerun; no stream code was changed. This fix is local, not deployed.
+  rerun. The release gate reproduced the rearmed-tail test failure: its 70 ms
+  idle deadline left only 25 ms beyond the intentional pause. The test now uses
+  a 100 ms tail, a 150 ms pause (still longer than the tail), and a 1 s idle
+  budget. Runtime streaming behavior is unchanged. This fix is not deployed yet.
 
 ## October 13, 2026 — a finished reply settles promptly; Stop stops every update
 

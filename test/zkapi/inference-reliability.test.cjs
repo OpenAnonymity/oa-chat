@@ -169,13 +169,15 @@ test('a confirmed finish followed only by heartbeats completes within the tail a
     } finally { clearInterval(heartbeat); feed.close(); }
 });
 test('output after a finish reason disarms the tail until completion is confirmed again', async () => {
-    const feed = openStream({ tailMs: 30, outputMs: 400 });
+    // Leave scheduling headroom for loaded release runners. The pause below
+    // still exceeds the original tail, proving that output really disarmed it.
+    const feed = openStream({ tailMs: 100, idleMs: 1000, outputMs: 3000 });
     const chunks = [];
     const pending = stream(feed.api, { chunk: c => chunks.push(c) });
     feed.push(delta + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
     await new Promise(r => setTimeout(r, 10));
     feed.push('data: {"choices":[{"delta":{"content":" more"}}]}\n\n');
-    await new Promise(r => setTimeout(r, 45));
+    await new Promise(r => setTimeout(r, 150));
     assert.equal(feed.canceled, false, 'late output reopens the stream: no cut at the first finish');
     feed.push('data: {"choices":[{"delta":{"content":" end"},"finish_reason":"stop"}]}\n\n');
     const result = await pending;
