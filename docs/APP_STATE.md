@@ -1,3 +1,10 @@
+## October 13, 2026 — consistent response model names
+
+Parallel lane and Council synthesis model names use the single-response header's
+0.7rem size, 500 weight and 1rem line height. The change is scoped to
+`.council-response-model-name`; provider icons, role badges and response text
+retain their existing styles.
+
 ## 2026-10-13: Quiet reasoning headers
 
 - Removed the “not shared by the provider” suffix from completed reasoning with

@@ -1380,6 +1380,10 @@ a.quick-ask-source:focus-visible {
 }
 
 .council-response-model-name {
+    /* Match the single-response assistant model label. */
+    font-size: 0.7rem;
+    font-weight: 500;
+    line-height: 1rem;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
