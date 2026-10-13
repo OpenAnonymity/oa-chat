@@ -1039,6 +1039,108 @@ describe('production ChatApp runtime ownership', () => {
         assert.equal(app.sendSubmissionsInFlight.size, 0);
     });
 
+    test('new-chat sends run independently and keep duplicate and Stop ownership per chat', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        const gates = [deferred(), deferred()];
+        const submissions = [];
+        app.sendCapturedMessage = async submission => {
+            const index = submissions.length;
+            submissions.push(submission);
+            submission.sessionId = index === 0 ? 'one' : 'two';
+            app.state.currentSessionId = submission.sessionId;
+            await gates[index].promise;
+        };
+        const first = app.sendMessage();
+        await app.sendMessage(); // Same created chat is still owned.
+        assert.equal(submissions.length, 1);
+        app.sessionNavigationGeneration++;
+        app.state.currentSessionId = null;
+        app.elements.messageInput.value = 'Second chat';
+        const second = app.sendMessage();
+        await app.sendMessage();
+        assert.equal(submissions.length, 2);
+        assert.equal(app.getPendingSend('one'), submissions[0]);
+        assert.equal(app.getPendingSend('two'), submissions[1]);
+        app.stopCurrentSessionStreaming();
+        assert.equal(submissions[1].controller.signal.aborted, true);
+        assert.equal(submissions[0].controller.signal.aborted, false);
+        gates[0].resolve();
+        await first;
+        assert.equal(app.getPendingSend('two'), submissions[1], 'late A cleanup must retain B ownership');
+        gates[1].resolve();
+        await second;
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
+    test('uncreated submissions deduplicate their own composer but not later new chats or existing chats', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        const gate = deferred();
+        const submissions = [];
+        app.sendCapturedMessage = async submission => { submissions.push(submission); await gate.promise; };
+        const first = app.sendMessage();
+        await app.sendMessage();
+        assert.equal(submissions.length, 1);
+        app.sessionNavigationGeneration++;
+        assert.equal(app.getPendingSend(null), null, 'old uncreated submission does not own the new draft');
+        const second = app.sendMessage();
+        await app.sendMessage();
+        assert.equal(submissions.length, 2);
+        app.sessionNavigationGeneration++;
+        const third = app.sendMessage();
+        assert.equal(submissions.length, 3);
+        app.state.currentSessionId = 'two';
+        assert.equal(app.getPendingSend('two'), null, 'an uncreated submission does not own an existing chat');
+        const existing = app.sendMessage();
+        assert.equal(submissions.length, 4);
+        gate.resolve();
+        await Promise.all([first, second, third, existing]);
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
+    test('abandoned session creation never sends the old prompt in the newly selected chat', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        app.ensureDatabaseReady = async () => true;
+        const creating = deferred();
+        const entered = deferred();
+        app.createSession = async () => { entered.resolve(); return creating.promise; };
+        app.inferenceService = { getVerificationAdapter: () => ({ supports: false }), getAccessInfo: () => null };
+        let validated = 0;
+        app.validateCapturedInput = async () => { validated++; };
+        app.preflightTurnTicketBudget = async () => false;
+        const sending = app.sendMessage();
+        await entered.promise;
+        app.sessionNavigationGeneration++;
+        app.state.currentSessionId = 'two';
+        creating.resolve(null);
+        await sending;
+        assert.equal(validated, 0, 'abandoned prompt never reaches validation or spending in another session');
+        assert.equal(app.elements.messageInput.value, 'Original prompt');
+        assert.equal(app.sendSubmissionsInFlight.size, 0);
+    });
+
+    test('New Chat cancels only the departing submission when the runtime requires retirement', async () => {
+        const app = appHarness();
+        app.state.currentSessionId = null;
+        app.runtime.onNewChat = () => {};
+        app.runtime.shouldCancelOnNewChat = () => true;
+        app.clearCurrentSession = async () => { app.state.currentSessionId = null; };
+        app.isMobileView = () => false;
+        const gate = deferred();
+        const submissions = [];
+        app.sendCapturedMessage = async submission => { submissions.push(submission); await gate.promise; };
+        const first = app.sendMessage();
+        await app.handleNewChatRequest();
+        assert.equal(submissions[0].controller.signal.aborted, true);
+        const second = app.sendMessage();
+        assert.equal(submissions.length, 2, 'retiring A does not reserve B composer');
+        assert.equal(submissions[1].controller.signal.aborted, false);
+        gate.resolve();
+        await Promise.all([first, second]);
+    });
+
     test('oversized conversation keeps the draft and history without spending tickets', async () => {
         const app = appHarness();
         const draft = 'a'.repeat((64_000 - 8) * 4);

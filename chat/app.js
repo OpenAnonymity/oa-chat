@@ -1273,8 +1273,9 @@ class ChatApp {
     }
 
     getPendingSend(sessionId = this.state.currentSessionId) {
-        return [...this.sendSubmissionsInFlight.values()].find(entry => entry.sessionId === sessionId
-            || (!entry.sessionId && entry.generation === this.sessionNavigationGeneration)) || null;
+        return [...this.sendSubmissionsInFlight.values()].find(entry => entry.sessionId
+            ? entry.sessionId === sessionId
+            : !sessionId && entry.generation === this.sessionNavigationGeneration) || null;
     }
 
     updateResponseModel(message, reportedModel, requestedModelId, requestedModelName, session) {
@@ -5546,6 +5547,7 @@ class ChatApp {
      * Handles new chat request with validation (prevents empty duplicate sessions).
      */
     async handleNewChatRequest(options = {}) {
+        const departingSend = this.getPendingSend();
         this.sessionNavigationGeneration += 1;
         const previousSession = this.getCurrentSession();
         const shouldCancel = typeof this.runtime.shouldCancelOnNewChat === 'function'
@@ -5555,7 +5557,7 @@ class ChatApp {
         // barrier before the next Send. Background work never delays typing.
         this.runtime.onNewChat?.({ sessionId: previousSession?.id || null });
         if (shouldCancel) {
-            this.sendSubmissionsInFlight.get('__new_chat__')?.controller.abort();
+            departingSend?.controller.abort();
             if (previousSession?.id) void this.cancelSessionWork(previousSession.id).catch(error => {
                 this.showToast(error.message, 'error');
             });
@@ -7850,7 +7852,10 @@ class ChatApp {
         if (this.getPendingSend(sessionId)) return;
         const owner = this.exclusiveSessionMutationOwners.get(sessionId);
         if (owner && owner !== options.mutationToken) return;
-        const submissionKey = sessionId || '__new_chat__';
+        // getPendingSend deduplicates the current empty composer by navigation
+        // generation, then by session once created. Each submission needs its
+        // own key so it cannot reserve a later New Chat until streaming ends.
+        const submissionKey = sessionId || Symbol('new-chat');
         if (this.sendSubmissionsInFlight.has(submissionKey)) return;
         const rawContent = options.rawContent ?? this.elements.messageInput.value ?? '';
         const files = [...(options.files || this.uploadedFiles)];
@@ -7918,7 +7923,10 @@ class ChatApp {
                 signal: submission.controller.signal,
                 onCreated: session => { submission.sessionId = session.id; }
             });
-            submission.sessionId = created?.id || this.state.currentSessionId;
+            // Navigation can abandon creation before a session exists. Never
+            // redirect that old prompt to whichever chat is now selected.
+            if (!created) return;
+            submission.sessionId = created.id;
         }
 
         this.throwIfAborted(submission.controller.signal);
