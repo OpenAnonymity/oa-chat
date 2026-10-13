@@ -700,6 +700,10 @@ export class OpenRouterAPI {
         let responseBody = null;
         let sawTerminal = false;
         let sawAnswer = false;
+        // Set when this request has returned or thrown. A delivery queued
+        // behind a callback that was still running at that moment must not
+        // reach the chat afterwards.
+        let streamSettled = false;
         const throwIfStreamAborted = () => {
             watchdog?.signal.throwIfAborted();
             if (!abortController?.signal?.aborted) return;
@@ -751,6 +755,11 @@ export class OpenRouterAPI {
                 reasoningBuffer = '';
                 reasoningFlushPromise = reasoningFlushPromise.then(async () => {
                     if (reasoningFlushError) return;
+                    // Stop (or a watchdog deadline) may have landed while the
+                    // previous delivery was still running: the request has
+                    // already been reported as cancelled, so this chunk is dropped
+                    // rather than delivered after the transcript was settled.
+                    if (streamSettled || watchdog?.signal.aborted || abortController?.signal?.aborted) return;
                     try {
                         await onReasoningChunk(bufferedReasoning);
                     } catch (error) {
@@ -962,7 +971,12 @@ export class OpenRouterAPI {
             if (parsed.type === 'response.completed') sawTerminal = true;
             const progressDelta = parsed.choices?.[0]?.delta;
             if (progressDelta?.content || progressDelta?.reasoning || progressDelta?.reasoning_details?.length
-                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) watchdog?.output();
+                || parsed.reasoning_delta || (parsed.type?.endsWith('.delta') && parsed.delta) || progressDelta?.images?.length) {
+                watchdog?.output();
+                // Resumed output invalidates an earlier finish. EOF alone must
+                // not use that stale finish to mark a truncated reply complete.
+                completionFinishReason = null;
+            }
 
             // A router may identify the selected model in a role-only event.
             // Publish it before any output/usage from the same event, without
@@ -1218,6 +1232,11 @@ export class OpenRouterAPI {
                 if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response. Please retry.');
                 if (finishReason) {
                     completionFinishReason = finishReason;
+                    // The provider has confirmed completion. Keep reading for the
+                    // tail ([DONE], final usage, citations), but only for a bounded
+                    // time: heartbeats on an otherwise finished connection must not
+                    // keep the answer "busy" until the output deadline.
+                    watchdog?.finished();
                 }
                 if (finishReason && finishReason !== 'stop') {
                     console.warn('Stream finished with reason:', finishReason);
@@ -1397,6 +1416,8 @@ export class OpenRouterAPI {
                         throwIfStreamAborted();
                         const { events } = pollAndroidNativeInferenceJob(jobId, afterSequence);
                         if (events.length === 0) {
+                            // Drain queued events before ending the completion tail.
+                            if (watchdog.tailExpired()) break;
                             await watchdog.wait(new Promise(resolve => setTimeout(resolve, 75)));
                             continue;
                         }
@@ -1499,7 +1520,7 @@ export class OpenRouterAPI {
             logStreamingRequest(response.status, 'web');
 
             await watchdog.wait(consumeSseBody(response.body, processSseLine, {
-                signal: watchdog.signal, onActivity: () => watchdog.activity()
+                signal: watchdog.signal, onActivity: () => watchdog.activity(), getSettled: () => watchdog.settled
             }));
 
             return await watchdog.wait(finalizeStreamResult());
@@ -1558,6 +1579,7 @@ export class OpenRouterAPI {
 
             throw streamError;
         } finally {
+            streamSettled = true;
             if (reasoningBufferTimer) clearTimeout(reasoningBufferTimer);
             discardResponseBody(responseBody);
             watchdog?.dispose();

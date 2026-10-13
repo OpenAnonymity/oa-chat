@@ -5759,6 +5759,12 @@ class ChatApp {
         return fields;
     }
 
+    refreshSessionSearchTextInBackground(session) {
+        Promise.resolve()
+            .then(() => this.refreshSessionConversationSearchText(session, null, { persist: true }))
+            .catch(error => console.warn('[App] Conversation search index refresh failed:', error?.message || error));
+    }
+
     async refreshSessionConversationSearchText(session, messages = null, options = {}) {
         if (!session?.id || chatDB.messageReplacements.has(session.id)) return null;
         const sourceMessages = Array.isArray(messages)
@@ -7412,12 +7418,19 @@ class ChatApp {
                 let reasoningStartTime = null;
                 let reasoningEndTime = null;
 
+                // Stop settles this reply from the catch block below while a
+                // delivery callback can still be inside one of its awaited
+                // IndexedDB writes. A callback that starts or resumes after Stop
+                // must neither change the reply nor repaint it.
+                const turnStopped = () => abortController.signal.aborted;
+
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
                     processedMessages,
                     modelIdForRequest,
                     session,
                     async (chunk, imageData) => {
+                        if (turnStopped()) return;
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -7475,6 +7488,7 @@ class ChatApp {
                             if (!streamingMessage.images) streamingMessage.images = [];
                             this.addImagesWithDedup(streamingMessage.images, imageData.images);
                             await chatDB.saveMessage(streamingMessage);
+                            if (turnStopped()) return;
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
                                 this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
@@ -7489,6 +7503,7 @@ class ChatApp {
                         }
 
                         // Only update UI if still viewing the same session
+                        if (turnStopped()) return;
                         if (chunk && this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
@@ -7509,6 +7524,7 @@ class ChatApp {
                         }
                     },
                     async (reasoningChunk, meta) => {
+                        if (turnStopped()) return;
                         // Reasoning the provider withholds: no words to show, so the
                         // pending line says "Thinking..." and the trace is timed from here.
                         if (meta?.withheld) {
@@ -7546,6 +7562,7 @@ class ChatApp {
                         }
 
                         // Only update UI if still viewing the same session
+                        if (turnStopped()) return;
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
@@ -7580,7 +7597,10 @@ class ChatApp {
 
                 await chatDB.saveMessage(streamingMessage);
                 if (this.isViewingSession(session.id)) this.announceChatOperation('Response complete.');
-                await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                // The reply is on disk. Search indexing is bookkeeping, not part
+                // of the reply: it runs in the background so it can neither keep
+                // the composer waiting nor turn a finished reply into an error.
+                this.refreshSessionSearchTextInBackground(session);
 
                 // Derive citation metadata locally and update UI.
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
@@ -8268,12 +8288,19 @@ class ChatApp {
                     session.id
                 ));
 
+                // Stop settles this reply from the catch block below while a
+                // delivery callback can still be inside one of its awaited
+                // IndexedDB writes. A callback that starts or resumes after Stop
+                // must neither change the reply nor repaint it.
+                const turnStopped = () => abortController.signal.aborted;
+
                 // Stream the response with token tracking
                 const tokenData = await this.streamCompletionWithRuntime(
                     processedMessages,
                     modelIdForRequest,
                     session,
                     async (chunk, imageData) => {
+                        if (turnStopped()) return;
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
@@ -8350,6 +8377,7 @@ class ChatApp {
                             if (!streamingMessage.images) streamingMessage.images = [];
                             this.addImagesWithDedup(streamingMessage.images, imageData.images);
                             await chatDB.saveMessage(streamingMessage);
+                            if (turnStopped()) return;
                             // Only update UI if still viewing the same session
                             if (this.chatArea && this.isViewingSession(session.id)) {
                                 this.chatArea.updateStreamingImages(streamingMessageId, streamingMessage.images);
@@ -8365,6 +8393,7 @@ class ChatApp {
                         }
 
                         // Update UI with new content (only if viewing this session)
+                        if (turnStopped()) return;
                         if (chunk && this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingMessage(streamingMessageId, streamedContent);
                         }
@@ -8385,6 +8414,7 @@ class ChatApp {
                         }
                     },
                     async (reasoningChunk, meta) => {
+                        if (turnStopped()) return;
                         // Reasoning the provider withholds: no words to show, so the
                         // pending line says "Thinking..." and the trace is timed from here.
                         if (meta?.withheld) {
@@ -8420,6 +8450,7 @@ class ChatApp {
                         }
 
                         // Update UI with new reasoning content (only if viewing this session)
+                        if (turnStopped()) return;
                         if (this.chatArea && this.isViewingSession(session.id)) {
                             this.chatArea.updateStreamingReasoning(streamingMessageId, streamedReasoning);
                         }
@@ -8458,7 +8489,10 @@ class ChatApp {
 
                 await chatDB.saveMessage(streamingMessage);
                 if (this.isViewingSession(session.id)) this.announceChatOperation('Response complete.');
-                await this.refreshSessionConversationSearchText(session, null, { persist: true });
+                // The reply is on disk. Search indexing is bookkeeping, not part
+                // of the reply: it runs in the background so it can neither keep
+                // the composer waiting nor turn a finished reply into an error.
+                this.refreshSessionSearchTextInBackground(session);
 
                 // Derive citation metadata locally and update UI.
                 if (streamingMessage.citations && streamingMessage.citations.length > 0) {
