@@ -132,7 +132,8 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
-    if (phase === 'preparing-access' || phase === 'thinking' || phase === 'reloading-tickets') return phase;
+    if (phase === 'preparing-access' || phase === 'thinking' || phase === 'reloading-tickets'
+        || phase === 'skipping-used-tickets') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -147,10 +148,16 @@ function formatPendingTimestamp(timestamp) {
     });
 }
 
-function getPendingIndicatorLabel(phase) {
+export function getPendingIndicatorLabel(phase, progress = null) {
     const normalizedPhase = normalizePendingPhase(phase);
     if (normalizedPhase === 'thinking') return 'Thinking...';
     if (normalizedPhase === 'reloading-tickets') return 'Reloading tickets…';
+    if (normalizedPhase === 'skipping-used-tickets') {
+        const skipped = Number(progress?.skippedTickets);
+        return Number.isInteger(skipped) && skipped > 0
+            ? `Skipping already-used tickets · ${skipped}`
+            : 'Skipping already-used tickets';
+    }
     return normalizedPhase === 'waiting-response'
         ? 'Waiting for response'
         : 'Requesting ephemeral key';
@@ -163,7 +170,7 @@ function buildPendingIndicatorContent(phase = 'requesting-key', progress = null,
         return buildDetailedPendingIndicator(presentation, { phase: normalizedPhase, traceId });
     }
     const shimmerClass = ' pending-response-streaming';
-    const label = getPendingIndicatorLabel(normalizedPhase);
+    const label = getPendingIndicatorLabel(normalizedPhase, progress);
     return `
         <div class="pending-response-line">
             <span class="pending-response-label${shimmerClass}">${escapeHtml(label)}</span>

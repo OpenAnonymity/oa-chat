@@ -1,3 +1,25 @@
+## October 14, 2026 — already-used tickets are swept, not counted to ten (local)
+
+A wallet whose tickets had been spent from another device (or left behind by
+a lost sync) stopped after `ticketsRequired + 10` refusals with "All available
+tickets were already spent" — a 477-ticket wallet checked 13 — and raised a
+toast per refusal. Key acquisition now sets each refused ticket aside and tries
+the next for as long as the wallet lasts; Stop cancels, and a wallet that runs
+out is the ordinary shortage (reload or offers), never that message. A refusal
+that does not shrink the wallet (a store that cannot write, an org refusing
+everything) stops the sweep with `TICKET_SWEEP_STALLED` instead of looping.
+The pending reply shows one state, "Skipping already-used tickets · N", with
+the count ticking in place (tabular digits); one toast at the end says how
+many left the wallet. The Activity Timeline names a refused ticket as skipped.
+
+Underneath: the org checks a multi-ticket request in order, stops at the first
+ticket it has already seen and rolls the earlier ones back, reporting
+`failed_ticket.index`. The client archived the whole selection, so on a
+three-ticket model every stale ticket silently cost two good ones. Only the
+named ticket is set aside now; an org that names none still sets the selection
+aside as before. A sweep is still one org round trip per stale ticket — a
+batch "which of these are spent" check would let the org link the unspent
+tickets' future requests to one wallet, which the privacy model forbids.
 ## October 14, 2026 — Haiku failure and provider diagnostic codes (local)
 
 Staging serves commercial d3764d08 / client f55fdb2b, built at 18:44:40 UTC.

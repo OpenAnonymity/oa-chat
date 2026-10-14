@@ -90,6 +90,21 @@ function escapeHtmlAttribute(text) {
         .replace(/\n/g, '&#10;');
 }
 
+// The org answers a ticket it has already seen with 401 TICKET_ALREADY_SPENT
+// (older orgs: a 401 whose words say so). The client sets that ticket aside
+// and tries the next, so the row says what happened rather than "requesting".
+export function isSpentTicketRefusal(status, response) {
+    if (status !== 401) return false;
+    const detail = response && typeof response.detail === 'object' && response.detail !== null
+        ? response.detail : response;
+    if (detail?.error_code === 'TICKET_ALREADY_SPENT') return true;
+    const words = String(
+        (typeof response?.detail === 'string' ? response.detail : '') ||
+        detail?.failed_ticket?.reason || detail?.message || detail?.error || ''
+    ).toLowerCase();
+    return words.includes('already spent') || words.includes('double-spend') || words.includes('already used');
+}
+
 /**
  * Get user-friendly activity description based on log type and endpoint
  */
@@ -249,6 +264,8 @@ export function getActivityDescription(log, detailed = false) {
                     return 'Ephemeral access key granted';
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key';
+                } else if (isSpentTicketRefusal(status, response)) {
+                    return 'Ticket already used elsewhere, skipped';
                 }
                 return 'Requesting ephemeral access key';
             } else {
@@ -257,6 +274,8 @@ export function getActivityDescription(log, detailed = false) {
                     return `Successfully obtained an ephemeral key valid for ${duration} minutes.`;
                 } else if (status === 0) {
                     return 'Failed to obtain ephemeral key. The OA platform may be unavailable or your ticket may have already been used.';
+                } else if (isSpentTicketRefusal(status, response)) {
+                    return 'The org had already seen this ticket: it was spent from another device or browser, or a sync did not carry its use over. Nothing was charged. The ticket was moved out of this wallet and the next one was tried.';
                 }
                 return 'Exchanging privacy ticket for ephemeral access key...';
             }

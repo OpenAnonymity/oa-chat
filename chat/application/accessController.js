@@ -177,6 +177,7 @@ export async function acquireVerifiedAccess(options = {}) {
         getTicketCost,
         getFallbackModelEntry,
         onTicketUsed = () => {},
+        onTicketSweepEnd = null,
         onNetworkSession = () => {},
         onGranted = null,
         onAccessRequestError = () => {},
@@ -257,61 +258,91 @@ export async function acquireVerifiedAccess(options = {}) {
     onNetworkSession(session.id);
 
     let result;
-    let retries = 0;
     let pricingRetried = false;
-    const maxRetries = Math.max(1, Math.min(spendableBalance(), ticketsRequired + 10));
     let selectionRetried = false;
-
-    while (retries < maxRetries) {
-        if (signal?.aborted) {
-            const error = new Error('Request aborted');
-            error.name = 'AbortError';
-            error.isCancelled = true;
-            throw error;
-        }
+    // Tickets the org had already seen — spent from another device or
+    // browser, or left behind by a lost sync. Each one is archived locally
+    // and the next is tried, for as long as the wallet lasts: the user
+    // asked for a reply, and a wallet with hundreds of such tickets must
+    // still get one. Stop cancels; a wallet that runs out is a shortage.
+    let ticketsSkipped = 0;
+    let invalidationRetries = 0;
+    let sweepSettled = false;
+    const settleSweep = recovered => {
+        if (sweepSettled || ticketsSkipped === 0) return;
+        sweepSettled = true;
+        if (typeof onTicketSweepEnd !== 'function') return;
         try {
-            result = await inferenceService.requestAccess(session, {
-                ticketsRequired,
-                ...(signal ? { signal } : {})
-            });
-            break;
-        } catch (error) {
-            if (['NO_TICKETS', 'INSUFFICIENT_TICKETS'].includes(error.code)) {
-                if (selectionRetried) throw shortageError(error.availableTickets ?? spendableBalance());
-                selectionRetried = true;
-                await checkBalance(error);
-                continue;
-            }
-            if (error.code === 'TICKET_PRICE_CHANGED' && !pricingRetried && !hasTicketOverride
-                && typeof inferenceService.getAccessTicketCost === 'function') {
-                pricingRetried = true;
-                ticketsRequired = await resolveTicketCost({ forceRefresh: true });
-                await checkBalance();
-                continue;
-            }
-            if (error.code === 'TICKET_USED') {
-                retries += 1;
-                await onTicketUsed(retries, error);
-                continue;
-            }
-            if (error.code === 'TICKET_KEY_INVALIDATED') {
-                retries += 1;
-                const remainingTickets = ticketClient.getTicketCount();
-                if (remainingTickets >= ticketsRequired) {
+            onTicketSweepEnd({ skipped: ticketsSkipped, recovered });
+        } catch (hookError) {
+            onVerificationWarning('Ticket sweep hook failed:', buildSafeAccessErrorMetadata(hookError));
+        }
+    };
+
+    try {
+        for (;;) {
+            throwIfCancelled();
+            const balanceBeforeRequest = spendableBalance();
+            try {
+                result = await inferenceService.requestAccess(session, {
+                    ticketsRequired,
+                    ...(signal ? { signal } : {})
+                });
+                break;
+            } catch (error) {
+                if (['NO_TICKETS', 'INSUFFICIENT_TICKETS'].includes(error.code)) {
+                    if (selectionRetried) throw shortageError(error.availableTickets ?? spendableBalance());
+                    selectionRetried = true;
+                    await checkBalance(error);
                     continue;
                 }
-                error.message = remainingTickets > 0
-                    ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
-                    : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+                if (error.code === 'TICKET_PRICE_CHANGED' && !pricingRetried && !hasTicketOverride
+                    && typeof inferenceService.getAccessTicketCost === 'function') {
+                    pricingRetried = true;
+                    ticketsRequired = await resolveTicketCost({ forceRefresh: true });
+                    await checkBalance();
+                    continue;
+                }
+                if (error.code === 'TICKET_USED') {
+                    // The wallet must shrink for every refusal, or the same
+                    // ticket is being offered again (a store that cannot
+                    // write, an org that refuses everything): stop rather
+                    // than loop.
+                    if (spendableBalance() >= balanceBeforeRequest) {
+                        error.message = 'A ticket was refused as already used but could not be set aside. Please try again.';
+                        error.code = 'TICKET_SWEEP_STALLED';
+                        onAccessRequestError(buildSafeAccessErrorMetadata(error));
+                        throw error;
+                    }
+                    ticketsSkipped += 1;
+                    await onTicketUsed(ticketsSkipped, error);
+                    continue;
+                }
+                if (error.code === 'TICKET_KEY_INVALIDATED') {
+                    invalidationRetries += 1;
+                    const remainingTickets = ticketClient.getTicketCount();
+                    if (remainingTickets >= ticketsRequired && invalidationRetries <= 3) {
+                        continue;
+                    }
+                    error.message = remainingTickets > 0
+                        ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
+                        : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+                }
+                onAccessRequestError(buildSafeAccessErrorMetadata(error));
+                throw error;
             }
-            onAccessRequestError(buildSafeAccessErrorMetadata(error));
-            throw error;
         }
+    } catch (error) {
+        settleSweep(false);
+        throw error;
     }
 
     if (!result) {
-        throw new Error('All available tickets were already spent');
+        const error = new Error('No usable ticket was found. Please try again.');
+        error.code = 'ACCESS_NOT_GRANTED';
+        throw error;
     }
+    settleSweep(true);
 
     if (typeof onGranted === 'function') {
         try {

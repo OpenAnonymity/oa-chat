@@ -1231,6 +1231,29 @@ class ChatApp {
         if (indicator) this.ui?.updatePendingIndicator?.(indicator, 'reloading-tickets', null);
     }
 
+    /**
+     * The pending reply's label while tickets the org had already seen
+     * (spent from another device, or left by a lost sync) are set aside one
+     * by one. The count ticks up in place; nothing else moves.
+     */
+    showTicketSweepPending(sessionId, skippedTickets) {
+        this.updateSessionStreamingPhase(sessionId, 'skipping-used-tickets');
+        const indicator = document.querySelector(`.typing-indicator[data-pending-session-id="${String(sessionId).replace(/["\\]/g, '\\$&')}"]`);
+        if (indicator) this.ui?.updatePendingIndicator?.(indicator, 'skipping-used-tickets', { skippedTickets });
+    }
+
+    /**
+     * One line once a sweep ends, whichever way: the wallet count just
+     * dropped by that many, and the reason should be on screen. A sweep
+     * that recovered moves on to the granted key by itself; one that did
+     * not leaves the row to the error that ended it.
+     */
+    settleTicketSweep(sessionId, { skipped = 0, recovered = false } = {}) {
+        if (!(skipped > 0)) return;
+        const count = Number(skipped);
+        this.showToast(`Removed ${count} already-used ticket${count === 1 ? '' : 's'}`, 'success', 5000);
+    }
+
     async handleAcquisitionTicketShortage(session, { requiredTickets, availableTickets, label }, signal = null) {
         this.throwIfAborted(signal);
         const budget = buildTurnTicketBudget({
@@ -12150,9 +12173,8 @@ Your API key has been cleared. A new key from a different station will be obtain
                     ticketRequirementLabel: options.ticketRequirementLabel
                         || this.normalizeModelName(options.modelNameOverride || session.model, session)
                         || options.modelNameOverride || session.model || 'this model',
-                    onTicketUsed: () => {
-                        this.showToast('Ticket already used, trying next available');
-                    },
+                    onTicketUsed: skipped => this.showTicketSweepPending(session.id, skipped),
+                    onTicketSweepEnd: outcome => this.settleTicketSweep(session.id, outcome),
                     onNetworkSession: (sessionId) => {
                         if (window.networkLogger) {
                             window.networkLogger.setCurrentSession(sessionId);

@@ -2075,6 +2075,8 @@ a.quick-ask-source:focus-visible {
 .pending-response-label {
     font-size: 0.75rem;
     color: hsl(var(--color-muted-foreground) / 0.8);
+    /* A count that ticks up in place ("Skipping already-used tickets · 12") must not jitter. */
+    font-variant-numeric: tabular-nums;
 }
 
 @keyframes pendingResponseShimmer {

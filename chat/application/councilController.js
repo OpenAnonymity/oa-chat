@@ -732,7 +732,8 @@ export default class CouncilController {
             ticketRequirementLabel: entry.name,
             signal,
             onTicketShortage: shortage => this.app.handleAcquisitionTicketShortage?.(session, shortage, signal),
-            onTicketUsed: () => this.app.showToast?.('Ticket already used, trying next available'),
+            onTicketUsed: skipped => this.app.showTicketSweepPending?.(session.id, skipped),
+            onTicketSweepEnd: outcome => this.app.settleTicketSweep?.(session.id, outcome),
             onNetworkSession: (sessionId) => {
                 if (typeof window !== 'undefined' && window.networkLogger) {
                     window.networkLogger.setCurrentSession(sessionId);

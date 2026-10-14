@@ -457,19 +457,39 @@ test('acquireSessionAccess uses model id override when display name does not mat
     assert.equal(harness.session.model, 'Model A');
 });
 
-test('acquireSessionAccess retries spent tickets before succeeding', async () => {
+// A wallet whose tickets the org has already seen: each refusal sets one
+// ticket aside (the store shrinks by one), as the real ticket store does.
+function createStaleWalletHarness({ stale, tickets, ticketsRequired = 2, onAttempt = null }) {
+    let remaining = tickets;
+    let attempts = 0;
+    const sweeps = [];
     const harness = createAccessHarness({
-        requestAccess: async (targetSession, request, attempt) => {
-            if (attempt === 1) {
-                const error = new Error('used');
-                error.code = 'TICKET_USED';
-                throw error;
+        ticketCount: () => remaining,
+        getTicketCost: () => ticketsRequired,
+        requestAccess: async () => {
+            attempts += 1;
+            await onAttempt?.(attempts);
+            if (remaining < ticketsRequired) {
+                throw Object.assign(new Error('Not enough tickets.'), {
+                    code: remaining === 0 ? 'NO_TICKETS' : 'INSUFFICIENT_TICKETS', availableTickets: remaining
+                });
             }
+            if (attempts <= stale) {
+                remaining -= 1;
+                throw Object.assign(new Error('used'), { code: 'TICKET_USED', consumeTickets: true });
+            }
+            remaining -= ticketsRequired;
             return { key: 'fresh-key', stationId: 'station-b' };
         }
     });
+    harness.callbacks.onTicketSweepEnd = outcome => sweeps.push(outcome);
+    harness.sweeps = sweeps;
+    harness.remaining = () => remaining;
+    return harness;
+}
 
-    const token = await acquireSessionAccess({
+function acquireWith(harness, extra = {}) {
+    return acquireSessionAccess({
         session: harness.session,
         models: [{ id: 'model-a', name: 'Model A' }],
         reasoningEnabled: false,
@@ -478,12 +498,82 @@ test('acquireSessionAccess retries spent tickets before succeeding', async () =>
         chatDB: harness.chatDB,
         getTicketCost: harness.getTicketCost,
         getFallbackModelEntry: harness.getFallbackModelEntry,
-        ...harness.callbacks
+        ...harness.callbacks,
+        ...extra
     });
+}
 
+test('acquireSessionAccess retries spent tickets before succeeding', async () => {
+    const harness = createStaleWalletHarness({ stale: 1, tickets: 5 });
+    const token = await acquireWith(harness);
     assert.equal(token, 'fresh-key');
     assert.equal(harness.requested.length, 2);
     assert.deepEqual(harness.ticketUsed, [1]);
+    assert.deepEqual(harness.sweeps, [{ skipped: 1, recovered: true }]);
+});
+
+test('a sweep past already-used tickets is bounded by the wallet, not by ten', async () => {
+    // 2026-10-14: a 477-ticket wallet whose first hundreds were spent from
+    // another device stopped after ticketsRequired + 10 refusals with
+    // "All available tickets were already spent" and a toast per refusal.
+    const harness = createStaleWalletHarness({ stale: 120, tickets: 477, ticketsRequired: 3 });
+    const token = await acquireWith(harness);
+    assert.equal(token, 'fresh-key');
+    assert.equal(harness.requested.length, 121);
+    assert.equal(harness.ticketUsed.length, 120);
+    assert.equal(harness.ticketUsed.at(-1), 120);
+    assert.deepEqual(harness.sweeps, [{ skipped: 120, recovered: true }]);
+    assert.equal(harness.remaining(), 477 - 120 - 3);
+});
+
+test('a wallet that runs out during the sweep becomes an ordinary shortage', async () => {
+    const shortages = [];
+    const harness = createStaleWalletHarness({ stale: 6, tickets: 6, ticketsRequired: 2 });
+    await assert.rejects(acquireWith(harness, {
+        onTicketShortage: shortage => { shortages.push(shortage); return { retry: false }; }
+    }), { code: 'TICKET_SHORTAGE' });
+    // Five refusals leave one ticket, which is not enough for two.
+    assert.equal(harness.ticketUsed.length, 5);
+    assert.deepEqual(shortages, [{ requiredTickets: 2, availableTickets: 1, label: 'this model' }]);
+    assert.deepEqual(harness.sweeps, [{ skipped: 5, recovered: false }]);
+});
+
+test('a refusal that does not shrink the wallet stops the sweep instead of looping', async () => {
+    const harness = createAccessHarness({
+        ticketCount: () => 5,
+        requestAccess: async () => {
+            throw Object.assign(new Error('used'), { code: 'TICKET_USED', consumeTickets: true });
+        }
+    });
+    const sweeps = [];
+    await assert.rejects(acquireWith(harness, { onTicketSweepEnd: outcome => sweeps.push(outcome) }),
+        { code: 'TICKET_SWEEP_STALLED' });
+    assert.equal(harness.requested.length, 1);
+    assert.deepEqual(harness.ticketUsed, []);
+    assert.deepEqual(sweeps, []);
+});
+
+test('Stop during a sweep cancels it and reports the sweep as not recovered', async () => {
+    const controller = new AbortController();
+    const harness = createStaleWalletHarness({
+        stale: 50, tickets: 60, onAttempt: attempt => {
+            if (attempt !== 4) return;
+            // Stop lands while the fourth key request is in flight.
+            controller.abort();
+            throw Object.assign(new Error('Request aborted'), { name: 'AbortError', isCancelled: true });
+        }
+    });
+    await assert.rejects(acquireWith(harness, { signal: controller.signal }), { name: 'AbortError' });
+    assert.equal(harness.requested.length, 4);
+    assert.deepEqual(harness.sweeps, [{ skipped: 3, recovered: false }]);
+});
+
+test('a sweep hook that throws does not change the outcome', async () => {
+    const harness = createStaleWalletHarness({ stale: 2, tickets: 5 });
+    harness.callbacks.onTicketSweepEnd = () => { throw new Error('hook'); };
+    assert.equal(await acquireWith(harness), 'fresh-key');
+    assert.equal(harness.warnings.length, 1);
+    assert.match(harness.warnings[0][0], /sweep hook/);
 });
 
 test('acquireSessionAccess retries after an invalidated generation is removed', async () => {

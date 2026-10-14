@@ -158,6 +158,12 @@ class TicketClient {
             error.code = 'TICKET_USED';
             error.status = status;
             error.consumeTickets = true;
+            // The org checks tickets in order and stops at the first one it
+            // had already seen, rolling the earlier ones back; the later ones
+            // were never looked at. Only that ticket is dead. Without the
+            // index (an older org) the whole selection is set aside.
+            const failedIndex = parsed.detail?.failed_ticket?.index;
+            if (Number.isInteger(failedIndex) && failedIndex >= 0) error.usedIndices = [failedIndex];
             return error;
         }
 
