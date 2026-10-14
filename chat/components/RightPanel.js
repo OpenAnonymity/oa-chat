@@ -2631,7 +2631,11 @@ class RightPanel {
         const tlsInfo = this.app.services.networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
 
-        return `<div class="p-3 space-y-2">
+        // The key names everything this markup depends on. A top-section
+        // rebuild that finds the same key keeps the live section instead of
+        // replacing it (renderTopSectionOnly), so the status icon's pulse,
+        // the tooltip, and a press in progress on a button all survive.
+        return `<div id="proxy-section" class="p-3 space-y-2" data-proxy-key="${this.escapeHtmlAttribute(this.proxySectionKey(settings, status))}">
                 <!-- Header Row: Title + Toggle -->
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5">
@@ -2783,6 +2787,19 @@ class RightPanel {
         return JSON.stringify([!!settings?.enabled, this.getProxyStatusMeta(settings, status).state]);
     }
 
+    /** Everything the proxy section's markup depends on (generateProxySectionHTML). */
+    proxySectionKey(settings = this.proxySettings, status = this.proxyStatus) {
+        const meta = this.getProxyStatusMeta(settings, status);
+        const tlsInfo = this.app.services.networkProxy.getTlsInfo?.() || {};
+        return JSON.stringify([!!settings?.enabled, meta.state, meta.label, !!this.showProxyInfo,
+            tlsInfo.version !== null && tlsInfo.version !== undefined, !!this.proxyActionPending]);
+    }
+
+    /** An in-place status update changes what the section depends on; record it. */
+    syncProxySectionKey() {
+        document.getElementById('proxy-section')?.setAttribute('data-proxy-key', this.proxySectionKey());
+    }
+
     handleProxyChange({ settings, status }) {
         const before = this.proxyPresentationKey();
         const enabledBefore = !!this.proxySettings?.enabled;
@@ -2803,6 +2820,7 @@ class RightPanel {
             const focused = icon === document.activeElement;
             icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
             if (focused) document.querySelector('.oa-proxy-status-icon')?.focus?.();
+            this.syncProxySectionKey();
             this.updateProxyFeedback();
             return;
         }
@@ -2860,6 +2878,7 @@ class RightPanel {
 
         const icon = document.querySelector('.oa-proxy-status-icon');
         if (icon) icon.outerHTML = this.generateProxyStatusIconHTML(this.getProxyStatusMeta());
+        this.syncProxySectionKey();
         this.updateProxyFeedback();
         try {
             if (retry && this.proxySettings.enabled) await this.app.services.networkProxy.reconnect();
@@ -3206,12 +3225,33 @@ class RightPanel {
             return;
         }
 
-        // Generate and update only the top section HTML
+        // Generate and update only the top section HTML. This runs on every
+        // account notification and every wallet change; most of them change
+        // nothing here. Markup that is identical to the last render leaves the
+        // DOM alone — replacing it would restart the status icon's pulse,
+        // drop a tooltip, and lose a click whose press landed on the old node.
+        const html = this.generateTopSectionHTML();
+        if (html === this.lastTopSectionHtml && this.lastTopSectionNode === topSection) {
+            this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
+            this.attachTopSectionEventListeners();
+            this.ensureLaneExpirationTimer();
+            return;
+        }
+        const previousProxySection = topSection.querySelector('#proxy-section');
         const proxyFeedback = topSection.querySelector('#proxy-failure-notice');
         const proxyRetryFocused = proxyFeedback?.contains(document.activeElement);
-        topSection.innerHTML = this.generateTopSectionHTML();
-        // Keep the retry animation and its timers alive across unrelated updates.
-        if (proxyFeedback) {
+        topSection.innerHTML = html;
+        this.lastTopSectionHtml = html;
+        this.lastTopSectionNode = topSection;
+        // A proxy section whose presentation did not change is kept as it is
+        // (its icon mid-pulse, its tooltip, its buttons and the retry
+        // animation) — only the parts around it were rebuilt.
+        const nextProxySection = topSection.querySelector('#proxy-section');
+        if (previousProxySection && nextProxySection
+            && previousProxySection.dataset?.proxyKey === nextProxySection.dataset?.proxyKey) {
+            nextProxySection.replaceWith(previousProxySection);
+        } else if (proxyFeedback) {
+            // Keep the retry animation and its timers alive across unrelated updates.
             topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
             if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
         }
@@ -3411,6 +3451,9 @@ class RightPanel {
         if (!panel) return;
 
         const hasApiKey = !!this.apiKey;
+        // A full render replaces the top section too; the next partial
+        // render must not take the old markup for the current one.
+        this.lastTopSectionHtml = null;
 
         panel.innerHTML = `
             <!-- Header - matches chat-toolbar height (3rem + 1px for border alignment) -->

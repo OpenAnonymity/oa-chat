@@ -22,18 +22,29 @@ class TLSSecurityModal {
     }
 
     async open() {
-        if (this.isOpen) return;
+        // "Open" is the dialog being on the page, not a flag that may have
+        // outlived it (a build that threw mid-open, an overlay removed by
+        // something other than close()): a press on Security Details must
+        // always get the dialog.
+        if (this.isOpen && this.overlay?.isConnected) return;
         this.isOpen = true;
 
         document.querySelector('.tls-security-modal')?.remove();
 
-        this.overlay = document.createElement('div');
-        this.overlay.className = 'tls-security-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
+        try {
+            this.overlay = document.createElement('div');
+            this.overlay.className = 'tls-security-modal fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in';
 
-        this.render();
-        document.body.appendChild(this.overlay);
-        showSurface(this.overlay);
-        this.setupEventListeners();
+            this.render();
+            document.body.appendChild(this.overlay);
+            showSurface(this.overlay);
+            this.setupEventListeners();
+        } catch (error) {
+            this.isOpen = false;
+            this.overlay?.remove?.();
+            this.overlay = null;
+            throw error;
+        }
 
         // Verify WASM integrity on first open
         if (!this.wasmIntegrity) {

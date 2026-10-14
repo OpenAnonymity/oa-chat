@@ -1,3 +1,26 @@
+## October 14, 2026 — the System Panel's proxy section holds still (local)
+
+The panel's top section was rebuilt from scratch on every account
+notification and every wallet change (start-up sync steps, the periodic sync,
+the shared-account check on each window focus, every `tickets-updated`
+broadcast from any tab). Each rebuild replaced the network-proxy status icon —
+restarting its "connecting" pulse, which read as a flashing icon — dropped its
+tooltip, and put a new Security Details button under the pointer, so a press
+that straddled a rebuild (the first click after switching back to the tab is
+the common case: focus runs the account check, which notifies) never became a
+click. `renderTopSectionOnly` now leaves markup identical to the last render
+alone, and when the section does change it keeps the live proxy section
+(`#proxy-section`, keyed by everything its markup depends on:
+`proxySectionKey`) instead of replacing it; in-place status updates record
+the new key (`syncProxySectionKey`). A full `render()` resets the comparison.
+
+The Security Details dialog treats "open" as the overlay being on the page:
+a flag left behind by a build that threw, or by an overlay removed without
+`close()`, no longer makes every later press a no-op; a failed build resets
+the flag.
+
+Tests: `components/rightPanelTopSection` (5), `components/tlsSecurityModalOpen` (2).
+
 ## October 14, 2026 — shorter failure copy; a silent stream ends at 45 s (local)
 
 Failure lines say what happened and stop: "The provider stopped the reply
