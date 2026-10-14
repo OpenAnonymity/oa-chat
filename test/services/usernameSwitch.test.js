@@ -148,6 +148,48 @@ for (const mismatch of ['pending-login', 'different-account', 'missing-account',
     });
 }
 
+// Start-up: the session check, the wallet scope activation and the first
+// encrypted sync are this tab's own work in progress. A send or a window focus
+// in that window must not lock the account and restore it from the key bundle.
+for (const phase of ['session check pending', 'scope activating', 'first sync running']) {
+    test(`reconciliation while the ${phase} leaves the start-up alone and takes no lock`, async t => {
+        const h = await setup(t);
+        let releaseInitialization = () => {};
+        if (phase === 'session check pending') {
+            Object.assign(accountService.state, { authBootstrapComplete: false, sessionVerified: false, accountScopeReady: false, ticketSyncReady: false });
+        } else if (phase === 'scope activating') {
+            Object.assign(accountService.state, { accountScopeReady: false, ticketSyncReady: false });
+            accountService.syncInitializationInFlight = new Promise(resolve => { releaseInitialization = resolve; });
+        } else {
+            Object.assign(accountService.state, { ticketSyncReady: false });
+        }
+        let lockRequests = 0;
+        navigator.locks = { request: async (_name, _options, callback) => { lockRequests++; return callback(); } };
+        try {
+            await accountService.reconcileSharedAccount();
+        } finally {
+            releaseInitialization();
+            accountService.syncInitializationInFlight = null;
+        }
+        assert.equal(lockRequests, 0, 'this tab’s own start-up is not a change made elsewhere');
+        assert.equal(accountService.cryptoKey, 'old-crypto', 'the keys stay loaded');
+        assert.equal(accountService.state.accountHandoffPending, false);
+        assert.equal(accountService.state.sessionVerified, phase !== 'session check pending');
+        assert.deepEqual(h.settings.get('tickets-active'), [{ finalized_ticket: 'x-ticket' }]);
+    });
+}
+
+test('a scope activation that failed with nothing in flight still restores through the handoff path', async t => {
+    const h = await setup(t);
+    Object.assign(accountService.state, { accountScopeReady: false, ticketSyncReady: false });
+    accountService.syncInitializationInFlight = null;
+    let lockRequests = 0;
+    navigator.locks = { request: async (_name, _options, callback) => { lockRequests++; return callback(); } };
+    await accountService.reconcileSharedAccount();
+    assert.equal(lockRequests, 1, 'a scope that is not active and not activating is retried under the lock');
+    assert.deepEqual(h.settings.get('tickets-active'), [{ finalized_ticket: 'x-ticket' }]);
+});
+
 test('a handoff during the snapshot invalidates the stable-account fast path', async t => {
     const h = await setup(t);
     const original = chatDB.getSettingsSnapshot;

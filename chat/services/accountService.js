@@ -768,6 +768,9 @@ class AccountService {
             accountHandoffPending: false,
             // Becomes true after this account's first encrypted sync has settled successfully.
             ticketSyncReady: false,
+            // True when that first sync of this initialization failed: a send
+            // short of tickets stops waiting for it and reports the shortage.
+            ticketSyncFailed: false,
             googleLinked: false,
             oauthProvider: null,
             oauthEmail: null,
@@ -806,6 +809,9 @@ class AccountService {
         // Invalidates async scope activation/sync work across lock, logout,
         // account switching, and a newer initialization attempt.
         this.syncInitializationGeneration = 0;
+        // The scope activation (initializeSync) now in flight, if any: a send
+        // during start-up waits for it instead of restarting the account.
+        this.syncInitializationInFlight = null;
 
         sessionService.onSessionExpired(() => this.handleTokenInvalidation());
 
@@ -1406,6 +1412,10 @@ class AccountService {
             this.updateStatus();
             this.notify();
             this.completeAuthBootstrap();
+            // The wallet scope and encrypted sync gate the first send. Start
+            // them now; the identity refresh below is cosmetic and must not
+            // hold them behind its burst-protection delay.
+            this.initializeSync(false).catch(() => {});
 
             // Existing cached identities can refresh quietly after the prior
             // burst-protection delay. Older settings without an email migrate
@@ -1425,8 +1435,6 @@ class AccountService {
             ) return;
             await this.persistSettings({ onlyIfCurrent: true });
             this.notify();
-            // Initialize sync for restored session
-            this.initializeSync(false).catch(() => {});
             // If verification failed, local data remains usable until re-authentication.
         } catch (error) {
             console.warn('[AccountService] Background session verification failed:', error);
@@ -1960,7 +1968,16 @@ class AccountService {
      *   Recovery callers can await the first sync and observe failures so they can
      *   retry. Startup callers keep the historical fire-and-forget behavior.
      */
-    async initializeSync(
+    initializeSync(enableForNewAccount = false, options = {}) {
+        const run = this.runSyncInitialization(enableForNewAccount, options);
+        this.syncInitializationInFlight = run;
+        run.catch(() => {}).finally(() => {
+            if (this.syncInitializationInFlight === run) this.syncInitializationInFlight = null;
+        });
+        return run;
+    }
+
+    async runSyncInitialization(
         enableForNewAccount = false,
         { awaitInitialSync = false, throwOnFailure = false } = {}
     ) {
@@ -1978,8 +1995,9 @@ class AccountService {
             }
         };
         let accountScopeActivated = false;
-        if (this.state.ticketSyncReady) {
+        if (this.state.ticketSyncReady || this.state.ticketSyncFailed) {
             this.state.ticketSyncReady = false;
+            this.state.ticketSyncFailed = false;
             this.notify();
         }
         try {
@@ -2051,6 +2069,10 @@ class AccountService {
             } else {
                 void initialSync.catch(err => {
                     console.warn('[AccountService] Initial sync failed:', err);
+                    if (this.syncInitializationGeneration !== initializationGeneration
+                        || this.state.accountId !== expectedAccountId || this.state.ticketSyncReady) return;
+                    this.state.ticketSyncFailed = true;
+                    this.notify();
                 });
             }
             return true;
@@ -3631,11 +3653,17 @@ class AccountService {
     async sharedAccountBindingIsCurrent() {
         const accountId = this.state.accountId;
         const generation = this.loginGeneration;
+        // Readiness this tab is still producing itself (the session check,
+        // the wallet scope activation, the first encrypted sync) is not a
+        // change made in another window. A send or a focus during start-up
+        // must not lock the account and restore it from the key bundle.
+        const startingUp = () => this.state.authBootstrapComplete !== true
+            || Boolean(this.syncInitializationInFlight);
         const locallyReady = () => accountId && this.state.accountId === accountId
             && this.loginGeneration === generation && !this.state.accountHandoffPending
-            && this.state.sessionVerified === true && this.state.accountScopeReady === true
-            && this.state.ticketSyncReady === true && this.getSyncKeyMaterial()
-            && syncService.getLocalAccountScope() === accountId;
+            && this.getSyncKeyMaterial() && syncService.getLocalAccountScope() === accountId
+            && (this.state.sessionVerified === true || this.state.authBootstrapComplete !== true)
+            && (this.state.accountScopeReady === true || startingUp());
         if (!locallyReady()) return false;
         const saved = await chatDB.getSettingsSnapshot([
             ACCOUNT_SETTINGS_KEY, ACCOUNT_LOGIN_PENDING_KEY, SYNC_ACCOUNT_SCOPE_SETTING

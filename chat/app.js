@@ -158,6 +158,11 @@ const SESSION_TITLE_FALLBACK_LENGTH = 50;
 const SIDEBAR_WIDTH = 220;      // Default sidebar width = minimum width
 const RIGHT_PANEL_WIDTH = 288;  // 18rem = 288px
 const SIDEBAR_CLOSE_DURATION_MS = 220;
+// A send during start-up waits (spinner showing, Stop cancels) for this tab's
+// own account work instead of being dropped with a notice: the wallet scope
+// activation is local; the first encrypted sync is one or two org round trips.
+const ACCOUNT_SCOPE_WAIT_MS = 10000;
+const TICKET_SYNC_WAIT_MS = 15000;
 
 // Used to upgrade users who were implicitly on the prior default.
 const PREVIOUS_DEFAULT_MODEL_NAMES = [
@@ -5278,20 +5283,67 @@ class ChatApp {
         };
     }
 
+    /**
+     * Resolves with the account state once `ready(state)` holds, or with the
+     * current state when the wait is cancelled or `timeoutMs` passes.
+     */
+    waitForAccountState(ready, { signal = null, timeoutMs = ACCOUNT_SCOPE_WAIT_MS } = {}) {
+        const current = accountService.getState();
+        if (ready(current) || signal?.aborted) return Promise.resolve(current);
+        return new Promise(resolve => {
+            let settled = false;
+            let unsubscribe = () => {};
+            const finish = () => {
+                if (settled) return;
+                settled = true;
+                unsubscribe();
+                clearTimeout(timer);
+                signal?.removeEventListener?.('abort', finish);
+                resolve(accountService.getState());
+            };
+            const timer = setTimeout(finish, timeoutMs);
+            signal?.addEventListener?.('abort', finish, { once: true });
+            unsubscribe = accountService.subscribe(state => { if (ready(state)) finish(); });
+            if (ready(accountService.getState())) finish();
+        });
+    }
+
     async preflightTurnTicketBudget(session, content, options = {}) {
         // Signed out on a host that requires sign-in: the answer is the Log
         // in dialog, not a ticket shortage (which would open the Welcome
         // offers over a page that cannot buy anything).
         if (this.signInRequiredNow()) {
+            // Start-up may still be checking the saved session: wait for its
+            // answer rather than judging (or restarting) an unverified account.
+            await this.accountReadyPromise?.catch?.(() => {});
+            await accountService.waitForAuthBootstrap?.();
+            this.throwIfAborted(options.signal);
+            // Lock-free while the shared binding still names this account; a
+            // sign-in or switch made in another window takes the handoff path.
             await accountService.reconcileSharedAccount();
-            const account = accountService.getState();
+            this.throwIfAborted(options.signal);
+            let account = accountService.getState();
             if (!account?.accountId || account.sessionVerified !== true || account.status !== 'unlocked') {
                 this.accountModal?.open?.();
                 return false;
             }
-            if (account.accountHandoffPending || account.accountScopeReady !== true || account.ticketSyncReady !== true) {
-                this.showToast('Your inference tickets are still loading. Try again shortly.', 'info', 5000);
-                return false;
+            if (account.accountHandoffPending || account.accountScopeReady !== true) {
+                // The wallet scope is activated by this tab's own start-up
+                // (local work). A send in that window waits with the spinner
+                // showing instead of being dropped with a notice.
+                account = await this.waitForAccountState(
+                    state => !state.accountHandoffPending && state.accountScopeReady === true,
+                    { signal: options.signal, timeoutMs: ACCOUNT_SCOPE_WAIT_MS }
+                );
+                this.throwIfAborted(options.signal);
+                if (!account?.accountId || account.sessionVerified !== true || account.status !== 'unlocked') {
+                    this.accountModal?.open?.();
+                    return false;
+                }
+                if (account.accountHandoffPending || account.accountScopeReady !== true) {
+                    this.showToast('Your inference tickets are still loading. Try again shortly.', 'info', 5000);
+                    return false;
+                }
             }
         }
         if (!this.usesTicketAccess(session)) {
@@ -5332,6 +5384,18 @@ class ChatApp {
             modelLabel: inference.label
         });
         let budget = buildBudget();
+        const syncStillStarting = state => Boolean(state?.accountId) && state.status === 'unlocked'
+            && state.sessionVerified === true && state.accountScopeReady === true
+            && state.ticketSyncReady !== true && state.ticketSyncFailed !== true;
+        if (!budget.sufficient && syncStillStarting(accountService.getState())) {
+            // The first encrypted sync of this page may still be pulling this
+            // account's tickets, which can cover the turn without a purchase.
+            // A wallet that already covers it never waits for the sync.
+            await this.waitForAccountState(state => !syncStillStarting(state),
+                { signal: options.signal, timeoutMs: TICKET_SYNC_WAIT_MS });
+            this.throwIfAborted(options.signal);
+            budget = buildBudget();
+        }
         if (!budget.sufficient && ticketClient.isLegacyTransferRunning?.()) {
             // A move of previous-version tickets may be finishing right now
             // and is the only thing that can turn this shortage into a

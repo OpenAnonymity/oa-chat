@@ -527,6 +527,27 @@ class ChatDatabase {
     }
 
     async backfillMissingUpdatedAt() {
+        // A session without updatedAt is absent from the updatedAt index, so
+        // two counts say whether anything needs the walk. The walk itself is
+        // one readwrite transaction over every session record; it used to run
+        // on every page load, and a send issued while it ran queued behind it
+        // (the user message is written to the same store).
+        const needsWalk = await new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            let total = null;
+            let indexed = null;
+            const settle = () => { if (total !== null && indexed !== null) resolve(total !== indexed); };
+            const all = store.count();
+            all.onsuccess = () => { total = all.result; settle(); };
+            all.onerror = () => reject(all.error);
+            let index;
+            try { index = store.index('updatedAt'); } catch { resolve(true); return; }
+            const withUpdatedAt = index.count();
+            withUpdatedAt.onsuccess = () => { indexed = withUpdatedAt.result; settle(); };
+            withUpdatedAt.onerror = () => reject(withUpdatedAt.error);
+        });
+        if (!needsWalk) return;
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['sessions'], 'readwrite');
             const store = transaction.objectStore('sessions');
