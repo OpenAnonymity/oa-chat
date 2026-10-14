@@ -1,3 +1,19 @@
+## October 14, 2026 — an edited prompt goes to the model on its edit card
+
+Editing a prompt and resubmitting it after switching the model picker still
+answered with the model the prompt was first sent to. `confirmEditPrompt`
+committed the new text and attachments but left the prompt's stored `model`
+as it was, and the regeneration that follows an edit reads that stored model
+(Retry's contract: a regenerated turn reuses the accepted model, search,
+Memory and reasoning settings). The edit card's model chip mirrors the
+session model, so the edit now records the session's current model on the
+prompt as part of the committed edit; the regeneration, its typing header,
+the ticket preflight and the reply's attribution then follow the chip. Retry
+on an assistant message is unchanged and still reuses the accepted model.
+Parallel/Council edits were already resolved from the live session config.
+Test: `application/chatRuntimeOwnership` ("an edited prompt is resubmitted to
+the model on the edit card").
+
 ## October 13, 2026 — a finished reply settles promptly; Stop stops every update
 
 Three ways a single chat could stay busy or keep changing after it should have
