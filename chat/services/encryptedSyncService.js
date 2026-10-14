@@ -16,6 +16,7 @@ import { ORG_API_BASE } from './orgEndpoints.js';
 import { chatDB } from '../db.js';
 import { fetchRetry, fetchRetryJson } from './fetchRetry.js';
 import storageEvents from './storageEvents.js';
+import { reportDiagnostic, requestFailureReason } from './diagnostics.js';
 import { withAccountDataLock, ACCOUNT_LOGIN_PENDING_KEY } from './accountDataLock.js';
 import sessionService from './sessionService.js';
 import {
@@ -689,6 +690,7 @@ export class SyncService {
             return hasChanges;
         } catch (error) {
             console.warn('[SyncService] Status check failed:', error);
+            reportDiagnostic('sync.failed', { reason: requestFailureReason(error), stage: 'status' });
             return false;
         }
     }
@@ -873,6 +875,7 @@ export class SyncService {
                 };
             }
             console.error('[SyncService] Sync failed:', error);
+            reportDiagnostic('sync.failed', { reason: requestFailureReason(error), stage: 'merge' });
             const result = { success: false, error: error.message };
             this.lastSyncResult = result;
             this.notify('sync_error', { error: error.message });

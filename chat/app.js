@@ -1,5 +1,6 @@
 import { isPhoneAppLayout } from './ui/phoneAppLayout.js';
 import { trackFeatureUsage, trackSettingChange } from './services/featureUsage.js';
+import { reportDiagnostic } from './services/diagnostics.js';
 import { getErrorMessage } from './domain/errorMessage.js';
 import { isRetryableInferenceError } from './services/inference/reliability.js';
 import { validateConversationInput } from './services/inference/inputLimits.js';
@@ -1215,6 +1216,7 @@ class ChatApp {
             await chatDB.saveMessage(message);
         } catch (error) {
             console.warn('Could not persist the pending turn:', error?.message || error);
+            reportDiagnostic('storage.failed', { store: 'pending-turn', op: 'write' });
         }
     }
 
@@ -1256,6 +1258,7 @@ class ChatApp {
         // the refusals themselves.
         const count = Number(removed > 0 ? removed : skipped);
         if (!(count > 0)) return;
+        reportDiagnostic('access.sweep', { skipped: Number(skipped), recovered: recovered === true, tier });
         const line = `Removed ${count} already-used ticket${count === 1 ? '' : 's'}`;
         this.showToast(reason === 'TICKET_SHORTAGE' ? `${line}. No tickets left for this message.` : line, 'success', 5000);
     }
@@ -12191,6 +12194,7 @@ Your API key has been cleared. A new key from a different station will be obtain
                     },
                     onAccessRequestError: (error) => {
                         console.error('Failed to automatically acquire API access:', error);
+                        if (error?.code === 'TICKET_SWEEP_STALLED') reportDiagnostic('access.sweep_stalled', {});
                     },
                     onVerificationWarning: (...args) => {
                         console.warn(...args);
