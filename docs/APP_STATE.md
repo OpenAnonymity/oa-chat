@@ -17,9 +17,20 @@ ticket it has already seen and rolls the earlier ones back, reporting
 `failed_ticket.index`. The client archived the whole selection, so on a
 three-ticket model every stale ticket silently cost two good ones. Only the
 named ticket is set aside now; an org that names none still sets the selection
-aside as before. A sweep is still one org round trip per stale ticket — a
-batch "which of these are spent" check would let the org link the unspent
-tickets' future requests to one wallet, which the privacy model forbids.
+aside as before — and the count shown (the ticking label and the closing toast)
+is what the wallet lost, not the number of refusals. A sweep is still one org
+round trip per stale ticket — a batch "which of these are spent" check would
+let the org link the unspent tickets' future requests to one wallet, which the
+privacy model forbids.
+
+Review correction (same day): a `TICKET_KEY_INVALIDATED` refusal retires one
+old signing-key generation; the loop continues while the wallet still covers
+the model and shrank on the refusal, bounded by the wallet and by Stop, never
+by a count. (The first cut capped it at three, so a wallet holding four old
+generations ahead of its current tickets stopped with "4 valid tickets remain,
+but this model needs 1"; the previous code reached the fifth request.) An
+invalidation that does not shrink the wallet stops with `TICKET_SWEEP_STALLED`.
+
 ## October 14, 2026 — Haiku failure and provider diagnostic codes (local)
 
 Staging serves commercial d3764d08 / client f55fdb2b, built at 18:44:40 UTC.

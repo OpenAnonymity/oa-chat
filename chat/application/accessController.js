@@ -265,15 +265,18 @@ export async function acquireVerifiedAccess(options = {}) {
     // and the next is tried, for as long as the wallet lasts: the user
     // asked for a reply, and a wallet with hundreds of such tickets must
     // still get one. Stop cancels; a wallet that runs out is a shortage.
+    // `ticketsSkipped` counts refusals; `ticketsRemoved` counts what the
+    // wallet actually lost to them (an org that names no index sets a whole
+    // selection aside), which is the number the user is told.
     let ticketsSkipped = 0;
-    let invalidationRetries = 0;
+    let ticketsRemoved = 0;
     let sweepSettled = false;
     const settleSweep = recovered => {
         if (sweepSettled || ticketsSkipped === 0) return;
         sweepSettled = true;
         if (typeof onTicketSweepEnd !== 'function') return;
         try {
-            onTicketSweepEnd({ skipped: ticketsSkipped, recovered });
+            onTicketSweepEnd({ skipped: ticketsSkipped, removed: ticketsRemoved, recovered });
         } catch (hookError) {
             onVerificationWarning('Ticket sweep hook failed:', buildSafeAccessErrorMetadata(hookError));
         }
@@ -308,25 +311,36 @@ export async function acquireVerifiedAccess(options = {}) {
                     // ticket is being offered again (a store that cannot
                     // write, an org that refuses everything): stop rather
                     // than loop.
-                    if (spendableBalance() >= balanceBeforeRequest) {
+                    const removedNow = balanceBeforeRequest - spendableBalance();
+                    if (!(removedNow > 0)) {
                         error.message = 'A ticket was refused as already used but could not be set aside. Please try again.';
                         error.code = 'TICKET_SWEEP_STALLED';
                         onAccessRequestError(buildSafeAccessErrorMetadata(error));
                         throw error;
                     }
                     ticketsSkipped += 1;
-                    await onTicketUsed(ticketsSkipped, error);
+                    ticketsRemoved += removedNow;
+                    await onTicketUsed(ticketsRemoved, error);
                     continue;
                 }
                 if (error.code === 'TICKET_KEY_INVALIDATED') {
-                    invalidationRetries += 1;
+                    // Each refusal retires one old signing-key generation from
+                    // the wallet; the next request uses what is left. Bounded
+                    // by the wallet shrinking (and by Stop), never by a count:
+                    // a wallet holding several old generations ahead of its
+                    // current tickets must still reach them.
                     const remainingTickets = ticketClient.getTicketCount();
-                    if (remainingTickets >= ticketsRequired && invalidationRetries <= 3) {
+                    if (remainingTickets >= ticketsRequired && spendableBalance() < balanceBeforeRequest) {
                         continue;
                     }
-                    error.message = remainingTickets > 0
-                        ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
-                        : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+                    if (remainingTickets >= ticketsRequired) {
+                        error.message = 'A ticket was refused as invalidated but could not be set aside. Please try again.';
+                        error.code = 'TICKET_SWEEP_STALLED';
+                    } else {
+                        error.message = remainingTickets > 0
+                            ? `The org rotated its ticket signing key and invalidated the old tickets. ${remainingTickets} valid ticket${remainingTickets === 1 ? '' : 's'} remain, but this model needs ${ticketsRequired}.`
+                            : 'The org rotated its ticket signing key and invalidated your old tickets. Redeem a new invite code to continue.';
+                    }
                 }
                 onAccessRequestError(buildSafeAccessErrorMetadata(error));
                 throw error;

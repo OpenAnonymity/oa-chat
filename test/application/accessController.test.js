@@ -509,7 +509,7 @@ test('acquireSessionAccess retries spent tickets before succeeding', async () =>
     assert.equal(token, 'fresh-key');
     assert.equal(harness.requested.length, 2);
     assert.deepEqual(harness.ticketUsed, [1]);
-    assert.deepEqual(harness.sweeps, [{ skipped: 1, recovered: true }]);
+    assert.deepEqual(harness.sweeps, [{ skipped: 1, removed: 1, recovered: true }]);
 });
 
 test('a sweep past already-used tickets is bounded by the wallet, not by ten', async () => {
@@ -522,7 +522,7 @@ test('a sweep past already-used tickets is bounded by the wallet, not by ten', a
     assert.equal(harness.requested.length, 121);
     assert.equal(harness.ticketUsed.length, 120);
     assert.equal(harness.ticketUsed.at(-1), 120);
-    assert.deepEqual(harness.sweeps, [{ skipped: 120, recovered: true }]);
+    assert.deepEqual(harness.sweeps, [{ skipped: 120, removed: 120, recovered: true }]);
     assert.equal(harness.remaining(), 477 - 120 - 3);
 });
 
@@ -535,7 +535,7 @@ test('a wallet that runs out during the sweep becomes an ordinary shortage', asy
     // Five refusals leave one ticket, which is not enough for two.
     assert.equal(harness.ticketUsed.length, 5);
     assert.deepEqual(shortages, [{ requiredTickets: 2, availableTickets: 1, label: 'this model' }]);
-    assert.deepEqual(harness.sweeps, [{ skipped: 5, recovered: false }]);
+    assert.deepEqual(harness.sweeps, [{ skipped: 5, removed: 5, recovered: false }]);
 });
 
 test('a refusal that does not shrink the wallet stops the sweep instead of looping', async () => {
@@ -565,7 +565,7 @@ test('Stop during a sweep cancels it and reports the sweep as not recovered', as
     });
     await assert.rejects(acquireWith(harness, { signal: controller.signal }), { name: 'AbortError' });
     assert.equal(harness.requested.length, 4);
-    assert.deepEqual(harness.sweeps, [{ skipped: 3, recovered: false }]);
+    assert.deepEqual(harness.sweeps, [{ skipped: 3, removed: 3, recovered: false }]);
 });
 
 test('a sweep hook that throws does not change the outcome', async () => {
@@ -574,6 +574,87 @@ test('a sweep hook that throws does not change the outcome', async () => {
     assert.equal(await acquireWith(harness), 'fresh-key');
     assert.equal(harness.warnings.length, 1);
     assert.match(harness.warnings[0][0], /sweep hook/);
+});
+
+test('a refusal that sets a whole selection aside counts the tickets the wallet lost, not the refusals', async () => {
+    // An org that names no failed_ticket.index: the client archives the
+    // whole 3-ticket selection per refusal. The count shown ticks by what
+    // the wallet actually lost.
+    let remaining = 12;
+    let attempts = 0;
+    const harness = createAccessHarness({
+        ticketCount: () => remaining,
+        getTicketCost: () => 3,
+        requestAccess: async () => {
+            attempts += 1;
+            if (attempts <= 2) {
+                remaining -= 3;
+                throw Object.assign(new Error('used'), { code: 'TICKET_USED', consumeTickets: true });
+            }
+            remaining -= 3;
+            return { key: 'fresh-key', stationId: 'station-b' };
+        }
+    });
+    const sweeps = [];
+    assert.equal(await acquireWith(harness, { onTicketSweepEnd: outcome => sweeps.push(outcome) }), 'fresh-key');
+    assert.deepEqual(harness.ticketUsed, [3, 6], 'the running count is tickets, not refusals');
+    assert.deepEqual(sweeps, [{ skipped: 2, removed: 6, recovered: true }]);
+});
+
+test('several old signing-key generations ahead of the current tickets are all retired, bounded by the wallet, not by a count', async () => {
+    // Review 2026-10-14 (ticket-rotation-repro.mjs): four invalidated
+    // generations followed by four current tickets, a one-ticket model. A
+    // hard three-retry cap stopped at the fourth refusal with "4 valid
+    // tickets remain, but this model needs 1"; the baseline reached the
+    // fifth request.
+    let count = 8;
+    let attempts = 0;
+    const harness = createAccessHarness({
+        ticketCount: () => count,
+        getTicketCost: () => 1,
+        requestAccess: async () => {
+            attempts += 1;
+            if (attempts <= 4) {
+                count -= 1;
+                throw Object.assign(new Error('old generation'), { code: 'TICKET_KEY_INVALIDATED' });
+            }
+            return { key: 'fresh-key', stationId: 'station-b' };
+        }
+    });
+    assert.equal(await acquireWith(harness), 'fresh-key');
+    assert.equal(attempts, 5);
+    assert.equal(count, 4);
+    assert.deepEqual(harness.ticketUsed, [], 'an invalidated generation is not an already-used ticket');
+});
+
+test('an invalidation that does not shrink the wallet stops instead of looping', async () => {
+    const harness = createAccessHarness({
+        ticketCount: () => 5,
+        getTicketCost: () => 1,
+        requestAccess: async () => {
+            throw Object.assign(new Error('old generation'), { code: 'TICKET_KEY_INVALIDATED' });
+        }
+    });
+    await assert.rejects(acquireWith(harness), { code: 'TICKET_SWEEP_STALLED', message: /invalidated but could not be set aside/ });
+    assert.equal(harness.requested.length, 1);
+});
+
+test('Stop during a run of invalidated generations cancels it', async () => {
+    const controller = new AbortController();
+    let count = 20;
+    let attempts = 0;
+    const harness = createAccessHarness({
+        ticketCount: () => count,
+        getTicketCost: () => 1,
+        requestAccess: async () => {
+            attempts += 1;
+            if (attempts === 3) controller.abort();
+            count -= 1;
+            throw Object.assign(new Error('old generation'), { code: 'TICKET_KEY_INVALIDATED' });
+        }
+    });
+    await assert.rejects(acquireWith(harness, { signal: controller.signal }), { name: 'AbortError' });
+    assert.equal(attempts, 3);
 });
 
 test('acquireSessionAccess retries after an invalidated generation is removed', async () => {

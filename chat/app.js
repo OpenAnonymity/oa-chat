@@ -1248,9 +1248,12 @@ class ChatApp {
      * that recovered moves on to the granted key by itself; one that did
      * not leaves the row to the error that ended it.
      */
-    settleTicketSweep(sessionId, { skipped = 0, recovered = false } = {}) {
-        if (!(skipped > 0)) return;
-        const count = Number(skipped);
+    settleTicketSweep(sessionId, { skipped = 0, removed = skipped, recovered = false } = {}) {
+        // `removed` is what the wallet lost (an org that names no ticket
+        // index sets a whole selection aside per refusal); `skipped` counts
+        // the refusals themselves.
+        const count = Number(removed > 0 ? removed : skipped);
+        if (!(count > 0)) return;
         this.showToast(`Removed ${count} already-used ticket${count === 1 ? '' : 's'}`, 'success', 5000);
     }
 
