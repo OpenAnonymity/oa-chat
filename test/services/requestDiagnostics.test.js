@@ -52,3 +52,16 @@ test('reporting has a hard per-page event bound', () => {
     }
     assert.equal(events.length, 20);
 });
+
+test('provider SSE codes stay distinct from HTTP errors without retaining original details', () => {
+    const { events, report } = harness();
+    for (const code of [429, 402, 502, secret, 123456]) {
+        const error = Object.assign(new Error(secret), { code, providerReported: true, data: secret });
+        report('completion', error);
+        assert.equal(error.status, undefined, 'diagnostics cannot change recovery policy');
+    }
+    assert.deepEqual(events.map(error => parseRequestFailureType(error.name).reason),
+        ['provider_code_429', 'provider_code_402', 'provider_code_502', 'provider_error']);
+    for (const event of events) assert.equal(JSON.stringify(event).includes(secret), false);
+    assert.equal(parseRequestFailureType('OARequest_completion_provider_code_123456'), null);
+});

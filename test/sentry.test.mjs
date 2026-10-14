@@ -141,3 +141,19 @@ test('handled request categories survive but original error data and arbitrary f
     assert.equal(sanitizeErrorEvent(input, config).exception.values[0].type, 'Error');
     assert.equal(sanitizeErrorEvent(input, config).fingerprint, undefined);
 });
+
+test('actual SDK envelope keeps finite provider error categories and drops private scope', async () => {
+    const input = event();
+    input.exception.values[0].type = 'OARequest_completion_provider_code_429';
+    const requests = [];
+    init({ ...privacyOptions(config), transport: options => makeFetchTransport(options, async (_url, request) => {
+        requests.push(request); return { status: 200, headers: new Headers() };
+    }) });
+    getCurrentScope().setUser({ email: privateText });
+    captureEvent(input);
+    await flush(2000);
+    assert.equal(requests.length, 1);
+    assert.ok(String(requests[0].body).includes('OARequest_completion_provider_code_429'));
+    assert.equal(String(requests[0].body).includes(privateText), false);
+    assert.equal(requests[0].credentials, 'omit');
+});

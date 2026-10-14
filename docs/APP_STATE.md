@@ -1,3 +1,24 @@
+## October 14, 2026 — Haiku failure and provider diagnostic codes (local)
+
+Staging serves commercial d3764d08 / client f55fdb2b, built at 18:44:40 UTC.
+A new-send Parallel lane completion failed at 18:48:35–36 UTC, immediately
+before the user's Haiku screenshot. The tab's sanitized Activity Timeline and
+Sentry OA-CHAT-4 both recorded the failure; deployed stack locations map to
+sendCapturedMessage → runMultiModelTurn → streamed lane completion. The recorded
+category was unexpected and no underlying error detail survived. Both inspected
+staging chats later showed completed lanes. Neither that recovery nor this
+diagnostic repair establishes the original failure's cause.
+
+Provider SSE errors already retain numeric code on the operational error, but
+lane/log formatting accepted only string codes and Sentry ignored provider
+codes. New diagnostic-only normalization keeps a finite provider-code allowlist
+or generic provider-stream category. Lane UI distinguishes provider codes from
+actual HTTP status; Sentry uses provider_code_NNN / provider_error. Raw provider
+messages, bodies and arbitrary provider codes remain excluded. HTTP status,
+credit recovery, retries, cancellation and ticket spending are unchanged.
+Details: [Parallel/Council](PARALLEL_COUNCIL.md) and [Sentry](SENTRY.md).
+This local update has not been deployed; upstream failure remains unresolved.
+
 ## October 14, 2026 — staging relay lifecycle and phone facade repair (local)
 
 The live staging run exposed repeated libcurl WASM errors. Closing a vendored

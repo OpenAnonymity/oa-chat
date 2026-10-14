@@ -105,3 +105,20 @@ After output pauses for 1.2 seconds, an unfinished lane shows “Still working�
 The label clears on resumed output, reasoning, completion, failure, or cancellation.
 Lane failures retain the provider error and HTTP code where available. Image,
 working, and error reveals honor reduced motion and do not change access issuance.
+
+## Provider errors inside an HTTP 200 stream (2026-10-14)
+
+An accepted streaming connection can still contain a terminal provider error
+before any answer. Its numeric code is diagnostic data, not the HTTP response
+status. The lane/log formatter previously accepted only string codes and the
+UI removed the remaining parentheses, so these failures could appear only as
+“Request failed.” A finite numeric provider-code allowlist now survives as
+`PROVIDER_CODE_NNN`, rendered as “Provider error NNN” with the standard status
+name. Provider errors without an allowlisted numeric code say “The provider
+reported an error.” Arbitrary provider strings and raw error bodies are excluded.
+
+This changes presentation and diagnostics only. It does not assign HTTP status
+to an operational error, trigger credit recovery, replay requests, spend tickets
+or change cancellation. Sibling lanes keep their results. The original live
+Haiku failure's cause cannot be recovered from the old generic record.
+Reference: [OpenRouter streaming error format](https://github.com/OpenRouterTeam/docs/blob/main/api_reference/streaming.mdx).

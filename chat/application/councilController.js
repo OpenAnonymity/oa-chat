@@ -7,6 +7,7 @@ import {
     buildSafeAccessErrorMetadata
 } from './accessController.js';
 import { getMessageTextContent } from '../domain/messageContent.js';
+import { providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
 import { buildCouncilSynthesisMessages } from '../domain/councilPrompts.js';
 import {
     COUNCIL_OUTPUT_SYNTHESIS,
@@ -46,9 +47,9 @@ function throwIfAborted(signal) {
 
 function buildSafeCouncilErrorMessage(error, fallback = 'Request failed.') {
     const status = Number(error?.status ?? error?.response?.status);
-    const code = typeof error?.code === 'string'
+    const code = providerErrorDiagnosticCode(error) || (typeof error?.code === 'string'
         ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
-        : '';
+        : '');
     const details = [];
     if (Number.isFinite(status)) details.push(`HTTP ${status}`);
     if (code) details.push(code);

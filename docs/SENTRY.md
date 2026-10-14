@@ -76,6 +76,14 @@ cancellation and expected HTTP 402 credit recovery are excluded. A failed attemp
 may later recover through application policy, so a report does not prove the
 whole chat ultimately failed. Reporting never changes retries or request results.
 
+Provider SSE errors have their own finite `provider_code_NNN` category when the
+provider reported an allowlisted numeric code, or `provider_error` otherwise.
+These are distinct from actual HTTP status categories: a stream can be HTTP 200
+and still terminate with a provider error before output. The raw provider body,
+message, model and arbitrary code strings remain excluded. Diagnostic categories
+never assign HTTP status to operational errors or authorize credit recovery.
+Older generic `unexpected` events cannot be reclassified after the fact.
+
 Custom exception names and messages outside that allowlist, stack variables/function names/source lines,
 page URLs, user data, request details, breadcrumbs, attachments, tags, context,
 and extra fields are discarded. Unknown or non-application frames are dropped.

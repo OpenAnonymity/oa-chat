@@ -48,6 +48,29 @@ test('nested HTTP and stream errors retain text and metadata without dumping req
     await assert.rejects(stream(apiFor(async () => response(delta + `data: ${JSON.stringify({ error: detail })}\n`))),
         error => error.message === 'Model unavailable' && error.isStreamError === true && error.retryable === false);
 });
+
+test('real SSE decoder passes provider code to sanitized timeline without changing HTTP or replay policy', async t => {
+    const logger = (await import(url('services/networkLogger.js'))).default;
+    const previous = window.networkLogger;
+    window.networkLogger = logger;
+    t.after(() => { window.networkLogger = previous; });
+    let calls = 0;
+    const api = apiFor(async () => {
+        calls++;
+        return response('data: {"error":{"code":429,"message":"PRIVATE_PROVIDER_BODY"}}\n\n');
+    });
+    await assert.rejects(stream(api), error => {
+        assert.equal(error.providerReported, true);
+        assert.equal(error.code, 429);
+        assert.equal(error.status, undefined);
+        assert.equal(error.retryable, false);
+        assert.equal(error.isCancelled, undefined);
+        return true;
+    });
+    assert.equal(calls, 1);
+    assert.equal(logger.getRecentLogs(1)[0].error, 'Request failed (PROVIDER_CODE_429)');
+    assert.doesNotMatch(JSON.stringify(logger.getRecentLogs(1)), /PRIVATE_PROVIDER_BODY/);
+});
 test('richer nested provider credit messages never authorize extra ticket spending', async () => {
     for (const message of ['This request requires more credits, or fewer max_tokens. You requested up to 65536 tokens, but can only afford 54775.',
         'Insufficient credits']) {

@@ -1681,6 +1681,31 @@ test('runMultiModelTurn skips post-turn memory extraction when every lane fails'
     assert.deepEqual(memoryExtractionCalls, []);
 });
 
+test('failed provider lane retains safe diagnostic code while its sibling completes without replay', async () => {
+    for (const [code, diagnostic] of [[429, 'PROVIDER_CODE_429'], [402, 'PROVIDER_CODE_402'],
+        ['PRIVATE_PROVIDER_BODY', 'PROVIDER_STREAM_ERROR']]) {
+        let requests = 0;
+        const error = Object.assign(new Error('PRIVATE_PROVIDER_BODY'), { code, providerReported: true, retryable: false });
+        const { controller, session, userMessage, savedMessages } = createRunTurnHarness({
+            councilConfig: { outputMode: 'parallel' },
+            sendLaneCompletion: async ({ entry }) => {
+                requests++;
+                if (entry.laneId === 'primary') throw error;
+                return { content: 'Sibling answer' };
+            }
+        });
+        await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false, abortController: new AbortController() });
+        const lanes = savedMessages.at(-1).council.stage1;
+        assert.equal(lanes[0].status, 'error');
+        assert.equal(lanes[0].error, `Request failed. (${diagnostic})`);
+        assert.equal(lanes[1].status, 'complete');
+        assert.equal(lanes[1].response, 'Sibling answer');
+        assert.equal(requests, 2, 'no extra inference request');
+        assert.doesNotMatch(JSON.stringify(lanes), /PRIVATE_PROVIDER_BODY/);
+        assert.equal(error.status, undefined);
+    }
+});
+
 test('runMultiModelTurn uses each lane previous Stage 1 response in parallel output mode', async () => {
     const sentMessagesByLane = new Map();
     const previousUserMessage = {

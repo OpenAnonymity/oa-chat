@@ -3,6 +3,8 @@
  * Tracks and stores network requests for debugging and monitoring
  */
 
+import { providerErrorDiagnosticCode } from '../domain/providerErrorDiagnostic.js';
+
 class NetworkLogger {
     constructor() {
         this.logs = [];
@@ -287,9 +289,9 @@ class NetworkLogger {
     sanitizeError(error) {
         if (!error) return null;
         const status = Number(error?.status ?? error?.response?.status);
-        const code = typeof error?.code === 'string'
+        const code = providerErrorDiagnosticCode(error) || (typeof error?.code === 'string'
             ? error.code.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 80)
-            : '';
+            : '');
         const details = [];
         if (Number.isFinite(status)) details.push(`HTTP ${status}`);
         if (code) details.push(code);

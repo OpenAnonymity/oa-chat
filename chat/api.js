@@ -1572,7 +1572,8 @@ export class OpenRouterAPI {
                         headers: window.networkLogger.sanitizeHeaders(headers),
                         body: logBody
                     },
-                    error: { status: streamError.status, code: streamError.code },
+                    error: { status: streamError.status, code: streamError.code,
+                        ...(streamError.providerReported === true ? { providerReported: true } : {}) },
                     isAborted: streamError.isCancelled === true // Flag user-initiated cancellation
                 });
             }

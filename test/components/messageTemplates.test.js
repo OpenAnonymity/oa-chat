@@ -418,6 +418,18 @@ test('describeCouncilLaneError states the error: the status by name, the code as
     assert.equal(describeCouncilLaneError('Context window exceeded').message, 'Context window exceeded');
 });
 
+test('lane display distinguishes provider SSE codes from actual HTTP errors', async () => {
+    const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_429)'),
+        { message: 'Too many requests.', detail: 'Provider error 429' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_502)'),
+        { message: 'Bad gateway.', detail: 'Provider error 502' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_STREAM_ERROR)'),
+        { message: 'The provider reported an error.', detail: '' });
+    assert.deepEqual(describeCouncilLaneError('Request failed. (PROVIDER_CODE_123456)'),
+        { message: 'Request failed.', detail: '' });
+});
+
 test('stopped replacement keeps the original reply with a neutral, retryable status', async () => {
     const restore = installTemplateGlobals();
     try {

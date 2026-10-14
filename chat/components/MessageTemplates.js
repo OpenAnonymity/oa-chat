@@ -16,6 +16,7 @@ import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAsse
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
 import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
 import { keptAccessStages } from '../domain/accessTrace.js';
+import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
 
 // In-memory cache for reasoning trace expanded state (persists across session switches)
 const reasoningExpandedState = new Set();
@@ -1511,6 +1512,14 @@ export function describeCouncilLaneError(errorText) {
     const raw = typeof errorText === 'string' ? errorText.trim() : '';
     const httpMatch = raw.match(/HTTP\s+(\d{3})/i);
     const code = httpMatch ? Number(httpMatch[1]) : null;
+    const providerMatch = raw.match(/\((PROVIDER_(?:CODE_\d{3}|STREAM_ERROR))\)$/);
+    const provider = providerMatch ? parseProviderErrorDiagnostic(providerMatch[1]) : null;
+    if (!code && provider) {
+        return {
+            message: (provider.status && HTTP_STATUS_NAMES[provider.status]) || 'The provider reported an error.',
+            detail: provider.status ? `Provider error ${provider.status}` : ''
+        };
+    }
     // Stored errors read "Request failed. (HTTP 429, CODE)"; the lead line
     // is the error's own text when there is no status to name.
     const stripped = raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
