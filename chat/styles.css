@@ -5470,6 +5470,13 @@ html[data-right-panel-hidden="true"] #right-panel #right-panel-content {
     transition: background-color 0.2s ease, opacity 0.2s ease;
 }
 
+/* Request activity must not look like the user's relay preference is changing.
+   Retain the busy cursor/aria guard and the existing deliberate-toggle motion. */
+#proxy-toggle-btn[data-busy]:not(:disabled) {
+    opacity: 1;
+    transition: background var(--toggle-track) var(--toggle-ease);
+}
+
 .switch-toggle:disabled {
     opacity: 0.7;
     cursor: pointer; /* Keep pointer cursor during animation, not wait cursor */

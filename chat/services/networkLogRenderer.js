@@ -111,6 +111,13 @@ export function isSpentTicketRefusal(status, response) {
 export function getActivityDescription(log, detailed = false) {
     const { type, url, method, status, response, request, action, message } = log;
 
+    if (action === 'ticket-sweep-summary' && type === 'local') {
+        const count = log.spentTicketChecks;
+        return detailed
+            ? `${count} key request${count === 1 ? ' was' : 's were'} refused because tickets had already been used. These repeated checks are grouped here while OA tries remaining tickets. This is a check count, not a count of tickets spent or removed.`
+            : `Used tickets · ${count} check${count === 1 ? '' : 's'}`;
+    }
+
     // Handle local events (non-network operations)
     if (type === 'local' && method === 'LOCAL') {
         if (!detailed) {
@@ -464,7 +471,7 @@ export function getActivityIcon(log) {
 
     // Handle local events
     if (type === 'local') {
-        if (action === 'ticket-select') {
+        if (action === 'ticket-select' || action === 'ticket-sweep-summary') {
             // Checkmark/select icon for ticket selection
             return `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>

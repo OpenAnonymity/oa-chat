@@ -9,7 +9,7 @@ import tlsSecurityModal from './TLSSecurityModal.js';
 import proxyInfoModal from './ProxyInfoModal.js';
 import verifierAttestationModal from './VerifierAttestationModal.js';
 import { getActivityDescription, getActivityIcon, getStatusIconClass, formatTimestamp } from '../services/networkLogRenderer.js';
-import { groupVerificationRetries } from '../services/activityTimeline.js';
+import { groupActivityTimeline } from '../services/activityTimeline.js';
 import { getTicketCost } from '../services/modelTiers.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import SmoothProgress from '../services/smoothProgress.js';
@@ -234,7 +234,7 @@ class RightPanel {
         this.expiresAt = accessInfo?.expiresAt || null;
 
         // Load ALL network logs globally (not just for this session)
-        this.networkLogs = groupVerificationRetries(this.app.services.networkLogger.getAllLogs());
+        this.networkLogs = groupActivityTimeline(this.app.services.networkLogger.getAllLogs(), this.networkLogs);
         this.previousLogCount = this.networkLogs.length;
 
         // Only update the top section (API key/tickets) without re-rendering logs
@@ -505,7 +505,7 @@ class RightPanel {
             // DON'T clear expandedLogIds - preserve expansion state
             const previousCount = this.previousLogCount;
             const previousLatestId = this.networkLogs[0]?.id;
-            this.networkLogs = groupVerificationRetries(this.app.services.networkLogger.getAllLogs());
+            this.networkLogs = groupActivityTimeline(this.app.services.networkLogger.getAllLogs(), this.networkLogs);
             this.previousLogCount = this.networkLogs.length;
             const hasNewRow = this.networkLogs[0]?.id !== previousLatestId;
 
@@ -1576,6 +1576,12 @@ class RightPanel {
      * Generate the expanded details HTML for a log entry
      */
     generateExpandedDetailsHTML(log) {
+        if (log.action === 'ticket-sweep-summary') {
+            return `<div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 p-3">
+                <div class="text-foreground leading-relaxed">${this.escapeHtml(getActivityDescription(log, true))}</div>
+                <div class="mt-1 text-muted-foreground">Last checked ${formatTimestamp(log.lastCheckTimestamp)}. Count covers checks retained in this tab’s activity log.</div>
+            </div>`;
+        }
         return `
             <div class="activity-log-details mt-2 text-xs bg-muted/10 rounded-lg border border-border/50 overflow-hidden" style="animation: slideDown 0.2s ease-out;">
                     <!-- Detailed description -->

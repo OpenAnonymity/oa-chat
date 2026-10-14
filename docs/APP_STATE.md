@@ -1,3 +1,27 @@
+## October 14, 2026 — compact spent-ticket activity and steady relay toggle
+
+The RHS groups adjacent ticket-selection / already-spent request-key refusal
+pairs into one expandable "Used tickets · N checks" row. Grouping is presentation
+only: raw in-memory network logs, cleanup, ticket retirement, retries, account
+boundaries and telemetry are unchanged. Counts are checks, not tickets lost:
+requests can contain several tickets but retire only the refused one. The first
+selection's row ID/time stay stable while a group grows. Success, other failures,
+intervening activity, chat/origin changes and pending selections stay separate.
+Counts cover the retained memory-log window, not a lifetime wallet total.
+
+The proxy toggle already retained its DOM nodes, but `data-busy` dimmed it to
+55% on every request and then restored it, creating a flash during a sweep.
+Only that toggle now stays opaque during ordinary request activity. Its busy
+cursor, aria-disabled state, explicit-toggle guard and existing t-toggle motion
+remain. User-initiated disabled/pending controls retain their original styling.
+
+Release regression: inject 100 spent-ticket refusal pairs and assert one summary,
+then a visible success or unrelated failure. Verify expansion, raw-log retention,
+and live counts. Alternate proxy active/idle state while sampling computed opacity
+and confirm it stays 1, with the same connected switch node and busy guard.
+Check light/dark and reduced motion. No real tickets should be consumed for this
+synthetic UI check.
+
 ## October 14, 2026 — keep proxy controls attached and preserve error provenance (local)
 
 Review of cb9fed96 found that replacing a parent's innerHTML and reinserting
