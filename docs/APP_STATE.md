@@ -19,15 +19,20 @@ two things turned that into the lane's header and a bare message.
 - **Conversations saved by earlier builds** may hold `responseModel: "unknown"`
   on a failed lane; the template (`councilLaneResponseModel`) skips it and shows
   the requested model, so those turns render correctly without a migration.
-- **The router's numeric error code is the status.** `buildSafeCouncilErrorMessage`
-  kept only string codes, so a mid-stream `code: 502` was dropped and the lane
-  could not say more than "Request failed." A numeric (or three-digit string)
-  `error.code` now counts as the HTTP status when the error has none, so the lane
-  reads "Bad gateway. Error 502" / "Too many requests. Error 429" with Try again.
-  An explicit `status` still wins; typed string codes stay the detail.
+- **The router's numeric error code is named — as the provider's.** The lane
+  text kept only string codes, so a mid-stream `code: 502` was dropped and the
+  lane could not say more than "Request failed." On this line that is the
+  provider-diagnostic code of the entry below ("Haiku failure and provider
+  diagnostic codes"): `Request failed. (PROVIDER_CODE_502)`, read as "Bad
+  gateway. Provider error 502" with Try again. It is kept apart from the
+  response status — `HTTP nnn` / "Error nnn" is only ever the HTTP response —
+  so an HTTP 200 stream carrying a provider 504 event never reads as an HTTP
+  504. (The first cut of this fix, `111864ec` on the prod pin, counted a
+  numeric code as the status; this integration keeps the distinction.)
 
 Tests: `application/councilLaneFailedLabel` (5), `components/councilLaneFailedRender`
 (3), `zkapi/stream-error-model` (3).
+
 ## October 14, 2026 — every Parallel lane renders its math (local)
 
 A Parallel turn whose second lane (Claude Haiku) answered with \(…\) math

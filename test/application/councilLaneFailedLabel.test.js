@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 // Prod, 2026-10-14: a Parallel lane that failed before answering was labelled
 // "unknown" (the router's `model` on its error event) and said only "Request
 // failed." (the router's numeric error code was dropped). A failed lane keeps
-// the model that was asked for and names the status it got.
+// the model that was asked for and names what it got — the provider's code as
+// a provider code (PROVIDER_CODE_nnn, "Provider error nnn"), never passed off
+// as the HTTP status of the response, which stays "HTTP nnn" / "Error nnn".
 const { default: CouncilController } = await import('../../chat/application/councilController.js');
 const { resolveResponseModelName, isReportedModelId } = await import('../../chat/domain/modelSelection.js');
 
@@ -68,8 +70,8 @@ test('a lane that fails before answering keeps the requested model and names the
     assert.equal(secondary.status, 'error');
     assert.equal(secondary.model, 'Gemini', 'the lane is still the model that was asked for');
     assert.equal(secondary.responseModel, undefined, 'nothing answered, so no response model is shown');
-    assert.equal(secondary.error, 'Request failed. (HTTP 502)');
-    assert.deepEqual(final.council.errors, [{ model: 'Gemini', message: 'Request failed. (HTTP 502)' }]);
+    assert.equal(secondary.error, 'Request failed. (PROVIDER_CODE_502)', 'a provider code, not an HTTP status');
+    assert.deepEqual(final.council.errors, [{ model: 'Gemini', message: 'Request failed. (PROVIDER_CODE_502)' }]);
     assert.equal(final.content, 'Evvia, Protégé, Ettan.', 'the completed lane is the turn');
 });
 
@@ -104,7 +106,7 @@ test('the router\'s "unknown" names no model, for a lane or a single chat', () =
     }), 'Gemini');
 });
 
-test('a numeric error code is the HTTP status the lane names', async () => {
+test('a provider\'s numeric error code is named as a provider error, apart from an HTTP status', async () => {
     const { describeCouncilLaneError } = await import('../../chat/components/MessageTemplates.js');
     const { controller, session, userMessage, savedMessages } = createHarness({
         sendLaneCompletion: async ({ entry }) => {
@@ -114,11 +116,13 @@ test('a numeric error code is the HTTP status the lane names', async () => {
     });
     await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false, abortController: new AbortController(), initialPendingPhase: 'requesting-key' });
     const secondary = savedMessages.at(-1).council.stage1[1];
-    assert.equal(secondary.error, 'Request failed. (HTTP 429)');
-    assert.deepEqual(describeCouncilLaneError(secondary.error), { message: 'Too many requests.', detail: 'Error 429' });
+    assert.equal(secondary.error, 'Request failed. (PROVIDER_CODE_429)');
+    assert.deepEqual(describeCouncilLaneError(secondary.error), { message: 'Too many requests.', detail: 'Provider error 429' });
+    // The same number as the response status reads as the response status.
+    assert.deepEqual(describeCouncilLaneError('Request failed. (HTTP 429)'), { message: 'Too many requests.', detail: 'Error 429' });
 });
 
-test('a three-digit string code counts as the status; an explicit status wins over a code', async () => {
+test('an HTTP status is the response\'s; a provider code off the list is a stream error; a typed code stays the detail', async () => {
     const run = async (error) => {
         const { controller, session, userMessage, savedMessages } = createHarness({
             sendLaneCompletion: async ({ entry }) => {
@@ -129,7 +133,9 @@ test('a three-digit string code counts as the status; an explicit status wins ov
         await controller.runMultiModelTurn({ session, userMessage, searchEnabled: false, abortController: new AbortController(), initialPendingPhase: 'requesting-key' });
         return savedMessages.at(-1).council.stage1[1].error;
     };
-    assert.equal(await run(routerError('503')), 'Request failed. (HTTP 503)');
+    assert.equal(await run(Object.assign(new Error('nope'), { status: 503 })), 'Request failed. (HTTP 503)');
+    assert.equal(await run(routerError('503')), 'Request failed. (PROVIDER_STREAM_ERROR)', 'a provider code is never read as the HTTP status');
+    assert.equal(await run(routerError(599)), 'Request failed. (PROVIDER_STREAM_ERROR)');
     assert.equal(await run(Object.assign(new Error('nope'), { status: 403, code: 'KEY_LIMIT' })), 'Request failed. (HTTP 403, KEY_LIMIT)');
     assert.equal(await run(new Error('closed')), 'Request failed.');
 });
