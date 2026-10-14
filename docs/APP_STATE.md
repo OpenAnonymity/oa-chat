@@ -1,3 +1,57 @@
+## October 13, 2026 — the first send on a fresh page is never dropped or restarted by start-up
+
+On the web build (sign-in required) the send preflight checked the shared
+account before the budget. On a freshly loaded page that check ran while this
+tab was still verifying the saved session, activating the wallet scope and
+running the first encrypted sync, and it did two harmful things: the stable-
+account fast path required the scope and sync flags, so the check fell through
+to the serialized handoff — which waited for the origin-wide `oa-sync` lock
+(held across the sync's network round trips, by this tab or any other tab) and
+then, seeing the same account with its scope not yet active, locked the account
+and restored it from the key bundle (session check, scope activation and sync
+all over again) — and when it returned with `ticketSyncReady` still false the
+send was dropped with "Your inference tickets are still loading." The Stop
+button is shown for the whole pending send, so the user saw Stop, the prompt
+still in the composer, and then a notice. The desktop build does not require
+sign-in and never ran this block.
+
+- `accountService.sharedAccountBindingIsCurrent()` treats this tab's own
+  start-up as current: the session check still pending
+  (`authBootstrapComplete` false), the scope activation in flight
+  (`syncInitializationInFlight`, published by `initializeSync`) or the first
+  sync not yet done are not a change made in another window. A changed
+  binding, a pending login marker, a different live scope, missing keys or a
+  handoff still take the serialized path, and a scope that is neither active
+  nor activating is still retried there.
+- `preflightTurnTicketBudget` waits for the auth bootstrap before judging the
+  account, then waits (spinner showing; Stop cancels; `ACCOUNT_SCOPE_WAIT_MS`
+  10 s) for the scope instead of dropping the send; a shortage waits
+  (`TICKET_SYNC_WAIT_MS` 15 s) for the first sync, which can cover the turn
+  without a purchase, and rechecks the wallet. A wallet that already covers the
+  turn never waits for the sync. The notices after a wait that runs out, the
+  Log in dialog for a signed-out page, the held-ticket branch, the shortage
+  dialog and automatic reload are unchanged.
+- `verifySessionInBackground` starts `initializeSync` as soon as the session is
+  confirmed, before the identity refresh and its one-second burst-protection
+  delay, which had been holding the wallet scope and sync behind it.
+- `chatDB.backfillMissingUpdatedAt()` compares the session count with the
+  `updatedAt` index count and walks the store only when a session is missing
+  the field. The readwrite walk over every session record had run on every
+  page load; a user message written while it ran queued behind it (0.4 s at
+  3,000 sessions, 0.9 s at 8,000 in headless Chromium).
+
+Not changed: the sync service still holds `oa-sync` across its network calls,
+so a second tab's start-up sync can still delay this tab's scope activation and
+the ticket redemption after the prompt is accepted. Tests:
+`application/sendPreflightStartup` (+6), `services/usernameSwitch` (+4),
+`services/startupSyncOrder` (new), `services/updatedAtBackfill` (new).
+
+## October 13, 2026 — consistent response model names
+
+Parallel lane and Council synthesis model names use the single-response header's
+0.7rem size, 500 weight and 1rem line height. The change is scoped to
+`.council-response-model-name`; provider icons, role badges and response text
+retain their existing styles.
 ## 2026-10-13: Quiet reasoning headers
 
 - Removed the “not shared by the provider” suffix from completed reasoning with
