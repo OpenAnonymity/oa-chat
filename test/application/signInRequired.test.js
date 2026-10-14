@@ -28,7 +28,10 @@ test('signed out, a send opens the dialog instead of a ticket shortage, and noth
     const preflight = app.slice(app.indexOf('    async preflightTurnTicketBudget('), app.indexOf('const memoryTickets', app.indexOf('    async preflightTurnTicketBudget(')));
     assert.match(preflight, /await accountService\.reconcileSharedAccount\(\)/);
     assert.match(preflight, /account\.sessionVerified !== true \|\| account\.status !== 'unlocked'/);
-    assert.match(preflight, /account\.accountScopeReady !== true \|\| account\.ticketSyncReady !== true/);
+    // An inactive wallet scope is waited for (start-up), never answered with a shortage;
+    // the first encrypted sync is not a gate before the wallet is read.
+    assert.match(preflight, /account\.accountHandoffPending \|\| account\.accountScopeReady !== true/);
+    assert.doesNotMatch(preflight, /ticketSyncReady/);
     const send = app.slice(app.indexOf('    async sendMessage(options = {}) {'), app.indexOf('ensureDatabaseReady', app.indexOf('    async sendMessage(options = {}) {')));
     assert.match(send, /if \(hasOpenModalDialog\(\)\) return;/);
 });

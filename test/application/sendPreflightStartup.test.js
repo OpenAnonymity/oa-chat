@@ -333,3 +333,136 @@ test('late reload hooks after Stop cannot update the stopped chat', async () => 
         assert.equal(notices, 0);
     } finally { restore(); }
 });
+
+// The web build requires sign-in. On a freshly loaded page the account is
+// still verifying its session, activating its wallet scope and running its
+// first encrypted sync. A send in that window waits for this tab's own work
+// (spinner showing, Stop cancels) and is never dropped with a notice; a wallet
+// that already covers the turn does not wait for the sync at all.
+
+const { default: accountService } = await import('../../chat/services/accountService.js');
+
+function withAccountState(patch, run) {
+    const previous = { ...accountService.state };
+    const previousKeys = [accountService.cryptoKey, accountService.syncDerivationKey, accountService.syncIdKey, accountService.syncInitializationInFlight];
+    // Unlocked: the status is derived from the keys this tab holds.
+    accountService.cryptoKey = patch.status === 'none' ? null : {};
+    accountService.syncDerivationKey = patch.status === 'none' ? null : {};
+    accountService.syncIdKey = patch.status === 'none' ? null : {};
+    Object.assign(accountService.state, {
+        isReady: true, authBootstrapComplete: true, accountId: '1234567890123456', status: 'unlocked',
+        sessionVerified: true, accountScopeReady: true, ticketSyncReady: true, accountHandoffPending: false, busy: false,
+        ...patch
+    });
+    return Promise.resolve().then(run).finally(() => {
+        Object.assign(accountService.state, previous);
+        [accountService.cryptoKey, accountService.syncDerivationKey, accountService.syncIdKey, accountService.syncInitializationInFlight] = previousKeys;
+    });
+}
+
+function signedInHarness() {
+    const app = preflightHarness();
+    app.signInPolicy = { required: true };
+    app.getPaymentMode = () => 'tickets';
+    app.accountModal = { open: () => assert.fail('A signed-in account must not be sent to the Log in dialog') };
+    app.accountReadyPromise = Promise.resolve();
+    return app;
+}
+
+test('a send while the wallet scope is still activating waits for it instead of being dropped', async () => {
+    const app = signedInHarness();
+    let reconciled = 0;
+    accountService.reconcileSharedAccount = async () => { reconciled += 1; };
+    await withAccountState({ accountScopeReady: false, ticketSyncReady: false }, () => withTicketClient({
+        getTicketCount: () => 3, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false
+    }, async () => {
+        let settled = false;
+        const pending = app.preflightTurnTicketBudget({ id: 'one', model: 'Model one' }, 'Hello').then(result => { settled = true; return result; });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(settled, false, 'the send is still waiting for the scope, not dropped');
+        accountService.setState({ accountScopeReady: true });
+        assert.equal(await pending, true);
+    }));
+    delete accountService.reconcileSharedAccount;
+    assert.equal(reconciled, 1);
+});
+
+test('a wallet that covers the turn never waits for the first encrypted sync', async () => {
+    const app = signedInHarness();
+    accountService.reconcileSharedAccount = async () => {};
+    try {
+        await withAccountState({ ticketSyncReady: false }, () => withTicketClient({
+            getTicketCount: () => 3, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false
+        }, async () => {
+            const result = await Promise.race([
+                app.preflightTurnTicketBudget({ id: 'one', model: 'Model one' }, 'Hello'),
+                new Promise(resolve => setTimeout(() => resolve('waited'), 50))
+            ]);
+            assert.equal(result, true);
+        }));
+    } finally { delete accountService.reconcileSharedAccount; }
+});
+
+test('a shortage during start-up waits for the first sync and rechecks the wallet it delivered', async () => {
+    const app = signedInHarness();
+    accountService.reconcileSharedAccount = async () => {};
+    let balance = 0;
+    try {
+        await withAccountState({ ticketSyncReady: false }, () => withTicketClient({
+            getTicketCount: () => balance, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false
+        }, async () => {
+            let settled = false;
+            const pending = app.preflightTurnTicketBudget({ id: 'one', model: 'Model one' }, 'Hello').then(result => { settled = true; return result; });
+            await new Promise(resolve => setTimeout(resolve, 20));
+            assert.equal(settled, false);
+            balance = 3;
+            accountService.setState({ ticketSyncReady: true });
+            assert.equal(await pending, true);
+        }));
+    } finally { delete accountService.reconcileSharedAccount; }
+});
+
+test('a start-up wait that runs out still reports the loading notice, never a shortage dialog', async () => {
+    const app = signedInHarness();
+    const notices = [];
+    app.showToast = message => { notices.push(message); };
+    app.waitForAccountState = async () => accountService.getState();
+    accountService.reconcileSharedAccount = async () => {};
+    try {
+        await withAccountState({ accountScopeReady: false }, () => withTicketClient({
+            getTicketCount: () => 3, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false
+        }, async () => {
+            assert.equal(await app.preflightTurnTicketBudget({ id: 'one', model: 'Model one' }, 'Hello'), false);
+        }));
+    } finally { delete accountService.reconcileSharedAccount; }
+    assert.deepEqual(notices, ['Your inference tickets are still loading. Try again shortly.']);
+});
+
+test('Stop during the start-up wait cancels the send', async () => {
+    const app = signedInHarness();
+    accountService.reconcileSharedAccount = async () => {};
+    const controller = new AbortController();
+    try {
+        await withAccountState({ accountScopeReady: false }, () => withTicketClient({
+            getTicketCount: () => 3, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false
+        }, async () => {
+            const pending = app.preflightTurnTicketBudget({ id: 'one', model: 'Model one' }, 'Hello', { signal: controller.signal });
+            await new Promise(resolve => setTimeout(resolve, 10));
+            controller.abort();
+            await assert.rejects(pending, error => error.isCancelled === true);
+        }));
+    } finally { delete accountService.reconcileSharedAccount; }
+});
+
+test('a signed-out page still gets the Log in dialog, with no waiting', async () => {
+    const app = signedInHarness();
+    let opened = 0;
+    app.accountModal = { open: () => { opened += 1; } };
+    accountService.reconcileSharedAccount = async () => {};
+    try {
+        await withAccountState({ accountId: null, status: 'none', sessionVerified: false, accountScopeReady: false, ticketSyncReady: false }, async () => {
+            assert.equal(await app.preflightTurnTicketBudget({ id: 'one', model: 'Model one' }, 'Hello'), false);
+        });
+    } finally { delete accountService.reconcileSharedAccount; }
+    assert.equal(opened, 1);
+});

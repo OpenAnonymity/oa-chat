@@ -2294,11 +2294,14 @@ test('send waits for shared account reconciliation and blocks locked or incomple
     const { default: accountService } = await import('../../chat/services/accountService.js');
     const originalState = accountService.getState;
     const originalReconcile = accountService.reconcileSharedAccount;
+    const originalWait = accountService.waitForAuthBootstrap;
     let current;
     let reconciled = false;
     let opened = 0;
     let notices = 0;
+    let waits = 0;
     try {
+        accountService.waitForAuthBootstrap = async () => current;
         accountService.reconcileSharedAccount = async () => { await Promise.resolve(); reconciled = true; };
         accountService.getState = () => { assert.ok(reconciled); return current; };
         const app = Object.create(ChatApp.prototype);
@@ -2306,22 +2309,46 @@ test('send waits for shared account reconciliation and blocks locked or incomple
         app.getPaymentMode = () => 'tickets';
         app.accountModal = { open() { opened += 1; } };
         app.showToast = () => { notices += 1; };
+        // A start-up wait that runs out (the account did not become ready).
+        app.waitForAccountState = async () => { waits += 1; return current; };
         // No model or wallet methods: reaching them would fail this test,
         // even when a stale UI had displayed a positive ticket balance.
         const ready = { accountId: 'account-y', sessionVerified: true, status: 'unlocked', accountScopeReady: true, ticketSyncReady: true };
         for (const patch of [
             { sessionVerified: false }, { status: 'locked' },
-            { accountHandoffPending: true }, { accountScopeReady: false }, { ticketSyncReady: false }
+            { accountHandoffPending: true }, { accountScopeReady: false }
         ]) {
             current = { ...ready, ...patch };
             reconciled = false;
             assert.equal(await app.preflightTurnTicketBudget({}, 'Hello'), false);
         }
         assert.equal(opened, 2);
-        assert.equal(notices, 3);
+        assert.equal(notices, 2);
+        assert.equal(waits, 2, 'a handoff or an inactive scope is waited for before the notice');
+        // The first encrypted sync still running is not a reason to refuse: a
+        // wallet that covers the turn sends; the budget check is reached.
+        current = { ...ready, ticketSyncReady: false };
+        reconciled = false;
+        let priced = 0;
+        app.runtime = {};
+        app.features = { tickets: true };
+        app.memoryFeatureEnabled = false;
+        app.memoryMode = false;
+        app.getFreshInferenceTicketRequirement = async () => { priced += 1; return { tickets: 1, label: 'Model one' }; };
+        const { default: ticketClient } = await import('../../chat/services/ticketClient.js');
+        const wallet = { getTicketCount: ticketClient.getTicketCount, getHeldTicketCount: ticketClient.getHeldTicketCount, isLegacyTransferRunning: ticketClient.isLegacyTransferRunning };
+        Object.assign(ticketClient, { getTicketCount: () => 3, getHeldTicketCount: () => 0, isLegacyTransferRunning: () => false });
+        try {
+            assert.equal(await app.preflightTurnTicketBudget({}, 'Hello'), true);
+        } finally {
+            Object.assign(ticketClient, wallet);
+        }
+        assert.equal(priced, 1);
+        assert.equal(waits, 2);
     } finally {
         accountService.getState = originalState;
         accountService.reconcileSharedAccount = originalReconcile;
+        accountService.waitForAuthBootstrap = originalWait;
         restore();
     }
 });
