@@ -1,5 +1,4 @@
 const MATH_DELIMITERS = [
-    { left: '$$', right: '$$', display: true },
     { left: '\\[', right: '\\]', display: true },
     { left: '\\(', right: '\\)', display: false }
 ];
@@ -39,6 +38,42 @@ function isEscaped(text, index) {
         slashCount += 1;
     }
     return slashCount % 2 === 1;
+}
+
+// Price ratings ($$, $$$, $$$$) must not join unrelated table rows into one
+// display equation. Only exact, unescaped double-dollar runs can delimit math.
+export function replaceDisplayDollarMath(text, replacer) {
+    const value = String(text ?? '');
+    const tokens = [];
+    for (const match of value.matchAll(/\$+/g)) {
+        const index = match.index;
+        if (match[0].length !== 2 || isEscaped(value, index)) continue;
+        const before = value.slice(0, index);
+        const after = value.slice(index + 2);
+        if ((before.endsWith('*') && after.startsWith('*'))
+            || (before.endsWith('_') && after.startsWith('_'))
+            || (/\|[ \t]*$/.test(before) && /^[ \t]*\|/.test(after))) continue;
+        tokens.push(index);
+    }
+    let result = '';
+    let cursor = 0;
+    for (let i = 0; i + 1 < tokens.length; i++) {
+        const start = tokens[i];
+        const end = tokens[i + 1];
+        const content = value.slice(start + 2, end);
+        // A rating inside a table must not consume another row. Inspect the
+        // delimiter's line, not the equation body (which may contain |x|).
+        const inTableRow = index => {
+            const lineStart = value.lastIndexOf('\n', index - 1) + 1;
+            const lineEnd = value.indexOf('\n', index + 2);
+            return /^\s*\|.*\|\s*$/.test(value.slice(lineStart, lineEnd === -1 ? value.length : lineEnd));
+        };
+        if (!content.trim() || (content.includes('\n') && (inTableRow(start) || inTableRow(end)))) continue;
+        result += value.slice(cursor, start) + replacer(value.slice(start, end + 2), content);
+        cursor = end + 2;
+        i++;
+    }
+    return result + value.slice(cursor);
 }
 
 function isSingleDollar(text, index) {
@@ -330,7 +365,9 @@ function normalizeDollarMathTextNodes(root) {
     }
 
     textNodes.forEach(textNode => {
-        textNode.nodeValue = normalizeInlineDollarMath(textNode.nodeValue);
+        textNode.nodeValue = normalizeInlineDollarMath(replaceDisplayDollarMath(
+            textNode.nodeValue, (_match, content) => `\\[${content}\\]`
+        ));
     });
 }
 
@@ -386,5 +423,11 @@ export function renderMathContent(root) {
         ignoredClasses: ['math-literal-dollar'],
         preProcess: normalizeMathTextAmpersands,
         throwOnError: false
+    });
+    // Make horizontal equation scrolling available to keyboard users too.
+    root.querySelectorAll?.('.katex-display').forEach(equation => {
+        equation.setAttribute('tabindex', '0');
+        equation.setAttribute('role', 'region');
+        equation.setAttribute('aria-label', 'Equation');
     });
 }

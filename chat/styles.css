@@ -3596,6 +3596,21 @@ a.quick-ask-source:focus-visible {
     font-size: inherit;
 }
 
+/* Display equations are indivisible: keep every term reachable within the
+   message instead of overflowing into the clipped chat/lane container. */
+.prose .katex-display {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-block: 0.25em;
+}
+
+.prose .katex-display > .katex {
+    width: max-content;
+    min-width: 100%;
+    text-align: center;
+}
+
 .prose hr {
     margin: 1rem 0;
     border: none;

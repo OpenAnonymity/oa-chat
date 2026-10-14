@@ -30,6 +30,8 @@ import { fetchUrlMetadata } from './services/urlMetadata.js';
 import { resolveProvider, resolveProviderFromModelReference } from './services/providerRegistry.js';
 import {
     createMathPlaceholderNamespace,
+    replaceDisplayDollarMath,
+    transformMarkdownOutsideCode,
     protectDollarMathForMarkdown,
     restoreLiteralDollarPlaceholders
 } from './services/mathRendering.js';
@@ -1757,11 +1759,11 @@ class ChatApp {
         });
 
         // Extract block LaTeX $$...$$ and replace with placeholders
-        processedContent = processedContent.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+        processedContent = transformMarkdownOutsideCode(processedContent, segment => replaceDisplayDollarMath(segment, (match, latex) => {
             const placeholder = `${placeholderNamespace}BLOCK${blockLatexPlaceholders.length}END`;
             blockLatexPlaceholders.push({ placeholder, latex: this.escapeHtml(match) });
             return `\n\n${placeholder}\n\n`;
-        });
+        }));
 
         // Extract inline LaTeX \(...\) and replace with placeholders
         processedContent = processedContent.replace(/\\\(([\s\S]*?)\\\)/g, (match, latex) => {
@@ -2443,6 +2445,9 @@ class ChatApp {
      */
     showLinkPreview(linkElement, metadata) {
         if (!this.linkPreviewCard) return;
+        if (this.currentPreviewLink !== linkElement || !this.elements.messagesContainer?.contains(linkElement)) {
+            return;
+        }
 
         const loader = this.linkPreviewCard.querySelector('.link-preview-loader');
         const content = this.linkPreviewCard.querySelector('.link-preview-content');
@@ -2534,10 +2539,10 @@ class ChatApp {
      * Hides the link preview card.
      */
     hideLinkPreview() {
-        if (!this.linkPreviewCard) return;
-
-        this.linkPreviewCard.classList.remove('visible');
-        this.linkPreviewCard.classList.add('hidden');
+        clearTimeout(this.linkPreviewTimeout);
+        this.linkPreviewTimeout = null;
+        this.linkPreviewCard?.classList.remove('visible');
+        this.linkPreviewCard?.classList.add('hidden');
         this.currentPreviewLink = null;
         this.isHoveringPreviewCard = false;
         this.cancelLinkPreviewHide();
@@ -2555,6 +2560,7 @@ class ChatApp {
         if (!url) return;
 
         this.currentPreviewLink = linkButton;
+        this.cancelLinkPreviewHide();
 
         // Clear any existing timeout
         if (this.linkPreviewTimeout) {
@@ -2563,7 +2569,7 @@ class ChatApp {
 
         // Show preview after a short delay
         this.linkPreviewTimeout = setTimeout(async () => {
-            if (this.currentPreviewLink !== linkButton) return;
+            if (this.currentPreviewLink !== linkButton || !this.elements.messagesContainer?.contains(linkButton)) return;
 
             // Show loading state
             this.showLinkPreview(linkButton, { loading: true });
@@ -2640,6 +2646,19 @@ class ChatApp {
         // Use event delegation on messages container
         const messagesContainer = this.elements.messagesContainer;
         if (!messagesContainer) return;
+
+        // Removed/replaced anchors do not reliably receive mouseleave. This
+        // also covers streaming rerenders, edits and opening an empty chat.
+        this.linkPreviewObserver?.disconnect();
+        this.linkPreviewObserver = new MutationObserver(() => {
+            if (this.currentPreviewLink && !messagesContainer.contains(this.currentPreviewLink)) {
+                this.hideLinkPreview();
+            }
+        });
+        this.linkPreviewObserver.observe(messagesContainer, { childList: true, subtree: true });
+        window.addEventListener('blur', () => this.hideLinkPreview());
+        messagesContainer.addEventListener('scroll', () => this.hideLinkPreview(), true);
+        this.elements.chatArea?.addEventListener('scroll', () => this.hideLinkPreview());
 
         messagesContainer.addEventListener('mouseenter', (e) => {
             this.handleLinkMouseEnter(e);
@@ -5676,6 +5695,7 @@ class ChatApp {
      * No session is selected until the user sends their first message.
      */
     async clearCurrentSession(options = {}) {
+        this.hideLinkPreview();
         const { awaitRender = false, immediate = false, emitDesktop = false } = options;
         const navigationGeneration = this.sessionNavigationGeneration;
         this.sessionSwitchInFlight = null;
@@ -10559,6 +10579,7 @@ class ChatApp {
      * Renders all messages for the current session (delegated to ChatArea component).
      */
     async renderMessages() {
+        this.hideLinkPreview();
         const session = this.getCurrentSession();
         if (this.chatArea) {
             await this.chatArea.render();

@@ -46,6 +46,30 @@ function transportWithResponse(result = { content: 'answer' }) {
     };
 }
 
+test('handled access, verification and completion failures report without changing results', async () => {
+    const events = [];
+    window.dispatchEvent = event => { events.push(event.detail); return true; };
+    const failure = Object.assign(new Error('private request data'), { status: 520 });
+    const backend = {
+        id: 'diagnostic-test', getAccessToken: () => 'private-key',
+        requestAccess: async () => { throw failure; },
+        streamCompletion: async () => { throw failure; },
+        sendCompletionStrict: async () => { throw failure; },
+        verification: { supports: true, submitAccess: async () => ({ status: 'rejected', error: failure }) }
+    };
+    const service = createInferenceService({ backends: [backend] });
+    const session = { inferenceBackend: backend.id };
+    await assert.rejects(service.requestAccess(session), error => error === failure);
+    assert.equal((await service.verifyAccess(session, {})).error, failure);
+    await assert.rejects(service.streamCompletion([], 'private-model', session), error => error === failure);
+    await assert.rejects(service.sendCompletionStrict([], 'private-model', session), error => error === failure);
+    assert.deepEqual(events.map(error => error.name), ['OARequest_access_http_520', 'OARequest_verification_http_520', 'OARequest_completion_http_520']);
+    assert.equal(JSON.stringify(events).includes('private'), false);
+    backend.requestAccess = async () => ({ token: 'success' });
+    assert.deepEqual(await service.requestAccess(session), { token: 'success' });
+    assert.equal(events.length, 3);
+});
+
 test('ticket price capabilities stay scoped to the selected backend', async () => {
     const calls = [];
     const service = createInferenceService({ backends: [

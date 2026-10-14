@@ -1,3 +1,5 @@
+import { parseRequestFailureType } from '../../chat/services/requestDiagnostics.js';
+
 const ERROR_TYPES = new Set(['Error', 'TypeError', 'ReferenceError', 'RangeError', 'SyntaxError', 'URIError', 'EvalError', 'AggregateError']);
 
 // Reconstruct the event from a small allowlist. Error text can contain prompts,
@@ -21,9 +23,12 @@ export function sanitizeErrorEvent(event, { origin, scriptPaths, environment, re
             }
         }).slice(-30);
         if (!frames.length) return [];
+        const failure = parseRequestFailureType(exception.type);
         return [{
-            type: ERROR_TYPES.has(exception.type) ? exception.type : 'Error',
-            value: 'OA Chat runtime error (details withheld)',
+            type: failure ? exception.type : ERROR_TYPES.has(exception.type) ? exception.type : 'Error',
+            value: failure
+                ? `OA Chat ${failure.phase} failed: ${failure.reason} (details withheld)`
+                : 'OA Chat runtime error (details withheld)',
             ...(typeof exception.mechanism?.handled === 'boolean'
                 ? { mechanism: { type: 'generic', handled: exception.mechanism.handled } }
                 : {}),
@@ -31,13 +36,15 @@ export function sanitizeErrorEvent(event, { origin, scriptPaths, environment, re
         }];
     });
     if (!values.length) return null;
+    const failureType = values.find(value => parseRequestFailureType(value.type))?.type;
     return {
         ...(typeof event.event_id === 'string' && /^[a-f0-9]{32}$/.test(event.event_id) ? { event_id: event.event_id } : {}),
         platform: 'javascript',
         level: 'error',
         environment,
         ...(release ? { release } : {}),
-        exception: { values }
+        exception: { values },
+        ...(failureType ? { fingerprint: [failureType] } : {})
     };
 }
 

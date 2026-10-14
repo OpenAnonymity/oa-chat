@@ -1,3 +1,79 @@
+## October 14, 2026 — long equations and handled request diagnostics (local)
+
+Display math now scrolls within its response instead of overflowing into the
+clipped chat/lane container. Its content gets max-content width with a 100%
+minimum, so both ends of long equations are reachable and short math remains
+centered. Display blocks have keyboard focus and an Equation region label.
+
+Sentry-enabled builds now receive synthetic handled request errors from the
+inference service access, verification and completion boundaries, including
+HTTP 520. Only finite categories/statuses and generated stack locations survive
+sanitization; original errors, prompts, models, keys, URLs and account data do
+not enter the report. Per-page category deduplication and a 20-event cap bound
+volume; no persistent identifier is added. Cancellation and expected 402 credit
+recovery are excluded. This adds diagnosis, not a 520 retry or backend fix.
+Verifier refusals can remain generic where its adapter drops HTTP metadata;
+tolerated verifier outages are outside this boundary. Browser checks at 360,
+680 and 1050 px response widths reached both equation ends without page overflow
+or math errors. The actual SDK bridge emitted one sanitized handled 520 envelope
+to an intercepted local transport; a repeat was deduplicated. Independent review
+approved the changes. Full verification: 1,581 core and 889 payment tests pass
+(2 payment skips), and a Sentry-enabled build passes. The initial full run caught
+a redundant equation focus ring; it was removed to use the existing global
+keyboard-navigation focus treatment, and the full rerun passed.
+The existing relay-failure candidate is still separate
+and undeployed.
+
+## October 14, 2026 — Sentry and Council 520 investigation
+
+Production Sentry's unresolved 14-day view shows OA-CHAT-2 (102 matching
+events) and OA-CHAT-3 (2). Sampled deployed bundle stacks map the first to
+RightPanel.handleProxyChange auto-disabling a failed relay during an active
+request: updateSettings rejects and the caller does not catch it. Existing
+uncommitted oa-chat-proxy-failure-20261013 addresses this; it is undeployed.
+The second stack maps to updatePanelVisibility calling hideSidebar when a
+phone sidebar is visible. COMPONENT_APP_KEYS does not expose hideSidebar,
+so the facade supplies undefined. This newly diagnosed bug is not yet fixed.
+
+The Council screenshot's shared `Model request failed.` banner and identical
+pending-lane 520 errors match the outer setup catch, making key acquisition
+the leading hypothesis, not a confirmed endpoint. fetchRetry.js does not
+retry 520; requestApiKey preserves it as a redemption error. Sentry only
+captures unhandled runtime failures, so it cannot rule out handled 520s.
+Current staging verifier/station checks are healthy; original failure
+evidence is unavailable and promotion remains on hold. Full sanitized notes:
+deployment/council-ui-eval-20261014/sentry-520-triage.md in the family workspace.
+
+## October 14, 2026 — price ratings and detached link previews
+
+Production client `d5e8ddd1` visibly corrupted a restaurant Markdown table:
+the broad `$$...$$` extraction paired parts of `**$$$**` / `**$$$$**` across
+rows, replacing table syntax with math placeholders. The shared display-dollar
+scanner now accepts exact unescaped two-dollar delimiters, leaves emphasized
+price ratings and bare rating cells literal, and prevents cross-row pairing.
+DOM math normalization uses the same scanner before KaTeX, rather than letting
+KaTeX independently interpret every dollar run. Real display/inline math,
+multiline absolute values, aligned equations, escaped dollars and code retain
+coverage. Unformatted `$$` in arbitrary prose remains ambiguous with math.
+
+The body-level link preview had no cleanup when its anchor disappeared. A
+pending hover callback or visible card could outlive a message rerender or New
+Chat. Preview callbacks now check anchor ownership; hiding cancels pending work;
+transcript mutations, New Chat, full renders, window blur and scrolling dismiss
+the card. This handles the stale-card path; the exact reported new-window
+startup sequence has not been reproduced (a fresh production page loaded).
+
+Browser fixture verification: all five table rows and three equations render
+with zero KaTeX errors; replacing the transcript with an empty chat removes the
+visible preview. The same fixture using production code retains only two
+rows, emits two math errors and leaves the detached preview visible. All 179
+relevant tests pass and independent review approved the code diff. Regression
+tests fail on the base and pass with these fixes. No inference, ticket,
+account, storage or provider request behavior changes. These local rendering
+fixes do not resolve the separately reported staging Council HTTP 520. A live
+staging two-Haiku/Grok Council new send and Retry both completed without a
+520 during follow-up; the original failure remains unexplained.
+
 ## October 14, 2026 — an edited prompt goes to the model on its edit card
 
 Editing a prompt and resubmitting it after switching the model picker still

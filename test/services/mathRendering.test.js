@@ -5,12 +5,32 @@ import markedApi from '../../chat/vendor/marked/marked.min.js';
 
 import {
     createMathPlaceholderNamespace,
+    replaceDisplayDollarMath,
     normalizeMathTextAmpersands,
     renderMathContent,
     normalizeInlineDollarMath,
     protectDollarMathForMarkdown,
     restoreLiteralDollarPlaceholders
 } from '../../chat/services/mathRendering.js';
+
+test('display math leaves restaurant price ratings and escaped dollars literal', () => {
+    for (const source of [
+        '**$$** and **$$$** and **$$$$**',
+        '*$$* and _$$_ and __$$__',
+        '| A | $$ |\n| B | $$$ |\n| C | $$$$ |',
+        String.raw`Keep \$\$x\$\$ literal.`
+    ]) {
+        assert.equal(replaceDisplayDollarMath(source, () => 'MATH'), source);
+    }
+    assert.equal(replaceDisplayDollarMath('$$x^2$$ and $$\ny=2\n$$', (_match, value) => `[${value}]`),
+        '[x^2] and [\ny=2\n]');
+    assert.equal(replaceDisplayDollarMath('$$|x|$$', (_match, value) => `[${value}]`), '[|x|]');
+    assert.equal(replaceDisplayDollarMath('Therefore $$\n|x|\n$$', (_match, value) => `[${value}]`), 'Therefore [\n|x|\n]');
+    for (const body of ['\n|x|\n', '\n\\begin{aligned}\nx&=1\\\\\n\ny&=2\n\\end{aligned}\n']) {
+        assert.doesNotThrow(() => katex.renderToString(body, { throwOnError: true }));
+        assert.equal(replaceDisplayDollarMath(`$$${body}$$`, (_match, value) => `[${value}]`), `[${body}]`);
+    }
+});
 
 test('creates a per-render placeholder namespace absent from message content', () => {
     const candidates = ['collision', 'safe'];

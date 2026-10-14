@@ -643,6 +643,76 @@ describe('production ChatApp runtime ownership', () => {
         assert.deepEqual(captures, [false, true]);
     });
 
+    test('restaurant price ratings preserve every Markdown table row', () => {
+        const previousMarked = globalThis.marked;
+        globalThis.marked = markedApi;
+        const app = appHarness();
+        app.escapeHtml = value => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            const source = [
+                '| Restaurant | Why go |', '| --- | --- |',
+                '| Evvia | Greek food. **$$$** · [Guide](https://example.com/evvia) |',
+                '| Protégé | Tasting menu. **$$$$** · [Guide](https://example.com/protege) |',
+                '| Ettan | Indian food. **$$$** |', '| Cafe | **$$** |'
+            ].join('\n');
+            const html = app.processContentWithLatex(source);
+            assert.equal((html.match(/<tr>/g) || []).length, 5);
+            assert.match(html, /<strong>\$\$\$<\/strong>/);
+            assert.match(html, /<strong>\$\$\$\$<\/strong>/);
+            assert.match(html, /<strong>\$\$<\/strong>/);
+            assert.match(html, /href="https:\/\/example.com\/protege"/);
+            assert.equal(app.processContentWithLatex('`$$x$$`').trim(), '<p><code>$$x$$</code></p>');
+        } finally { globalThis.marked = previousMarked; }
+    });
+
+    test('removed link anchors cannot open a delayed preview', t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const app = appHarness();
+        let attached = true;
+        let shown = 0;
+        const link = { getAttribute: () => 'https://example.com/' };
+        app.elements.messagesContainer = { contains: () => attached };
+        app.showLinkPreview = () => { shown++; };
+        app.handleLinkMouseEnter({ target: { closest: () => link } });
+        attached = false;
+        t.mock.timers.tick(201);
+        assert.equal(shown, 0);
+    });
+
+    test('transcript removal and window blur dismiss a visible preview and cancel pending work', t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const app = appHarness();
+        const classes = new Set(['visible']);
+        app.linkPreviewCard = {
+            classList: { add: x => classes.add(x), remove: x => classes.delete(x) },
+            addEventListener() {}
+        };
+        let attached = true;
+        app.elements.messagesContainer = { contains: () => attached, addEventListener() {} };
+        let mutation;
+        let blur;
+        const previousObserver = globalThis.MutationObserver;
+        globalThis.MutationObserver = class { constructor(fn) { mutation = fn; } observe() {} disconnect() {} };
+        window.addEventListener = (name, fn) => { if (name === 'blur') blur = fn; };
+        try {
+            app.setupLinkPreviewListeners();
+            app.currentPreviewLink = {};
+            app.isHoveringPreviewCard = true;
+            app.linkPreviewTimeout = setTimeout(() => assert.fail('stale preview reopened'), 200);
+            attached = false;
+            mutation();
+            t.mock.timers.tick(201);
+            assert.equal(classes.has('visible'), false);
+            assert.equal(classes.has('hidden'), true);
+            assert.equal(app.currentPreviewLink, null);
+            classes.add('visible');
+            app.currentPreviewLink = {};
+            blur();
+            assert.equal(classes.has('visible'), false);
+            assert.equal(app.currentPreviewLink, null);
+        } finally { globalThis.MutationObserver = previousObserver; }
+    });
+
     test('math restoration keeps distinct values beyond nine inline, block, and literal-dollar tokens', () => {
         const previousMarked = Object.getOwnPropertyDescriptor(globalThis, 'marked');
         globalThis.marked = markedApi;

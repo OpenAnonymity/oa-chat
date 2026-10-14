@@ -3,6 +3,16 @@ import enclaveStationBackend from './backends/enclaveStationBackend.js';
 import providerDirectBackend from './backends/providerDirectBackend.js';
 import transportHints from './transportHints.js';
 import { getDefaultModelConfig } from '../modelConfig.js';
+import { reportRequestFailure } from '../requestDiagnostics.js';
+
+async function observeRequest(phase, run, signal) {
+    try {
+        return await run();
+    } catch (error) {
+        reportRequestFailure(phase, error, signal);
+        throw error;
+    }
+}
 
 const builtinBackends = [
     openRouterBackend,
@@ -194,12 +204,16 @@ const inferenceService = {
     },
     async requestAccess(session, options = {}) {
         const backend = getBackendForSession(session);
-        return backend.requestAccess({ ...options, session });
+        return observeRequest('access', () => backend.requestAccess({ ...options, session }), options.signal);
     },
     async verifyAccess(session, accessInfo) {
         const backend = getBackendForSession(session);
         if (!backend.verification?.supports) return null;
-        return backend.verification.submitAccess(accessInfo);
+        const result = await observeRequest('verification', () => backend.verification.submitAccess(accessInfo));
+        if (result?.status === 'rejected') {
+            reportRequestFailure('verification', result.error || { code: 'VERIFICATION_REJECTED' });
+        }
+        return result;
     },
     setCurrentAccess(session, accessInfo) {
         const backend = getBackendForSession(session);
@@ -213,7 +227,7 @@ const inferenceService = {
     streamCompletion(messages, modelId, session, onChunk, onTokenUpdate, files, searchEnabled, abortController, onStreamOpen, onReasoningChunk, reasoningEnabled, reasoningEffort, onAccessProgress, onStreamHealth) {
         const backend = getBackendForSession(session);
         const token = backend.getAccessToken(session);
-        return backend.streamCompletion(
+        return observeRequest('completion', () => backend.streamCompletion(
             messages,
             modelId,
             token,
@@ -228,7 +242,7 @@ const inferenceService = {
             reasoningEffort,
             onAccessProgress,
             onStreamHealth
-        );
+        ), abortController?.signal);
     },
     isTransportAccessReady(session) {
         const backend = getBackendForSession(session);
@@ -241,7 +255,7 @@ const inferenceService = {
             throw new Error(`Backend does not support strict completions: ${backend.id}`);
         }
         const token = backend.getAccessToken(session);
-        return backend.sendCompletionStrict(messages, modelId, token, options);
+        return observeRequest('completion', () => backend.sendCompletionStrict(messages, modelId, token, options), options.signal);
     },
     buildSharedAccessPayload(session) {
         const backend = getBackendForSession(session);

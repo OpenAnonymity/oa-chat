@@ -57,11 +57,26 @@ screen still shows Flask. The same DSN can receive JavaScript events.
 ## Data boundary and limitations
 
 Only uncaught window errors and unhandled promise rejections with a stack frame
-in a known generated application bundle are captured. Errors caught by the app
-(including many handled inference failures) are not automatically reported.
+in a known generated application bundle are captured. Handled failures at the inference service boundary are explicitly reported for
+key acquisition, verification and streaming/strict completions. These include
+HTTP 520 and other allowlisted HTTP statuses, timeouts and unexpected failures.
+Verification refusals may be generic because the existing verifier adapter
+sometimes discards HTTP status or timeout metadata. Tolerated verifier outages
+that return an accepted fallback are not reported by this boundary. Other caught
+application errors are not automatically reported. CSS/layout
+problems that throw no error still require visual checks.
 The event is reconstructed with only a random per-event ID, fixed error category
 and message, environment/release, and allowlisted script paths/line/column numbers.
-Custom exception names and messages, stack variables/function names/source lines,
+Handled request reports use a new synthetic error (never the original error or
+its cause). A finite phase/reason allowlist produces a fixed message and grouping
+fingerprint, e.g. `OARequest_access_http_520`. No destination or model is included.
+Reports are limited to once per category per page and at most 20 total per page;
+counts indicate observed incidents, not request volume or failure rates. User
+cancellation and expected HTTP 402 credit recovery are excluded. A failed attempt
+may later recover through application policy, so a report does not prove the
+whole chat ultimately failed. Reporting never changes retries or request results.
+
+Custom exception names and messages outside that allowlist, stack variables/function names/source lines,
 page URLs, user data, request details, breadcrumbs, attachments, tags, context,
 and extra fields are discarded. Unknown or non-application frames are dropped.
 
