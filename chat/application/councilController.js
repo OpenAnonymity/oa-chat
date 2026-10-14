@@ -45,6 +45,10 @@ function throwIfAborted(signal) {
     }
 }
 
+// `HTTP nnn` is the response status only. A provider's mid-stream error code
+// (a numeric error.code inside a 200 stream) is kept apart as its diagnostic
+// code (PROVIDER_CODE_nnn, providerErrorDiagnostic.js), so the lane can say
+// "Provider error 504" and never pass it off as an HTTP 504 response.
 function buildSafeCouncilErrorMessage(error, fallback = 'Request failed.') {
     const status = Number(error?.status ?? error?.response?.status);
     const code = providerErrorDiagnosticCode(error) || (typeof error?.code === 'string'
@@ -86,6 +90,15 @@ function hasLaneOutput(entry) {
 // reasoning. Stop keeps all of it, the way a single chat keeps its partial.
 function hasLanePartialOutput(entry) {
     return hasLaneOutput(entry) || (typeof entry?.reasoning === 'string' && entry.reasoning.trim().length > 0);
+}
+
+// A lane that fails before showing anything keeps the label of the model that
+// was asked for: whatever the router reported on the way to the error did not
+// answer, so it is not this lane's response model.
+function markLaneFailed(stageEntry, error) {
+    stageEntry.status = 'error';
+    stageEntry.error = buildSafeCouncilErrorMessage(error);
+    if (!hasLanePartialOutput(stageEntry)) delete stageEntry.responseModel;
 }
 
 // The turn a lane sees in its own history when it was stopped or failed
@@ -286,8 +299,7 @@ export default class CouncilController {
                 stageEntry.status = 'cancelled';
                 stageEntry.cancelledAt = Date.now();
             } else {
-                stageEntry.status = 'error';
-                stageEntry.error = buildSafeCouncilErrorMessage(error);
+                markLaneFailed(stageEntry, error);
                 assistantMessage.council.errors.push({
                     laneId,
                     model: stageEntry.model,
@@ -1190,8 +1202,7 @@ export default class CouncilController {
                         stageEntry.streamingTokens = null;
                         return;
                     }
-                    stageEntry.status = 'error';
-                    stageEntry.error = buildSafeCouncilErrorMessage(error);
+                    markLaneFailed(stageEntry, error);
                     stageEntry.streamingReasoning = false;
                     stageEntry.streamingTokens = null;
                     assistantMessage.council.errors.push({

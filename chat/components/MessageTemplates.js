@@ -14,6 +14,7 @@ import { syncScrollFade } from '../ui/scrollFade.js';
 import preferencesStore, { PREF_KEYS } from '../services/preferencesStore.js';
 import { renderMemoryConfidenceBadgeHtml } from '../services/memoryRetrievalAssessment.js';
 import { getCouncilDisplayState } from '../domain/councilDisplay.js';
+import { isReportedModelId } from '../domain/modelSelection.js';
 import { buildDetailedPendingIndicator, buildKeptAccessTrace, buildKeptAccessTraceInline } from './PendingIndicator.js';
 import { keptAccessStages } from '../domain/accessTrace.js';
 import { parseProviderErrorDiagnostic } from '../domain/providerErrorDiagnostic.js';
@@ -1586,6 +1587,14 @@ function buildCouncilLaneWorkingIndicator() {
     `;
 }
 
+// The model a lane shows: the one that answered when the stream named a
+// concrete one, else the one that was asked for. A stored "unknown" (what the
+// router puts on an error event; saved by builds before 2026-10-14) names
+// nothing and is not shown.
+function councilLaneResponseModel(entry) {
+    return isReportedModelId(entry?.responseModel) ? entry.responseModel.trim() : '';
+}
+
 function buildCouncilStage1EntryBody(entry, processContentWithLatex, messageId, options = {}) {
     const { showLaneActions = false } = options;
     const status = typeof entry?.status === 'string' ? entry.status : 'pending';
@@ -1976,7 +1985,7 @@ function buildCouncilAssistantMessage({
                             : entry.status === 'cancelled'
                                 ? 'Cancelled'
                                 : 'Pending';
-                    const shortName = extractShortModelName(entry.responseModel || entry.model || '');
+                    const shortName = extractShortModelName(councilLaneResponseModel(entry) || entry.model || '');
                     return `
                         <button
                             type="button"
@@ -1996,6 +2005,7 @@ function buildCouncilAssistantMessage({
 
     const stage1Panels = stage1Entries.map((entry) => {
         const isActive = useSideBySide || entry.label === activeLabel;
+        const laneResponseModel = councilLaneResponseModel(entry);
         return `
             <div
                 class="council-response-panel${isActive ? '' : ' hidden'}"
@@ -2003,7 +2013,7 @@ function buildCouncilAssistantMessage({
                 data-council-lane-id="${escapeHtmlAttribute(entry.laneId || '')}"
             >
                 <div class="council-response-meta">
-                    <span class="council-response-model">${buildCouncilModelLabel(entry.responseModel || entry.model || entry.modelId || '', { modelId: entry.responseModel ? '' : (entry.modelId || '') })}</span>
+                    <span class="council-response-model">${buildCouncilModelLabel(laneResponseModel || entry.model || entry.modelId || '', { modelId: laneResponseModel ? '' : (entry.modelId || '') })}</span>
                     ${buildCouncilResponseStatus(entry.status || 'pending', {
                         isFallbackContext: synthesis?.status === 'error' && canonicalLabel === entry.label
                     })}

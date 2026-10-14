@@ -1,5 +1,6 @@
 import { getSystemPrompt } from './services/inference/systemPrompt.js';
 import { getErrorMessage } from './domain/errorMessage.js';
+import { isReportedModelId } from './domain/modelSelection.js';
 // OpenRouter API integration
 //
 // Direct-to-provider architecture: all inference requests (completions, streaming)
@@ -981,7 +982,12 @@ export class OpenRouterAPI {
             // A router may identify the selected model in a role-only event.
             // Publish it before any output/usage from the same event, without
             // treating metadata as generated output or final provider usage.
-            const reportedModel = typeof parsed.model === 'string' ? parsed.model.trim() : '';
+            // An error event names no answering model (the router sends
+            // "unknown" when no provider took the request), so it is never
+            // published: the lane keeps the model that was asked for.
+            const reportedModel = !parsed.error && isReportedModelId(parsed.model)
+                ? parsed.model.trim()
+                : '';
             if (reportedModel && reportedModel !== modelUsed) {
                 modelUsed = reportedModel;
                 // Router prices describe the request selector, not the model

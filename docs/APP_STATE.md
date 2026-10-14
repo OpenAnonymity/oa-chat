@@ -1,3 +1,33 @@
+## October 14, 2026 — a failed Parallel lane keeps its model and names its status
+
+Seen on prod: a Parallel lane that failed before answering was labelled
+"unknown" with a "U" avatar and said only "Request failed." The router's error
+event (HTTP 200, one event, `error.code` 502) carried `"model": "unknown"`, and
+two things turned that into the lane's header and a bare message.
+
+- **The stream parser published the error event's model.** Any `model` string
+  on an event became the answering model (`modelOnly` token update), and the
+  council controller stored it as the lane's `responseModel`. Now an event that
+  carries `error` publishes no model, and the string "unknown" is never a
+  model (`isReportedModelId` in `chat/domain/modelSelection.js`, used by the
+  parser and by `resolveResponseModelName`). A concrete routed id on a role-only
+  event is still published as before.
+- **A lane that failed before showing anything** now drops any `responseModel`
+  it had picked up on the way to the error (`markLaneFailed`): the header is the
+  model that was asked for. A lane that answered partially and then failed
+  keeps the model that answered.
+- **Conversations saved by earlier builds** may hold `responseModel: "unknown"`
+  on a failed lane; the template (`councilLaneResponseModel`) skips it and shows
+  the requested model, so those turns render correctly without a migration.
+- **The router's numeric error code is the status.** `buildSafeCouncilErrorMessage`
+  kept only string codes, so a mid-stream `code: 502` was dropped and the lane
+  could not say more than "Request failed." A numeric (or three-digit string)
+  `error.code` now counts as the HTTP status when the error has none, so the lane
+  reads "Bad gateway. Error 502" / "Too many requests. Error 429" with Try again.
+  An explicit `status` still wins; typed string codes stay the detail.
+
+Tests: `application/councilLaneFailedLabel` (5), `components/councilLaneFailedRender`
+(3), `zkapi/stream-error-model` (3).
 ## October 14, 2026 — every Parallel lane renders its math (local)
 
 A Parallel turn whose second lane (Claude Haiku) answered with \(…\) math

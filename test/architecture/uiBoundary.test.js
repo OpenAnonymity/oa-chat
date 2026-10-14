@@ -218,9 +218,14 @@ test('parallel aggregate messages omit redundant visible mode and completion lab
         'Council synthesis should identify the selected synthesis model as the Council model and pass provider metadata'
     );
     assert.equal(
-        source.includes("buildCouncilModelLabel(entry.responseModel || entry.model || entry.modelId || '', { modelId: entry.responseModel ? '' : (entry.modelId || '') })"),
+        source.includes("buildCouncilModelLabel(laneResponseModel || entry.model || entry.modelId || '', { modelId: laneResponseModel ? '' : (entry.modelId || '') })"),
         true,
         'Stage 1 lane labels should remain plain model labels and pass provider metadata'
+    );
+    assert.equal(
+        source.includes("const laneResponseModel = councilLaneResponseModel(entry);"),
+        true,
+        'Stage 1 lane labels show a reported model only when it is a concrete id (a stored "unknown" is skipped)'
     );
     assert.equal(
         source.includes('function inferProvider'),
