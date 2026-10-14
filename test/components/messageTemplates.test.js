@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { restoredResponseForDisplay } from '../../chat/ui/restoredResponse.js';
+import { restoredResponseForDisplay, wasReplyStreaming } from '../../chat/ui/restoredResponse.js';
+import { OWNERSHIP_ELSEWHERE, OWNERSHIP_NONE, OWNERSHIP_UNKNOWN } from '../../chat/services/turnOwnership.js';
 
 function installTemplateGlobals() {
     const originalDocument = globalThis.document;
@@ -98,6 +99,71 @@ test('a pending turn saved before the first chunk is displayed as an interrupted
         assert.equal(restoredResponseForDisplay(saved, true), saved, 'a live pending turn in this tab is untouched');
         // A local-only row that is not a pending turn keeps the old behaviour.
         assert.equal(restoredResponseForDisplay({ ...saved, pendingTurn: false }, false).inferenceError, undefined);
+    } finally { restoreGlobals(); }
+});
+
+test('a reply another tab is still writing is shown as answering elsewhere, with no error and no actions', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const placeholder = Object.freeze({ id: 'row', sessionId: 'chat', role: 'assistant', content: '', model: 'Test',
+            timestamp: 1, streamingPending: true, streamingPhase: 'requesting-key', streamingTokens: 0 });
+        const partial = Object.freeze({ ...placeholder, streamingPending: false, content: 'Half an answer', streamingTokens: 4 });
+        const pendingTurn = Object.freeze({ ...placeholder, isLocalOnly: true, pendingTurn: true });
+        for (const saved of [placeholder, partial, pendingTurn]) {
+            assert.equal(wasReplyStreaming(saved), true);
+            const display = restoredResponseForDisplay(saved, false, OWNERSHIP_ELSEWHERE);
+            assert.equal(display.answeringElsewhere, true);
+            assert.equal(display.inferenceError, undefined);
+            assert.equal(display.streamingPending, false);
+            assert.equal(display.streamingTokens, null);
+            assert.equal(display.content, saved.content, 'what has arrived so far stays visible');
+            const html = buildMessageHTML(display, helpers, [], 'Test');
+            assert.match(html, /Answering in another tab/);
+            assert.match(html, /pending-response-streaming/);
+            assert.doesNotMatch(html, /Retry response|no longer connected|connection to this/);
+            assert.doesNotMatch(html, /copy-message-btn|regenerate-message-btn/, 'no actions on a reply still being written');
+            assert.doesNotMatch(html, /Model provider returned no response/);
+            assert.doesNotMatch(html, /data-streaming-pending="true"/);
+            assert.equal(saved.streamingPending, placeholder === saved || pendingTurn === saved, 'stored state untouched');
+        }
+        // A reply that already carries its own error keeps it, whoever holds the turn.
+        const failed = { ...partial, inferenceError: 'Provider error' };
+        assert.equal(restoredResponseForDisplay(failed, false, OWNERSHIP_ELSEWHERE).inferenceError, 'Provider error');
+        assert.equal(restoredResponseForDisplay(failed, false, OWNERSHIP_ELSEWHERE).answeringElsewhere, undefined);
+        // This tab's own live reply is never normalized, whatever the lock says.
+        assert.equal(restoredResponseForDisplay(partial, true, OWNERSHIP_ELSEWHERE), partial);
+        assert.equal(wasReplyStreaming({ role: 'assistant', content: 'done', streamingTokens: null }), false);
+        assert.equal(wasReplyStreaming({ role: 'user', streamingPending: true }), false);
+    } finally { restoreGlobals(); }
+});
+
+test('the interrupted copy says what the turn lock knows: connection lost, or check other tabs when it cannot tell', async () => {
+    const restoreGlobals = installTemplateGlobals();
+    try {
+        const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
+        const helpers = { processContentWithLatex: escapeHtml, formatTime: () => '' };
+        const reply = Object.freeze({ id: 'row', sessionId: 'chat', role: 'assistant', content: 'Half an answer',
+            model: 'Test', timestamp: 1, streamingTokens: 4 });
+        const pendingTurn = Object.freeze({ ...reply, content: '', streamingPending: true, streamingTokens: 0,
+            isLocalOnly: true, pendingTurn: true });
+        // Nobody holds the turn: the tab that was writing it is gone.
+        const lost = restoredResponseForDisplay(reply, false, OWNERSHIP_NONE);
+        assert.match(lost.inferenceError, /^The connection to this reply was lost before it finished\. Retry sends a new request\.$/);
+        assert.doesNotMatch(lost.inferenceError, /other open tab/);
+        assert.match(restoredResponseForDisplay(pendingTurn, false, OWNERSHIP_NONE).inferenceError,
+            /^The connection to this request was lost before a reply arrived\. Retry sends a new request\.$/);
+        const html = buildMessageHTML(lost, helpers, [], 'Test');
+        assert.match(html, /Retry response/);
+        assert.doesNotMatch(html, /Answering in another tab/);
+        // No Web Locks (or no answer): the cautious copy stays.
+        for (const ownership of [OWNERSHIP_UNKNOWN, null, undefined]) {
+            assert.match(restoredResponseForDisplay(reply, false, ownership).inferenceError,
+                /no longer connected to the response\. Check any other open tab/);
+            assert.match(restoredResponseForDisplay(pendingTurn, false, ownership).inferenceError,
+                /no reply was received\. Check any other open tab/);
+        }
     } finally { restoreGlobals(); }
 });
 

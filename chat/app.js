@@ -22,6 +22,7 @@ import { snapshotAccessTrace, upsertAccessStage } from './domain/accessTrace.js'
 import preferencesStore, { PREF_KEYS } from './services/preferencesStore.js';
 import storageManager from './services/storageManager.js';
 import storageEvents from './services/storageEvents.js';
+import { holdTurn } from './services/turnOwnership.js';
 import { getFileIconSvg } from './services/fileUtils.js';
 import { exportChats } from './services/globalExport.js';
 import { parseReasoningContent } from './services/reasoningParser.js';
@@ -5483,11 +5484,12 @@ class ChatApp {
      * @returns {boolean}
      */
     isCurrentSessionStreaming() {
-        const session = this.getCurrentSession();
-        if (this.getPendingSend(session?.id || null)) return true;
-        if (!session) return false;
-        const state = this.getSessionStreamingState(session.id);
-        return state.isStreaming;
+        // By id, not through the cached session object: the chat list is
+        // rebuilt from storage on cross-tab changes (reloadSessions), and a
+        // reply must keep reading as this tab's while that happens.
+        const sessionId = this.state.currentSessionId || null;
+        if (this.getPendingSend(sessionId)) return true;
+        return sessionId ? this.getSessionStreamingState(sessionId).isStreaming === true : false;
     }
 
     getCurrentSessionStreamingPhase() {
@@ -7230,6 +7232,7 @@ class ChatApp {
         const abortController = options.abortController;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
+        const releaseTurn = holdTurn(session.id);
 
         // Pause auto-scroll for streaming (set immediately)
         this.isAutoScrollPaused = true;
@@ -7385,6 +7388,12 @@ class ChatApp {
                 const streamingMessageId = this.generateId();
                 let streamingTokenCount = 0;
 
+                // The placeholder is a pending turn like a send's (local-only,
+                // so it never enters model context, shares or memory): saved
+                // at once so switching chats finds it, and so a reload before
+                // the first chunk shows an interrupted reply with Retry rather
+                // than a prompt that looks unanswered. The first chunk clears
+                // the marker.
                 streamingMessage = {
                     id: streamingMessageId,
                     sessionId: session.id,
@@ -7399,11 +7408,11 @@ class ChatApp {
                     streamingPending: true, // Indicates waiting for first chunk
                     streamingPhase: this.getSessionStreamingState(session.id).phase || initialPendingPhase,
                     scrubber: scrubberMetadata,
-                    accessTrace: this.takeAccessTrace(session.id)
+                    accessTrace: this.takeAccessTrace(session.id),
+                    isLocalOnly: true,
+                    pendingTurn: true
                 };
-
-                // Save placeholder immediately so switching sessions back can find it
-                await chatDB.saveMessage(streamingMessage);
+                await this.persistPendingTurn(streamingMessage);
                 ({
                     processedMessages,
                     memoryGenerationAtProcess
@@ -7436,6 +7445,7 @@ class ChatApp {
                         // On first chunk (of any kind), remove typing indicator and append message
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
+                            this.markPendingTurnStarted(streamingMessage);
 
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
@@ -7542,6 +7552,7 @@ class ChatApp {
                         // Handle reasoning trace streaming
                         if (!firstChunkReceived) {
                             firstChunkReceived = true;
+                            this.markPendingTurnStarted(streamingMessage);
                             reasoningStartTime = Date.now();
                             // Clear pending flag now that we have actual content
                             streamingMessage.streamingPending = false;
@@ -7575,6 +7586,7 @@ class ChatApp {
                 );
 
                 // Save the final message content with token data, reasoning, and citations
+                this.markPendingTurnStarted(streamingMessage);
                 streamingMessage.content = streamedContent;
                 if (streamingMessage.scrubber) {
                     streamingMessage.scrubber.redactedResponse = streamedContent;
@@ -7695,6 +7707,7 @@ class ChatApp {
             }
         } finally {
             this.clearMemoryApiOverrideContent(session.id);
+            releaseTurn();
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
             this.isAutoScrollPaused = false;
@@ -7993,6 +8006,9 @@ class ChatApp {
         const abortController = submission.controller;
         const initialPendingPhase = this.resolvePendingPhaseForSession(session);
         this.setSessionStreamingState(session.id, true, abortController, initialPendingPhase);
+        // Other tabs painting this chat from storage ask this lock whether the
+        // reply is still being written here (turnOwnership.js).
+        const releaseTurn = holdTurn(session.id);
 
         // Store current files and search state before clearing
         const currentFiles = submission.files;
@@ -8660,6 +8676,8 @@ class ChatApp {
             // A turn that ended without a chunk, an error row or a page unload
             // must not leave a pending row behind.
             if (pendingTurn?.pendingTurn) await this.discardPendingTurn(pendingTurn);
+            // The row is settled on disk: let other tabs repaint it.
+            releaseTurn();
             // Clear streaming state for this session
             this.setSessionStreamingState(session.id, false, null);
             // Reset auto-scroll state and hide button
@@ -9978,15 +9996,30 @@ class ChatApp {
     async ensureSessionLoaded(sessionId) {
         if (!sessionId) return;
         const cachedSession = this.state.sessionsById.get(sessionId);
-        if (cachedSession) {
+        // A chat carried across a reload (reloadSessions) is still re-read.
+        if (cachedSession && cachedSession !== this.sessionsBeforeReload?.get(sessionId)) {
             this.insertSessionIntoList(cachedSession);
             return;
         }
         const session = await chatDB.getSession(sessionId);
         if (session) {
             this.migrateSessionsInBackground([session]);
+            if (cachedSession) {
+                this.noteLoadedSession(session);
+                this.state.sessionsById.set(session.id, session);
+            }
             this.insertSessionIntoList(session);
         }
+    }
+
+    /** Chats this tab is showing or writing in: a send, a reply or a retry in flight. */
+    liveSessionIds() {
+        const ids = new Set();
+        if (this.state.currentSessionId) ids.add(this.state.currentSessionId);
+        for (const [id, state] of this.sessionStreamingStates || []) if (state?.isStreaming) ids.add(id);
+        for (const entry of (this.sendSubmissionsInFlight || new Map()).values()) if (entry?.sessionId) ids.add(entry.sessionId);
+        for (const id of (this.regenerationJobs || new Map()).keys()) ids.add(id);
+        return ids;
     }
 
     async reloadSessions() {
@@ -9994,7 +10027,17 @@ class ChatApp {
         // back without the key this tab held is noticed (noteLoadedSession).
         this.sessionsBeforeReload = this.state.sessionsById;
         this.state.sessions = [];
-        this.state.sessionsById = new Map();
+        // The chats this tab is showing or writing in stay resolvable while
+        // the list is rebuilt from storage: a send that lands during the
+        // reload must find its session, and a reply being written must keep
+        // reading as this tab's (otherwise it is painted as interrupted).
+        // Fresh copies replace them as the pages load.
+        const carried = new Map();
+        for (const id of this.liveSessionIds()) {
+            const session = this.sessionsBeforeReload.get(id);
+            if (session) carried.set(id, session);
+        }
+        this.state.sessionsById = new Map(carried);
         this.state.sessionsPageCursor = null;
         this.state.hasMoreSessions = true;
         this.state.sessionSearchResults = null;
@@ -10006,6 +10049,14 @@ class ChatApp {
             await this.ensureSessionLoaded(this.state.currentSessionId);
         } finally {
             this.sessionsBeforeReload = null;
+            // A carried chat that storage no longer has (deleted in another
+            // tab) is dropped as before, unless this tab is still writing in it.
+            for (const [id, session] of carried) {
+                if (this.state.sessionsById.get(id) !== session) continue;
+                const busy = this.sessionStreamingStates?.get(id)?.isStreaming === true
+                    || Boolean(this.getPendingSend(id)) || this.regenerationJobs?.has(id) === true;
+                if (!busy) this.state.sessionsById.delete(id);
+            }
         }
         if (this.hasActiveSessionListCriteria()) {
             await this.updateSessionSearchResults();
