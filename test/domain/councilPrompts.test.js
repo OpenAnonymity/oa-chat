@@ -17,37 +17,30 @@ test('buildAnonymousResponseBlocks labels responses without model identities', (
     assert.doesNotMatch(blocks, /OpenAI|Anthropic|GPT|Claude/);
 });
 
-test('buildCouncilSynthesisPrompt asks for concise anonymous review', () => {
+test('buildCouncilSynthesisPrompt asks for evidence-led summary and comparison', () => {
     const prompt = buildCouncilSynthesisPrompt({
-        userQuery: 'Which answer is better?',
+        userQuery: 'Explain the tradeoffs.',
         responses: [
             { model: 'Model A', response: 'Answer one.' },
             { model: 'Model B', response: 'Answer two.' }
         ]
     });
 
-    assert.match(prompt, /independent reviewer/i);
-    assert.match(prompt, /one or two anonymous models produced available draft answers/i);
-    assert.match(prompt, /Read Response A and Response B/i);
-    assert.match(prompt, /Briefly compare the drafts/i);
-    assert.match(prompt, /material differences, errors, missing caveats, and useful synthesis/i);
-    assert.match(prompt, /concise final answer/i);
+    assert.match(prompt, /Summarize the main points of each available response/i);
+    assert.match(prompt, /meaningful agreements and differences/i);
+    assert.match(prompt, /conclusions, reasoning, assumptions, or coverage/i);
+    assert.match(prompt, /Identify factual errors, unsupported claims, missing caveats, and relevant tradeoffs directly/i);
+    assert.match(prompt, /State uncertainty when the available evidence does not resolve a disagreement/i);
+    assert.match(prompt, /Let the evidence determine how much attention each response needs/i);
+    assert.match(prompt, /Do not force equal praise or criticism, invent differences, or treat conflicting claims as equally credible/i);
+    assert.match(prompt, /Do not routinely declare an overall winner or write a separate replacement answer/i);
     assert.match(prompt, /Do not mention model names, provider names, or hidden identities/i);
-    assert.match(prompt, /If one response is clearly stronger/i);
     assert.match(prompt, /Do not assign scores, grades, or ranked lists/i);
-    assert.match(prompt, /Do not use chatty phrasing/i);
-    assert.match(prompt, /Keep the review concise and useful/i);
-    assert.match(prompt, /Write the review and final answer now:/);
-    assert.doesNotMatch(prompt, /paper submissions/i);
-    assert.doesNotMatch(prompt, /Council review and final take:/);
-    assert.doesNotMatch(prompt, /Council review:/);
-    assert.doesNotMatch(prompt, /Final take for you/i);
-    assert.doesNotMatch(prompt, /Best combined answer/i);
-    assert.doesNotMatch(prompt, /STAGE 2/i);
-    assert.doesNotMatch(prompt, /Peer Rankings/i);
-    assert.doesNotMatch(prompt, /ranking inputs/i);
-    assert.doesNotMatch(prompt, /numerical scoring/i);
-    assert.doesNotMatch(prompt, /Chairman/i);
+    assert.match(prompt, /Keep the summary and comparison concise and specific/i);
+    assert.match(prompt, /Write the summary and comparison now:/);
+    assert.doesNotMatch(prompt, /balanced|clearly stronger|synthesize the best answer|concise final answer/i);
+    assert.doesNotMatch(prompt, /stronger, better, or superior overall/i);
+    assert.doesNotMatch(prompt, /Peer Rankings|ranking inputs|Chairman/i);
     assert.doesNotMatch(prompt, /Model A|Model B/);
 });
 
@@ -59,8 +52,9 @@ test('buildCouncilSynthesisPrompt supports partial draft availability', () => {
         ]
     });
 
-    assert.match(prompt, /one or two anonymous models produced available draft answers/i);
     assert.match(prompt, /If only one response is available/);
+    assert.match(prompt, /summarize it and note relevant limitations/i);
+    assert.match(prompt, /other response was unavailable and a comparison is not possible/i);
     assert.match(prompt, /Response A:\nUse the blue wire\./);
     assert.doesNotMatch(prompt, /Response B:/);
     assert.doesNotMatch(prompt, /OpenAI|GPT/);

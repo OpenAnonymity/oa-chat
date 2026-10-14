@@ -1,3 +1,17 @@
+## 2026-10-14: Council summaries and comparisons follow the evidence
+
+- Replaced the explicit instruction to call one response "clearly stronger"
+  and synthesize a final answer with summaries and meaningful comparisons.
+  Council identifies errors, unsupported claims, missing caveats, and tradeoffs
+  directly, and states uncertainty when evidence cannot settle a disagreement.
+- The prompt does not demand balance or equal praise/criticism, and does not
+  categorically ban comparative judgments. It discourages routine overall
+  winner declarations and separate replacement answers to the original request.
+- One available response gets a summary and limitations with an explicit note
+  that comparison is unavailable. Anonymous labels, context handling, saved
+  responses, and controller fallback remain unchanged. New Council output
+  continues to become shared assistant context for later turns.
+
 ## October 13, 2026 — the first send on a fresh page is never dropped or restarted by start-up
 
 On the web build (sign-in required) the send preflight checked the shared
@@ -5958,13 +5972,14 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     model, the controller adds the first available non-primary model as the
     secondary lane.
   - The Council synthesis prompt lives in `chat/domain/councilPrompts.js`. It
-    asks the synthesis model to act as an independent reviewer over anonymous
-    `Response A` / `Response B` drafts, briefly compare only material
-    differences, errors, missing caveats, and useful synthesis, then produce a
-    concise final answer to the original request. The review should be fair,
-    critical, concise, and evidence-oriented, but avoid generic praise, model/provider identities,
-    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
-    Partial synthesis is supported when only one draft response is available.
+    asks for each anonymous response's main points and meaningful agreements
+    and differences in conclusions, reasoning, assumptions, or coverage.
+    Evidence determines the attention given to each response; equal praise or
+    criticism is not required. Factual errors and missing caveats are identified
+    directly, and unresolved disagreements retain uncertainty. It discourages
+    routine overall winner declarations and separate replacement answers.
+    One available draft gets a summary with limitations and an explicit note
+    that comparison is not possible.
   - `chat/application/councilController.js` runs the selected models in
     parallel through `inferenceService.streamCompletion(...)`, preserving the
     browser-only OpenRouter path and the existing ephemeral access flow. Strict
@@ -6230,10 +6245,10 @@ Keep entries concise and factual. Prefer short bullets over long narratives.
     partial synthesis, and synthesis fallback behavior with small stubs.
   - `chat/domain/councilPrompts.js` defines the Council synthesis prompt. It
     intentionally omits Stage 2 peer-ranking inputs, anonymizes first-opinion
-    drafts as `Response A`, `Response B`, and asks the Council model to briefly
-    compare only material differences, errors, missing caveats, and useful
-    synthesis before writing a concise final answer. It avoids model/provider identities,
-    scores/grades/ranked lists, chatty phrasing, and generic follow-up offers.
+    drafts as `Response A`, `Response B`, and asks for a concise summary and
+    evidence-led comparison, without forced balance or routine overall winners.
+    It avoids model/provider identities, scores/grades/ranked lists, generic
+    praise, chatty phrasing, and generic follow-up offers.
 - 2026-05-26: Prompt edit file drag feedback is scoped to the inline editor.
   - While a prompt edit draft is open, file drags highlight the edit prompt card
     and keep the bottom composer drop overlay hidden, matching the drop target.
