@@ -2183,6 +2183,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const hasNoOutput = !processedContent && !hasReasoningOutput && (!message.images || message.images.length === 0) && !hasAgentTrace;
     const hasRenderableAssistantOutput = !!processedContent || !!generatedImagesHtml || !!thumbnailsBubble;
     const hideAssistantActionsDuringReasoning = !!message.streamingReasoning && !hasRenderableAssistantOutput;
+    // Painted from storage while another tab writes it (restoredResponse.js):
+    // what has arrived so far, no actions yet, and where the rest comes from.
+    const isAnsweringElsewhere = message.answeringElsewhere === true;
     // Message is complete if:
     // - Not actively streaming reasoning
     // - streamingTokens is null/undefined (finalized)
@@ -2190,7 +2193,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
     const isMessageComplete = !message.streamingReasoning &&
         (message.streamingTokens === null || message.streamingTokens === undefined);
     const isSessionStreaming = options.isSessionStreaming || false;
-    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming && !message.inferenceError) ? `
+    const noResponseNotice = (hasNoOutput && isMessageComplete && !isSessionStreaming && !message.inferenceError && !isAnsweringElsewhere) ? `
         <span class="text-xs text-muted-foreground opacity-70">[Model provider returned no response. Try a new prompt or a new session.]</span>
     ` : '';
 
@@ -2285,7 +2288,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
             </svg>
         </button>
     ` : '';
-    const shouldShowMemoryStatusSpacer = hideAssistantActionsDuringReasoning && !isMemoryStatusMessage;
+    const shouldShowMemoryStatusSpacer = (hideAssistantActionsDuringReasoning || isAnsweringElsewhere) && !isMemoryStatusMessage;
     const assistantActionsRow = (shouldShowMemoryStatusSpacer || isMemoryStatusMessage) ? (
         isMemoryStatusMessage
             ? ''
@@ -2359,6 +2362,9 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${message.inferenceError ? `<div class="inference-failure-warning" role="status">
                     <div>${escapeHtml(message.inferenceError)}</div>
                     <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
+                </div>` : ''}
+                ${isAnsweringElsewhere ? `<div class="px-2 py-1 answering-elsewhere" role="status" aria-live="polite">
+                    <div class="pending-response-line"><span class="pending-response-label pending-response-streaming">Answering in another tab</span></div>
                 </div>` : ''}
                 ${buildRegenerationStatus(message)}
                 ${memoryApprovalActions}

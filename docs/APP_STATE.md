@@ -1,3 +1,18 @@
+## October 14, 2026 — updated ownership staging integration
+
+The supplied staging merge 07310783 was based on c468c3cc, before the deployed
+Council correction 1b096668. It is merged onto that newer client plus the local
+rendering/Sentry fixes, preserving the latest prompt, first-send and edit-model
+changes. Review caught two original gaps: loadInitialSessions still cleared the
+carried session map, and exclusive ifAvailable ownership silently lost second
+writers or writers colliding with a probe. The real loader now preserves the map
+when called by reload; writers use shared ownership and observers probe/wait
+exclusively. Acquisition never blocks the request pipeline. All writers remain
+represented until the last releases, including when a transient probe held the
+lock. Release watchers are cancelled at render entry, including empty chats.
+Regression tests exercise the real paged/fallback loaders, overlapping writers,
+probe contention and switching to an empty chat.
+
 ## October 14, 2026 — long equations and handled request diagnostics (local)
 
 Display math now scrolls within its response instead of overflowing into the
@@ -73,6 +88,64 @@ account, storage or provider request behavior changes. These local rendering
 fixes do not resolve the separately reported staging Council HTTP 520. A live
 staging two-Haiku/Grok Council new send and Retry both completed without a
 520 during follow-up; the original failure remains unexplained.
+
+## October 14, 2026 — a reply painted from storage says who is writing it
+
+A reply saved mid-stream is painted from storage by any tab showing the chat,
+and by this tab whenever it re-reads the chat. Until now the only thing such a
+paint could say was "This tab is no longer connected to the response. Check any
+other open tab before retrying", with a Retry button — shown while another tab
+was still streaming the answer, and shown by the writing tab itself whenever a
+re-read landed in a moment it did not count as its own reply.
+
+- **Turn ownership (`chat/services/turnOwnership.js`).** The tab writing a
+  reply holds a shared origin-wide Web Lock `oa-turn:<sessionId>` from the moment
+  the turn streams (`setSessionStreamingState(true)` in `sendCapturedMessage`
+  and `regenerateCapturedResponse`) until the row is settled on disk (released
+  in `finally`, before the streaming state clears). Writers share the lock; acquisition is scheduled without blocking the turn
+  and queues behind short observer probes rather than losing ownership; the browser releases it
+  when the page reloads, closes or crashes. When `ChatArea.render` paints a
+  chat it is not streaming and a row still carries streaming flags
+  (`wasReplyStreaming`), it probes the lock once (an exclusive `ifAvailable`
+  request): held → the row shows what has arrived so far with the pending-line
+  shimmer "Answering in another tab", no error, no actions, and the area waits
+  (an exclusive request, abortable, dropped at the start of the next render) for the release to
+  re-read the chat; free → the chat is read once more (the lock is let go only
+  after the settled row is on disk, so a snapshot taken while the turn was
+  finishing never paints a completed reply as interrupted) and a row still
+  carrying the flags is an interrupted turn with Retry that says so: "The
+  connection to this reply was lost before it finished. Retry sends a new
+  request." (a pending turn: "…this request was lost before a reply
+  arrived…"). Without Web Locks the cautious "check any other open tab" copy
+  stays. Chats whose rows are all settled never touch the lock.
+- **The chat list reload no longer disowns the reply being written.**
+  `reloadSessions` (every cross-tab `sessions-updated`, and after a turn that
+  deferred one) emptied `state.sessionsById` for the duration of the reload, so
+  `getCurrentSession()` was undefined and `isCurrentSessionStreaming()` false
+  while a reply streamed: a re-read in that window painted the reply as
+  interrupted, a cross-tab event in it wiped the chat to the empty state, and a
+  send or retry entering in it hit the `if (!session) return` safety check and
+  was silently dropped. The chats this tab is showing or writing in
+  (`liveSessionIds`: selected, streaming, send in flight, retry in flight) are
+  carried into the new map and replaced by their fresh copies as the pages
+  load; a carried chat storage no longer has is dropped as before unless this
+  tab is still writing in it. `isCurrentSessionStreaming()` now answers by
+  `state.currentSessionId` rather than through the cached session object.
+- **A regeneration's placeholder is a pending turn.** `regenerateCapturedResponse`
+  saved its placeholder with streaming flags but neither `isLocalOnly` nor
+  `pendingTurn`, so a reload before the first chunk showed the "no longer
+  connected to the response" copy with an empty row, and the empty row was
+  eligible for model context. It is now persisted like a send's pending turn
+  (local-only, `pendingTurn: true`, `persistPendingTurn`), cleared by
+  `markPendingTurnStarted` at the first chunk and at completion.
+
+Tests: `services/turnOwnership` (hold/probe/wait/abort, no Web Locks),
+`components/messageTemplates` (+2: answering elsewhere; the lock-aware copy),
+`components/chatAreaRestoredOwnership` (render with a held / free lock, the
+release repaint, dropped waits, the re-read on a free lock, no probe while
+streaming or for settled chats),
+`application/restoredResponseOwnership` (the send holds and releases the lock,
+the regeneration placeholder, the reload window, id-based streaming check).
 
 ## October 14, 2026 — an edited prompt goes to the model on its edit card
 

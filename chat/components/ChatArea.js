@@ -1,5 +1,6 @@
 import { leaveChatArrival, cancelChatArrival } from '../ui/chatArrival.js';
-import { restoredResponseForDisplay } from '../ui/restoredResponse.js';
+import { restoredResponseForDisplay, wasReplyStreaming } from '../ui/restoredResponse.js';
+import { probeTurnOwnership, whenTurnReleased, OWNERSHIP_ELSEWHERE, OWNERSHIP_NONE } from '../services/turnOwnership.js';
 import { showSurface, hideSurface } from '../ui/uiMotion.js';
 import { syncScrollFade, syncAllScrollFades, watchScrollFade } from '../ui/scrollFade.js';
 /**
@@ -50,6 +51,9 @@ export default class ChatArea {
         this.streamingCodeCopyPointerWindowMs = 1200;
         // Render generation counter - used to cancel stale renders during rapid session switching
         this.renderGeneration = 0;
+        // Waits for another tab to finish the reply this tab painted from
+        // storage (restoredResponse.js); dropped by the next render.
+        this.turnReleaseWatch = null;
         this.memoryPromptModal = null;
         this.memoryPromptModalKeyHandler = null;
         this.quickAsk = {
@@ -1774,6 +1778,24 @@ export default class ChatArea {
     }
 
     /**
+     * Repaint the chat once the tab writing its reply lets go of the turn
+     * (it settled, or that page went away), unless this render was superseded
+     * or this tab has started writing in the chat itself.
+     */
+    watchTurnRelease(sessionId, renderGeneration) {
+        const watch = new AbortController();
+        this.turnReleaseWatch = watch;
+        whenTurnReleased(sessionId, watch.signal).then(released => {
+            if (!released || watch.signal.aborted || renderGeneration !== this.renderGeneration) return;
+            if (this.turnReleaseWatch === watch) this.turnReleaseWatch = null;
+            // Components see the app through its facade (appInterface.js):
+            // state and renderMessages are on it, isViewingSession is not.
+            if (this.app.state?.currentSessionId !== sessionId || this.app.isCurrentSessionStreaming()) return;
+            void this.app.renderMessages();
+        }).catch(() => {});
+    }
+
+    /**
      * Renders all messages for the current session.
      * Handles empty states, message rendering, LaTeX processing, and scroll behavior.
      *
@@ -1795,6 +1817,8 @@ export default class ChatArea {
      *    so only NEW content that arrives after the switch animates.
      */
     async render() {
+        this.turnReleaseWatch?.abort();
+        this.turnReleaseWatch = null;
         // Increment render generation - used to cancel stale renders during rapid session switching
         const currentGeneration = ++this.renderGeneration;
         cancelChatArrival(this.app.elements.messagesContainer);
@@ -1833,7 +1857,7 @@ export default class ChatArea {
         }
 
         // Load messages from IndexedDB
-        const messages = await this.app.data.getSessionMessages(session.id);
+        let messages = await this.app.data.getSessionMessages(session.id);
 
         // Check if this render is stale (a newer render was triggered while we were loading messages)
         if (currentGeneration !== this.renderGeneration) {
@@ -1867,6 +1891,25 @@ export default class ChatArea {
             ? this.app.getCurrentSessionStreamingPhase()
             : 'waiting';
 
+        // A reply saved mid-stream that this tab is not writing: ask the turn
+        // lock whether another tab still is, so the row reads "answering in
+        // another tab" rather than an interrupted turn with Retry.
+        let restoredOwnership = null;
+        if (!isSessionStreaming && messages.some(wasReplyStreaming)) {
+            restoredOwnership = await probeTurnOwnership(session.id);
+            if (currentGeneration !== this.renderGeneration) return;
+            if (restoredOwnership === OWNERSHIP_ELSEWHERE) {
+                this.watchTurnRelease(session.id, currentGeneration);
+            } else if (restoredOwnership === OWNERSHIP_NONE) {
+                // The lock is let go only once the settled row is on disk, so
+                // a snapshot read while the turn was still finishing is
+                // re-read: a reply that just completed is never painted as
+                // interrupted.
+                messages = await this.app.data.getSessionMessages(session.id);
+                if (currentGeneration !== this.renderGeneration) return;
+            }
+        }
+
         // Check if this is an imported (or forked from import) session with new messages added
         // importedFrom = share import (can still receive updates)
         // importedSource = external import (ChatGPT, etc.)
@@ -1892,7 +1935,7 @@ export default class ChatArea {
             options.isSessionStreaming = isSessionStreaming;
             options.pendingPhase = streamingPhase;
             options.pendingProgress = this.app.getSessionPendingProgress?.(session.id) || null;
-            const normalizedMessage = restoredResponseForDisplay(message, isSessionStreaming);
+            const normalizedMessage = restoredResponseForDisplay(message, isSessionStreaming, restoredOwnership);
 
             let html = buildMessageHTML(normalizedMessage, helpers, this.app.state.models, session.model, options);
 
