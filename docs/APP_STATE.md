@@ -1,3 +1,17 @@
+## October 14, 2026 — one error line everywhere; the ticket sweep in two toasts (local)
+
+Dominic's review of the state mockups. A failed reply now reads the same
+wherever it fails: "**Error:** …" in answer type (`buildResponseErrorHtml`),
+as a turn that failed before any text always did. Below a partial answer it
+is the next line (the red-ruled box and its "Retry response" button are gone;
+retry is the reply's own regenerate action). A failed Parallel lane and a
+failed Council review use the same line ("Error: Gateway timeout (504).");
+the lane's retry is its regenerate action. The already-used-ticket sweep no
+longer changes the pending row: one loading toast "Removing already-used
+tickets…" for the whole sweep, then "Removed N already-used tickets" (or
+"…. No tickets left for this message." when it emptied the wallet, instead
+of a second toast). Shortage toasts are no longer red. The stalled-sweep
+error now says "Couldn’t update the tickets saved on this device."
 ## October 14, 2026 — a failed Parallel lane keeps its model and names its status
 
 Seen on prod: a Parallel lane that failed before answering was labelled

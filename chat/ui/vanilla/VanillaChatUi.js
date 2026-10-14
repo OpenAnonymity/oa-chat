@@ -99,8 +99,7 @@ export default class VanillaChatUi {
             updateDetailedPendingIndicator(indicator, presentation, normalizedPhase);
             return;
         }
-        // The sweep label carries a count that changes within the phase.
-        if (indicator.dataset.phase === normalizedPhase && normalizedPhase !== 'skipping-used-tickets') return;
+        if (indicator.dataset.phase === normalizedPhase) return;
         indicator.dataset.phase = normalizedPhase;
         const label = indicator.querySelector('.pending-response-label');
         if (label) {

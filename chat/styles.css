@@ -10272,6 +10272,10 @@ details.t-acc[data-open="true"] > .t-acc-panel > .t-acc-panel-inner { opacity: 1
     line-height: 1.5;
     overflow-wrap: anywhere;
 }
+/* A failed reply reads like a reply: "Error: …" in answer type (MessageTemplates
+   buildResponseErrorHtml). Below a partial answer it sits as the next line. */
+.response-error .prose p { margin: 0; }
+
 .inference-failure-warning {
     padding: 0.65rem 0.85rem;
     border-inline-start: 2px solid light-dark(#ae3440, #e79ca3);

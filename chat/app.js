@@ -1232,29 +1232,32 @@ class ChatApp {
     }
 
     /**
-     * The pending reply's label while tickets the org had already seen
-     * (spent from another device, or left by a lost sync) are set aside one
-     * by one. The count ticks up in place; nothing else moves.
+     * Tickets the org had already seen (spent from another device, or left
+     * by a lost sync) are being set aside one by one. One quiet toast says
+     * so for the whole sweep; the reply row keeps its usual label.
      */
     showTicketSweepPending(sessionId, skippedTickets) {
-        this.updateSessionStreamingPhase(sessionId, 'skipping-used-tickets');
-        const indicator = document.querySelector(`.typing-indicator[data-pending-session-id="${String(sessionId).replace(/["\\]/g, '\\$&')}"]`);
-        if (indicator) this.ui?.updatePendingIndicator?.(indicator, 'skipping-used-tickets', { skippedTickets });
+        const sweeps = (this.ticketSweeps ||= new Map());
+        if (sweeps.has(sessionId)) return;
+        sweeps.set(sessionId, { stop: this.showLoadingToast('Removing already-used tickets…') });
     }
 
     /**
-     * One line once a sweep ends, whichever way: the wallet count just
-     * dropped by that many, and the reason should be on screen. A sweep
-     * that recovered moves on to the granted key by itself; one that did
-     * not leaves the row to the error that ended it.
+     * The sweep is over, whichever way. The loading toast becomes one line
+     * that says how many left the wallet; when none are left for this
+     * message it says that too, instead of a second, red toast.
      */
-    settleTicketSweep(sessionId, { skipped = 0, removed = skipped, recovered = false } = {}) {
+    settleTicketSweep(sessionId, { skipped = 0, removed = skipped, recovered = false, reason = null, tier = null } = {}) {
+        const sweep = this.ticketSweeps?.get(sessionId);
+        this.ticketSweeps?.delete(sessionId);
+        sweep?.stop?.();
         // `removed` is what the wallet lost (an org that names no ticket
         // index sets a whole selection aside per refusal); `skipped` counts
         // the refusals themselves.
         const count = Number(removed > 0 ? removed : skipped);
         if (!(count > 0)) return;
-        this.showToast(`Removed ${count} already-used ticket${count === 1 ? '' : 's'}`, 'success', 5000);
+        const line = `Removed ${count} already-used ticket${count === 1 ? '' : 's'}`;
+        this.showToast(reason === 'TICKET_SHORTAGE' ? `${line}. No tickets left for this message.` : line, 'success', 5000);
     }
 
     async handleAcquisitionTicketShortage(session, { requiredTickets, availableTickets, label }, signal = null) {
@@ -1269,7 +1272,10 @@ class ChatApp {
             }
         });
         this.throwIfAborted(signal);
-        if (!retry && this.isViewingSession(session.id)) this.showToast(budget.message, 'error', 7000);
+        // A ticket sweep that emptied the wallet says so in its own toast.
+        if (!retry && this.isViewingSession(session.id) && !this.ticketSweeps?.has(session.id)) {
+            this.showToast(budget.message, 'success', 7000);
+        }
         return { retry };
     }
 

@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// While tickets the org had already seen are set aside, the pending reply
-// says so once, with a count that ticks up in place; the sweep ends with a
-// single toast. Before 2026-10-14 every refusal raised its own toast.
+// While tickets the org had already seen are set aside, one quiet toast
+// covers the whole sweep ("Removing already-used tickets…") and becomes one
+// line when it ends. Before 2026-10-14 every refusal raised its own toast.
 
 function installBrowser() {
     const keys = ['window', 'location', 'localStorage', 'sessionStorage', 'document', 'fetch', 'requestAnimationFrame'];
@@ -33,77 +33,58 @@ const { default: preferencesStore } = await import('../../chat/services/preferen
 const getPreference = preferencesStore.getPreference;
 preferencesStore.getPreference = async () => false;
 const { ChatApp } = await import('../../chat/app.js');
-const { default: VanillaChatUi } = await import('../../chat/ui/vanilla/VanillaChatUi.js');
-const { buildTypingIndicator } = await import('../../chat/components/MessageTemplates.js');
 preferencesStore.getPreference = getPreference;
 restoreImport();
 
-function pendingHarness() {
-    const label = { textContent: 'Requesting ephemeral key', classList: { add() {} } };
-    const indicator = { dataset: { phase: 'requesting-key', pendingSessionId: 'one' }, querySelector: selector => selector === '.pending-response-label' ? label : null };
-    const ui = Object.assign(Object.create(VanillaChatUi.prototype), { interfaces: { componentApp: { services: {} } } });
-    const toasts = [];
+function harness() {
+    const events = [];
     const app = Object.assign(Object.create(ChatApp.prototype), {
-        ui,
-        sessionStreamingStates: new Map([['one', { isStreaming: true, abortController: null, phase: 'requesting-key' }]]),
-        showToast: (message, type, duration) => toasts.push({ message, type, duration })
+        showToast: (message, type) => events.push({ toast: message, type }),
+        showLoadingToast: message => { events.push({ loading: message }); return () => events.push({ stopped: message }); },
+        isViewingSession: () => true,
+        notifyTicketShortage: async () => ({ retry: false })
     });
-    document.querySelector = selector => selector.includes('data-pending-session-id="one"') ? indicator : null;
-    return { app, ui, label, indicator, toasts };
+    return { app, events };
 }
 
-test('the pending reply counts the tickets being set aside, in place', async () => {
+test('one loading toast for the whole sweep, then one line', () => {
     const restore = installBrowser();
     try {
-        const { app, ui, label, indicator, toasts } = pendingHarness();
-        app.showTicketSweepPending('one', 1);
-        assert.equal(label.textContent, 'Skipping already-used tickets · 1');
-        assert.equal(app.getSessionStreamingState('one').phase, 'skipping-used-tickets');
-        app.showTicketSweepPending('one', 2);
-        app.showTicketSweepPending('one', 37);
-        assert.equal(label.textContent, 'Skipping already-used tickets · 37');
-        assert.deepEqual(toasts, []);
-        // The granted key moves the label on as before.
-        ui.updatePendingIndicator(indicator, 'waiting-response');
-        assert.equal(label.textContent, 'Waiting for response');
-    } finally {
-        restore();
-    }
-});
-
-test('a sweep ends with one line naming what left the wallet', async () => {
-    const restore = installBrowser();
-    try {
-        const { app, toasts } = pendingHarness();
-        app.settleTicketSweep('one', { skipped: 213, recovered: true });
-        app.settleTicketSweep('one', { skipped: 1, recovered: false });
-        app.settleTicketSweep('one', { skipped: 0, recovered: true });
-        assert.deepEqual(toasts.map(toast => toast.message), [
-            'Removed 213 already-used tickets',
-            'Removed 1 already-used ticket'
+        const { app, events } = harness();
+        for (let skipped = 1; skipped <= 37; skipped += 1) app.showTicketSweepPending('one', skipped);
+        assert.deepEqual(events, [{ loading: 'Removing already-used tickets…' }]);
+        app.settleTicketSweep('one', { skipped: 37, recovered: true });
+        assert.deepEqual(events.slice(1), [
+            { stopped: 'Removing already-used tickets…' },
+            { toast: 'Removed 37 already-used tickets', type: 'success' }
         ]);
-        assert.ok(toasts.every(toast => toast.type === 'success'));
-    } finally {
-        restore();
-    }
+        app.settleTicketSweep('one', { skipped: 37, recovered: true });
+        assert.equal(events.length, 4, 'a second settle only toasts');
+    } finally { restore(); }
 });
 
-test('a reload mid-sweep restores the row with the same label', async () => {
+test('a sweep that empties the wallet says so in its own toast, not a second red one', async () => {
     const restore = installBrowser();
     try {
-        document.createElement = () => {
-            const element = { textContent: '' };
-            Object.defineProperty(element, 'innerHTML', {
-                get: () => String(element.textContent).replace(/[&<>]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[char])
-            });
-            return element;
-        };
-        const html = buildTypingIndicator('typing-1', 'xAI', 'Grok 4.7', Date.now(), 'skipping-used-tickets', null, 'one');
-        assert.match(html, /Skipping already-used tickets</);
-        assert.match(html, /data-phase="skipping-used-tickets"/);
-        const counted = buildTypingIndicator('typing-1', 'xAI', 'Grok 4.7', Date.now(), 'skipping-used-tickets', { skippedTickets: 5 }, 'one');
-        assert.match(counted, /Skipping already-used tickets · 5</);
-    } finally {
-        restore();
-    }
+        const { app, events } = harness();
+        app.showTicketSweepPending('one', 1);
+        assert.deepEqual(await app.handleAcquisitionTicketShortage({ id: 'one' }, { requiredTickets: 3, availableTickets: 1, label: 'Grok 4.7' }),
+            { retry: false });
+        app.settleTicketSweep('one', { skipped: 476, recovered: false, reason: 'TICKET_SHORTAGE' });
+        assert.deepEqual(events.filter(event => event.toast), [
+            { toast: 'Removed 476 already-used tickets. No tickets left for this message.', type: 'success' }
+        ]);
+        assert.ok(events.every(event => event.type !== 'error'));
+    } finally { restore(); }
+});
+
+test('an ordinary shortage toast is quiet, not red', async () => {
+    const restore = installBrowser();
+    try {
+        const { app, events } = harness();
+        await app.handleAcquisitionTicketShortage({ id: 'one' }, { requiredTickets: 3, availableTickets: 1, label: 'Grok 4.7' });
+        assert.equal(events.length, 1);
+        assert.equal(events[0].type, 'success');
+        assert.match(events[0].toast, /Grok 4\.7/);
+    } finally { restore(); }
 });

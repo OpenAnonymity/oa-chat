@@ -69,7 +69,7 @@ test('a saved pending response is displayed as disconnected without changing sto
             assert.doesNotMatch(html, /data-streaming-pending="true"/);
             assert.match(html, /no longer connected/);
             assert.match(html, /Retrying sends a new request/);
-            assert.match(html, /Retry response/);
+            assert.match(html, /class="[^"]*response-error/);
             assert.doesNotMatch(html, /Model provider returned no response/);
             assert.doesNotMatch(html, /Private access secured|Verify private key/);
             assert.equal(saved.accessTrace.steps[0].state, 'active');
@@ -93,7 +93,8 @@ test('a pending turn saved before the first chunk is displayed as an interrupted
         assert.match(display.inferenceError, /no reply was received/);
         assert.match(display.inferenceError, /Retrying sends a new request/);
         const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
-        assert.match(html, /Retry response/);
+        assert.match(html, /response-error/);
+        assert.match(html, /regenerate-message-btn/);
         assert.doesNotMatch(html, /data-streaming-pending="true"/);
         assert.doesNotMatch(html, /Model provider returned no response/);
         assert.equal(restoredResponseForDisplay(saved, true), saved, 'a live pending turn in this tab is untouched');
@@ -122,7 +123,7 @@ test('a reply another tab is still writing is shown as answering elsewhere, with
             const html = buildMessageHTML(display, helpers, [], 'Test');
             assert.match(html, /Answering in another tab/);
             assert.match(html, /pending-response-streaming/);
-            assert.doesNotMatch(html, /Retry response|no longer connected|connection to this/);
+            assert.doesNotMatch(html, /response-error|no longer connected|connection to this/);
             assert.doesNotMatch(html, /copy-message-btn|regenerate-message-btn/, 'no actions on a reply still being written');
             assert.doesNotMatch(html, /Model provider returned no response/);
             assert.doesNotMatch(html, /data-streaming-pending="true"/);
@@ -155,7 +156,7 @@ test('the interrupted copy says what the turn lock knows: connection lost, or ch
         assert.match(restoredResponseForDisplay(pendingTurn, false, OWNERSHIP_NONE).inferenceError,
             /^The connection to this request was lost before a reply arrived\. Retry sends a new request\.$/);
         const html = buildMessageHTML(lost, helpers, [], 'Test');
-        assert.match(html, /Retry response/);
+        assert.match(html, /response-error/);
         assert.doesNotMatch(html, /Answering in another tab/);
         // No Web Locks (or no answer): the cautious copy stays.
         for (const ownership of [OWNERSHIP_UNKNOWN, null, undefined]) {
@@ -203,13 +204,14 @@ test('interrupted answers keep their content and show an escaped error with retr
         const { buildMessageHTML } = await import('../../chat/components/MessageTemplates.js');
         const message = {id:'partial-answer',role:'assistant',content:'Partial answer',model:'Test',timestamp:new Date().toISOString()};
         const render = value => buildMessageHTML(value,{processContentWithLatex:escapeHtml,formatTime:()=>''},[],'Test');
-        assert.doesNotMatch(render(message), /inference-failure-warning/);
+        assert.doesNotMatch(render(message), /response-error/);
         const html = render({...message,inferenceError:'Response interrupted <script>alert(1)</script>'});
         assert.match(html, /Partial answer/);
-        assert.match(html, /Response interrupted &lt;script&gt;/);
-        assert.doesNotMatch(html, /<script>/);
-        assert.match(html, /regenerate-message-btn inference-retry-button/);
-        assert.match(html, /Retry response/);
+        // The same line as a reply that failed before any text, after the answer.
+        assert.match(html, /class="[^"]*response-error"[\s\S]*<strong>Error:<\/strong> Response interrupted &lt;script&gt;/);
+        assert.ok(html.indexOf('Partial answer') < html.indexOf('response-error'));
+        assert.doesNotMatch(html, /<script>|inference-failure-warning|Retry response/);
+        assert.match(html, /regenerate-message-btn/, 'retry is the action row');
     } finally { restoreGlobals(); }
 });
 
@@ -365,10 +367,9 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm1', role: 'assistant', model: 'Parallel', content: 'Hello',
             council: { enabled: true, stage1: lanes, errors: [{ model: 'Image', message: 'Request failed. (HTTP 429)' }] }
         }, helpers, [], 'GPT');
-        assert.match(parallel, /class="council-lane-error"/);
-        assert.match(parallel, /<p class="council-lane-error-message">Too many requests\.<\/p>/);
-        assert.match(parallel, /Error 429/);
-        assert.match(parallel, /council-lane-retry-btn regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
+        assert.match(parallel, /response-error[\s\S]*<strong>Error:<\/strong> Too many requests \(429\)\./);
+        assert.match(parallel, /regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
+        assert.doesNotMatch(parallel, /council-lane-error|council-lane-retry-btn/);
         assert.doesNotMatch(parallel, /model request failed|Request failed\.|council-stage-warning|>Failed</);
 
         // With a Council review the lane cannot be retried on its own.
@@ -376,8 +377,8 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm2', role: 'assistant', model: 'Council', content: '',
             council: { enabled: true, stage1: lanes, synthesis: { model: 'Fable', status: 'partial', response: 'Review' } }
         }, helpers, [], 'GPT');
-        assert.match(council, /Too many requests\./);
-        assert.doesNotMatch(council, /council-lane-retry-btn/);
+        assert.match(council, /Too many requests \(429\)\./);
+        assert.doesNotMatch(council, /data-council-lane-id="secondary"[^>]*data-tooltip="Regenerate/);
     } finally { restoreGlobals(); }
 });
 

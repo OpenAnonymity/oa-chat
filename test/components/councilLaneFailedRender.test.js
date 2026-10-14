@@ -45,13 +45,12 @@ test('a stored "unknown" response model is not shown: the failed lane keeps the 
     assert.match(header, /council-response-model-name">Gemini 3\.8 Flash</);
     assert.doesNotMatch(html, /council-response-model-name">unknown</);
     assert.doesNotMatch(html, /font-semibold">U</, 'no "U" avatar for a model that does not exist');
-    assert.match(html, /regenerate-council-lane-btn[^>]*data-council-lane-id="secondary"/, 'Try again is offered');
+    assert.match(html, /regenerate-council-lane-btn[\s\S]*?data-council-lane-id="secondary"/, 'retry is the lane action');
 });
 
 test('a numeric router code is named on the failed lane', async () => {
     const html = await renderMessage(message({ error: 'Request failed. (HTTP 502)' }));
-    assert.match(html, /Bad gateway\./);
-    assert.match(html, /Error 502/);
+    assert.match(html, /<strong>Error:<\/strong> Bad gateway \(502\)\./);
 });
 
 test('a concrete routed model still labels the lane that it answered', async () => {

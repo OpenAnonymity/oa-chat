@@ -271,12 +271,12 @@ export async function acquireVerifiedAccess(options = {}) {
     let ticketsSkipped = 0;
     let ticketsRemoved = 0;
     let sweepSettled = false;
-    const settleSweep = recovered => {
+    const settleSweep = (recovered, reason = null) => {
         if (sweepSettled || ticketsSkipped === 0) return;
         sweepSettled = true;
         if (typeof onTicketSweepEnd !== 'function') return;
         try {
-            onTicketSweepEnd({ skipped: ticketsSkipped, removed: ticketsRemoved, recovered });
+            onTicketSweepEnd({ skipped: ticketsSkipped, removed: ticketsRemoved, recovered, reason, tier: ticketsRequired });
         } catch (hookError) {
             onVerificationWarning('Ticket sweep hook failed:', buildSafeAccessErrorMetadata(hookError));
         }
@@ -313,7 +313,7 @@ export async function acquireVerifiedAccess(options = {}) {
                     // than loop.
                     const removedNow = balanceBeforeRequest - spendableBalance();
                     if (!(removedNow > 0)) {
-                        error.message = 'A ticket was refused as already used but could not be set aside. Please try again.';
+                        error.message = 'Couldn’t update the tickets saved on this device. Please try again.';
                         error.code = 'TICKET_SWEEP_STALLED';
                         onAccessRequestError(buildSafeAccessErrorMetadata(error));
                         throw error;
@@ -334,7 +334,7 @@ export async function acquireVerifiedAccess(options = {}) {
                         continue;
                     }
                     if (remainingTickets >= ticketsRequired) {
-                        error.message = 'A ticket was refused as invalidated but could not be set aside. Please try again.';
+                        error.message = 'Couldn’t update the tickets saved on this device. Please try again.';
                         error.code = 'TICKET_SWEEP_STALLED';
                     } else {
                         error.message = remainingTickets > 0
@@ -347,7 +347,7 @@ export async function acquireVerifiedAccess(options = {}) {
             }
         }
     } catch (error) {
-        settleSweep(false);
+        settleSweep(false, error?.code || error?.name || null);
         throw error;
     }
 

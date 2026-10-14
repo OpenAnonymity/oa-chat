@@ -133,8 +133,7 @@ function escapeHtmlAttribute(text) {
 }
 
 function normalizePendingPhase(phase) {
-    if (phase === 'preparing-access' || phase === 'thinking' || phase === 'reloading-tickets'
-        || phase === 'skipping-used-tickets') return phase;
+    if (phase === 'preparing-access' || phase === 'thinking' || phase === 'reloading-tickets') return phase;
     return phase === 'requesting-key' || phase === 'waiting'
         ? 'requesting-key'
         : 'waiting-response';
@@ -153,12 +152,6 @@ export function getPendingIndicatorLabel(phase, progress = null) {
     const normalizedPhase = normalizePendingPhase(phase);
     if (normalizedPhase === 'thinking') return 'Thinking...';
     if (normalizedPhase === 'reloading-tickets') return 'Reloading tickets…';
-    if (normalizedPhase === 'skipping-used-tickets') {
-        const skipped = Number(progress?.skippedTickets);
-        return Number.isInteger(skipped) && skipped > 0
-            ? `Skipping already-used tickets · ${skipped}`
-            : 'Skipping already-used tickets';
-    }
     return normalizedPhase === 'waiting-response'
         ? 'Waiting for response'
         : 'Requesting ephemeral key';
@@ -1461,7 +1454,8 @@ function buildCouncilLaneActionRow(entry, messageId, citationsToggle = '') {
     // A finished lane with output, or a lane stopped after showing something
     // (text, an image, or reasoning), gets copy and regenerate.
     const settled = entry?.status === 'complete' || entry?.status === 'cancelled';
-    if (!settled || !(entry.response || hasImages || (entry.status === 'cancelled' && hasReasoning))) {
+    const failed = entry?.status === 'error';
+    if (!failed && (!settled || !(entry.response || hasImages || (entry.status === 'cancelled' && hasReasoning)))) {
         return '';
     }
 
@@ -1541,42 +1535,20 @@ export function describeCouncilLaneError(errorText) {
 function buildCouncilLaneErrorBody(entry, messageId, options = {}) {
     const { showRetry = false } = options;
     const { message, detail } = describeCouncilLaneError(entry?.error);
-    const laneId = entry?.laneId || '';
-    const label = entry?.label || laneId || 'response';
-    const retryButton = showRetry && laneId
-        ? `
-            <button
-                type="button"
-                class="council-lane-retry-btn regenerate-council-lane-btn"
-                data-message-id="${escapeHtmlAttribute(messageId)}"
-                data-council-lane-id="${escapeHtmlAttribute(laneId)}"
-                data-council-label="${escapeHtmlAttribute(label)}"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
-                <span>Try again</span>
-            </button>
-        `
-        : '';
-    return buildCouncilErrorNotice({ message, detail, actionHtml: retryButton });
+    const code = /(\d{3})/.exec(detail || '')?.[1];
+    const text = code ? `${message.replace(/\.$/, '')} (${code}).` : message;
+    // Same line as a failed single reply; retry is the lane's regenerate action.
+    return `
+        <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry?.laneId || entry?.label || 'lane')}">
+            ${buildResponseErrorHtml(text)}
+        </div>
+        ${showRetry ? buildCouncilLaneActionRow(entry, messageId) : ''}
+    `;
 }
 
-function buildCouncilErrorNotice({ message, detail = '', actionHtml = '' }) {
-    return `
-        <div class="council-lane-error" role="status">
-            <svg class="council-lane-error-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" />
-                <path stroke-linecap="round" d="M12 7.75v5" />
-                <path stroke-linecap="round" d="M12 16.25h.01" stroke-width="2.25" />
-            </svg>
-            <div class="council-lane-error-text">
-                <p class="council-lane-error-message">${escapeHtml(message)}</p>
-                ${detail ? `<p class="council-lane-error-detail">${escapeHtml(detail)}</p>` : ''}
-                ${actionHtml}
-            </div>
-        </div>
-    `;
+function buildCouncilErrorNotice({ message, detail = '' }) {
+    const code = /(\d{3})/.exec(detail || '')?.[1];
+    return buildResponseErrorHtml(code ? `${message.replace(/\.$/, '')} (${code}).` : message);
 }
 
 function buildCouncilLaneWorkingIndicator() {
@@ -1949,6 +1921,20 @@ function shouldShowCouncilAssistantActions(synthesis) {
         ? synthesis.status.trim().toLowerCase()
         : '';
     return !COUNCIL_SYNTHESIS_ACTION_PENDING_STATUSES.has(status);
+}
+
+/**
+ * The one way a failed reply reads, wherever it fails: a plain answer-style
+ * line, "Error: …", the same as a turn that failed before any text. Retry
+ * lives in the reply's own action row (regenerate), not in a second button.
+ */
+export function buildResponseErrorHtml(text) {
+    const value = String(text || '').trim() || 'The response failed.';
+    return `
+        <div class="${CLASSES.assistantBubble} response-error" role="status">
+            <div class="min-w-0 w-full overflow-hidden prose"><p><strong>Error:</strong> ${escapeHtml(value)}</p></div>
+        </div>
+    `;
 }
 
 function buildRegenerationStatus(message) {
@@ -2385,10 +2371,7 @@ function buildAssistantMessage(message, helpers, providerName, modelName, option
                 ${thumbnailsBubble}
                 ${textBubble}
                 ${imageBubble}
-                ${message.inferenceError ? `<div class="inference-failure-warning" role="status">
-                    <div>${escapeHtml(message.inferenceError)}</div>
-                    <button type="button" class="regenerate-message-btn inference-retry-button" data-message-id="${escapeHtmlAttribute(message.id)}">Retry response</button>
-                </div>` : ''}
+                ${message.inferenceError ? buildResponseErrorHtml(message.inferenceError) : ''}
                 ${isAnsweringElsewhere ? `<div class="px-2 py-1 answering-elsewhere" role="status" aria-live="polite">
                     <div class="pending-response-line"><span class="pending-response-label pending-response-streaming">Answering in another tab</span></div>
                 </div>` : ''}

@@ -130,7 +130,7 @@ test('a reply another tab is writing is painted as answering elsewhere, and repa
     const { area, container, repaints } = await mountedArea({ locks, messages: [prompt, placeholder] });
     await area.render();
     assert.match(container.innerHTML, /Answering in another tab/);
-    assert.doesNotMatch(container.innerHTML, /Retry response|no longer connected|connection to this reply/);
+    assert.doesNotMatch(container.innerHTML, /response-error|no longer connected|connection to this reply/);
     assert.deepEqual(locks.log.map(entry => [entry.mode, entry.ifAvailable]), [['exclusive', true], ['exclusive', false]],
         'one exclusive probe, then a release wait; neither holds ownership');
     assert.equal(locks.waiting(turnLockName('chat')), 1);
@@ -148,7 +148,7 @@ test('a reply nobody is writing any more is an interrupted turn with Retry, and 
     const { area, container, repaints } = await mountedArea({ locks, messages: [prompt, placeholder] });
     await area.render();
     assert.match(container.innerHTML, /The connection to this reply was lost before it finished\. Retry sends a new request\./);
-    assert.match(container.innerHTML, /Retry response/);
+    assert.match(container.innerHTML, /response-error/);
     assert.doesNotMatch(container.innerHTML, /Answering in another tab|other open tab/);
     assert.deepEqual(locks.log.map(entry => entry.mode), ['exclusive']);
     assert.equal(locks.waiting(turnLockName('chat')), 0);
@@ -170,7 +170,7 @@ test('a wait from an earlier paint is dropped by the next one, and never fires o
     const probes = locks.log.length;
     await mounted.area.render();
     assert.equal(locks.log.length, probes, 'no probe while this tab streams');
-    assert.doesNotMatch(mounted.container.innerHTML, /Answering in another tab|Retry response/);
+    assert.doesNotMatch(mounted.container.innerHTML, /Answering in another tab|response-error/);
     assert.equal(locks.waiting(turnLockName('chat')), 0, 'the earlier wait was dropped');
     locks.release(turnLockName('chat'));
     await new Promise(resolve => setTimeout(resolve, 5));
@@ -186,7 +186,7 @@ test('a snapshot taken while the turn was still finishing is re-read before a fr
     await area.render();
     assert.equal(reads.length, 2, 'read again once the lock said nobody is writing');
     assert.match(container.innerHTML, /Finished just now/);
-    assert.doesNotMatch(container.innerHTML, /Retry response|connection to this reply|Answering in another tab/);
+    assert.doesNotMatch(container.innerHTML, /response-error|connection to this reply|Answering in another tab/);
 });
 
 test('a chat with only settled replies never touches the lock', async t => {
