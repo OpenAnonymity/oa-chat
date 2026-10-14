@@ -117,6 +117,12 @@ UI removed the remaining parentheses, so these failures could appear only as
 name. Provider errors without an allowlisted numeric code say “The provider
 reported an error.” Arbitrary provider strings and raw error bodies are excluded.
 
+The compact error line preserves this distinction in both failed lanes and
+Council-review fallback notices: `Error: Gateway timeout (HTTP 504).` versus
+`Error: Gateway timeout (provider error 504).` Keep coverage on the final
+rendered message, not just `describeCouncilLaneError`, so a later copy change
+cannot silently drop the error's origin.
+
 This changes presentation and diagnostics only. It does not assign HTTP status
 to an operational error, trigger credit recovery, replay requests, spend tickets
 or change cancellation. Sibling lanes keep their results. The original live

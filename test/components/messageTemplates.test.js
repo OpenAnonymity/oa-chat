@@ -367,7 +367,7 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm1', role: 'assistant', model: 'Parallel', content: 'Hello',
             council: { enabled: true, stage1: lanes, errors: [{ model: 'Image', message: 'Request failed. (HTTP 429)' }] }
         }, helpers, [], 'GPT');
-        assert.match(parallel, /response-error[\s\S]*<strong>Error:<\/strong> Too many requests \(429\)\./);
+        assert.match(parallel, /response-error[\s\S]*<strong>Error:<\/strong> Too many requests \(HTTP 429\)\./);
         assert.match(parallel, /regenerate-council-lane-btn[\s\S]*data-council-lane-id="secondary"/);
         assert.doesNotMatch(parallel, /council-lane-error|council-lane-retry-btn/);
         assert.doesNotMatch(parallel, /model request failed|Request failed\.|council-stage-warning|>Failed</);
@@ -377,7 +377,7 @@ test('a failed Parallel lane reads as one plain sentence with a way to try again
             id: 'm2', role: 'assistant', model: 'Council', content: '',
             council: { enabled: true, stage1: lanes, synthesis: { model: 'Fable', status: 'partial', response: 'Review' } }
         }, helpers, [], 'GPT');
-        assert.match(council, /Too many requests \(429\)\./);
+        assert.match(council, /Too many requests \(HTTP 429\)\./);
         assert.doesNotMatch(council, /data-council-lane-id="secondary"[^>]*data-tooltip="Regenerate/);
     } finally { restoreGlobals(); }
 });

@@ -1,3 +1,38 @@
+## October 14, 2026 — keep proxy controls attached and preserve error provenance (local)
+
+Review of cb9fed96 found that replacing a parent's innerHTML and reinserting
+its old proxy section still detached the live controls. Real Chrome interaction
+lost keyboard focus, restarted CSS animation, and swallowed a click when a
+wallet update landed between mousedown and mouseup. The partial render now
+parses new markup off-page and updates only siblings around an unchanged proxy
+section. The section stays attached throughout. Help visibility is managed in
+place by setOpenHelp, independently of the proxy render key.
+
+The cached-HTML fast path also checks the live proxy presentation key. Retry
+mutates the switch/icon while its request is pending; a failure returning to
+the same logical status must still clear that transient DOM state. A failed
+Retry now restores an enabled switch and the unavailable icon. Retained retry
+controls use one transitionend handler, so repeated notifications do not
+accumulate animation callbacks.
+
+Compact lane and Council-review errors retain their origin: `(HTTP 504)` versus
+`(provider error 504)`. The regressions assert the final rendered message.
+The earlier ticket, provider diagnostic, and 45-second timeout code is unchanged;
+the shorter timeout still needs slow-provider/relay validation before release.
+
+Regression acceptance for the System Panel: focus Security Details, update
+wallet markup, and verify focus and animation continuity; update during a native
+press and verify the click still arrives. Exercise failed Retry returning to
+the original unavailable state, repeated notifications, and opening/closing
+help. Use synthetic fixtures for failures; do not mutate a personal wallet or
+change live relay preferences to induce them. No transport, account, telemetry
+or privacy-protocol behavior is changed by these UI repairs.
+
+Validation: official runner 1,661 core + 893 payment tests passed (2 skipped);
+fresh independent adversarial review approved the repair. Native Chrome checks
+retain focus and deliver the click without restarting animation. Local changes
+only; no new release pin or deployment has been created.
+
 ## October 14, 2026 — the System Panel's proxy section holds still (local)
 
 The panel's top section was rebuilt from scratch on every account
@@ -10,8 +45,8 @@ that straddled a rebuild (the first click after switching back to the tab is
 the common case: focus runs the account check, which notifies) never became a
 click. `renderTopSectionOnly` now leaves markup identical to the last render
 alone, and when the section does change it keeps the live proxy section
-(`#proxy-section`, keyed by everything its markup depends on:
-`proxySectionKey`) instead of replacing it; in-place status updates record
+(`#proxy-section`, keyed by its controls through `proxySectionKey`) instead
+of replacing it; in-place status updates record
 the new key (`syncProxySectionKey`). A full `render()` resets the comparison.
 
 The Security Details dialog treats "open" as the overlay being on the page:

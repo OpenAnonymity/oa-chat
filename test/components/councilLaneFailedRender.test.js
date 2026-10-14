@@ -50,10 +50,31 @@ test('a stored "unknown" response model is not shown: the failed lane keeps the 
 
 test('a numeric router code is named on the failed lane', async () => {
     const html = await renderMessage(message({ error: 'Request failed. (HTTP 502)' }));
-    assert.match(html, /<strong>Error:<\/strong> Bad gateway \(502\)\./);
+    assert.match(html, /<strong>Error:<\/strong> Bad gateway \(HTTP 502\)\./);
 });
 
 test('a concrete routed model still labels the lane that it answered', async () => {
     const html = await renderMessage(message({ status: 'complete', response: 'Routed answer.', responseModel: 'Google: Gemini 3.8 Flash Lite' }));
     assert.match(laneHeader(html, 'secondary'), /council-response-model-name">Gemini 3\.8 Flash Lite</);
+});
+
+
+test('compact lane errors distinguish an HTTP status from the same provider code', async () => {
+    const http = await renderMessage(message({ error: 'Request failed. (HTTP 504)' }));
+    const provider = await renderMessage(message({ error: 'Request failed. (PROVIDER_CODE_504)' }));
+    assert.match(http, /<strong>Error:<\/strong> Gateway timeout \(HTTP 504\)\./);
+    assert.match(provider, /<strong>Error:<\/strong> Gateway timeout \(provider error 504\)\./);
+    assert.doesNotMatch(provider, /HTTP 504/);
+});
+
+test('Council review errors retain provider or HTTP provenance in their compact fallback line', async () => {
+    for (const [error, expected] of [
+        ['Request failed. (HTTP 504)', /Continuing from Response A \(HTTP 504\)\./],
+        ['Request failed. (PROVIDER_CODE_504)', /Continuing from Response A \(provider error 504\)\./]
+    ]) {
+        const value = message({ status: 'complete', response: 'Other answer.' });
+        value.council.synthesis = { status: 'error', model: 'Test', fallbackLabel: 'Response A', error };
+        const html = await renderMessage(value);
+        assert.match(html, expected);
+    }
 });

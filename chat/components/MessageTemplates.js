@@ -1535,20 +1535,20 @@ export function describeCouncilLaneError(errorText) {
 function buildCouncilLaneErrorBody(entry, messageId, options = {}) {
     const { showRetry = false } = options;
     const { message, detail } = describeCouncilLaneError(entry?.error);
-    const code = /(\d{3})/.exec(detail || '')?.[1];
-    const text = code ? `${message.replace(/\.$/, '')} (${code}).` : message;
     // Same line as a failed single reply; retry is the lane's regenerate action.
     return `
         <div class="council-response-body" data-council-lane-body="${escapeHtmlAttribute(entry?.laneId || entry?.label || 'lane')}">
-            ${buildResponseErrorHtml(text)}
+            ${buildCouncilErrorNotice({ message, detail })}
         </div>
         ${showRetry ? buildCouncilLaneActionRow(entry, messageId) : ''}
     `;
 }
 
 function buildCouncilErrorNotice({ message, detail = '' }) {
-    const code = /(\d{3})/.exec(detail || '')?.[1];
-    return buildResponseErrorHtml(code ? `${message.replace(/\.$/, '')} (${code}).` : message);
+    // Keep the error's origin in the compact line: a provider code inside
+    // an HTTP 200 stream is not the HTTP response status.
+    const source = detail.replace(/^Error /, 'HTTP ').replace(/^Provider /, 'provider ');
+    return buildResponseErrorHtml(source ? `${message.replace(/\.$/, '')} (${source}).` : message);
 }
 
 function buildCouncilLaneWorkingIndicator() {

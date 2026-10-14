@@ -2631,10 +2631,9 @@ class RightPanel {
         const tlsInfo = this.app.services.networkProxy.getTlsInfo();
         const hasTlsInfo = tlsInfo.version !== null;
 
-        // The key names everything this markup depends on. A top-section
-        // rebuild that finds the same key keeps the live section instead of
-        // replacing it (renderTopSectionOnly), so the status icon's pulse,
-        // the tooltip, and a press in progress on a button all survive.
+        // The key tracks the proxy controls; help visibility updates in place.
+        // A top-section update with the same key leaves this section attached,
+        // so its pulse, tooltip and a press in progress all survive.
         return `<div id="proxy-section" class="p-3 space-y-2" data-proxy-key="${this.escapeHtmlAttribute(this.proxySectionKey(settings, status))}">
                 <!-- Header Row: Title + Toggle -->
                 <div class="flex items-center justify-between">
@@ -2787,11 +2786,11 @@ class RightPanel {
         return JSON.stringify([!!settings?.enabled, this.getProxyStatusMeta(settings, status).state]);
     }
 
-    /** Everything the proxy section's markup depends on (generateProxySectionHTML). */
+    /** Proxy controls that need a render; help visibility is updated in place by setOpenHelp. */
     proxySectionKey(settings = this.proxySettings, status = this.proxyStatus) {
         const meta = this.getProxyStatusMeta(settings, status);
         const tlsInfo = this.app.services.networkProxy.getTlsInfo?.() || {};
-        return JSON.stringify([!!settings?.enabled, meta.state, meta.label, !!this.showProxyInfo,
+        return JSON.stringify([!!settings?.enabled, meta.state, meta.label,
             tlsInfo.version !== null && tlsInfo.version !== undefined, !!this.proxyActionPending]);
     }
 
@@ -3175,9 +3174,10 @@ class RightPanel {
             };
             // While still connecting when a turn ends, take another: the
             // motion is continuous, and always ends on a whole turn.
-            proxyRetry.querySelector('.oa-proxy-retry-turns')?.addEventListener('transitionend', event => {
+            const turns = proxyRetry.querySelector('.oa-proxy-retry-turns');
+            if (turns) turns.ontransitionend = event => {
                 if (event.propertyName === 'transform') this.onProxyRetryTurnEnd();
-            });
+            };
         }
 
         const verifierAttestationBtn = document.getElementById('verifier-attestation-btn');
@@ -3231,30 +3231,46 @@ class RightPanel {
         // DOM alone — replacing it would restart the status icon's pulse,
         // drop a tooltip, and lose a click whose press landed on the old node.
         const html = this.generateTopSectionHTML();
-        if (html === this.lastTopSectionHtml && this.lastTopSectionNode === topSection) {
+        const previousProxySection = topSection.querySelector('#proxy-section');
+        // Retry/toggle updates the live controls before its request settles.
+        // Matching the last HTML string alone can leave those controls stuck
+        // in their temporary state when the request returns to the old status.
+        const proxyUnchanged = !!previousProxySection
+            && previousProxySection.dataset.proxyKey === this.proxySectionKey();
+        if (html === this.lastTopSectionHtml && this.lastTopSectionNode === topSection && proxyUnchanged) {
             this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
             this.attachTopSectionEventListeners();
             this.ensureLaneExpirationTimer();
             return;
         }
-        const previousProxySection = topSection.querySelector('#proxy-section');
         const proxyFeedback = topSection.querySelector('#proxy-failure-notice');
         const proxyRetryFocused = proxyFeedback?.contains(document.activeElement);
-        topSection.innerHTML = html;
+        if (proxyUnchanged && previousProxySection.parentNode === topSection) {
+            const template = document.createElement('template');
+            template.innerHTML = html;
+            const nextProxySection = template.content.querySelector('#proxy-section');
+            // Keep the proxy continuously attached. Removing and reinserting
+            // the same node still loses focus/native clicks and restarts CSS
+            // animation; update only the siblings around it.
+            for (const child of [...topSection.childNodes]) {
+                if (child !== previousProxySection) child.remove();
+            }
+            let beforeProxy = true;
+            for (const child of [...template.content.childNodes]) {
+                if (child === nextProxySection) beforeProxy = false;
+                else topSection.insertBefore(child, beforeProxy ? previousProxySection : null);
+            }
+        } else {
+            topSection.innerHTML = html;
+            // A real proxy presentation change may replace the controls;
+            // keep the retry animation and its timers across that change.
+            if (proxyFeedback) {
+                topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
+                if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
+            }
+        }
         this.lastTopSectionHtml = html;
         this.lastTopSectionNode = topSection;
-        // A proxy section whose presentation did not change is kept as it is
-        // (its icon mid-pulse, its tooltip, its buttons and the retry
-        // animation) — only the parts around it were rebuilt.
-        const nextProxySection = topSection.querySelector('#proxy-section');
-        if (previousProxySection && nextProxySection
-            && previousProxySection.dataset?.proxyKey === nextProxySection.dataset?.proxyKey) {
-            nextProxySection.replaceWith(previousProxySection);
-        } else if (proxyFeedback) {
-            // Keep the retry animation and its timers alive across unrelated updates.
-            topSection.querySelector('#proxy-failure-notice')?.replaceWith(proxyFeedback);
-            if (proxyRetryFocused) proxyFeedback.querySelector('#proxy-retry-btn')?.focus();
-        }
         this.app.refreshExtensionSlot?.(SLOT_NAMES.RIGHT_PANEL_TICKET_STATUS);
 
         // Re-attach event listeners for the top section only
