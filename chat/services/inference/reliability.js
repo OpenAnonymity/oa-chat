@@ -1,7 +1,10 @@
 // Client recovery policy, not provider guarantees. Heartbeats prove transport
 // activity, not generation progress. All state stays in this browser.
 export const INFERENCE_TIMING = Object.freeze({
-    warningMs: 45000, connectionMs: 120000, idleMs: 180000,
+    // idleMs: no byte at all, heartbeats included, for this long means the
+    // stream is dead (routers send keep-alives while a model thinks), so
+    // the turn ends instead of showing a "still waiting" line.
+    warningMs: 45000, connectionMs: 120000, idleMs: 45000,
     outputMs: 600000, tailMs: 5000, pollMs: 1000
 });
 
@@ -60,12 +63,14 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
         if (!opened && elapsed >= policy.connectionMs) {
             error = inferenceError('INFERENCE_CONNECTION_TIMEOUT', 'The provider did not open a response in time. Please retry.');
         } else if (opened && silence >= policy.idleMs) {
-            error = inferenceError('INFERENCE_IDLE_TIMEOUT', 'The response timed out after prolonged silence. Provider progress is unknown. Any partial answer has been kept. Please retry.');
+            error = inferenceError('INFERENCE_IDLE_TIMEOUT', 'The provider stopped responding.');
         } else if (opened && now() - outputAt >= policy.outputMs) {
             error = inferenceError('INFERENCE_OUTPUT_TIMEOUT', 'The connection stayed open but no model output arrived for 10 minutes. Please retry.');
         }
         if (error) controller.abort(error);
-        else if (silence >= policy.warningMs) publish({ kind: 'silence', message: 'Taking longer than usual. No data received for 45 seconds; still waiting for a response.' });
+        else if (silence >= policy.warningMs && policy.warningMs < policy.idleMs) {
+            publish({ kind: 'silence', message: 'Taking longer than usual. Still waiting for a response.' });
+        }
     }, policy.pollMs);
     return {
         signal: controller.signal,

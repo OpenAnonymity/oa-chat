@@ -1,3 +1,15 @@
+## October 14, 2026 — shorter failure copy; a silent stream ends at 45 s (local)
+
+Failure lines say what happened and stop: "The provider stopped the reply
+with an error." (the provider's own text stays in the Activity Timeline),
+"The provider stopped responding.", "The connection closed before the model
+replied." — no "Any partial answer has been kept" or "Retry sends a new
+request" (the kept text and the regenerate action show both). A stream that
+sends no byte at all for 45 s, heartbeats included, now ends the turn; it
+used to show "Taking longer than usual…" at 45 s and wait until 180 s.
+Routers send keep-alives while a model thinks, so a thinking model is not
+cut off. The 120 s limit for the provider to open a response is unchanged.
+
 ## October 14, 2026 — one error line everywhere; the ticket sweep in two toasts (local)
 
 Dominic's review of the state mockups. A failed reply now reads the same

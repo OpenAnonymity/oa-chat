@@ -960,14 +960,14 @@ export class OpenRouterAPI {
             try {
                 parsed = JSON.parse(data);
             } catch (error) {
-                throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an unreadable response. Any partial answer has been kept. Please retry.');
+                throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an unreadable response.');
             }
 
             if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 throw inferenceError('INFERENCE_INVALID_STREAM', 'The provider sent an invalid response. Please retry.');
             }
             if (parsed.type === 'response.failed' || parsed.type === 'response.incomplete') {
-                throw inferenceError('INFERENCE_INCOMPLETE', 'The provider could not complete the response. Any partial answer has been kept. Please retry.');
+                throw inferenceError('INFERENCE_INCOMPLETE', 'The provider could not complete the response.');
             }
             if (parsed.type === 'response.completed') sawTerminal = true;
             const progressDelta = parsed.choices?.[0]?.delta;
@@ -1235,7 +1235,7 @@ export class OpenRouterAPI {
 
                 // Check for finish reason
                 const finishReason = parsed.choices?.[0]?.finish_reason;
-                if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response. Please retry.');
+                if (finishReason === 'error') throw inferenceError('INFERENCE_PROVIDER_ERROR', 'The provider could not complete the response.');
                 if (finishReason) {
                     completionFinishReason = finishReason;
                     // The provider has confirmed completion. Keep reading for the
@@ -1290,7 +1290,7 @@ export class OpenRouterAPI {
             throwIfStreamAborted();
 
             if (!sawTerminal && !completionFinishReason) {
-                throw inferenceError('INFERENCE_TRUNCATED', 'The response ended before completion was confirmed. Any partial answer has been kept. Please retry.');
+                throw inferenceError('INFERENCE_TRUNCATED', 'The response ended before it was complete.');
             }
             if (!sawAnswer) {
                 throw inferenceError('INFERENCE_EMPTY', 'The provider finished without an answer. Please retry or choose another model.');

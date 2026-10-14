@@ -147,7 +147,7 @@ test('a reply nobody is writing any more is an interrupted turn with Retry, and 
     t.after(restore);
     const { area, container, repaints } = await mountedArea({ locks, messages: [prompt, placeholder] });
     await area.render();
-    assert.match(container.innerHTML, /The connection to this reply was lost before it finished\. Retry sends a new request\./);
+    assert.match(container.innerHTML, /The connection to this reply was lost before it finished\./);
     assert.match(container.innerHTML, /response-error/);
     assert.doesNotMatch(container.innerHTML, /Answering in another tab|other open tab/);
     assert.deepEqual(locks.log.map(entry => entry.mode), ['exclusive']);

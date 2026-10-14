@@ -8752,12 +8752,12 @@ class ChatApp {
                 } else if (terminalError?.providerReported && !terminalError?.status) {
                     // The provider ended the stream with its own error event.
                     // Say what happened in plain words; keep its text as detail.
-                    const detail = String(errorMessage || '').replace(/\s+/g, ' ').trim().slice(0, 160);
-                    userFriendlyMessage = `The provider stopped the reply with an error${detail ? ` (${detail})` : ''}. Any partial answer has been kept. Retry sends a new request.`;
+                    // Its own text stays in the Activity Timeline, not in the reply.
+                    userFriendlyMessage = 'The provider stopped the reply with an error.';
                 } else if (terminalError?.name === 'AbortError' || /\boperation was aborted\b/i.test(errorMessage)) {
                     // Aborted without the person asking: the transport (relay
                     // session or browser connection) closed under the request.
-                    userFriendlyMessage = `The request was interrupted before the model replied: the connection to the relay or the provider closed. Retry sends a new request.`;
+                    userFriendlyMessage = 'The connection closed before the model replied.';
                 } else if (errorMessage.includes('proxy') || errorMessage.includes('Proxy')) {
                     // Proxy/connection errors
                     userFriendlyMessage = `Proxy error. Please take a look at the system panel and submit an issue at [issue](https://docs.google.com/forms/d/e/1FAIpQLSfIwuJ6sMTm1XISiVyb3P1ueK3SFZ_4vLj9-KH4FATodVfyxA/viewform?usp=publish-editor).`;

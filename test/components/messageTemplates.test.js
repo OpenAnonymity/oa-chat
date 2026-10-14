@@ -68,7 +68,7 @@ test('a saved pending response is displayed as disconnected without changing sto
             const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
             assert.doesNotMatch(html, /data-streaming-pending="true"/);
             assert.match(html, /no longer connected/);
-            assert.match(html, /Retrying sends a new request/);
+            assert.doesNotMatch(html, /Retrying sends a new request/);
             assert.match(html, /class="[^"]*response-error/);
             assert.doesNotMatch(html, /Model provider returned no response/);
             assert.doesNotMatch(html, /Private access secured|Verify private key/);
@@ -91,7 +91,7 @@ test('a pending turn saved before the first chunk is displayed as an interrupted
             isLocalOnly: true, pendingTurn: true });
         const display = restoredResponseForDisplay(saved, false);
         assert.match(display.inferenceError, /no reply was received/);
-        assert.match(display.inferenceError, /Retrying sends a new request/);
+        assert.match(display.inferenceError, /Check any other open tab before retrying\.$/);
         const html = buildMessageHTML(display, {processContentWithLatex:escapeHtml,formatTime:()=>''}, [], 'Test');
         assert.match(html, /response-error/);
         assert.match(html, /regenerate-message-btn/);
@@ -151,10 +151,10 @@ test('the interrupted copy says what the turn lock knows: connection lost, or ch
             isLocalOnly: true, pendingTurn: true });
         // Nobody holds the turn: the tab that was writing it is gone.
         const lost = restoredResponseForDisplay(reply, false, OWNERSHIP_NONE);
-        assert.match(lost.inferenceError, /^The connection to this reply was lost before it finished\. Retry sends a new request\.$/);
+        assert.match(lost.inferenceError, /^The connection to this reply was lost before it finished\.$/);
         assert.doesNotMatch(lost.inferenceError, /other open tab/);
         assert.match(restoredResponseForDisplay(pendingTurn, false, OWNERSHIP_NONE).inferenceError,
-            /^The connection to this request was lost before a reply arrived\. Retry sends a new request\.$/);
+            /^The connection to this request was lost before a reply arrived\.$/);
         const html = buildMessageHTML(lost, helpers, [], 'Test');
         assert.match(html, /response-error/);
         assert.doesNotMatch(html, /Answering in another tab/);

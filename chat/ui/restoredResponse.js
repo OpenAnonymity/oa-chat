@@ -13,12 +13,12 @@ export function wasReplyStreaming(message) {
 
 const INTERRUPTED_COPY = {
     [OWNERSHIP_NONE]: {
-        pending: 'The connection to this request was lost before a reply arrived. Retry sends a new request.',
-        reply: 'The connection to this reply was lost before it finished. Retry sends a new request.'
+        pending: 'The connection to this request was lost before a reply arrived.',
+        reply: 'The connection to this reply was lost before it finished.'
     },
     unknown: {
-        pending: 'This tab is no longer connected to the request; no reply was received. Check any other open tab before retrying. Retrying sends a new request.',
-        reply: 'This tab is no longer connected to the response. Check any other open tab before retrying. Retrying sends a new request.'
+        pending: 'This tab is no longer connected to the request; no reply was received. Check any other open tab before retrying.',
+        reply: 'This tab is no longer connected to the response. Check any other open tab before retrying.'
     }
 };
 
