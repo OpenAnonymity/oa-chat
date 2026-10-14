@@ -1,3 +1,12 @@
+## October 14, 2026 — every Parallel lane renders its math (local)
+
+A Parallel turn whose second lane (Claude Haiku) answered with \(…\) math
+showed the delimiters as text once the turn finished, although the lane had
+rendered them while streaming. The finished message is painted whole by
+`ChatArea.appendMessage`, and all three of its paths rendered math in only the
+first `.message-content` — the first lane. They now render every content
+element of the message (`renderMessageMath`). Single chats were unaffected
+(one content element), as was a reload (which renders every element).
 ## October 14, 2026 — already-used tickets are swept, not counted to ten (local)
 
 A wallet whose tickets had been spent from another device (or left behind by

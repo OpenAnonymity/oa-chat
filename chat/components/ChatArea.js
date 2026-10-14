@@ -2094,6 +2094,17 @@ export default class ChatArea {
     }
 
     /**
+     * Renders the math in every content element of one message. A Parallel
+     * turn has one per lane; rendering only the first (`querySelector`) left
+     * the other lanes' \(…\) as text once the turn finished (2026-10-14).
+     */
+    renderMessageMath(messageEl) {
+        if (!messageEl) return;
+        if (messageEl.matches?.('.message-content')) renderMathContent(messageEl);
+        messageEl.querySelectorAll?.('.message-content').forEach(el => renderMathContent(el));
+    }
+
+    /**
      * Updates a specific message in the DOM without full re-render.
      * @param {Object} message - The message object to update
      */
@@ -3239,10 +3250,7 @@ export default class ChatArea {
             if (newMessageEl) {
                 existingMessageEl.replaceWith(newMessageEl);
                 // Re-run LaTeX on the replaced element
-                const contentEl = newMessageEl.querySelector('.message-content');
-                if (contentEl) {
-                    renderMathContent(contentEl);
-                }
+                this.renderMessageMath(newMessageEl);
                 // Update scroll button visibility (no auto-scroll for appended messages)
                 this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
@@ -3262,10 +3270,7 @@ export default class ChatArea {
                 existingTypingIndicator.replaceWith(newMessageEl);
                 messagesContainer.querySelectorAll('[id^="typing-"]').forEach(el => el.remove());
 
-                const contentEl = newMessageEl.querySelector('.message-content');
-                if (contentEl) {
-                    renderMathContent(contentEl);
-                }
+                this.renderMessageMath(newMessageEl);
                 this.app.updateActivePromptScrollSpacer();
                 this.app.updateScrollButtonVisibility();
                 if (this.app.messageNavigation) {
@@ -3297,10 +3302,7 @@ export default class ChatArea {
                 reasoningTrace.classList.add('fade-in');
             }
 
-            const contentEl = newMessageEl.querySelector('.message-content');
-            if (contentEl) {
-                renderMathContent(contentEl);
-            }
+            this.renderMessageMath(newMessageEl);
         }
 
         // Update scroll button visibility (no auto-scroll for appended messages)
