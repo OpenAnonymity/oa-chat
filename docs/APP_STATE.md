@@ -1,3 +1,21 @@
+## October 14, 2026 — diagnostics that can find a bug, same data boundary (local)
+
+Sentry reported one event per category per page with no context: enough to
+see that something failed, not why. Reports now carry a trail (the Activity
+Timeline reduced to category, step name, HTTP status and the org's structured
+error code, last 40, never host/params/headers/bodies), four fixed-value tags
+(`oa.mode`, `oa.surface`, `oa.visibility`, `oa.online`), and catalogued
+incidents raised by the client itself — `access.sweep` (already-used tickets
+set aside, with bucketed counts), `access.sweep_stalled`, `stream.timeout`,
+`storage.failed`, `sync.failed` — each at most once a minute per name, ten per
+name and sixty per page. Everything is drawn from a finite vocabulary in
+`chat/services/diagnostics.js` and rebuilt by `scripts/sentry/privacy.mjs`
+before sending; free text, URLs, identifiers and model names have no field to
+travel in. Application code never imports the SDK (DOM events bridge the two),
+so unconfigured builds send nothing. No success events, timings or identities.
+Details and the catalogue: [SENTRY.md](SENTRY.md#diagnostics-and-the-trail--2026-10-14).
+
+
 ## October 14, 2026 — compact spent-ticket activity and steady relay toggle
 
 The RHS groups adjacent ticket-selection / already-spent request-key refusal

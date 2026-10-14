@@ -1,5 +1,7 @@
 // Client recovery policy, not provider guarantees. Heartbeats prove transport
 // activity, not generation progress. All state stays in this browser.
+import { reportDiagnostic } from '../diagnostics.js';
+
 export const INFERENCE_TIMING = Object.freeze({
     // idleMs: no byte at all, heartbeats included, for this long means the
     // stream is dead (routers send keep-alives while a model thinks), so
@@ -67,8 +69,14 @@ export function createInferenceWatchdog({ signal, onHealth, timing = {}, now = D
         } else if (opened && now() - outputAt >= policy.outputMs) {
             error = inferenceError('INFERENCE_OUTPUT_TIMEOUT', 'The connection stayed open but no model output arrived for 10 minutes. Please retry.');
         }
-        if (error) controller.abort(error);
-        else if (silence >= policy.warningMs && policy.warningMs < policy.idleMs) {
+        if (error) {
+            reportDiagnostic('stream.timeout', {
+                stage: error.code === 'INFERENCE_CONNECTION_TIMEOUT' ? 'connection'
+                    : error.code === 'INFERENCE_IDLE_TIMEOUT' ? 'idle' : 'output',
+                seconds: Math.round(elapsed / 1000)
+            });
+            controller.abort(error);
+        } else if (silence >= policy.warningMs && policy.warningMs < policy.idleMs) {
             publish({ kind: 'silence', message: 'Taking longer than usual. Still waiting for a response.' });
         }
     }, policy.pollMs);
