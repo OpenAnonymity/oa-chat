@@ -1887,6 +1887,49 @@ describe('production ChatApp runtime ownership', () => {
             ['Auto Router', 'Auto Router']);
     });
 
+    test('an edited prompt is resubmitted to the model on the edit card, not the one it was first sent to', async () => {
+        let requestedModelId;
+        const { app, records } = streamHarness(async (...args) => {
+            requestedModelId = args[1];
+            await args[3]('An answer from the newly selected model');
+            return { completionTokens: 3 };
+        });
+        app.state.models = [
+            { id: 'vendor/first-model', name: 'First model' },
+            { id: 'vendor/second-model', name: 'Second model' }
+        ];
+        app.inferenceService.getDisplayName = (_id, fallback) => fallback;
+        app.chatArea = { appendMessage() {}, updateStreamingMessage() {}, finalizeStreamingMessage() {},
+            updateMessage() {}, removeMessagesAfter() {}, updateMessageModel() {} };
+        records.set('prompt', { id: 'prompt', sessionId: 'one', role: 'user', content: 'Earlier prompt',
+            model: 'First model', memoryMode: false, timestamp: 1 });
+        records.set('answer', { id: 'answer', sessionId: 'one', role: 'assistant', content: 'From the first model',
+            model: 'First model', timestamp: 2 });
+        // The model picker was switched while the edit card was open; its chip mirrors the session model.
+        app.state.sessionsById.get('one').model = 'Second model';
+        app.editDrafts = new Map([['prompt', { content: 'Edited prompt', files: [] }]]);
+        app.editingMessageId = 'prompt';
+        app.stopSessionStreamingAndWait = async () => true;
+        app.recomputeSessionCouncilTranscriptHint = async () => {};
+        app.applySessionConversationSearchText = () => {};
+        app.renderSessions = () => {};
+        globalThis.document.querySelector = selector => (selector.includes('edit-prompt-textarea')
+            ? { value: 'Edited prompt' }
+            : null);
+
+        await app.confirmEditPrompt('prompt');
+
+        const prompt = records.get('prompt');
+        assert.equal(prompt.content, 'Edited prompt');
+        assert.equal(prompt.model, 'Second model', 'the stored prompt records the model it was resubmitted to');
+        assert.equal(records.has('answer'), false, 'the earlier reply is truncated');
+        assert.equal(requestedModelId, 'vendor/second-model');
+        const assistant = [...records.values()].find(message => message.role === 'assistant');
+        assert.equal(assistant?.model, 'Second model');
+        assert.equal(app.editingMessageId, null);
+        assert.equal(app.exclusiveSessionMutationOwners.has('one'), false, 'the edit releases its exclusive reservation');
+    });
+
     test('pre-output response metadata patches only its session pending header in place', () => {
         const makePending = sessionId => {
             const label = { textContent: 'Auto Router' };

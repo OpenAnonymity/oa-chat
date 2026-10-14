@@ -9522,6 +9522,11 @@ class ChatApp {
         message.content = newContent;
         message.files = draftFiles.length > 0 ? draftFiles : null;
         delete message.pendingFileObjects;
+        // The edited prompt is resubmitted to the model shown on the edit card's
+        // chip, which is the session's current model; record that on the prompt
+        // so its stored model matches the reply it gets.
+        const resubmitModelName = this.normalizeModelName(session.model, session) || session.model;
+        if (resubmitModelName) message.model = resubmitModelName;
         message.timestamp = Date.now();
         await chatDB.saveMessage(message);
 
