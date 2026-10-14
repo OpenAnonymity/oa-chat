@@ -1,4 +1,5 @@
-import { zkapiErrorMessage } from './zkapiErrorCopy.mjs';
+import { explainZkapiError, zkapiErrorMessage } from './zkapiErrorCopy.mjs';
+import { copyTokens, versionCopyText } from '../versioning/copy.mjs';
 import {
     buildUsageLedgerEntry, mergeUsageLedgerEntries, recoverUsageLedgerFromMessages,
     summarizeUsageLedger, upsertUsageLedgerEntry
@@ -26,7 +27,10 @@ function waitFor(promise, signal) {
 }
 
 /** OA owns the chat lifecycle; the SDK owns private keys, proofs and settlement. */
-export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
+// `versioning` is the protocol-version facade (versioning/index.js) or null.
+// Everything read from it fails open: a missing, throwing or malformed facade
+// never stops a chat, so single-version builds and tests behave as before.
+export function createZkapiChatRuntimeCore({ client, backend, createInferenceService, modelConfiguration, resolveModelBudget, settleAccess, versioning = null, initializeClient = () => client.init(), retirementTimeoutMs = RETIREMENT_TIMEOUT_MS, retryDelay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) } = {}) {
     if (!client || !backend || typeof createInferenceService !== 'function' || !modelConfiguration) {
         throw new Error('Private chat runtime dependencies are required.');
     }
@@ -45,6 +49,63 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
 
     function publish() {
         if (!disposed) context?.refreshPresentation();
+    }
+
+    // The SDK's failure to start is the SDK's own words, which can name the
+    // operator's address. When the page holds a balance it cannot read because
+    // of it, the version facade says so (isStartFailure) and the error is told
+    // in plain words, the same sentence every other surface shows, before any
+    // caller turns it into a toast. It is the error the SDK replays to every
+    // later caller, so it is reworded once, in place. Every other failure, and
+    // a build with no facade, keeps the SDK's words. Returns the same error.
+    function plainStartFailure(error) {
+        try {
+            if (error && typeof error === 'object' && versioning?.isStartFailure?.(error) === true) {
+                explainZkapiError(error, { facade: versioning });
+            }
+        } catch (_) { /* the error itself is what the caller handles */ }
+        return error;
+    }
+
+    // The SDK's start, with its failure told by plainStartFailure.
+    async function startClient() {
+        try {
+            return await initializeClient();
+        } catch (error) {
+            throw plainStartFailure(error);
+        }
+    }
+
+    // May a NEW chat key start? Only a multi-version build whose loaded adapter
+    // has a chat cutoff can say no (the last hours before a note expires). It
+    // is asked only for a send that would open a key: a follow-up that reuses
+    // the live key of its own session and cap opens none, so the cutoff has
+    // nothing to protect there and the person is not told chats are paused
+    // while theirs works.
+    function newKeyAllowed() {
+        try {
+            const gate = versioning?.sendGate?.(Date.now());
+            return !(gate && gate.canSend === false);
+        } catch (_) {
+            return true;
+        }
+    }
+
+    // The toast for a model whose key needs more than the balance. With a
+    // newer version to move to it says so; without one (every single-version
+    // build) it is the plain advice returned at the end.
+    function largerKeyMessage(spendingLimitUsd) {
+        const amount = `$${spendingLimitUsd.toFixed(2)}`;
+        try {
+            const state = versioning?.state?.();
+            const target = state?.show === true ? state.target : null;
+            if (target && state.current && target.id !== state.current.id) {
+                const tokens = { ...copyTokens(state, { table: versioning.table }), amount };
+                const text = versionCopyText('send.largerKey', tokens);
+                if (text) return text;
+            }
+        } catch (_) { /* fall through to the single-version text */ }
+        return `This model requires ${amount} in private balance for a new key. Choose a lower-cap model, or withdraw the remaining balance and fund a larger one.`;
     }
 
     function setTransition(value) {
@@ -92,7 +153,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             if (expectedOwner || deletionScope !== undefined) {
                 // Hydration and owner discovery belong inside the registered
                 // barrier: a fast return to private mode must see them too.
-                await initializeClient();
+                await startClient();
                 checkCanceled();
             }
             if (deletionScope !== undefined) {
@@ -133,7 +194,7 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
                     const retryAfter = Number(error?.data?.retry_after_seconds ?? error?.data?.error?.retry_after_seconds);
                     const delay = Number.isFinite(retryAfter) && retryAfter >= 0
                         ? Math.max(250, Math.ceil(retryAfter * 1000)) : 1000;
-                    if (!retryable || Date.now() + delay > deadline) throw error;
+                    if (!retryable || Date.now() + delay > deadline) throw plainStartFailure(error);
                     await waitFor(retryDelay(delay), signal);
                 }
             }
@@ -214,12 +275,19 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
             const unsubscribe = client.subscribe((snapshot, detail) => {
                 if (detail?.reason !== 'clock') reportSnapshot(snapshot);
             });
+            // A reload that would interrupt a settling chat key is not offered
+            // while one is closing (the facade's canReload).
+            let unregisterBusy = () => {};
+            try {
+                unregisterBusy = versioning?.registerBusy?.(() => Boolean(retirement) || queuedSessions.size > 0)
+                    || unregisterBusy;
+            } catch (_) { /* presentation only */ }
             void initializeClient().then(publish, publish);
-            return () => { disposed = true; unsubscribe(); };
+            return () => { disposed = true; unsubscribe(); unregisterBusy(); };
         },
         async checkCanSend({ signal, sessionId, modelId, reasoningEnabled, shouldOpenFunding = () => true } = {}) {
             if (signal?.aborted) throw abortError();
-            await initializeClient();
+            await startClient();
             await client.ensureTestnetAccess?.({ signal, interactive: true });
             if (signal?.aborted) throw abortError();
             const expired = Number(client.note?.expiry_ts) > 0
@@ -228,18 +296,43 @@ export function createZkapiChatRuntimeCore({ client, backend, createInferenceSer
                 if (shouldOpenFunding()) context?.openFunding();
                 return false;
             }
+            // Close to expiry a new key could leave a lease unsettled when the
+            // note runs out. Existing keys, settlement and withdrawals are
+            // unaffected; the person is told what to do instead. Only a send
+            // that opens a key is refused, and the facade is asked once.
+            let cutoffChecked = false;
+            const refuseNewKey = () => {
+                if (cutoffChecked) return false;
+                cutoffChecked = true;
+                if (newKeyAllowed()) return false;
+                context?.showToast?.(versionCopyText('near_expiry'), 'error', 9000);
+                return true;
+            };
+            // A live key of this session that is not closing or about to
+            // lapse: what a follow-up reuses when its cap matches too. Read
+            // when needed, so a key that closed while the budget was looked
+            // up is not reused.
+            const liveLease = () => {
+                const lease = client.activeLease;
+                return lease?.session_id === sessionId
+                    && Number(lease.expires_at) * 1000 > Date.now() + 90_000
+                    && !lease.retiring && !lease.retired ? lease : null;
+            };
+            // Nothing to reuse: this send opens a key whatever the model is,
+            // so the cutoff applies before any budget is looked up.
+            if (!liveLease() && refuseNewKey()) return false;
             if (modelId && resolveModelBudget) {
                 const { spendingLimitUsd } = await resolveModelBudget(modelId, reasoningEnabled, signal);
                 if (signal?.aborted) throw abortError();
-                const lease = client.activeLease;
-                const reusesKey = lease?.session_id === sessionId
-                    && Number(lease.spending_limit_usd) === spendingLimitUsd
-                    && Number(lease.expires_at) * 1000 > Date.now() + 90_000
-                    && !lease.retiring && !lease.retired;
+                const lease = liveLease();
+                const reusesKey = lease !== null && Number(lease.spending_limit_usd) === spendingLimitUsd;
+                // Another cap (or a key that just closed) needs a new key, and
+                // the cutoff applies to it.
+                if (!reusesKey && refuseNewKey()) return false;
                 // An existing matching key has already proved its cap. Its
                 // remaining allowance is enforced upstream, not reproved here.
                 if (!reusesKey && Number(client.note?.current_balance) / client.creditsPerUsd < spendingLimitUsd) {
-                    context?.showToast?.(`This model requires $${spendingLimitUsd.toFixed(2)} in private balance for a new key. Choose a lower-cap model, or withdraw the remaining balance and fund a larger one.`, 'error', 9000);
+                    context?.showToast?.(largerKeyMessage(spendingLimitUsd), 'error', 9000);
                     return false;
                 }
             }

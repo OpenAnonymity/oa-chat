@@ -1,0 +1,31 @@
+{
+  "name": "@openanonymity/zkapi-browser-sdk",
+  "version": "0.2.0",
+  "private": true,
+  "description": "TEST FIXTURE: module layout, export names and build contract of the zkAPI browser SDK 0.2.0, with stub behavior. Not the SDK.",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "sdk/"
+  ],
+  "exports": {
+    ".": "./sdk/index.js",
+    "./configure": "./sdk/configure.js",
+    "./client": "./sdk/services/zkapiClient.js",
+    "./runtime": "./sdk/services/browserWalletRuntime.js",
+    "./store": "./sdk/services/browserWalletStore.js",
+    "./wallet": "./sdk/wallet.js",
+    "./build": "./sdk/build.mjs",
+    "./request-compat": "./sdk/services/zkapiRequestCompat.mjs",
+    "./withdrawal-recovery": "./sdk/services/zkapiWithdrawalRecovery.mjs",
+    "./expiry-history": "./sdk/services/zkapiExpiryHistory.mjs",
+    "./withdrawal-root": "./sdk/services/zkapiWithdrawalRoot.mjs",
+    "./request-archive": "./sdk/services/zkapiRequestArchive.mjs",
+    "./exit-kit": "./sdk/services/zkapiExitKit.mjs",
+    "./gas": "./sdk/services/zkapiGas.mjs",
+    "./contract-error": "./sdk/services/zkapiContractError.mjs",
+    "./wallet-error": "./sdk/services/zkapiWalletError.mjs",
+    "./package.json": "./package.json"
+  }
+}

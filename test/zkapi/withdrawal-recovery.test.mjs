@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { BrowserWalletRuntime } from '@openanonymity/zkapi-browser-sdk/runtime';
 import walletRuntime from '@openanonymity/zkapi-browser-sdk/runtime';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
-import { availableWithdrawalEscape, sameWithdrawalEscape, assertWithdrawalEscapeAvailable } from '../../chat/zkapi/services/withdrawalRecovery.mjs';
+import * as walletStore from '@openanonymity/zkapi-browser-sdk/store';
+import * as withdrawalRecovery from '../../chat/zkapi/services/withdrawalRecovery.mjs';
+import { availableWithdrawalEscape, canCancelPreparedWithdrawal, sameWithdrawalEscape, assertWithdrawalEscapeAvailable } from '../../chat/zkapi/services/withdrawalRecovery.mjs';
+import { createFakeEnvironment, createFakeStorage } from './_fakeIndexedDb.mjs';
 
 const destination = `0x${'12'.repeat(20)}`;
 
@@ -349,4 +352,189 @@ test('closing during a replacement mutual reservation retains ambiguity through 
     await reloaded.prepareWithdrawal('mutual', destination, { expectedNoteId: 7 });
     assert.equal(fixture.snapshot().preparedWithdrawal.phase, 'prepared');
     assert.deepEqual(fixture.snapshot().preparedWithdrawal.ambiguousSubmissions, history);
+});
+
+// ---------------------------------------------------------------------------
+// The note-only recheck: what the person looked at is still what is held
+// ---------------------------------------------------------------------------
+//
+// {kind: 'note', noteId, operationId|null} is the identity of a withdrawal
+// about to start, in any mode and phase. It runs beside the strict identity
+// check above, which the cases earlier in this file pin unchanged.
+
+function noteFixture({ slotNote = 7, clientNote = 7, plan = { operationId: 'op-shown', noteId: 7, mode: 'mutual', phase: 'prepared' } } = {}) {
+    const events = [];
+    let locked = false;
+    const runtime = {
+        manifest: { deployment_id: 'recheck' },
+        runtime: { state: slotNote === null ? null : { note_id: slotNote }, preparedWithdrawal: plan, lateWithdrawalAttempts: [] },
+        async init() { events.push('init'); },
+        preemptForExit(options) { events.push(['preempt', options]); },
+        async reload() { assert.equal(locked, true, 'reload under the wallet lock'); events.push('reload'); }
+    };
+    const client = { browserMode: true, note: clientNote === null ? null : { note_id: clientNote }, config: { prepared_withdrawal: null } };
+    const withWalletLock = async (deployment, operation) => {
+        assert.equal(deployment, 'recheck');
+        locked = true;
+        events.push('lock');
+        try { return await operation(); } finally { locked = false; events.push('unlock'); }
+    };
+    return { client, runtime, withWalletLock, events };
+}
+
+const CHANGED = { code: 'withdrawal_note_changed' };
+
+test('wiring:withdrawal-operation-recheck the note and the prepared operation are checked after init, under the lock, on a fresh read', async () => {
+    const context = noteFixture();
+    await assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 7, operationId: 'op-shown' }, context);
+    // Pre-emption first (so nothing queues ahead of the exit), then the lock.
+    assert.deepEqual(context.events, ['init', ['preempt', { requests: true }], 'lock', 'reload', 'unlock']);
+    // The operation is optional: with none named only the note is bound.
+    const bare = noteFixture({ plan: null });
+    await assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 7, operationId: null }, bare);
+    await assertWithdrawalEscapeAvailable({ kind: 'note', noteId: '7' }, noteFixture());
+    // Any mode and phase of the named plan is the same operation.
+    for (const plan of [{ operationId: 'op-shown', mode: 'escape', phase: 'submitted' },
+        { operationId: 'op-shown', mode: 'escape', phase: 'ambiguous', submissionId: 'wallet-prompt' }]) {
+        await assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 7, operationId: 'op-shown' }, noteFixture({ plan }));
+    }
+});
+
+test('wiring:withdrawal-operation-recheck a changed note, client view or operation is refused', async () => {
+    const refused = (label, options, expected) => assert.rejects(
+        assertWithdrawalEscapeAvailable(expected, noteFixture(options)), CHANGED, label);
+    await refused('another note in the slot', { slotNote: 8 }, { kind: 'note', noteId: 7, operationId: 'op-shown' });
+    await refused('another note displayed', { clientNote: 8 }, { kind: 'note', noteId: 7, operationId: 'op-shown' });
+    await refused('another note chosen', {}, { kind: 'note', noteId: 8, operationId: 'op-shown' });
+    await refused('no note in the slot', { slotNote: null }, { kind: 'note', noteId: 7 });
+    await refused('no note displayed', { clientNote: null }, { kind: 'note', noteId: 7 });
+    await refused('another operation', { plan: { operationId: 'op-replaced', noteId: 7, mode: 'mutual', phase: 'prepared' } },
+        { kind: 'note', noteId: 7, operationId: 'op-shown' });
+    await refused('the operation is gone', { plan: null }, { kind: 'note', noteId: 7, operationId: 'op-shown' });
+    // A missing id never reads as note 0.
+    await refused('no id chosen', { slotNote: 0, clientNote: 0 }, { kind: 'note', noteId: null });
+    await refused('no id at all', { slotNote: 0, clientNote: 0 }, { kind: 'note' });
+    await refused('a fractional id', { slotNote: 7, clientNote: 7 }, { kind: 'note', noteId: 7.5 });
+    await refused('an id that is not a number', { slotNote: 7, clientNote: 7 }, { kind: 'note', noteId: '7a' });
+    await assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 0 }, noteFixture({ slotNote: 0, clientNote: 0, plan: null }));
+});
+
+test('wiring:withdrawal-operation-recheck an id with nothing to compare never starts the SDK', async () => {
+    const context = noteFixture();
+    await assert.rejects(assertWithdrawalEscapeAvailable({ kind: 'note', noteId: undefined }, context), CHANGED);
+    assert.deepEqual(context.events, []);
+});
+
+test('wiring:withdrawal-operation-recheck a runtime without pre-emption (the legacy SDK) is checked all the same', async () => {
+    const context = noteFixture();
+    delete context.runtime.preemptForExit;
+    await assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 7, operationId: 'op-shown' }, context);
+    assert.deepEqual(context.events, ['init', 'lock', 'reload', 'unlock']);
+});
+
+test('wiring:withdrawal-operation-recheck the decision is made on what the re-read finds, not on what was displayed', async () => {
+    const context = noteFixture();
+    context.runtime.reload = async function reload() {
+        // Another tab replaced the prepared withdrawal while this one waited.
+        this.runtime = { ...this.runtime, preparedWithdrawal: { operationId: 'op-replaced', noteId: 7, mode: 'escape', phase: 'reserving' } };
+    };
+    await assert.rejects(assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 7, operationId: 'op-shown' }, context), CHANGED);
+});
+
+test('the strict identity check is untouched and the note check is not reachable from it', async () => {
+    // Without `kind` the original sequence runs: init, lock, reload, no pre-emption.
+    const context = fixture();
+    const events = [];
+    let locked = false;
+    context.runtime.init = async () => { events.push('init'); };
+    context.runtime.preemptForExit = () => { events.push('preempt'); };
+    context.runtime.reload = async () => { events.push(locked ? 'reload' : 'reload-outside'); };
+    context.withWalletLock = async (_deployment, operation) => {
+        locked = true;
+        events.push('lock');
+        try { return await operation(); } finally { locked = false; events.push('unlock'); }
+    };
+    const choice = availableWithdrawalEscape(context);
+    // Reading the identity (and asking whether a plan can be cancelled) never
+    // touches the runtime's lifecycle: no init, no lock, no pre-emption.
+    canCancelPreparedWithdrawal(context);
+    sameWithdrawalEscape(choice, choice);
+    assert.deepEqual(events, []);
+    await assertWithdrawalEscapeAvailable(choice, context);
+    assert.deepEqual(events, ['init', 'lock', 'reload', 'unlock']);
+    // An unsubmitted plan with a note-shaped expectation is not "the same
+    // choice": a record without `kind` is only ever the strict identity.
+    await assert.rejects(assertWithdrawalEscapeAvailable({ noteId: 7, operationId: 'withdraw-7' }, context), /saved withdrawal changed/);
+    // The module's public surface is the one the dialog's import pin names.
+    assert.deepEqual(Object.keys(withdrawalRecovery).sort(),
+        ['assertWithdrawalEscapeAvailable', 'availableWithdrawalEscape', 'canCancelPreparedWithdrawal', 'sameWithdrawalEscape']);
+    assert.equal(typeof canCancelPreparedWithdrawal, 'function');
+});
+
+test('wiring:withdrawal-operation-recheck over the real store and runtime: a replaced plan is caught under the lock', async t => {
+    const env = createFakeEnvironment();
+    const restore = env.install();
+    const storage = globalThis.localStorage;
+    globalThis.localStorage = createFakeStorage();
+    t.after(async () => {
+        await new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase('zkapi-browser-wallet-v1');
+            request.onsuccess = resolve;
+            request.onerror = () => reject(request.error);
+        });
+        restore();
+        globalThis.localStorage = storage;
+    });
+    const DEPLOYMENT = 'zkapi-native-eth-sepolia-concession-v1-recheck';
+    const plan = (operationId, extra = {}) => ({ operationId, mode: 'mutual', phase: 'prepared', noteId: 7, destination,
+        clearanceReserved: true, withdrawalNullifier: '0x2a', public_inputs: { note_id: 7, final_balance: 4_000_000, kind: 1 }, ...extra });
+    const note = id => ({ note_id: id, current_balance: 4_000_000, deposit_amount: 5_000_000, expiry_ts: 1_900_000_000, secret: 'SECRET' });
+    const slot = (id, preparedWithdrawal) => ({ version: 1, deploymentId: DEPLOYMENT, state: note(id), preparedWithdrawal });
+
+    const runtime = new BrowserWalletRuntime();
+    runtime.manifest = { deployment_id: DEPLOYMENT };
+    runtime.init = async () => {};
+    const client = { browserMode: true, note: { note_id: 7 }, config: {} };
+    const deps = { client, runtime, withWalletLock: walletStore.withBrowserWalletLock };
+    const expected = { kind: 'note', noteId: 7, operationId: 'op-displayed' };
+
+    // The person looks at this plan...
+    await walletStore.writeBrowserWallet(slot(7, plan('op-displayed')));
+    await runtime.reload();
+    env.trace.length = 0;
+    await assertWithdrawalEscapeAvailable(expected, deps);
+    assert.deepEqual(env.trace.map(entry => entry.type), ['lock-acquire', 'lock-release'], 'a read under the exclusive wallet lock, no write');
+
+    // ...another tab cancels it and prepares another...
+    await walletStore.writeBrowserWallet(slot(7, plan('op-replaced', { phase: 'reserving' })));
+    await assert.rejects(assertWithdrawalEscapeAvailable(expected, deps), CHANGED);
+    // ...which is fine when that is the one that was looked at.
+    await assertWithdrawalEscapeAvailable({ ...expected, operationId: 'op-replaced' }, deps);
+
+    // A successor note in the slot is another balance entirely.
+    await walletStore.writeBrowserWallet(slot(8, null));
+    await assert.rejects(assertWithdrawalEscapeAvailable({ kind: 'note', noteId: 7, operationId: null }, deps), CHANGED);
+
+    // The check waits its turn: a plan replaced while it is queued behind
+    // another tab's critical section is judged as it is when the lock comes.
+    await walletStore.writeBrowserWallet(slot(7, plan('op-displayed')));
+    await runtime.reload();
+    let finish;
+    const gate = new Promise(resolve => { finish = resolve; });
+    let entered;
+    const inside = new Promise(resolve => { entered = resolve; });
+    const other = walletStore.withBrowserWalletLock(DEPLOYMENT, async () => {
+        entered();
+        await gate;
+        await walletStore.writeBrowserWallet(slot(7, plan('op-replaced')));
+    });
+    await inside;
+    const waiting = assertWithdrawalEscapeAvailable(expected, deps);
+    let settled = false;
+    waiting.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(settled, false, 'it does not decide before the lock is its own');
+    finish();
+    await other;
+    await assert.rejects(waiting, CHANGED);
 });

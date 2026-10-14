@@ -7,6 +7,7 @@ import { ensureModelTiersReady } from '../../publicModelTierApi.js';
 import { getModelBudget } from './zkapiModelBudget.mjs';
 import { settlePrivateAccess } from './privateAccessSettlement.js';
 import { initWalletClient } from './walletMethod.mjs';
+import { zkapiVersioning } from '../versioning/index.js';
 
 /** Production defaults; the lifecycle core has no browser/wallet side effects. */
 export function createZkapiChatRuntime(options = {}) {
@@ -17,6 +18,8 @@ export function createZkapiChatRuntime(options = {}) {
         createInferenceService,
         modelConfiguration,
         settleAccess: settlePrivateAccess,
+        // Inert unless the build has more than one protocol version.
+        versioning: zkapiVersioning,
         resolveModelBudget: async (modelId, reasoningEnabled, signal) => {
             await ensureModelTiersReady({ signal });
             return getModelBudget(modelId, reasoningEnabled);

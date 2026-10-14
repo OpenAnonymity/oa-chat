@@ -64,6 +64,13 @@ npm run fonts:sync
 - `ticketClient.js`: Ticket lifecycle and access issuance (Privacy Pass integration)
 - `networkLogger.js`: In-memory request logging with header sanitization
 
+**zkAPI Payments (`chat/zkapi/`; built in only when `OA_ZKAPI_NETWORK` is set):**
+- `boot.js`: payment boot called by `chat/startup.js`. Chooses the protocol version from the local wallet, loads that SDK build, installs the deposit guard and the watcher. Never throws; on failure the app starts ticket-only with one toast
+- `versioning/`: multi-version zkAPI support. `registryModel.mjs` (pure registry model), `adapters/` (one per protocol family), `walletHoldings.mjs` + `versionLoader.mjs` (read-only holdings probe and version selection), `switchProtocol.mjs` (build switches, loop guard, upgrade intent), `depositGuard.mjs`, `versionWatcher.mjs`, `versionState.mjs` / `upgradeFlow.mjs` / `copy.mjs` (state, guided upgrade, words), `exitRefusal.mjs` (the SDK's exit and service refusals, read once), `abandonNote.mjs` (the give-up verdict), `otherVersionHistory.mjs` (read-only payment history of the other versions), `exitKit.mjs`, `wiring.mjs` (`WIRED`) and `index.js` (the runtime facade, attached as `zkapiClient.oaVersioning`). SDK-free by rule: it runs before any SDK build is chosen
+- Version UI and services: `components/VersionNotices.js`, `UpgradeView.js`, `BalanceExtras.js`, `ExitChoice.js`, `ExitKitDialog.js`, `AbandonDialog.js`, `RecordExtras.js`, `OtherVersionHistory.js`; `services/abandonedNote.mjs` (the SDK-bound give-up, loaded on use)
+- Build side: `deployments/zkapi/registry.json` (the version registry; a row goes live only through its gates), `scripts/zkapiRegistry.mjs`, `zkapiBuild.mjs`, `zkapiFacadePlugin.mjs`, `zkapi-registry-cli.mjs`. Version 2's ten host behaviors are implemented and listed in `WIRED`, but it stays `pending`: it needs a published SDK revision with a deployed profile for its proof setup, a recovery patch that covers `withdrawal-operation-recheck` (`PATCH_COVERAGE`; the registry check and the build refuse a live row without it) and the operator's finalized manifest. The host accepts the proof setups `mpc-1` and the single-party `dev` by one rule on both networks (owner decision): `dev` is reported (build warning, `build.json` `proofSetup`, registry check warnings), not blocked, and whoever holds its toxic waste can forge proofs, so read the guide's "Single-party development proof setup: known limitation" before touching that rule
+- Read `docs/ZKAPI_VERSIONING.md` before changing any of it
+
 **Local Assets:**
 - `chat/vendor/`: Marked, KaTeX (+ fonts), Highlight.js, libcurl.js, hash-wasm, html2pdf
 - `chat/fonts/`: self-hosted Google Fonts (`fonts.css` + WOFF2 files, managed via `scripts/sync-fonts.mjs`)
@@ -79,7 +86,7 @@ npm run fonts:sync
 - PascalCase for classes, camelCase for functions/methods
 - Use relative paths for assets (resolved via `<base href="/">`) — never hardcode absolute paths
 - Tailwind utilities from `tailwind.generated.css`; custom tweaks in `styles.css` with rationale
-- All persisted data flows through `chatDB`; keep transactions minimal
+- All persisted data flows through `chatDB`; keep transactions minimal. The zkAPI version keys listed under Key Patterns > Data Storage are the documented exception
 
 ## Key Patterns
 
@@ -87,6 +94,14 @@ npm run fonts:sync
 - IndexedDB: sessions, messages, settings (via `db.js`)
 - localStorage: theme (`oa-theme-preference`), wide mode (`oa-wide-mode`), panel visibility (`oa-right-panel-visible`), proxy settings (`oa-network-proxy-settings`)
 - Network logs are memory-only (tab-scoped)
+- zkAPI version keys (documented exception to "persisted data flows through `chatDB`"): they must be readable synchronously before `chatDB` opens, because boot decides which SDK build to load first, and the upgrade intent must survive a new tab. They hold ids, enums and a stage only (no note id, deployment id, amount or address), are never account-synced and are never in `SYNCABLE_PREF_KEYS`. Every read and write is inside try/catch and the UI must render without them:
+  - sessionStorage `oa-zkapi-version-switch`: one-shot hint for the next boot (reason, view, preferred version id); deleted when consumed, ignored after 5 minutes
+  - sessionStorage `oa-zkapi-version-switch-log`: loop-guard timestamps of build switches and draft discards (60 s window, at most 2 of each); never cleared by consuming a hint
+  - localStorage `oa-zkapi-upgrade-v1`: guided-upgrade intent `{network, from, to, stage, since}`; cleared when the upgrade is done or dismissed, expires after 45 days
+  - localStorage `oa-zkapi-upgrade-reminder-v1`: last reminder tier shown per `network:versionId` (a per-viewer convenience)
+  - sessionStorage `oa-zkapi-running-modal` and `oa-zkapi-welcome-modal` (existing): gain a `{network, versionId}` stamp only on a multi-version build; a mismatching stamp is ignored, an unstamped entry stays valid
+- zkAPI wallet database `zkapi-browser-wallet-<lineage>-<network>-v1` is the SDK's, shared by every protocol version; this app's own code only reads it (version-less open that never creates or upgrades; the other versions' payment history is read the same way and kept in memory), plus two guarded writes under the SDK's wallet lock: the automatic discard of an unused deposit draft, and the user-confirmed give-up of a zero or dust balance (through the SDK's own archive transaction; no in-app undo)
+- zkAPI exit kits, held refusals, the "kit not saved" flag and foreign history rows are memory only: no new storage key; the kit passphrase and text are never stored or logged
 
 **Access Keys:**
 - Ephemeral, acquired via Privacy Pass ticket redemption in `ticketClient.js`
@@ -105,7 +120,9 @@ npm run fonts:sync
 
 ## Testing
 
-No automated test harness. Manual verification checklist:
+`npm test` runs the unit suites (`scripts/run-unit-tests.mjs`; its `pretest` applies the zkAPI SDK patches). This repository has no CI configuration: nothing runs the suites or the registry check (`node scripts/zkapi-registry-cli.mjs check --base origin/main`) for you, so run them before merging. zkAPI payment and versioning tests live in `test/zkapi/` (plain Node, `node --test test/zkapi/<file>`) and `test/architecture/`; `docs/ZKAPI_VERSIONING.md` section 13 maps each file to what it pins. Tests that need the real successor SDK skip without it (`ZKAPI_V2_SDK_DIR=<unpacked zkapi repository>` points them at one); against the unpatched `0.2.0` snapshot exactly one fails by design, the SDK half of the withdrawal recheck. The four vm-evaluated sources (`AccountModal.js`, `WelcomePanel.js`, `WalletMethodControls.js`, `services/walletMethod.mjs`) must not gain imports; they reach version context only through `zkapiClient.oaVersioning?.` (`test/architecture/zkapiVmSources.test.js`). `AccountModal.js` and `WelcomePanel.js` each carry five identical facade helpers because neither may import (`zkapiVmSourceCopies.test.js` compares them). Four tests parse sources with `acorn`, a pinned devDependency. A test that seeds a fixed date and reads it through the real clock fails on that date with no code change: pin `Date.now`.
+
+There is no automated UI harness. Manual verification checklist:
 - Sessions: create/switch/delete, title auto-generation, ordering
 - Messages: Markdown + LaTeX rendering, streaming, token counts, reasoning traces, citations
 - Model picker: fuzzy search, pinned/disabled models

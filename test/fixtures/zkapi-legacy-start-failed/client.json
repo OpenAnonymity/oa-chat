@@ -1,0 +1,44 @@
+{
+    "about": "What the legacy zkAPI browser client (the note-bound SDK) holds when its start fails because the operator's deployment manifest answers 503: recorded by calling init() on the real client class with a fetch that answers 503 for the manifest, then a quiet refresh() (what the balance dialog does when it opens). The client never becomes initialized, never leaves daemon mode (browserMode false), has no config and no wallet, and the refresh replaces lastError with a different error object. On a host that serves its own page for any path it did not find (the production host's rewrite), the same refresh is answered with that page and \"succeeds\": lastError is cleared, config and wallet hold the page's text, and the client is still not initialized (see pageAnsweredRefresh). The operator address is a placeholder: the point of the fixture is that it appears in the SDK's message and must never reach the page.",
+    "client": {
+        "initialized": false,
+        "browserMode": false,
+        "snapshot": {
+            "config": null,
+            "wallet": null,
+            "walletAddress": null,
+            "withdrawal": null,
+            "withdrawals": [],
+            "deposits": [],
+            "challengePeriodSeconds": 86400,
+            "loading": false,
+            "initialized": false,
+            "activities": []
+        }
+    },
+    "errors": {
+        "start": {
+            "name": "Error",
+            "message": "Unable to load https://zkapi-operator.invalid/config.json (503)."
+        },
+        "refresh": {
+            "name": "ZkapiHttpError",
+            "message": "HTTP 503",
+            "status": 503
+        }
+    },
+    "pageAnsweredRefresh": {
+        "about": "The same client after a quiet refresh() that a host answered with its own page (HTTP 200, text/html) for the two paths the daemon branch asks for. Nothing started: initialized is still false and the start error is gone.",
+        "initialized": false,
+        "browserMode": false,
+        "lastError": null,
+        "config": {
+            "raw": "<!doctype html><html><body>app</body></html>"
+        },
+        "wallet": {
+            "raw": "<!doctype html><html><body>app</body></html>"
+        },
+        "withdrawals": [],
+        "deposits": []
+    }
+}

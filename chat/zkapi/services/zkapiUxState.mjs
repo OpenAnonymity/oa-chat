@@ -1,3 +1,4 @@
+import { copyTokens, versionCopyText } from '../versioning/copy.mjs';
 import { zkapiErrorMessage } from './zkapiErrorCopy.mjs';
 
 export const ZKAPI_UX_PROPOSALS = Object.freeze([
@@ -9,6 +10,27 @@ export const ZKAPI_UX_PROPOSALS = Object.freeze([
     'ambient',
     'capsule'
 ]);
+
+// The words of a balance that is frozen by an exit lock (a released proof that
+// can still land) and has no withdrawal of its own to finish. The sentence is
+// the one the balance dialog's notice uses (versioning/copy.mjs); the title,
+// the label of the glance surfaces and the three steps only name what it says.
+//
+// A frozen balance that another device or copy has since used is told the
+// device sentence instead (versioning/copy.mjs, 'exit.device'): the frozen
+// sentence ends "You can still withdraw", and a withdrawal from this browser
+// would be rejected. Its steps promise no resume: the copy this browser holds
+// is out of date, so waiting is not the way on; the copy that used the balance
+// last is.
+const FROZEN_WORDS = Object.freeze({
+    title: 'Balance frozen',
+    steps: Object.freeze([
+        Object.freeze({ id: 'started', label: 'Withdrawal started' }),
+        Object.freeze({ id: 'frozen', label: 'Balance frozen' }),
+        Object.freeze({ id: 'resume', label: 'Chats resume' })
+    ]),
+    deviceNextStep: 'Use the newest copy'
+});
 
 const RUNNING_STATUSES = new Set(['running', 'waiting']);
 const ACCESS_PHASES = new Set(['checking', 'syncing', 'proving', 'requesting', 'verifying']);
@@ -160,6 +182,64 @@ function operationJourney(activity) {
     }
 }
 
+// The state of a frozen balance. It keeps the phase of a withdrawal so the
+// surfaces that wait on one (the panel's status badge, the balance control, the
+// composer's hold glyph) treat it as one; `frozen` is what tells the journey
+// and a reader that nothing is prepared, and `deviceNotNewest` that the way on
+// is not a wait.
+function frozenState(words) {
+    return {
+        phase: 'withdrawal',
+        tone: 'waiting',
+        frozen: true,
+        ...(words.deviceNotNewest === true ? { deviceNotNewest: true } : {}),
+        title: words.title,
+        detail: words.detail,
+        compact: words.compact,
+        busy: false,
+        blocksSend: true
+    };
+}
+
+// The words for a balance the version facade says is frozen, or null. Said
+// only for a balance in the wallet with no withdrawal of its own in any form
+// (the dialog's own rule): a prepared plan, a submitted transaction, a late
+// attempt or a pending escape each have words that say what to do next, and a
+// frozen notice would hide them. `version` is the facade's VersionState, which
+// only a build with versions to tell apart has; anything else says nothing.
+//
+// A balance this browser can not withdraw (another device or copy used it
+// since) is told that instead, as the dialog's banner does (its frozen notice
+// steps aside for the device notice, VersionNotices `cannotWithdrawHere`): the
+// frozen sentence ends "You can still withdraw", which would send the person
+// to a withdrawal that is rejected. The lock still holds chats, so sending
+// stays blocked.
+function frozenCopy(version, { note, withdrawal, now }) {
+    if (!note || withdrawal) return null;
+    const exit = version !== null && typeof version === 'object' && !Array.isArray(version) ? version.exit : null;
+    const frozen = exit !== null && typeof exit === 'object' && !Array.isArray(exit) ? exit.frozen : null;
+    if (frozen === null || typeof frozen !== 'object' || Array.isArray(frozen)) return null;
+    const tokens = copyTokens(version, { now });
+    if (exit.deviceNotNewest === true) {
+        const title = versionCopyText('exit.device.label', tokens);
+        const detail = versionCopyText('exit.device', tokens);
+        return title && detail ? { title, detail, compact: title, deviceNotNewest: true } : null;
+    }
+    const detail = versionCopyText('exit.frozen', tokens);
+    return detail ? { title: FROZEN_WORDS.title, detail, compact: FROZEN_WORDS.title } : null;
+}
+
+// The words for the SDK's failure to start when the version facade says the
+// wallet holds a balance this page therefore cannot read: the balance is saved,
+// and the service of its version is not available. The SDK's own message names
+// the operator's address and would stand in the chat bar and on the balance
+// control. null for any other state, which keeps the SDK's message.
+function heldWords(version) {
+    const held = version !== null && typeof version === 'object' && !Array.isArray(version) ? version.held : null;
+    if (held === null || typeof held !== 'object' || Array.isArray(held) || held.unreachable !== true) return null;
+    return versionCopyText('held.summary') || null;
+}
+
 function buildJourney(primary, transition, activity) {
     const isHandoff = Boolean(transition) || activity?.kind === 'settlement';
     const needsFunding = ['unfunded', 'loading'].includes(primary.phase);
@@ -185,6 +265,20 @@ function buildJourney(primary, transition, activity) {
     let activeIndex = operation?.activeIndex ?? 0;
     if (operation) {
         // The operation supplies its own truthful phase mapping.
+    } else if (primary.frozen === true && primary.deviceNotNewest === true) {
+        // Nothing is prepared, nothing here can finish this balance and
+        // nothing is promised to resume: it was used elsewhere, and the way on
+        // is the copy that used it last.
+        steps = [
+            { id: 'used', label: primary.title },
+            { id: 'newest', label: FROZEN_WORDS.deviceNextStep }
+        ];
+        activeIndex = 1;
+    } else if (primary.frozen === true) {
+        // Nothing is prepared and nothing is to finish: the withdrawal started,
+        // the balance waits, and chats come back.
+        steps = FROZEN_WORDS.steps.map(step => ({ ...step }));
+        activeIndex = 1;
     } else if (primary.phase === 'withdrawal') {
         steps = [
             { id: 'prepare', label: 'Withdrawal prepared' },
@@ -228,7 +322,12 @@ function buildJourney(primary, transition, activity) {
     }));
 }
 
-export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId = null, now = Date.now() } = {}) {
+// `version` is the version facade's state (VersionState) on a build that has
+// versions to tell apart, and null otherwise. It adds two things: a balance the
+// facade says is frozen, with no withdrawal of its own, is said to be frozen,
+// and a balance that is held but cannot be read (the SDK did not start) is
+// said in plain words instead of in the SDK's error.
+export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId = null, now = Date.now(), version = null } = {}) {
     const activities = Array.isArray(snapshot.activities) ? snapshot.activities : [];
     const running = activities.filter(isRunningActivity);
     const currentActivity = latest(running, activity => !activity.sessionId || !sessionId || activity.sessionId === sessionId)
@@ -299,6 +398,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
                 detail: 'No transaction is moving. Finish withdrawing or set this balance aside.',
                 compact: 'Withdrawal ready'
             };
+    // Last in line behind every withdrawal in motion (the chains below ask for
+    // those first), so a plan, a transaction or a pending escape keeps its words.
+    const frozenWords = frozenCopy(version, { note, withdrawal, now });
     const depositCopy = pendingDeposit?.phase === 'submitted'
         ? {
             title: 'Deposit submitted',
@@ -356,6 +458,9 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
             blocksSend: true
         };
         primary = withdrawalState;
+    } else if (!primary && frozenWords) {
+        withdrawalState = frozenState(frozenWords);
+        primary = withdrawalState;
     } else if (!primary && depositCopy) {
         primary = {
             phase: 'deposit-recovery',
@@ -364,12 +469,15 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
             busy: false,
             blocksSend: true
         };
-    } else if (!primary && snapshot.lastError) {
+    } else if (!primary && (snapshot.lastError || heldWords(version) !== null)) {
+        // A held balance is said even when the client no longer holds the
+        // error that stopped it (a refresh of a client that never started can
+        // clear it): the balance is still there and still unreadable.
         primary = {
             phase: 'error',
             tone: 'error',
             title: 'Private balance unavailable',
-            detail: zkapiErrorMessage(snapshot.lastError, String(snapshot.lastError)),
+            detail: heldWords(version) ?? zkapiErrorMessage(snapshot.lastError, String(snapshot.lastError)),
             compact: 'Private balance unavailable',
             busy: false,
             blocksSend: true
@@ -422,6 +530,8 @@ export function deriveZkapiUxState({ snapshot = {}, transition = null, sessionId
             busy: false,
             blocksSend: true
         };
+    } else if (!withdrawalState && frozenWords) {
+        withdrawalState = frozenState(frozenWords);
     }
 
     // Concurrent private-payment work is routed to the surface where it is

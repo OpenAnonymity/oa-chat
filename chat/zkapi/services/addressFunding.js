@@ -1,6 +1,8 @@
 import { getAddress, parseUnits, formatUnits } from 'ethers';
 import zkapiClient from '@openanonymity/zkapi-browser-sdk/client';
-import { addressFundingWallet } from './addressFundingProvider.mjs';
+import { getVersionTable } from '../versioning/activeVersion.mjs';
+import { noteBoundV1 } from '../versioning/adapters/noteBoundV1.mjs';
+import { addressFundingWallet, installedVersionContext } from './addressFundingProvider.mjs';
 
 export function fundingEthAmount(value) {
     const text = String(value ?? '').trim();
@@ -10,12 +12,41 @@ export function fundingEthAmount(value) {
     return amount.toString();
 }
 
-export function fundingDestination(value, funding = zkapiClient.config?.funding) {
+// Addresses a typed destination may never be, once more than one protocol
+// version exists: the vault of every registered version (live or retired; none
+// accepts a plain transfer, and one is never a wallet) and, while versions
+// differ, this browser's own funding address. Funds sent there would be
+// reachable only through a funding scope the next version no longer shows.
+// A single-version build denies only its own vault, which is the funding
+// contract fundingDestination already refuses, so nothing changes there.
+function defaultDeniedDestinations() {
+    const table = getVersionTable();
+    const denied = table.map(version => version.vault).filter(vault => typeof vault === 'string' && vault);
+    const versioned = table.filter(version => version.status !== 'retired').length > 1
+        || table.some(version => version.status === 'retired');
+    const own = versioned ? addressFundingWallet.address : null;
+    if (own) denied.push(own);
+    return denied;
+}
+
+// `denied` replaces the registry-derived list for a caller that knows better
+// (a saved destination is not user input; a rescue sweep may target the
+// current funding address on purpose). The vault of `funding` is always
+// refused.
+export function fundingDestination(value, funding = zkapiClient.config?.funding, { denied } = {}) {
     let result;
     try { result = getAddress(String(value ?? '').trim()); }
     catch { throw new Error('Enter a valid Ethereum withdrawal address.'); }
-    if (/^0x0{40}$/i.test(result) || funding?.contract_address?.toLowerCase() === result.toLowerCase()) {
+    const same = address => typeof address === 'string' && address.toLowerCase() === result.toLowerCase();
+    if (/^0x0{40}$/i.test(result) || same(funding?.contract_address)) {
         throw new Error('Use your own receiving address, not the vault contract.');
+    }
+    const own = addressFundingWallet.address;
+    for (const address of denied ?? defaultDeniedDestinations()) {
+        if (!same(address)) continue;
+        throw new Error(own && same(own)
+            ? 'Use an address in your own wallet, not this browser’s funding address.'
+            : 'Use your own receiving address, not a vault contract.');
     }
     return result;
 }
@@ -26,8 +57,12 @@ export function formatFundingAmount(value, decimals = 6) {
 
 export function withdrawalDestination(owner, recordId = null) {
     const record = recordId ? zkapiClient.withdrawals.find(entry => entry.recordId === recordId) : null;
-    return fundingDestination(record?.destination || zkapiClient.config?.prepared_withdrawal?.destination
-        || zkapiClient.withdrawal?.destination || owner.fundingDestination);
+    const saved = record?.destination || zkapiClient.config?.prepared_withdrawal?.destination
+        || zkapiClient.withdrawal?.destination;
+    // A saved destination was fixed when its withdrawal was prepared and cannot
+    // be edited. It must stay completable, so only typed input meets the
+    // version-aware denylist.
+    return saved ? fundingDestination(saved, undefined, { denied: [] }) : fundingDestination(owner.fundingDestination);
 }
 
 export function canQuotePendingAddressDeposit(client = zkapiClient, wallet = addressFundingWallet) {
@@ -63,6 +98,39 @@ export async function runAddressAction(owner, details, report, action) {
             // plan. The SDK rechecks that transition under its wallet lock.
             mode: record?.mode || (kind === 'escape' ? 'escape' : zkapiClient.config?.prepared_withdrawal?.mode || owner.withdrawMode),
             noteId: record?.noteId ?? zkapiClient.note?.note_id };
+        // The amount an escape concedes, only where the protocol has one and
+        // only as the caller confirmed it. The signer refuses any other value.
+        //   conceded     the exact amount
+        //   concededMax  a cap: the bound the person was shown before choosing
+        // A call that names neither concedes nothing, except that a repeat of
+        // an operation the signer already accepted or signed is held to no
+        // more than that operation's amount
+        // (AddressFundingProvider.continuedAuthorization). This function never
+        // reads the SDK's saved plan to fill either one: the plan records what
+        // the SDK proved, not what anyone confirmed, so a refused action
+        // repeated without its bound stays refused. A call site that continues
+        // an escape the signer has not itself accepted (a saved plan after a
+        // reload, a set-aside record) must therefore pass the bound it showed.
+        // Where there is none to show (the state's bound has fallen to nothing
+        // since the plan was prepared), the signer refuses before anything is
+        // signed, in words that tell the person to start the withdrawal again
+        // (CONCESSION_UNCONFIRMED_MESSAGE). By then the SDK has usually cleared
+        // the unsubmitted plan itself, so the words name no button.
+        if (details.conceded != null) authorization.conceded = String(details.conceded);
+        if (details.concededMax != null) authorization.concededMax = String(details.concededMax);
+        // The prepared withdrawal the person looked at. The signer refuses a
+        // call for another one.
+        if (details.operationId != null) authorization.operationId = String(details.operationId);
+    } else if (kind === 'payout-claim') {
+        // Delivering a credited escape payout. Only a protocol that credits
+        // payouts has this call; the destination is the saved record's, which
+        // the claimant never chooses.
+        const claim = (installedVersionContext().adapter?.callProfile ?? noteBoundV1.callProfile).claim;
+        if (!claim) throw new Error('This version has no payout to claim.');
+        const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : null;
+        if (!record?.destination) throw new Error('Choose the payout to claim first.');
+        authorization = { kind: claim.authorizationKind, destination: fundingDestination(record.destination, undefined, { denied: [] }),
+            recordId: record.recordId, noteId: record.noteId };
     } else if (kind === 'escape-finalize') {
         const record = details.withdrawalRecordId ? zkapiClient.withdrawals.find(entry => entry.recordId === details.withdrawalRecordId) : zkapiClient.withdrawal;
         authorization = { kind: 'finalization', noteId: record?.noteId ?? record?.note_id };

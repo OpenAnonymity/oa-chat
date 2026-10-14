@@ -54,8 +54,31 @@ export function createAddressFundingStore({ indexedDB = globalThis.indexedDB } =
         });
     }
 
+    // Every saved scope, as plain strings, from one read-only transaction. Only
+    // the keys are read: no envelope, key or journal leaves the store. It lets a
+    // later protocol version find the funding addresses of earlier vaults
+    // without changing the row format or the database version.
+    async function keys() {
+        const database = await open();
+        return new Promise((resolve, reject) => {
+            let transaction;
+            try {
+                transaction = database.transaction(RECORDS, 'readonly', { durability: 'strict' });
+                const request = transaction.objectStore(RECORDS).getAllKeys();
+                let result = [];
+                request.onsuccess = () => { result = request.result; };
+                transaction.oncomplete = () => resolve(result.filter(key => typeof key === 'string'));
+                transaction.onerror = transaction.onabort = () => reject(unavailable());
+            } catch {
+                try { transaction?.abort(); } catch { /* Already completed. */ }
+                reject(unavailable());
+            }
+        });
+    }
+
     return {
         load: scope => operation(scope, 'readonly'),
+        keys,
         save(scope, record, { createOnly = false } = {}) {
             if (record?.format !== 'oa-address-wallet' || typeof record.ciphertext !== 'string'
                 || ![1, 2].includes(record.version) || Object.hasOwn(record, 'privateKey')

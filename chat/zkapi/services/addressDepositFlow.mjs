@@ -3,6 +3,17 @@ import { DepositAmount, validateIntent, withInput } from './depositAmount.mjs';
 const positiveInteger = value => typeof value === 'string' && /^[1-9]\d*$/.test(value);
 const nonNegativeInteger = value => typeof value === 'string' && /^\d+$/.test(value);
 const depositChanged = 'The deposit amount changed in another tab. Reopen this screen to use the saved amount.';
+const depositsClosedMessage = 'This version no longer accepts new deposits.';
+// A page that is only stale (another tab moved the balance) is told to reload;
+// its version still takes deposits.
+const staleMessage = 'This page is out of date. Reload to continue.';
+const REFUSED_GATE = Object.freeze({ canStart: false, canResume: false, code: null, successor: null });
+
+// The refusal a version that stopped accepting deposits answers with: the SDK's
+// own (409 deposits_closed) or the host guard's. Both carry this code. This is
+// the same code check as zkapiErrorCopy.isDepositsClosed, kept local so this
+// module imports nothing beyond depositAmount.mjs.
+const isDepositsClosed = error => error?.code === 'deposits_closed';
 
 function validateFeeQuote(fee, intent, funding, address, now) {
     if (!fee || !positiveInteger(fee.expectedFeeWei) || !positiveInteger(fee.requiredFeeWei) || !positiveInteger(fee.feeReserveWei)
@@ -25,10 +36,21 @@ function validateFeeQuote(fee, intent, funding, address, now) {
 
 // This controller only reads public chain state. It cannot sign, submit or
 // recover transactions. Explicit Deposit handlers own those separate capabilities.
+//
+// A version that no longer accepts deposits ends the flow instead of polling it:
+// every quote would ask the SDK to prepare a plan, and a prepared plan is saved
+// in the browser wallet. `closed` is then set (null otherwise) with the reason
+// and the version that takes deposits; `error` carries plain text for views
+// that do not read it. A closed flow answers verifyReady with that reason, and
+// reopenIfAllowed() starts it again once the gate explicitly allows a deposit.
 export class AddressDepositFlow extends DepositAmount {
-    constructor({ wallet, client, store, changed = () => {}, now = Date.now, interval = 5_000 }) {
+    // `depositGate` answers whether a deposit may start or resume here. Without
+    // versioning there is none and nothing changes.
+    constructor({ wallet, client, store, changed = () => {}, now = Date.now, interval = 5_000,
+        depositGate = () => client?.oaVersioning?.depositGate?.() ?? null }) {
         super({ client, changed, now });
-        Object.assign(this, { wallet, store, interval });
+        Object.assign(this, { wallet, store, interval, depositGate });
+        this.closed = null;
         this.intent = null;
         this.status = null;
         this.fee = null;
@@ -42,8 +64,78 @@ export class AddressDepositFlow extends DepositAmount {
         this.writes = Promise.resolve();
     }
 
+    // The installed gate's refusal when it allows neither a new nor a resumed
+    // deposit, else null. Only an explicit allow passes an installed gate: null
+    // or undefined (no gate, no versioning) or an object carrying canStart or
+    // canResume === true. Anything else (false, 0, '', a malformed object, a
+    // throwing gate) is a refusal, and a refusal is always a non-null object.
+    gateRefusal() {
+        try {
+            const gate = this.depositGate?.();
+            if (gate === null || gate === undefined) return null;
+            if (typeof gate === 'object' && (gate.canStart === true || gate.canResume === true)) return null;
+            return typeof gate === 'object'
+                ? { canStart: false, canResume: false,
+                    code: typeof gate.code === 'string' ? gate.code : null, successor: gate.successor ?? null }
+                : { ...REFUSED_GATE };
+        } catch { return { ...REFUSED_GATE }; }
+    }
+
+    // Ends the flow in its closed state. Cancels the timers and invalidates any
+    // read still in flight, so nothing can quote, save or re-enable Deposit.
+    close({ gateCode = null, versionId = null, successorId = null, closedSince = null } = {}, message = depositsClosedMessage) {
+        this.stop();
+        this.closed = { code: 'deposits_closed', gateCode, versionId, successorId, closedSince };
+        this.error = message;
+        this.fee = null;
+        this.displayQuote = null;
+        this.changed();
+    }
+
+    // True once the gate has closed the flow. The refusal is an object or null
+    // (never falsy-but-refused), so only exactly null leaves the flow running.
+    closeIfRefused() {
+        const gate = this.gateRefusal();
+        if (gate === null) return false;
+        this.close({ gateCode: gate.code ?? null, successorId: gate.successor?.id ?? null },
+            gate.code === 'reload_required' ? staleMessage : depositsClosedMessage);
+        return true;
+    }
+
+    // Starts a closed flow again, but only when the gate now explicitly allows a
+    // deposit to start or resume: `closed` is then cleared (synchronously, before
+    // the returned promise settles) and start() runs with the amount this flow
+    // last asked for. A gate that is still closed, and a flow that is not
+    // closed, change nothing. Resolves to whether the flow was restarted.
+    //
+    // A gate can close for a reason that passes (another tab's withdrawal
+    // settles, a refreshed build): the host calls this when its version state
+    // changes instead of tearing the flow down and building a new one.
+    async reopenIfAllowed() {
+        if (!this.closed || this.running) return false;
+        if (this.gateRefusal() !== null) return false;
+        const starting = this.start(this.requestedAmount?.value, this.requestedAmount?.currency);
+        // start() runs up to its first await synchronously: it has cleared
+        // `closed`, or closed the flow again if the gate changed in between.
+        const reopened = this.closed === null;
+        await starting;
+        return reopened;
+    }
+
+    // What verifyReady answers with once the flow is closed: the closed reason
+    // itself, in the shape of the host's own deposits_closed refusal, so every
+    // error surface words it like any other closed deposit.
+    closedRefusal() {
+        const { gateCode = null, versionId = null, successorId = null, closedSince = null } = this.closed;
+        return Object.assign(new Error(this.error || depositsClosedMessage), { code: 'deposits_closed', status: 409,
+            data: { gateCode, versionId, successorId, closedSince } });
+    }
+
     async start(suggestedAmount = '10', currency = 'usd', { initialIntent = null, preferInput = false } = {}) {
         if (this.running) return;
+        this.closed = null;
+        // Before any address, amount or quote work: a closed version needs none.
+        if (this.closeIfRefused()) return;
         this.running = true;
         const generation = ++this.generation;
         let edit = this.editGeneration;
@@ -150,7 +242,11 @@ export class AddressDepositFlow extends DepositAmount {
     async setAmount(...args) {
         this.clearQuoteExpiry();
         this.displayQuote = null;
-        return super.setAmount(...args);
+        const result = await super.setAmount(...args);
+        // A refused USD quote leaves only its message behind. When the gate is
+        // what refused it, end the flow rather than retry on the poll cadence.
+        if (!result && this.error && this.running) this.closeIfRefused();
+        return result;
     }
 
     async commitIntent(intent, generation, edit, expected) {
@@ -175,6 +271,7 @@ export class AddressDepositFlow extends DepositAmount {
         clearTimeout(this.timer);
         this.timer = setTimeout(async () => {
             try {
+                if (this.closeIfRefused()) return;
                 // A failed amount quote (price oracle or RPC outage) is retried
                 // on the poll cadence like the fee check, whether it was the
                 // first quote or an edit; check() skips a dirty flow, so without
@@ -189,6 +286,7 @@ export class AddressDepositFlow extends DepositAmount {
 
     async check({ forceQuote = false, explicit = false } = {}) {
         if (!this.running || !this.intent || this.dirty || this.changingCurrency || (this.verifying && !explicit)) return;
+        if (this.closeIfRefused()) return;
         const generation = this.generation;
         const edit = this.editGeneration;
         const intent = this.intent;
@@ -231,6 +329,14 @@ export class AddressDepositFlow extends DepositAmount {
                 && BigInt(status.ethBalance) >= BigInt(intent.depositWei) + BigInt(fee.requiredFeeWei);
         } catch (error) {
             if (generation !== this.generation || edit !== this.editGeneration || check !== this.checkGeneration) return;
+            if (isDepositsClosed(error)) {
+                // Final, not transient: no retry, and no further quote attempt
+                // that could prepare a plan on a version that refuses deposits.
+                this.close({ gateCode: error.data?.gateCode ?? 'deposits_closed', versionId: error.data?.versionId ?? null,
+                    successorId: error.data?.successorId ?? null, closedSince: error.data?.closedSince ?? null },
+                typeof error.message === 'string' && error.message ? error.message : depositsClosedMessage);
+                return;
+            }
             this.error = error.message;
             this.ready = false;
             this.fee = null;
@@ -262,6 +368,8 @@ export class AddressDepositFlow extends DepositAmount {
     }
 
     async verifyReady() {
+        // A closed flow's reason is the answer, not "wait for more ETH".
+        if (this.closed) throw this.closedRefusal();
         if (!this.running || !this.intent || !this.ready || !this.fee || this.verifying || this.changingCurrency) throw new Error('Wait until enough ETH has arrived, then choose Deposit.');
         const intent = this.intent;
         const edit = this.editGeneration;

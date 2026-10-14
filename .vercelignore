@@ -21,6 +21,7 @@
 /deployments/zkapi/*
 !/deployments/zkapi/mainnet.json
 !/deployments/zkapi/sepolia.json
+!/deployments/zkapi/registry.json
 !/package.json
 !/package-lock.json
 !/vercel.json

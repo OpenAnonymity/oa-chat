@@ -2,6 +2,7 @@ import TicketRightPanel from '../../components/RightPanel.js';
 import ZkapiRightPanel from './RightPanel.js';
 import { deriveZkapiUxState } from '../services/zkapiUxState.mjs';
 import { attachZkapiSettlementActions, renderZkapiPanelExperience } from './ZkapiStateExperience.js';
+import { attachVersionNotices } from './VersionNotices.js';
 
 export default class PaymentModeRightPanel extends ZkapiRightPanel {
     isTicketMode() {
@@ -24,8 +25,63 @@ export default class PaymentModeRightPanel extends ZkapiRightPanel {
             ? `${TicketRightPanel.prototype.generateFundingSectionHTML.call(this)}
                 <div id="zkapi-ticket-closing-notice" class="px-3 pb-3" role="status" aria-live="polite" aria-atomic="true" ${this.isClosingPreviousChat() ? '' : 'hidden'}>
                     ${this.backgroundClosingNoticeHTML()}
-                </div>`
+                </div>${this.upgradeNoticeSlotHTML()}`
             : super.generateFundingSectionHTML();
+    }
+
+    // The protocol-version reminder of a zkAPI balance, shown while the
+    // current chat pays with tickets. Keyed like the closing notice above: its
+    // slot exists whenever the build has versions (hidden when empty), so a
+    // later change only patches it and never remounts the ticket controls.
+    // Static text, no live region: a reminder is not an announcement. A build
+    // with one version renders no slot, so today's ticket panel is unchanged.
+    upgradeNoticeBannerHTML(now = Date.now()) {
+        const view = this.versionView(now);
+        if (!view) return '';
+        try {
+            return view.ui.banner?.(view.state, { surface: 'ticket', now }) || '';
+        } catch {
+            return '';
+        }
+    }
+
+    upgradeNoticeSlotHTML() {
+        if (!this.versionFacade()) return '';
+        const html = this.upgradeNoticeBannerHTML();
+        // What the slot holds, to tell a real change from the browser's own
+        // re-serialization of the same markup.
+        this.renderedUpgradeNotice = html;
+        return `<div id="zkapi-upgrade-notice" class="px-3 pb-3" ${html ? '' : 'hidden'}>${html}</div>`;
+    }
+
+    updateUpgradeNotice() {
+        // No lookup at all without versions: the keyed closing notice is the
+        // only element this panel's tests and ticket mode ever resolve.
+        if (!this.versionFacade()) return;
+        const notice = document.getElementById('zkapi-upgrade-notice');
+        if (!notice) return;
+        const html = this.upgradeNoticeBannerHTML();
+        const hidden = !html;
+        if (notice.hidden !== hidden) notice.hidden = hidden;
+        if (html !== this.renderedUpgradeNotice) {
+            this.renderedUpgradeNotice = html;
+            notice.innerHTML = html;
+            attachVersionNotices(notice, this.versionActionContext());
+        }
+    }
+
+    versionSurface() {
+        return this.isTicketMode() ? 'ticket' : 'panel';
+    }
+
+    handleVersionChange() {
+        if (this.isTicketMode()) this.updateUpgradeNotice();
+        else super.handleVersionChange();
+    }
+
+    refreshVersionNotices() {
+        if (this.isTicketMode()) this.updateUpgradeNotice();
+        else super.refreshVersionNotices();
     }
 
     fundingSectionIncludesAccessKey() {

@@ -84,9 +84,11 @@ test('Vercel source uploads include only reviewed public deployment pin files', 
     execFileSync('git', ['init', '-q', directory]);
     const included = [...['mainnet', 'sepolia'].map(network =>
         `deployments/zkapi/${network}.json`),
+        // The version registry is the one logic-bearing deployment file.
+        'deployments/zkapi/registry.json',
         'patches/zkapi-browser-sdk-wallet-recovery.mjs'];
     const excluded = ['deployments/private/key.json', 'deployments/zkapi/other/mainnet.json',
-        ...['secret.json', 'nested/secret.json', '.env', '.git/config']
+        ...['secret.json', 'nested/secret.json', 'nested/registry.json', 'registry.json.bak', '.env', '.git/config']
             .map(file => `deployments/zkapi/${file}`), 'patches/private-test.json'];
     const ignored = execFileSync('git', ['-c', 'core.excludesFile=.vercelignore', 'check-ignore', '--no-index', '--stdin'], {
         cwd: directory, input: [...included, ...excluded].join('\n') + '\n', encoding: 'utf8'
@@ -292,6 +294,29 @@ test('a ticket-only build removes stale SDK source and assets without loading a 
     const result = await buildZkapiAssets({ network: '', outDir, build() { throw new Error('SDK build must stay disabled'); } });
     assert.equal(result, null);
     await assert.rejects(fs.stat(path.join(outDir, 'zkapi')), { code: 'ENOENT' });
+});
+
+test('a ticket-only bundle resolves the payment adapter and its boot entry to inert stubs', async t => {
+    const { build, zkapiBuildPlugins } = await sourceBuildHelpers();
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'oa-ticket-stubs-'));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    await fs.mkdir(path.join(directory, 'chat/zkapi'), { recursive: true });
+    for (const name of ['index', 'boot']) {
+        await fs.writeFile(path.join(directory, `chat/zkapi/${name}.js`),
+            "import '@openanonymity/zkapi-browser-sdk/client';\nexport const real = true;\n");
+    }
+    await fs.writeFile(path.join(directory, 'chat/startup.js'), [
+        "import { bootZkapiPayments } from './zkapi/boot.js';",
+        "import { createZkapiPaymentIntegration } from './zkapi/index.js';",
+        'export { bootZkapiPayments, createZkapiPaymentIntegration };', ''
+    ].join('\n'));
+    const result = await build({ entryPoints: [path.join(directory, 'chat/startup.js')], bundle: true, write: false,
+        format: 'esm', platform: 'node', logLevel: 'silent', plugins: zkapiBuildPlugins('', '') });
+    const text = Buffer.from(result.outputFiles[0].contents).toString('utf8');
+    assert.doesNotMatch(text, /zkapi-browser-sdk|real = true/);
+    const module = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`);
+    assert.deepEqual(await module.bootZkapiPayments(), { integration: null });
+    assert.throws(() => module.createZkapiPaymentIntegration(), /not enabled/);
 });
 
 test('zkAPI provenance refuses floating or local SDK dependencies', async t => {
