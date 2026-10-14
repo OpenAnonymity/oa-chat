@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 
 // 2026-10-14: a Parallel turn whose second lane (Claude Haiku) showed its
 // \(…\) as text once the turn finished. While streaming, each lane renders
@@ -77,7 +78,10 @@ test('a finished Parallel message renders the math of every lane, not only the f
 });
 
 test('every path that paints a whole message uses the per-lane renderer', () => {
-    const source = fs.readFileSync(new URL('../../chat/components/ChatArea.js', import.meta.url), 'utf8');
+    // From the repository root, as test/architecture/uiBoundary does: the
+    // release runner bundles tests under /tmp, where import.meta.url no
+    // longer points into the repository.
+    const source = fs.readFileSync(path.join(process.cwd(), 'chat/components/ChatArea.js'), 'utf8');
     const start = source.indexOf('    async appendMessage(');
     const end = source.indexOf('\n    }\n', source.indexOf('this.renderMessageMath(newMessageEl);', source.indexOf('insertAdjacentHTML', start)));
     const appendMessage = source.slice(start, end);
