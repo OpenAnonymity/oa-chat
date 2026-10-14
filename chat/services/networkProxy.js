@@ -616,27 +616,11 @@ class NetworkProxy {
             }
         };
 
-        // Create a TransformStream that passes data through and decrements on close/cancel
-        const trackingStream = new TransformStream({
-            transform(chunk, controller) {
-                controller.enqueue(chunk);
-            },
-            flush() {
-                // Stream completed normally
-                decrementOnce();
-            },
-            abort() {
-                // Stream errored
-                decrementOnce();
-            },
-            cancel() {
-                // Stream was cancelled (e.g., user stopped generation)
-                decrementOnce();
-            }
-        });
-
-        // Pipe the original body through our tracking stream
-        const trackedBody = originalBody.pipeThrough(trackingStream);
+        // Some browsers still ignore transformer.cancel. Observe pipe settlement
+        // too, while retaining prompt cancellation where the callback is supported.
+        const trackingStream = new TransformStream({ flush: decrementOnce, cancel: decrementOnce });
+        originalBody.pipeTo(trackingStream.writable).then(decrementOnce, decrementOnce);
+        const trackedBody = trackingStream.readable;
 
         // Return a new Response with the tracked body
         return new Response(trackedBody, {

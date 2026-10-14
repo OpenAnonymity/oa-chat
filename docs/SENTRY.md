@@ -98,6 +98,22 @@ used during staging setup could not edit this project-wide setting; it remained
 off. Do not claim it was applied or that delivery is anonymous.
 Deployments requiring no third-party metadata exposure should omit `SENTRY_DSN`.
 
+### Hosted geography follow-up — 2026-10-14
+
+Staging issue OA-CHAT-4 displayed User Geography even with the outbound SDK's
+`infer_ip: "never"` setting and user-free event allowlist. Sentry's upstream
+[geography discussion](https://github.com/getsentry/sentry/issues/92201)
+states that preventing IP storage does not remove geography. A project owner,
+manager or team admin must separately add this advanced data-scrubbing rule:
+**Remove → Anything → `$user.geo.**`**. Also enable **Prevent Storing of IP
+Addresses**. Inspect a subsequent synthetic hosted event to verify both rules;
+these affect new events and do not rewrite existing ones.
+
+At the October 14 check, both the IP switch and Add Rule control were disabled
+for the signed-in account. No project or organization advanced rules were shown.
+No setting was changed. Do not treat this as fixed by the client update or
+resolve the privacy finding until an authorized admin applies and verifies it.
+
 Source maps are not uploaded by this integration. Code locations identify the
 generated bundle; error descriptions are deliberately generic. Worker errors,
 browser extensions, scripts outside the generated bundles, and errors before

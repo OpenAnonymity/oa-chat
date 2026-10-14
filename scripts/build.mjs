@@ -289,6 +289,11 @@ const build = async () => {
 
     const indexPath = path.join(outDir, 'index.html');
     let html = await fs.readFile(indexPath, 'utf8');
+    // The vendored relay runtime is copied, not part of the app bundle hash.
+    const libcurlHash = createHash('sha256').update(await fs.readFile(
+        path.join(outDir, 'vendor/libcurl/libcurl_full.js')
+    )).digest('hex').slice(0, 12);
+    html = html.replace("'vendor/libcurl/libcurl_full.js'", `'vendor/libcurl/libcurl_full.js?v=${libcurlHash}'`);
     html = await injectSentry(html, { outDir, outputs, config: sentryConfig });
 
     if (sameOriginOrg || configuredOrgOrigin) {

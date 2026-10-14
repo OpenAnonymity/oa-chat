@@ -2583,8 +2583,8 @@ class RightPanel {
         if (!settings?.enabled && this.proxyFailureDismissed) {
             return { state: 'off', label: 'Direct connection', textClass: 'text-muted-foreground' };
         }
-        // A failed connection may have automatically switched off. Keep the
-        // warning visible until the user retries or explicitly disables it.
+        // A request failure is status, not permission to change the relay
+        // preference. Keep the warning until recovery or an explicit disable.
         if (status?.fallbackActive || status?.lastError || this.proxyActionError) {
             return { state: 'unavailable', label: 'Unavailable', textClass: 'text-amber-600 dark:text-amber-400' };
         }
@@ -2784,17 +2784,13 @@ class RightPanel {
     }
 
     handleProxyChange({ settings, status }) {
-        const hadError = this.proxyStatus?.lastError;
         const before = this.proxyPresentationKey();
         const enabledBefore = !!this.proxySettings?.enabled;
         this.proxySettings = settings;
         this.proxyStatus = status;
 
-        // Auto-disable proxy when it fails (new error detected while enabled)
-        if (!hadError && status?.lastError && settings?.enabled && !this.proxyActionPending) {
-            this.app.services.networkProxy.updateSettings({ enabled: false });
-            return; // Will trigger another onChange with disabled state
-        }
+        // Render failures without mutating settings or interrupting other
+        // requests. The transport owns the existing per-request fallback policy.
 
         this.updateProxyToggleBusy();
         // Skip re-render if animation is in progress (will re-render after animation)

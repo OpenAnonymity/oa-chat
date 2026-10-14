@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { isPhoneAppLayout } from '../../chat/ui/phoneAppLayout.js';
+import { createComponentAppFacade } from '../../chat/ui/appInterface.js';
 
 const read = file => fs.readFileSync(file, 'utf8');
 const phoneView = (extra = {}) => ({ innerWidth: 393, innerHeight: 852,
@@ -95,7 +96,7 @@ function panelFixture(phone = true) {
         documentElement: { removeAttribute() {}, setAttribute() {} } } };
     vm.createContext(context); vm.runInContext(`this.Subject = class { ${methods} }`, context);
     const subject = new context.Subject(); subject.isVisible = false;
-    subject.app = { elements: { sidebar }, hideSidebar: () => { sidebar.visible = false; }, updateToolbarDivider() {} };
+    subject.app = createComponentAppFacade({ elements: { sidebar }, hideSidebar: () => { sidebar.visible = false; }, updateToolbarDivider() {} });
     subject.loadPreferences();
     return { subject, sidebar, saves: () => saves, finishSave: () => finishSave(), finishRead: async () => { finishRead(true); await Promise.resolve(); },
         setPhone: value => { phone = value; } };
@@ -119,6 +120,21 @@ test('returning to phone portrait reconciles two open rails without saving prefe
     f.setPhone(true); f.subject.reconcilePhonePanels();
     assert.equal(f.subject.isVisible, false); assert.equal(f.sidebar.visible, true); assert.equal(f.saves(), 0);
     assert.match(read('chat/components/RightPanel.js'), /window\.addEventListener\(PHONE_APP_LAYOUT_CHANGE, \(\) => this\.reconcilePhonePanels\(\)\)/);
+});
+
+test('twenty phone panel hand-offs work through the restricted component facade', () => {
+    const f = panelFixture();
+    for (let i = 0; i < 20; i++) {
+        f.sidebar.visible = true;
+        f.subject.toggle();
+        assert.equal(f.subject.isVisible, true);
+        assert.equal(f.sidebar.visible, false);
+        f.finishSave();
+        f.subject.closeRightPanel({ persist: false });
+        f.sidebar.visible = true;
+        assert.equal(f.subject.isVisible, false);
+    }
+    assert.equal(f.saves(), 20, 'automatic closure never persists a second preference');
 });
 
 test('ordinary browser preference hydration still applies after a local close', async () => {

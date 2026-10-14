@@ -1,3 +1,23 @@
+## October 14, 2026 — staging relay lifecycle and phone facade repair (local)
+
+The live staging run exposed repeated libcurl WASM errors. Closing a vendored
+session left its polling interval alive; shutdown also skipped handles while
+mutating its request list and could double-free a queued removal. These paths
+are repaired, including late cancellation and repeated close. The built lazy
+vendor URL now carries its content hash. Stream error/cancel tracking releases
+active request counts using pipe settlement on browsers ignoring the newer
+transformer.cancel callback, while retaining that callback where supported.
+RightPanel no longer auto-disables a failed relay (OA-CHAT-2), and its
+facade now exposes hideSidebar for phone handoff (OA-CHAT-3).
+
+Correction to the live report: 360px desktop Chrome does not activate phone
+mode; two rails there are expected. The missing facade method is a separately
+confirmed phone bug, now covered by twenty fixture handoffs. Real phone testing
+is still required. Upstream Gemini abort and the original 520 remain unresolved;
+these client repairs do not establish their cause. Hosted Sentry geography needs
+an admin-owned server scrub rule. See [repair details](RELAY_LIFECYCLE.md) and
+[Sentry privacy](SENTRY.md). Nothing has been deployed by this repair task.
+
 ## October 14, 2026 — updated ownership staging integration
 
 The supplied staging merge 07310783 was based on c468c3cc, before the deployed
